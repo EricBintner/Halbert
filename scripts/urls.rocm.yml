@@ -1,0 +1,11 @@
+urls:
+  # ROCm - AMD GPU Computing
+  - https://rocm.docs.amd.com/en/latest/
+  - https://rocm.docs.amd.com/en/latest/conceptual/gpu-arch.html
+  - https://rocm.docs.amd.com/en/latest/how-to/rocm-install-on-linux.html
+  - https://rocm.docs.amd.com/en/latest/how-to/native-install/index.html
+  - https://rocm.docs.amd.com/en/latest/reference/rocm-tools.html
+  
+  # HIP (ROCm's CUDA-like API)
+  - https://rocm.docs.amd.com/projects/HIP/en/latest/
+  - https://rocm.docs.amd.com/projects/HIP/en/latest/user_guide/programming_manual.html

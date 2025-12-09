@@ -1,0 +1,19 @@
+urls:
+  # kubectl reference
+  - https://kubernetes.io/docs/reference/kubectl/
+  - https://kubernetes.io/docs/reference/kubectl/cheatsheet/
+  
+  # Core concepts
+  - https://kubernetes.io/docs/concepts/overview/
+  - https://kubernetes.io/docs/concepts/workloads/pods/
+  - https://kubernetes.io/docs/concepts/services-networking/service/
+  - https://kubernetes.io/docs/concepts/storage/volumes/
+  
+  # Tasks
+  - https://kubernetes.io/docs/tasks/tools/
+  - https://kubernetes.io/docs/tasks/access-application-cluster/
+  - https://kubernetes.io/docs/tasks/debug/
+  
+  # Configuration
+  - https://kubernetes.io/docs/concepts/configuration/configmap/
+  - https://kubernetes.io/docs/concepts/configuration/secret/

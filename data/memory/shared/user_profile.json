@@ -1,0 +1,32 @@
+{
+  "version": "1.0",
+  "created_at": "2025-11-27T19:00:00Z",
+  "user": {
+    "name": "User",
+    "timezone": "America/New_York",
+    "preferences": {
+      "default_persona": "it_admin",
+      "enable_auto_suggest": true,
+      "do_not_disturb_hours": ["22:00-08:00"]
+    }
+  },
+  "personas": {
+    "it_admin": {
+      "enabled": true,
+      "memory_dir": "core",
+      "lora": null
+    },
+    "friend": {
+      "enabled": true,
+      "memory_dir": "personas/friend",
+      "lora": null
+    },
+    "custom": {
+      "enabled": false,
+      "memory_dir": "personas/custom",
+      "lora": null,
+      "note": "Coming in Phase 5"
+    }
+  },
+  "active_persona": "it_admin"
+}

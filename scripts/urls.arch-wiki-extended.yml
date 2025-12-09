@@ -1,0 +1,59 @@
+urls:
+  # Core System
+  - https://wiki.archlinux.org/title/Arch_boot_process
+  - https://wiki.archlinux.org/title/Kernel
+  - https://wiki.archlinux.org/title/Kernel_module
+  - https://wiki.archlinux.org/title/Mkinitcpio
+  - https://wiki.archlinux.org/title/GRUB
+  - https://wiki.archlinux.org/title/Systemd-boot
+  
+  # Storage & Filesystems
+  - https://wiki.archlinux.org/title/File_systems
+  - https://wiki.archlinux.org/title/Fstab
+  - https://wiki.archlinux.org/title/RAID
+  - https://wiki.archlinux.org/title/LVM
+  - https://wiki.archlinux.org/title/Dm-crypt
+  - https://wiki.archlinux.org/title/LUKS
+  
+  # Networking
+  - https://wiki.archlinux.org/title/Network_configuration
+  - https://wiki.archlinux.org/title/Wireless_network_configuration
+  - https://wiki.archlinux.org/title/NetworkManager
+  - https://wiki.archlinux.org/title/Systemd-networkd
+  - https://wiki.archlinux.org/title/Iwd
+  - https://wiki.archlinux.org/title/DNS
+  - https://wiki.archlinux.org/title/Firewalld
+  
+  # Security
+  - https://wiki.archlinux.org/title/Security
+  - https://wiki.archlinux.org/title/PAM
+  - https://wiki.archlinux.org/title/Sudo
+  - https://wiki.archlinux.org/title/GPG
+  - https://wiki.archlinux.org/title/SSH_keys
+  
+  # Desktop
+  - https://wiki.archlinux.org/title/Xorg
+  - https://wiki.archlinux.org/title/Wayland
+  - https://wiki.archlinux.org/title/GNOME
+  - https://wiki.archlinux.org/title/KDE
+  - https://wiki.archlinux.org/title/PipeWire
+  - https://wiki.archlinux.org/title/PulseAudio
+  
+  # Hardware
+  - https://wiki.archlinux.org/title/Power_management
+  - https://wiki.archlinux.org/title/CPU_frequency_scaling
+  - https://wiki.archlinux.org/title/Fan_speed_control
+  - https://wiki.archlinux.org/title/Laptop
+  - https://wiki.archlinux.org/title/Bluetooth
+  
+  # Virtualization
+  - https://wiki.archlinux.org/title/QEMU
+  - https://wiki.archlinux.org/title/KVM
+  - https://wiki.archlinux.org/title/Libvirt
+  - https://wiki.archlinux.org/title/VirtualBox
+  
+  # Development
+  - https://wiki.archlinux.org/title/Python
+  - https://wiki.archlinux.org/title/Rust
+  - https://wiki.archlinux.org/title/Go
+  - https://wiki.archlinux.org/title/Node.js

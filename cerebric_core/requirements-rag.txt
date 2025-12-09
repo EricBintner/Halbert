@@ -1,0 +1,22 @@
+# RAG System Dependencies for Cerebric
+# Phase 7: Production RAG System
+
+# Core embedding and retrieval
+sentence-transformers==2.2.2
+chromadb==0.4.22
+rank-bm25==0.2.2
+
+# Vector operations
+numpy>=1.24.0
+faiss-cpu>=1.7.4  # Optional: for faster dense search
+
+# Web scraping (M2-M3)
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+html5lib>=1.1
+
+# Evaluation (optional)
+ragas>=0.1.0  # Automated RAG evaluation
+
+# Utilities
+tqdm>=4.65.0

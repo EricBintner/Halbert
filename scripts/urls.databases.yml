@@ -1,0 +1,18 @@
+urls:
+  # PostgreSQL
+  - https://www.postgresql.org/docs/current/tutorial.html
+  - https://www.postgresql.org/docs/current/admin.html
+  - https://www.postgresql.org/docs/current/sql.html
+  - https://www.postgresql.org/docs/current/reference.html
+  
+  # MySQL/MariaDB
+  - https://mariadb.com/kb/en/getting-started-with-indexes/
+  - https://mariadb.com/kb/en/mariadb-basics/
+  
+  # Redis
+  - https://redis.io/docs/latest/get-started/
+  - https://redis.io/docs/latest/commands/
+  
+  # SQLite
+  - https://www.sqlite.org/cli.html
+  - https://www.sqlite.org/lang.html

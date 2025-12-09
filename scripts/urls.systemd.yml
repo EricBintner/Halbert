@@ -1,0 +1,19 @@
+urls:
+  # systemd main docs
+  - https://systemd.io/
+  
+  # systemd man pages (freedesktop)
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemctl.html
+  - https://www.freedesktop.org/software/systemd/man/latest/journalctl.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd-analyze.html
+  - https://www.freedesktop.org/software/systemd/man/latest/loginctl.html
+  - https://www.freedesktop.org/software/systemd/man/latest/timedatectl.html
+  - https://www.freedesktop.org/software/systemd/man/latest/hostnamectl.html
+  - https://www.freedesktop.org/software/systemd/man/latest/localectl.html
+  - https://www.freedesktop.org/software/systemd/man/latest/networkctl.html
+  - https://www.freedesktop.org/software/systemd/man/latest/resolvectl.html
+  - https://www.freedesktop.org/software/systemd/man/latest/coredumpctl.html

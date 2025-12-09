@@ -1,0 +1,140 @@
+# Approved RAG Sources
+# These domains are pre-vetted and trusted for automatic ingestion
+
+tier_1_official:
+  # Official documentation - highest trust
+  - pattern: "*.readthedocs.io"
+    name: "ReadTheDocs Projects"
+    trust: official_docs
+    
+  - pattern: "wiki.archlinux.org"
+    name: "Arch Wiki"
+    trust: community_wiki
+    
+  - pattern: "man7.org"
+    name: "Linux Man Pages"
+    trust: official_manpages
+    
+  - pattern: "freedesktop.org"
+    name: "Freedesktop Specs"
+    trust: official_specs
+    
+  - pattern: "kernel.org"
+    name: "Linux Kernel"
+    trust: kernel_official
+    
+  - pattern: "postgresql.org"
+    name: "PostgreSQL"
+    trust: official_docs
+    
+  - pattern: "nginx.org"
+    name: "nginx"
+    trust: official_docs
+    
+  - pattern: "docs.docker.com"
+    name: "Docker"
+    trust: official_docs
+    
+  - pattern: "kubernetes.io"
+    name: "Kubernetes"
+    trust: official_docs
+    
+  - pattern: "git-scm.com"
+    name: "Git"
+    trust: official_docs
+    
+  - pattern: "docs.nvidia.com"
+    name: "NVIDIA"
+    trust: official_docs
+    
+  - pattern: "rocm.docs.amd.com"
+    name: "AMD ROCm"
+    trust: official_docs
+    
+  - pattern: "helm.sh"
+    name: "Helm"
+    trust: official_docs
+    
+  - pattern: "ansible.com"
+    name: "Ansible"
+    trust: official_docs
+    
+  - pattern: "docs.aws.amazon.com"
+    name: "AWS"
+    trust: official_docs
+
+  - pattern: "systemd.io"
+    name: "systemd"
+    trust: official_docs
+
+  - pattern: "openzfs.github.io"
+    name: "OpenZFS"
+    trust: official_docs
+
+  - pattern: "borgbackup.readthedocs.io"
+    name: "Borg Backup"
+    trust: official_docs
+
+  - pattern: "restic.readthedocs.io"
+    name: "Restic"
+    trust: official_docs
+
+  - pattern: "wireguard.com"
+    name: "WireGuard"
+    trust: official_docs
+
+  - pattern: "tailscale.com"
+    name: "Tailscale"
+    trust: official_docs
+
+tier_2_community:
+  # Community-curated wikis - high trust
+  - pattern: "wiki.debian.org"
+    name: "Debian Wiki"
+    trust: community_wiki
+    
+  - pattern: "wiki.gentoo.org"
+    name: "Gentoo Wiki"
+    trust: community_wiki
+    
+  - pattern: "wiki.ubuntu.com"
+    name: "Ubuntu Wiki"
+    trust: community_wiki
+    
+  - pattern: "help.ubuntu.com"
+    name: "Ubuntu Help"
+    trust: community_wiki
+
+tier_3_expert:
+  # Expert content - requires manual curation
+  - pattern: "level1techs.com"
+    name: "Level1Techs"
+    trust: expert_blog
+    requires_manual_curation: true
+    
+  - pattern: "stackoverflow.com"
+    name: "Stack Overflow"
+    trust: qa_site
+    requires_vote_filter: 10
+    
+  - pattern: "serverfault.com"
+    name: "Server Fault"
+    trust: qa_site
+    requires_vote_filter: 10
+
+blocked:
+  # Never auto-add these
+  - pattern: "*.medium.com"
+    reason: "Variable quality, often outdated"
+    
+  - pattern: "*.blogspot.com"
+    reason: "Unvetted personal blogs"
+    
+  - pattern: "w3schools.com"
+    reason: "Known inaccuracies"
+    
+  - pattern: "geeksforgeeks.org"
+    reason: "Often incorrect Linux advice"
+    
+  - pattern: "tutorialspoint.com"
+    reason: "Variable quality"

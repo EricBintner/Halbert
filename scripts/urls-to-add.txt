@@ -1,0 +1,11 @@
+# High-value Arch Wiki pages to bulk add
+# Run: cerebric rag-bulk scripts/urls-to-add.txt
+
+https://wiki.archlinux.org/title/Tmux
+https://wiki.archlinux.org/title/Neovim
+https://wiki.archlinux.org/title/Alacritty
+https://wiki.archlinux.org/title/Zsh
+https://wiki.archlinux.org/title/Fish
+https://wiki.archlinux.org/title/Pacman/Tips_and_tricks
+https://wiki.archlinux.org/title/AUR_helpers
+https://wiki.archlinux.org/title/Makepkg

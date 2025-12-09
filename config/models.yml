@@ -1,0 +1,26 @@
+providers:
+  ollama:
+    base_url: http://localhost:11434
+    timeout: 120
+orchestrator:
+  model: llama3.1:8b-instruct
+  provider: ollama
+  always_loaded: true
+  purpose: Intent classification, simple Q&A, context selection
+specialist:
+  enabled: false
+routing:
+  strategy: auto
+  prefer_specialist_for:
+  - code_generation
+  - code_analysis
+  - reasoning
+  - system_command
+  complexity_threshold: 0.5
+handoff:
+  strategy: summarized
+  max_context_tokens: 4096
+  include_rag: true
+  include_system_identity: true
+persona_names:
+  default: Linus

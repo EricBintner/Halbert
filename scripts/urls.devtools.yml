@@ -1,0 +1,21 @@
+urls:
+  # Git
+  - https://git-scm.com/docs
+  - https://git-scm.com/docs/git
+  - https://git-scm.com/docs/git-clone
+  - https://git-scm.com/docs/git-commit
+  - https://git-scm.com/docs/git-branch
+  - https://git-scm.com/docs/git-merge
+  - https://git-scm.com/docs/git-rebase
+  - https://git-scm.com/docs/git-stash
+  - https://git-scm.com/docs/git-log
+  - https://git-scm.com/docs/git-diff
+  
+  # tmux
+  - https://github.com/tmux/tmux/wiki/Getting-Started
+  
+  # vim/neovim
+  - https://neovim.io/doc/user/quickref.html
+  
+  # Make
+  - https://www.gnu.org/software/make/manual/make.html

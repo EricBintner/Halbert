@@ -1,0 +1,10 @@
+[Unit]
+Description=Path trigger for Cerebric Config Watcher
+
+[Path]
+# Trigger when files under /etc/cerebric change (system scope)
+PathModified=/etc/cerebric/
+Unit=cerebric-config-watch.service
+
+[Install]
+WantedBy=multi-user.target

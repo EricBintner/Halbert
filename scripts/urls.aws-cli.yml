@@ -1,0 +1,14 @@
+urls:
+  # AWS CLI
+  - https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-welcome.html
+  - https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html
+  - https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
+  - https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-parameters.html
+  
+  # Common Services
+  - https://docs.aws.amazon.com/cli/latest/reference/s3/index.html
+  - https://docs.aws.amazon.com/cli/latest/reference/ec2/index.html
+  - https://docs.aws.amazon.com/cli/latest/reference/iam/index.html
+  - https://docs.aws.amazon.com/cli/latest/reference/lambda/index.html
+  - https://docs.aws.amazon.com/cli/latest/reference/rds/index.html
+  - https://docs.aws.amazon.com/cli/latest/reference/ecs/index.html

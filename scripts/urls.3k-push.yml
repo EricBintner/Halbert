@@ -1,0 +1,12 @@
+urls:
+  # Unique docs we don't have yet
+  - https://wiki.archlinux.org/title/Bash
+  - https://wiki.archlinux.org/title/Zsh
+  - https://wiki.archlinux.org/title/Fish
+  - https://wiki.archlinux.org/title/Ranger
+  - https://wiki.archlinux.org/title/Neovim
+  - https://wiki.archlinux.org/title/Tmux
+  - https://wiki.archlinux.org/title/Alacritty
+  - https://wiki.archlinux.org/title/Kitty
+  - https://wiki.archlinux.org/title/Mullvad
+  - https://wiki.archlinux.org/title/VPN

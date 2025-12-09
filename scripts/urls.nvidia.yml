@@ -1,0 +1,26 @@
+urls:
+  # CUDA Programming Guides (Priority)
+  - https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html
+  - https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html
+  
+  # CUDA Runtime & Driver APIs
+  - https://docs.nvidia.com/cuda/cuda-runtime-api/index.html
+  - https://docs.nvidia.com/cuda/cuda-driver-api/index.html
+  
+  # CUDA Math Libraries
+  - https://docs.nvidia.com/cuda/cublas/index.html
+  - https://docs.nvidia.com/cuda/cufft/index.html
+  - https://docs.nvidia.com/cuda/cusparse/index.html
+  - https://docs.nvidia.com/cuda/cusolver/index.html
+  
+  # Deep Learning Libraries
+  - https://docs.nvidia.com/deeplearning/cudnn/index.html
+  - https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html
+  
+  # CUDA Compiler & Tools
+  - https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html
+  - https://docs.nvidia.com/cuda/profiler-users-guide/index.html
+  
+  # Installation & Getting Started
+  - https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html
+  - https://docs.nvidia.com/cuda/cuda-quick-start-guide/index.html

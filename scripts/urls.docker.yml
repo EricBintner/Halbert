@@ -1,0 +1,19 @@
+urls:
+  # Docker CLI reference
+  - https://docs.docker.com/reference/cli/docker/
+  - https://docs.docker.com/reference/cli/docker/container/
+  - https://docs.docker.com/reference/cli/docker/image/
+  - https://docs.docker.com/reference/cli/docker/network/
+  - https://docs.docker.com/reference/cli/docker/volume/
+  
+  # Docker Compose
+  - https://docs.docker.com/compose/
+  - https://docs.docker.com/compose/compose-file/
+  
+  # Getting Started
+  - https://docs.docker.com/get-started/
+  - https://docs.docker.com/get-started/docker-concepts/
+  
+  # Best practices
+  - https://docs.docker.com/build/building/best-practices/
+  - https://docs.docker.com/config/containers/logging/

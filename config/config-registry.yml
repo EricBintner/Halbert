@@ -1,0 +1,12 @@
+include:
+  - /etc/**/*.conf
+  - /etc/systemd/*.service
+  - /etc/default/*
+exclude:
+  - /etc/ssl/**
+  - /etc/shadow
+parsers:
+  ini: ["*.ini", "*.conf"]
+  yaml: ["*.yml", "*.yaml"]
+  json: ["*.json"]
+  systemd: ["*.service", "*.timer"]

@@ -1,0 +1,20 @@
+urls:
+  # WireGuard VPN
+  - https://www.wireguard.com/
+  - https://www.wireguard.com/quickstart/
+  - https://www.wireguard.com/install/
+  
+  # OpenVPN
+  - https://openvpn.net/community-resources/how-to/
+  - https://openvpn.net/community-resources/reference-manual-for-openvpn-2-6/
+  
+  # Samba (Windows file sharing)
+  - https://wiki.samba.org/index.php/Main_Page
+  - https://wiki.samba.org/index.php/Setting_up_Samba_as_a_Standalone_Server
+  
+  # NFS
+  - https://wiki.linux-nfs.org/wiki/index.php/Main_Page
+  
+  # iptables/nftables
+  - https://wiki.nftables.org/wiki-nftables/index.php/Main_Page
+  - https://wiki.nftables.org/wiki-nftables/index.php/Quick_reference-nftables_in_10_minutes

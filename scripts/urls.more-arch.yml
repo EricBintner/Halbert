@@ -1,0 +1,25 @@
+urls:
+  # More Arch Wiki essentials
+  - https://wiki.archlinux.org/title/Users_and_groups
+  - https://wiki.archlinux.org/title/File_permissions_and_attributes
+  - https://wiki.archlinux.org/title/Environment_variables
+  - https://wiki.archlinux.org/title/Locale
+  - https://wiki.archlinux.org/title/Time
+  - https://wiki.archlinux.org/title/Cron
+  - https://wiki.archlinux.org/title/Swap
+  - https://wiki.archlinux.org/title/Tmpfs
+  - https://wiki.archlinux.org/title/Partitioning
+  - https://wiki.archlinux.org/title/EFI_system_partition
+  - https://wiki.archlinux.org/title/Unified_Extensible_Firmware_Interface
+  - https://wiki.archlinux.org/title/Core_utilities
+  - https://wiki.archlinux.org/title/General_recommendations
+  - https://wiki.archlinux.org/title/System_maintenance
+  - https://wiki.archlinux.org/title/Performance
+  - https://wiki.archlinux.org/title/Improving_performance
+  - https://wiki.archlinux.org/title/Silent_boot
+  - https://wiki.archlinux.org/title/Kernel_parameters
+  - https://wiki.archlinux.org/title/Sysctl
+  - https://wiki.archlinux.org/title/Udev
+  - https://wiki.archlinux.org/title/Udisks
+  - https://wiki.archlinux.org/title/Polkit
+  - https://wiki.archlinux.org/title/D-Bus
