@@ -1,0 +1,34 @@
+[Unit]
+Description=Cerebric Dashboard API Server
+Documentation=https://github.com/cerebric/LinuxBrain
+After=network.target ollama.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/opt/cerebric
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/%i
+
+# Use the virtual environment
+ExecStart=/opt/cerebric/.venv/bin/python -m uvicorn \
+    cerebric_core.cerebric_core.dashboard.app:app \
+    --host 127.0.0.1 \
+    --port 8000
+
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/opt/cerebric/data /tmp
+
+[Install]
+WantedBy=multi-user.target

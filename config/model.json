@@ -1,0 +1,9 @@
+{
+  "runtime": "ollama",
+  "model_id": "llama3.1:8b-instruct",
+  "quantization": null,
+  "max_context": 8192,
+  "temperature": 0.7,
+  "top_p": 0.9,
+  "top_k": 40
+}

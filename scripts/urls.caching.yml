@@ -1,0 +1,10 @@
+urls:
+  # Redis (more)
+  - https://redis.io/docs/latest/develop/data-types/
+  - https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/
+  
+  # Memcached
+  - https://memcached.org/about
+  
+  # Varnish
+  - https://varnish-cache.org/docs/trunk/users-guide/

@@ -1,0 +1,32 @@
+urls:
+  # Essential utils from man7.org
+  - https://man7.org/linux/man-pages/man1/chmod.1.html
+  - https://man7.org/linux/man-pages/man1/chown.1.html
+  - https://man7.org/linux/man-pages/man1/ln.1.html
+  - https://man7.org/linux/man-pages/man1/cp.1.html
+  - https://man7.org/linux/man-pages/man1/mv.1.html
+  - https://man7.org/linux/man-pages/man1/rm.1.html
+  - https://man7.org/linux/man-pages/man1/mkdir.1.html
+  - https://man7.org/linux/man-pages/man1/cat.1.html
+  - https://man7.org/linux/man-pages/man1/head.1.html
+  - https://man7.org/linux/man-pages/man1/tail.1.html
+  - https://man7.org/linux/man-pages/man1/sort.1.html
+  - https://man7.org/linux/man-pages/man1/uniq.1.html
+  - https://man7.org/linux/man-pages/man1/wc.1.html
+  - https://man7.org/linux/man-pages/man1/tee.1.html
+  - https://man7.org/linux/man-pages/man1/cut.1.html
+  - https://man7.org/linux/man-pages/man1/paste.1.html
+  - https://man7.org/linux/man-pages/man1/tr.1.html
+  - https://man7.org/linux/man-pages/man1/diff.1.html
+  - https://man7.org/linux/man-pages/man1/patch.1.html
+  - https://man7.org/linux/man-pages/man1/touch.1.html
+  - https://man7.org/linux/man-pages/man1/file.1.html
+  - https://man7.org/linux/man-pages/man1/stat.1.html
+  - https://man7.org/linux/man-pages/man1/which.1.html
+  - https://man7.org/linux/man-pages/man1/type.1p.html
+  - https://man7.org/linux/man-pages/man1/env.1.html
+  - https://man7.org/linux/man-pages/man1/export.1p.html
+  - https://man7.org/linux/man-pages/man1/alias.1p.html
+  - https://man7.org/linux/man-pages/man1/echo.1.html
+  - https://man7.org/linux/man-pages/man1/printf.1.html
+  - https://man7.org/linux/man-pages/man1/read.1p.html

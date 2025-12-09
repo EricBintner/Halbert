@@ -1,0 +1,16 @@
+urls:
+  # nginx
+  - https://nginx.org/en/docs/
+  - https://nginx.org/en/docs/beginners_guide.html
+  - https://nginx.org/en/docs/http/ngx_http_core_module.html
+  - https://nginx.org/en/docs/http/configuring_https_servers.html
+  
+  # Apache (httpd)
+  - https://httpd.apache.org/docs/current/getting-started.html
+  - https://httpd.apache.org/docs/current/configuring.html
+  - https://httpd.apache.org/docs/current/ssl/ssl_howto.html
+  
+  # Caddy
+  - https://caddyserver.com/docs/
+  - https://caddyserver.com/docs/quick-starts
+  - https://caddyserver.com/docs/caddyfile

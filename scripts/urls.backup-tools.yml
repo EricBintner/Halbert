@@ -1,0 +1,23 @@
+urls:
+  # rsync - File synchronization
+  - https://rsync.samba.org/
+  - https://download.samba.org/pub/rsync/rsync.1
+  
+  # Borg Backup - Deduplicating backup
+  - https://borgbackup.readthedocs.io/en/stable/
+  - https://borgbackup.readthedocs.io/en/stable/quickstart.html
+  - https://borgbackup.readthedocs.io/en/stable/usage/general.html
+  - https://borgbackup.readthedocs.io/en/stable/usage/create.html
+  - https://borgbackup.readthedocs.io/en/stable/usage/prune.html
+  
+  # Restic - Fast, secure backup
+  - https://restic.readthedocs.io/en/stable/
+  - https://restic.readthedocs.io/en/stable/010_introduction.html
+  - https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html
+  - https://restic.readthedocs.io/en/stable/040_backup.html
+  - https://restic.readthedocs.io/en/stable/050_restore.html
+  
+  # rclone - Cloud storage sync
+  - https://rclone.org/docs/
+  - https://rclone.org/commands/
+  - https://rclone.org/overview/

@@ -1,0 +1,26 @@
+urls:
+  # Bcachefs - Modern copy-on-write filesystem
+  - https://bcachefs.org/
+  - https://bcachefs.org/FAQ/
+  - https://bcachefs.org/Getting_Started/
+  
+  # OpenZFS - Enterprise filesystem
+  - https://openzfs.github.io/openzfs-docs/
+  - https://openzfs.github.io/openzfs-docs/Getting%20Started/index.html
+  - https://openzfs.github.io/openzfs-docs/man/8/zpool.8.html
+  - https://openzfs.github.io/openzfs-docs/man/8/zfs.8.html
+  - https://openzfs.github.io/openzfs-docs/Basic%20Concepts/index.html
+  
+  # Btrfs - B-tree filesystem
+  - https://btrfs.readthedocs.io/en/latest/
+  - https://btrfs.readthedocs.io/en/latest/Introduction.html
+  - https://btrfs.readthedocs.io/en/latest/Quick-start.html
+  - https://btrfs.readthedocs.io/en/latest/Administration.html
+  - https://btrfs.readthedocs.io/en/latest/btrfs-man5.html
+  
+  # XFS - High-performance filesystem
+  - https://xfs.wiki.kernel.org/
+  
+  # ext4 - Standard Linux filesystem
+  - https://ext4.wiki.kernel.org/index.php/Main_Page
+  - https://ext4.wiki.kernel.org/index.php/Ext4_Howto

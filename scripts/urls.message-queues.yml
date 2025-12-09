@@ -1,0 +1,12 @@
+urls:
+  # RabbitMQ
+  - https://www.rabbitmq.com/docs/tutorials
+  - https://www.rabbitmq.com/docs/documentation
+  
+  # Kafka
+  - https://kafka.apache.org/quickstart
+  - https://kafka.apache.org/documentation/
+  
+  # NATS
+  - https://docs.nats.io/
+  - https://docs.nats.io/nats-concepts/intro

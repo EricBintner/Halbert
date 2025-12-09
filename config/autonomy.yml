@@ -1,0 +1,53 @@
+# Autonomy Guardrails Configuration
+# Phase 3 M6: Safety limits for autonomous operations
+
+# Confidence thresholds
+confidence:
+  min_auto_execute: 0.8       # Minimum confidence to auto-execute (80%)
+  min_approval_execute: 0.5   # Below this, reject (50%)
+  conservative_mode: true     # Start conservative, relax after validation
+
+# Resource budgets (per job execution)
+budgets:
+  cpu_percent_max: 50         # Max 50% CPU usage
+  memory_mb_max: 2048         # Max 2GB RAM
+  time_minutes_max: 30        # Max 30 minutes per job
+  frequency_per_hour_max: 10  # Max 10 executions per hour per job
+
+# Anomaly detection (basic rules)
+anomalies:
+  cpu_spike_threshold: 90     # CPU >90% triggers alert
+  memory_leak_mb: 500         # Memory growth >500MB triggers alert
+  repeated_failures: 3        # 3 failures in a row triggers safe-mode
+  error_rate_threshold: 0.5   # >50% errors triggers safe-mode
+
+# Safe-mode behavior
+safe_mode:
+  auto_pause_on_anomaly: true # Pause autonomy if anomaly detected
+  require_manual_resume: true # User must explicitly resume
+  alert_channels:
+    - log                     # Always log
+    - dashboard               # Show in dashboard
+    # - email                 # Optional: email admin
+    # - webhook               # Optional: webhook notification
+
+# Recovery playbooks
+recovery:
+  rollback:
+    enabled: true
+    max_rollback_depth: 5     # Keep last 5 config versions
+  
+  restart_service:
+    enabled: true
+    max_restart_attempts: 3
+    backoff_minutes: 5
+  
+  alert_user:
+    enabled: true
+    throttle_minutes: 30      # Max 1 alert per 30 minutes
+
+# Audit settings
+audit:
+  log_all_decisions: true
+  log_guardrail_triggers: true
+  retention_days: 90

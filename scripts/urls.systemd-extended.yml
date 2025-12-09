@@ -1,0 +1,14 @@
+urls:
+  # More systemd man pages
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.resource-control.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.mount.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.socket.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.path.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.target.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.slice.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.scope.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd-nspawn.html
+  - https://www.freedesktop.org/software/systemd/man/latest/machinectl.html
+  - https://www.freedesktop.org/software/systemd/man/latest/bootctl.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd-boot.html

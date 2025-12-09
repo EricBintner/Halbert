@@ -1,0 +1,10 @@
+urls:
+  # Podman - Daemonless containers
+  - https://docs.podman.io/en/latest/
+  - https://docs.podman.io/en/latest/Introduction.html
+  - https://docs.podman.io/en/latest/Commands.html
+  - https://docs.podman.io/en/latest/markdown/podman.1.html
+  - https://docs.podman.io/en/latest/markdown/podman-run.1.html
+  - https://docs.podman.io/en/latest/markdown/podman-build.1.html
+  - https://docs.podman.io/en/latest/markdown/podman-compose.1.html
+  - https://docs.podman.io/en/latest/Tutorials.html

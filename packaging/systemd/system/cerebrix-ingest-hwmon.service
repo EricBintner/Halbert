@@ -1,0 +1,30 @@
+[Unit]
+Description=Cerebric Ingestion (hwmon sensors)
+After=multi-user.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=cerebric
+LogsDirectory=cerebric
+ConfigurationDirectory=cerebric
+Environment=Cerebric_DATA_DIR=/var/lib/cerebric
+Environment=Cerebric_LOG_DIR=/var/log/cerebric
+# Adjust ExecStart to your install path or packaged CLI
+ExecStart=/usr/bin/env python3 /opt/cerebric/Cerebric/main.py ingest-hwmon
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

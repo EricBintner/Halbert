@@ -1,0 +1,99 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Mac
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Data (local)
+*.db
+*.sqlite
+*.sqlite3
+local_data/
+*.log
+
+# Secrets
+.env
+.env.local
+secrets/
+*.key
+*.pem
+config/production.yml
+
+# Temporary
+*.tmp
+*.bak
+*.orig
+tmp/
+temp/
+
+# Private (Mac app code - not in public repo)
+cerebric-mac/
+data/mac/
+tests/mac/
+mac-app/
+
+# Mac Build Artifacts
+*.app
+*.dmg
+*.pkg
+build-mac/
+dist-mac/
+
+# Release artifacts
+*.tar.gz
+*.zip.backup
+release-temp/
+release/
+
+# Maintenance scripts (one-time use)
+scripts/maintenance/
+scripts/temp/
+
+# Mac-specific code (private)
+cerebric-mac/
+tests/mac/
+
+# Internal Documentation (keep private, not in public repo)
+docs/
+
+# Keep these public:
+!docs/README.md

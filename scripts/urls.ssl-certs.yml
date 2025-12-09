@@ -1,0 +1,10 @@
+urls:
+  # Let's Encrypt / Certbot
+  - https://certbot.eff.org/instructions
+  - https://letsencrypt.org/docs/
+  - https://letsencrypt.org/docs/challenge-types/
+  
+  # OpenSSL
+  - https://www.openssl.org/docs/man3.0/man1/openssl.html
+  - https://www.openssl.org/docs/man3.0/man1/openssl-req.html
+  - https://www.openssl.org/docs/man3.0/man1/openssl-x509.html

@@ -1,0 +1,14 @@
+urls:
+  # Helm - Kubernetes Package Manager
+  - https://helm.sh/docs/intro/quickstart/
+  - https://helm.sh/docs/intro/install/
+  - https://helm.sh/docs/intro/using_helm/
+  - https://helm.sh/docs/topics/charts/
+  - https://helm.sh/docs/howto/charts_tips_and_tricks/
+  
+  # More Kubernetes
+  - https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+  - https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/
+  - https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/
+  - https://kubernetes.io/docs/concepts/storage/persistent-volumes/
+  - https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/

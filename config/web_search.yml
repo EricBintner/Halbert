@@ -1,0 +1,61 @@
+# Cerebric Web Search Configuration
+# Uses SearXNG public instances for web grounding
+
+web_search:
+  # Enable/disable web search
+  enabled: true
+  
+  # SearXNG settings
+  searxng:
+    # Public instances (fallback order - fastest/healthiest used first)
+    # Full list at https://searx.space
+    instances:
+      - "https://search.ononoki.org"
+      - "https://searx.work"
+      - "https://search.nerdvpn.de"
+      - "https://searx.ox2.fr"
+      - "https://search.mdosch.de"
+      - "https://paulgo.io"
+      - "https://searxng.site"
+    
+    # Self-hosted instance (takes priority if set)
+    # Run your own: docker run -d -p 8080:8080 searxng/searxng
+    self_hosted: null
+    
+    # Request timeout (seconds)
+    timeout: 10
+    
+    # Default max results per search
+    max_results: 10
+    
+    # Preferred search engines (leave empty for all)
+    # Options: google, duckduckgo, brave, bing, etc.
+    engines: []
+  
+  # Caching settings
+  cache:
+    enabled: true
+    ttl_hours: 1
+    max_entries: 500
+  
+  # Rate limiting (be nice to public instances)
+  rate_limit:
+    queries_per_second: 1
+    
+  # When to use web search in chat
+  chat_integration:
+    # Auto-detect when web search might help
+    auto_detect: true
+    
+    # Always search for these query patterns
+    always_search_patterns:
+      - "latest version"
+      - "current version"
+      - "how to install"
+      - "best practices"
+      - "up to date"
+      - "CVE"
+      - "security advisory"
+    
+    # Max results to include in chat context
+    max_context_results: 5

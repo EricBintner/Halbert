@@ -1,0 +1,18 @@
+urls:
+  # fail2ban
+  - https://www.fail2ban.org/wiki/index.php/Main_Page
+  - https://www.fail2ban.org/wiki/index.php/MANUAL_0_8
+  - https://www.fail2ban.org/wiki/index.php/Commands
+  
+  # OpenSSH
+  - https://www.openssh.com/manual.html
+  - https://man.openbsd.org/ssh
+  - https://man.openbsd.org/sshd_config
+  - https://man.openbsd.org/ssh-keygen
+  
+  # UFW (Uncomplicated Firewall)
+  - https://help.ubuntu.com/community/UFW
+  
+  # SMART monitoring
+  - https://www.smartmontools.org/
+  - https://www.smartmontools.org/wiki/TocDoc

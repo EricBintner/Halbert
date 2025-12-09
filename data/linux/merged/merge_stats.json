@@ -1,0 +1,15 @@
+{
+  "total_documents": 2883,
+  "duplicates_removed": 138,
+  "total_size_bytes": 7264068,
+  "average_doc_size_bytes": 2519.621227887617,
+  "sources": {
+    "vendor_docs_full": 40,
+    "tldr_man_pages": 481,
+    "unix_commands": 100,
+    "arch_wiki": 2140,
+    "combined_all_output_converted": 246,
+    "nvidia_cuda_docs": 14
+  },
+  "generated_at": "2025-11-28T20:30:00.592778"
+}

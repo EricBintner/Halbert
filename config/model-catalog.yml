@@ -1,0 +1,248 @@
+# Model Catalog for Cerebric (Phase 5 M1)
+#
+# Curated list of recommended models for different hardware configurations.
+# Models are tested and verified to work well with Cerebric.
+
+catalog_version: "1.0"
+updated: "2025-11-27"
+
+# Orchestrator Models (Small, always-loaded base models)
+orchestrators:
+  llama3.1-8b:
+    model_id: "llama3.1:8b-instruct"
+    provider: "ollama"
+    description: "Llama 3.1 8B Instruct - Recommended orchestrator"
+    memory_mb: 8000
+    context_length: 128000  # 128k context!
+    capabilities: [chat, reasoning, technical, fast]
+    quantization: "Q4_K_M"
+    recommended: true
+    notes: |
+      - Best all-around orchestrator
+      - Excellent instruction-following
+      - Massive 128k context window
+      - Fast inference on CPU
+      - Perfect for personas with LoRA
+    hardware_requirements:
+      min_ram_gb: 12
+      recommended_ram_gb: 16
+      min_vram_gb: 0  # CPU-only works
+      recommended_vram_gb: 8
+
+  llama3-8b:
+    model_id: "llama3:8b-instruct"
+    provider: "ollama"
+    description: "Llama 3 8B Instruct - Alternative orchestrator"
+    memory_mb: 8000
+    context_length: 8192
+    capabilities: [chat, reasoning, technical, fast]
+    quantization: "Q4_K_M"
+    recommended: false
+    notes: "Older version, use Llama 3.1 instead for 128k context"
+
+# Specialist Models - Code Focus
+code_specialists:
+  qwen2.5-coder-14b:
+    model_id: "qwen2.5-coder:14b"
+    provider: "ollama"
+    description: "Qwen 2.5 Coder 14B - Fast, efficient code specialist"
+    memory_mb: 14000
+    context_length: 32768
+    capabilities: [code, chat, reasoning, fast]
+    quantization: "Q5_K_M"
+    recommended: true
+    tier: "small"
+    notes: |
+      - Excellent code generation quality
+      - Fast inference (14B parameter count)
+      - Great for laptops and workstations
+      - Balanced speed and quality
+    hardware_requirements:
+      min_ram_gb: 24
+      recommended_ram_gb: 32
+      min_vram_gb: 0
+      recommended_vram_gb: 12
+    use_cases:
+      - Script generation
+      - Code review
+      - Documentation
+      - Quick prototyping
+
+  deepseek-coder-33b:
+    model_id: "deepseek-coder:33b"
+    provider: "ollama"
+    description: "DeepSeek Coder 33B - High-quality code specialist"
+    memory_mb: 33000
+    context_length: 16384
+    capabilities: [code, reasoning, chat]
+    quantization: "Q5_K_M"
+    recommended: true
+    tier: "large"
+    notes: |
+      - Best-in-class code generation
+      - Excellent for complex tasks
+      - Requires significant RAM
+      - Worth the memory cost for quality
+    hardware_requirements:
+      min_ram_gb: 48
+      recommended_ram_gb: 64
+      min_vram_gb: 0
+      recommended_vram_gb: 24
+    use_cases:
+      - Complex system administration scripts
+      - Multi-file code generation
+      - Architecture design
+      - Code refactoring
+
+  codellama-34b:
+    model_id: "codellama:34b-instruct"
+    provider: "ollama"
+    description: "CodeLlama 34B Instruct - Meta's code specialist"
+    memory_mb: 34000
+    context_length: 16384
+    capabilities: [code, chat, reasoning]
+    quantization: "Q5_K_M"
+    recommended: true
+    tier: "large"
+    notes: |
+      - Meta's specialized code model
+      - Strong Linux/system knowledge
+      - Good instruction-following
+      - Alternative to DeepSeek Coder
+    hardware_requirements:
+      min_ram_gb: 48
+      recommended_ram_gb: 64
+      min_vram_gb: 0
+      recommended_vram_gb: 24
+
+# Hardware-Based Recommendations
+hardware_profiles:
+  laptop_16gb:
+    name: "Laptop (16GB RAM)"
+    orchestrator: "llama3.1-8b"
+    specialist: null  # Orchestrator-only mode
+    notes: |
+      - Run orchestrator only
+      - Disable specialist for memory
+      - Still very capable for most tasks
+
+  workstation_32gb:
+    name: "Workstation (32GB RAM)"
+    orchestrator: "llama3.1-8b"
+    specialist: "qwen2.5-coder-14b"
+    notes: |
+      - Orchestrator + small specialist
+      - Fast code generation
+      - Good balance of speed and quality
+
+  workstation_64gb:
+    name: "Workstation (64GB+ RAM)"
+    orchestrator: "llama3.1-8b"
+    specialist: "deepseek-coder-33b"
+    notes: |
+      - Orchestrator + large specialist
+      - Best code quality
+      - Excellent for heavy development work
+
+  mac_studio_128gb:
+    name: "Mac Studio (128GB Unified Memory)"
+    orchestrator: "llama3.1-8b"
+    specialist: "deepseek-coder-33b"
+    provider: "mlx"  # Use MLX on Mac Apple Silicon
+    notes: |
+      - Optimal for Mac with Apple Silicon
+      - Use MLX provider for best performance
+      - Can load both models simultaneously
+      - LoRA training and hot-swapping enabled
+      - Unified memory = excellent performance
+
+# Task-to-Model Routing Guidelines
+routing_guidelines:
+  chat:
+    description: "General conversation"
+    use_orchestrator: true
+    use_specialist: false
+
+  system_command:
+    description: "Simple system commands (ls, top, etc.)"
+    use_orchestrator: true
+    use_specialist: false
+
+  code_generation:
+    description: "Generate scripts, code"
+    use_orchestrator: false
+    use_specialist: true
+    fallback_to_orchestrator: true
+    confidence_threshold: 0.7
+
+  code_analysis:
+    description: "Review, analyze code"
+    use_orchestrator: false
+    use_specialist: true
+    fallback_to_orchestrator: true
+
+  reasoning:
+    description: "Complex problem-solving"
+    use_orchestrator: true  # Llama 3.1 8B is good at reasoning
+    use_specialist: false
+
+  quick_query:
+    description: "Fast, simple questions"
+    use_orchestrator: true
+    use_specialist: false
+
+# Model Installation Instructions
+installation:
+  ollama:
+    install: |
+      # Install Ollama
+      curl -fsSL https://ollama.com/install.sh | sh
+
+    pull_orchestrator: |
+      # Pull orchestrator model
+      ollama pull llama3.1:8b-instruct
+
+    pull_specialist_small: |
+      # Pull small specialist (workstation 32GB+)
+      ollama pull qwen2.5-coder:14b
+
+    pull_specialist_large: |
+      # Pull large specialist (workstation 64GB+)
+      ollama pull deepseek-coder:33b
+
+  mlx:
+    install: |
+      # Install MLX (Mac Apple Silicon only)
+      pip install mlx mlx-lm
+
+    notes: |
+      - MLX optimized for Mac M1/M2/M3
+      - Requires macOS 13.3+
+      - Best performance on Apple Silicon
+      - LoRA training supported
+
+# Performance Expectations
+performance_targets:
+  orchestrator:
+    latency_ms: 500  # <500ms for simple queries
+    tokens_per_second: 20  # ~20 tokens/sec on CPU
+
+  specialist_small:
+    latency_ms: 1500  # <1.5s for code generation
+    tokens_per_second: 15
+
+  specialist_large:
+    latency_ms: 3000  # <3s for code generation
+    tokens_per_second: 10
+
+  routing_overhead_ms: 10  # <10ms routing decision
+
+# Safety Notes
+notes:
+  - "All models use Ollama's quantized formats for efficiency"
+  - "Context lengths are theoretical maximums; actual usage varies"
+  - "Memory estimates include model + context + overhead"
+  - "Specialist models load on-demand and can be unloaded"
+  - "Orchestrator should always be loaded for responsiveness"
+  - "GPU acceleration optional but recommended for large models"
+  - "Mac users: MLX provider gives best performance on Apple Silicon"

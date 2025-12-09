@@ -1,0 +1,19 @@
+sources:
+  hwmon:
+    enabled: true
+    interval_s: 10
+  journald:
+    enabled: true
+    severities: [error, warn]
+    identifiers: [systemd, kernel, CRON, NetworkManager, dbus-daemon, sshd, udevd]
+    units: []
+    rate_limit_per_min: 60
+    cursor_persist_every: 100
+retention:
+  raw_days: 14
+  index_days: 60
+redaction:
+  home_paths: true
+  emails: true
+  ipv4: true
+  secrets: true

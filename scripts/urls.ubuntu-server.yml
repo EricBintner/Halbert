@@ -1,0 +1,15 @@
+urls:
+  # Ubuntu Server Guide
+  - https://ubuntu.com/server/docs
+  - https://ubuntu.com/server/docs/installation
+  - https://ubuntu.com/server/docs/security-introduction
+  - https://ubuntu.com/server/docs/network-introduction
+  - https://ubuntu.com/server/docs/virtualization-introduction
+  - https://ubuntu.com/server/docs/databases-introduction
+  - https://ubuntu.com/server/docs/web-servers-introduction
+  - https://ubuntu.com/server/docs/mail-introduction
+  - https://ubuntu.com/server/docs/backups-introduction
+  
+  # Ubuntu Pro/Security
+  - https://ubuntu.com/security/livepatch
+  - https://ubuntu.com/pro

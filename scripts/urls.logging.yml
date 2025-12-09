@@ -1,0 +1,14 @@
+urls:
+  # rsyslog
+  - https://www.rsyslog.com/doc/master/index.html
+  - https://www.rsyslog.com/doc/master/configuration/index.html
+  
+  # logrotate
+  - https://man7.org/linux/man-pages/man8/logrotate.8.html
+  
+  # ELK Stack (Elasticsearch, Logstash, Kibana)
+  - https://www.elastic.co/guide/en/elasticsearch/reference/current/getting-started.html
+  - https://www.elastic.co/guide/en/logstash/current/getting-started-with-logstash.html
+  
+  # Loki (Grafana logs)
+  - https://grafana.com/docs/loki/latest/get-started/
