@@ -1,4 +1,4 @@
-<p align="center">
+<p align="left">
   <img src="Cerebric.png" alt="Cerebric" width="120">
 </p>
 
@@ -10,11 +10,11 @@ Cerebric runs on your machine using local LLMs by default—no cloud required. O
 
 ---
 
-## Features
+<p align="center">
+  <img src="assets/img/_llm2.png" alt="LLM Interface" width="600">
+</p>
 
-<table>
-<tr>
-<td width="60%">
+## Features
 
 - **Local LLM** — Runs on Ollama by default, no cloud required
 - **Cloud optional** — Connect OpenAI, Claude, or Gemini if you prefer
@@ -22,15 +22,6 @@ Cerebric runs on your machine using local LLMs by default—no cloud required. O
 - **RAG-powered** — Answers grounded in Linux documentation
 - **Safe by default** — Dry-run mode, approval system, policy engine
 - **Self-identifying** — The LLM identifies as your computer
-
-</td>
-<td width="40%">
-
-<img src="assets/img/_llm2.png" alt="LLM Interface" width="100%">
-
-</td>
-</tr>
-</table>
 
 ---
 
@@ -99,16 +90,16 @@ python Cerebric/main.py snapshot-configs
 
 ```
 ┌─────────────────────────────────────────────┐
-│                  Cerebric                    │
+│                  Cerebric                   │
 ├─────────────────────────────────────────────┤
 │  CLI / Dashboard                            │
 ├─────────────────────────────────────────────┤
 │  Runtime Engine (LangGraph)                 │
 ├──────────────┬──────────────┬───────────────┤
-│   Memory     │     RAG      │    Tools      │
-│  (ChromaDB)  │  (Docs + KB) │  (System)     │
+│    Memory    │      RAG     │    Tools      │
+│  (ChromaDB)  │  (Docs + KB) │   (System)    │
 ├──────────────┴──────────────┴───────────────┤
-│  Ollama (Local) or Cloud API (Optional)    │
+│   Ollama (Local) or Cloud API (Optional)    │
 └─────────────────────────────────────────────┘
 ```
 
