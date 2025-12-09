@@ -1,4 +1,4 @@
-from cerebric_core.cerebric_core.ingestion.redaction import redact_text
+from cerebric_core.ingestion.redaction import redact_text
 
 
 def test_redact_ipv6_mac_jwt_pem():

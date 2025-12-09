@@ -2,9 +2,9 @@ import json
 import os
 from pathlib import Path
 from datetime import datetime, timezone
-from cerebric_core.cerebric_core.ingestion.redaction import redact_event
-from cerebric_core.cerebric_core.ingestion.validate import TelemetryValidator
-from cerebric_core.cerebric_core.ingestion.jsonl_writer import append_event
+from cerebric_core.ingestion.redaction import redact_event
+from cerebric_core.ingestion.validate import TelemetryValidator
+from cerebric_core.ingestion.jsonl_writer import append_event
 
 
 def test_ingestion_pipeline_redact_validate_write(tmp_path):

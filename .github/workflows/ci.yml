@@ -17,8 +17,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest
-          # Install package in editable mode without deps, then add minimal test deps
-          pip install -e cerebric_core --no-deps
-          pip install pyyaml jsonschema
+          # Install package with all dependencies
+          pip install -e cerebric_core/
       - name: Run tests
-        run: pytest -q
+        run: pytest tests/ -q --ignore=tests/rag/

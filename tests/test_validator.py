@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from cerebric_core.cerebric_core.ingestion.validate import TelemetryValidator
+from cerebric_core.ingestion.validate import TelemetryValidator
 
 
 def test_validator_accepts_valid_event(tmp_path):

@@ -1,5 +1,5 @@
 import os
-from cerebric_core.cerebric_core.utils.paths import config_dir, data_dir, log_dir, data_subdir, log_subdir, state_subdir
+from cerebric_core.utils.paths import config_dir, data_dir, log_dir, data_subdir, log_subdir, state_subdir
 
 def test_env_overrides_take_precedence(tmp_path, monkeypatch):
     c = tmp_path / "cfg"

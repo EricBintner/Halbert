@@ -1,5 +1,5 @@
-from cerebric_core.cerebric_core.tools.write_config import WriteConfig
-from cerebric_core.cerebric_core.tools.base import ToolRequest
+from cerebric_core.tools.write_config import WriteConfig
+from cerebric_core.tools.base import ToolRequest
 
 
 def test_write_config_rollback_restores_backup(tmp_path, monkeypatch):

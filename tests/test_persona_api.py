@@ -15,7 +15,7 @@ def test_api_imports():
     """Test that API dependencies are available."""
     try:
         from fastapi.testclient import TestClient
-        from cerebric_core.cerebric_core.dashboard.app import create_app
+        from cerebric_core.dashboard.app import create_app
         
         print("✅ FastAPI and TestClient imported successfully")
         return True
@@ -29,7 +29,7 @@ def test_persona_status_endpoint():
     """Test GET /api/persona/status endpoint."""
     try:
         from fastapi.testclient import TestClient
-        from cerebric_core.cerebric_core.dashboard.app import create_app
+        from cerebric_core.dashboard.app import create_app
         
         app = create_app(enable_cors=False)
         client = TestClient(app)
@@ -60,7 +60,7 @@ def test_persona_list_endpoint():
     """Test GET /api/persona/list endpoint."""
     try:
         from fastapi.testclient import TestClient
-        from cerebric_core.cerebric_core.dashboard.app import create_app
+        from cerebric_core.dashboard.app import create_app
         
         app = create_app(enable_cors=False)
         client = TestClient(app)
@@ -97,7 +97,7 @@ def test_lora_list_endpoint():
     """Test GET /api/persona/lora/list endpoint."""
     try:
         from fastapi.testclient import TestClient
-        from cerebric_core.cerebric_core.dashboard.app import create_app
+        from cerebric_core.dashboard.app import create_app
         
         app = create_app(enable_cors=False)
         client = TestClient(app)
@@ -134,7 +134,7 @@ def test_memory_stats_endpoint():
     """Test GET /api/persona/memory/stats endpoint."""
     try:
         from fastapi.testclient import TestClient
-        from cerebric_core.cerebric_core.dashboard.app import create_app
+        from cerebric_core.dashboard.app import create_app
         
         app = create_app(enable_cors=False)
         client = TestClient(app)

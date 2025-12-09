@@ -1,4 +1,4 @@
-from cerebric_core.cerebric_core.obs.audit import write_audit
+from cerebric_core.obs.audit import write_audit
 
 
 def test_audit_hash_chain_links_records(tmp_path, monkeypatch):
