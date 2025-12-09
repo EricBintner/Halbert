@@ -26,7 +26,7 @@ Cerebric runs on your machine using local LLMs by default—no cloud required. O
 </td>
 <td width="40%">
 
-<img src="docs/Img/_llm2.png" alt="LLM Interface" width="100%">
+<img src="assets/img/_llm2.png" alt="LLM Interface" width="100%">
 
 </td>
 </tr>
@@ -113,9 +113,9 @@ python Cerebric/main.py snapshot-configs
 ```
 
 <p align="center">
-  <img src="docs/Img/_storage2.png" alt="Storage Management" width="45%">
+  <img src="assets/img/_storage2.png" alt="Storage Management" width="45%">
   &nbsp;&nbsp;
-  <img src="docs/Img/_network2.png" alt="Network Monitoring" width="45%">
+  <img src="assets/img/_network2.png" alt="Network Monitoring" width="45%">
 </p>
 
 ---
