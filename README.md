@@ -2,13 +2,14 @@
 
 **Local-first AI assistant for Linux system administration.**
 
-Cerebric runs entirely on your machine using local LLMs. It ingests system logs, tracks configuration changes, and answers questions grounded in real system data.
+Cerebric runs on your machine using local LLMs by default—no cloud required. Optionally connect to cloud APIs (OpenAI, Claude, Gemini) if you prefer. It ingests system logs, tracks configuration changes, and answers questions grounded in real system data.
 
 ---
 
 ## Features
 
-- **Local LLM** — No cloud APIs, runs on Ollama
+- **Local LLM** — Runs on Ollama by default, no cloud required
+- **Cloud optional** — Connect OpenAI, Claude, or Gemini if you prefer
 - **System-aware** — Ingests journald logs and hardware sensors
 - **RAG-powered** — Answers grounded in Linux documentation
 - **Safe by default** — Dry-run mode, approval system, policy engine
@@ -90,7 +91,7 @@ python Cerebric/main.py snapshot-configs
 │   Memory     │     RAG      │    Tools      │
 │  (ChromaDB)  │  (Docs + KB) │  (System)     │
 ├──────────────┴──────────────┴───────────────┤
-│  Ollama (Local LLM)                         │
+│  Ollama (Local) or Cloud API (Optional)    │
 └─────────────────────────────────────────────┘
 ```
 
