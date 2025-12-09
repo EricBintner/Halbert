@@ -1,4 +1,4 @@
-from cerebric_core.cerebric_core.tools.schedule_cron import ScheduleCron
+from cerebric_core.tools.schedule_cron import ScheduleCron
 
 
 def test_upsert_block_appends_when_missing():

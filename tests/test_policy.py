@@ -1,7 +1,7 @@
 import os
-from cerebric_core.cerebric_core.tools.write_config import WriteConfig
-from cerebric_core.cerebric_core.tools.schedule_cron import ScheduleCron
-from cerebric_core.cerebric_core.tools.base import ToolRequest
+from cerebric_core.tools.write_config import WriteConfig
+from cerebric_core.tools.schedule_cron import ScheduleCron
+from cerebric_core.tools.base import ToolRequest
 
 
 def _deny_policy_yaml():

@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 def test_full_persona_workflow():
     """Test complete persona switching workflow."""
     try:
-        from cerebric_core.cerebric_core.persona import PersonaManager, Persona
+        from cerebric_core.persona import PersonaManager, Persona
         
         manager = PersonaManager()
         
@@ -60,8 +60,8 @@ def test_full_persona_workflow():
 def test_memory_isolation():
     """Test that persona memory is properly isolated."""
     try:
-        from cerebric_core.cerebric_core.memory.retrieval import MemoryRetrieval
-        from cerebric_core.cerebric_core.persona import PersonaManager, Persona
+        from cerebric_core.memory.retrieval import MemoryRetrieval
+        from cerebric_core.persona import PersonaManager, Persona
         
         memory = MemoryRetrieval()
         persona_mgr = PersonaManager()
@@ -92,7 +92,7 @@ def test_memory_isolation():
 def test_lora_catalog():
     """Test LoRA catalog loading and listing."""
     try:
-        from cerebric_core.cerebric_core.model import LoRAManager
+        from cerebric_core.model import LoRAManager
         
         manager = LoRAManager()
         
@@ -125,7 +125,7 @@ def test_lora_catalog():
 def test_context_detection():
     """Test context detection from running processes."""
     try:
-        from cerebric_core.cerebric_core.persona import ContextDetector
+        from cerebric_core.persona import ContextDetector
         
         detector = ContextDetector()
         
@@ -159,7 +159,7 @@ def test_context_detection():
 def test_memory_purge_safety():
     """Test that core memory cannot be purged."""
     try:
-        from cerebric_core.cerebric_core.persona import MemoryPurge
+        from cerebric_core.persona import MemoryPurge
         
         purge = MemoryPurge()
         
@@ -192,8 +192,8 @@ def test_memory_purge_safety():
 def test_persona_with_lora():
     """Test persona switching with LoRA assignment."""
     try:
-        from cerebric_core.cerebric_core.persona import PersonaManager, Persona
-        from cerebric_core.cerebric_core.model import LoRAManager
+        from cerebric_core.persona import PersonaManager, Persona
+        from cerebric_core.model import LoRAManager
         
         persona_mgr = PersonaManager()
         lora_mgr = LoRAManager()
@@ -227,7 +227,7 @@ def test_persona_with_lora():
 def test_state_persistence():
     """Test that persona state persists across manager instances."""
     try:
-        from cerebric_core.cerebric_core.persona import PersonaManager, Persona
+        from cerebric_core.persona import PersonaManager, Persona
         
         # Create first instance, ensure we're in IT Admin first
         mgr1 = PersonaManager()

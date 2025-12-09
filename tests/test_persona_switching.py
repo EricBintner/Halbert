@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 def test_persona_manager_initialization():
     """Test that PersonaManager initializes and loads state."""
     try:
-        from cerebric_core.cerebric_core.persona import PersonaManager, Persona
+        from cerebric_core.persona import PersonaManager, Persona
         
         manager = PersonaManager()
         state = manager.get_state()
@@ -35,7 +35,7 @@ def test_persona_manager_initialization():
 def test_persona_switching():
     """Test switching between personas."""
     try:
-        from cerebric_core.cerebric_core.persona import PersonaManager, Persona
+        from cerebric_core.persona import PersonaManager, Persona
         
         manager = PersonaManager()
         initial_persona = manager.get_active_persona()
@@ -64,7 +64,7 @@ def test_persona_switching():
 def test_persona_list():
     """Test listing available personas."""
     try:
-        from cerebric_core.cerebric_core.persona import PersonaManager
+        from cerebric_core.persona import PersonaManager
         
         manager = PersonaManager()
         personas = manager.list_personas()
@@ -90,7 +90,7 @@ def test_persona_list():
 def test_custom_persona_blocked():
     """Test that custom persona is blocked (Phase 5)."""
     try:
-        from cerebric_core.cerebric_core.persona import PersonaManager, Persona, PersonaSwitchError
+        from cerebric_core.persona import PersonaManager, Persona, PersonaSwitchError
         
         manager = PersonaManager()
         
@@ -112,7 +112,7 @@ def test_custom_persona_blocked():
 def test_memory_purge_protected():
     """Test that core memory cannot be purged."""
     try:
-        from cerebric_core.cerebric_core.persona import MemoryPurge
+        from cerebric_core.persona import MemoryPurge
         
         purge = MemoryPurge()
         

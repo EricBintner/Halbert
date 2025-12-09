@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 def test_context_creation():
     """Test creating and manipulating conversation context."""
     try:
-        from cerebric_core.cerebric_core.model import (
+        from cerebric_core.model import (
             ConversationContext, MessageRole
         )
         
@@ -41,7 +41,7 @@ def test_context_creation():
 def test_token_estimation():
     """Test token count estimation."""
     try:
-        from cerebric_core.cerebric_core.model import (
+        from cerebric_core.model import (
             ConversationContext, MessageRole
         )
         
@@ -69,7 +69,7 @@ def test_token_estimation():
 def test_full_handoff_strategy():
     """Test full context handoff (no compression)."""
     try:
-        from cerebric_core.cerebric_core.model import (
+        from cerebric_core.model import (
             ContextHandoffEngine, ConversationContext, 
             HandoffStrategy, MessageRole
         )
@@ -109,7 +109,7 @@ def test_full_handoff_strategy():
 def test_summarized_handoff_strategy():
     """Test summarized context handoff."""
     try:
-        from cerebric_core.cerebric_core.model import (
+        from cerebric_core.model import (
             ContextHandoffEngine, ConversationContext,
             HandoffStrategy, MessageRole
         )
@@ -151,7 +151,7 @@ def test_summarized_handoff_strategy():
 def test_minimal_handoff_strategy():
     """Test minimal context handoff."""
     try:
-        from cerebric_core.cerebric_core.model import (
+        from cerebric_core.model import (
             ContextHandoffEngine, ConversationContext,
             HandoffStrategy, MessageRole
         )
@@ -193,7 +193,7 @@ def test_minimal_handoff_strategy():
 def test_quality_loss_estimation():
     """Test quality loss estimation."""
     try:
-        from cerebric_core.cerebric_core.model import (
+        from cerebric_core.model import (
             ContextHandoffEngine, ConversationContext,
             HandoffStrategy, MessageRole
         )
@@ -237,7 +237,7 @@ def test_quality_loss_estimation():
 def test_ollama_formatting():
     """Test formatting context for Ollama API."""
     try:
-        from cerebric_core.cerebric_core.model import (
+        from cerebric_core.model import (
             ContextHandoffEngine, ConversationContext, MessageRole
         )
         
@@ -274,7 +274,7 @@ def test_ollama_formatting():
 def test_context_serialization():
     """Test context serialization/deserialization."""
     try:
-        from cerebric_core.cerebric_core.model import (
+        from cerebric_core.model import (
             ConversationContext, MessageRole
         )
         

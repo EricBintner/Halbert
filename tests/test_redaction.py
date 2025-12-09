@@ -1,5 +1,5 @@
 import re
-from cerebric_core.cerebric_core.ingestion.redaction import redact_text, redact_event
+from cerebric_core.ingestion.redaction import redact_text, redact_event
 
 def test_redact_text():
     s = "token=ABC123 email me@ex.com path /home/user secret:xyz IP 10.1.2.3"

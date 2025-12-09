@@ -1,8 +1,8 @@
 import os
 from pathlib import Path
-from cerebric_core.cerebric_core.tools.write_config import WriteConfig
-from cerebric_core.cerebric_core.tools.schedule_cron import ScheduleCron
-from cerebric_core.cerebric_core.tools.base import ToolRequest
+from cerebric_core.tools.write_config import WriteConfig
+from cerebric_core.tools.schedule_cron import ScheduleCron
+from cerebric_core.tools.base import ToolRequest
 
 
 def _policy_yaml_paths_allow(allow_glob: str) -> str:

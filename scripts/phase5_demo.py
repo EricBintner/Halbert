@@ -23,7 +23,7 @@ def demo_basic_routing():
     print("="*70)
     
     try:
-        from cerebric_core.cerebric_core.model import ModelRouter, TaskType
+        from cerebric_core.model import ModelRouter, TaskType
         
         router = ModelRouter()
         
@@ -64,7 +64,7 @@ def demo_context_handoff():
     print("="*70)
     
     try:
-        from cerebric_core.cerebric_core.model import ModelRouter, TaskType
+        from cerebric_core.model import ModelRouter, TaskType
         
         router = ModelRouter()
         
@@ -117,7 +117,7 @@ def demo_hardware_detection():
     print("="*70)
     
     try:
-        from cerebric_core.cerebric_core.model import HardwareDetector
+        from cerebric_core.model import HardwareDetector
         
         detector = HardwareDetector()
         hardware = detector.detect()
@@ -169,7 +169,7 @@ def demo_performance_monitoring():
     print("="*70)
     
     try:
-        from cerebric_core.cerebric_core.model import ModelRouter, TaskType
+        from cerebric_core.model import ModelRouter, TaskType
         
         router = ModelRouter()
         
@@ -225,7 +225,7 @@ def demo_lora_info():
     print("="*70)
     
     try:
-        from cerebric_core.cerebric_core.model import PersonaTrainingDataGenerator
+        from cerebric_core.model import PersonaTrainingDataGenerator
         import platform
         
         # Check platform
