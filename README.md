@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Cerebric.png" alt="Cerebric" width="120">
+</p>
+
 # Cerebric
 
 **Local-first AI assistant for Linux system administration.**
@@ -8,12 +12,25 @@ Cerebric runs on your machine using local LLMs by default—no cloud required. O
 
 ## Features
 
+<table>
+<tr>
+<td width="60%">
+
 - **Local LLM** — Runs on Ollama by default, no cloud required
 - **Cloud optional** — Connect OpenAI, Claude, or Gemini if you prefer
 - **System-aware** — Ingests journald logs and hardware sensors
 - **RAG-powered** — Answers grounded in Linux documentation
 - **Safe by default** — Dry-run mode, approval system, policy engine
 - **Self-identifying** — The LLM identifies as your computer
+
+</td>
+<td width="40%">
+
+<img src="docs/Img/_llm2.png" alt="LLM Interface" width="100%">
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -94,6 +111,12 @@ python Cerebric/main.py snapshot-configs
 │  Ollama (Local) or Cloud API (Optional)    │
 └─────────────────────────────────────────────┘
 ```
+
+<p align="center">
+  <img src="docs/Img/_storage2.png" alt="Storage Management" width="45%">
+  &nbsp;&nbsp;
+  <img src="docs/Img/_network2.png" alt="Network Monitoring" width="45%">
+</p>
 
 ---
 
