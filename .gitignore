@@ -50,6 +50,9 @@ htmlcov/
 local_data/
 *.log
 
+# Model cache (downloaded automatically)
+data/.cache/
+
 # Secrets
 .env
 .env.local
