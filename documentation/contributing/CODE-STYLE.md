@@ -1,6 +1,6 @@
 # Code Style
 
-Python code style for Cerebric.
+Python code style for Halbert.
 
 ---
 
@@ -14,13 +14,13 @@ Python code style for Cerebric.
 
 ```bash
 # Format
-black cerebric_core/ Cerebric/ tests/
+black halbert_core/ Halbert/ tests/
 
 # Lint
-ruff check cerebric_core/ Cerebric/ tests/
+ruff check halbert_core/ Halbert/ tests/
 
 # Type check
-mypy cerebric_core/
+mypy halbert_core/
 ```
 
 ---
@@ -49,7 +49,7 @@ import yaml
 from pydantic import BaseModel
 
 # 3. Local
-from cerebric_core.cerebric_core.utils.paths import data_subdir
+from halbert_core.halbert_core.utils.paths import data_subdir
 ```
 
 ---

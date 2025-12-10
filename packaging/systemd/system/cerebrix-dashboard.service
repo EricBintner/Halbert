@@ -1,6 +1,6 @@
 [Unit]
-Description=Cerebric Dashboard API Server
-Documentation=https://github.com/cerebric/LinuxBrain
+Description=Halbert Dashboard API Server
+Documentation=https://github.com/halbert/LinuxBrain
 After=network.target ollama.service
 Wants=ollama.service
 
@@ -8,13 +8,13 @@ Wants=ollama.service
 Type=simple
 User=%i
 Group=%i
-WorkingDirectory=/opt/cerebric
+WorkingDirectory=/opt/halbert
 Environment=PYTHONUNBUFFERED=1
 Environment=HOME=/home/%i
 
 # Use the virtual environment
-ExecStart=/opt/cerebric/.venv/bin/python -m uvicorn \
-    cerebric_core.cerebric_core.dashboard.app:app \
+ExecStart=/opt/halbert/.venv/bin/python -m uvicorn \
+    halbert_core.halbert_core.dashboard.app:app \
     --host 127.0.0.1 \
     --port 8000
 
@@ -28,7 +28,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
-ReadWritePaths=/opt/cerebric/data /tmp
+ReadWritePaths=/opt/halbert/data /tmp
 
 [Install]
 WantedBy=multi-user.target

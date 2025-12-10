@@ -69,7 +69,7 @@ tmp/
 temp/
 
 # Private (Mac app code - not in public repo)
-cerebric-mac/
+halbert-mac/
 data/mac/
 tests/mac/
 mac-app/
@@ -92,7 +92,7 @@ scripts/maintenance/
 scripts/temp/
 
 # Mac-specific code (private)
-cerebric-mac/
+halbert-mac/
 tests/mac/
 
 # Internal Documentation (keep private, not in public repo)

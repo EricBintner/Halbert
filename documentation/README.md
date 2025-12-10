@@ -1,6 +1,6 @@
-# Cerebric Documentation
+# Halbert Documentation
 
-**Cerebric** is a self-aware Linux system management agent. It runs locally on your machine, understands its own hardware and configuration, and assists with system administration through natural language conversation.
+**Halbert** is a self-aware Linux system management agent. It runs locally on your machine, understands its own hardware and configuration, and assists with system administration through natural language conversation.
 
 The key innovation: **the LLM identifies as the computer itself**, not as an external assistant. System state becomes its biography; configuration files become its physiology. When you ask "how are you doing?", it answers with its actual CPU temperature and memory pressure.
 
@@ -85,14 +85,14 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 
 ### The Self-Identifying System
 
-Traditional system monitoring tools show you data. Cerebric is different—it **is** the system, speaking in first person:
+Traditional system monitoring tools show you data. Halbert is different—it **is** the system, speaking in first person:
 
 ```
 User: "How are you doing?"
 
 Generic LLM: "I am an AI assistant, I don't have feelings."
 
-Cerebric: "I am operating at optimal parameters. Core temperature is 
+Halbert: "I am operating at optimal parameters. Core temperature is 
 45°C, load average is 0.15, and my morning backup completed 
 successfully. I'm ready for tasks."
 ```
@@ -109,7 +109,7 @@ Every response is backed by:
 
 ### Safety-First Autonomy
 
-Cerebric can act on your behalf, but with guardrails:
+Halbert can act on your behalf, but with guardrails:
 - **Dry-run by default** — Shows what would change before doing it
 - **Human approval** — Destructive operations require confirmation
 - **Rollback capability** — Changes are tracked and reversible
@@ -121,10 +121,10 @@ Cerebric can act on your behalf, but with guardrails:
 
 ```
 LinuxBrain/
-├── Cerebric/                 # CLI entry point
+├── Halbert/                 # CLI entry point
 │   └── main.py
-├── cerebric_core/            # Core Python package
-│   └── cerebric_core/
+├── halbert_core/            # Core Python package
+│   └── halbert_core/
 │       ├── approval/         # Approval workflows
 │       ├── autonomy/         # Guardrails and budgets
 │       ├── config/           # Config registry
@@ -151,7 +151,7 @@ LinuxBrain/
 
 ## License
 
-Cerebric is open source under the **GPL-3.0** license. See [legal/LICENSE.md](legal/LICENSE.md).
+Halbert is open source under the **GPL-3.0** license. See [legal/LICENSE.md](legal/LICENSE.md).
 
 ---
 
@@ -159,18 +159,18 @@ Cerebric is open source under the **GPL-3.0** license. See [legal/LICENSE.md](le
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/cerebric.git
-cd cerebric
+git clone https://github.com/yourusername/halbert.git
+cd halbert
 
 # Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies
-pip install -e cerebric_core/
+pip install -e halbert_core/
 
 # Run the CLI
-python Cerebric/main.py --help
+python Halbert/main.py --help
 ```
 
 For detailed setup, see [INSTALLATION.md](INSTALLATION.md).

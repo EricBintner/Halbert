@@ -1,6 +1,6 @@
 # RAG Pipeline
 
-Retrieval-Augmented Generation (RAG) grounds Cerebric's responses in documentation and system knowledge.
+Retrieval-Augmented Generation (RAG) grounds Halbert's responses in documentation and system knowledge.
 
 ---
 
@@ -8,7 +8,7 @@ Retrieval-Augmented Generation (RAG) grounds Cerebric's responses in documentati
 
 RAG retrieves relevant documents before LLM generation, ensuring responses are accurate and grounded in real information.
 
-**Code**: `cerebric_core/cerebric_core/rag/`
+**Code**: `halbert_core/halbert_core/rag/`
 
 ---
 
@@ -50,7 +50,7 @@ Response
 Loads and chunks documentation.
 
 ```python
-from cerebric_core.cerebric_core.rag import RAGPipeline
+from halbert_core.halbert_core.rag import RAGPipeline
 
 pipeline = RAGPipeline(data_dir=Path("data/"))
 pipeline.load_and_index_documents()
@@ -93,7 +93,7 @@ pipeline = RAGPipeline(
 ### LLM Integration
 
 ```python
-from cerebric_core.cerebric_core.rag.llm import OllamaLLM
+from halbert_core.halbert_core.rag.llm import OllamaLLM
 
 llm = OllamaLLM(model="llama3.2:3b")
 response = pipeline.generate(query="Why did docker fail?", llm=llm)
@@ -128,16 +128,16 @@ data/linux/
 
 ```bash
 # Ask a question with RAG
-python Cerebric/main.py ask "How do I fix broken apt packages?"
+python Halbert/main.py ask "How do I fix broken apt packages?"
 
 # Retrieve without LLM generation
-python Cerebric/main.py ask "systemd timers" --no-llm
+python Halbert/main.py ask "systemd timers" --no-llm
 
 # Use different model
-python Cerebric/main.py ask "docker networking" --model llama3.1:70b
+python Halbert/main.py ask "docker networking" --model llama3.1:70b
 
 # Retrieve more documents
-python Cerebric/main.py ask "nginx config" --top-k 10
+python Halbert/main.py ask "nginx config" --top-k 10
 ```
 
 ---
@@ -178,7 +178,7 @@ context = "\n\n".join([doc["content"] for doc in reranked[:3]])
 ## Prompt Template
 
 ```python
-PROMPT_TEMPLATE = """You are Cerebric, a Linux system assistant.
+PROMPT_TEMPLATE = """You are Halbert, a Linux system assistant.
 
 Use the following documentation to answer the question:
 

@@ -1,6 +1,6 @@
 # Data Formats
 
-Schema definitions for Cerebric data files.
+Schema definitions for Halbert data files.
 
 ---
 

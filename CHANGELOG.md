@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Cerebric.
+All notable changes to Halbert.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
@@ -10,7 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 - Initial public release
-- CLI interface (`Cerebric/main.py`)
+- CLI interface (`Halbert/main.py`)
 - RAG pipeline with Linux documentation
 - journald and hwmon ingestion
 - Configuration tracking and diff

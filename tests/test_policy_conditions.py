@@ -1,8 +1,8 @@
 import os
 from pathlib import Path
-from cerebric_core.tools.write_config import WriteConfig
-from cerebric_core.tools.schedule_cron import ScheduleCron
-from cerebric_core.tools.base import ToolRequest
+from halbert_core.tools.write_config import WriteConfig
+from halbert_core.tools.schedule_cron import ScheduleCron
+from halbert_core.tools.base import ToolRequest
 
 
 def _policy_yaml_paths_allow(allow_glob: str) -> str:
@@ -34,8 +34,8 @@ def test_write_config_paths_allow_enforced(tmp_path, monkeypatch):
     allow_root = tmp_path / "allowed"
     allow_root.mkdir()
     (cfgdir / "policy.yml").write_text(_policy_yaml_paths_allow(str(allow_root / "*") ), encoding="utf-8")
-    monkeypatch.setenv("Cerebric_CONFIG_DIR", str(cfgdir))
-    monkeypatch.setenv("Cerebric_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("Halbert_CONFIG_DIR", str(cfgdir))
+    monkeypatch.setenv("Halbert_LOG_DIR", str(tmp_path / "logs"))
 
     tool = WriteConfig()
     # Denied path
@@ -73,8 +73,8 @@ def test_schedule_cron_names_allow_enforced(tmp_path, monkeypatch):
     cfgdir = tmp_path / "conf"
     cfgdir.mkdir()
     (cfgdir / "policy.yml").write_text(_policy_yaml_names_allow(["backup"]), encoding="utf-8")
-    monkeypatch.setenv("Cerebric_CONFIG_DIR", str(cfgdir))
-    monkeypatch.setenv("Cerebric_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("Halbert_CONFIG_DIR", str(cfgdir))
+    monkeypatch.setenv("Halbert_LOG_DIR", str(tmp_path / "logs"))
 
     tool = DummyScheduleCron()
     # Denied name

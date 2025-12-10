@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cerebric Dashboard - Web-only Development Launcher
+# Halbert Dashboard - Web-only Development Launcher
 # Starts backend API only (frontend served from dist/)
 # Faster startup - no Tauri compilation needed
 
@@ -31,12 +31,12 @@ fi
 [ -f "$PROJECT_ROOT/.venv/bin/activate" ] && source "$PROJECT_ROOT/.venv/bin/activate"
 
 echo -e "${GREEN}═══════════════════════════════════════════${NC}"
-echo -e "${GREEN}  Cerebric Dashboard - http://localhost:8000${NC}"
+echo -e "${GREEN}  Halbert Dashboard - http://localhost:8000${NC}"
 echo -e "${GREEN}═══════════════════════════════════════════${NC}"
 echo -e "${BLUE}Press Ctrl+C to stop${NC}\n"
 
-cd "$PROJECT_ROOT/cerebric_core"
-python -m uvicorn cerebric_core.dashboard.app:app \
+cd "$PROJECT_ROOT/halbert_core"
+python -m uvicorn halbert_core.dashboard.app:app \
     --host 127.0.0.1 \
     --port 8000 \
     --reload

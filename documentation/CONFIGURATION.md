@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Cerebric uses YAML configuration files following XDG Base Directory standards.
+Halbert uses YAML configuration files following XDG Base Directory standards.
 
 ---
 
@@ -8,9 +8,9 @@ Cerebric uses YAML configuration files following XDG Base Directory standards.
 
 | Path | Purpose |
 |------|---------|
-| `~/.config/cerebric/` | User configuration |
-| `~/.local/share/cerebric/` | Application data |
-| `~/.local/state/cerebric/` | Runtime state |
+| `~/.config/halbert/` | User configuration |
+| `~/.local/share/halbert/` | Application data |
+| `~/.local/state/halbert/` | Runtime state |
 
 ---
 
@@ -21,7 +21,7 @@ Cerebric uses YAML configuration files following XDG Base Directory standards.
 LLM configuration.
 
 ```yaml
-# ~/.config/cerebric/model.yml
+# ~/.config/halbert/model.yml
 
 # Default model for all operations
 default_model: llama3.2:3b
@@ -49,7 +49,7 @@ generation:
 Data ingestion settings.
 
 ```yaml
-# ~/.config/cerebric/ingestion.yml
+# ~/.config/halbert/ingestion.yml
 
 journald:
   enabled: true
@@ -79,7 +79,7 @@ hwmon:
 Action policy rules.
 
 ```yaml
-# ~/.config/cerebric/policy.yml
+# ~/.config/halbert/policy.yml
 
 # Global settings
 defaults:
@@ -121,7 +121,7 @@ rules:
 Autonomy guardrails.
 
 ```yaml
-# ~/.config/cerebric/autonomy.yml
+# ~/.config/halbert/autonomy.yml
 
 # Confidence thresholds
 confidence:
@@ -154,7 +154,7 @@ safe_mode:
 Configuration files to track.
 
 ```yaml
-# ~/.config/cerebric/config-registry.yml
+# ~/.config/halbert/config-registry.yml
 
 # Files to snapshot and track changes
 files:
@@ -172,7 +172,7 @@ files:
 
 # Snapshot settings
 snapshot:
-  directory: ~/.local/share/cerebric/config/snapshots
+  directory: ~/.local/share/halbert/config/snapshots
   keep_count: 50
   on_change: true
 ```
@@ -181,14 +181,14 @@ snapshot:
 
 ## Prompt Configuration
 
-Located in `~/.config/cerebric/prompts/`.
+Located in `~/.config/halbert/prompts/`.
 
 ### base-safety.txt
 
 Core safety instructions included in all prompts.
 
 ```text
-You are Cerebric, a local-first AI assistant that identifies as this computer.
+You are Halbert, a local-first AI assistant that identifies as this computer.
 
 SAFETY RULES:
 1. Never execute destructive commands without approval
@@ -219,11 +219,11 @@ Override configuration with environment variables:
 
 | Variable | Description |
 |----------|-------------|
-| `Cerebric_CONFIG_DIR` | Config directory |
-| `Cerebric_DATA_DIR` | Data directory |
-| `Cerebric_STATE_DIR` | State directory |
+| `Halbert_CONFIG_DIR` | Config directory |
+| `Halbert_DATA_DIR` | Data directory |
+| `Halbert_STATE_DIR` | State directory |
 | `OLLAMA_HOST` | Ollama API endpoint |
-| `Cerebric_LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `Halbert_LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) |
 
 ---
 
@@ -232,7 +232,7 @@ Override configuration with environment variables:
 ### Memory Structure
 
 ```
-~/.local/share/cerebric/
+~/.local/share/halbert/
 ├── index/              # ChromaDB vector database
 ├── memory/
 │   ├── core/           # Core knowledge
@@ -245,7 +245,7 @@ Override configuration with environment variables:
 ### State Files
 
 ```
-~/.local/state/cerebric/
+~/.local/state/halbert/
 ├── scheduler.db        # Job queue
 ├── approval.db         # Approval history
 └── safe_mode.lock      # Safe mode indicator
@@ -258,7 +258,7 @@ Override configuration with environment variables:
 Check configuration validity:
 
 ```bash
-python Cerebric/main.py config-validate
+python Halbert/main.py config-validate
 ```
 
 This verifies:

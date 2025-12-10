@@ -6,7 +6,7 @@ Phase 3 M3: Test retry mechanisms for autonomous execution
 
 import pytest
 import time
-from cerebric_core.utils.retry import (
+from halbert_core.utils.retry import (
     exponential_backoff_retry,
     RetryPolicy,
     CRITICAL_TASK_POLICY,

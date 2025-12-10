@@ -1,6 +1,6 @@
 # Runtime Engine
 
-The runtime engine orchestrates Cerebric's behavior using LangGraph for state machine management.
+The runtime engine orchestrates Halbert's behavior using LangGraph for state machine management.
 
 ---
 
@@ -8,7 +8,7 @@ The runtime engine orchestrates Cerebric's behavior using LangGraph for state ma
 
 The engine processes user requests through a graph of nodes, where each node represents a step in the reasoning and action pipeline.
 
-**Code**: `cerebric_core/cerebric_core/runtime/langgraph_engine.py`
+**Code**: `halbert_core/halbert_core/runtime/langgraph_engine.py`
 
 ---
 
@@ -245,7 +245,7 @@ def build_graph():
 
 If LangGraph is unavailable, a simpler sequential engine runs:
 
-**Code**: `cerebric_core/cerebric_core/runtime/engine.py`
+**Code**: `halbert_core/halbert_core/runtime/engine.py`
 
 ```python
 class Engine:
@@ -266,10 +266,10 @@ class Engine:
 
 ```bash
 # Run one tick
-python Cerebric/main.py runtime-tick
+python Halbert/main.py runtime-tick
 
 # Run autonomous task
-python Cerebric/main.py autonomous-run --task-type health_check
+python Halbert/main.py autonomous-run --task-type health_check
 ```
 
 ---
@@ -286,7 +286,7 @@ Add new nodes by:
 
 ### Custom Tools
 
-Register tools in `cerebric_core/cerebric_core/tools/`:
+Register tools in `halbert_core/halbert_core/tools/`:
 
 ```python
 from .base import BaseTool, tool_registry

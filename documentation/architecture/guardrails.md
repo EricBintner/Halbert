@@ -2,7 +2,7 @@
 
 Safety controls for autonomous operation.
 
-**Code**: `cerebric_core/cerebric_core/autonomy/`
+**Code**: `halbert_core/halbert_core/autonomy/`
 
 ---
 
@@ -19,7 +19,7 @@ Safety controls for autonomous operation.
 ## Configuration
 
 ```yaml
-# ~/.config/cerebric/autonomy.yml
+# ~/.config/halbert/autonomy.yml
 
 confidence:
   min_auto_execute: 0.9
@@ -46,10 +46,10 @@ Emergency stop for all autonomous operations.
 
 ```bash
 # Pause everything
-python Cerebric/main.py autonomy-pause --reason "maintenance"
+python Halbert/main.py autonomy-pause --reason "maintenance"
 
 # Resume
-python Cerebric/main.py autonomy-resume --user $USER
+python Halbert/main.py autonomy-resume --user $USER
 ```
 
 ---
@@ -58,13 +58,13 @@ python Cerebric/main.py autonomy-resume --user $USER
 
 ```bash
 # Status
-python Cerebric/main.py autonomy-status
+python Halbert/main.py autonomy-status
 
 # View anomalies
-python Cerebric/main.py autonomy-anomalies --hours 24
+python Halbert/main.py autonomy-anomalies --hours 24
 
 # Recovery history
-python Cerebric/main.py autonomy-recovery --limit 20
+python Halbert/main.py autonomy-recovery --limit 20
 ```
 
 ---

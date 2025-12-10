@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Demo script for Cerebric RAG system.
+Demo script for Halbert RAG system.
 
 Shows how to use the RAG pipeline for man page retrieval.
 """
@@ -8,16 +8,16 @@ Shows how to use the RAG pipeline for man page retrieval.
 import sys
 from pathlib import Path
 
-# Add cerebric_core to path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'cerebric_core'))
+# Add halbert_core to path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'halbert_core'))
 
-from cerebric_core.rag import RAGPipeline
+from halbert_core.rag import RAGPipeline
 
 
 def demo_basic_retrieval():
     """Demo basic retrieval without LLM."""
     print("=" * 70)
-    print("Cerebric RAG DEMO: Basic Retrieval")
+    print("Halbert RAG DEMO: Basic Retrieval")
     print("=" * 70)
     
     # Initialize pipeline
@@ -67,7 +67,7 @@ def demo_basic_retrieval():
 def demo_with_context():
     """Demo context building for LLM."""
     print("\n" + "=" * 70)
-    print("Cerebric RAG DEMO: Context Building")
+    print("Halbert RAG DEMO: Context Building")
     print("=" * 70)
     
     # Initialize pipeline
@@ -99,7 +99,7 @@ def demo_with_context():
 def demo_full_pipeline():
     """Demo full pipeline with mock LLM."""
     print("\n" + "=" * 70)
-    print("Cerebric RAG DEMO: Full Pipeline")
+    print("Halbert RAG DEMO: Full Pipeline")
     print("=" * 70)
     
     # Initialize pipeline
@@ -147,7 +147,7 @@ def demo_full_pipeline():
 def interactive_mode():
     """Interactive query mode."""
     print("\n" + "=" * 70)
-    print("Cerebric RAG: Interactive Mode")
+    print("Halbert RAG: Interactive Mode")
     print("=" * 70)
     print("\nType your queries (or 'quit' to exit)\n")
     
@@ -199,7 +199,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description='Cerebric RAG System Demo'
+        description='Halbert RAG System Demo'
     )
     parser.add_argument(
         '--mode',

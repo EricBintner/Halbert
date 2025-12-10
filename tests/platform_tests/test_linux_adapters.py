@@ -6,13 +6,13 @@ Test Linux adapters directly.
 import sys
 import os
 
-# Add cerebric-linux to path
-linux_path = os.path.join(os.path.dirname(__file__), '../../cerebric-linux')
+# Add halbert-linux to path
+linux_path = os.path.join(os.path.dirname(__file__), '../../halbert-linux')
 sys.path.insert(0, linux_path)
 
-# Add cerebric_core to path
-cerebric_path = os.path.join(os.path.dirname(__file__), '../../cerebric_core')
-sys.path.insert(0, cerebric_path)
+# Add halbert_core to path
+halbert_path = os.path.join(os.path.dirname(__file__), '../../halbert_core')
+sys.path.insert(0, halbert_path)
 
 from adapters import JournaldAdapter, HwmonAdapter, SystemdAdapter
 
@@ -102,7 +102,7 @@ def test_adapter_integration():
     """Test that adapters integrate with platform bridge."""
     print("Testing adapter integration with platform bridge...")
     
-    from cerebric_core.platform import get_platform_bridge
+    from halbert_core.platform import get_platform_bridge
     
     bridge = get_platform_bridge()
     assert bridge.platform_name == 'linux'

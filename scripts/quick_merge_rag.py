@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'cerebric_core'))
-from cerebric_core.rag.pipeline import RAGPipeline
+sys.path.insert(0, str(Path(__file__).parent.parent / 'halbert_core'))
+from halbert_core.rag.pipeline import RAGPipeline
 
 def main():
     print("Quick RAG Merge with Normalization")

@@ -1,5 +1,5 @@
 # High-value Arch Wiki pages to bulk add
-# Run: cerebric rag-bulk scripts/urls-to-add.txt
+# Run: halbert rag-bulk scripts/urls-to-add.txt
 
 https://wiki.archlinux.org/title/Tmux
 https://wiki.archlinux.org/title/Neovim

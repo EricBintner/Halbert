@@ -1,4 +1,4 @@
-# Cerebric Prompt Configuration
+# Halbert Prompt Configuration
 
 ## Base Safety Prompt
 
@@ -13,13 +13,13 @@ The base safety prompt ensures:
 
 ## Mode-Specific Layers (Phase 3)
 
-Cerebric supports two operational modes:
+Halbert supports two operational modes:
 
 ### Interactive Mode (default)
-User-driven conversation. Cerebric responds to questions, provides recommendations, and requires confirmation for all changes.
+User-driven conversation. Halbert responds to questions, provides recommendations, and requires confirmation for all changes.
 
 ### Autonomous Mode
-Scheduled maintenance routines. Cerebric executes tasks within guardrails (confidence thresholds, resource budgets, policy constraints).
+Scheduled maintenance routines. Halbert executes tasks within guardrails (confidence thresholds, resource budgets, policy constraints).
 
 ## Persona Layers (Phase 4)
 
@@ -61,4 +61,4 @@ All safety rules still apply. Friend mode changes tone, not capabilities.
 
 ---
 
-**Security Note**: Cerebric safety comes from the **policy engine** (independent of LLM), not just prompts. Even if prompts are modified, the policy engine enforces tool restrictions at execution time.
+**Security Note**: Halbert safety comes from the **policy engine** (independent of LLM), not just prompts. Even if prompts are modified, the policy engine enforces tool restrictions at execution time.

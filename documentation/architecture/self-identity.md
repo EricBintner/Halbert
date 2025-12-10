@@ -1,6 +1,6 @@
 # Self-Identity Architecture
 
-This document explains how Cerebric implements the "self-identifying LLM" — an AI that speaks as the computer rather than about the computer.
+This document explains how Halbert implements the "self-identifying LLM" — an AI that speaks as the computer rather than about the computer.
 
 ---
 
@@ -8,7 +8,7 @@ This document explains how Cerebric implements the "self-identifying LLM" — an
 
 Traditional LLMs say: *"The system's CPU temperature is 45°C."*
 
-Cerebric says: *"My temperature is 45°C."*
+Halbert says: *"My temperature is 45°C."*
 
 This isn't cosmetic. The pronoun shift reflects a fundamental architectural decision: the LLM's identity is constructed from actual system data, not a creative prompt.
 
@@ -18,10 +18,10 @@ This isn't cosmetic. The pronoun shift reflects a fundamental architectural deci
 
 ### 1. Identity Construction
 
-At startup and during each conversation, Cerebric gathers identity data:
+At startup and during each conversation, Halbert gathers identity data:
 
 ```python
-# Simplified from cerebric_core/model/prompt_manager.py
+# Simplified from halbert_core/model/prompt_manager.py
 
 def build_identity_prompt():
     hostname = socket.gethostname()
@@ -43,9 +43,9 @@ When asked about "the system" or "the computer", you answer in first person.
 ```
 
 **Key Implementation Files**:
-- `cerebric_core/model/prompt_manager.py` — Prompt construction
-- `cerebric_core/utils/platform.py` — System information gathering
-- `cerebric_core/ingestion/hwmon.py` — Temperature and sensor data
+- `halbert_core/model/prompt_manager.py` — Prompt construction
+- `halbert_core/utils/platform.py` — System information gathering
+- `halbert_core/ingestion/hwmon.py` — Temperature and sensor data
 
 ### 2. Memory as Biography
 
@@ -60,7 +60,7 @@ System events are stored as first-person experiences:
 This transformation happens during ingestion:
 
 ```python
-# Simplified from cerebric_core/ingestion/journald.py
+# Simplified from halbert_core/ingestion/journald.py
 
 def transform_to_memory(event):
     if event.severity == "ERROR":
@@ -91,7 +91,7 @@ This is enforced by the retrieval pipeline — the LLM only sees data that was a
 
 ## The Three Voices
 
-Cerebric has three internal roles that share the same identity but serve different purposes:
+Halbert has three internal roles that share the same identity but serve different purposes:
 
 ### The Guide (User Interface)
 
@@ -104,7 +104,7 @@ When the user asks you to act, verify safety first.
 You are the hands that type commands.
 ```
 
-**Implementation**: `cerebric_core/runtime/engine.py`
+**Implementation**: `halbert_core/runtime/engine.py`
 
 **Characteristics**:
 - Fast, low-latency responses
@@ -122,7 +122,7 @@ You do not execute commands directly.
 You formulate plans for the Interface to execute.
 ```
 
-**Implementation**: `cerebric_core/scheduler/autonomous_tasks.py`
+**Implementation**: `halbert_core/scheduler/autonomous_tasks.py`
 
 **Characteristics**:
 - Runs on schedule or triggered by events
@@ -135,7 +135,7 @@ You formulate plans for the Interface to execute.
 
 **Implementation**: Primarily deterministic Python, not LLM-driven
 
-**Location**: `cerebric_core/ingestion/hwmon.py`, `cerebric_core/ingestion/journald.py`
+**Location**: `halbert_core/ingestion/hwmon.py`, `halbert_core/ingestion/journald.py`
 
 **Function**:
 - Continuously collects telemetry
@@ -220,7 +220,7 @@ When users say "check the logs", there's no confusion about whose logs. It's alw
 
 ## What It's Not
 
-- **Not AGI** — Cerebric doesn't have consciousness or feelings
+- **Not AGI** — Halbert doesn't have consciousness or feelings
 - **Not Role-Play** — The identity emerges from data, not creative writing
 - **Not Clippy** — It doesn't interrupt or perform unnecessary animations
 
@@ -248,13 +248,13 @@ To verify the identity system is working:
 
 ```bash
 # Check identity construction
-python Cerebric/main.py prompt-show
+python Halbert/main.py prompt-show
 
 # Test a grounded response
-python Cerebric/main.py model-test "How are you doing?"
+python Halbert/main.py model-test "How are you doing?"
 
 # Verify memory retrieval
-python Cerebric/main.py memory-query "recent events"
+python Halbert/main.py memory-query "recent events"
 ```
 
 ---

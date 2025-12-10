@@ -1,8 +1,8 @@
 # API Reference
 
-REST API for the Cerebric dashboard.
+REST API for the Halbert dashboard.
 
-**Code**: `cerebric_core/cerebric_core/dashboard/`
+**Code**: `halbert_core/halbert_core/dashboard/`
 
 ---
 
@@ -14,7 +14,7 @@ http://localhost:8000
 
 Start with:
 ```bash
-python Cerebric/main.py dashboard
+python Halbert/main.py dashboard
 ```
 
 ---
@@ -102,7 +102,7 @@ No authentication by default. Dashboard binds to `127.0.0.1` only.
 
 For network access:
 ```bash
-python Cerebric/main.py dashboard --host 0.0.0.0
+python Halbert/main.py dashboard --host 0.0.0.0
 ```
 
 **Warning**: No auth means anyone on the network can access.

@@ -19,12 +19,12 @@ STACKOVERFLOW_MAX_QUESTIONS="${STACKOVERFLOW_MAX_QUESTIONS:-100}"
 STACKOVERFLOW_MIN_SCORE="${STACKOVERFLOW_MIN_SCORE:-5}"
 
 echo "======================================"
-echo "Cerebric RAG Data Scraping"
+echo "Halbert RAG Data Scraping"
 echo "======================================"
 echo ""
 
 # Check if we're in the right directory
-if [ ! -d "cerebric_core" ]; then
+if [ ! -d "halbert_core" ]; then
     echo -e "${RED}Error: Must be run from LinuxBrain root directory${NC}"
     exit 1
 fi
@@ -39,14 +39,14 @@ python3 -c "import requests; import bs4" 2>/dev/null || {
 echo -e "${GREEN}✓ Dependencies OK${NC}"
 echo ""
 
-# Add cerebric_core to Python path
-export PYTHONPATH="${PWD}/cerebric_core:${PYTHONPATH}"
+# Add halbert_core to Python path
+export PYTHONPATH="${PWD}/halbert_core:${PYTHONPATH}"
 
 # 1. Scrape Arch Wiki
 echo "======================================"
 echo "1. Scraping Arch Wiki"
 echo "======================================"
-python3 -m cerebric_core.rag.scrapers.arch_wiki \
+python3 -m halbert_core.rag.scrapers.arch_wiki \
     --output-dir "${DATA_DIR}/raw/arch_wiki" \
     --max-pages ${ARCH_WIKI_MAX_PAGES} \
     --rate-limit 1.0
@@ -74,7 +74,7 @@ else
     echo "Set STACKOVERFLOW_API_KEY environment variable for better performance"
 fi
 
-python3 -m cerebric_core.rag.scrapers.stackoverflow \
+python3 -m halbert_core.rag.scrapers.stackoverflow \
     --output-dir "${DATA_DIR}/raw/stackoverflow" \
     --max-questions ${STACKOVERFLOW_MAX_QUESTIONS} \
     --min-score ${STACKOVERFLOW_MIN_SCORE} \
@@ -95,7 +95,7 @@ echo "======================================"
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "Running on macOS - extracting man pages..."
-    python3 -m cerebric_core.rag.scrapers.macos_man \
+    python3 -m halbert_core.rag.scrapers.macos_man \
         --output-dir "${DATA_DIR}/raw/macos_man" \
         --max-pages 600
     
@@ -129,7 +129,7 @@ fi
 
 echo "Processing sources: ${SOURCES[*]}"
 
-python3 -m cerebric_core.rag.data_pipeline \
+python3 -m halbert_core.rag.data_pipeline \
     --data-dir "${DATA_DIR}" \
     --sources ${SOURCES[*]} \
     --output-name all_sources
@@ -158,7 +158,7 @@ if [ -f "${DATA_DIR}/processed/all_sources.jsonl" ]; then
     echo "  - ${DATA_DIR}/processed/all_sources_stats.json"
     echo ""
     echo "Next step: Rebuild RAG index with new data"
-    echo "  python3 -m cerebric_core.rag.index_builder --test"
+    echo "  python3 -m halbert_core.rag.index_builder --test"
 else
     echo -e "${RED}✗ Output file not found${NC}"
     exit 1

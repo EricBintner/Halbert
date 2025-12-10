@@ -1,12 +1,12 @@
 <p align="left">
-  <img src="Cerebric.png" alt="Cerebric" width="120">
+  <img src="Halbert.png" alt="Halbert" width="120">
 </p>
 
-# Cerebric
+# Halbert
 
 **Local-first AI assistant for Linux system administration.**
 
-Cerebric runs on your machine using local LLMs by default—no cloud required. Optionally connect to cloud APIs (OpenAI, Claude, Gemini) if you prefer. It ingests system logs, tracks configuration changes, and answers questions grounded in real system data.
+Halbert runs on your machine using local LLMs by default—no cloud required. Optionally connect to cloud APIs (OpenAI, Claude, Gemini) if you prefer. It ingests system logs, tracks configuration changes, and answers questions grounded in real system data.
 
 ---
 
@@ -33,14 +33,14 @@ curl -fsSL https://ollama.ai/install.sh | sh
 ollama pull llama3.2:3b
 
 # 2. Clone and install
-git clone https://github.com/yourusername/cerebric.git
-cd cerebric
+git clone https://github.com/yourusername/halbert.git
+cd halbert
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e cerebric_core/
+pip install -e halbert_core/
 
 # 3. Ask a question
-python Cerebric/main.py ask "Why did my docker service fail?"
+python Halbert/main.py ask "Why did my docker service fail?"
 ```
 
 ---
@@ -72,16 +72,16 @@ See [documentation/](documentation/) for full docs.
 
 ```bash
 # Ask questions
-python Cerebric/main.py ask "How do I free up disk space?"
+python Halbert/main.py ask "How do I free up disk space?"
 
 # Start dashboard
-python Cerebric/main.py dashboard
+python Halbert/main.py dashboard
 
 # Ingest system logs
-python Cerebric/main.py ingest-journald
+python Halbert/main.py ingest-journald
 
 # Track config changes
-python Cerebric/main.py snapshot-configs
+python Halbert/main.py snapshot-configs
 ```
 
 ---
@@ -89,18 +89,18 @@ python Cerebric/main.py snapshot-configs
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│                  Cerebric                   │
-├─────────────────────────────────────────────┤
-│  CLI / Dashboard                            │
-├─────────────────────────────────────────────┤
-│  Runtime Engine (LangGraph)                 │
-├──────────────┬──────────────┬───────────────┤
-│    Memory    │      RAG     │    Tools      │
-│  (ChromaDB)  │  (Docs + KB) │   (System)    │
-├──────────────┴──────────────┴───────────────┤
-│   Ollama (Local) or Cloud API (Optional)    │
-└─────────────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│                Halbert                │
+├────────────────────────────────────────┤
+│ CLI / Dashboard                        │
+├────────────────────────────────────────┤
+│ Runtime Engine (LangGraph)             │
+├────────────┬──────────────┬────────────┤
+│   Memory   │      RAG     │   Tools    │
+│ (ChromaDB) │  (Docs + KB) │  (System)  │
+├────────────┴──────────────┴────────────┤
+│ Ollama (Local) or Cloud API (Optional) │
+└────────────────────────────────────────┘
 ```
 
 <p align="center">

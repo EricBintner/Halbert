@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 def test_router_initialization():
     """Test that ModelRouter can be initialized."""
     try:
-        from cerebric_core.model import ModelRouter
+        from halbert_core.model import ModelRouter
         
         router = ModelRouter()
         assert router is not None
@@ -32,7 +32,7 @@ def test_router_initialization():
 def test_router_status():
     """Test getting router status."""
     try:
-        from cerebric_core.model import ModelRouter
+        from halbert_core.model import ModelRouter
         
         router = ModelRouter()
         status = router.get_status()
@@ -55,7 +55,7 @@ def test_router_status():
 def test_task_classification():
     """Test task type classification."""
     try:
-        from cerebric_core.model import TaskType
+        from halbert_core.model import TaskType
         
         # Test all task types exist
         assert TaskType.CHAT is not None
@@ -79,7 +79,7 @@ def test_task_classification():
 def test_provider_abstraction():
     """Test provider interface."""
     try:
-        from cerebric_core.model.providers import (
+        from halbert_core.model.providers import (
             ModelProvider, ModelCapability, OllamaProvider
         )
         
@@ -105,7 +105,7 @@ def test_provider_abstraction():
 def test_configuration_loading():
     """Test configuration system."""
     try:
-        from cerebric_core.model import ModelRouter
+        from halbert_core.model import ModelRouter
         
         router = ModelRouter()
         config = router.config

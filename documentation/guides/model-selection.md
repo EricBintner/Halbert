@@ -1,14 +1,14 @@
 # Model Selection
 
-Choosing and configuring LLMs for Cerebric.
+Choosing and configuring LLMs for Halbert.
 
-> **Local-first, cloud-optional**: Cerebric is designed to run entirely on local LLMs via Ollama—no API keys or internet required. However, you can optionally connect to cloud LLM providers (OpenAI, Claude, Gemini) if you prefer faster responses or don't have local GPU resources.
+> **Local-first, cloud-optional**: Halbert is designed to run entirely on local LLMs via Ollama—no API keys or internet required. However, you can optionally connect to cloud LLM providers (OpenAI, Claude, Gemini) if you prefer faster responses or don't have local GPU resources.
 
 ---
 
 ## Model Roles
 
-Cerebric uses up to three models for different tasks:
+Halbert uses up to three models for different tasks:
 
 | Role | Purpose | Recommended |
 |------|---------|-------------|
@@ -65,7 +65,7 @@ ollama pull llava:7b
 Assign models in Settings → AI Models, or via config:
 
 ```yaml
-# ~/.config/cerebric/model.yml
+# ~/.config/halbert/model.yml
 
 guide:
   endpoint: http://localhost:11434
@@ -101,7 +101,7 @@ ollama pull llama3.1:8b-q4_0
 ## Hardware Detection
 
 ```bash
-python Cerebric/main.py hardware-detect --recommend
+python Halbert/main.py hardware-detect --recommend
 ```
 
 Shows:
@@ -114,7 +114,7 @@ Shows:
 ## Configuration Wizard
 
 ```bash
-python Cerebric/main.py config-wizard
+python Halbert/main.py config-wizard
 ```
 
 Interactive setup based on your hardware.
@@ -125,10 +125,10 @@ Interactive setup based on your hardware.
 
 ```bash
 # Check model status
-python Cerebric/main.py model-status
+python Halbert/main.py model-status
 
 # Test generation
-python Cerebric/main.py model-test --prompt "Hello"
+python Halbert/main.py model-test --prompt "Hello"
 ```
 
 ---
@@ -164,7 +164,7 @@ ollama run llama3.2:8b
 
 ## Cloud LLM Providers (Optional)
 
-If you prefer cloud APIs over local models, Cerebric supports any OpenAI-compatible endpoint.
+If you prefer cloud APIs over local models, Halbert supports any OpenAI-compatible endpoint.
 
 ### Supported Providers
 
@@ -198,7 +198,7 @@ OpenRouter gives you access to Claude, GPT-4, Gemini, and more through one API:
 ### Example: OpenAI Direct
 
 ```yaml
-# ~/.config/cerebric/models.yml
+# ~/.config/halbert/models.yml
 saved_endpoints:
   - id: openai
     name: OpenAI

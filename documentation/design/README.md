@@ -1,6 +1,6 @@
 # Design Documentation
 
-This section explains **why** Cerebric was built the way it was. While the architecture documentation explains **what** exists, these documents explain the reasoning behind the design decisions.
+This section explains **why** Halbert was built the way it was. While the architecture documentation explains **what** exists, these documents explain the reasoning behind the design decisions.
 
 ## Purpose
 
@@ -24,7 +24,7 @@ This documentation serves two audiences:
 
 ## The Central Insight
 
-Cerebric is built on one key observation:
+Halbert is built on one key observation:
 
 > **An LLM that identifies as the computer is more useful than an LLM that answers questions about computers.**
 

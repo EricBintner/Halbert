@@ -1,5 +1,5 @@
-from cerebric_core.tools.write_config import WriteConfig
-from cerebric_core.tools.base import ToolRequest
+from halbert_core.tools.write_config import WriteConfig
+from halbert_core.tools.base import ToolRequest
 
 
 def test_write_config_rollback_restores_backup(tmp_path, monkeypatch):
@@ -10,7 +10,7 @@ def test_write_config_rollback_restores_backup(tmp_path, monkeypatch):
     bak.write_text("key=OLD\n", encoding="utf-8")
 
     # Ensure logs go to tmp
-    monkeypatch.setenv("Cerebric_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("Halbert_LOG_DIR", str(tmp_path / "logs"))
 
     tool = WriteConfig()
     req = ToolRequest(tool=tool.name, request_id="r-rollback", dry_run=False, confirm=True, inputs={

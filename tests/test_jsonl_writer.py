@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import datetime, timezone
-from cerebric_core.ingestion.jsonl_writer import append_event
+from halbert_core.ingestion.jsonl_writer import append_event
 
 
 def test_append_event_writes_jsonl(tmp_path):

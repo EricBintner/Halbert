@@ -1,7 +1,7 @@
-# Model Catalog for Cerebric (Phase 5 M1)
+# Model Catalog for Halbert (Phase 5 M1)
 #
 # Curated list of recommended models for different hardware configurations.
-# Models are tested and verified to work well with Cerebric.
+# Models are tested and verified to work well with Halbert.
 
 catalog_version: "1.0"
 updated: "2025-11-27"

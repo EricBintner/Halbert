@@ -1,7 +1,7 @@
 import os
 import json
 import yaml
-from cerebric_core.tools.write_config import WriteConfig
+from halbert_core.tools.write_config import WriteConfig
 
 
 def test_apply_yaml_deep_merge_backup(tmp_path):

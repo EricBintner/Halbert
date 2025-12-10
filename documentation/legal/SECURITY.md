@@ -30,7 +30,7 @@ You can expect:
 
 ### Design Principles
 
-Cerebric follows a **safety-first autonomy** model:
+Halbert follows a **safety-first autonomy** model:
 
 1. **Dry-run by default** - Destructive operations preview before execution
 2. **Human approval** - High-risk actions require explicit confirmation
@@ -56,7 +56,7 @@ Cerebric follows a **safety-first autonomy** model:
 
 ### Policy Engine
 
-The policy engine at `cerebric_core/cerebric_core/policy/` controls:
+The policy engine at `halbert_core/halbert_core/policy/` controls:
 
 - Which tools can run automatically
 - Which require approval

@@ -1,6 +1,6 @@
 # Tools System
 
-Tools are the actions Cerebric can perform on the system. All tools follow a consistent interface with dry-run support.
+Tools are the actions Halbert can perform on the system. All tools follow a consistent interface with dry-run support.
 
 ---
 
@@ -12,7 +12,7 @@ Tools bridge the LLM's reasoning to system actions. Every tool:
 2. Returns structured results
 3. Is subject to policy enforcement
 
-**Code**: `cerebric_core/cerebric_core/tools/`
+**Code**: `halbert_core/halbert_core/tools/`
 
 ---
 
@@ -117,7 +117,7 @@ rules:
 ```
 
 ```python
-from cerebric_core.cerebric_core.policy.engine import decide
+from halbert_core.halbert_core.policy.engine import decide
 
 # Before execution
 decision = decide(policy, "restart_service", is_apply=True)
@@ -138,7 +138,7 @@ if decision.require_approval:
 ### 1. Define the Tool
 
 ```python
-# cerebric_core/cerebric_core/tools/disk_analyzer.py
+# halbert_core/halbert_core/tools/disk_analyzer.py
 
 from .base import BaseTool, ToolResult
 
@@ -174,7 +174,7 @@ class DiskAnalyzerTool(BaseTool):
 ### 2. Register the Tool
 
 ```python
-# cerebric_core/cerebric_core/tools/__init__.py
+# halbert_core/halbert_core/tools/__init__.py
 
 from .disk_analyzer import DiskAnalyzerTool
 
@@ -197,7 +197,7 @@ rules:
 ### 4. Add CLI Command (Optional)
 
 ```python
-# Cerebric/main.py
+# Halbert/main.py
 
 def cmd_analyze_disk(args):
     tool = TOOLS["analyze_disk"]

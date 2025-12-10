@@ -1,6 +1,6 @@
 # XDG/FHS Paths
 
-Cerebric follows XDG Base Directory and FHS standards.
+Halbert follows XDG Base Directory and FHS standards.
 
 ---
 
@@ -8,19 +8,19 @@ Cerebric follows XDG Base Directory and FHS standards.
 
 | Path | Purpose | XDG Variable |
 |------|---------|--------------|
-| `~/.config/cerebric/` | Configuration | `$XDG_CONFIG_HOME` |
-| `~/.local/share/cerebric/` | Application data | `$XDG_DATA_HOME` |
-| `~/.local/state/cerebric/` | Runtime state | `$XDG_STATE_HOME` |
-| `~/.cache/cerebric/` | Cached data | `$XDG_CACHE_HOME` |
+| `~/.config/halbert/` | Configuration | `$XDG_CONFIG_HOME` |
+| `~/.local/share/halbert/` | Application data | `$XDG_DATA_HOME` |
+| `~/.local/state/halbert/` | Runtime state | `$XDG_STATE_HOME` |
+| `~/.cache/halbert/` | Cached data | `$XDG_CACHE_HOME` |
 
 ---
 
 ## Directory Structure
 
-### Config (`~/.config/cerebric/`)
+### Config (`~/.config/halbert/`)
 
 ```
-~/.config/cerebric/
+~/.config/halbert/
 ├── model.yml           # LLM configuration
 ├── ingestion.yml       # Data ingestion settings
 ├── policy.yml          # Action policies
@@ -31,10 +31,10 @@ Cerebric follows XDG Base Directory and FHS standards.
     └── identity.txt
 ```
 
-### Data (`~/.local/share/cerebric/`)
+### Data (`~/.local/share/halbert/`)
 
 ```
-~/.local/share/cerebric/
+~/.local/share/halbert/
 ├── index/              # ChromaDB vector database
 ├── memory/
 │   ├── core/           # Core knowledge
@@ -46,19 +46,19 @@ Cerebric follows XDG Base Directory and FHS standards.
     └── snapshots/      # Config snapshots
 ```
 
-### State (`~/.local/state/cerebric/`)
+### State (`~/.local/state/halbert/`)
 
 ```
-~/.local/state/cerebric/
+~/.local/state/halbert/
 ├── scheduler.db        # Job queue
 ├── approval.db         # Approval history
 └── safe_mode.lock      # Safe mode indicator
 ```
 
-### Cache (`~/.cache/cerebric/`)
+### Cache (`~/.cache/halbert/`)
 
 ```
-~/.cache/cerebric/
+~/.cache/halbert/
 └── models/             # Embedding model cache
 ```
 
@@ -73,22 +73,22 @@ export XDG_STATE_HOME=/custom/state
 export XDG_CACHE_HOME=/custom/cache
 ```
 
-Or Cerebric-specific:
+Or Halbert-specific:
 
 ```bash
-export Cerebric_CONFIG_DIR=/custom/cerebric/config
-export Cerebric_DATA_DIR=/custom/cerebric/data
+export Halbert_CONFIG_DIR=/custom/halbert/config
+export Halbert_DATA_DIR=/custom/halbert/data
 ```
 
 ---
 
 ## Code Reference
 
-Path resolution: `cerebric_core/cerebric_core/utils/paths.py`
+Path resolution: `halbert_core/halbert_core/utils/paths.py`
 
 ```python
-from cerebric_core.cerebric_core.utils.paths import config_dir, data_subdir
+from halbert_core.halbert_core.utils.paths import config_dir, data_subdir
 
-cfg = config_dir()  # ~/.config/cerebric
-data = data_subdir("memory", "core")  # ~/.local/share/cerebric/memory/core
+cfg = config_dir()  # ~/.config/halbert
+data = data_subdir("memory", "core")  # ~/.local/share/halbert/memory/core
 ```

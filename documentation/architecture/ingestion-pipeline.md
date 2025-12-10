@@ -8,7 +8,7 @@ The ingestion pipeline collects system telemetry from journald, hardware sensors
 
 Ingestion transforms raw system data into structured events that feed the memory system and RAG pipeline.
 
-**Code**: `cerebric_core/cerebric_core/ingestion/`
+**Code**: `halbert_core/halbert_core/ingestion/`
 
 ---
 
@@ -19,10 +19,10 @@ Ingestion transforms raw system data into structured events that feed the memory
 System logs via `systemd-journald`.
 
 ```bash
-python Cerebric/main.py ingest-journald
+python Halbert/main.py ingest-journald
 ```
 
-**Code**: `cerebric_core/cerebric_core/ingestion/runner.py`
+**Code**: `halbert_core/halbert_core/ingestion/runner.py`
 
 Captures:
 - Service start/stop events
@@ -35,10 +35,10 @@ Captures:
 Hardware temperature sensors.
 
 ```bash
-python Cerebric/main.py ingest-hwmon
+python Halbert/main.py ingest-hwmon
 ```
 
-**Code**: `cerebric_core/cerebric_core/ingestion/hwmon_runner.py`
+**Code**: `halbert_core/halbert_core/ingestion/hwmon_runner.py`
 
 Captures:
 - CPU temperature
@@ -51,11 +51,11 @@ Captures:
 Point-in-time captures of config files.
 
 ```bash
-python Cerebric/main.py snapshot-configs
-python Cerebric/main.py watch-configs
+python Halbert/main.py snapshot-configs
+python Halbert/main.py watch-configs
 ```
 
-**Code**: `cerebric_core/cerebric_core/config/snapshot.py`
+**Code**: `halbert_core/halbert_core/config/snapshot.py`
 
 ---
 
@@ -136,7 +136,7 @@ files:
 │       ▼                                                     │
 │  ┌──────────────────────────────────────────────┐          │
 │  │               JSONL Writer                    │          │
-│  │    (~/.local/share/cerebric/telemetry/)      │          │
+│  │    (~/.local/share/halbert/telemetry/)      │          │
 │  └──────────────────────────────────────────────┘          │
 │       │                                                     │
 │       ▼                                                     │
@@ -155,7 +155,7 @@ files:
 ### JSONL Files
 
 ```
-~/.local/share/cerebric/telemetry/
+~/.local/share/halbert/telemetry/
 ├── journald/
 │   └── 2024-01-15.jsonl
 ├── hwmon/
@@ -171,7 +171,7 @@ Events are embedded and stored in ChromaDB for semantic search.
 
 ```python
 # Query recent errors
-from cerebric_core.cerebric_core.memory.retrieval import MemoryRetrieval
+from halbert_core.halbert_core.memory.retrieval import MemoryRetrieval
 
 mem = MemoryRetrieval()
 errors = mem.retrieve_from("runtime", "docker container failed", k=10)
@@ -213,19 +213,19 @@ journald:
 
 ```bash
 # Start journald ingestion (foreground)
-python Cerebric/main.py ingest-journald
+python Halbert/main.py ingest-journald
 
 # Start hwmon polling (foreground)
-python Cerebric/main.py ingest-hwmon
+python Halbert/main.py ingest-hwmon
 
 # Snapshot configs
-python Cerebric/main.py snapshot-configs
+python Halbert/main.py snapshot-configs
 
 # Watch configs continuously
-python Cerebric/main.py watch-configs
+python Halbert/main.py watch-configs
 
 # Diff config snapshots
-python Cerebric/main.py diff-configs
+python Halbert/main.py diff-configs
 ```
 
 ---

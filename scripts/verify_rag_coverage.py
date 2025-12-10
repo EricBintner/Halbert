@@ -11,13 +11,13 @@ from pathlib import Path
 # Suppress logging
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'cerebric_core'))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'halbert_core'))
 
 import logging
-logging.getLogger('cerebric').setLevel(logging.WARNING)
+logging.getLogger('halbert').setLevel(logging.WARNING)
 logging.getLogger('sentence_transformers').setLevel(logging.WARNING)
 
-from cerebric_core.rag import RAGPipeline
+from halbert_core.rag import RAGPipeline
 
 
 def verify_coverage():

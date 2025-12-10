@@ -1,6 +1,6 @@
 # Testing
 
-Test conventions for Cerebric.
+Test conventions for Halbert.
 
 ---
 
@@ -14,7 +14,7 @@ pytest tests/
 pytest tests/test_memory.py
 
 # With coverage
-pytest tests/ --cov=cerebric_core --cov-report=html
+pytest tests/ --cov=halbert_core --cov-report=html
 
 # Verbose
 pytest tests/ -v
@@ -41,7 +41,7 @@ tests/
 
 ```python
 import pytest
-from cerebric_core.cerebric_core.memory.retrieval import MemoryRetrieval
+from halbert_core.halbert_core.memory.retrieval import MemoryRetrieval
 
 def test_retrieval_returns_list():
     """Test that retrieval returns a list."""
