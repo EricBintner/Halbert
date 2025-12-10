@@ -1,6 +1,6 @@
 # Future Directions
 
-This document outlines potential future enhancements for Cerebric. These are ideas, not commitments.
+This document outlines potential future enhancements for Halbert. These are ideas, not commitments.
 
 ---
 
@@ -45,7 +45,7 @@ Allow third-party extensions:
 
 ### Multi-Host Support
 
-Currently Cerebric monitors a single machine. Extensions could include:
+Currently Halbert monitors a single machine. Extensions could include:
 
 - **Fleet Management** — Monitor multiple hosts from one dashboard
 - **Aggregated Views** — Cross-host metrics and alerts
@@ -66,7 +66,7 @@ Natural language through voice:
 
 - **Speech-to-Text** — Speak queries
 - **Text-to-Speech** — Hear responses
-- **Wake Word** — "Hey Cerebric, how's the disk?"
+- **Wake Word** — "Hey Halbert, how's the disk?"
 
 ---
 
@@ -120,7 +120,7 @@ No area is "owned" — contributions in any direction are welcome.
 
 To set expectations, some things are explicitly **not** on the roadmap:
 
-- **Cloud-hosted version** — Cerebric is local-first by design
+- **Cloud-hosted version** — Halbert is local-first by design
 - **Paid features** — The project is fully open source
 - **Windows support** — Focus is on Linux
 - **Mobile apps** — Desktop/server focus only
@@ -132,7 +132,7 @@ To set expectations, some things are explicitly **not** on the roadmap:
 See [contributing/CONTRIBUTING.md](../contributing/CONTRIBUTING.md) for how to contribute.
 
 The best way to influence future direction is to:
-1. Use Cerebric and report issues
+1. Use Halbert and report issues
 2. Propose features with clear use cases
 3. Submit PRs that implement features cleanly
 4. Help with documentation and testing

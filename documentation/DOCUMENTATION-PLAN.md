@@ -1,4 +1,4 @@
-# Cerebric Public Documentation Plan
+# Halbert Public Documentation Plan
 
 **Purpose**: Transform internal `docs/` (AI planning) into polished public-facing `documentation/` for GitHub release.
 

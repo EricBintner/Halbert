@@ -1,12 +1,12 @@
 # Packaging Directory
 
-**Purpose**: Deployment and installation artifacts for Cerebric
+**Purpose**: Deployment and installation artifacts for Halbert
 
 ---
 
 ## What This Is
 
-This directory contains files needed to **deploy and install** Cerebric on production systems, particularly for Linux.
+This directory contains files needed to **deploy and install** Halbert on production systems, particularly for Linux.
 
 **Not to be confused with**:
 - `scripts/` - Development and demo scripts
@@ -20,29 +20,29 @@ This directory contains files needed to **deploy and install** Cerebric on produ
 
 **Purpose**: Linux systemd service files for background services
 
-**What these do**: Allow Cerebric to run as a system service on Linux, starting automatically on boot.
+**What these do**: Allow Halbert to run as a system service on Linux, starting automatically on boot.
 
 **Files**:
 
-#### `cerebric-ingest-journald.service`
+#### `halbert-ingest-journald.service`
 - **What**: Background service that reads system logs (journald)
 - **When**: Runs continuously on Linux systems
 - **Used by**: Data ingestion system (Phase 1-3)
 
-#### `cerebric-ingest-hwmon.service`
+#### `halbert-ingest-hwmon.service`
 - **What**: Background service that reads hardware sensors (hwmon)
 - **When**: Runs continuously on Linux systems
 - **Used by**: Hardware monitoring (Phase 1-3)
 
-#### `cerebric-config-watch.service`
+#### `halbert-config-watch.service`
 - **What**: Watches for configuration file changes
 - **When**: Runs when config files are modified
-- **Triggered by**: `cerebric-config-watch.path`
+- **Triggered by**: `halbert-config-watch.path`
 
-#### `cerebric-config-watch.path`
+#### `halbert-config-watch.path`
 - **What**: systemd path unit (watches for file changes)
 - **When**: Always active, triggers service on changes
-- **Watches**: Cerebric config directory
+- **Watches**: Halbert config directory
 
 ---
 
@@ -54,8 +54,8 @@ This directory contains files needed to **deploy and install** Cerebric on produ
 /etc/systemd/system/
 
 # Then enabled and started:
-sudo systemctl enable cerebric-ingest-journald
-sudo systemctl start cerebric-ingest-journald
+sudo systemctl enable halbert-ingest-journald
+sudo systemctl start halbert-ingest-journald
 ```
 
 ### Development
@@ -72,7 +72,7 @@ Not used on Mac - Mac uses launchd instead of systemd.
 - Creating Linux installers (.deb, .rpm)
 - Production Linux deployment
 - System integration on Linux servers
-- Running Cerebric as a service
+- Running Halbert as a service
 
 ### ❌ You don't need this for:
 - Development/testing (use scripts/)
@@ -100,7 +100,7 @@ Not used on Mac - Mac uses launchd instead of systemd.
 ## Summary
 
 **What**: systemd service files for Linux  
-**Why**: Run Cerebric services in background  
+**Why**: Run Halbert services in background  
 **When**: Production Linux deployment  
 **Platform**: Linux only (not Mac, not Windows)  
 **Status**: Operational, required for deployment

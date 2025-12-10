@@ -1,11 +1,11 @@
 #!/bin/bash
-# Cerebric Phase 5 Quick Start Script
+# Halbert Phase 5 Quick Start Script
 # Automates setup and testing of Phase 5 multi-model system
 
 set -e
 
 echo "======================================================================="
-echo "  Cerebric Phase 5: Multi-Model LLM System - Quick Start"
+echo "  Halbert Phase 5: Multi-Model LLM System - Quick Start"
 echo "======================================================================="
 echo ""
 
@@ -30,18 +30,18 @@ PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
 echo -e "${GREEN}✓ Python $PYTHON_VERSION found${NC}"
 echo ""
 
-# Step 2: Check Cerebric installation
-echo -e "${YELLOW}[2/6] Checking Cerebric installation...${NC}"
-if ! python3 -c "import cerebric_core.cerebric_core.model" &> /dev/null; then
-    echo -e "${RED}Cerebric core not installed. Installing...${NC}"
-    cd cerebric_core && pip install -e . && cd ..
+# Step 2: Check Halbert installation
+echo -e "${YELLOW}[2/6] Checking Halbert installation...${NC}"
+if ! python3 -c "import halbert_core.halbert_core.model" &> /dev/null; then
+    echo -e "${RED}Halbert core not installed. Installing...${NC}"
+    cd halbert_core && pip install -e . && cd ..
 fi
-echo -e "${GREEN}✓ Cerebric core installed${NC}"
+echo -e "${GREEN}✓ Halbert core installed${NC}"
 echo ""
 
 # Step 3: Detect hardware
 echo -e "${YELLOW}[3/6] Detecting hardware...${NC}"
-python3 Cerebric/main.py hardware-detect --recommend || true
+python3 Halbert/main.py hardware-detect --recommend || true
 echo ""
 
 # Step 4: Check/install model provider
@@ -82,7 +82,7 @@ echo ""
 # Step 5: Run configuration wizard
 echo -e "${YELLOW}[5/6] Running configuration wizard...${NC}"
 if [ "$PROVIDER" != "none" ]; then
-    python3 Cerebric/main.py config-wizard --auto || true
+    python3 Halbert/main.py config-wizard --auto || true
     echo -e "${GREEN}✓ Configuration created${NC}"
 else
     echo -e "${YELLOW}⚠ Skipping configuration (no provider installed)${NC}"
@@ -92,7 +92,7 @@ echo ""
 # Step 6: Check status
 echo -e "${YELLOW}[6/6] Checking router status...${NC}"
 if [ "$PROVIDER" != "none" ]; then
-    python3 Cerebric/main.py model-router-status || true
+    python3 Halbert/main.py model-router-status || true
 fi
 echo ""
 
@@ -103,14 +103,14 @@ echo "======================================================================="
 echo ""
 
 if [ "$PROVIDER" != "none" ]; then
-    echo -e "${GREEN}✓ Cerebric Phase 5 is ready to use!${NC}"
+    echo -e "${GREEN}✓ Halbert Phase 5 is ready to use!${NC}"
     echo ""
     echo "Next steps:"
     echo "  1. Test basic generation:"
-    echo "     python3 -c 'from cerebric_core.cerebric_core.model import ModelRouter, TaskType; r=ModelRouter(); print(r.generate(\"Hello!\", TaskType.CHAT).text)'"
+    echo "     python3 -c 'from halbert_core.halbert_core.model import ModelRouter, TaskType; r=ModelRouter(); print(r.generate(\"Hello!\", TaskType.CHAT).text)'"
     echo ""
     echo "  2. Check performance:"
-    echo "     python3 Cerebric/main.py performance-status"
+    echo "     python3 Halbert/main.py performance-status"
     echo ""
     echo "  3. Explore examples:"
     echo "     cat docs/Phase5/INTEGRATION-EXAMPLES.md"
@@ -118,10 +118,10 @@ if [ "$PROVIDER" != "none" ]; then
     
     if [ "$PLATFORM" = "Darwin" ] && [ "$PROVIDER" = "mlx" ]; then
         echo "  4. Train LoRA (Mac Apple Silicon):"
-        echo "     python3 Cerebric/main.py mlx-prepare-training-data --list-personas"
+        echo "     python3 Halbert/main.py mlx-prepare-training-data --list-personas"
     fi
 else
-    echo -e "${YELLOW}⚠ Please install a model provider to use Cerebric:${NC}"
+    echo -e "${YELLOW}⚠ Please install a model provider to use Halbert:${NC}"
     echo ""
     if [ "$PLATFORM" = "Darwin" ]; then
         echo "  For Mac Apple Silicon:"

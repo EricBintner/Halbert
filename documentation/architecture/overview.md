@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This document provides a comprehensive view of Cerebric's architecture, explaining how components interact to create a self-aware Linux system agent.
+This document provides a comprehensive view of Halbert's architecture, explaining how components interact to create a self-aware Linux system agent.
 
 ---
 
@@ -166,14 +166,14 @@ Alternative considered: Celery. Rejected because it requires a message broker (R
 
 | Type | Path | Contents |
 |------|------|----------|
-| **Config** | `~/.config/cerebric/` | User configuration files |
-| **Data** | `~/.local/share/cerebric/` | Persistent data (vector DB, snapshots) |
-| **State** | `~/.local/state/cerebric/` | Runtime state (logs, cursors) |
+| **Config** | `~/.config/halbert/` | User configuration files |
+| **Data** | `~/.local/share/halbert/` | Persistent data (vector DB, snapshots) |
+| **State** | `~/.local/state/halbert/` | Runtime state (logs, cursors) |
 
 ### Storage Layout
 
 ```
-~/.local/share/cerebric/
+~/.local/share/halbert/
 ├── raw/                    # Raw telemetry JSONL
 │   ├── journal_events.jsonl
 │   └── hwmon_events.jsonl
@@ -221,16 +221,16 @@ Alternative considered: Celery. Rejected because it requires a message broker (R
 
 ### Adding a New Tool
 
-1. Create `cerebric_core/tools/my_tool.py`
+1. Create `halbert_core/tools/my_tool.py`
 2. Implement the `BaseTool` interface
 3. Add dry-run support
 4. Add audit logging
 5. Register in tool catalog
-6. Add CLI command in `Cerebric/main.py`
+6. Add CLI command in `Halbert/main.py`
 
 ### Adding a New Data Source
 
-1. Create `cerebric_core/ingestion/my_source.py`
+1. Create `halbert_core/ingestion/my_source.py`
 2. Implement collection logic
 3. Transform to standard event schema
 4. Add to ingestion runner
@@ -238,7 +238,7 @@ Alternative considered: Celery. Rejected because it requires a message broker (R
 
 ### Adding a Dashboard Feature
 
-1. Add API route in `cerebric_core/dashboard/routes/`
+1. Add API route in `halbert_core/dashboard/routes/`
 2. Create React component in `dashboard/frontend/src/`
 3. Add WebSocket handler if real-time needed
 4. Update API documentation

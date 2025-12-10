@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 def test_hardware_detection():
     """Test basic hardware detection."""
     try:
-        from cerebric_core.model import HardwareDetector
+        from halbert_core.model import HardwareDetector
         
         detector = HardwareDetector()
         hardware = detector.detect()
@@ -43,7 +43,7 @@ def test_hardware_detection():
 def test_model_recommendations():
     """Test model recommendation engine."""
     try:
-        from cerebric_core.model import HardwareDetector
+        from halbert_core.model import HardwareDetector
         
         detector = HardwareDetector()
         hardware = detector.detect()
@@ -74,7 +74,7 @@ def test_model_recommendations():
 def test_hardware_profiles():
     """Test hardware profile classification."""
     try:
-        from cerebric_core.model import HardwareDetector, HardwareProfile
+        from halbert_core.model import HardwareDetector, HardwareProfile
         
         detector = HardwareDetector()
         hardware = detector.detect()
@@ -98,7 +98,7 @@ def test_hardware_profiles():
 def test_mac_detection():
     """Test Mac Apple Silicon detection."""
     try:
-        from cerebric_core.utils.platform import (
+        from halbert_core.utils.platform import (
             is_macos, is_mac_apple_silicon, get_unified_memory_gb
         )
         
@@ -124,7 +124,7 @@ def test_mac_detection():
 def test_config_wizard_auto():
     """Test automatic configuration wizard."""
     try:
-        from cerebric_core.model import ConfigWizard
+        from halbert_core.model import ConfigWizard
         
         wizard = ConfigWizard()
         config = wizard.run_auto()
@@ -155,7 +155,7 @@ def test_config_wizard_auto():
 def test_installation_commands():
     """Test installation command generation."""
     try:
-        from cerebric_core.model import HardwareDetector
+        from halbert_core.model import HardwareDetector
         
         detector = HardwareDetector()
         hardware = detector.detect()
@@ -185,7 +185,7 @@ def test_installation_commands():
 def test_platform_utilities():
     """Test cross-platform utilities."""
     try:
-        from cerebric_core.utils.platform import (
+        from halbert_core.utils.platform import (
             get_platform, get_config_dir, get_data_dir, get_cache_dir,
             get_recommended_provider, get_platform_info
         )

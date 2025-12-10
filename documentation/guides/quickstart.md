@@ -1,6 +1,6 @@
 # Quickstart Guide
 
-Get Cerebric running in 5 minutes.
+Get Halbert running in 5 minutes.
 
 ---
 
@@ -26,11 +26,11 @@ ollama pull llama3.2:3b
 
 ---
 
-## Step 2: Clone Cerebric
+## Step 2: Clone Halbert
 
 ```bash
-git clone https://github.com/yourusername/cerebric.git
-cd cerebric
+git clone https://github.com/ericbintner/halbert.git
+cd halbert
 ```
 
 ---
@@ -40,7 +40,7 @@ cd cerebric
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e cerebric_core/
+pip install -e halbert_core/
 ```
 
 ---
@@ -49,10 +49,10 @@ pip install -e cerebric_core/
 
 ```bash
 # Check if everything works
-python Cerebric/main.py info
+python Halbert/main.py info
 
 # Ask a question
-python Cerebric/main.py ask "What is systemd?"
+python Halbert/main.py ask "What is systemd?"
 ```
 
 ---
@@ -60,7 +60,7 @@ python Cerebric/main.py ask "What is systemd?"
 ## Step 5: Start the Dashboard
 
 ```bash
-python Cerebric/main.py dashboard
+python Halbert/main.py dashboard
 ```
 
 Open http://localhost:8000 in your browser.
@@ -73,30 +73,30 @@ Open http://localhost:8000 in your browser.
 
 ```bash
 # Check model status
-python Cerebric/main.py model-status
+python Halbert/main.py model-status
 
 # Query memory
-python Cerebric/main.py memory-stats
+python Halbert/main.py memory-stats
 
 # See autonomy guardrails
-python Cerebric/main.py autonomy-status
+python Halbert/main.py autonomy-status
 ```
 
 ### Ingest Your System Data
 
 ```bash
 # Start journald ingestion
-python Cerebric/main.py ingest-journald
+python Halbert/main.py ingest-journald
 
 # Snapshot your configs
-python Cerebric/main.py snapshot-configs
+python Halbert/main.py snapshot-configs
 ```
 
 ### Ask About Your System
 
 ```bash
-python Cerebric/main.py ask "Why did my docker service fail?"
-python Cerebric/main.py ask "How do I free up disk space?"
+python Halbert/main.py ask "Why did my docker service fail?"
+python Halbert/main.py ask "How do I free up disk space?"
 ```
 
 ---

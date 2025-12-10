@@ -8,7 +8,7 @@ import json
 import tempfile
 import os
 
-from cerebric_core.rag import EmbeddingManager, HybridRetriever, RAGPipeline
+from halbert_core.rag import EmbeddingManager, HybridRetriever, RAGPipeline
 
 
 @pytest.fixture

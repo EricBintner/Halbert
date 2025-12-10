@@ -1,6 +1,6 @@
-# Cerebric Architecture
+# Halbert Architecture
 
-This document provides a high-level overview of Cerebric's architecture. For detailed component documentation, see the [architecture/](architecture/) directory.
+This document provides a high-level overview of Halbert's architecture. For detailed component documentation, see the [architecture/](architecture/) directory.
 
 ---
 
@@ -63,9 +63,9 @@ This document provides a high-level overview of Cerebric's architecture. For det
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **CLI** | `Cerebric/main.py` | Command-line interface with 50+ commands |
-| **Dashboard** | `cerebric_core/dashboard/` | React + FastAPI web interface |
-| **REST API** | `cerebric_core/dashboard/routes/` | Programmatic access |
+| **CLI** | `Halbert/main.py` | Command-line interface with 50+ commands |
+| **Dashboard** | `halbert_core/dashboard/` | React + FastAPI web interface |
+| **REST API** | `halbert_core/dashboard/routes/` | Programmatic access |
 
 The CLI is the primary interface for power users. The dashboard provides a web-based GUI with real-time updates via WebSocket.
 
@@ -73,9 +73,9 @@ The CLI is the primary interface for power users. The dashboard provides a web-b
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **Orchestrator** | `cerebric_core/runtime/engine.py` | LangGraph-based agent loop |
-| **State Management** | `cerebric_core/runtime/state.py` | Conversation and agent state |
-| **Graph Definition** | `cerebric_core/runtime/graph.py` | Node and edge definitions |
+| **Orchestrator** | `halbert_core/runtime/engine.py` | LangGraph-based agent loop |
+| **State Management** | `halbert_core/runtime/state.py` | Conversation and agent state |
+| **Graph Definition** | `halbert_core/runtime/graph.py` | Node and edge definitions |
 
 The runtime engine uses [LangGraph](https://github.com/langchain-ai/langgraph) to orchestrate multi-step reasoning. It:
 1. Receives user input
@@ -88,10 +88,10 @@ The runtime engine uses [LangGraph](https://github.com/langchain-ai/langgraph) t
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **Model Loader** | `cerebric_core/model/loader.py` | LLM initialization and management |
-| **Prompt Manager** | `cerebric_core/model/prompt_manager.py` | System prompt construction |
-| **Model Router** | `cerebric_core/model/router.py` | Task-based model selection |
-| **Providers** | `cerebric_core/model/providers/` | Backend integrations (Ollama, etc.) |
+| **Model Loader** | `halbert_core/model/loader.py` | LLM initialization and management |
+| **Prompt Manager** | `halbert_core/model/prompt_manager.py` | System prompt construction |
+| **Model Router** | `halbert_core/model/router.py` | Task-based model selection |
+| **Providers** | `halbert_core/model/providers/` | Backend integrations (Ollama, etc.) |
 
 The model system handles LLM integration. The **Prompt Manager** is critical—it injects the system's self-identity into every conversation:
 
@@ -109,9 +109,9 @@ All your responses must be grounded in this reality.
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **Vector Index** | `cerebric_core/index/chroma_index.py` | ChromaDB wrapper |
-| **Retrieval Engine** | `cerebric_core/memory/retrieval.py` | RAG query execution |
-| **Memory Writer** | `cerebric_core/memory/writer.py` | Event persistence |
+| **Vector Index** | `halbert_core/index/chroma_index.py` | ChromaDB wrapper |
+| **Retrieval Engine** | `halbert_core/memory/retrieval.py` | RAG query execution |
+| **Memory Writer** | `halbert_core/memory/writer.py` | Event persistence |
 
 The memory system stores and retrieves system events. When the user asks a question, relevant past events are retrieved and included in the prompt context.
 
@@ -119,10 +119,10 @@ The memory system stores and retrieves system events. When the user asks a quest
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **Base Tool** | `cerebric_core/tools/base.py` | Tool interface contract |
-| **read_sensor** | `cerebric_core/tools/read_sensor.py` | Hardware sensor access |
-| **write_config** | `cerebric_core/tools/write_config.py` | Configuration modification |
-| **schedule_cron** | `cerebric_core/tools/schedule_cron.py` | Cron job management |
+| **Base Tool** | `halbert_core/tools/base.py` | Tool interface contract |
+| **read_sensor** | `halbert_core/tools/read_sensor.py` | Hardware sensor access |
+| **write_config** | `halbert_core/tools/write_config.py` | Configuration modification |
+| **schedule_cron** | `halbert_core/tools/schedule_cron.py` | Cron job management |
 
 Tools are the LLM's "hands"—functions it can call to interact with the system. All tools:
 - Support dry-run mode
@@ -133,11 +133,11 @@ Tools are the LLM's "hands"—functions it can call to interact with the system.
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **journald** | `cerebric_core/ingestion/journald.py` | System log collection |
-| **hwmon** | `cerebric_core/ingestion/hwmon.py` | Hardware sensor collection |
-| **JSONL Writer** | `cerebric_core/ingestion/jsonl_writer.py` | Event persistence |
-| **Severity Mapper** | `cerebric_core/ingestion/severity.py` | Log level normalization |
-| **Redaction** | `cerebric_core/ingestion/redaction.py` | Sensitive data removal |
+| **journald** | `halbert_core/ingestion/journald.py` | System log collection |
+| **hwmon** | `halbert_core/ingestion/hwmon.py` | Hardware sensor collection |
+| **JSONL Writer** | `halbert_core/ingestion/jsonl_writer.py` | Event persistence |
+| **Severity Mapper** | `halbert_core/ingestion/severity.py` | Log level normalization |
+| **Redaction** | `halbert_core/ingestion/redaction.py` | Sensitive data removal |
 
 Ingestion continuously collects telemetry and logs, transforms them into structured events, and indexes them for retrieval.
 
@@ -145,8 +145,8 @@ Ingestion continuously collects telemetry and logs, transforms them into structu
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **Policy Loader** | `cerebric_core/policy/loader.py` | YAML policy parsing |
-| **Policy Engine** | `cerebric_core/policy/engine.py` | Rule evaluation |
+| **Policy Loader** | `halbert_core/policy/loader.py` | YAML policy parsing |
+| **Policy Engine** | `halbert_core/policy/engine.py` | Rule evaluation |
 
 Policies define what the LLM can and cannot do:
 
@@ -164,10 +164,10 @@ rules:
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **Job Definitions** | `cerebric_core/scheduler/job.py` | Scheduled task schema |
-| **Scheduler Engine** | `cerebric_core/scheduler/engine.py` | APScheduler wrapper |
-| **Executor** | `cerebric_core/scheduler/executor.py` | Job execution with guardrails |
-| **Autonomous Tasks** | `cerebric_core/scheduler/autonomous_tasks.py` | LLM-driven tasks |
+| **Job Definitions** | `halbert_core/scheduler/job.py` | Scheduled task schema |
+| **Scheduler Engine** | `halbert_core/scheduler/engine.py` | APScheduler wrapper |
+| **Executor** | `halbert_core/scheduler/executor.py` | Job execution with guardrails |
+| **Autonomous Tasks** | `halbert_core/scheduler/autonomous_tasks.py` | LLM-driven tasks |
 
 The scheduler runs background tasks:
 - Health checks
@@ -179,8 +179,8 @@ The scheduler runs background tasks:
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **Approval Engine** | `cerebric_core/approval/engine.py` | Approval workflow management |
-| **Simulator** | `cerebric_core/approval/simulator.py` | Dry-run simulation |
+| **Approval Engine** | `halbert_core/approval/engine.py` | Approval workflow management |
+| **Simulator** | `halbert_core/approval/simulator.py` | Dry-run simulation |
 
 When a tool requires approval, the workflow:
 1. Displays what would change (dry-run)
@@ -192,10 +192,10 @@ When a tool requires approval, the workflow:
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **Guardrails** | `cerebric_core/autonomy/guardrails.py` | Safety checks |
-| **Budgets** | `cerebric_core/autonomy/budgets.py` | Rate limiting |
-| **Anomaly Detector** | `cerebric_core/autonomy/anomaly_detector.py` | Unusual behavior detection |
-| **Recovery** | `cerebric_core/autonomy/recovery.py` | Rollback procedures |
+| **Guardrails** | `halbert_core/autonomy/guardrails.py` | Safety checks |
+| **Budgets** | `halbert_core/autonomy/budgets.py` | Rate limiting |
+| **Anomaly Detector** | `halbert_core/autonomy/anomaly_detector.py` | Unusual behavior detection |
+| **Recovery** | `halbert_core/autonomy/recovery.py` | Rollback procedures |
 
 Guardrails prevent runaway automation:
 - Operation budgets (max N operations per hour)
@@ -290,10 +290,10 @@ System Events (journald, hwmon, configs)
 
 | Type | Path | Purpose |
 |------|------|---------|
-| **Config** | `~/.config/cerebric/` | User configuration |
-| **Data** | `~/.local/share/cerebric/` | Persistent data |
-| **State** | `~/.local/state/cerebric/` | Runtime state |
-| **Logs** | `~/.local/state/cerebric/log/` | Application logs |
+| **Config** | `~/.config/halbert/` | User configuration |
+| **Data** | `~/.local/share/halbert/` | Persistent data |
+| **State** | `~/.local/state/halbert/` | Runtime state |
+| **Logs** | `~/.local/state/halbert/log/` | Application logs |
 
 ### Key Configuration Files
 
@@ -326,7 +326,7 @@ System Events (journald, hwmon, configs)
 |---------|---------|
 | **Ollama** | Local LLM inference |
 
-Cerebric runs entirely locally. No external API calls are required for core functionality.
+Halbert runs entirely locally. No external API calls are required for core functionality.
 
 ---
 

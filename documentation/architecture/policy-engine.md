@@ -1,15 +1,15 @@
 # Policy Engine
 
-Controls which actions Cerebric can perform and under what conditions.
+Controls which actions Halbert can perform and under what conditions.
 
-**Code**: `cerebric_core/cerebric_core/policy/`
+**Code**: `halbert_core/halbert_core/policy/`
 
 ---
 
 ## Configuration
 
 ```yaml
-# ~/.config/cerebric/policy.yml
+# ~/.config/halbert/policy.yml
 
 defaults:
   dry_run: true
@@ -46,7 +46,7 @@ rules:
 ## Evaluation
 
 ```python
-from cerebric_core.cerebric_core.policy.engine import decide
+from halbert_core.halbert_core.policy.engine import decide
 
 decision = decide(policy, tool_name="restart_service", is_apply=True)
 
@@ -63,10 +63,10 @@ elif decision.require_approval:
 
 ```bash
 # Show current policy
-python Cerebric/main.py policy-show
+python Halbert/main.py policy-show
 
 # Evaluate a decision
-python Cerebric/main.py policy-eval --tool restart_service --inputs inputs.json
+python Halbert/main.py policy-eval --tool restart_service --inputs inputs.json
 ```
 
 ---

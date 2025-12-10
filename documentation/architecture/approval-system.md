@@ -2,7 +2,7 @@
 
 Human-in-the-loop confirmation for high-risk actions.
 
-**Code**: `cerebric_core/cerebric_core/approval/`
+**Code**: `halbert_core/halbert_core/approval/`
 
 ---
 
@@ -54,10 +54,10 @@ ApprovalRequest(
 
 ```bash
 # List pending
-python Cerebric/main.py approval-list
+python Halbert/main.py approval-list
 
 # View history
-python Cerebric/main.py approval-history --limit 20
+python Halbert/main.py approval-history --limit 20
 ```
 
 ---
@@ -67,7 +67,7 @@ python Cerebric/main.py approval-history --limit 20
 Before requesting approval, actions run in dry-run mode:
 
 ```python
-from cerebric_core.cerebric_core.approval.simulator import DryRunSimulator
+from halbert_core.halbert_core.approval.simulator import DryRunSimulator
 
 sim = DryRunSimulator()
 preview = sim.simulate(action)

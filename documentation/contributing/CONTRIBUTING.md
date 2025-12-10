@@ -1,6 +1,6 @@
-# Contributing to Cerebric
+# Contributing to Halbert
 
-Thank you for your interest in contributing to Cerebric! This document provides guidelines for contributing.
+Thank you for your interest in contributing to Halbert! This document provides guidelines for contributing.
 
 ---
 
@@ -9,8 +9,8 @@ Thank you for your interest in contributing to Cerebric! This document provides 
 ### 1. Fork and Clone
 
 ```bash
-git clone https://github.com/yourusername/cerebric.git
-cd cerebric
+git clone https://github.com/yourusername/halbert.git
+cd halbert
 ```
 
 ### 2. Set Up Development Environment
@@ -21,7 +21,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 # Install in development mode
-pip install -e cerebric_core/
+pip install -e halbert_core/
 
 # Install dev dependencies
 pip install pytest pytest-cov black ruff mypy
@@ -34,7 +34,7 @@ pip install pytest pytest-cov black ruff mypy
 pytest tests/
 
 # Check CLI works
-python Cerebric/main.py info
+python Halbert/main.py info
 ```
 
 ---
@@ -81,10 +81,10 @@ refactor: extract common tool patterns
 
 ```bash
 # Format code
-black cerebric_core/ Cerebric/ tests/
+black halbert_core/ Halbert/ tests/
 
 # Check linting
-ruff check cerebric_core/ Cerebric/ tests/
+ruff check halbert_core/ Halbert/ tests/
 ```
 
 ### Naming Conventions
@@ -110,7 +110,7 @@ import yaml
 from pydantic import BaseModel
 
 # Local
-from cerebric_core.cerebric_core.utils.paths import data_subdir
+from halbert_core.halbert_core.utils.paths import data_subdir
 ```
 
 ---
@@ -119,7 +119,7 @@ from cerebric_core.cerebric_core.utils.paths import data_subdir
 
 ### Adding a New Tool
 
-1. Create `cerebric_core/cerebric_core/tools/my_tool.py`:
+1. Create `halbert_core/halbert_core/tools/my_tool.py`:
 
 ```python
 from .base import BaseTool, ToolResult
@@ -149,20 +149,20 @@ class MyTool(BaseTool):
         )
 ```
 
-2. Add CLI command in `Cerebric/main.py`
+2. Add CLI command in `Halbert/main.py`
 3. Add tests in `tests/test_my_tool.py`
 4. Update documentation
 
 ### Adding a New Ingestion Source
 
-1. Create `cerebric_core/cerebric_core/ingestion/my_source.py`
+1. Create `halbert_core/halbert_core/ingestion/my_source.py`
 2. Implement the standard event schema
 3. Add to ingestion runner
 4. Update `ingestion.yml` schema
 
 ### Adding a Dashboard Feature
 
-1. Add API route in `cerebric_core/cerebric_core/dashboard/routes/`
+1. Add API route in `halbert_core/halbert_core/dashboard/routes/`
 2. Add React component in `dashboard/frontend/src/`
 3. Update API documentation
 
@@ -180,14 +180,14 @@ pytest tests/
 pytest tests/test_memory.py
 
 # With coverage
-pytest tests/ --cov=cerebric_core --cov-report=html
+pytest tests/ --cov=halbert_core --cov-report=html
 ```
 
 ### Writing Tests
 
 ```python
 import pytest
-from cerebric_core.cerebric_core.memory.retrieval import MemoryRetrieval
+from halbert_core.halbert_core.memory.retrieval import MemoryRetrieval
 
 def test_memory_retrieval_basic():
     """Test basic memory retrieval."""
@@ -239,7 +239,7 @@ def test_memory_retrieval_empty_query():
 ### Reporting Bugs
 
 Include:
-- Cerebric version (from `git log -1`)
+- Halbert version (from `git log -1`)
 - Python version
 - OS and version
 - Steps to reproduce

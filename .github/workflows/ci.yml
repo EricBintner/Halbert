@@ -18,6 +18,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest
           # Install package with all dependencies
-          pip install -e cerebric_core/
+          pip install -e halbert_core/
       - name: Run tests
         run: pytest tests/ -q --ignore=tests/rag/

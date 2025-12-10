@@ -6,11 +6,11 @@ Simple test runner for platform abstraction (no pytest required).
 import sys
 import os
 
-# Add cerebric_core to path
-cerebric_path = os.path.join(os.path.dirname(__file__), '../../cerebric_core')
-sys.path.insert(0, cerebric_path)
+# Add halbert_core to path
+halbert_path = os.path.join(os.path.dirname(__file__), '../../halbert_core')
+sys.path.insert(0, halbert_path)
 
-from cerebric_core.platform import (
+from halbert_core.platform import (
     get_platform_bridge,
     reset_platform_cache,
     PlatformBridge,

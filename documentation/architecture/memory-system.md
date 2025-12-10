@@ -1,6 +1,6 @@
 # Memory System
 
-Cerebric's memory system provides persistent, queryable knowledge storage using ChromaDB as a vector database.
+Halbert's memory system provides persistent, queryable knowledge storage using ChromaDB as a vector database.
 
 ---
 
@@ -8,7 +8,7 @@ Cerebric's memory system provides persistent, queryable knowledge storage using 
 
 The memory system serves as the LLM's "biography" - its accumulated knowledge about the system it manages.
 
-**Code**: `cerebric_core/cerebric_core/memory/`
+**Code**: `halbert_core/halbert_core/memory/`
 
 ---
 
@@ -56,7 +56,7 @@ The memory system serves as the LLM's "biography" - its accumulated knowledge ab
 Static knowledge about the system.
 
 ```python
-from cerebric_core.cerebric_core.memory.writer import MemoryWriter
+from halbert_core.halbert_core.memory.writer import MemoryWriter
 
 writer = MemoryWriter()
 
@@ -90,7 +90,7 @@ writer.write_action_outcome({
 ## Querying Memory
 
 ```python
-from cerebric_core.cerebric_core.memory.retrieval import MemoryRetrieval
+from halbert_core.halbert_core.memory.retrieval import MemoryRetrieval
 
 mem = MemoryRetrieval()
 
@@ -112,16 +112,16 @@ for result in results:
 
 ```bash
 # Query memory
-python Cerebric/main.py memory-query \
+python Halbert/main.py memory-query \
   --subdir core \
   --query "docker errors" \
   --limit 10
 
 # Show statistics
-python Cerebric/main.py memory-stats
+python Halbert/main.py memory-stats
 
 # Write test entry
-python Cerebric/main.py memory-write \
+python Halbert/main.py memory-write \
   --subdir core \
   --entry '{"type": "test", "content": "Test entry"}'
 ```
@@ -131,7 +131,7 @@ python Cerebric/main.py memory-write \
 ## Storage Location
 
 ```
-~/.local/share/cerebric/
+~/.local/share/halbert/
 ├── index/                  # ChromaDB database
 │   ├── chroma.sqlite3
 │   └── ...
@@ -152,7 +152,7 @@ Memory uses sentence-transformers for embeddings:
 model = SentenceTransformer('all-MiniLM-L6-v2')
 ```
 
-Model is cached at `~/.cache/cerebric/models/`.
+Model is cached at `~/.cache/halbert/models/`.
 
 ---
 
@@ -191,7 +191,7 @@ No explicit configuration required. Memory uses XDG paths by default.
 To override:
 
 ```bash
-export Cerebric_DATA_DIR=/custom/path
+export Halbert_DATA_DIR=/custom/path
 ```
 
 ---
@@ -200,7 +200,7 @@ export Cerebric_DATA_DIR=/custom/path
 
 ### Index Class
 
-**Code**: `cerebric_core/cerebric_core/index/chroma_index.py`
+**Code**: `halbert_core/halbert_core/index/chroma_index.py`
 
 ```python
 class Index:

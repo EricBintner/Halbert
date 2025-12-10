@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cerebric Phase 5 Demo Script
+Halbert Phase 5 Demo Script
 
 Demonstrates all Phase 5 features:
 1. Multi-model routing
@@ -23,7 +23,7 @@ def demo_basic_routing():
     print("="*70)
     
     try:
-        from cerebric_core.model import ModelRouter, TaskType
+        from halbert_core.model import ModelRouter, TaskType
         
         router = ModelRouter()
         
@@ -64,7 +64,7 @@ def demo_context_handoff():
     print("="*70)
     
     try:
-        from cerebric_core.model import ModelRouter, TaskType
+        from halbert_core.model import ModelRouter, TaskType
         
         router = ModelRouter()
         
@@ -117,7 +117,7 @@ def demo_hardware_detection():
     print("="*70)
     
     try:
-        from cerebric_core.model import HardwareDetector
+        from halbert_core.model import HardwareDetector
         
         detector = HardwareDetector()
         hardware = detector.detect()
@@ -169,7 +169,7 @@ def demo_performance_monitoring():
     print("="*70)
     
     try:
-        from cerebric_core.model import ModelRouter, TaskType
+        from halbert_core.model import ModelRouter, TaskType
         
         router = ModelRouter()
         
@@ -225,7 +225,7 @@ def demo_lora_info():
     print("="*70)
     
     try:
-        from cerebric_core.model import PersonaTrainingDataGenerator
+        from halbert_core.model import PersonaTrainingDataGenerator
         import platform
         
         # Check platform
@@ -249,9 +249,9 @@ def demo_lora_info():
             print(f"  • {persona}")
         
         print("\n💡 LoRA Training Workflow:")
-        print("  1. Prepare data: cerebric mlx-prepare-training-data --persona friend")
-        print("  2. Train LoRA: cerebric mlx-train-lora --persona friend --data friend.jsonl")
-        print("  3. Load LoRA: cerebric mlx-load-lora --persona friend")
+        print("  1. Prepare data: halbert mlx-prepare-training-data --persona friend")
+        print("  2. Train LoRA: halbert mlx-train-lora --persona friend --data friend.jsonl")
+        print("  3. Load LoRA: halbert mlx-load-lora --persona friend")
         print("  4. Hot-swap: <2s persona switching!")
         
         print("\n✅ Demo 5 complete!")
@@ -267,7 +267,7 @@ def demo_lora_info():
 def main():
     """Run all demos"""
     print("\n" + "="*70)
-    print("  Cerebric Phase 5: Multi-Model System Demo")
+    print("  Halbert Phase 5: Multi-Model System Demo")
     print("="*70)
     
     demos = [

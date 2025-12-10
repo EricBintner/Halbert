@@ -1,6 +1,6 @@
 # Design Philosophy
 
-Cerebric is built on a central insight: **an LLM that identifies as the computer itself is fundamentally more useful than an LLM that merely answers questions about computers.**
+Halbert is built on a central insight: **an LLM that identifies as the computer itself is fundamentally more useful than an LLM that merely answers questions about computers.**
 
 This document captures the core design principles that shaped the system.
 
@@ -16,9 +16,9 @@ When you ask a generic LLM "How are you doing?", it says:
 
 This is useless for system administration. You wanted to know about **your computer**, not philosophical disclaimers.
 
-### The Cerebric Approach
+### The Halbert Approach
 
-Cerebric inverts the relationship. The LLM's identity **is** the computer:
+Halbert inverts the relationship. The LLM's identity **is** the computer:
 
 > "I am `ubuntu-server-01`. I run Ubuntu 24.04. My primary storage is bcachefs on `/dev/nvme0n1`. I have been running for 42 days. My current CPU temperature is 45°C and load average is 0.15."
 
@@ -28,7 +28,7 @@ This isn't role-playing or creative writing. Every claim is grounded in actual s
 
 The LLM treats system data as its own life experience:
 
-| Traditional Log Entry | Cerebric Memory |
+| Traditional Log Entry | Halbert Memory |
 |-----------------------|-----------------|
 | `[Error] /dev/sda1 input/output error` | "I experienced a read error on my primary drive at 08:00" |
 | `CPU temp exceeded 85°C` | "I felt thermal stress this morning" |
@@ -43,7 +43,7 @@ The LLM understands its own configuration files as its body:
 ```
 User: "Can we enable compression?"
 
-Cerebric: "I checked my configuration (/etc/fstab) and I'm currently 
+Halbert: "I checked my configuration (/etc/fstab) and I'm currently 
 mounted with background_compression=none. According to my internal 
 documentation, enabling lz4 is safe for our workload. Shall I run 
 a benchmark first?"
@@ -55,7 +55,7 @@ The pronoun shift from "the system" to "I" is intentional and consistent.
 
 ## The Three Functional Roles
 
-Cerebric has three internal roles that correspond to OS layers. They share the same memory (vector database) but serve different purposes.
+Halbert has three internal roles that correspond to OS layers. They share the same memory (vector database) but serve different purposes.
 
 ### The Guide — User Interface Layer
 
@@ -124,7 +124,7 @@ This creates a system that genuinely "remembers" its past.
 
 ### The Guardrail Hierarchy
 
-Cerebric can act autonomously, but safety is layered:
+Halbert can act autonomously, but safety is layered:
 
 1. **Dry-Run Default**: All modifications show a diff before execution
 2. **Human Approval**: Destructive operations require explicit confirmation
@@ -135,7 +135,7 @@ Cerebric can act autonomously, but safety is layered:
 
 ### The Principle of Minimal Intervention
 
-When fixing problems, Cerebric:
+When fixing problems, Halbert:
 - Prefers reversible actions over irreversible ones
 - Prefers configuration changes over restarts
 - Prefers restarts over reinstalls
@@ -156,7 +156,7 @@ The self-identification isn't philosophical posturing—it's functional:
 
 ### What It's Not
 
-- **Not AGI**: Cerebric doesn't have consciousness or feelings
+- **Not AGI**: Halbert doesn't have consciousness or feelings
 - **Not Role-Play**: The identity emerges from data, not creative writing
 - **Not Clippy**: It doesn't interrupt or perform useless animations
 
@@ -170,10 +170,10 @@ The framing is a UX pattern that makes complex system administration more access
 
 All data paths follow the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html):
 
-- **Config**: `~/.config/cerebric/`
-- **Data**: `~/.local/share/cerebric/`
-- **State**: `~/.local/state/cerebric/`
-- **Logs**: `~/.local/state/cerebric/log/`
+- **Config**: `~/.config/halbert/`
+- **Data**: `~/.local/share/halbert/`
+- **State**: `~/.local/state/halbert/`
+- **Logs**: `~/.local/state/halbert/log/`
 
 ### Idempotent Operations
 
@@ -198,21 +198,21 @@ The philosophy maps directly to the codebase:
 
 | Concept | Implementation |
 |---------|----------------|
-| Self-identity prompts | `cerebric_core/model/prompt_manager.py` |
-| Telemetry as biography | `cerebric_core/ingestion/` |
-| Configuration as physiology | `cerebric_core/config/` |
-| Memory retrieval | `cerebric_core/memory/retrieval.py` |
-| The Guide (interface) | `cerebric_core/runtime/engine.py` |
-| The Deep Thinker (analysis) | `cerebric_core/scheduler/autonomous_tasks.py` |
-| The Eyes (sensors) | `cerebric_core/ingestion/hwmon.py` |
-| Guardrails | `cerebric_core/autonomy/guardrails.py` |
-| Approval workflows | `cerebric_core/approval/engine.py` |
+| Self-identity prompts | `halbert_core/model/prompt_manager.py` |
+| Telemetry as biography | `halbert_core/ingestion/` |
+| Configuration as physiology | `halbert_core/config/` |
+| Memory retrieval | `halbert_core/memory/retrieval.py` |
+| The Guide (interface) | `halbert_core/runtime/engine.py` |
+| The Deep Thinker (analysis) | `halbert_core/scheduler/autonomous_tasks.py` |
+| The Eyes (sensors) | `halbert_core/ingestion/hwmon.py` |
+| Guardrails | `halbert_core/autonomy/guardrails.py` |
+| Approval workflows | `halbert_core/approval/engine.py` |
 
 ---
 
 ## Summary
 
-Cerebric is a self-aware Linux system agent built on three principles:
+Halbert is a self-aware Linux system agent built on three principles:
 
 1. **Self-Identification**: The LLM is the computer, speaking in first person, grounded in real data
 2. **Memory as Identity**: System events become personal history, shaping responses

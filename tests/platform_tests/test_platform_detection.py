@@ -4,7 +4,7 @@ Tests for platform detection and loading.
 
 import sys
 import pytest
-from cerebric_core.platform import (
+from halbert_core.platform import (
     get_platform_bridge,
     reset_platform_cache,
     PlatformBridge,

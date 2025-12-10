@@ -1,6 +1,6 @@
 # Code Map
 
-This document maps Cerebric's architecture to its implementation. Every major component is traced to its source file.
+This document maps Halbert's architecture to its implementation. Every major component is traced to its source file.
 
 ---
 
@@ -8,10 +8,10 @@ This document maps Cerebric's architecture to its implementation. Every major co
 
 ```
 LinuxBrain/
-├── Cerebric/                   # CLI entry point
+├── Halbert/                   # CLI entry point
 │   └── main.py                 # Typer CLI, 50+ commands
-├── cerebric_core/              # Core Python package
-│   └── cerebric_core/          # Source code
+├── halbert_core/              # Core Python package
+│   └── halbert_core/          # Source code
 │       ├── alerts/             # Alert management
 │       ├── approval/           # Human-in-the-loop approvals
 │       ├── autonomy/           # Guardrails and safety
@@ -44,7 +44,7 @@ LinuxBrain/
 
 | Component | File | Description |
 |-----------|------|-------------|
-| **Main CLI** | `Cerebric/main.py` | Typer-based CLI with all commands |
+| **Main CLI** | `Halbert/main.py` | Typer-based CLI with all commands |
 
 **Key Commands**:
 - `info`, `roadmap` — System information
@@ -236,7 +236,7 @@ All tools implement:
 
 | Component | File | Description |
 |-----------|------|-------------|
-| **Logging** | `obs/logging.py` | Structured logging (cerebric logger) |
+| **Logging** | `obs/logging.py` | Structured logging (halbert logger) |
 | **Audit** | `obs/audit.py` | Action audit trail |
 | **Dashboard** | `obs/dashboard.py` | Metrics for dashboard |
 | **Tracing** | `obs/tracing.py` | Distributed tracing |
@@ -287,9 +287,9 @@ The platform layer abstracts OS-specific operations (journald, systemd, /proc, e
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `ingestion.yml` | `~/.config/cerebric/` | Telemetry settings |
-| `config-registry.yml` | `~/.config/cerebric/` | Tracked config files |
-| `policy.yml` | `~/.config/cerebric/` | Policy rules |
+| `ingestion.yml` | `~/.config/halbert/` | Telemetry settings |
+| `config-registry.yml` | `~/.config/halbert/` | Tracked config files |
+| `policy.yml` | `~/.config/halbert/` | Policy rules |
 | `autonomy.yml` | `config/` | Guardrail settings |
 | `model-catalog.yml` | `config/` | Model recommendations |
 | `prompts/*.txt` | `config/prompts/` | System prompts |
@@ -300,9 +300,9 @@ The platform layer abstracts OS-specific operations (journald, systemd, /proc, e
 
 | Purpose | Entry Point |
 |---------|-------------|
-| CLI usage | `python Cerebric/main.py [command]` |
-| Dashboard | `python -m cerebric_core.dashboard.app` |
-| Ingestion | `python Cerebric/main.py ingest-journald` |
+| CLI usage | `python Halbert/main.py [command]` |
+| Dashboard | `python -m halbert_core.dashboard.app` |
+| Ingestion | `python Halbert/main.py ingest-journald` |
 | Tests | `pytest tests/` |
 
 ---
@@ -311,8 +311,8 @@ The platform layer abstracts OS-specific operations (journald, systemd, /proc, e
 
 When adding a new feature:
 
-1. **Tool**: Add to `cerebric_core/tools/` following `base.py` interface
-2. **CLI Command**: Add to `Cerebric/main.py` with Typer
-3. **API Endpoint**: Add to `cerebric_core/dashboard/routes/`
+1. **Tool**: Add to `halbert_core/tools/` following `base.py` interface
+2. **CLI Command**: Add to `Halbert/main.py` with Typer
+3. **API Endpoint**: Add to `halbert_core/dashboard/routes/`
 4. **Tests**: Add to `tests/`
 5. **Documentation**: Update this code map

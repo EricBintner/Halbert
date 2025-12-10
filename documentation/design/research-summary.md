@@ -1,6 +1,6 @@
 # Research Summary
 
-This document condenses the research that informed Cerebric's design. The full research (79 user scenarios, 120+ tools analyzed, forum deep-dives) is distilled here into the key insights that shaped the architecture.
+This document condenses the research that informed Halbert's design. The full research (79 user scenarios, 120+ tools analyzed, forum deep-dives) is distilled here into the key insights that shaped the architecture.
 
 ---
 
@@ -27,7 +27,7 @@ User sees: "Job for docker.service failed because the control process exited"
 Actual cause: /var partition is 100% full, journald can't write
 ```
 
-**Design Implication**: Cerebric should explain systemd errors in plain English and trace root causes.
+**Design Implication**: Halbert should explain systemd errors in plain English and trace root causes.
 
 ---
 
@@ -44,7 +44,7 @@ Actual cause: /var partition is 100% full, journald can't write
 
 **The Problem**: Users don't know WHERE space went, just that it's gone.
 
-**Design Implication**: Cerebric should categorize disk usage and suggest safe cleanup.
+**Design Implication**: Halbert should categorize disk usage and suggest safe cleanup.
 
 ---
 
@@ -61,7 +61,7 @@ User: "My CPU is barely used, why is everything slow?"
 Answer: iowait is 15%, disk is the bottleneck
 ```
 
-**Design Implication**: Cerebric should surface I/O wait prominently and explain it.
+**Design Implication**: Halbert should surface I/O wait prominently and explain it.
 
 ---
 
@@ -78,7 +78,7 @@ sudo kill -9 $(pgrep apt)
 # Result: Corrupted dpkg database
 ```
 
-**Design Implication**: Cerebric should explain locks, show progress, and warn against killing.
+**Design Implication**: Halbert should explain locks, show progress, and warn against killing.
 
 ---
 
@@ -90,7 +90,7 @@ sudo kill -9 $(pgrep apt)
 - External drives get disconnected (backups skipped)
 - Nobody tests restores until disaster strikes
 
-**Design Implication**: Cerebric should proactively validate backups and alert on failures.
+**Design Implication**: Halbert should proactively validate backups and alert on failures.
 
 ---
 
@@ -101,7 +101,7 @@ sudo kill -9 $(pgrep apt)
 - What did I change and when?
 - "It worked before I upgraded"
 
-**Design Implication**: Cerebric should track config changes with diffs and timestamps.
+**Design Implication**: Halbert should track config changes with diffs and timestamps.
 
 ---
 
@@ -142,7 +142,7 @@ Research identified ~120 tools needed across categories:
 4. Automates common fixes safely
 5. Learns from past issues
 
-This gap defined Cerebric's value proposition.
+This gap defined Halbert's value proposition.
 
 ---
 
@@ -203,4 +203,4 @@ The research validated three core insights:
 
 3. **Safety and reversibility** are critical — users make dangerous mistakes when panicking
 
-These insights directly shaped Cerebric's architecture: self-identifying LLM, grounded responses via RAG, and layered safety controls.
+These insights directly shaped Halbert's architecture: self-identifying LLM, grounded responses via RAG, and layered safety controls.

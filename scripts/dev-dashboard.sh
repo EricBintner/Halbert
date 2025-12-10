@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cerebric Dashboard - Development Launcher
+# Halbert Dashboard - Development Launcher
 # Starts both backend API and Tauri frontend app
 
 set -e
@@ -48,8 +48,8 @@ fi
 
 # Start backend
 echo -e "${GREEN}Starting backend API on http://localhost:8000${NC}"
-cd "$PROJECT_ROOT/cerebric_core"
-python -m uvicorn cerebric_core.dashboard.app:app \
+cd "$PROJECT_ROOT/halbert_core"
+python -m uvicorn halbert_core.dashboard.app:app \
     --host 127.0.0.1 \
     --port 8000 \
     --reload \
@@ -68,7 +68,7 @@ done
 
 # Start Tauri frontend
 echo -e "${GREEN}Starting Tauri desktop app...${NC}"
-cd "$PROJECT_ROOT/cerebric_core/cerebric_core/dashboard/frontend"
+cd "$PROJECT_ROOT/halbert_core/halbert_core/dashboard/frontend"
 
 # Check if npm dependencies are installed
 if [ ! -d "node_modules" ]; then

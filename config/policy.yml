@@ -1,7 +1,7 @@
-# Cerebric Policy (Phase 2)
+# Halbert Policy (Phase 2)
 # Controls whether side-effecting tools may apply changes.
-# Place this file under /etc/cerebric/policy.yml for system scope, or
-# $XDG_CONFIG_HOME/cerebric/policy.yml for user scope.
+# Place this file under /etc/halbert/policy.yml for system scope, or
+# $XDG_CONFIG_HOME/halbert/policy.yml for user scope.
 
 # If true, tools are allowed by default unless overridden below.
 # If false, tools are denied by default unless explicitly allowed.

@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 def test_guardrail_imports():
     """Test that scheduler can import guardrail modules."""
     try:
-        from cerebric_core.autonomy import (
+        from halbert_core.autonomy import (
             GuardrailEnforcer,
             GuardrailViolation,
             BudgetTracker,
@@ -31,7 +31,7 @@ def test_guardrail_imports():
 def test_guardrail_initialization():
     """Test that guardrails can be initialized."""
     try:
-        from cerebric_core.autonomy import GuardrailEnforcer
+        from halbert_core.autonomy import GuardrailEnforcer
         
         enforcer = GuardrailEnforcer()
         assert enforcer.config is not None
@@ -53,7 +53,7 @@ def test_guardrail_initialization():
 def test_confidence_check():
     """Test confidence checking logic."""
     try:
-        from cerebric_core.autonomy import GuardrailEnforcer, GuardrailViolation
+        from halbert_core.autonomy import GuardrailEnforcer, GuardrailViolation
         
         enforcer = GuardrailEnforcer()
         
@@ -88,7 +88,7 @@ def test_confidence_check():
 def test_budget_tracking():
     """Test budget tracking."""
     try:
-        from cerebric_core.autonomy import BudgetTracker
+        from halbert_core.autonomy import BudgetTracker
         
         tracker = BudgetTracker(
             cpu_percent_max=90,
@@ -124,7 +124,7 @@ def test_budget_tracking():
 def test_anomaly_detection():
     """Test anomaly detection."""
     try:
-        from cerebric_core.autonomy import AnomalyDetector, AnomalyDetected
+        from halbert_core.autonomy import AnomalyDetector, AnomalyDetected
         
         config = {
             "cpu_spike_threshold": 90,
@@ -165,7 +165,7 @@ def test_anomaly_detection():
 def test_safe_mode_lifecycle():
     """Test safe-mode enter/exit."""
     try:
-        from cerebric_core.autonomy import GuardrailEnforcer
+        from halbert_core.autonomy import GuardrailEnforcer
         
         enforcer = GuardrailEnforcer()
         

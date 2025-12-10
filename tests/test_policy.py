@@ -1,7 +1,7 @@
 import os
-from cerebric_core.tools.write_config import WriteConfig
-from cerebric_core.tools.schedule_cron import ScheduleCron
-from cerebric_core.tools.base import ToolRequest
+from halbert_core.tools.write_config import WriteConfig
+from halbert_core.tools.schedule_cron import ScheduleCron
+from halbert_core.tools.base import ToolRequest
 
 
 def _deny_policy_yaml():
@@ -20,8 +20,8 @@ def test_policy_denies_write_config_apply(tmp_path, monkeypatch):
     cfgdir = tmp_path / "conf"
     cfgdir.mkdir()
     (cfgdir / "policy.yml").write_text(_deny_policy_yaml(), encoding="utf-8")
-    monkeypatch.setenv("Cerebric_CONFIG_DIR", str(cfgdir))
-    monkeypatch.setenv("Cerebric_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("Halbert_CONFIG_DIR", str(cfgdir))
+    monkeypatch.setenv("Halbert_LOG_DIR", str(tmp_path / "logs"))
 
     tool = WriteConfig()
     req = ToolRequest(tool=tool.name, request_id="r1", dry_run=False, confirm=True, inputs={
@@ -38,8 +38,8 @@ def test_policy_denies_schedule_cron_apply(tmp_path, monkeypatch):
     cfgdir = tmp_path / "conf"
     cfgdir.mkdir()
     (cfgdir / "policy.yml").write_text(_deny_policy_yaml(), encoding="utf-8")
-    monkeypatch.setenv("Cerebric_CONFIG_DIR", str(cfgdir))
-    monkeypatch.setenv("Cerebric_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("Halbert_CONFIG_DIR", str(cfgdir))
+    monkeypatch.setenv("Halbert_LOG_DIR", str(tmp_path / "logs"))
 
     tool = ScheduleCron()
     req = ToolRequest(tool=tool.name, request_id="r2", dry_run=False, confirm=True, inputs={

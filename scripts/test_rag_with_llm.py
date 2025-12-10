@@ -6,15 +6,15 @@ Test RAG system with LLM integration.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'cerebric_core'))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'halbert_core'))
 
-from cerebric_core.rag import RAGPipeline
-from cerebric_core.rag.llm import OllamaLLM, LLMConfig
+from halbert_core.rag import RAGPipeline
+from halbert_core.rag.llm import OllamaLLM, LLMConfig
 
 
 def test_rag_with_llm():
     print("="*70)
-    print("Cerebric RAG + LLM DEMO")
+    print("Halbert RAG + LLM DEMO")
     print("="*70)
     
     # Initialize RAG
@@ -82,7 +82,7 @@ def test_rag_with_llm():
 def test_interactive():
     """Interactive mode with LLM."""
     print("="*70)
-    print("Cerebric RAG + LLM: Interactive Mode")
+    print("Halbert RAG + LLM: Interactive Mode")
     print("="*70)
     print("\nType your questions (or 'quit' to exit)\n")
     

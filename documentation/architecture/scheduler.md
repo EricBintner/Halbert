@@ -2,7 +2,7 @@
 
 Manages scheduled and autonomous task execution.
 
-**Code**: `cerebric_core/cerebric_core/scheduler/`
+**Code**: `halbert_core/halbert_core/scheduler/`
 
 ---
 
@@ -34,7 +34,7 @@ Job(
 
 ```bash
 # Add a job
-python Cerebric/main.py scheduler-add \
+python Halbert/main.py scheduler-add \
   --id nightly-health \
   --task health_check \
   --schedule "0 2 * * *" \
@@ -42,10 +42,10 @@ python Cerebric/main.py scheduler-add \
   --inputs inputs.json
 
 # List jobs
-python Cerebric/main.py scheduler-list
+python Halbert/main.py scheduler-list
 
 # Cancel
-python Cerebric/main.py scheduler-cancel --id nightly-health
+python Halbert/main.py scheduler-cancel --id nightly-health
 ```
 
 ---
@@ -54,16 +54,16 @@ python Cerebric/main.py scheduler-cancel --id nightly-health
 
 ```bash
 # Schedule cron job
-python Cerebric/main.py executor-schedule \
+python Halbert/main.py executor-schedule \
   --job-id daily-check \
   --cron '{"hour": 2}' \
   --daemon
 
 # List scheduled
-python Cerebric/main.py executor-list
+python Halbert/main.py executor-list
 
 # Cancel
-python Cerebric/main.py executor-cancel --job-id daily-check
+python Halbert/main.py executor-cancel --job-id daily-check
 ```
 
 ---

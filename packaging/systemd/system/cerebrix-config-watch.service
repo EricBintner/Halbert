@@ -1,17 +1,17 @@
 [Unit]
-Description=Cerebric Config Watcher (snapshots on changes)
+Description=Halbert Config Watcher (snapshots on changes)
 After=local-fs.target
 
 [Service]
 Type=simple
 DynamicUser=yes
-StateDirectory=cerebric
-LogsDirectory=cerebric
-ConfigurationDirectory=cerebric
-Environment=Cerebric_DATA_DIR=/var/lib/cerebric
-Environment=Cerebric_LOG_DIR=/var/log/cerebric
+StateDirectory=halbert
+LogsDirectory=halbert
+ConfigurationDirectory=halbert
+Environment=Halbert_DATA_DIR=/var/lib/halbert
+Environment=Halbert_LOG_DIR=/var/log/halbert
 # Adjust ExecStart to your install path or packaged CLI
-ExecStart=/usr/bin/env python3 /opt/cerebric/Cerebric/main.py watch-configs --interval 300
+ExecStart=/usr/bin/env python3 /opt/halbert/Halbert/main.py watch-configs --interval 300
 Restart=always
 RestartSec=5s
 NoNewPrivileges=yes

@@ -1,6 +1,6 @@
 # License
 
-Cerebric is licensed under the **GNU General Public License v3.0** (GPL-3.0).
+Halbert is licensed under the **GNU General Public License v3.0** (GPL-3.0).
 
 ## Summary
 
@@ -27,7 +27,7 @@ The complete GPL-3.0 license text is available at:
 
 ## For Contributors
 
-By contributing to Cerebric, you agree that your contributions will be licensed under GPL-3.0.
+By contributing to Halbert, you agree that your contributions will be licensed under GPL-3.0.
 
 ## Why GPL-3.0?
 

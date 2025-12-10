@@ -1,6 +1,6 @@
 # Scripts Directory
 
-**Purpose**: Operational scripts for Cerebric development and deployment
+**Purpose**: Operational scripts for Halbert development and deployment
 
 ---
 

@@ -1,6 +1,6 @@
 # Installation Guide
 
-This guide covers installing Cerebric on Linux systems.
+This guide covers installing Halbert on Linux systems.
 
 ---
 
@@ -27,18 +27,18 @@ This guide covers installing Cerebric on Linux systems.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/cerebric.git
-cd cerebric
+git clone https://github.com/yourusername/halbert.git
+cd halbert
 
 # 2. Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
 # 3. Install the package
-pip install -e cerebric_core/
+pip install -e halbert_core/
 
 # 4. Verify installation
-python Cerebric/main.py --help
+python Halbert/main.py --help
 ```
 
 ---
@@ -47,7 +47,7 @@ python Cerebric/main.py --help
 
 ### Step 1: Install Ollama
 
-Cerebric uses [Ollama](https://ollama.ai/) for local LLM inference.
+Halbert uses [Ollama](https://ollama.ai/) for local LLM inference.
 
 ```bash
 # Install Ollama
@@ -73,11 +73,11 @@ ollama pull llama3.1:70b
 ollama list
 ```
 
-### Step 3: Clone Cerebric
+### Step 3: Clone Halbert
 
 ```bash
-git clone https://github.com/yourusername/cerebric.git
-cd cerebric
+git clone https://github.com/yourusername/halbert.git
+cd halbert
 ```
 
 ### Step 4: Create Virtual Environment
@@ -97,7 +97,7 @@ pip install --upgrade pip
 
 ```bash
 # Install in development mode
-pip install -e cerebric_core/
+pip install -e halbert_core/
 
 # This installs all dependencies including:
 # - langchain, langgraph (orchestration)
@@ -111,25 +111,25 @@ pip install -e cerebric_core/
 
 ```bash
 # Create default configuration
-python Cerebric/main.py init
+python Halbert/main.py init
 
 # This creates:
-# ~/.config/cerebric/          (configuration)
-# ~/.local/share/cerebric/     (data)
-# ~/.local/state/cerebric/     (runtime state)
+# ~/.config/halbert/          (configuration)
+# ~/.local/share/halbert/     (data)
+# ~/.local/state/halbert/     (runtime state)
 ```
 
 ### Step 7: Verify Installation
 
 ```bash
 # Check CLI works
-python Cerebric/main.py info
+python Halbert/main.py info
 
 # Test model connection
-python Cerebric/main.py model-status
+python Halbert/main.py model-status
 
 # Run a quick test
-python Cerebric/main.py model-test "Hello, who are you?"
+python Halbert/main.py model-test "Hello, who are you?"
 ```
 
 ---
@@ -138,7 +138,7 @@ python Cerebric/main.py model-test "Hello, who are you?"
 
 ### Model Selection
 
-Edit `~/.config/cerebric/model.yml`:
+Edit `~/.config/halbert/model.yml`:
 
 ```yaml
 default_model: llama3.1:8b
@@ -152,7 +152,7 @@ routing:
 
 ### Ingestion Settings
 
-Edit `~/.config/cerebric/ingestion.yml`:
+Edit `~/.config/halbert/ingestion.yml`:
 
 ```yaml
 journald:
@@ -173,7 +173,7 @@ hwmon:
 
 ### Policy Rules
 
-Edit `~/.config/cerebric/policy.yml`:
+Edit `~/.config/halbert/policy.yml`:
 
 ```yaml
 rules:
@@ -190,27 +190,27 @@ rules:
 
 ---
 
-## Running Cerebric
+## Running Halbert
 
 ### CLI Mode
 
 ```bash
 # Interactive chat
-python Cerebric/main.py chat
+python Halbert/main.py chat
 
 # Single query
-python Cerebric/main.py ask "How's my disk space?"
+python Halbert/main.py ask "How's my disk space?"
 
 # Run specific commands
-python Cerebric/main.py ingest-journald
-python Cerebric/main.py memory-stats
+python Halbert/main.py ingest-journald
+python Halbert/main.py memory-stats
 ```
 
 ### Dashboard Mode
 
 ```bash
 # Start the web dashboard
-python Cerebric/main.py dashboard
+python Halbert/main.py dashboard
 
 # Access at http://localhost:8000
 ```
@@ -219,13 +219,13 @@ python Cerebric/main.py dashboard
 
 ```bash
 # Start as background service
-python Cerebric/main.py daemon start
+python Halbert/main.py daemon start
 
 # Check status
-python Cerebric/main.py daemon status
+python Halbert/main.py daemon status
 
 # Stop
-python Cerebric/main.py daemon stop
+python Halbert/main.py daemon stop
 ```
 
 ---
@@ -294,10 +294,10 @@ sudo usermod -a -G systemd-journal $USER
 
 ```bash
 # Clear the vector database
-rm -rf ~/.local/share/cerebric/index/
+rm -rf ~/.local/share/halbert/index/
 
 # Re-initialize
-python Cerebric/main.py init
+python Halbert/main.py init
 ```
 
 ### Out of Memory
@@ -307,7 +307,7 @@ python Cerebric/main.py init
 ollama pull llama3.1:8b-q4_0  # 4-bit quantized, ~2GB
 
 # Update config
-echo "default_model: llama3.1:8b-q4_0" >> ~/.config/cerebric/model.yml
+echo "default_model: llama3.1:8b-q4_0" >> ~/.config/halbert/model.yml
 ```
 
 ---
@@ -316,11 +316,11 @@ echo "default_model: llama3.1:8b-q4_0" >> ~/.config/cerebric/model.yml
 
 ```bash
 # Pull latest changes
-cd cerebric
+cd halbert
 git pull
 
 # Update dependencies
-pip install -e cerebric_core/ --upgrade
+pip install -e halbert_core/ --upgrade
 ```
 
 ---
@@ -329,13 +329,13 @@ pip install -e cerebric_core/ --upgrade
 
 ```bash
 # Remove configuration and data
-rm -rf ~/.config/cerebric
-rm -rf ~/.local/share/cerebric
-rm -rf ~/.local/state/cerebric
+rm -rf ~/.config/halbert
+rm -rf ~/.local/share/halbert
+rm -rf ~/.local/state/halbert
 
 # Remove the repository
 cd ..
-rm -rf cerebric
+rm -rf halbert
 
 # Optionally remove Ollama
 # See: https://ollama.ai/docs/uninstall

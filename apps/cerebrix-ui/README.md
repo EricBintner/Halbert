@@ -1,4 +1,4 @@
-# Cerebric UI (Tauri) — Placeholder
+# Halbert UI (Tauri) — Placeholder
 
 Plan: Tauri + Svelte + xterm.js for Terminal; second window for Dashboard; micro Chat window on notifications.
 

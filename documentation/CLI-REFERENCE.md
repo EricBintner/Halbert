@@ -1,19 +1,19 @@
 # CLI Reference
 
-Complete reference for the Cerebric command-line interface.
+Complete reference for the Halbert command-line interface.
 
 ---
 
 ## Usage
 
 ```bash
-python Cerebric/main.py [command] [options]
+python Halbert/main.py [command] [options]
 ```
 
 Or if installed:
 
 ```bash
-cerebric [command] [options]
+halbert [command] [options]
 ```
 
 ---
@@ -46,7 +46,7 @@ cerebric [command] [options]
 Show product information.
 
 ```bash
-python Cerebric/main.py info
+python Halbert/main.py info
 ```
 
 ### `roadmap`
@@ -54,15 +54,15 @@ python Cerebric/main.py info
 Display the development roadmap.
 
 ```bash
-python Cerebric/main.py roadmap
+python Halbert/main.py roadmap
 ```
 
 ### `show`
 
-Show a project file (relative to `Cerebric/`).
+Show a project file (relative to `Halbert/`).
 
 ```bash
-python Cerebric/main.py show <path>
+python Halbert/main.py show <path>
 ```
 
 ### `show-doc`
@@ -70,7 +70,7 @@ python Cerebric/main.py show <path>
 Show a docs file (relative to `docs/`).
 
 ```bash
-python Cerebric/main.py show-doc Phase1/ROADMAP.md
+python Halbert/main.py show-doc Phase1/ROADMAP.md
 ```
 
 ---
@@ -82,12 +82,12 @@ python Cerebric/main.py show-doc Phase1/ROADMAP.md
 Run journald follower and write events to JSONL.
 
 ```bash
-python Cerebric/main.py ingest-journald [--config PATH] [--schema PATH]
+python Halbert/main.py ingest-journald [--config PATH] [--schema PATH]
 ```
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--config` | Path to ingestion.yml | `~/.config/cerebric/ingestion.yml` |
+| `--config` | Path to ingestion.yml | `~/.config/halbert/ingestion.yml` |
 | `--schema` | Path to schema JSON | `docs/Phase1/schemas/telemetry-event.schema.json` |
 
 ### `ingest-hwmon`
@@ -95,12 +95,12 @@ python Cerebric/main.py ingest-journald [--config PATH] [--schema PATH]
 Poll hardware sensors and write to JSONL.
 
 ```bash
-python Cerebric/main.py ingest-hwmon [--config PATH]
+python Halbert/main.py ingest-hwmon [--config PATH]
 ```
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--config` | Path to ingestion.yml | `~/.config/cerebric/ingestion.yml` |
+| `--config` | Path to ingestion.yml | `~/.config/halbert/ingestion.yml` |
 
 ---
 
@@ -111,24 +111,24 @@ python Cerebric/main.py ingest-hwmon [--config PATH]
 Take a point-in-time snapshot of tracked configuration files.
 
 ```bash
-python Cerebric/main.py snapshot-configs [--manifest PATH]
+python Halbert/main.py snapshot-configs [--manifest PATH]
 ```
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--manifest` | Path to config-registry.yml | `~/.config/cerebric/config-registry.yml` |
+| `--manifest` | Path to config-registry.yml | `~/.config/halbert/config-registry.yml` |
 
 ### `watch-configs`
 
 Continuously watch configuration files and snapshot on changes.
 
 ```bash
-python Cerebric/main.py watch-configs [--manifest PATH] [--interval SECONDS]
+python Halbert/main.py watch-configs [--manifest PATH] [--interval SECONDS]
 ```
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--manifest` | Path to config-registry.yml | `~/.config/cerebric/config-registry.yml` |
+| `--manifest` | Path to config-registry.yml | `~/.config/halbert/config-registry.yml` |
 | `--interval` | Polling interval (fallback) | 600 |
 
 ### `diff-configs`
@@ -136,7 +136,7 @@ python Cerebric/main.py watch-configs [--manifest PATH] [--interval SECONDS]
 Compare two configuration snapshots.
 
 ```bash
-python Cerebric/main.py diff-configs [--prev PATH] [--curr PATH]
+python Halbert/main.py diff-configs [--prev PATH] [--curr PATH]
 ```
 
 Without arguments, compares the two most recent snapshots.
@@ -146,7 +146,7 @@ Without arguments, compares the two most recent snapshots.
 Index configuration records into the vector database.
 
 ```bash
-python Cerebric/main.py index-configs
+python Halbert/main.py index-configs
 ```
 
 ---
@@ -158,7 +158,7 @@ python Cerebric/main.py index-configs
 Query the memory system.
 
 ```bash
-python Cerebric/main.py memory-query --subdir SUBDIR --query "search text" [--limit N] [--json]
+python Halbert/main.py memory-query --subdir SUBDIR --query "search text" [--limit N] [--json]
 ```
 
 | Option | Description | Default |
@@ -173,7 +173,7 @@ python Cerebric/main.py memory-query --subdir SUBDIR --query "search text" [--li
 Show memory system statistics.
 
 ```bash
-python Cerebric/main.py memory-stats
+python Halbert/main.py memory-stats
 ```
 
 ### `memory-write`
@@ -181,7 +181,7 @@ python Cerebric/main.py memory-stats
 Write an entry to memory (for testing).
 
 ```bash
-python Cerebric/main.py memory-write --subdir SUBDIR --entry '{"key": "value"}'
+python Halbert/main.py memory-write --subdir SUBDIR --entry '{"key": "value"}'
 ```
 
 ### `index-query`
@@ -189,7 +189,7 @@ python Cerebric/main.py memory-write --subdir SUBDIR --entry '{"key": "value"}'
 Query the vector index directly.
 
 ```bash
-python Cerebric/main.py index-query "query text" [-k N]
+python Halbert/main.py index-query "query text" [-k N]
 ```
 
 ### `ask`
@@ -197,7 +197,7 @@ python Cerebric/main.py index-query "query text" [-k N]
 Ask a question using RAG + LLM.
 
 ```bash
-python Cerebric/main.py ask "How do I fix a broken apt database?"
+python Halbert/main.py ask "How do I fix a broken apt database?"
 ```
 
 | Option | Description | Default |
@@ -215,7 +215,7 @@ python Cerebric/main.py ask "How do I fix a broken apt database?"
 Show LLM connection and status.
 
 ```bash
-python Cerebric/main.py model-status
+python Halbert/main.py model-status
 ```
 
 ### `model-test`
@@ -223,7 +223,7 @@ python Cerebric/main.py model-status
 Test the model with a prompt.
 
 ```bash
-python Cerebric/main.py model-test --prompt "Hello, who are you?" [--max-tokens N]
+python Halbert/main.py model-test --prompt "Hello, who are you?" [--max-tokens N]
 ```
 
 ### `prompt-show`
@@ -231,7 +231,7 @@ python Cerebric/main.py model-test --prompt "Hello, who are you?" [--max-tokens 
 Display the system prompt for a mode.
 
 ```bash
-python Cerebric/main.py prompt-show [--mode MODE] [--context TEXT]
+python Halbert/main.py prompt-show [--mode MODE] [--context TEXT]
 ```
 
 | Mode | Description |
@@ -247,7 +247,7 @@ python Cerebric/main.py prompt-show [--mode MODE] [--context TEXT]
 Initialize default prompt configuration files.
 
 ```bash
-python Cerebric/main.py prompt-init
+python Halbert/main.py prompt-init
 ```
 
 ---
@@ -259,7 +259,7 @@ python Cerebric/main.py prompt-init
 Display the current policy configuration.
 
 ```bash
-python Cerebric/main.py policy-show
+python Halbert/main.py policy-show
 ```
 
 ### `policy-eval`
@@ -267,7 +267,7 @@ python Cerebric/main.py policy-show
 Evaluate a policy decision for a tool.
 
 ```bash
-python Cerebric/main.py policy-eval --tool TOOL_NAME --inputs PATH_TO_JSON
+python Halbert/main.py policy-eval --tool TOOL_NAME --inputs PATH_TO_JSON
 ```
 
 ---
@@ -279,7 +279,7 @@ python Cerebric/main.py policy-eval --tool TOOL_NAME --inputs PATH_TO_JSON
 Add a job to the scheduler.
 
 ```bash
-python Cerebric/main.py scheduler-add \
+python Halbert/main.py scheduler-add \
   --id JOB_ID \
   --task TASK_NAME \
   --schedule "CRON_EXPR" \
@@ -292,7 +292,7 @@ python Cerebric/main.py scheduler-add \
 List scheduled jobs.
 
 ```bash
-python Cerebric/main.py scheduler-list [--state STATE]
+python Halbert/main.py scheduler-list [--state STATE]
 ```
 
 States: `pending`, `running`, `completed`, `failed`, `cancelled`
@@ -302,7 +302,7 @@ States: `pending`, `running`, `completed`, `failed`, `cancelled`
 Cancel a pending job.
 
 ```bash
-python Cerebric/main.py scheduler-cancel --id JOB_ID
+python Halbert/main.py scheduler-cancel --id JOB_ID
 ```
 
 ---
@@ -314,7 +314,7 @@ python Cerebric/main.py scheduler-cancel --id JOB_ID
 Show executor status.
 
 ```bash
-python Cerebric/main.py executor-status
+python Halbert/main.py executor-status
 ```
 
 ### `executor-schedule`
@@ -322,7 +322,7 @@ python Cerebric/main.py executor-status
 Schedule a cron job.
 
 ```bash
-python Cerebric/main.py executor-schedule \
+python Halbert/main.py executor-schedule \
   --job-id JOB_ID \
   --cron '{"hour": 2, "minute": 0}' \
   [--description TEXT] \
@@ -334,7 +334,7 @@ python Cerebric/main.py executor-schedule \
 List scheduled jobs.
 
 ```bash
-python Cerebric/main.py executor-list
+python Halbert/main.py executor-list
 ```
 
 ### `executor-cancel`
@@ -342,7 +342,7 @@ python Cerebric/main.py executor-list
 Cancel a scheduled job.
 
 ```bash
-python Cerebric/main.py executor-cancel --job-id JOB_ID
+python Halbert/main.py executor-cancel --job-id JOB_ID
 ```
 
 ---
@@ -354,7 +354,7 @@ python Cerebric/main.py executor-cancel --job-id JOB_ID
 List pending approval requests.
 
 ```bash
-python Cerebric/main.py approval-list
+python Halbert/main.py approval-list
 ```
 
 ### `approval-history`
@@ -362,7 +362,7 @@ python Cerebric/main.py approval-list
 Show approval history.
 
 ```bash
-python Cerebric/main.py approval-history [--limit N] [--approved-only]
+python Halbert/main.py approval-history [--limit N] [--approved-only]
 ```
 
 ---
@@ -374,7 +374,7 @@ python Cerebric/main.py approval-history [--limit N] [--approved-only]
 Show guardrail configuration and status.
 
 ```bash
-python Cerebric/main.py autonomy-status
+python Halbert/main.py autonomy-status
 ```
 
 ### `autonomy-pause`
@@ -382,7 +382,7 @@ python Cerebric/main.py autonomy-status
 Activate safe mode (pause all autonomous operations).
 
 ```bash
-python Cerebric/main.py autonomy-pause --reason "maintenance"
+python Halbert/main.py autonomy-pause --reason "maintenance"
 ```
 
 ### `autonomy-resume`
@@ -390,7 +390,7 @@ python Cerebric/main.py autonomy-pause --reason "maintenance"
 Resume autonomous operations.
 
 ```bash
-python Cerebric/main.py autonomy-resume --user USERNAME
+python Halbert/main.py autonomy-resume --user USERNAME
 ```
 
 ### `autonomy-anomalies`
@@ -398,7 +398,7 @@ python Cerebric/main.py autonomy-resume --user USERNAME
 View detected anomalies.
 
 ```bash
-python Cerebric/main.py autonomy-anomalies [--hours N]
+python Halbert/main.py autonomy-anomalies [--hours N]
 ```
 
 ### `autonomy-recovery`
@@ -406,7 +406,7 @@ python Cerebric/main.py autonomy-anomalies [--hours N]
 View recovery action history.
 
 ```bash
-python Cerebric/main.py autonomy-recovery [--limit N]
+python Halbert/main.py autonomy-recovery [--limit N]
 ```
 
 ---
@@ -418,7 +418,7 @@ python Cerebric/main.py autonomy-recovery [--limit N]
 Start the web dashboard.
 
 ```bash
-python Cerebric/main.py dashboard [--host HOST] [--port PORT]
+python Halbert/main.py dashboard [--host HOST] [--port PORT]
 ```
 
 | Option | Description | Default |
@@ -433,7 +433,7 @@ Access at `http://localhost:8000` after starting.
 Build dashboard JSON artifacts.
 
 ```bash
-python Cerebric/main.py build-dashboard
+python Halbert/main.py build-dashboard
 ```
 
 ---
@@ -445,7 +445,7 @@ python Cerebric/main.py build-dashboard
 Run one iteration of the runtime engine.
 
 ```bash
-python Cerebric/main.py runtime-tick
+python Halbert/main.py runtime-tick
 ```
 
 ### `autonomous-run`
@@ -453,7 +453,7 @@ python Cerebric/main.py runtime-tick
 Run an autonomous task with LLM decision making.
 
 ```bash
-python Cerebric/main.py autonomous-run \
+python Halbert/main.py autonomous-run \
   --task-type TYPE \
   [--confidence THRESHOLD] \
   [--context JSON] \
@@ -471,7 +471,7 @@ Task types: `health_check`, `log_cleanup`
 Detect hardware and show capabilities.
 
 ```bash
-python Cerebric/main.py hardware-detect [--recommend]
+python Halbert/main.py hardware-detect [--recommend]
 ```
 
 ### `config-wizard`
@@ -479,7 +479,7 @@ python Cerebric/main.py hardware-detect [--recommend]
 Run the interactive configuration wizard.
 
 ```bash
-python Cerebric/main.py config-wizard [--auto] [--install-help]
+python Halbert/main.py config-wizard [--auto] [--install-help]
 ```
 
 ### `config-validate`
@@ -487,7 +487,7 @@ python Cerebric/main.py config-wizard [--auto] [--install-help]
 Validate model configuration.
 
 ```bash
-python Cerebric/main.py config-validate
+python Halbert/main.py config-validate
 ```
 
 ---
@@ -499,7 +499,7 @@ python Cerebric/main.py config-validate
 Show model performance metrics.
 
 ```bash
-python Cerebric/main.py performance-status
+python Halbert/main.py performance-status
 ```
 
 ### `performance-alerts`
@@ -507,7 +507,7 @@ python Cerebric/main.py performance-status
 Show performance alerts.
 
 ```bash
-python Cerebric/main.py performance-alerts [--severity LEVEL] [--hours N]
+python Halbert/main.py performance-alerts [--severity LEVEL] [--hours N]
 ```
 
 ### `performance-reset`
@@ -515,7 +515,7 @@ python Cerebric/main.py performance-alerts [--severity LEVEL] [--hours N]
 Reset performance metrics.
 
 ```bash
-python Cerebric/main.py performance-reset [--model MODEL_ID]
+python Halbert/main.py performance-reset [--model MODEL_ID]
 ```
 
 ---
@@ -534,8 +534,8 @@ python Cerebric/main.py performance-reset [--model MODEL_ID]
 
 | Variable | Description |
 |----------|-------------|
-| `Cerebric_CONFIG_DIR` | Override config directory |
-| `Cerebric_DATA_DIR` | Override data directory |
+| `Halbert_CONFIG_DIR` | Override config directory |
+| `Halbert_DATA_DIR` | Override data directory |
 | `OLLAMA_HOST` | Ollama API endpoint |
 
 ---
@@ -546,42 +546,42 @@ python Cerebric/main.py performance-reset [--model MODEL_ID]
 
 ```bash
 # Check system status
-python Cerebric/main.py model-test --prompt "How are you doing today?"
+python Halbert/main.py model-test --prompt "How are you doing today?"
 
 # View recent anomalies
-python Cerebric/main.py autonomy-anomalies --hours 24
+python Halbert/main.py autonomy-anomalies --hours 24
 ```
 
 ### Configuration tracking
 
 ```bash
 # Take a snapshot
-python Cerebric/main.py snapshot-configs
+python Halbert/main.py snapshot-configs
 
 # Make a change to /etc/ssh/sshd_config
 
 # Take another snapshot
-python Cerebric/main.py snapshot-configs
+python Halbert/main.py snapshot-configs
 
 # See what changed
-python Cerebric/main.py diff-configs
+python Halbert/main.py diff-configs
 ```
 
 ### Query the knowledge base
 
 ```bash
 # Ask about systemd
-python Cerebric/main.py ask "Why did docker.service fail to start?"
+python Halbert/main.py ask "Why did docker.service fail to start?"
 
 # Query memory directly
-python Cerebric/main.py memory-query --subdir core --query "docker errors"
+python Halbert/main.py memory-query --subdir core --query "docker errors"
 ```
 
 ### Schedule a maintenance task
 
 ```bash
 # Schedule nightly health check at 2 AM
-python Cerebric/main.py executor-schedule \
+python Halbert/main.py executor-schedule \
   --job-id "nightly-health" \
   --cron '{"hour": 2, "minute": 0}' \
   --description "Nightly system health check" \

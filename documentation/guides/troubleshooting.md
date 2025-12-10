@@ -21,7 +21,7 @@ sudo apt install python3.12 python3.12-venv
 
 ### Dependencies Not Installing
 
-**Symptom**: `pip install -e cerebric_core/` fails.
+**Symptom**: `pip install -e halbert_core/` fails.
 
 **Solution**:
 ```bash
@@ -29,7 +29,7 @@ sudo apt install python3.12 python3.12-venv
 pip install --upgrade pip
 
 # Install with verbose output
-pip install -e cerebric_core/ -v
+pip install -e halbert_core/ -v
 
 # Missing system deps (Ubuntu)
 sudo apt install python3-dev build-essential
@@ -84,7 +84,7 @@ ollama pull llama3.2:1b
 ollama pull llama3.2:3b-q4_0
 
 # Update config
-echo "default_model: llama3.2:3b-q4_0" >> ~/.config/cerebric/model.yml
+echo "default_model: llama3.2:3b-q4_0" >> ~/.config/halbert/model.yml
 ```
 
 ### Slow Generation
@@ -157,10 +157,10 @@ journalctl -u docker.service -n 10
 **Solution**:
 ```bash
 # Backup and remove
-mv ~/.local/share/cerebric/index ~/.local/share/cerebric/index.bak
+mv ~/.local/share/halbert/index ~/.local/share/halbert/index.bak
 
 # Re-initialize
-python Cerebric/main.py init
+python Halbert/main.py init
 ```
 
 ### Embedding Model Download Fails
@@ -191,7 +191,7 @@ export TRANSFORMERS_OFFLINE=1
 lsof -i :8000
 
 # Kill it or use different port
-python Cerebric/main.py dashboard --port 8001
+python Halbert/main.py dashboard --port 8001
 ```
 
 ### Cannot Connect from Browser
@@ -206,7 +206,7 @@ python Cerebric/main.py dashboard --port 8001
 **Solution**:
 ```bash
 # Bind to all interfaces (not just localhost)
-python Cerebric/main.py dashboard --host 0.0.0.0
+python Halbert/main.py dashboard --host 0.0.0.0
 
 # Check firewall
 sudo ufw status
@@ -232,7 +232,7 @@ htop
 
 # Use smaller model
 # Clear old telemetry data
-rm ~/.local/share/cerebric/telemetry/journald/old-*.jsonl
+rm ~/.local/share/halbert/telemetry/journald/old-*.jsonl
 ```
 
 ### Index Too Large
@@ -242,10 +242,10 @@ rm ~/.local/share/cerebric/telemetry/journald/old-*.jsonl
 **Solution**:
 ```bash
 # Check index size
-du -sh ~/.local/share/cerebric/index
+du -sh ~/.local/share/halbert/index
 
 # Rebuild with less data
-rm -rf ~/.local/share/cerebric/index
+rm -rf ~/.local/share/halbert/index
 # Re-index only recent data
 ```
 
@@ -263,10 +263,10 @@ rm -rf ~/.local/share/cerebric/index
 echo $XDG_CONFIG_HOME  # Should be ~/.config
 
 # Verify file location
-ls -la ~/.config/cerebric/
+ls -la ~/.config/halbert/
 
 # Check YAML syntax
-python -c "import yaml; yaml.safe_load(open('~/.config/cerebric/model.yml'))"
+python -c "import yaml; yaml.safe_load(open('~/.config/halbert/model.yml'))"
 ```
 
 ### YAML Syntax Error
@@ -300,13 +300,13 @@ python -c "import yaml; yaml.safe_load(open('your-file.yml'))"
 **Solution**:
 ```bash
 # Be more specific
-python Cerebric/main.py ask "systemd docker.service failed to start exit code 1"
+python Halbert/main.py ask "systemd docker.service failed to start exit code 1"
 
 # Check if data is indexed
-python Cerebric/main.py memory-stats
+python Halbert/main.py memory-stats
 
 # Re-index
-python Cerebric/main.py index-configs
+python Halbert/main.py index-configs
 ```
 
 ### Slow Retrieval
@@ -316,10 +316,10 @@ python Cerebric/main.py index-configs
 **Solution**:
 ```bash
 # Check index size
-du -sh ~/.local/share/cerebric/index
+du -sh ~/.local/share/halbert/index
 
 # Reduce top_k
-python Cerebric/main.py ask "query" --top-k 3
+python Halbert/main.py ask "query" --top-k 3
 ```
 
 ---
@@ -332,24 +332,24 @@ python Cerebric/main.py ask "query" --top-k 3
 # System info
 uname -a
 python3 --version
-pip list | grep -E "(cerebric|langchain|chromadb|ollama)"
+pip list | grep -E "(halbert|langchain|chromadb|ollama)"
 
 # Ollama info
 ollama --version
 ollama list
 
 # Config
-cat ~/.config/cerebric/model.yml
+cat ~/.config/halbert/model.yml
 ```
 
 ### Log Files
 
 ```bash
 # Application logs
-ls ~/.local/share/cerebric/logs/
+ls ~/.local/share/halbert/logs/
 
-# journald logs for Cerebric
-journalctl -f | grep -i cerebric
+# journald logs for Halbert
+journalctl -f | grep -i halbert
 ```
 
 ### Reset Everything
@@ -358,14 +358,14 @@ Last resort - start fresh:
 
 ```bash
 # Backup first
-cp -r ~/.config/cerebric ~/.config/cerebric.bak
-cp -r ~/.local/share/cerebric ~/.local/share/cerebric.bak
+cp -r ~/.config/halbert ~/.config/halbert.bak
+cp -r ~/.local/share/halbert ~/.local/share/halbert.bak
 
 # Remove all state
-rm -rf ~/.config/cerebric
-rm -rf ~/.local/share/cerebric
-rm -rf ~/.local/state/cerebric
+rm -rf ~/.config/halbert
+rm -rf ~/.local/share/halbert
+rm -rf ~/.local/state/halbert
 
 # Re-initialize
-python Cerebric/main.py init
+python Halbert/main.py init
 ```
