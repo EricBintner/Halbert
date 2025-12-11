@@ -110,7 +110,7 @@ export function Dashboard() {
             System overview and health status
           </p>
         </div>
-        <Button onClick={handleScan} disabled={scanning}>
+        <Button variant="outline" onClick={handleScan} disabled={scanning}>
           <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
           {scanning ? 'Scanning...' : 'Scan System'}
         </Button>

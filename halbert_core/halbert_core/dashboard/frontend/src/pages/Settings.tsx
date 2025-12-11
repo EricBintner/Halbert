@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -93,6 +94,9 @@ interface ModelStatus {
 }
 
 export function Settings() {
+  // Scan context for coordinated system-wide scanning
+  const { triggerDeepScan, isDeepScanning } = useScan()
+  
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [alertRules, setAlertRules] = useState<AlertRule[]>([])
   const [discoveryStats, setDiscoveryStats] = useState<DiscoveryStats | null>(null)
@@ -164,7 +168,14 @@ export function Settings() {
     scan_time: string | null
     quick_scan_time: string | null
   } | null>(null)
-  const [deepScanning, setDeepScanning] = useState(false)
+  // Note: deepScanning state moved to ScanContext (isDeepScanning)
+  
+  // Computer name (AI identity) state
+  const [aiName, setAiName] = useState<string>('Halbert')
+  const [userName, setUserName] = useState<string | null>(null)
+  const [editingAiName, setEditingAiName] = useState(false)
+  const [tempAiName, setTempAiName] = useState('')
+  const [savingAiName, setSavingAiName] = useState(false)
   
   // AI Rules state
   interface AIRule {
@@ -253,11 +264,17 @@ export function Settings() {
       console.error('Failed to load persona status:', err)
     }
     
-    // Load persona names
+    // Load persona names and AI name
     try {
       const res = await fetch(`${API_BASE}/settings/persona-names`)
       const data = await res.json()
       setPersonaNames(data.names || {})
+      if (data.ai_name) {
+        setAiName(data.ai_name)
+      }
+      if (data.user_name) {
+        setUserName(data.user_name)
+      }
     } catch (err) {
       console.error('Failed to load persona names:', err)
     }
@@ -302,6 +319,29 @@ export function Settings() {
     alert('Cache cleared. Run a new scan to refresh.')
   }
   
+  const handleSaveAiName = async () => {
+    if (!tempAiName.trim()) return
+    
+    setSavingAiName(true)
+    try {
+      const res = await fetch(`${API_BASE}/settings/computer-name`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ai_name: tempAiName.trim() })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setAiName(data.ai_name)
+        setEditingAiName(false)
+        setToast({ open: true, message: `Renamed to "${data.ai_name}"`, variant: 'success' })
+      }
+    } catch (err) {
+      console.error('Failed to save AI name:', err)
+      setToast({ open: true, message: 'Failed to save name', variant: 'error' })
+    }
+    setSavingAiName(false)
+  }
+  
   const handleTestEndpoint = async (endpoint: string, provider: string) => {
     setTestingEndpoint(true)
     setTestResult(null)
@@ -337,25 +377,19 @@ export function Settings() {
   }
   
   const handleDeepScan = async () => {
-    setDeepScanning(true)
+    console.log('[Settings] handleDeepScan called')
     try {
-      const res = await fetch(`${API_BASE}/settings/system-profile/scan`, {
-        method: 'POST',
-      })
-      const data = await res.json()
-      if (data.status === 'complete') {
-        setSystemProfile({
-          summary: data.summary,
-          scan_time: data.profile?.scan_time || new Date().toISOString(),
-          quick_scan_time: data.profile?.quick_scan_time || null,
-        })
-        setToast({ open: true, message: 'Deep scan complete!', variant: 'success' })
-      }
+      // Use context's deep scan - this also triggers refresh for all pages
+      console.log('[Settings] Calling triggerDeepScan from context...')
+      await triggerDeepScan()
+      console.log('[Settings] triggerDeepScan completed, loading system profile...')
+      // Reload the system profile to update the local display
+      await loadSystemProfile()
+      setToast({ open: true, message: 'Deep scan complete! All sections updated.', variant: 'success' })
     } catch (err) {
       console.error('Deep scan failed:', err)
       setToast({ open: true, message: 'Deep scan failed', variant: 'error' })
     }
-    setDeepScanning(false)
   }
   
   // AI Rules functions
@@ -746,6 +780,65 @@ export function Settings() {
             </CardContent>
           </Card>
 
+          {/* Computer Identity Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                Computer Identity
+              </CardTitle>
+              <CardDescription>The name your AI assistant uses to identify itself</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-xs text-muted-foreground">AI Name</Label>
+                  {editingAiName ? (
+                    <div className="flex items-center gap-2 mt-1">
+                      <Input
+                        value={tempAiName}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTempAiName(e.target.value)}
+                        placeholder="Enter a name..."
+                        className="h-8 w-48"
+                        onKeyDown={(e) => e.key === 'Enter' && handleSaveAiName()}
+                      />
+                      <Button size="sm" onClick={handleSaveAiName} disabled={savingAiName || !tempAiName.trim()}>
+                        {savingAiName ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditingAiName(false)}>
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 mt-1">
+                      <code className="text-sm bg-muted px-2 py-1 rounded">{aiName}</code>
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        className="h-7 px-2"
+                        onClick={() => {
+                          setTempAiName(aiName)
+                          setEditingAiName(true)
+                        }}
+                      >
+                        <Edit3 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                {userName && (
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Your Name</Label>
+                    <p className="text-sm font-medium mt-1">{userName}</p>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  This name appears in chat greetings, system profile, and the AI's self-references.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -828,10 +921,10 @@ export function Settings() {
               <div className="flex gap-2">
                 <Button 
                   onClick={handleDeepScan} 
-                  disabled={deepScanning}
+                  disabled={isDeepScanning}
                   variant="outline"
                 >
-                  {deepScanning ? (
+                  {isDeepScanning ? (
                     <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Scanning...</>
                   ) : (
                     <><ScanSearch className="h-4 w-4 mr-2" />Run Deep Scan</>

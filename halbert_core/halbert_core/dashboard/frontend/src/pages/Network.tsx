@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -147,6 +148,8 @@ function formatInlineMarkdown(text: string): React.ReactNode {
 }
 
 export function Network() {
+  const { refreshTrigger } = useScan()
+  
   const [network, setNetwork] = useState<NetworkItem[]>([])
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
@@ -192,6 +195,20 @@ export function Network() {
 
   useEffect(() => {
     loadNetwork()
+  }, [])
+
+  // Refresh when system-wide scan completes (via context)
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      loadNetwork()
+    }
+  }, [refreshTrigger])
+
+  // Also listen for window events (backup mechanism)
+  useEffect(() => {
+    const handleScanComplete = () => loadNetwork()
+    window.addEventListener('halbert-scan-complete', handleScanComplete)
+    return () => window.removeEventListener('halbert-scan-complete', handleScanComplete)
   }, [])
 
   const loadNetwork = async () => {
@@ -413,7 +430,7 @@ export function Network() {
             Network interfaces, firewall, and connectivity
           </p>
         </div>
-        <Button onClick={handleScan} disabled={scanning}>
+        <Button variant="outline" onClick={handleScan} disabled={scanning}>
           <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
           {scanning ? 'Scanning...' : 'Scan'}
         </Button>

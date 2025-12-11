@@ -95,7 +95,7 @@ export function Security() {
             Security configuration and hardening status
           </p>
         </div>
-        <Button onClick={handleScan} disabled={scanning}>
+        <Button variant="outline" onClick={handleScan} disabled={scanning}>
           <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
           {scanning ? 'Scanning...' : 'Scan'}
         </Button>
@@ -158,7 +158,7 @@ export function Security() {
             <p className="text-muted-foreground mb-4">
               Click Scan to check your security configuration.
             </p>
-            <Button onClick={handleScan} disabled={scanning}>
+            <Button variant="outline" onClick={handleScan} disabled={scanning}>
               <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
               Scan Security
             </Button>

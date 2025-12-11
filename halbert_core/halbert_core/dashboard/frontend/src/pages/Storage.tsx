@@ -15,6 +15,7 @@
  */
 
 import React, { useEffect, useState, useMemo, useRef, useContext, useCallback } from 'react'
+import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -1528,6 +1529,8 @@ function UnmountedSection({ volumes, show, onToggle }: {
 const ShowUUIDsContext = React.createContext(false)
 
 export function Storage() {
+  const { refreshTrigger } = useScan()
+  
   const [storage, setStorage] = useState<StorageItem[]>([])
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
@@ -1551,6 +1554,24 @@ export function Storage() {
 
   useEffect(() => {
     loadStorage()
+  }, [])
+
+  // Refresh when system-wide scan completes (via context)
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      console.log('[Storage] Refreshing due to context trigger')
+      loadStorage()
+    }
+  }, [refreshTrigger])
+
+  // Also listen for window events (backup mechanism)
+  useEffect(() => {
+    const handleScanComplete = () => {
+      console.log('[Storage] Refreshing due to scan-complete event')
+      loadStorage()
+    }
+    window.addEventListener('halbert-scan-complete', handleScanComplete)
+    return () => window.removeEventListener('halbert-scan-complete', handleScanComplete)
   }, [])
 
   const loadStorage = async () => {
@@ -1648,7 +1669,7 @@ export function Storage() {
           >
             {showUUIDs ? 'Hide UUIDs' : 'Show UUIDs'}
           </button>
-          <Button onClick={handleScan} disabled={scanning}>
+          <Button variant="outline" onClick={handleScan} disabled={scanning}>
             <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
             {scanning ? 'Scanning...' : 'Scan'}
           </Button>

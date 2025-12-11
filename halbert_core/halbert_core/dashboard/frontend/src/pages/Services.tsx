@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useState, useCallback } from 'react'
+import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -277,6 +278,8 @@ const CATEGORY_CONFIG: Record<CategoryFilter, { label: string; icon: React.React
 }
 
 export function Services() {
+  const { refreshTrigger } = useScan()
+  
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
@@ -346,6 +349,20 @@ export function Services() {
 
   useEffect(() => {
     loadServices()
+  }, [])
+
+  // Refresh when system-wide scan completes (via context)
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      loadServices()
+    }
+  }, [refreshTrigger])
+
+  // Also listen for window events (backup mechanism)
+  useEffect(() => {
+    const handleScanComplete = () => loadServices()
+    window.addEventListener('halbert-scan-complete', handleScanComplete)
+    return () => window.removeEventListener('halbert-scan-complete', handleScanComplete)
   }, [])
 
   const loadServices = async () => {
@@ -548,7 +565,7 @@ export function Services() {
             Manage system services and containers
           </p>
         </div>
-        <Button onClick={handleScan} disabled={scanning}>
+        <Button variant="outline" onClick={handleScan} disabled={scanning}>
           <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
           {scanning ? 'Scanning...' : 'Scan'}
         </Button>

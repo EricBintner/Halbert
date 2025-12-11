@@ -1109,6 +1109,51 @@ async def get_persona_names() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ComputerNameUpdate(BaseModel):
+    """Update the computer/AI name."""
+    ai_name: str
+    user_name: Optional[str] = None
+
+
+@router.post("/computer-name")
+async def update_computer_name(data: ComputerNameUpdate) -> Dict[str, Any]:
+    """Update the AI name (computer name) in preferences.
+    
+    This is the name the AI uses to identify itself (e.g., "Linus", "HAL", etc.)
+    """
+    try:
+        config_path = get_config_dir() / 'preferences.yml'
+        
+        # Load existing preferences
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                prefs = yaml.safe_load(f) or {}
+        else:
+            prefs = {}
+        
+        # Update the AI name
+        prefs['ai_name'] = data.ai_name
+        if data.user_name:
+            prefs['user_name'] = data.user_name
+        
+        # Save back
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, 'w') as f:
+            yaml.dump(prefs, f, default_flow_style=False, sort_keys=False)
+        
+        logger.info(f"Updated computer name to: {data.ai_name}")
+        
+        return {
+            'success': True,
+            'ai_name': data.ai_name,
+            'user_name': prefs.get('user_name')
+        }
+    
+    except Exception as e:
+        logger.error(f"Error updating computer name: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class PersonaNameUpdate(BaseModel):
     persona: str
     name: str
@@ -1391,9 +1436,15 @@ async def get_system_profile() -> Dict[str, Any]:
 
 @router.post("/system-profile/scan")
 async def scan_system_profile() -> Dict[str, Any]:
-    """Run a comprehensive system profile scan."""
+    """Run a comprehensive system profile scan.
+    
+    This is the "Deep Scan" - it scans:
+    1. System profile (hardware, OS, etc.)
+    2. All discovery types (storage, services, network, backups, security)
+    """
     try:
         from ...discovery.scanners.system_profile import get_system_profiler
+        from ...discovery.engine import get_engine
         
         profiler = get_system_profiler()
         
@@ -1403,11 +1454,19 @@ async def scan_system_profile() -> Dict[str, Any]:
         # Save to disk for persistence
         save_path = profiler.save_profile()
         
+        # Also run all discovery scanners (storage, services, network, etc.)
+        logger.info("Running discovery scanners...")
+        engine = get_engine()
+        discoveries = engine.scan_all()
+        discovery_count = len(discoveries)
+        logger.info(f"Discovery scan complete: {discovery_count} items found")
+        
         return {
             "status": "complete",
             "profile": profile,
             "summary": profiler.get_summary(),
             "saved_to": str(save_path),
+            "discoveries_scanned": discovery_count,
         }
     
     except Exception as e:

@@ -16,6 +16,7 @@ import { Approvals } from './pages/Approvals'
 import { Settings } from './pages/Settings'
 import { Onboarding } from './components/Onboarding'
 import { DebugProvider } from './contexts/DebugContext'
+import { ScanProvider } from './contexts/ScanContext'
 
 function App() {
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -37,7 +38,11 @@ function App() {
           console.log('Running full scan on startup...')
           fetch('/api/settings/system-profile/scan', { method: 'POST' })
             .then(res => res.json())
-            .then(data => console.log('Full scan complete:', data.summary?.split('\n')[0]))
+            .then(data => {
+              console.log('Full scan complete:', data.summary?.split('\n')[0])
+              // Dispatch event to notify all pages to refresh
+              window.dispatchEvent(new CustomEvent('halbert-scan-complete', { detail: { type: 'system' } }))
+            })
             .catch(err => console.warn('Startup scan failed:', err))
         }
       } catch (err) {
@@ -68,26 +73,28 @@ function App() {
 
   return (
     <DebugProvider>
-      <Onboarding open={showOnboarding} onComplete={handleOnboardingComplete} />
-      <Router>
-        <Layout>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/terminal" element={<Terminal />} />
-            <Route path="/services" element={<Services />} />
-            <Route path="/storage" element={<Storage />} />
-            <Route path="/gpu" element={<GPU />} />
-            <Route path="/containers" element={<Containers />} />
-            <Route path="/development" element={<Development />} />
-            <Route path="/network" element={<Network />} />
-            <Route path="/sharing" element={<Sharing />} />
-            <Route path="/security" element={<Security />} />
-            <Route path="/backups" element={<Backups />} />
-            <Route path="/approvals" element={<Approvals />} />
-            <Route path="/settings" element={<Settings />} />
-          </Routes>
-        </Layout>
-      </Router>
+      <ScanProvider>
+        <Onboarding open={showOnboarding} onComplete={handleOnboardingComplete} />
+        <Router>
+          <Layout>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/terminal" element={<Terminal />} />
+              <Route path="/services" element={<Services />} />
+              <Route path="/storage" element={<Storage />} />
+              <Route path="/gpu" element={<GPU />} />
+              <Route path="/containers" element={<Containers />} />
+              <Route path="/development" element={<Development />} />
+              <Route path="/network" element={<Network />} />
+              <Route path="/sharing" element={<Sharing />} />
+              <Route path="/security" element={<Security />} />
+              <Route path="/backups" element={<Backups />} />
+              <Route path="/approvals" element={<Approvals />} />
+              <Route path="/settings" element={<Settings />} />
+            </Routes>
+          </Layout>
+        </Router>
+      </ScanProvider>
     </DebugProvider>
   )
 }
