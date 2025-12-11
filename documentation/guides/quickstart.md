@@ -30,7 +30,7 @@ ollama pull llama3.2:3b
 
 ```bash
 git clone https://github.com/ericbintner/halbert.git
-cd halbert
+cd Halbert
 ```
 
 ---
@@ -60,6 +60,10 @@ python Halbert/main.py ask "What is systemd?"
 ## Step 5: Start the Dashboard
 
 ```bash
+# Recommended: use make (starts backend + live reload)
+make dev-web
+
+# Or directly via Python
 python Halbert/main.py dashboard
 ```
 

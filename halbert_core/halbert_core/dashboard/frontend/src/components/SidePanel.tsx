@@ -9,6 +9,7 @@
  */
 
 import { useState, useRef, useEffect, KeyboardEvent, useCallback } from 'react'
+import { useLocation } from 'react-router-dom'
 import { 
   MessageCircle, 
   Terminal,
@@ -225,6 +226,10 @@ function MessageContent({ content, onRunCommand }: {
 export function SidePanel() {
   // Debug context - chatMetrics used for updating, displayed in Layout.tsx
   const { isDebugMode, addLog, updateChatMetrics, chatMetrics } = useDebug()
+  
+  // Current page tracking for context awareness
+  const location = useLocation()
+  const currentPage = location.pathname.replace('/', '') || 'dashboard'
   
   // Panel state
   const [isOpen, setIsOpen] = useState(true)
@@ -824,8 +829,15 @@ export function SidePanel() {
         const history = messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
         response = await api.sendConfigChat(messageContent, configContext.filePath, fileContent, history)
       } else {
-        // Regular chat endpoint - pass debug flag
-        response = await api.sendChat(messageContent, userMessage.mentions || [], 'guide', isDebugMode)
+        // Regular chat endpoint - pass debug flag and current page for context
+        response = await api.sendChat(
+          messageContent, 
+          userMessage.mentions || [], 
+          'guide', 
+          isDebugMode,
+          currentPage,
+          '' // pageContext - could be enhanced to pass visible items
+        )
       }
       
       const apiEndTime = performance.now()

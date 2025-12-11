@@ -95,8 +95,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               {isDebugMode ? 'Debug Mode ON' : 'Debug Mode'}
             </Button>
             <div className="text-xs text-muted-foreground">
-              <p>v0.1.0 • Phase 11 {isDebugMode && '• DEV'}</p>
-              <p>AI-First System Management</p>
+              <p>v0.1.0-alpha.1</p>
             </div>
           </div>
         </div>

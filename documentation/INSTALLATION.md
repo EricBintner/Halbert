@@ -27,8 +27,8 @@ This guide covers installing Halbert on Linux systems.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/halbert.git
-cd halbert
+git clone https://github.com/EricBintner/Halbert.git
+cd Halbert
 
 # 2. Create virtual environment
 python3 -m venv .venv
@@ -76,8 +76,8 @@ ollama list
 ### Step 3: Clone Halbert
 
 ```bash
-git clone https://github.com/yourusername/halbert.git
-cd halbert
+git clone https://github.com/EricBintner/Halbert.git
+cd Halbert
 ```
 
 ### Step 4: Create Virtual Environment
@@ -209,7 +209,10 @@ python Halbert/main.py memory-stats
 ### Dashboard Mode
 
 ```bash
-# Start the web dashboard
+# Recommended: use make (starts backend + live reload)
+make dev-web
+
+# Or directly via Python
 python Halbert/main.py dashboard
 
 # Access at http://localhost:8000
@@ -316,7 +319,7 @@ echo "default_model: llama3.1:8b-q4_0" >> ~/.config/halbert/model.yml
 
 ```bash
 # Pull latest changes
-cd halbert
+cd Halbert
 git pull
 
 # Update dependencies
