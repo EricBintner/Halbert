@@ -223,7 +223,7 @@ function MessageContent({ content, onRunCommand }: {
 }
 
 export function SidePanel() {
-  // Debug context
+  // Debug context - chatMetrics used for updating, displayed in Layout.tsx
   const { isDebugMode, addLog, updateChatMetrics, chatMetrics } = useDebug()
   
   // Panel state
@@ -1349,27 +1349,6 @@ export function SidePanel() {
                   <Pencil className="h-3 w-3" />
                   <span>Editing: {configContext.filePath.split('/').pop()}</span>
                   <span className="text-blue-400/60 ml-1">• AI can apply edits directly</span>
-                </div>
-              )}
-
-              {/* Debug Panel - only shown in debug mode */}
-              {isDebugMode && (
-                <div className="mx-3 mb-1 p-2 bg-amber-500/10 border border-amber-500/30 rounded text-[10px] font-mono space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-amber-400 font-semibold">🐛 Debug Mode</span>
-                    <span className="text-amber-400/60">
-                      {chatMetrics.totalRequests} req • ~{chatMetrics.totalTokensEstimate} tok
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-2 text-amber-400/80">
-                    <div>Avg: {chatMetrics.averageResponseTime > 0 ? `${chatMetrics.averageResponseTime.toFixed(0)}ms` : '-'}</div>
-                    <div>Last: {chatMetrics.lastResponseTime && chatMetrics.lastRequestTime 
-                      ? `${(chatMetrics.lastResponseTime - chatMetrics.lastRequestTime).toFixed(0)}ms` 
-                      : '-'}</div>
-                  </div>
-                  <div className="text-amber-400/50 text-[9px] border-t border-amber-500/20 pt-1 mt-1">
-                    💡 Check DevTools Console (F12) for full logs
-                  </div>
                 </div>
               )}
 

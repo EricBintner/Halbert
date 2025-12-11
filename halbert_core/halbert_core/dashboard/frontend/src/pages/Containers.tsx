@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -96,6 +97,8 @@ const statusIcons: Record<string, React.ReactNode> = {
 }
 
 export function Containers() {
+  const { refreshTrigger } = useScan()
+  
   const [data, setData] = useState<ContainerData | null>(null)
   const [loading, setLoading] = useState(true)
   const [, setError] = useState<string | null>(null)
@@ -127,6 +130,20 @@ export function Containers() {
     // Refresh every 5 seconds for live stats
     const interval = setInterval(loadContainers, 5000)
     return () => clearInterval(interval)
+  }, [])
+
+  // Also refresh when system-wide scan completes (via context)
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      loadContainers()
+    }
+  }, [refreshTrigger])
+
+  // Also listen for window events (backup mechanism)
+  useEffect(() => {
+    const handleScanComplete = () => loadContainers()
+    window.addEventListener('halbert-scan-complete', handleScanComplete)
+    return () => window.removeEventListener('halbert-scan-complete', handleScanComplete)
   }, [])
 
   const handleRefresh = () => {

@@ -45,7 +45,7 @@ const navigation = [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
-  const { isDebugMode, setDebugMode } = useDebug()
+  const { isDebugMode, setDebugMode, chatMetrics } = useDebug()
 
   return (
     <div className="h-screen bg-background flex overflow-hidden">
@@ -87,7 +87,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               size="sm" 
               className={cn(
                 "w-full text-xs",
-                isDebugMode && "bg-amber-600 hover:bg-amber-700"
+                isDebugMode && "bg-emerald-600 hover:bg-emerald-700 text-white"
               )}
               onClick={() => setDebugMode(!isDebugMode)}
             >
@@ -104,10 +104,28 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Main content + Chat Panel */}
       <div className="flex flex-1 ml-64 h-full">
-        {/* Page content */}
-        <main className="flex-1 p-8 overflow-auto relative">
-          {children}
-        </main>
+        {/* Page content with optional debug footer */}
+        <div className="flex-1 flex flex-col">
+          <main className="flex-1 p-8 overflow-auto relative">
+            {children}
+          </main>
+          
+          {/* Debug Bar - matches sidebar footer height */}
+          {isDebugMode && (
+            <div className="border-t bg-slate-800 px-4 py-3 flex items-center justify-between text-xs font-mono">
+              <div className="flex items-center gap-4">
+                <span className="text-emerald-400 font-bold">🐛 Debug Mode</span>
+                <span className="text-slate-400">DevTools Console (F12) for full logs</span>
+              </div>
+              <div className="flex items-center gap-6 text-slate-200">
+                <span><span className="text-emerald-400">Requests:</span> {chatMetrics.totalRequests}</span>
+                <span><span className="text-emerald-400">Tokens:</span> ~{chatMetrics.totalTokensEstimate}</span>
+                <span><span className="text-emerald-400">Avg:</span> {chatMetrics.averageResponseTime > 0 ? `${chatMetrics.averageResponseTime.toFixed(0)}ms` : '-'}</span>
+                <span><span className="text-emerald-400">Last:</span> {chatMetrics.lastResponseTime && chatMetrics.lastRequestTime ? `${(chatMetrics.lastResponseTime - chatMetrics.lastRequestTime).toFixed(0)}ms` : '-'}</span>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Side Panel - Chat/Terminal, always visible */}
         <SidePanel />

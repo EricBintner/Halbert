@@ -262,7 +262,7 @@ export function Backups() {
             Discovered backup configurations on your system
           </p>
         </div>
-        <Button onClick={handleScan} disabled={scanning}>
+        <Button variant="outline" onClick={handleScan} disabled={scanning}>
           <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
           {scanning ? 'Scanning...' : 'Scan'}
         </Button>
@@ -325,7 +325,7 @@ export function Backups() {
             <p className="text-muted-foreground mb-4">
               Click Scan to discover backup configurations on your system.
             </p>
-            <Button onClick={handleScan} disabled={scanning}>
+            <Button variant="outline" onClick={handleScan} disabled={scanning}>
               <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
               Scan for Backups
             </Button>
