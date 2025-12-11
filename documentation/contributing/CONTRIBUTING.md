@@ -9,8 +9,8 @@ Thank you for your interest in contributing to Halbert! This document provides g
 ### 1. Fork and Clone
 
 ```bash
-git clone https://github.com/yourusername/halbert.git
-cd halbert
+git clone https://github.com/EricBintner/Halbert.git
+cd Halbert
 ```
 
 ### 2. Set Up Development Environment

@@ -877,7 +877,7 @@ export function Settings() {
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Version</span>
-                  <span className="font-medium">0.1.0 (Phase 11 MVP)</span>
+                  <span className="font-medium">0.1.0-alpha.1</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">API Status</span>

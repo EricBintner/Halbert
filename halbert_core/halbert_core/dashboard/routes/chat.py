@@ -110,8 +110,17 @@ def call_ollama_with_tools(prompt: str, system_prompt: str, model: str = None) -
         tool_calls = message.get("tool_calls", [])
         
         if not tool_calls:
-            # No tool calls, return the response directly
-            return message.get("content", ""), []
+            # No tool calls - check if model incorrectly output function call JSON as text
+            content = message.get("content", "")
+            
+            # Detect if model output looks like a raw function call (common with models
+            # that don't support native tool calling)
+            if content and ('{"name":' in content or '"function"' in content or 
+                           'get_network_info' in content or 'get_disk_usage' in content):
+                logger.warning("Model output appears to contain raw tool call JSON - falling back to standard generation")
+                return None, []  # Fall back to standard generation
+            
+            return content, []
         
         # Execute tool calls
         logger.info(f"LLM requested {len(tool_calls)} tool calls")
@@ -604,6 +613,8 @@ class ChatRequest(BaseModel):
     history: List[ChatMessage] = []
     persona: str = "guide"  # 'guide' for dashboard, 'coder' for terminal
     debug: bool = False  # Enable debug info in response
+    current_page: str = ""  # Current page/tab user is on (e.g., 'network', 'storage')
+    page_context: str = ""  # Visible items/state from the page
 
 
 class ChatResponse(BaseModel):
@@ -630,6 +641,8 @@ if FASTAPI_AVAILABLE:
         mentions = request.mentions
         persona = request.persona
         debug_mode = request.debug
+        current_page = request.current_page
+        page_context = request.page_context
         
         # Debug info collection
         debug_info = {
@@ -653,6 +666,19 @@ if FASTAPI_AVAILABLE:
         # Auto-inject context based on message content (Phase 13 smart context)
         message_lower = message.lower()
         auto_injected_types = set()
+        
+        # Inject page context if available (Phase 17: UI awareness)
+        if current_page and page_context:
+            context_parts.append(
+                f"**User is currently on the {current_page.title()} page.**\n"
+                f"Visible items:\n{page_context}"
+            )
+            if debug_info:
+                debug_info['auto_injected_context'].append({'type': 'page_context', 'page': current_page})
+            logger.debug(f"Injected page context for: {current_page}")
+        elif current_page:
+            # Even without specific context, knowing the page helps
+            context_parts.append(f"**User is currently viewing the {current_page.title()} page.**")
         
         # Storage/disk/filesystem keywords -> auto-inject storage context
         storage_keywords = ['disk', 'storage', 'drive', 'filesystem', 'mount', 'bcachefs', 
@@ -714,6 +740,154 @@ if FASTAPI_AVAILABLE:
                             debug_info['auto_injected_context'].append({'type': 'service', 'count': len(service_discoveries)})
             except Exception as e:
                 logger.warning(f"Failed to auto-inject service context: {e}")
+        
+        # Network keywords -> auto-inject network context
+        network_keywords = ['network', 'interface', 'ethernet', 'wifi', 'bridge', 'bond', 
+                           'ip', 'connected', 'down', 'up', 'mac', 'tailscale', 'vpn',
+                           'firewall', 'port', 'eno', 'enp', 'eth', 'wlan']
+        if any(kw in message_lower for kw in network_keywords):
+            try:
+                network_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'network']
+                if network_discoveries:
+                    network_summary = []
+                    # Prioritize interfaces, then firewall, then ports
+                    interfaces = [d for d in network_discoveries if d.name.startswith('iface-')]
+                    firewalls = [d for d in network_discoveries if d.name.startswith('firewall-')]
+                    
+                    for d in interfaces[:10]:
+                        # Include more detail: type, status, IP, and bridge info
+                        iface_name = d.data.get('interface', d.name.replace('iface-', ''))
+                        iface_type = d.data.get('type', 'Unknown')
+                        status = d.status or 'Unknown'
+                        ip = d.data.get('ipv4', 'No IP')
+                        master = d.data.get('master', '')
+                        config_path = d.data.get('config_path', '')
+                        
+                        detail = f"- {iface_name} ({iface_type}): {status}"
+                        if d.data.get('ipv4'):
+                            detail += f", IP: {ip}"
+                        if master:
+                            detail += f", bridged to {master}"
+                        if config_path:
+                            detail += f", config: {config_path}"
+                        network_summary.append(detail)
+                    
+                    for d in firewalls[:2]:
+                        network_summary.append(f"- Firewall ({d.data.get('tool', 'unknown')}): {d.status}")
+                    
+                    if network_summary:
+                        context_parts.append(
+                            "**Network Interfaces on this system:**\n" + "\n".join(network_summary)
+                        )
+                        auto_injected_types.add('network')
+                        logger.debug(f"Auto-injected network context: {len(network_discoveries)} discoveries")
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'network', 'count': len(network_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject network context: {e}")
+        
+        # Security keywords -> auto-inject security context
+        security_keywords = ['security', 'ssh', 'firewall', 'fail2ban', 'sudo', 'permission',
+                            'user', 'password', 'key', 'certificate', 'ssl', 'tls', 'audit',
+                            'login', 'root', 'admin', 'ufw', 'iptables', 'selinux', 'apparmor']
+        if any(kw in message_lower for kw in security_keywords):
+            try:
+                security_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'security']
+                if security_discoveries:
+                    security_summary = []
+                    for d in security_discoveries[:10]:
+                        security_summary.append(f"- {d.title}: {d.status or d.description}")
+                    if security_summary:
+                        context_parts.append(
+                            "**Security Status on this system:**\n" + "\n".join(security_summary)
+                        )
+                        auto_injected_types.add('security')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'security', 'count': len(security_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject security context: {e}")
+        
+        # Container/Docker keywords -> auto-inject container context
+        container_keywords = ['container', 'docker', 'podman', 'kubernetes', 'k8s', 'compose',
+                             'image', 'volume', 'registry', 'dockerfile', 'pod']
+        if any(kw in message_lower for kw in container_keywords):
+            try:
+                container_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'container']
+                if container_discoveries:
+                    container_summary = []
+                    for d in container_discoveries[:15]:
+                        container_summary.append(f"- {d.title}: {d.status or d.description}")
+                    if container_summary:
+                        context_parts.append(
+                            "**Containers on this system:**\n" + "\n".join(container_summary)
+                        )
+                        auto_injected_types.add('container')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'container', 'count': len(container_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject container context: {e}")
+        
+        # GPU keywords -> auto-inject GPU context
+        gpu_keywords = ['gpu', 'nvidia', 'amd', 'graphics', 'cuda', 'rocm', 'vram', 'driver',
+                       'opengl', 'vulkan', 'render', 'display', 'monitor', 'geforce', 'radeon']
+        if any(kw in message_lower for kw in gpu_keywords):
+            try:
+                gpu_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'gpu']
+                if gpu_discoveries:
+                    gpu_summary = []
+                    for d in gpu_discoveries[:5]:
+                        gpu_summary.append(f"- {d.title}: {d.status or d.description}")
+                    if gpu_summary:
+                        context_parts.append(
+                            "**GPU/Graphics on this system:**\n" + "\n".join(gpu_summary)
+                        )
+                        auto_injected_types.add('gpu')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'gpu', 'count': len(gpu_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject GPU context: {e}")
+        
+        # Sharing keywords -> auto-inject sharing context (SMB, NFS, etc.)
+        sharing_keywords = ['share', 'sharing', 'smb', 'samba', 'nfs', 'cifs', 'mount',
+                           'network drive', 'file share', 'windows share', 'rclone', 'fuse']
+        if any(kw in message_lower for kw in sharing_keywords):
+            try:
+                sharing_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'sharing']
+                if sharing_discoveries:
+                    sharing_summary = []
+                    for d in sharing_discoveries[:10]:
+                        sharing_summary.append(f"- {d.title}: {d.status or d.description}")
+                    if sharing_summary:
+                        context_parts.append(
+                            "**File Sharing on this system:**\n" + "\n".join(sharing_summary)
+                        )
+                        auto_injected_types.add('sharing')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'sharing', 'count': len(sharing_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject sharing context: {e}")
+        
+        # Development/Process keywords -> auto-inject development context
+        dev_keywords = ['development', 'dev', 'process', 'server', 'port', 'node', 'python',
+                       'npm', 'yarn', 'pip', 'venv', 'virtualenv', 'git', 'code', 'ide']
+        if any(kw in message_lower for kw in dev_keywords):
+            try:
+                # Include both process and task discoveries for development context
+                dev_discoveries = [d for d in engine.discoveries.values() 
+                                   if d.type.value in ('process', 'task')]
+                if dev_discoveries:
+                    dev_summary = []
+                    for d in dev_discoveries[:10]:
+                        dev_summary.append(f"- {d.title}: {d.status or d.description}")
+                    if dev_summary:
+                        context_parts.append(
+                            "**Development/Processes on this system:**\n" + "\n".join(dev_summary)
+                        )
+                        auto_injected_types.add('development')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'development', 'count': len(dev_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject development context: {e}")
         
         for mention in mentions:
             mention_id = mention.replace('@', '')
@@ -841,6 +1015,13 @@ if FASTAPI_AVAILABLE:
                     f"{custom_rules}\n\n"
                     "IMPORTANT: Always ground your responses in THIS specific system's actual state. "
                     "If asked about something not present on this system, say so clearly before offering general advice.\n\n"
+                    "UI CONTEXT AWARENESS:\n"
+                    "- The user may be viewing a specific page (Network, Storage, etc.) and asking about what they see.\n"
+                    "- When the context shows network interfaces with 'Down' status, this means the interface has no IP or carrier.\n"
+                    "- When asking 'why is this down', check the context for clues (bridge ports, bond slaves, missing cables).\n"
+                    "- A bond showing 'Down' often means not enough physical interfaces are connected.\n"
+                    "- A bridge port showing 'Bridged to X' with no IP is normal - the bridge interface holds the IP.\n"
+                    "- Answer based on the provided context first, before suggesting commands.\n\n"
                     "RESPONSE LENGTH - Be concise:\n"
                     "- Match response length to question complexity. Simple questions get 1-2 sentence answers.\n"
                     "- Don't pad responses with unnecessary filler or repetition.\n"

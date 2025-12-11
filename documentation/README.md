@@ -159,8 +159,8 @@ Halbert is open source under the **GPL-3.0** license. See [legal/LICENSE.md](leg
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/halbert.git
-cd halbert
+git clone https://github.com/EricBintner/Halbert.git
+cd Halbert
 
 # Create virtual environment
 python3 -m venv .venv

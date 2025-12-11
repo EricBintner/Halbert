@@ -6,7 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [0.1.0-alpha.1] - 2025-12-11
+
+First public alpha release.
 
 ### Added
 - Initial public release

@@ -22,6 +22,7 @@ wheels/
 
 # Virtual environments
 venv/
+.venv/
 ENV/
 env/
 
@@ -53,6 +54,9 @@ local_data/
 # Model cache (downloaded automatically)
 data/.cache/
 
+# Runtime memory (created at ~/.local/share/halbert/memory/)
+data/memory/
+
 # Secrets
 .env
 .env.local
@@ -60,6 +64,11 @@ secrets/
 *.key
 *.pem
 config/production.yml
+
+# Node.js / Frontend
+node_modules/
+.vite/
+*.tsbuildinfo
 
 # Temporary
 *.tmp

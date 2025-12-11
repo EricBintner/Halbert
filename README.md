@@ -33,14 +33,17 @@ curl -fsSL https://ollama.ai/install.sh | sh
 ollama pull llama3.2:3b
 
 # 2. Clone and install
-git clone https://github.com/yourusername/halbert.git
-cd halbert
+git clone https://github.com/EricBintner/Halbert.git
+cd Halbert
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e halbert_core/
 
-# 3. Ask a question
-python Halbert/main.py ask "Why did my docker service fail?"
+# 3. Start the web dashboard
+make dev-web
+# Open http://localhost:8000
+# or for Tauri build
+make dev  
 ```
 
 ---
