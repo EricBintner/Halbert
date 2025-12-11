@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Halbert Dashboard",
+  "productName": "Halbert",
   "version": "0.1.0-alpha.1",
   "identifier": "ai.halbert.dashboard",
   "build": {
@@ -12,9 +12,10 @@
   "app": {
     "windows": [
       {
-        "title": "Halbert Dashboard",
-        "width": 1280,
-        "height": 800
+        "title": "Halbert",
+        "width": 1600,
+        "height": 1000,
+        "center": true
       }
     ],
     "security": {

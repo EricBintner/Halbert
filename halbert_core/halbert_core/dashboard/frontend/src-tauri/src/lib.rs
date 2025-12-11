@@ -355,6 +355,48 @@ pub fn run() {
             get_memory_stats,
             get_documents
         ])
+        .setup(|app| {
+            // Set window icon for Linux taskbar
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+                use image::ImageReader;
+                use std::io::Cursor;
+                
+                println!("[Halbert] Setting up window icon...");
+                
+                if let Some(window) = app.get_webview_window("main") {
+                    // Embed icon at compile time for reliability
+                    let icon_bytes = include_bytes!("../icons/icon.png");
+                    println!("[Halbert] Icon bytes loaded: {} bytes", icon_bytes.len());
+                    
+                    if let Some(img) = ImageReader::new(Cursor::new(icon_bytes))
+                        .with_guessed_format()
+                        .ok()
+                        .and_then(|r| r.decode().ok())
+                    {
+                        let rgba = img.to_rgba8();
+                        let (width, height) = rgba.dimensions();
+                        println!("[Halbert] Icon decoded: {}x{}", width, height);
+                        
+                        let icon = tauri::image::Image::new_owned(
+                            rgba.into_raw(),
+                            width,
+                            height,
+                        );
+                        match window.set_icon(icon) {
+                            Ok(_) => println!("[Halbert] Window icon set successfully!"),
+                            Err(e) => println!("[Halbert] Failed to set icon: {:?}", e),
+                        }
+                    } else {
+                        println!("[Halbert] Failed to decode icon image");
+                    }
+                } else {
+                    println!("[Halbert] Could not get main window");
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
