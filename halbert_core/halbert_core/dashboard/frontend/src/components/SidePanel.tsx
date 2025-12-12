@@ -490,7 +490,9 @@ export function SidePanel() {
           // Save the initial assistant message
           api.addMessageToConversation(conv.id, 'assistant', contextContent)
             .catch(err => console.error('Failed to save context message:', err))
-          loadConversations()
+          // Update conversation list without reloading current conversation
+          // (loadConversations has stale closure and would overwrite our message)
+          api.listConversations().then(data => setConversations(data || [])).catch(() => {})
         }).catch(err => {
           console.error('Failed to create conversation:', err)
           // Fallback: show messages anyway but they won't be saved
