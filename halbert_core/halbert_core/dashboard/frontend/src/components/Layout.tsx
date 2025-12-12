@@ -65,16 +65,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [])
   
-  // Show config editor if path is set
-  if (editingConfigPath) {
-    return (
-      <ConfigEditor
-        filePath={editingConfigPath}
-        onClose={() => setEditingConfigPath(null)}
-      />
-    )
-  }
-
   return (
     <div className="h-screen bg-background flex overflow-hidden">
       {/* Sidebar */}
@@ -134,7 +124,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {/* Page content with optional debug footer */}
         <div className="flex-1 flex flex-col">
           <main className="flex-1 p-8 overflow-auto relative">
-            {children}
+            {editingConfigPath ? (
+              <ConfigEditor
+                filePath={editingConfigPath}
+                onClose={() => setEditingConfigPath(null)}
+              />
+            ) : (
+              children
+            )}
           </main>
           
           {/* Debug Bar - matches sidebar footer height */}
