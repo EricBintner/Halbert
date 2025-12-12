@@ -52,6 +52,7 @@ import {
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
+import { SystemItemActions } from '@/components/domain'
 
 /**
  * Executable code block component with copy and run buttons
@@ -767,6 +768,15 @@ export function Services() {
                         </Button>
                       )}
                     </div>
+                    <SystemItemActions
+                      item={{
+                        name: service.name,
+                        type: 'service',
+                        id: service.name,
+                        context: `Service: ${service.name}\nStatus: ${service.status}\nDescription: ${service.description}`,
+                      }}
+                      size="sm"
+                    />
                     <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                   </div>
                 </div>

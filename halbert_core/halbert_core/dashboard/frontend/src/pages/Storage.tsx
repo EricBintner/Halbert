@@ -44,7 +44,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
-import { openChat } from '@/components/SendToChat'
+import { SystemItemActions } from '@/components/domain'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -917,29 +917,17 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
     return parts.length > 1 ? parts.join(' + ') : null
   }, [group.arrayMembers])
   
-  // Reference this storage item in chat
-  const handleMention = () => {
-    // Create a clean slug from the semantic name for the mention
-    const slug = group.semanticName.replace(/\s+/g, '_')
-    
-    // Primary filesystem info for context
+  // Build context for chat/mention
+  const storageContext = useMemo(() => {
     const primaryFs = group.filesystems[0]
     const mountInfo = primaryFs ? `${primaryFs.mountpoint} (${primaryFs.fstype})` : ''
-    
-    // Keep context concise - just the key info
     const usageInfo = group.filesystems.map(fs => 
       `${fs.mountpoint}: ${fs.percent}% used (${fs.used}/${fs.size})`
     ).join(', ')
-    
-    openChat({
-      title: group.semanticName,
-      type: 'storage',
-      context: `${group.semanticName} - ${mountInfo}\n${group.diskCount} disks, ${usageInfo}`,
-      itemId: slug,
-      newConversation: false,  // @ tag just adds mention to current chat
-      useSpecialist: false,
-    })
-  }
+    return `${group.semanticName} - ${mountInfo}\n${group.diskCount} disks, ${usageInfo}`
+  }, [group])
+  
+  const storageItemId = group.semanticName.replace(/\s+/g, '_')
   
   return (
     <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
@@ -980,14 +968,15 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
                 : `${group.diskCount} ${group.diskCount === 1 ? 'disk' : 'disks'}`
               }
             </span>
-            <button
-              type="button"
-              onClick={handleMention}
-              className="text-muted-foreground hover:text-blue-500 font-medium text-sm px-1"
-              title={`Reference ${group.semanticName} in chat`}
-            >
-              @
-            </button>
+            <SystemItemActions
+              item={{
+                name: group.semanticName,
+                type: 'storage',
+                id: storageItemId,
+                context: storageContext,
+              }}
+              size="sm"
+            />
           </div>
         </div>
       </div>

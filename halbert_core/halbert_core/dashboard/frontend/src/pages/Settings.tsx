@@ -37,7 +37,9 @@ import {
   Shield,
   AlertTriangle,
   Eye,
+  Palette,
 } from 'lucide-react'
+import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 
 const API_BASE = '/api'
 
@@ -161,6 +163,9 @@ export function Settings() {
   const [toast, setToast] = useState<{ open: boolean, message: string, variant: 'success' | 'error' | 'info' }>({ 
     open: false, message: '', variant: 'info' 
   })
+  
+  // Component Library viewer state
+  const [showComponentLibrary, setShowComponentLibrary] = useState(false)
   
   // System Profile state
   const [systemProfile, setSystemProfile] = useState<{
@@ -710,7 +715,7 @@ export function Settings() {
       </div>
 
       <Tabs defaultValue="system" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="system" className="flex items-center gap-2">
             <Cpu className="h-4 w-4" />
             System
@@ -736,6 +741,10 @@ export function Settings() {
           <TabsTrigger value="alerts" className="flex items-center gap-2">
             <Bell className="h-4 w-4" />
             Alerts
+          </TabsTrigger>
+          <TabsTrigger value="about" className="flex items-center gap-2">
+            <Info className="h-4 w-4" />
+            About
           </TabsTrigger>
         </TabsList>
 
@@ -2061,7 +2070,62 @@ export function Settings() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* About Tab */}
+        <TabsContent value="about" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Info className="h-5 w-5" />
+                About Halbert
+              </CardTitle>
+              <CardDescription>
+                AI-powered Linux system assistant
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <h4 className="font-medium">Version</h4>
+                <p className="text-sm text-muted-foreground">Development Build</p>
+              </div>
+              
+              <div className="space-y-2">
+                <h4 className="font-medium">Developer Tools</h4>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Explore the UI component library used to build Halbert.
+                </p>
+                <Button variant="outline" onClick={() => setShowComponentLibrary(true)}>
+                  <Palette className="h-4 w-4 mr-2" />
+                  View Component Library
+                </Button>
+              </div>
+              
+              <div className="space-y-2">
+                <h4 className="font-medium">Links</h4>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="ghost" size="sm" asChild>
+                    <a href="https://github.com" target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="h-4 w-4 mr-1" />
+                      GitHub
+                    </a>
+                  </Button>
+                  <Button variant="ghost" size="sm" asChild>
+                    <a href="/docs" target="_blank" rel="noopener noreferrer">
+                      <BookOpen className="h-4 w-4 mr-1" />
+                      Documentation
+                    </a>
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
+      
+      {/* Component Library Viewer */}
+      {showComponentLibrary && (
+        <ComponentLibraryViewer onClose={() => setShowComponentLibrary(false)} />
+      )}
       
       {/* Delete Endpoint Confirmation Dialog */}
       <ConfirmDialog

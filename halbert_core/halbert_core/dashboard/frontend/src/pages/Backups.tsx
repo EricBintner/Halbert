@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { ConfigEditor } from '@/components/ConfigEditor'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -27,11 +28,12 @@ import {
   History,
   ExternalLink,
   Loader2,
-  MessageCircle,
+  Pencil,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
+import { SystemItemActions } from '@/components/domain'
 
 interface BackupHistory {
   timestamp: string
@@ -77,6 +79,7 @@ export function Backups() {
   const [loadingHistories, setLoadingHistories] = useState<Set<string>>(new Set())
   const [backupStatuses, setBackupStatuses] = useState<Record<string, BackupStatus>>({})
   const [historyLimits, setHistoryLimits] = useState<Record<string, number>>({})
+  const [editingConfig, setEditingConfig] = useState<string | null>(null)
   const DEFAULT_HISTORY_LIMIT = 10
   const HISTORY_INCREMENT = 20
 
@@ -249,6 +252,16 @@ export function Backups() {
     )
   }
 
+  // Show editor instead of normal content when editing
+  if (editingConfig) {
+    return (
+      <ConfigEditor
+        filePath={editingConfig}
+        onClose={() => setEditingConfig(null)}
+      />
+    )
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -360,26 +373,16 @@ export function Backups() {
                           </p>
                         </div>
                       </div>
-                      {/* Chat button */}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 shrink-0"
-                        title="Ask about this backup"
-                        onClick={() => openChat({
-                          title: backup.name,
+                      {/* @ and Chat buttons */}
+                      <SystemItemActions
+                        item={{
+                          name: backup.name,
                           type: 'backup',
+                          id: backup.name,
                           context: `Backup: ${backup.name}\nTool: ${backup.data.tool}\nSchedule: ${backup.data.schedule || 'manual'}\nStatus: ${getEffectiveStatus(backup)}\nSource: ${backup.data.source_path || 'N/A'}\nDestination: ${backup.data.destination || 'N/A'}`,
-                          itemId: backup.name,
-                          newConversation: true,
-                          useSpecialist: false,
-                          prefillMessage: getEffectiveSeverity(backup) === 'critical' 
-                            ? 'This backup is failing. What could be wrong?' 
-                            : 'Tell me about this backup configuration.',
-                        })}
-                      >
-                        <MessageCircle className="h-4 w-4" />
-                      </Button>
+                        }}
+                        size="sm"
+                      />
                     </div>
 
                     {/* Backup details grid - improved spacing */}
@@ -426,6 +429,22 @@ export function Backups() {
                           <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded break-all">
                             {backup.data.config_path}
                           </code>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-xs ml-auto"
+                            onClick={() => {
+                              const configPath = backup.data.config_path || ''
+                              setEditingConfig(configPath)
+                              openChat({
+                                title: `Config: ${configPath.split('/').pop()}`,
+                                type: 'config',
+                              })
+                            }}
+                          >
+                            <Pencil className="h-3 w-3 mr-1" />
+                            Edit
+                          </Button>
                         </div>
                       )}
                     </div>

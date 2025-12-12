@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { useScan } from '@/contexts/ScanContext'
+import { ConfigEditor } from '@/components/ConfigEditor'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -40,6 +41,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
+import { SystemItemActions } from '@/components/domain'
 
 interface PortDetail {
   port: number
@@ -156,6 +158,7 @@ export function Network() {
   const [selectedInterface, setSelectedInterface] = useState<NetworkItem | null>(null)
   const [explanation, setExplanation] = useState<string | null>(null)
   const [loadingExplanation, setLoadingExplanation] = useState(false)
+  const [editingConfig, setEditingConfig] = useState<string | null>(null)
   
   // Edit classification state
   const [editingInterface, setEditingInterface] = useState<NetworkItem | null>(null)
@@ -417,6 +420,16 @@ export function Network() {
     return <div className="flex items-center justify-center h-64">Loading...</div>
   }
 
+  // Show editor instead of normal content when editing
+  if (editingConfig) {
+    return (
+      <ConfigEditor
+        filePath={editingConfig}
+        onClose={() => setEditingConfig(null)}
+      />
+    )
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -529,26 +542,15 @@ export function Network() {
                         <Pencil className="h-4 w-4" />
                       </Button>
                     )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 w-8 p-0"
-                      title="Ask about this interface"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        openChat({
-                          title: iface.title,
-                          type: 'network',
-                          context: `Interface: ${iface.title}\nType: ${iface.data.type || 'unknown'}\nStatus: ${iface.status}\nIPv4: ${iface.data.ipv4 || 'none'}\nMAC: ${iface.data.mac || 'none'}`,
-                          itemId: iface.data.interface || iface.name,
-                          newConversation: true,
-                          useSpecialist: false,
-                          prefillMessage: 'Tell me about this network interface.',
-                        })
+                    <SystemItemActions
+                      item={{
+                        name: iface.title,
+                        type: 'network',
+                        id: iface.data.interface || iface.name,
+                        context: `Interface: ${iface.title}\nType: ${iface.data.type || 'unknown'}\nStatus: ${iface.status}\nIPv4: ${iface.data.ipv4 || 'none'}\nMAC: ${iface.data.mac || 'none'}`,
                       }}
-                    >
-                      <MessageCircle className="h-4 w-4" />
-                    </Button>
+                      size="sm"
+                    />
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </div>
                 </div>
@@ -738,24 +740,43 @@ export function Network() {
                       <span className="text-sm font-medium">Config File</span>
                     </div>
                     <p className="font-mono text-xs break-all">{selectedInterface.data.config_path}</p>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="mt-2 h-7 text-xs"
-                      onClick={() => copyToClipboard(selectedInterface.data.config_path || '', `config-${selectedInterface.id}`)}
-                    >
-                      {copied === `config-${selectedInterface.id}` ? (
-                        <>
-                          <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" />
-                          Copied
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3 w-3 mr-1" />
-                          Copy Path
-                        </>
-                      )}
-                    </Button>
+                    <div className="flex gap-2 mt-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => copyToClipboard(selectedInterface.data.config_path || '', `config-${selectedInterface.id}`)}
+                      >
+                        {copied === `config-${selectedInterface.id}` ? (
+                          <>
+                            <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" />
+                            Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3 w-3 mr-1" />
+                            Copy Path
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => {
+                          const configPath = selectedInterface.data.config_path || ''
+                          setSelectedInterface(null)
+                          setEditingConfig(configPath)
+                          openChat({
+                            title: `Config: ${configPath.split('/').pop()}`,
+                            type: 'config',
+                          })
+                        }}
+                      >
+                        <Pencil className="h-3 w-3 mr-1" />
+                        Edit Config
+                      </Button>
+                    </div>
                   </div>
                 )}
 

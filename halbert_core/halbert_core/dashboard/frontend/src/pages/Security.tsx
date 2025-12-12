@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
+import { SystemItemActions, StatusBadge } from '@/components/domain'
 
 interface SecurityItem {
   id: string
@@ -200,16 +201,18 @@ export function Security() {
                       )}
                     </div>
                   </div>
-                  <Badge
-                    className={cn(
-                      item.severity === 'critical' && 'bg-red-500',
-                      item.severity === 'warning' && 'bg-yellow-500',
-                      item.severity === 'success' && 'bg-green-500',
-                      item.severity === 'info' && 'bg-blue-500',
-                    )}
-                  >
-                    {item.status}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={item.status} severity={item.severity} />
+                    <SystemItemActions
+                      item={{
+                        name: item.title,
+                        type: 'security',
+                        id: item.id,
+                        context: `Security Item: ${item.title}\nStatus: ${item.status}\nDescription: ${item.description}`,
+                      }}
+                      size="sm"
+                    />
+                  </div>
                 </div>
               </CardContent>
             </Card>
