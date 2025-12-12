@@ -134,11 +134,18 @@ export function Settings() {
   const [showAddEndpoint, setShowAddEndpoint] = useState(false)
   const [showAddKnowledgeSource, setShowAddKnowledgeSource] = useState(false)
   
-  // Model selector state (for each role)
-  const [selectingModelFor, setSelectingModelFor] = useState<'guide' | 'specialist' | 'vision' | null>(null)
-  const [selectedEndpointId, setSelectedEndpointId] = useState<string>('')
-  const [availableModels, setAvailableModels] = useState<string[]>([])
-  const [loadingModels, setLoadingModels] = useState(false)
+  // Model selector state (separate per role to avoid cross-contamination)
+  const [guideEndpointId, setGuideEndpointId] = useState<string>('')
+  const [guideModels, setGuideModels] = useState<string[]>([])
+  const [loadingGuideModels, setLoadingGuideModels] = useState(false)
+  
+  const [specialistEndpointId, setSpecialistEndpointId] = useState<string>('')
+  const [specialistModels, setSpecialistModels] = useState<string[]>([])
+  const [loadingSpecialistModels, setLoadingSpecialistModels] = useState(false)
+  
+  const [visionEndpointId, setVisionEndpointId] = useState<string>('')
+  const [visionModels, setVisionModels] = useState<string[]>([])
+  const [loadingVisionModels, setLoadingVisionModels] = useState(false)
   
   // RAG knowledge source state
   const [newSourceUrl, setNewSourceUrl] = useState('')
@@ -300,14 +307,15 @@ export function Settings() {
       if (!modelConfig?.orchestrator?.model && 
           modelConfig?.saved_endpoints && 
           modelConfig.saved_endpoints.length > 0 &&
-          availableModels.length === 0 &&
-          !loadingModels) {
+          guideModels.length === 0 &&
+          !loadingGuideModels) {
         const firstEndpoint = modelConfig.saved_endpoints[0]
         if (firstEndpoint?.id) {
-          setLoadingModels(true)
+          setGuideEndpointId(firstEndpoint.id)
+          setLoadingGuideModels(true)
           const models = await fetchEndpointModels(firstEndpoint.id)
-          setAvailableModels(models)
-          setLoadingModels(false)
+          setGuideModels(models)
+          setLoadingGuideModels(false)
         }
       }
     }
@@ -1067,13 +1075,15 @@ export function Settings() {
 
           {/* Model Assignment Cards with Endpoint + Model Dropdowns */}
           <div className="grid grid-cols-3 gap-4">
-            {/* Guide Model Card - yellow border if Ollama connected but not configured */}
+            {/* Guide Model Card - green only if configured AND verified connected */}
             <Card className={
-              modelConfig?.orchestrator?.model 
-                ? 'border-green-500' 
-                : modelStatus?.ollama_connected 
-                  ? 'border-yellow-500' 
-                  : ''
+              modelConfig?.orchestrator?.model && modelStatus?.ollama_connected && modelStatus?.model_installed
+                ? 'border-green-500'  // Configured and verified working
+                : modelConfig?.orchestrator?.model && !modelStatus?.ollama_connected
+                  ? 'border-red-500'  // Configured but NOT connected (stale config)
+                  : modelStatus?.ollama_connected 
+                    ? 'border-yellow-500'  // Connected but not configured
+                    : ''
             }>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
@@ -1092,7 +1102,34 @@ export function Settings() {
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">{modelConfig.orchestrator.name || 'Endpoint'}</p>
                     <code className="text-sm bg-muted px-2 py-1 rounded inline-block">{modelConfig.orchestrator.model}</code>
-                    <div>
+                    
+                    {/* Show warning if configured but not connected */}
+                    {!modelStatus?.ollama_connected && (
+                      <p className="text-xs text-red-600 flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" />
+                        Endpoint not reachable - clear and reconfigure
+                      </p>
+                    )}
+                    {modelStatus?.ollama_connected && !modelStatus?.model_installed && (
+                      <p className="text-xs text-yellow-600 flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" />
+                        Model not found on endpoint
+                      </p>
+                    )}
+                    
+                    <div className="flex gap-1">
+                      {/* Retry button when not connected */}
+                      {!modelStatus?.ollama_connected && (
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="h-7 px-2 text-xs"
+                          onClick={() => loadSettings()}
+                        >
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                          Retry
+                        </Button>
+                      )}
                       <Button 
                         variant="ghost" 
                         size="sm" 
@@ -1116,15 +1153,14 @@ export function Settings() {
                     <Label className="text-xs">Endpoint</Label>
                     <select 
                       className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
-                      value={selectingModelFor === 'guide' ? selectedEndpointId : modelConfig.saved_endpoints[0]?.id || ''}
+                      value={guideEndpointId || modelConfig.saved_endpoints[0]?.id || ''}
                       onChange={async (e) => {
-                        setSelectingModelFor('guide')
-                        setSelectedEndpointId(e.target.value)
+                        setGuideEndpointId(e.target.value)
                         if (e.target.value) {
-                          setLoadingModels(true)
+                          setLoadingGuideModels(true)
                           const models = await fetchEndpointModels(e.target.value)
-                          setAvailableModels(models)
-                          setLoadingModels(false)
+                          setGuideModels(models)
+                          setLoadingGuideModels(false)
                         }
                       }}
                     >
@@ -1132,32 +1168,28 @@ export function Settings() {
                         <option key={ep.id} value={ep.id}>{ep.name}</option>
                       ))}
                     </select>
-                    {(selectingModelFor === 'guide' || !modelConfig?.orchestrator?.model) && (
-                      <>
-                        <Label className="text-xs">Model</Label>
-                        <select 
-                          className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
-                          disabled={loadingModels}
-                          onChange={async (e) => {
-                            if (e.target.value) {
-                              const epId = selectingModelFor === 'guide' ? selectedEndpointId : modelConfig.saved_endpoints[0]?.id
-                              if (epId) {
-                                await handleAssignModel('guide', epId, e.target.value)
-                                setSelectingModelFor(null)
-                                setSelectedEndpointId('')
-                              }
-                            }
-                          }}
-                        >
-                          <option value="">{loadingModels ? 'Loading...' : 'Select model...'}</option>
-                          {availableModels.map(m => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                        </select>
-                        {availableModels.length === 0 && !loadingModels && (
-                          <p className="text-xs text-muted-foreground">Select an endpoint to see available models</p>
-                        )}
-                      </>
+                    <Label className="text-xs">Model</Label>
+                    <select 
+                      className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
+                      disabled={loadingGuideModels}
+                      onChange={async (e) => {
+                        if (e.target.value) {
+                          const epId = guideEndpointId || modelConfig.saved_endpoints[0]?.id
+                          if (epId) {
+                            await handleAssignModel('guide', epId, e.target.value)
+                            setGuideEndpointId('')
+                            setGuideModels([])
+                          }
+                        }
+                      }}
+                    >
+                      <option value="">{loadingGuideModels ? 'Loading...' : 'Select model...'}</option>
+                      {guideModels.map((m: string) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    {guideModels.length === 0 && !loadingGuideModels && (
+                      <p className="text-xs text-muted-foreground">Select an endpoint to see available models</p>
                     )}
                   </div>
                 )}
@@ -1204,15 +1236,14 @@ export function Settings() {
                   <Label className="text-xs">Endpoint</Label>
                   <select 
                     className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
-                    value={selectingModelFor === 'specialist' ? selectedEndpointId : ''}
+                    value={specialistEndpointId}
                     onChange={async (e) => {
-                      setSelectingModelFor('specialist')
-                      setSelectedEndpointId(e.target.value)
+                      setSpecialistEndpointId(e.target.value)
                       if (e.target.value) {
-                        setLoadingModels(true)
+                        setLoadingSpecialistModels(true)
                         const models = await fetchEndpointModels(e.target.value)
-                        setAvailableModels(models)
-                        setLoadingModels(false)
+                        setSpecialistModels(models)
+                        setLoadingSpecialistModels(false)
                       }
                     }}
                   >
@@ -1221,22 +1252,22 @@ export function Settings() {
                       <option key={ep.id} value={ep.id}>{ep.name}</option>
                     ))}
                   </select>
-                  {selectingModelFor === 'specialist' && selectedEndpointId && (
+                  {specialistEndpointId && (
                     <>
                       <Label className="text-xs">Model</Label>
                       <select 
                         className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
-                        disabled={loadingModels}
+                        disabled={loadingSpecialistModels}
                         onChange={async (e) => {
                           if (e.target.value) {
-                            await handleAssignModel('specialist', selectedEndpointId, e.target.value)
-                            setSelectingModelFor(null)
-                            setSelectedEndpointId('')
+                            await handleAssignModel('specialist', specialistEndpointId, e.target.value)
+                            setSpecialistEndpointId('')
+                            setSpecialistModels([])
                           }
                         }}
                       >
-                        <option value="">{loadingModels ? 'Loading...' : 'Select model...'}</option>
-                        {availableModels.map(m => (
+                        <option value="">{loadingSpecialistModels ? 'Loading...' : 'Select model...'}</option>
+                        {specialistModels.map((m: string) => (
                           <option key={m} value={m}>{m}</option>
                         ))}
                       </select>
@@ -1287,15 +1318,14 @@ export function Settings() {
                   <Label className="text-xs">Endpoint</Label>
                   <select 
                     className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
-                    value={selectingModelFor === 'vision' ? selectedEndpointId : ''}
+                    value={visionEndpointId}
                     onChange={async (e) => {
-                      setSelectingModelFor('vision')
-                      setSelectedEndpointId(e.target.value)
+                      setVisionEndpointId(e.target.value)
                       if (e.target.value) {
-                        setLoadingModels(true)
+                        setLoadingVisionModels(true)
                         const models = await fetchEndpointModels(e.target.value)
-                        setAvailableModels(models)
-                        setLoadingModels(false)
+                        setVisionModels(models)
+                        setLoadingVisionModels(false)
                       }
                     }}
                   >
@@ -1304,22 +1334,22 @@ export function Settings() {
                       <option key={ep.id} value={ep.id}>{ep.name}</option>
                     ))}
                   </select>
-                  {selectingModelFor === 'vision' && selectedEndpointId && (
+                  {visionEndpointId && (
                     <>
                       <Label className="text-xs">Model</Label>
                       <select 
                         className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
-                        disabled={loadingModels}
+                        disabled={loadingVisionModels}
                         onChange={async (e) => {
                           if (e.target.value) {
-                            await handleAssignModel('vision', selectedEndpointId, e.target.value)
-                            setSelectingModelFor(null)
-                            setSelectedEndpointId('')
+                            await handleAssignModel('vision', visionEndpointId, e.target.value)
+                            setVisionEndpointId('')
+                            setVisionModels([])
                           }
                         }}
                       >
-                        <option value="">{loadingModels ? 'Loading...' : 'Select model...'}</option>
-                        {availableModels.map(m => (
+                        <option value="">{loadingVisionModels ? 'Loading...' : 'Select model...'}</option>
+                        {visionModels.map((m: string) => (
                           <option key={m} value={m}>{m}</option>
                         ))}
                       </select>

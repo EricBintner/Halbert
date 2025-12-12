@@ -330,7 +330,17 @@ export function GPU() {
                       item={{
                         name: gpu.model,
                         type: 'gpu',
-                        id: gpu.pci_id,
+                        id: `gpu/${gpu.pci_id}`,
+                        description: `${gpu.vendor} GPU`,
+                        status: gpu.driver_type ? 'Driver Loaded' : 'No Driver',
+                        data: {
+                          vendor: gpu.vendor,
+                          pci_id: gpu.pci_id,
+                          vram_mb: gpu.vram_mb,
+                          driver_type: gpu.driver_type,
+                          driver_version: gpu.driver_version,
+                          cuda_version: gpu.cuda_version,
+                        },
                         context: `GPU: ${gpu.model}\nVendor: ${gpu.vendor}\nDriver: ${gpu.driver_type || 'Unknown'} ${gpu.driver_version || ''}\nVRAM: ${gpu.vram_mb ? (gpu.vram_mb / 1024).toFixed(0) + ' GB' : 'Unknown'}\nCUDA: ${gpu.cuda_version || 'N/A'}`,
                       }}
                       size="sm"

@@ -546,7 +546,10 @@ export function Network() {
                       item={{
                         name: iface.title,
                         type: 'network',
-                        id: iface.data.interface || iface.name,
+                        id: `network/${iface.data.interface || iface.name}`,
+                        description: iface.description,
+                        status: iface.status,
+                        data: iface.data,
                         context: `Interface: ${iface.title}\nType: ${iface.data.type || 'unknown'}\nStatus: ${iface.status}\nIPv4: ${iface.data.ipv4 || 'none'}\nMAC: ${iface.data.mac || 'none'}`,
                       }}
                       size="sm"

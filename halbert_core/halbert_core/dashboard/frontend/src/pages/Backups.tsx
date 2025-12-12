@@ -378,7 +378,10 @@ export function Backups() {
                         item={{
                           name: backup.name,
                           type: 'backup',
-                          id: backup.name,
+                          id: `backup/${backup.name}`,
+                          description: backup.description,
+                          status: getEffectiveStatus(backup),
+                          data: backup.data,
                           context: `Backup: ${backup.name}\nTool: ${backup.data.tool}\nSchedule: ${backup.data.schedule || 'manual'}\nStatus: ${getEffectiveStatus(backup)}\nSource: ${backup.data.source_path || 'N/A'}\nDestination: ${backup.data.destination || 'N/A'}`,
                         }}
                         size="sm"

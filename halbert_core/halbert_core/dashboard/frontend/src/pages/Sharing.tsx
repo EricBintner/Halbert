@@ -809,7 +809,10 @@ export function Sharing() {
                   item={{
                     name: selectedItem.title,
                     type: 'sharing',
-                    id: selectedItem.id,
+                    id: `sharing/${selectedItem.id}`,
+                    description: selectedItem.description,
+                    status: selectedItem.status,
+                    data: selectedItem.data,
                     context: JSON.stringify(selectedItem.data, null, 2),
                   }}
                   variant="full"
