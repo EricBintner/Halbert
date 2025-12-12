@@ -138,55 +138,126 @@ def file_needs_sudo(file_path: str) -> bool:
         return not os.access(parent, os.W_OK)
 
 
+def get_file_helper_path() -> str:
+    """Get path to the halbert-file-helper script."""
+    # Check standard install locations
+    paths = [
+        "/usr/local/bin/halbert-file-helper",
+        "/usr/bin/halbert-file-helper",
+        str(Path(__file__).parent.parent.parent.parent.parent / "packaging" / "polkit" / "halbert-file-helper"),
+    ]
+    for p in paths:
+        if os.path.exists(p) and os.access(p, os.X_OK):
+            return p
+    return paths[0]  # Fallback to standard location
+
+
 def read_file_content(file_path: str) -> str:
-    """Read file content, using sudo if needed."""
+    """Read file content, using pkexec if needed for privileged access."""
     try:
         with open(file_path, 'r') as f:
             return f.read()
     except PermissionError:
-        # Try with sudo (non-interactive)
+        # Try with pkexec (PolicyKit) - will prompt for password via GUI
+        helper = get_file_helper_path()
         try:
             result = subprocess.run(
-                ['sudo', '-n', 'cat', file_path],
+                ['pkexec', helper, 'read', file_path],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=120  # Allow time for user to enter password
             )
             if result.returncode == 0:
                 return result.stdout
+            elif result.returncode == 126:
+                # User cancelled authentication
+                raise PermissionError("Authentication cancelled by user")
+            elif result.returncode == 127:
+                # pkexec or helper not found - fall back to sudo
+                return _read_with_sudo(file_path)
             else:
-                # Provide helpful error message
-                if 'password is required' in result.stderr:
-                    raise PermissionError(
-                        f"This file requires root access. To enable editing:\n"
-                        f"1. Run: sudo visudo\n"
-                        f"2. Add: {os.getenv('USER', 'your_user')} ALL=(ALL) NOPASSWD: /usr/bin/cat {file_path}, /usr/bin/tee {file_path}\n"
-                        f"Or temporarily: sudo chmod 644 {file_path}"
-                    )
                 raise PermissionError(f"Cannot read file: {result.stderr.strip()}")
+        except FileNotFoundError:
+            # pkexec not available - fall back to sudo
+            return _read_with_sudo(file_path)
         except subprocess.TimeoutExpired:
-            raise PermissionError("Sudo timeout - password required")
+            raise PermissionError("Authentication timeout")
+
+
+def _read_with_sudo(file_path: str) -> str:
+    """Fallback: read with sudo -n (non-interactive)."""
+    result = subprocess.run(
+        ['sudo', '-n', 'cat', file_path],
+        capture_output=True,
+        text=True,
+        timeout=5
+    )
+    if result.returncode == 0:
+        return result.stdout
+    elif 'password is required' in result.stderr:
+        raise PermissionError(
+            f"This file requires root access.\n"
+            f"Install the PolicyKit policy for GUI authentication:\n"
+            f"  sudo cp packaging/polkit/com.halbert.editor.policy /usr/share/polkit-1/actions/\n"
+            f"  sudo cp packaging/polkit/halbert-file-helper /usr/local/bin/\n"
+            f"  sudo chmod +x /usr/local/bin/halbert-file-helper"
+        )
+    raise PermissionError(f"Cannot read file: {result.stderr.strip()}")
 
 
 def write_file_content(file_path: str, content: str) -> bool:
-    """Write file content, using sudo if needed."""
+    """Write file content, using pkexec if needed for privileged access."""
     try:
         with open(file_path, 'w') as f:
             f.write(content)
         return True
     except PermissionError:
-        # Try with sudo using tee
+        # Try with pkexec (PolicyKit) - will prompt for password via GUI
+        helper = get_file_helper_path()
         try:
             result = subprocess.run(
-                ['sudo', '-n', 'tee', file_path],
+                ['pkexec', helper, 'write', file_path],
                 input=content,
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=120  # Allow time for user to enter password
             )
-            return result.returncode == 0
+            if result.returncode == 0:
+                return True
+            elif result.returncode == 126:
+                raise PermissionError("Authentication cancelled by user")
+            elif result.returncode == 127:
+                # pkexec or helper not found - fall back to sudo
+                return _write_with_sudo(file_path, content)
+            else:
+                raise PermissionError(f"Cannot write file: {result.stderr.strip()}")
+        except FileNotFoundError:
+            # pkexec not available - fall back to sudo
+            return _write_with_sudo(file_path, content)
         except subprocess.TimeoutExpired:
-            raise PermissionError("Sudo timeout - password required")
+            raise PermissionError("Authentication timeout")
+
+
+def _write_with_sudo(file_path: str, content: str) -> bool:
+    """Fallback: write with sudo -n (non-interactive)."""
+    result = subprocess.run(
+        ['sudo', '-n', 'tee', file_path],
+        input=content,
+        capture_output=True,
+        text=True,
+        timeout=10
+    )
+    if result.returncode == 0:
+        return True
+    elif 'password is required' in result.stderr:
+        raise PermissionError(
+            f"This file requires root access to save.\n"
+            f"Install the PolicyKit policy for GUI authentication:\n"
+            f"  sudo cp packaging/polkit/com.halbert.editor.policy /usr/share/polkit-1/actions/\n"
+            f"  sudo cp packaging/polkit/halbert-file-helper /usr/local/bin/\n"
+            f"  sudo chmod +x /usr/local/bin/halbert-file-helper"
+        )
+    raise PermissionError(f"Cannot write file: {result.stderr.strip()}")
 
 
 # --- Routes ---
