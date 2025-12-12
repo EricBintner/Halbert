@@ -413,9 +413,9 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
       
       {/* Status messages */}
       {error && (
-        <div className="px-4 py-2 bg-destructive/20 text-destructive flex items-center gap-2">
-          <AlertCircle className="h-4 w-4" />
-          {error}
+        <div className="px-4 py-2 bg-destructive/20 text-destructive flex gap-2">
+          <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+          <pre className="text-sm whitespace-pre-wrap font-sans">{error}</pre>
         </div>
       )}
       {successMessage && (
