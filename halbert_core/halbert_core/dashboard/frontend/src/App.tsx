@@ -17,6 +17,7 @@ import { Settings } from './pages/Settings'
 import { Onboarding } from './components/Onboarding'
 import { DebugProvider } from './contexts/DebugContext'
 import { ScanProvider } from './contexts/ScanContext'
+import { PageContextProvider } from './contexts/PageContext'
 
 function App() {
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -76,23 +77,25 @@ function App() {
       <ScanProvider>
         <Onboarding open={showOnboarding} onComplete={handleOnboardingComplete} />
         <Router>
-          <Layout>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/terminal" element={<Terminal />} />
-              <Route path="/services" element={<Services />} />
-              <Route path="/storage" element={<Storage />} />
-              <Route path="/gpu" element={<GPU />} />
-              <Route path="/containers" element={<Containers />} />
-              <Route path="/development" element={<Development />} />
-              <Route path="/network" element={<Network />} />
-              <Route path="/sharing" element={<Sharing />} />
-              <Route path="/security" element={<Security />} />
-              <Route path="/backups" element={<Backups />} />
-              <Route path="/approvals" element={<Approvals />} />
-              <Route path="/settings" element={<Settings />} />
-            </Routes>
-          </Layout>
+          <PageContextProvider>
+            <Layout>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/terminal" element={<Terminal />} />
+                <Route path="/services" element={<Services />} />
+                <Route path="/storage" element={<Storage />} />
+                <Route path="/gpu" element={<GPU />} />
+                <Route path="/containers" element={<Containers />} />
+                <Route path="/development" element={<Development />} />
+                <Route path="/network" element={<Network />} />
+                <Route path="/sharing" element={<Sharing />} />
+                <Route path="/security" element={<Security />} />
+                <Route path="/backups" element={<Backups />} />
+                <Route path="/approvals" element={<Approvals />} />
+                <Route path="/settings" element={<Settings />} />
+              </Routes>
+            </Layout>
+          </PageContextProvider>
         </Router>
       </ScanProvider>
     </DebugProvider>

@@ -772,7 +772,10 @@ export function Services() {
                       item={{
                         name: service.name,
                         type: 'service',
-                        id: service.name,
+                        id: `service/${service.name}`,
+                        description: service.description,
+                        status: service.status,
+                        data: service.data,
                         context: `Service: ${service.name}\nStatus: ${service.status}\nDescription: ${service.description}`,
                       }}
                       size="sm"
