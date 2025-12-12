@@ -47,6 +47,8 @@ export interface OpenChatEvent {
   description?: string
   /** Current status */
   status?: string
+  /** Path to config file for this item (enables Edit Config button) */
+  configPath?: string
 }
 
 /**

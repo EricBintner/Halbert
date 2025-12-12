@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { 
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SidePanel } from './SidePanel'
+import { ConfigEditor } from './ConfigEditor'
 import { useDebug } from '@/contexts/DebugContext'
 
 const navigation = [
@@ -46,6 +48,32 @@ const navigation = [
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const { isDebugMode, setDebugMode, chatMetrics } = useDebug()
+  
+  // Global config editor state (triggered from chat "Edit Config" button)
+  const [editingConfigPath, setEditingConfigPath] = useState<string | null>(null)
+  
+  // Listen for open-config-editor events from chat
+  useEffect(() => {
+    const handleOpenConfigEditor = (e: CustomEvent<{ filePath: string }>) => {
+      console.log('[Layout] Opening config editor for:', e.detail.filePath)
+      setEditingConfigPath(e.detail.filePath)
+    }
+    
+    window.addEventListener('halbert:open-config-editor', handleOpenConfigEditor as EventListener)
+    return () => {
+      window.removeEventListener('halbert:open-config-editor', handleOpenConfigEditor as EventListener)
+    }
+  }, [])
+  
+  // Show config editor if path is set
+  if (editingConfigPath) {
+    return (
+      <ConfigEditor
+        filePath={editingConfigPath}
+        onClose={() => setEditingConfigPath(null)}
+      />
+    )
+  }
 
   return (
     <div className="h-screen bg-background flex overflow-hidden">
