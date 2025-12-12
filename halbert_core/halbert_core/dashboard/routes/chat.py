@@ -1389,7 +1389,7 @@ class ConfigChatResponse(BaseModel):
     edit_blocks: List[dict] = []  # {search: str, replace: str}
 
 
-CONFIG_EDITOR_SYSTEM_PROMPT = """You are a Linux configuration file editor assistant. You are currently editing:
+CONFIG_EDITOR_SYSTEM_PROMPT = """You are an expert Linux system administrator and configuration file editor. You are editing:
 
 **File:** {file_path}
 
@@ -1398,31 +1398,34 @@ CONFIG_EDITOR_SYSTEM_PROMPT = """You are a Linux configuration file editor assis
 {file_content}
 ```
 
-When the user asks you to make changes to this file, respond with SEARCH/REPLACE edit blocks.
-
-**FORMAT for edits:**
-<<<<<<< SEARCH
-exact text to find in the file
-=======
-replacement text
->>>>>>> REPLACE
-
-**Rules:**
-1. The SEARCH section must match EXACTLY what's in the file (including whitespace)
-2. You can include multiple edit blocks for multiple changes
-3. For adding content at the end, search for the last few lines and include them with the new content
-4. Always explain what you're changing and why
-5. If you're unsure about syntax, explain the change instead of making it
-
-**Example - Adding a comment at the end:**
-To add "# edited" at the end, I'll include the last line and add the comment:
+When the user asks you to make changes, you MUST respond with SEARCH/REPLACE edit blocks in this EXACT format:
 
 <<<<<<< SEARCH
-last line of file
+exact text to find (copy from file above)
 =======
-last line of file
-# edited
+new replacement text
 >>>>>>> REPLACE
+
+CRITICAL RULES:
+1. Copy the SEARCH text EXACTLY from the file content above (including whitespace, comments, etc.)
+2. The ======= separator line is REQUIRED between SEARCH and REPLACE sections
+3. To add content at the end, SEARCH for the last few lines and include them in REPLACE with your addition
+4. You may include multiple edit blocks for multiple changes
+5. After the edit blocks, briefly explain what you changed
+
+EXAMPLE - Adding a comment at the end of a file:
+I'll add the requested comment after the last line:
+
+<<<<<<< SEARCH
+    dhcp6: no
+=======
+    dhcp6: no
+# Added by Halbert on 2024-12-12
+>>>>>>> REPLACE
+
+This adds a comment after the dhcp6 line.
+
+IMPORTANT: Always use the exact <<<<<<< SEARCH, =======, and >>>>>>> REPLACE markers on their own lines.
 """
 
 
@@ -1509,10 +1512,19 @@ if FASTAPI_AVAILABLE:
         # Add current message
         messages.append({"role": "user", "content": message})
         
-        # Call LLM
+        # Call LLM - prefer specialist model for config editing (coding task)
         try:
             endpoint = get_ollama_endpoint()
-            model = get_configured_model()
+            
+            # Try to use specialist model for better code editing
+            model_router = get_model_router()
+            specialist_config = model_router.config.get("specialist", {})
+            if specialist_config.get("enabled") and specialist_config.get("model"):
+                model = specialist_config.get("model")
+                logger.info(f"Using specialist model for config editing: {model}")
+            else:
+                model = get_configured_model()
+                logger.info(f"Using guide model for config editing: {model} (no specialist configured)")
             
             response = requests.post(
                 f"{endpoint}/api/chat",
@@ -1521,11 +1533,11 @@ if FASTAPI_AVAILABLE:
                     "messages": messages,
                     "stream": False,
                     "options": {
-                        "temperature": 0.3,  # Lower temperature for more precise edits
-                        "num_predict": 2048
+                        "temperature": 0.2,  # Lower temperature for more precise edits
+                        "num_predict": 4096  # More tokens for full file edits
                     }
                 },
-                timeout=120
+                timeout=180  # Longer timeout for larger models
             )
             
             if response.status_code == 200:
