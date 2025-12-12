@@ -45,6 +45,7 @@ interface Message {
   timestamp: Date
   mentions?: string[]
   editBlocks?: EditBlock[]  // Phase 18: Config editor edit proposals
+  configPath?: string  // Path to config file for "Edit Config" button
 }
 
 interface Mentionable {
@@ -413,6 +414,8 @@ export function SidePanel() {
       useSpecialist?: boolean
       prefillMessage?: string
       reuseExisting?: boolean  // Phase 18: Reuse existing conversation with same title
+      configPath?: string  // Path to config file for "Edit Config" button
+      data?: Record<string, unknown>  // Full item data
       // Legacy format
       service?: string
     }
@@ -465,14 +468,23 @@ export function SidePanel() {
         // Create a named conversation so messages get saved
         const contextContent = `**${title}**\n\n${detail.context}`
         
+        // Check for config file path - either directly provided or from data
+        // Scanner uses config_path, but we also check other variations
+        const configPath = detail.configPath || 
+          (detail.data?.config_path as string) ||   // Scanner convention
+          (detail.data?.config_file as string) ||   // Alternative name
+          (detail.data?.configPath as string) ||    // camelCase
+          null
+        
         api.createConversation(title).then((conv: Conversation) => {
           setCurrentConversationId(conv.id)
-          // Add the assistant message with context
-          const assistantMsg = {
+          // Add the assistant message with context (and optional config path)
+          const assistantMsg: Message = {
             id: Date.now().toString(),
             role: 'assistant' as const,
             content: contextContent,
             timestamp: new Date(),
+            configPath: configPath || undefined,
           }
           setMessages([assistantMsg])
           // Save the initial assistant message
@@ -488,6 +500,7 @@ export function SidePanel() {
             role: 'assistant',
             content: contextContent,
             timestamp: new Date(),
+            configPath: configPath || undefined,
           }])
         })
         
@@ -1329,6 +1342,25 @@ export function SidePanel() {
                               </Button>
                             </div>
                           ))}
+                        </div>
+                      )}
+                      {/* Render Edit Config button if configPath is available */}
+                      {message.configPath && (
+                        <div className="mt-3 pt-2 border-t border-border/50">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs gap-1.5 w-full"
+                            onClick={() => {
+                              // Open config editor with this file
+                              window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {
+                                detail: { filePath: message.configPath }
+                              }))
+                            }}
+                          >
+                            <Pencil className="h-3 w-3" />
+                            Edit Config ({message.configPath.split('/').pop()})
+                          </Button>
                         </div>
                       )}
                     </div>
