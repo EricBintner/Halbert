@@ -23,6 +23,12 @@ export interface SystemItem {
   id: string
   /** Context string for chat - describes the item */
   context?: string
+  /** Item description */
+  description?: string
+  /** Current status (e.g., "Running", "Stopped") */
+  status?: string
+  /** Full data object from scanner */
+  data?: Record<string, unknown>
 }
 
 export interface SystemItemActionsProps {
@@ -94,7 +100,7 @@ export function SystemItemActions({
       onChat()
       return
     }
-    // Default: new conversation
+    // Default: new conversation with full item data
     openChat({
       title: item.name,
       type: item.type,
@@ -102,6 +108,10 @@ export function SystemItemActions({
       itemId: item.id,
       newConversation: true,
       useSpecialist: false,
+      // Pass full item data for PageContext
+      description: item.description,
+      status: item.status,
+      data: item.data,
     })
   }
   

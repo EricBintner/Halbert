@@ -9,7 +9,6 @@
  */
 
 import { useState, useRef, useEffect, KeyboardEvent, useCallback } from 'react'
-import { useLocation } from 'react-router-dom'
 import { 
   MessageCircle, 
   Terminal,
@@ -31,6 +30,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useDebug } from '@/contexts/DebugContext'
+import { usePageContext } from '@/contexts/PageContext'
 
 // Types
 interface EditBlock {
@@ -227,9 +227,8 @@ export function SidePanel() {
   // Debug context - chatMetrics used for updating, displayed in Layout.tsx
   const { isDebugMode, addLog, updateChatMetrics, chatMetrics } = useDebug()
   
-  // Current page tracking for context awareness
-  const location = useLocation()
-  const currentPage = location.pathname.replace('/', '') || 'dashboard'
+  // Page context - tracks current page, focused item, and visible items
+  const { currentPage, focusedItem, setFocusedItem, buildPageContext } = usePageContext()
   
   // Panel state
   const [isOpen, setIsOpen] = useState(true)
@@ -829,15 +828,21 @@ export function SidePanel() {
         const history = messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
         response = await api.sendConfigChat(messageContent, configContext.filePath, fileContent, history)
       } else {
-        // Regular chat endpoint - pass debug flag and current page for context
+        // Regular chat endpoint - pass debug flag, current page, and page context
+        const pageContext = buildPageContext()
         response = await api.sendChat(
           messageContent, 
           userMessage.mentions || [], 
           'guide', 
           isDebugMode,
           currentPage,
-          '' // pageContext - could be enhanced to pass visible items
+          pageContext
         )
+        
+        // Clear focused item after sending (it's been included in context)
+        if (focusedItem) {
+          setFocusedItem(null)
+        }
       }
       
       const apiEndTime = performance.now()

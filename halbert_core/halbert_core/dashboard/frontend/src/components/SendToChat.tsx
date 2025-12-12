@@ -41,12 +41,34 @@ export interface OpenChatEvent {
   useSpecialist?: boolean
   prefillMessage?: string
   reuseExisting?: boolean  // Phase 18: Reuse existing conversation with same title
+  /** Full item data for rich context */
+  data?: Record<string, unknown>
+  /** Description of the item */
+  description?: string
+  /** Current status */
+  status?: string
 }
 
 /**
  * Dispatch event to open chat with context
+ * Also sets focused item for PageContext
  */
 export function openChat(event: OpenChatEvent) {
+  // Set focused item for PageContext (rich context in chat)
+  if (event.itemId) {
+    window.dispatchEvent(new CustomEvent('halbert:set-focused-item', { 
+      detail: {
+        id: event.itemId,
+        name: event.title,
+        title: event.title,
+        type: event.type,
+        status: event.status,
+        description: event.description || event.context,
+        data: event.data,
+      }
+    }))
+  }
+  
   window.dispatchEvent(new CustomEvent('halbert:open-chat', { detail: event }))
 }
 
