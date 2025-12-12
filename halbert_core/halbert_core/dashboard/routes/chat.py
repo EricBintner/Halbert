@@ -1514,16 +1514,17 @@ if FASTAPI_AVAILABLE:
         
         # Call LLM - prefer specialist model for config editing (coding task)
         try:
-            endpoint = get_ollama_endpoint()
-            
             # Try to use specialist model for better code editing
             model_router = get_model_router()
             specialist_config = model_router.config.get("specialist", {})
             if specialist_config.get("enabled") and specialist_config.get("model"):
                 model = specialist_config.get("model")
-                logger.info(f"Using specialist model for config editing: {model}")
+                # Use specialist endpoint if configured, otherwise default
+                endpoint = specialist_config.get("endpoint", get_ollama_endpoint())
+                logger.info(f"Using specialist model for config editing: {model} at {endpoint}")
             else:
                 model = get_configured_model()
+                endpoint = get_ollama_endpoint()
                 logger.info(f"Using guide model for config editing: {model} (no specialist configured)")
             
             response = requests.post(
