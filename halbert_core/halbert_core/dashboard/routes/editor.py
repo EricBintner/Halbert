@@ -144,7 +144,7 @@ def read_file_content(file_path: str) -> str:
         with open(file_path, 'r') as f:
             return f.read()
     except PermissionError:
-        # Try with sudo
+        # Try with sudo (non-interactive)
         try:
             result = subprocess.run(
                 ['sudo', '-n', 'cat', file_path],
@@ -155,7 +155,15 @@ def read_file_content(file_path: str) -> str:
             if result.returncode == 0:
                 return result.stdout
             else:
-                raise PermissionError(f"Cannot read file: {result.stderr}")
+                # Provide helpful error message
+                if 'password is required' in result.stderr:
+                    raise PermissionError(
+                        f"This file requires root access. To enable editing:\n"
+                        f"1. Run: sudo visudo\n"
+                        f"2. Add: {os.getenv('USER', 'your_user')} ALL=(ALL) NOPASSWD: /usr/bin/cat {file_path}, /usr/bin/tee {file_path}\n"
+                        f"Or temporarily: sudo chmod 644 {file_path}"
+                    )
+                raise PermissionError(f"Cannot read file: {result.stderr.strip()}")
         except subprocess.TimeoutExpired:
             raise PermissionError("Sudo timeout - password required")
 
