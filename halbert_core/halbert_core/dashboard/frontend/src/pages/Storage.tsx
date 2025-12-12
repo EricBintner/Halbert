@@ -972,7 +972,20 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
               item={{
                 name: group.semanticName,
                 type: 'storage',
-                id: storageItemId,
+                id: `storage/${storageItemId}`,
+                description: group.filesystems[0]?.mountpoint || 'Storage',
+                status: group.hasWarnings ? 'Warning' : 'Healthy',
+                data: {
+                  diskCount: group.diskCount,
+                  arrayProfile: group.arrayProfile,
+                  filesystems: group.filesystems.map(fs => ({
+                    mountpoint: fs.mountpoint,
+                    fstype: fs.fstype,
+                    size: fs.size,
+                    used: fs.used,
+                    percent: fs.percent,
+                  })),
+                },
                 context: storageContext,
               }}
               size="sm"
