@@ -44,6 +44,28 @@ This directory contains files needed to **deploy and install** Halbert on produc
 - **When**: Always active, triggers service on changes
 - **Watches**: Halbert config directory
 
+### `polkit/`
+
+**Purpose**: PolicyKit configuration for privileged file operations
+
+**What these do**: Enable GUI password prompts when editing system configuration files (like `/etc/netplan/*.yaml`).
+
+**Files**:
+
+#### `com.halbert.editor.policy`
+- **What**: PolicyKit policy defining authentication requirements
+- **Install to**: `/usr/share/polkit-1/actions/`
+- **Effect**: Allows Halbert to read/write protected config files with user authentication
+
+#### `halbert-file-helper`
+- **What**: Helper script that performs privileged file operations
+- **Install to**: `/usr/local/bin/`
+- **Used by**: PolicyKit to safely read/write system files
+
+#### `install.sh`
+- **What**: Installation script for PolicyKit components
+- **Usage**: `./packaging/polkit/install.sh`
+
 ---
 
 ## How These Are Used

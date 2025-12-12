@@ -1,0 +1,58 @@
+#!/bin/bash
+# Halbert File Helper - used by pkexec for privileged file operations
+# This script is called by PolicyKit to read/write system config files
+
+set -e
+
+ACTION="$1"
+FILE_PATH="$2"
+
+# Validate arguments
+if [ -z "$ACTION" ] || [ -z "$FILE_PATH" ]; then
+    echo "Usage: halbert-file-helper <read|write> <file_path>" >&2
+    exit 1
+fi
+
+# Validate file path is absolute
+if [[ "$FILE_PATH" != /* ]]; then
+    echo "Error: File path must be absolute" >&2
+    exit 1
+fi
+
+# Only allow operations on config-like paths for security
+ALLOWED_PATHS=(
+    "/etc/"
+    "/usr/lib/systemd/"
+    "/var/lib/"
+)
+
+is_allowed=false
+for allowed in "${ALLOWED_PATHS[@]}"; do
+    if [[ "$FILE_PATH" == "$allowed"* ]]; then
+        is_allowed=true
+        break
+    fi
+done
+
+if [ "$is_allowed" = false ]; then
+    echo "Error: File path not in allowed locations" >&2
+    exit 1
+fi
+
+case "$ACTION" in
+    read)
+        if [ ! -f "$FILE_PATH" ]; then
+            echo "Error: File not found: $FILE_PATH" >&2
+            exit 1
+        fi
+        cat "$FILE_PATH"
+        ;;
+    write)
+        # Content is read from stdin
+        cat > "$FILE_PATH"
+        ;;
+    *)
+        echo "Error: Unknown action: $ACTION" >&2
+        exit 1
+        ;;
+esac

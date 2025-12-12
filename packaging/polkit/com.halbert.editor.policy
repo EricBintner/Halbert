@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+
+  <vendor>Halbert</vendor>
+  <vendor_url>https://github.com/eric-bintner/Halbert</vendor_url>
+
+  <!-- Policy for reading system configuration files -->
+  <action id="com.halbert.editor.read">
+    <description>Read system configuration file</description>
+    <message>Authentication is required to read system configuration files</message>
+    <icon_name>document-open</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <!-- Policy for writing system configuration files -->
+  <action id="com.halbert.editor.write">
+    <description>Write system configuration file</description>
+    <message>Authentication is required to modify system configuration files</message>
+    <icon_name>document-save</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+</policyconfig>
