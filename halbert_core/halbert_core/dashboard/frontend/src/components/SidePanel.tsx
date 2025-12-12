@@ -275,7 +275,7 @@ export function SidePanel() {
   // const [showModelSelector, setShowModelSelector] = useState(false)
   
   // Refs
-  const chatInputRef = useRef<HTMLInputElement>(null)
+  const chatInputRef = useRef<HTMLTextAreaElement>(null)
   const terminalInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const terminalEndRef = useRef<HTMLDivElement>(null)
@@ -709,7 +709,7 @@ export function SidePanel() {
     return conv?.name || 'New Chat'
   }
 
-  const handleChatInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChatInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const value = e.target.value
     setChatInput(value)
 
@@ -738,7 +738,7 @@ export function SidePanel() {
     chatInputRef.current?.focus()
   }
 
-  const handleChatKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+  const handleChatKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !showMentions) {
       e.preventDefault()
       handleSendChat()
@@ -746,6 +746,22 @@ export function SidePanel() {
       setShowMentions(false)
     }
   }
+  
+  // Auto-resize textarea based on content
+  const autoResizeTextarea = () => {
+    const textarea = chatInputRef.current
+    if (textarea) {
+      textarea.style.height = 'auto'
+      textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px' // Max 150px (~6 lines)
+    }
+  }
+  
+  // Reset textarea height when input is cleared (e.g., after sending)
+  useEffect(() => {
+    if (!chatInput && chatInputRef.current) {
+      chatInputRef.current.style.height = 'auto'
+    }
+  }, [chatInput])
 
   // Get recent terminal history for @terminal context (Phase 13)
   const getTerminalContext = (): string => {
@@ -1405,22 +1421,26 @@ export function SidePanel() {
 
               {/* Chat Input */}
               <div className="p-3 border-t">
-                <div className="flex gap-2">
-                  <input
+                <div className="flex gap-2 items-end">
+                  <textarea
                     ref={chatInputRef}
-                    type="text"
                     value={chatInput}
-                    onChange={handleChatInputChange}
+                    onChange={(e) => {
+                      handleChatInputChange(e)
+                      autoResizeTextarea()
+                    }}
                     onKeyDown={handleChatKeyDown}
-                    placeholder={configContext ? "Ask to modify this file..." : "Ask... (@ to mention)"}
-                    className="flex-1 px-2 py-1.5 rounded-md border bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder={configContext ? "Ask to modify this file..." : "Ask... (@ to mention, Shift+Enter for newline)"}
+                    className="flex-1 px-2 py-1.5 rounded-md border bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary resize-none overflow-hidden min-h-[30px]"
                     disabled={isLoading}
+                    rows={1}
+                    style={{ maxHeight: '150px' }}
                   />
                   <Button 
                     onClick={handleSendChat} 
                     disabled={isLoading || !chatInput.trim()}
                     size="icon"
-                    className="h-7 w-7"
+                    className="h-7 w-7 flex-shrink-0"
                   >
                     {isLoading ? (
                       <Loader2 className="h-3 w-3 animate-spin" />

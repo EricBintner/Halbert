@@ -13,7 +13,7 @@ help:
 	@echo "  show-config-dir    - Print resolved config_dir from Halbert"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Development
+# Development (Tauri + FastAPI)
 # ─────────────────────────────────────────────────────────────────────────────
 
 dev:
