@@ -207,7 +207,12 @@ export function Security() {
                       item={{
                         name: item.title,
                         type: 'security',
-                        id: item.id,
+                        id: `security/${item.id}`,
+                        description: item.description,
+                        status: item.status,
+                        data: {
+                          severity: item.severity,
+                        },
                         context: `Security Item: ${item.title}\nStatus: ${item.status}\nDescription: ${item.description}`,
                       }}
                       size="sm"

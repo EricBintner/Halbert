@@ -486,7 +486,15 @@ export function Containers() {
                         item={{
                           name: container.name,
                           type: 'container',
-                          id: container.id,
+                          id: `container/${container.id}`,
+                          description: `${container.image} container`,
+                          status: container.status,
+                          data: {
+                            image: container.image,
+                            runtime: container.runtime,
+                            ports: container.ports,
+                            created: container.created,
+                          },
                           context: `Container: ${container.name}\nImage: ${container.image}\nStatus: ${container.status}\nRuntime: ${container.runtime}\nPorts: ${container.ports.join(', ') || 'none'}`,
                         }}
                         size="sm"
