@@ -70,8 +70,17 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
   // Editor ref
   const editorRef = useRef<any>(null);
   
+  // Track initialization to prevent duplicate calls (React 18 StrictMode runs effects twice)
+  const initStartedRef = useRef<string | null>(null);
+  
   // Load file on mount - properly sequence file and session loading
   useEffect(() => {
+    // Skip if already initialized for this file path
+    if (initStartedRef.current === filePath) {
+      return;
+    }
+    initStartedRef.current = filePath;
+    
     const initEditor = async () => {
       await loadFile();
       loadBackups();
