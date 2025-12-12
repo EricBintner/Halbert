@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
+import { SystemItemActions } from '@/components/domain'
 import {
   Sheet,
   SheetContent,
@@ -481,6 +482,15 @@ export function Containers() {
                           </Button>
                         </>
                       )}
+                      <SystemItemActions
+                        item={{
+                          name: container.name,
+                          type: 'container',
+                          id: container.id,
+                          context: `Container: ${container.name}\nImage: ${container.image}\nStatus: ${container.status}\nRuntime: ${container.runtime}\nPorts: ${container.ports.join(', ') || 'none'}`,
+                        }}
+                        size="sm"
+                      />
                     </div>
                   </div>
                 </CardContent>

@@ -35,6 +35,7 @@ import {
   Clock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { SystemItemActions } from '@/components/domain'
 
 interface GPUInfo {
   vendor: string
@@ -325,6 +326,15 @@ export function GPU() {
                     <Badge variant="outline" className="text-xs">
                       {gpu.vram_mb ? `${(gpu.vram_mb / 1024).toFixed(0)} GB VRAM` : 'Unknown VRAM'}
                     </Badge>
+                    <SystemItemActions
+                      item={{
+                        name: gpu.model,
+                        type: 'gpu',
+                        id: gpu.pci_id,
+                        context: `GPU: ${gpu.model}\nVendor: ${gpu.vendor}\nDriver: ${gpu.driver_type || 'Unknown'} ${gpu.driver_version || ''}\nVRAM: ${gpu.vram_mb ? (gpu.vram_mb / 1024).toFixed(0) + ' GB' : 'Unknown'}\nCUDA: ${gpu.cuda_version || 'N/A'}`,
+                      }}
+                      size="sm"
+                    />
                   </div>
                 </div>
               </CardHeader>

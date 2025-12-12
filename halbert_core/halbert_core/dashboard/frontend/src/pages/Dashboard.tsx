@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { getSystemMetrics, type SystemMetrics } from '@/lib/tauri'
@@ -20,6 +19,7 @@ import {
   ArrowRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { StatusBadge } from '@/components/domain'
 
 interface Discovery {
   id: string
@@ -300,12 +300,7 @@ export function Dashboard() {
                       <p className="text-sm text-muted-foreground">{issue.description}</p>
                     </div>
                   </div>
-                  <Badge className={cn(
-                    issue.severity === 'critical' && 'bg-red-500',
-                    issue.severity === 'warning' && 'bg-yellow-500',
-                  )}>
-                    {issue.status || issue.severity}
-                  </Badge>
+                  <StatusBadge status={issue.status || issue.severity} severity={issue.severity} />
                 </div>
               ))}
             </div>

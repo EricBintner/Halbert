@@ -27,7 +27,6 @@ import {
   Server,
   ChevronRight,
   Loader2,
-  MessageCircle,
   FolderOpen,
   Copy,
   CheckCircle2,
@@ -38,6 +37,7 @@ import {
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
+import { SystemItemActions } from '@/components/domain'
 
 interface SharingItem {
   id: string
@@ -805,25 +805,16 @@ export function Sharing() {
                   </Button>
                 )}
                 
-                <Button
-                  className="w-full"
-                  variant="outline"
-                  onClick={() => {
-                    setSelectedItem(null)
-                    openChat({
-                      title: selectedItem.title,
-                      type: 'sharing',
-                      context: JSON.stringify(selectedItem.data, null, 2),
-                      itemId: selectedItem.id,
-                      newConversation: true,
-                      useSpecialist: false,
-                      prefillMessage: `Tell me about this ${selectedItem.data.share_type}.`,
-                    })
+                <SystemItemActions
+                  item={{
+                    name: selectedItem.title,
+                    type: 'sharing',
+                    id: selectedItem.id,
+                    context: JSON.stringify(selectedItem.data, null, 2),
                   }}
-                >
-                  <MessageCircle className="h-4 w-4 mr-2" />
-                  Ask AI
-                </Button>
+                  variant="full"
+                  className="w-full justify-center"
+                />
               </div>
             </div>
           )}

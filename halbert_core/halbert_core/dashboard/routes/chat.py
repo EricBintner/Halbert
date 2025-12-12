@@ -917,8 +917,33 @@ if FASTAPI_AVAILABLE:
                     "title": discovery.title,
                     "type": discovery.type.value,
                     "status": discovery.status,
+                    "description": discovery.description,
+                    "data": discovery.data,  # Full scanner data
                 })
-                context_parts.append(discovery.chat_context or f"{discovery.title}: {discovery.description}")
+                
+                # Build rich context from all discovery data
+                context_lines = [
+                    f"**@{discovery.id}** - {discovery.title}",
+                    f"Type: {discovery.type.value}",
+                    f"Status: {discovery.status or 'Unknown'}",
+                    f"Description: {discovery.description}",
+                ]
+                
+                # Include all scanner-specific data
+                if discovery.data:
+                    context_lines.append("Details:")
+                    for key, value in discovery.data.items():
+                        if value is not None and value != "":
+                            # Format key nicely
+                            nice_key = key.replace("_", " ").title()
+                            context_lines.append(f"  - {nice_key}: {value}")
+                
+                if discovery.status_detail:
+                    context_lines.append(f"Status Detail: {discovery.status_detail}")
+                if discovery.source:
+                    context_lines.append(f"Source: {discovery.source}")
+                
+                context_parts.append("\n".join(context_lines))
         
         # Build context
         context = "\n".join(context_parts) if context_parts else ""
@@ -1236,13 +1261,29 @@ def generate_guide_response(message: str, context: str, mentions: List[dict]) ->
     
     lower = message.lower()
     
-    # Handle mentions
+    # Handle mentions - show ALL available data
     if mentions:
         mention = mentions[0]
-        return f"I found **{mention['title']}**.\n\n" \
-               f"**Status**: {mention.get('status', 'Unknown')}\n" \
-               f"**Type**: {mention['type']}\n\n" \
-               f"Would you like me to check its health or show more details?"
+        response_parts = [f"**{mention['title']}**\n"]
+        
+        response_parts.append(f"- **Type**: {mention['type']}")
+        response_parts.append(f"- **Status**: {mention.get('status', 'Unknown')}")
+        
+        if mention.get('description'):
+            response_parts.append(f"- **Description**: {mention['description']}")
+        
+        # Include all scanner data
+        data = mention.get('data', {})
+        if data:
+            for key, value in data.items():
+                if value is not None and value != "" and key not in ('context_hint',):
+                    nice_key = key.replace("_", " ").title()
+                    if isinstance(value, float):
+                        value = f"{value:.1f}"
+                    response_parts.append(f"- **{nice_key}**: {value}")
+        
+        response_parts.append("\nWhat would you like to know about this?")
+        return "\n".join(response_parts)
     
     # Topic-based responses
     if 'backup' in lower:
