@@ -1259,18 +1259,21 @@ if FASTAPI_AVAILABLE:
                     "RESPONSE LENGTH - Be concise:\n"
                     "- Match response length to question complexity. Simple questions get 1-2 sentence answers.\n"
                     "- Don't pad responses with unnecessary filler or repetition.\n"
-                    "- For clarification requests, just ask the question briefly - don't explain why you're asking.\n"
                     "- Only provide detailed explanations when the question actually warrants depth.\n\n"
-                    "UNCERTAINTY - Ask for clarification:\n"
-                    "- If a question is unclear or doesn't make sense, simply say 'Could you rephrase that?' - nothing more.\n"
-                    "- Do NOT confidently answer questions you don't understand.\n"
-                    "- Don't explain what clarification means or why you need it - just ask briefly.\n\n"
-                    "CONVERSATION AWARENESS:\n"
-                    "- Pay close attention to the recent conversation history provided.\n"
-                    "- When the user shares command output or error messages, ANALYZE them - don't just suggest more commands.\n"
-                    "- If you previously suggested a command and the user shares its output, interpret that output.\n"
-                    "- For follow-up questions like 'what does this mean?' or 'explain the output', refer to context they just shared.\n"
-                    "- Never ignore command output the user just pasted - that's the most important context."
+                    "CONVERSATION CONTEXT - THIS IS CRITICAL:\n"
+                    "- ALWAYS check the conversation history FIRST before responding.\n"
+                    "- When you see command output with 'Error' or error messages, THAT IS THE CONTEXT.\n"
+                    "- When the user says 'that failed' or 'it's broken' or 'malformed', they're referring to the output you just saw.\n"
+                    "- If there's an error visible in the conversation, analyze it - don't ask what they mean.\n"
+                    "- The user expects you to understand what you're looking at, just like a human would.\n"
+                    "- Example: If output shows 'Syntax error: EOF in backquote' and user says 'looks malformed', ANALYZE THE ERROR.\n"
+                    "- NEVER ask 'could you rephrase' when there's visible command output or errors in the conversation.\n"
+                    "- NEVER pretend you can't see what's clearly in the chat history.\n"
+                    "- If a command failed, explain WHY based on the error output - don't ask for more information.\n\n"
+                    "UNCERTAINTY - Only ask when truly necessary:\n"
+                    "- Only ask for clarification if the conversation history provides NO context at all.\n"
+                    "- If there's ANY command output, error, or previous context - USE IT.\n"
+                    "- Asking to rephrase when context exists makes you seem incompetent - avoid this."
                 )
                 task_type = TaskType.CHAT
             
@@ -1313,13 +1316,19 @@ if FASTAPI_AVAILABLE:
             
             # Add conversation history for context continuity
             if request.history:
-                full_prompt += "**Recent conversation (IMPORTANT - refer to this when user asks follow-up questions):**\n"
+                full_prompt += "**CONVERSATION HISTORY - READ THIS CAREFULLY BEFORE RESPONDING:**\n"
+                full_prompt += "(This is what's been discussed. Use this context to understand follow-up questions.)\n\n"
                 for msg in request.history[-6:]:  # Last 6 messages for context
-                    role_label = "User" if msg.role == "user" else "Assistant"
+                    role_label = "User" if msg.role == "user" else "You (Assistant)"
                     # Allow longer content for command outputs (2000 chars)
                     content = msg.content[:2000] + "..." if len(msg.content) > 2000 else msg.content
-                    full_prompt += f"{role_label}: {content}\n\n"
-                full_prompt += "---\n\n"
+                    # Highlight command outputs
+                    if "Command:" in content or "Output:" in content or "Error" in content:
+                        full_prompt += f"[COMMAND OUTPUT] {role_label}: {content}\n\n"
+                    else:
+                        full_prompt += f"{role_label}: {content}\n\n"
+                full_prompt += "---END HISTORY---\n\n"
+                full_prompt += "REMINDER: If the user asks about something 'failing' or 'broken', look at the command output above!\n\n"
             
             # Phase 12d: Try tool-calling for real-time queries
             tool_response = None
