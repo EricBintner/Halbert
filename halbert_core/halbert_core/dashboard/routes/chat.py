@@ -95,6 +95,31 @@ def get_specialist_model() -> tuple[str, str]:
         return ("llama3.1:70b", get_ollama_endpoint())
 
 
+def get_vision_model() -> tuple[str, str]:
+    """Get the configured vision model name and endpoint from config.
+    
+    Returns:
+        Tuple of (model_name, endpoint_url)
+    """
+    try:
+        from ...utils.platform import get_config_dir
+        import yaml
+        
+        config_path = get_config_dir() / 'models.yml'
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f) or {}
+            
+            vision = config.get('vision', {})
+            model = vision.get('model', 'llama3.2-vision:11b')
+            endpoint = vision.get('endpoint', get_ollama_endpoint())
+            return (model, endpoint)
+        
+        return ("llama3.2-vision:11b", get_ollama_endpoint())
+    except Exception:
+        return ("llama3.2-vision:11b", get_ollama_endpoint())
+
+
 def get_loaded_models(endpoint: str = None) -> List[dict]:
     """
     Get list of currently loaded models from Ollama.
@@ -300,7 +325,8 @@ def call_ollama_with_images(
     images: List[str], 
     system_prompt: str = "",
     model: str = None,
-    endpoint: str = None
+    endpoint: str = None,
+    history: List[dict] = None
 ) -> str:
     """
     Call Ollama with images for vision model support.
@@ -309,31 +335,41 @@ def call_ollama_with_images(
         message: The user's text message
         images: List of base64-encoded images
         system_prompt: Optional system prompt
-        model: Optional model override (defaults to configured model)
+        model: Optional model override (defaults to vision model)
         endpoint: Optional endpoint override (defaults to configured endpoint)
+        history: Optional conversation history for context
     
     Returns:
         The AI response text
     """
     try:
+        # Use vision model by default
         if endpoint is None:
-            endpoint = get_ollama_endpoint()
+            _, endpoint = get_vision_model()
         if model is None:
-            model = get_configured_model()
+            model, _ = get_vision_model()
         
-        # Build messages with images on user message
+        # Build messages with system prompt and history
         messages = []
         
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         
-        # User message with images
+        # Add conversation history for context (without images - too large)
+        if history:
+            for msg in history[:-1]:  # Skip current message, will add with images
+                messages.append({
+                    "role": msg.get("role", "user"),
+                    "content": msg.get("content", "")[:1500]  # Truncate for token limits
+                })
+        
+        # Current user message with images
         user_message = {"role": "user", "content": message}
         if images:
             user_message["images"] = images
         messages.append(user_message)
         
-        logger.info(f"Calling Ollama vision model: {model} with {len(images)} images")
+        logger.info(f"Calling Ollama vision model: {model} with {len(images)} images, {len(messages)-1} history messages")
         
         response = requests.post(
             f"{endpoint}/api/chat",
@@ -1300,16 +1336,22 @@ if FASTAPI_AVAILABLE:
                 if tool_results:
                     logger.info(f"Tool-calling succeeded with {len(tool_results)} tool calls")
             elif request.images:
-                # Vision model: Use direct Ollama call with images
+                # Vision model: Use direct Ollama call with images and history
                 logger.info(f"Processing {len(request.images)} images with vision model")
+                # Convert history to dict format for vision call
+                history_dicts = [{"role": msg.role, "content": msg.content} for msg in request.history] if request.history else []
+                vision_model, vision_endpoint = get_vision_model()
                 response = call_ollama_with_images(
                     message=message,
                     images=request.images,
-                    system_prompt=system_prompt
+                    system_prompt=system_prompt,
+                    model=vision_model,
+                    endpoint=vision_endpoint,
+                    history=history_dicts
                 )
                 if debug_info:
-                    debug_info['model_used'] = get_configured_model()
-                    debug_info['endpoint_used'] = get_ollama_endpoint()
+                    debug_info['model_used'] = vision_model
+                    debug_info['endpoint_used'] = vision_endpoint
                     debug_info['vision_mode'] = True
                     debug_info['image_count'] = len(request.images)
             else:
