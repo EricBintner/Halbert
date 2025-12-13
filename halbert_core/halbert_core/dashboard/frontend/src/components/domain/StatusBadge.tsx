@@ -35,10 +35,10 @@ export interface StatusBadgeProps {
 }
 
 const severityStyles: Record<string, string> = {
-  success: 'bg-green-500/10 text-green-600 border-green-500/30 dark:text-green-400',
-  warning: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/30 dark:text-yellow-400',
-  critical: 'bg-red-500/10 text-red-600 border-red-500/30 dark:text-red-400',
-  info: 'bg-blue-500/10 text-blue-600 border-blue-500/30 dark:text-blue-400',
+  success: 'bg-green-500/15 text-green-700 border-green-500/40 dark:bg-green-900/40 dark:text-green-300 dark:border-green-600',
+  warning: 'bg-yellow-500/15 text-yellow-700 border-yellow-500/40 dark:bg-yellow-900/40 dark:text-yellow-300 dark:border-yellow-600',
+  critical: 'bg-red-500/15 text-red-700 border-red-500/40 dark:bg-red-900/40 dark:text-red-300 dark:border-red-600',
+  info: 'bg-sky-500/15 text-sky-700 border-sky-500/40 dark:bg-sky-900/40 dark:text-sky-300 dark:border-sky-600',
   unknown: 'bg-muted text-muted-foreground border-border',
 }
 

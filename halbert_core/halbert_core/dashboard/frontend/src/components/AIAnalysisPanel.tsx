@@ -53,9 +53,9 @@ export function AIAnalysisPanel({
   canAnalyze = true,
   buildContext,
   researchQuestion,
-  gradientFrom = 'from-blue-50/50',
-  gradientTo = 'to-purple-50/50',
-  iconColor = 'text-blue-600 dark:text-blue-400',
+  gradientFrom = 'from-sky-50/70',
+  gradientTo = 'to-purple-50/70',
+  iconColor = 'text-sky-700 dark:text-sky-300',
 }: AIAnalysisPanelProps) {
   const [analysis, setAnalysis] = useState<AIAnalysis | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
@@ -87,18 +87,18 @@ export function AIAnalysisPanel({
 
   return (
     <Card className={cn(
-      "border-blue-200 bg-gradient-to-r dark:from-blue-950/20 dark:to-purple-950/20",
+      "border-sky-300 bg-gradient-to-r dark:border-sky-700 dark:from-sky-950/30 dark:to-purple-950/30",
       gradientFrom,
       gradientTo
     )}>
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3 flex-1">
-            <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/50">
+            <div className="p-2 rounded-lg bg-sky-100 dark:bg-sky-900/60">
               <Sparkles className={cn("h-5 w-5", iconColor)} />
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-blue-900 dark:text-blue-100 flex items-center gap-2">
+              <h3 className="font-semibold text-sky-800 dark:text-sky-100 flex items-center gap-2">
                 AI {title} Analysis
                 {analysis && (
                   <Badge variant="outline" className={cn(
