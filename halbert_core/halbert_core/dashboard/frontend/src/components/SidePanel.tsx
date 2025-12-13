@@ -55,6 +55,7 @@ interface Message {
   editBlocks?: EditBlock[]  // Phase 18: Config editor edit proposals
   configPath?: string  // Path to config file for "Edit Config" button
   images?: string[]  // Vision model: base64 image data
+  isCommandOutput?: boolean  // True for inline command output messages (shown in history, styled differently)
 }
 
 interface Mentionable {
@@ -1508,7 +1509,7 @@ export function SidePanel() {
             <>
               {/* Messages */}
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                {messages.map((message) => (
+                {messages.filter(m => !m.isCommandOutput).map((message) => (
                   <div
                     key={message.id}
                     className={cn(
@@ -1533,6 +1534,21 @@ export function SidePanel() {
                             // Execute command and return result for inline display
                             try {
                               const result = await api.executeCommand(cmd)
+                              
+                              // Add command output to conversation history so AI can see it
+                              const outputContent = result.exit_code === 0 
+                                ? `Command: \`${cmd}\`\nOutput:\n\`\`\`\n${result.output || '(no output)'}\n\`\`\``
+                                : `Command: \`${cmd}\`\nError (exit ${result.exit_code}):\n\`\`\`\n${result.error || result.output || 'Command failed'}\n\`\`\``
+                              
+                              const outputMessage: Message = {
+                                id: `cmd-${Date.now()}`,
+                                role: 'user',
+                                content: outputContent,
+                                timestamp: new Date(),
+                                isCommandOutput: true,  // Flag for special styling, included in history
+                              }
+                              setMessages(prev => [...prev, outputMessage])
+                              
                               return result
                             } catch (err) {
                               return { error: String(err), exit_code: 1 }
