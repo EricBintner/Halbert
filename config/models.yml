@@ -10,7 +10,7 @@ orchestrator:
 specialist:
   enabled: false
 vision:
-  model: llama3.2-vision:11b
+  model: llava:34b
   endpoint: http://100.74.58.17:11434  # Same as specialist endpoint
   purpose: Image analysis, screenshot interpretation, visual troubleshooting
 routing:

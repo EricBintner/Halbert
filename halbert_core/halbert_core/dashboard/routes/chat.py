@@ -111,13 +111,13 @@ def get_vision_model() -> tuple[str, str]:
                 config = yaml.safe_load(f) or {}
             
             vision = config.get('vision', {})
-            model = vision.get('model', 'llama3.2-vision:11b')
+            model = vision.get('model', 'llava:34b')
             endpoint = vision.get('endpoint', get_ollama_endpoint())
             return (model, endpoint)
         
-        return ("llama3.2-vision:11b", get_ollama_endpoint())
+        return ("llava:34b", get_ollama_endpoint())
     except Exception:
-        return ("llama3.2-vision:11b", get_ollama_endpoint())
+        return ("llava:34b", get_ollama_endpoint())
 
 
 def get_loaded_models(endpoint: str = None) -> List[dict]:
