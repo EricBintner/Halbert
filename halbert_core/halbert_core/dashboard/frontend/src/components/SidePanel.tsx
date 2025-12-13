@@ -95,10 +95,11 @@ interface Conversation {
 }
 
 // Inline code block with run button and output display
-function InlineCodeBlock({ code, lang, onRunCommand }: { 
+function InlineCodeBlock({ code, lang, onRunCommand, onAutoAnalyze }: { 
   code: string, 
   lang: string, 
-  onRunCommand: (cmd: string) => Promise<{output?: string, error?: string, exit_code?: number}> 
+  onRunCommand: (cmd: string) => Promise<{output?: string, error?: string, exit_code?: number}>,
+  onAutoAnalyze?: (command: string, output: string, isError: boolean) => void
 }) {
   const [isRunning, setIsRunning] = useState(false)
   const [output, setOutput] = useState<string | null>(null)
@@ -133,16 +134,25 @@ function InlineCodeBlock({ code, lang, onRunCommand }: {
       // Sanitize command - remove stray backticks that LLMs sometimes add
       const sanitizedCode = code.replace(/^`+|`+$/g, '').trim()
       const result = await onRunCommand(sanitizedCode)
-      if (result.exit_code === 0) {
-        setOutput(result.output || '(no output)')
-        setIsError(false)
-      } else {
-        setOutput(result.error || result.output || `Exit code: ${result.exit_code}`)
-        setIsError(true)
+      const outputText = result.exit_code === 0 
+        ? (result.output || '(no output)')
+        : (result.error || result.output || `Exit code: ${result.exit_code}`)
+      const hasError = result.exit_code !== 0
+      
+      setOutput(outputText)
+      setIsError(hasError)
+      
+      // Auto-analyze: send output back to AI for analysis
+      if (onAutoAnalyze) {
+        onAutoAnalyze(sanitizedCode, outputText, hasError)
       }
     } catch (err) {
-      setOutput(`Error: ${err}`)
+      const errorMsg = `Error: ${err}`
+      setOutput(errorMsg)
       setIsError(true)
+      if (onAutoAnalyze) {
+        onAutoAnalyze(code, errorMsg, true)
+      }
     } finally {
       setIsRunning(false)
     }
@@ -205,9 +215,10 @@ function InlineCodeBlock({ code, lang, onRunCommand }: {
 }
 
 // Helper to render message content with code blocks and terminal buttons
-function MessageContent({ content, onRunCommand }: { 
+function MessageContent({ content, onRunCommand, onAutoAnalyze }: { 
   content: string, 
-  onRunCommand: (cmd: string) => Promise<{output?: string, error?: string, exit_code?: number}> 
+  onRunCommand: (cmd: string) => Promise<{output?: string, error?: string, exit_code?: number}>,
+  onAutoAnalyze?: (command: string, output: string, isError: boolean) => void
 }) {
   // Parse content for code blocks
   const parts: Array<{ type: 'text' | 'code', content: string, lang?: string }> = []
@@ -247,7 +258,8 @@ function MessageContent({ content, onRunCommand }: {
               key={i} 
               code={part.content} 
               lang={part.lang || 'bash'} 
-              onRunCommand={onRunCommand} 
+              onRunCommand={onRunCommand}
+              onAutoAnalyze={onAutoAnalyze}
             />
           )
         } else {
@@ -1578,6 +1590,52 @@ export function SidePanel() {
                               return result
                             } catch (err) {
                               return { error: String(err), exit_code: 1 }
+                            }
+                          }}
+                          onAutoAnalyze={async (cmd, output, isError) => {
+                            // Auto-analyze: automatically ask AI to analyze the output
+                            const analyzePrompt = isError
+                              ? `I ran the command \`${cmd}\` and got this error:\n\`\`\`\n${output}\n\`\`\`\n\nPlease analyze this error and suggest a fix.`
+                              : `I ran the command \`${cmd}\` and got this output:\n\`\`\`\n${output}\n\`\`\`\n\nPlease analyze this output and explain what it means.`
+                            
+                            // Add as a user message requesting analysis
+                            const analysisRequest: Message = {
+                              id: `analyze-${Date.now()}`,
+                              role: 'user',
+                              content: analyzePrompt,
+                              timestamp: new Date(),
+                            }
+                            setMessages(prev => [...prev, analysisRequest])
+                            setIsLoading(true)
+                            
+                            try {
+                              // Get conversation history for context
+                              const historyMessages = [...messages.slice(-9), analysisRequest]
+                              const history = historyMessages.map(m => ({ role: m.role, content: m.content }))
+                              const pageContext = buildPageContext()
+                              
+                              const response = await api.sendChat(
+                                analyzePrompt,
+                                [],
+                                'guide',
+                                isDebugMode,
+                                currentPage || '',
+                                pageContext || '',
+                                [],  // No images
+                                history
+                              )
+                              
+                              const aiResponse: Message = {
+                                id: `ai-${Date.now()}`,
+                                role: 'assistant',
+                                content: response.response,
+                                timestamp: new Date(),
+                              }
+                              setMessages(prev => [...prev, aiResponse])
+                            } catch (err) {
+                              console.error('Auto-analyze failed:', err)
+                            } finally {
+                              setIsLoading(false)
                             }
                           }}
                         />

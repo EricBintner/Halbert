@@ -271,10 +271,24 @@ def call_ollama_with_tools(prompt: str, system_prompt: str, model: str = None) -
     try:
         from ...tools.system_tools import SYSTEM_TOOLS, execute_tool
         
-        # Get endpoint and model from config if not specified
-        endpoint = get_ollama_endpoint()
+        # Smart routing: use specialist for complex queries
         if model is None:
-            model = get_configured_model()
+            specialist_model, specialist_endpoint = get_specialist_model()
+            if specialist_model:
+                complexity_score = _score_query_complexity(prompt)
+                if complexity_score >= 0.5:
+                    model = specialist_model
+                    endpoint = specialist_endpoint
+                    logger.info(f"Tool-calling with specialist: {model} (complexity: {complexity_score:.2f})")
+                else:
+                    model = get_configured_model()
+                    endpoint = get_ollama_endpoint()
+                    logger.info(f"Tool-calling with guide: {model} (complexity: {complexity_score:.2f})")
+            else:
+                model = get_configured_model()
+                endpoint = get_ollama_endpoint()
+        else:
+            endpoint = get_ollama_endpoint()
         
         # Build messages
         messages = [
