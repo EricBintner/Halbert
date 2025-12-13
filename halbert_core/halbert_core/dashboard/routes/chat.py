@@ -192,6 +192,76 @@ def should_use_tools(query: str) -> bool:
     query_lower = query.lower()
     return any(kw in query_lower for kw in tool_keywords)
 
+
+def call_ollama_with_images(
+    message: str, 
+    images: List[str], 
+    system_prompt: str = "",
+    model: str = None,
+    endpoint: str = None
+) -> str:
+    """
+    Call Ollama with images for vision model support.
+    
+    Args:
+        message: The user's text message
+        images: List of base64-encoded images
+        system_prompt: Optional system prompt
+        model: Optional model override (defaults to configured model)
+        endpoint: Optional endpoint override (defaults to configured endpoint)
+    
+    Returns:
+        The AI response text
+    """
+    try:
+        if endpoint is None:
+            endpoint = get_ollama_endpoint()
+        if model is None:
+            model = get_configured_model()
+        
+        # Build messages with images on user message
+        messages = []
+        
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        
+        # User message with images
+        user_message = {"role": "user", "content": message}
+        if images:
+            user_message["images"] = images
+        messages.append(user_message)
+        
+        logger.info(f"Calling Ollama vision model: {model} with {len(images)} images")
+        
+        response = requests.post(
+            f"{endpoint}/api/chat",
+            json={
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,
+                    "num_predict": 2048
+                }
+            },
+            timeout=180  # Longer timeout for vision processing
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("message", {}).get("content", "")
+        else:
+            logger.error(f"Ollama vision call failed: {response.status_code}")
+            return f"Sorry, the vision model returned an error (status {response.status_code}). Make sure you're using a vision-capable model like llava."
+            
+    except requests.exceptions.Timeout:
+        logger.error("Ollama vision call timed out")
+        return "The image processing timed out. The image may be too large or the model may be loading."
+    except Exception as e:
+        logger.error(f"Ollama vision call failed: {e}")
+        return f"Sorry, I couldn't process the image: {str(e)}"
+
+
 # Phase 12c: RAG Pipeline singleton for documentation retrieval
 _rag_pipeline = None
 _rag_loading = False
@@ -615,6 +685,7 @@ class ChatRequest(BaseModel):
     debug: bool = False  # Enable debug info in response
     current_page: str = ""  # Current page/tab user is on (e.g., 'network', 'storage')
     page_context: str = ""  # Visible items/state from the page
+    images: List[str] = []  # Vision model: Base64 encoded images
 
 
 class ChatResponse(BaseModel):
@@ -1110,6 +1181,19 @@ if FASTAPI_AVAILABLE:
                 response = tool_response
                 if tool_results:
                     logger.info(f"Tool-calling succeeded with {len(tool_results)} tool calls")
+            elif request.images:
+                # Vision model: Use direct Ollama call with images
+                logger.info(f"Processing {len(request.images)} images with vision model")
+                response = call_ollama_with_images(
+                    message=message,
+                    images=request.images,
+                    system_prompt=system_prompt
+                )
+                if debug_info:
+                    debug_info['model_used'] = get_configured_model()
+                    debug_info['endpoint_used'] = get_ollama_endpoint()
+                    debug_info['vision_mode'] = True
+                    debug_info['image_count'] = len(request.images)
             else:
                 # Standard generation (no tool use or tool-calling failed)
                 full_prompt += f"User: {message}\n\nAssistant:"
@@ -1381,6 +1465,7 @@ class ConfigChatRequest(BaseModel):
     file_path: str
     file_content: str
     history: List[ChatMessage] = []
+    images: List[str] = []  # Vision model: Base64 encoded images
 
 
 class ConfigChatResponse(BaseModel):
@@ -1509,8 +1594,12 @@ if FASTAPI_AVAILABLE:
         for msg in history[-10:]:  # Last 10 messages for context
             messages.append({"role": msg.role, "content": msg.content})
         
-        # Add current message
-        messages.append({"role": "user", "content": message})
+        # Add current message (with images if present for vision models)
+        user_message = {"role": "user", "content": message}
+        if request.images:
+            user_message["images"] = request.images
+            logger.info(f"Config chat with {len(request.images)} images")
+        messages.append(user_message)
         
         # Call LLM - prefer specialist model for config editing (coding task)
         try:

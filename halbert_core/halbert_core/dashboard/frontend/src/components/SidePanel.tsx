@@ -24,6 +24,8 @@ import {
   Check,
   X,
   ChevronDown,
+  Image as ImageIcon,
+  X as XIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -38,6 +40,12 @@ interface EditBlock {
   replace: string
 }
 
+interface AttachedImage {
+  id: string
+  dataUrl: string  // base64 data URL
+  name: string
+}
+
 interface Message {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -46,6 +54,7 @@ interface Message {
   mentions?: string[]
   editBlocks?: EditBlock[]  // Phase 18: Config editor edit proposals
   configPath?: string  // Path to config file for "Edit Config" button
+  images?: string[]  // Vision model: base64 image data
 }
 
 interface Mentionable {
@@ -267,6 +276,10 @@ export function SidePanel() {
     filePath: string
     getContent: () => string
   } | null>(null)
+  
+  // Vision model support - attached images
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
+  const [isDraggingImage, setIsDraggingImage] = useState(false)
   
   // Model state (Phase 12e) - COMMENTED OUT: Will revisit when adding API key support for OpenAI/Anthropic/Gemini
   // For now, model selection should only happen in Settings via saved endpoints
@@ -584,6 +597,24 @@ export function SidePanel() {
     }
   }, [])
 
+  // Listen for screenshot events from Layout
+  useEffect(() => {
+    const handleScreenshot = (e: CustomEvent<{ dataUrl: string; base64: string; name: string }>) => {
+      console.log('[SidePanel] Received screenshot:', e.detail.name)
+      // Add screenshot as attached image
+      setAttachedImages(prev => [...prev, {
+        id: `screenshot-${Date.now()}`,
+        dataUrl: e.detail.dataUrl,
+        name: e.detail.name,
+      }])
+    }
+    
+    window.addEventListener('halbert:add-screenshot', handleScreenshot as EventListener)
+    return () => {
+      window.removeEventListener('halbert:add-screenshot', handleScreenshot as EventListener)
+    }
+  }, [])
+
   // Handle resize
   const startResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -763,6 +794,84 @@ export function SidePanel() {
     }
   }, [chatInput])
 
+  // Vision model: Handle image file to base64 conversion
+  const processImageFile = (file: File): Promise<AttachedImage> => {
+    return new Promise((resolve, reject) => {
+      if (!file.type.startsWith('image/')) {
+        reject(new Error('Not an image file'))
+        return
+      }
+      
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string
+        resolve({
+          id: `img-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          dataUrl,
+          name: file.name,
+        })
+      }
+      reader.onerror = () => reject(new Error('Failed to read file'))
+      reader.readAsDataURL(file)
+    })
+  }
+
+  // Vision model: Handle drag and drop
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDraggingImage(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDraggingImage(false)
+  }
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDraggingImage(false)
+    
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))
+    if (files.length === 0) return
+    
+    try {
+      const newImages = await Promise.all(files.map(processImageFile))
+      setAttachedImages(prev => [...prev, ...newImages])
+    } catch (err) {
+      console.error('Failed to process dropped images:', err)
+    }
+  }
+
+  // Vision model: Handle paste (for screenshots)
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData.items)
+    const imageItems = items.filter(item => item.type.startsWith('image/'))
+    
+    if (imageItems.length === 0) return
+    
+    e.preventDefault() // Prevent default paste of image as text
+    
+    for (const item of imageItems) {
+      const file = item.getAsFile()
+      if (file) {
+        try {
+          const image = await processImageFile(file)
+          setAttachedImages(prev => [...prev, image])
+        } catch (err) {
+          console.error('Failed to process pasted image:', err)
+        }
+      }
+    }
+  }
+
+  // Vision model: Remove attached image
+  const removeAttachedImage = (id: string) => {
+    setAttachedImages(prev => prev.filter(img => img.id !== id))
+  }
+
   // Get recent terminal history for @terminal context (Phase 13)
   const getTerminalContext = (): string => {
     const recentLines = terminalLines.slice(-10) // Last 10 lines
@@ -778,18 +887,25 @@ export function SidePanel() {
   }
 
   const handleSendChat = async () => {
-    if (!chatInput.trim() || isLoading) return
+    if ((!chatInput.trim() && attachedImages.length === 0) || isLoading) return
 
     const requestStartTime = performance.now()
     const mentions = extractMentions(chatInput)
+    
+    // Extract base64 data from attached images (strip data URL prefix)
+    const imageData = attachedImages.map(img => {
+      // Convert data:image/png;base64,xxxx to just xxxx
+      const base64Match = img.dataUrl.match(/^data:image\/\w+;base64,(.+)$/)
+      return base64Match ? base64Match[1] : img.dataUrl
+    })
     
     // Debug logging
     if (isDebugMode) {
       addLog({
         type: 'request',
         category: 'chat',
-        message: `Sending chat message (${chatInput.length} chars, ${mentions.length} mentions)`,
-        data: { message: chatInput.slice(0, 100), mentions, hasConfigContext: !!configContext }
+        message: `Sending chat message (${chatInput.length} chars, ${mentions.length} mentions, ${imageData.length} images)`,
+        data: { message: chatInput.slice(0, 100), mentions, hasConfigContext: !!configContext, imageCount: imageData.length }
       })
     }
     
@@ -812,13 +928,15 @@ export function SidePanel() {
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: chatInput.trim(), // Show original in UI
+      content: chatInput.trim() || (imageData.length > 0 ? '[Image]' : ''), // Show original in UI
       timestamp: new Date(),
       mentions,
+      images: imageData.length > 0 ? imageData : undefined,
     }
 
     setMessages(prev => [...prev, userMessage])
     setChatInput('')
+    setAttachedImages([])  // Clear attached images after sending
     setIsLoading(true)
 
     // Ensure we have a conversation to save to
@@ -857,7 +975,7 @@ export function SidePanel() {
         }
         const fileContent = configContext.getContent()
         const history = messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
-        response = await api.sendConfigChat(messageContent, configContext.filePath, fileContent, history)
+        response = await api.sendConfigChat(messageContent, configContext.filePath, fileContent, history, imageData)
       } else {
         // Regular chat endpoint - pass debug flag, current page, and page context
         const pageContext = buildPageContext()
@@ -867,7 +985,8 @@ export function SidePanel() {
           'guide', 
           isDebugMode,
           currentPage,
-          pageContext
+          pageContext,
+          imageData  // Vision model support
         )
         
         // Clear focused item after sending (it's been included in context)
@@ -1420,7 +1539,44 @@ export function SidePanel() {
               )}
 
               {/* Chat Input */}
-              <div className="p-3 border-t">
+              <div 
+                className={cn(
+                  "p-3 border-t transition-colors",
+                  isDraggingImage && "bg-primary/10 border-primary"
+                )}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
+                {/* Attached Images Preview */}
+                {attachedImages.length > 0 && (
+                  <div className="flex gap-2 mb-2 flex-wrap">
+                    {attachedImages.map(img => (
+                      <div key={img.id} className="relative group">
+                        <img 
+                          src={img.dataUrl} 
+                          alt={img.name}
+                          className="h-12 w-12 object-cover rounded border"
+                        />
+                        <button
+                          onClick={() => removeAttachedImage(img.id)}
+                          className="absolute -top-1 -right-1 h-4 w-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <XIcon className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Drop indicator */}
+                {isDraggingImage && (
+                  <div className="mb-2 p-2 border-2 border-dashed border-primary rounded text-center text-xs text-primary">
+                    <ImageIcon className="h-4 w-4 mx-auto mb-1" />
+                    Drop image here
+                  </div>
+                )}
+                
                 <div className="flex gap-2 items-end">
                   <textarea
                     ref={chatInputRef}
@@ -1430,7 +1586,8 @@ export function SidePanel() {
                       autoResizeTextarea()
                     }}
                     onKeyDown={handleChatKeyDown}
-                    placeholder={configContext ? "Ask to modify this file..." : "Ask... (@ to mention, Shift+Enter for newline)"}
+                    onPaste={handlePaste}
+                    placeholder={configContext ? "Ask to modify this file..." : "Ask... (@ to mention, paste/drop images)"}
                     className="flex-1 px-2 py-1.5 rounded-md border bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary resize-none overflow-hidden min-h-[30px]"
                     disabled={isLoading}
                     rows={1}
@@ -1438,7 +1595,7 @@ export function SidePanel() {
                   />
                   <Button 
                     onClick={handleSendChat} 
-                    disabled={isLoading || !chatInput.trim()}
+                    disabled={isLoading || (!chatInput.trim() && attachedImages.length === 0)}
                     size="icon"
                     className="h-7 w-7 flex-shrink-0"
                   >
