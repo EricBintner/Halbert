@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useRef, Suspense, lazy } from 'react';
-import { Save, History, ArrowLeft, AlertCircle, Check, Loader2 } from 'lucide-react';
+import { Save, History, ArrowLeft, AlertCircle, Check, Loader2, X, CheckCircle } from 'lucide-react';
 import { Button } from './ui/button';
 // Sheet components available if needed
 // import { Sheet, SheetContent, SheetHeader, SheetTitle } from './ui/sheet';
@@ -22,6 +22,7 @@ import {
 
 // Lazy load Monaco to reduce initial bundle size
 const Editor = lazy(() => import('@monaco-editor/react'));
+const DiffEditor = lazy(() => import('@monaco-editor/react').then(m => ({ default: m.DiffEditor })));
 
 const API_BASE = '/api';
 
@@ -56,6 +57,10 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
   const [language, setLanguage] = useState<string>('plaintext');
   const [isDirty, setIsDirty] = useState(false);
   const [needsSudo, setNeedsSudo] = useState(false);
+  
+  // AI Diff state - for inline diff view like Cursor/Windsurf
+  const [proposedContent, setProposedContent] = useState<string | null>(null);
+  const [diffSummary, setDiffSummary] = useState<string>('');
   
   // UI state
   const [loading, setLoading] = useState(true);
@@ -114,28 +119,44 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
     }));
   }, [content, filePath]);
   
-  // Listen for apply-edit events from chat (Phase 18)
+  // Listen for proposed changes from chat (Phase 18 - IDE-style diff)
   useEffect(() => {
-    const handleApplyEdit = (e: CustomEvent<{ search: string; replace: string }>) => {
-      const { search, replace } = e.detail;
+    const handleProposedEdit = (e: CustomEvent<{ 
+      proposedContent: string; 
+      summary: string;
+    }>) => {
+      const { proposedContent: proposed, summary } = e.detail;
+      console.log('[ConfigEditor] Received proposed edit, showing diff view');
       
-      // Apply the edit to the content
-      if (content.includes(search)) {
-        const newContent = content.replace(search, replace);
-        setContent(newContent);
-        setSuccessMessage('Edit applied successfully');
-        setTimeout(() => setSuccessMessage(null), 3000);
-      } else {
-        setError('Could not find the text to replace. The file may have changed.');
-        setTimeout(() => setError(null), 5000);
-      }
+      // Set proposed content to trigger diff view
+      setProposedContent(proposed);
+      setDiffSummary(summary);
     };
     
-    window.addEventListener('halbert:apply-edit', handleApplyEdit as EventListener);
+    window.addEventListener('halbert:propose-edit', handleProposedEdit as EventListener);
     return () => {
-      window.removeEventListener('halbert:apply-edit', handleApplyEdit as EventListener);
+      window.removeEventListener('halbert:propose-edit', handleProposedEdit as EventListener);
     };
-  }, [content]);
+  }, []);
+  
+  // Accept proposed changes
+  const handleAcceptDiff = () => {
+    if (proposedContent !== null) {
+      setContent(proposedContent);
+      setProposedContent(null);
+      setDiffSummary('');
+      setSuccessMessage('Changes accepted');
+      setTimeout(() => setSuccessMessage(null), 3000);
+    }
+  };
+  
+  // Reject proposed changes
+  const handleRejectDiff = () => {
+    setProposedContent(null);
+    setDiffSummary('');
+    setSuccessMessage('Changes rejected');
+    setTimeout(() => setSuccessMessage(null), 3000);
+  };
   
   // Auto-save session every 30 seconds
   useEffect(() => {
@@ -434,15 +455,75 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
         </div>
       )}
       
+      {/* AI Diff Bar - shown when there are proposed changes */}
+      {proposedContent !== null && (
+        <div className="px-4 py-2 bg-blue-500/20 border-b border-blue-500/30 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm text-blue-400">
+            <CheckCircle className="h-4 w-4" />
+            <span className="font-medium">AI Proposed Changes</span>
+            {diffSummary && (
+              <span className="text-blue-400/70">— {diffSummary}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRejectDiff}
+              className="border-red-500/50 text-red-400 hover:bg-red-500/20"
+            >
+              <X className="h-4 w-4 mr-1" />
+              Reject
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleAcceptDiff}
+              className="bg-green-600 hover:bg-green-700 text-white"
+            >
+              <Check className="h-4 w-4 mr-1" />
+              Accept
+            </Button>
+          </div>
+        </div>
+      )}
+      
       {/* Editor area */}
       <div className="flex-1 flex">
-        {/* Monaco Editor */}
+        {/* Monaco Editor / DiffEditor */}
         <div className="flex-1">
           {loading ? (
             <div className="flex items-center justify-center h-full">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
+          ) : proposedContent !== null ? (
+            // Show DiffEditor when there are proposed changes
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+              }
+            >
+              <DiffEditor
+                height="100%"
+                language={language}
+                original={content}
+                modified={proposedContent}
+                theme="vs-dark"
+                options={{
+                  minimap: { enabled: false },
+                  lineNumbers: 'on',
+                  wordWrap: 'on',
+                  fontSize: 14,
+                  automaticLayout: true,
+                  scrollBeyondLastLine: false,
+                  renderSideBySide: false,  // Inline diff like Cursor
+                  readOnly: true,  // User can't edit in diff view
+                }}
+              />
+            </Suspense>
           ) : (
+            // Normal editor
             <Suspense
               fallback={
                 <div className="flex items-center justify-center h-full">
