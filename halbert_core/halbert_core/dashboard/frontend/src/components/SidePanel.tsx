@@ -902,18 +902,29 @@ export function SidePanel() {
     })
     
     // Check if model is loaded - if not, show loading status
+    // Use specialist model for config editing, guide model for regular chat
     try {
       const modelStatus = await api.getLoadedModels()
-      if (!modelStatus.configured_loaded) {
+      
+      // Determine which model to check based on context
+      const isConfigEditing = !!configContext
+      const modelToCheck = isConfigEditing ? modelStatus.specialist_model : modelStatus.configured_model
+      const isLoaded = isConfigEditing ? modelStatus.specialist_loaded : modelStatus.configured_loaded
+      
+      if (!isLoaded) {
         setIsModelLoading(true)
-        setLoadingStatus(`Loading ${modelStatus.configured_model}...`)
+        setLoadingStatus(`Loading ${modelToCheck}...`)
         
         if (isDebugMode) {
           addLog({
             type: 'info',
             category: 'api',
-            message: `Model not loaded, will load on first request: ${modelStatus.configured_model}`,
-            data: { loaded_models: modelStatus.loaded_models }
+            message: `Model not loaded, will load on first request: ${modelToCheck}`,
+            data: { 
+              isConfigEditing,
+              modelToCheck,
+              loaded_models: modelStatus.loaded_models 
+            }
           })
         }
       }
