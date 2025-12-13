@@ -1299,6 +1299,7 @@ if FASTAPI_AVAILABLE:
             )
             
             # Phase 12c: RAG documentation retrieval (skip for unclear queries)
+            rag_context = None
             if not unclear_query:
                 rag_context = get_rag_context(message)
                 if rag_context:
@@ -1364,26 +1365,78 @@ if FASTAPI_AVAILABLE:
                     debug_info['vision_mode'] = True
                     debug_info['image_count'] = len(request.images)
             else:
-                # Standard generation (no tool use or tool-calling failed)
-                full_prompt += f"User: {message}\n\nAssistant:"
+                # Phase 21: Use proper chat API with message arrays
+                # LLMs understand structured roles better than concatenated strings
                 
-                # Generate response using the LLM
-                llm_response = model_router.generate(
-                    prompt=full_prompt,
-                    task_type=task_type,
-                    max_tokens=1024,
-                    temperature=0.7
-                )
+                # Build messages array
+                messages = []
                 
-                response = llm_response.text.strip()
-                logger.info(f"LLM response generated ({llm_response.tokens_used} tokens)")
+                # System message with all context
+                system_content = system_prompt
+                if context:
+                    system_content += f"\n\nContext from @mentions:\n{context}"
+                if topic_context:
+                    system_content += f"\n\nRelevant system context:{topic_context}"
+                # Use RAG context already fetched above (avoid duplicate call)
+                if not unclear_query and rag_context:
+                    system_content += f"\n\n{rag_context}"
+                
+                messages.append({"role": "system", "content": system_content})
+                
+                # Add conversation history as proper messages
+                if request.history:
+                    for msg in request.history[-6:]:
+                        role = "user" if msg.role == "user" else "assistant"
+                        content = msg.content[:2000] + "..." if len(msg.content) > 2000 else msg.content
+                        messages.append({"role": role, "content": content})
+                
+                # Current user message
+                messages.append({"role": "user", "content": message})
+                
+                # Use chat API instead of generate
+                endpoint = get_ollama_endpoint()
+                model = get_configured_model()
+                
+                try:
+                    chat_response = requests.post(
+                        f"{endpoint}/api/chat",
+                        json={
+                            "model": model,
+                            "messages": messages,
+                            "stream": False,
+                            "options": {
+                                "num_predict": 1024,
+                                "temperature": 0.7
+                            }
+                        },
+                        timeout=180
+                    )
+                    chat_response.raise_for_status()
+                    data = chat_response.json()
+                    response = data.get("message", {}).get("content", "").strip()
+                    tokens_used = data.get("eval_count", 0) + data.get("prompt_eval_count", 0)
+                    logger.info(f"Chat API response generated ({tokens_used} tokens, {len(messages)} messages)")
+                except Exception as chat_err:
+                    logger.warning(f"Chat API failed, falling back to generate: {chat_err}")
+                    # Fallback to old method if chat fails
+                    full_prompt += f"User: {message}\n\nAssistant:"
+                    llm_response = model_router.generate(
+                        prompt=full_prompt,
+                        task_type=task_type,
+                        max_tokens=1024,
+                        temperature=0.7
+                    )
+                    response = llm_response.text.strip()
+                    tokens_used = llm_response.tokens_used
                 
                 # Track model info for debug
                 if debug_info:
-                    debug_info['model_used'] = get_configured_model()
-                    debug_info['endpoint_used'] = get_ollama_endpoint()
-                    debug_info['tokens_used'] = llm_response.tokens_used
+                    debug_info['model_used'] = model
+                    debug_info['endpoint_used'] = endpoint
+                    debug_info['tokens_used'] = tokens_used
                     debug_info['generation_time_ms'] = int((time.time() - start_time) * 1000)
+                    debug_info['message_count'] = len(messages)
+                    debug_info['chat_api'] = True
             
             # Track tool calls for debug
             if debug_info and tool_results:
