@@ -1228,7 +1228,13 @@ if FASTAPI_AVAILABLE:
                     "UNCERTAINTY - Ask for clarification:\n"
                     "- If a question is unclear or doesn't make sense, simply say 'Could you rephrase that?' - nothing more.\n"
                     "- Do NOT confidently answer questions you don't understand.\n"
-                    "- Don't explain what clarification means or why you need it - just ask briefly."
+                    "- Don't explain what clarification means or why you need it - just ask briefly.\n\n"
+                    "CONVERSATION AWARENESS:\n"
+                    "- Pay close attention to the recent conversation history provided.\n"
+                    "- When the user shares command output or error messages, ANALYZE them - don't just suggest more commands.\n"
+                    "- If you previously suggested a command and the user shares its output, interpret that output.\n"
+                    "- For follow-up questions like 'what does this mean?' or 'explain the output', refer to context they just shared.\n"
+                    "- Never ignore command output the user just pasted - that's the most important context."
                 )
                 task_type = TaskType.CHAT
             
@@ -1271,13 +1277,13 @@ if FASTAPI_AVAILABLE:
             
             # Add conversation history for context continuity
             if request.history:
-                full_prompt += "**Recent conversation:**\n"
+                full_prompt += "**Recent conversation (IMPORTANT - refer to this when user asks follow-up questions):**\n"
                 for msg in request.history[-6:]:  # Last 6 messages for context
                     role_label = "User" if msg.role == "user" else "Assistant"
-                    # Truncate long messages
-                    content = msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
-                    full_prompt += f"{role_label}: {content}\n"
-                full_prompt += "\n"
+                    # Allow longer content for command outputs (2000 chars)
+                    content = msg.content[:2000] + "..." if len(msg.content) > 2000 else msg.content
+                    full_prompt += f"{role_label}: {content}\n\n"
+                full_prompt += "---\n\n"
             
             # Phase 12d: Try tool-calling for real-time queries
             tool_response = None
