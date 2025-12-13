@@ -1019,13 +1019,17 @@ export function SidePanel() {
           })
         }
         const fileContent = configContext.getContent()
-        const history = messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
+        // IMPORTANT: Add current userMessage since setMessages is async and messages doesn't include it yet
+        const historyMessages = [...messages.slice(-9), userMessage]
+        const history = historyMessages.map(m => ({ role: m.role, content: m.content }))
         response = await api.sendConfigChat(messageContent, configContext.filePath, fileContent, history, imageData)
       } else {
         // Regular chat endpoint - pass debug flag, current page, page context, and history
         const pageContext = buildPageContext()
         // Include last 10 messages for conversation context
-        const history = messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
+        // IMPORTANT: Add current userMessage since setMessages is async and messages doesn't include it yet
+        const historyMessages = [...messages.slice(-9), userMessage]
+        const history = historyMessages.map(m => ({ role: m.role, content: m.content }))
         response = await api.sendChat(
           messageContent, 
           userMessage.mentions || [], 
