@@ -974,7 +974,7 @@ if FASTAPI_AVAILABLE:
             try:
                 # Find ALL discoveries with failed/error status
                 failed_discoveries = [
-                    d for d in engine.discoveries.values() 
+                    d for d in engine.get_all() 
                     if d.status and any(s in d.status.lower() for s in ['fail', 'error', 'down', 'critical', 'warning', 'missing'])
                 ]
                 if failed_discoveries:
@@ -998,7 +998,7 @@ if FASTAPI_AVAILABLE:
         if any(kw in message_lower for kw in storage_keywords):
             # Get all storage discoveries for context
             try:
-                storage_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'storage']
+                storage_discoveries = [d for d in engine.get_all() if d.type.value == 'storage']
                 if storage_discoveries:
                     storage_summary = []
                     for d in storage_discoveries[:10]:  # Limit to avoid huge context
@@ -1018,7 +1018,7 @@ if FASTAPI_AVAILABLE:
         backup_keywords = ['backup', 'timeshift', 'snapshot', 'restore', 'rsync', 'borg']
         if any(kw in message_lower for kw in backup_keywords):
             try:
-                backup_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'backup']
+                backup_discoveries = [d for d in engine.get_all() if d.type.value == 'backup']
                 if backup_discoveries:
                     backup_summary = []
                     for d in backup_discoveries[:10]:
@@ -1038,7 +1038,7 @@ if FASTAPI_AVAILABLE:
         service_keywords = ['service', 'systemd', 'daemon', 'running', 'status']
         if any(kw in message_lower for kw in service_keywords):
             try:
-                service_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'service']
+                service_discoveries = [d for d in engine.get_all() if d.type.value == 'service']
                 if service_discoveries:
                     service_summary = []
                     for d in service_discoveries[:15]:
@@ -1059,7 +1059,7 @@ if FASTAPI_AVAILABLE:
                            'firewall', 'port', 'eno', 'enp', 'eth', 'wlan']
         if any(kw in message_lower for kw in network_keywords):
             try:
-                network_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'network']
+                network_discoveries = [d for d in engine.get_all() if d.type.value == 'network']
                 if network_discoveries:
                     network_summary = []
                     # Prioritize interfaces, then firewall, then ports
@@ -1104,7 +1104,7 @@ if FASTAPI_AVAILABLE:
                             'login', 'root', 'admin', 'ufw', 'iptables', 'selinux', 'apparmor']
         if any(kw in message_lower for kw in security_keywords):
             try:
-                security_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'security']
+                security_discoveries = [d for d in engine.get_all() if d.type.value == 'security']
                 if security_discoveries:
                     security_summary = []
                     for d in security_discoveries[:10]:
@@ -1124,7 +1124,7 @@ if FASTAPI_AVAILABLE:
                              'image', 'volume', 'registry', 'dockerfile', 'pod']
         if any(kw in message_lower for kw in container_keywords):
             try:
-                container_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'container']
+                container_discoveries = [d for d in engine.get_all() if d.type.value == 'container']
                 if container_discoveries:
                     container_summary = []
                     for d in container_discoveries[:15]:
@@ -1144,7 +1144,7 @@ if FASTAPI_AVAILABLE:
                        'opengl', 'vulkan', 'render', 'display', 'monitor', 'geforce', 'radeon']
         if any(kw in message_lower for kw in gpu_keywords):
             try:
-                gpu_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'gpu']
+                gpu_discoveries = [d for d in engine.get_all() if d.type.value == 'gpu']
                 if gpu_discoveries:
                     gpu_summary = []
                     for d in gpu_discoveries[:5]:
@@ -1164,7 +1164,7 @@ if FASTAPI_AVAILABLE:
                            'network drive', 'file share', 'windows share', 'rclone', 'fuse']
         if any(kw in message_lower for kw in sharing_keywords):
             try:
-                sharing_discoveries = [d for d in engine.discoveries.values() if d.type.value == 'sharing']
+                sharing_discoveries = [d for d in engine.get_all() if d.type.value == 'sharing']
                 if sharing_discoveries:
                     sharing_summary = []
                     for d in sharing_discoveries[:10]:
@@ -1185,7 +1185,7 @@ if FASTAPI_AVAILABLE:
         if any(kw in message_lower for kw in dev_keywords):
             try:
                 # Include both process and task discoveries for development context
-                dev_discoveries = [d for d in engine.discoveries.values() 
+                dev_discoveries = [d for d in engine.get_all() 
                                    if d.type.value in ('process', 'task')]
                 if dev_discoveries:
                     dev_summary = []
