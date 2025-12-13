@@ -1042,6 +1042,15 @@ export function SidePanel() {
       // Build assistant message content
       let assistantContent = response.response || "I'm not sure how to help with that."
       
+      // Debug: Log what we received from the API
+      console.log('[SidePanel] Response received:', {
+        hasProposedContent: !!response.proposed_content,
+        proposedContentLength: response.proposed_content?.length,
+        summary: response.summary,
+        hasConfigContext: !!configContext,
+        configPath: configContext?.filePath
+      })
+      
       // If we have proposed content, dispatch event to trigger diff view in ConfigEditor
       // Don't show raw edit blocks in chat - just show the summary
       if (response.proposed_content && configContext) {
