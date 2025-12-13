@@ -1091,6 +1091,13 @@ export function SidePanel() {
           .replace(/<<<<<<< SEARCH[\s\S]*?>>>>>>> REPLACE/g, '')
           .trim()
         assistantContent = cleanContent || `I've made the changes. ${response.summary || 'Please review the diff in the editor.'}`
+      } else {
+        // Debug: Log why we didn't dispatch the event
+        console.log('[SidePanel] NOT dispatching propose-edit:', {
+          reason: !response.proposed_content ? 'no proposed_content in response' : 'no configContext',
+          hasProposedContent: !!response.proposed_content,
+          hasConfigContext: !!configContext
+        })
       }
       
       const assistantMessage: Message = {
