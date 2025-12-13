@@ -1471,7 +1471,9 @@ class ConfigChatRequest(BaseModel):
 class ConfigChatResponse(BaseModel):
     """Response for config file editing chat."""
     response: str
-    edit_blocks: List[dict] = []  # {search: str, replace: str}
+    edit_blocks: List[dict] = []  # {search: str, replace: str} - legacy, kept for compatibility
+    proposed_content: Optional[str] = None  # The file with edits applied (for IDE-style diff)
+    summary: str = ""  # Brief summary of changes for the diff bar
 
 
 CONFIG_EDITOR_SYSTEM_PROMPT = """You are an expert Linux system administrator and configuration file editor. You are editing:
@@ -1559,6 +1561,63 @@ def parse_edit_blocks(response: str) -> List[dict]:
     return blocks
 
 
+def apply_edit_blocks(content: str, edit_blocks: List[dict]) -> tuple[str, bool, str]:
+    """
+    Apply edit blocks to file content.
+    
+    Args:
+        content: Original file content
+        edit_blocks: List of {search: str, replace: str} dicts
+    
+    Returns:
+        Tuple of (new_content, success, error_message)
+    """
+    if not edit_blocks:
+        return content, False, "No edit blocks to apply"
+    
+    new_content = content
+    applied_count = 0
+    
+    for block in edit_blocks:
+        search = block.get('search', '')
+        replace = block.get('replace', '')
+        
+        if search and search in new_content:
+            new_content = new_content.replace(search, replace, 1)  # Replace first occurrence
+            applied_count += 1
+            logger.debug(f"Applied edit block: {len(search)} chars -> {len(replace)} chars")
+        else:
+            logger.warning(f"Could not find search text in content: {search[:50]}...")
+    
+    if applied_count == 0:
+        return content, False, "Could not find any matching text to replace"
+    
+    logger.info(f"Applied {applied_count}/{len(edit_blocks)} edit blocks")
+    return new_content, True, ""
+
+
+def extract_summary_from_response(response: str) -> str:
+    """Extract a brief summary from the AI response (text after edit blocks)."""
+    # Remove edit blocks from response to get just the explanation
+    import re
+    # Remove all edit block patterns
+    clean = re.sub(r'<<<<<<< SEARCH.*?>>>>>>> REPLACE', '', response, flags=re.DOTALL)
+    # Get first sentence or first 100 chars
+    clean = clean.strip()
+    if not clean:
+        return "Made changes to the file"
+    
+    # Get first sentence
+    sentences = clean.split('.')
+    if sentences and sentences[0].strip():
+        summary = sentences[0].strip()
+        if len(summary) > 100:
+            summary = summary[:97] + "..."
+        return summary
+    
+    return clean[:100] if len(clean) > 100 else clean
+
+
 if FASTAPI_AVAILABLE:
     
     @router.post("/config", response_model=ConfigChatResponse)
@@ -1637,15 +1696,31 @@ if FASTAPI_AVAILABLE:
                 # Parse edit blocks
                 edit_blocks = parse_edit_blocks(ai_response)
                 
+                # Apply edits to create proposed content (IDE-style diff)
+                proposed_content = None
+                summary = ""
+                if edit_blocks:
+                    new_content, success, error = apply_edit_blocks(file_content, edit_blocks)
+                    if success:
+                        proposed_content = new_content
+                        summary = extract_summary_from_response(ai_response)
+                        logger.info(f"Created proposed content for diff view: {summary}")
+                    else:
+                        logger.warning(f"Could not apply edits: {error}")
+                
                 return ConfigChatResponse(
                     response=ai_response,
-                    edit_blocks=edit_blocks
+                    edit_blocks=edit_blocks,
+                    proposed_content=proposed_content,
+                    summary=summary
                 )
             else:
                 logger.error(f"Ollama error: {response.status_code}")
                 return ConfigChatResponse(
                     response="Sorry, I couldn't connect to the AI model. Please check that Ollama is running.",
-                    edit_blocks=[]
+                    edit_blocks=[],
+                    proposed_content=None,
+                    summary=""
                 )
                 
         except requests.exceptions.Timeout:

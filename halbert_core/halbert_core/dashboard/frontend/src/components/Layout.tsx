@@ -163,9 +163,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Main content + Chat Panel */}
-      <div className="flex flex-1 ml-64 h-full">
+      <div className="flex flex-1 ml-64 h-full overflow-hidden">
         {/* Page content with optional debug footer */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <main className="flex-1 p-8 overflow-auto relative">
             {editingConfigPath ? (
               <ConfigEditor

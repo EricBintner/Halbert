@@ -961,7 +961,13 @@ export function SidePanel() {
     }
 
     try {
-      let response: { response: string; edit_blocks?: Array<{search: string, replace: string}>; debug?: unknown }
+      let response: { 
+        response: string; 
+        edit_blocks?: Array<{search: string, replace: string}>; 
+        proposed_content?: string;  // IDE-style diff: applied edits
+        summary?: string;  // Brief description of changes
+        debug?: unknown 
+      }
       const apiStartTime = performance.now()
       
       // Use config chat endpoint if we're editing a config file (Phase 18)
@@ -1033,15 +1039,34 @@ export function SidePanel() {
         })
       }
       
-      // Build assistant message content, including edit blocks if present
-      const assistantContent = response.response || "I'm not sure how to help with that."
+      // Build assistant message content
+      let assistantContent = response.response || "I'm not sure how to help with that."
+      
+      // If we have proposed content, dispatch event to trigger diff view in ConfigEditor
+      // Don't show raw edit blocks in chat - just show the summary
+      if (response.proposed_content && configContext) {
+        console.log('[SidePanel] Dispatching proposed edit to ConfigEditor')
+        window.dispatchEvent(new CustomEvent('halbert:propose-edit', {
+          detail: {
+            proposedContent: response.proposed_content,
+            summary: response.summary || 'Made changes to the file'
+          }
+        }))
+        
+        // Show a cleaner message in chat (without the raw edit blocks)
+        // Extract just the explanation from the response
+        const cleanContent = assistantContent
+          .replace(/<<<<<<< SEARCH[\s\S]*?>>>>>>> REPLACE/g, '')
+          .trim()
+        assistantContent = cleanContent || `I've made the changes. ${response.summary || 'Please review the diff in the editor.'}`
+      }
       
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: assistantContent,
         timestamp: new Date(),
-        editBlocks: response.edit_blocks,  // Store edit blocks for rendering
+        // Don't store edit blocks - they're now shown as diff in editor
       }
 
       setMessages(prev => [...prev, assistantMessage])
@@ -1208,11 +1233,11 @@ export function SidePanel() {
     <div
       ref={panelRef}
       className={cn(
-        "h-full bg-card border-l flex relative",
+        "h-full bg-card border-l flex relative flex-shrink-0 overflow-hidden",
         !isResizing && "transition-all duration-200",  // Only animate when not dragging
         isOpen ? "" : "w-12"
       )}
-      style={{ width: isOpen ? width : 48 }}
+      style={{ width: isOpen ? width : 48, minWidth: isOpen ? 280 : 48 }}
     >
       {/* Resize Handle */}
       {isOpen && (
@@ -1248,7 +1273,7 @@ export function SidePanel() {
           </span>
         </button>
       ) : (
-        <div className="flex flex-col flex-1 ml-1">
+        <div className="flex flex-col flex-1 ml-1 min-w-0 overflow-hidden">
           {/* Header with Toggle */}
           <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
             {/* Mode Toggle */}
@@ -1451,36 +1476,8 @@ export function SidePanel() {
                           }}
                         />
                       </div>
-                      {/* Render edit blocks with Apply buttons (Phase 18) */}
-                      {message.editBlocks && message.editBlocks.length > 0 && (
-                        <div className="mt-2 space-y-2">
-                          {message.editBlocks.map((block, idx) => (
-                            <div key={idx} className="border rounded p-2 bg-background/50">
-                              <div className="text-[10px] text-muted-foreground mb-1">
-                                Edit {idx + 1}
-                              </div>
-                              <pre className="text-[10px] bg-red-500/10 p-1 rounded mb-1 overflow-x-auto">
-                                <code>- {block.search.split('\n').join('\n- ')}</code>
-                              </pre>
-                              <pre className="text-[10px] bg-green-500/10 p-1 rounded mb-2 overflow-x-auto">
-                                <code>+ {block.replace.split('\n').join('\n+ ')}</code>
-                              </pre>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-6 text-xs"
-                                onClick={() => {
-                                  window.dispatchEvent(new CustomEvent('halbert:apply-edit', {
-                                    detail: { search: block.search, replace: block.replace }
-                                  }))
-                                }}
-                              >
-                                Apply Edit
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      {/* Legacy: Edit blocks are now shown as inline diff in editor */}
+                      {/* This section kept for backwards compatibility with old messages */}
                       {/* Render Edit Config button if configPath is available */}
                       {message.configPath && (
                         <div className="mt-3 pt-2 border-t border-border/50">
