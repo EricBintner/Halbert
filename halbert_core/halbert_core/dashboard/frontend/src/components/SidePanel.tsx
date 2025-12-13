@@ -1593,38 +1593,36 @@ export function SidePanel() {
                             }
                           }}
                           onAutoAnalyze={async (cmd, output, isError) => {
-                            // Auto-analyze: automatically ask AI to analyze the output
-                            const analyzePrompt = isError
-                              ? `I ran the command \`${cmd}\` and got this error:\n\`\`\`\n${output}\n\`\`\`\n\nPlease analyze this error and suggest a fix.`
-                              : `I ran the command \`${cmd}\` and got this output:\n\`\`\`\n${output}\n\`\`\`\n\nPlease analyze this output and explain what it means.`
+                            // Auto-analyze: AI analyzes output under the hood
+                            // NO visible user message - just show AI's analysis
                             
-                            // Add as a user message requesting analysis
-                            const analysisRequest: Message = {
-                              id: `analyze-${Date.now()}`,
-                              role: 'user',
-                              content: analyzePrompt,
-                              timestamp: new Date(),
-                            }
-                            setMessages(prev => [...prev, analysisRequest])
+                            // Build context for analysis (includes command output)
+                            const contextForAI = isError
+                              ? `[COMMAND EXECUTED]\nCommand: ${cmd}\nStatus: Error\nOutput:\n${output}\n\n[TASK] Analyze this error and suggest how to fix it.`
+                              : `[COMMAND EXECUTED]\nCommand: ${cmd}\nStatus: Success\nOutput:\n${output}\n\n[TASK] Analyze this output and explain what it reveals about the issue.`
+                            
                             setIsLoading(true)
                             
                             try {
-                              // Get conversation history for context
-                              const historyMessages = [...messages.slice(-9), analysisRequest]
-                              const history = historyMessages.map(m => ({ role: m.role, content: m.content }))
+                              // Include command context in history but don't show as visible message
+                              const historyWithContext = [
+                                ...messages.slice(-9).map(m => ({ role: m.role, content: m.content })),
+                                { role: 'user' as const, content: contextForAI }
+                              ]
                               const pageContext = buildPageContext()
                               
                               const response = await api.sendChat(
-                                analyzePrompt,
+                                contextForAI,
                                 [],
                                 'guide',
                                 isDebugMode,
                                 currentPage || '',
                                 pageContext || '',
                                 [],  // No images
-                                history
+                                historyWithContext
                               )
                               
+                              // Only show AI's analysis (which will include the output context)
                               const aiResponse: Message = {
                                 id: `ai-${Date.now()}`,
                                 role: 'assistant',
