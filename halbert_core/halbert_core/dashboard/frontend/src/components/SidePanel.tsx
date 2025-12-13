@@ -105,10 +105,26 @@ function InlineCodeBlock({ code, lang, onRunCommand }: {
   const [isError, setIsError] = useState(false)
   const [isCollapsed, setIsCollapsed] = useState(false)
   
-  const isShellCommand = ['bash', 'sh', 'shell', 'zsh'].includes(lang) || 
+  // Detect if this looks like command OUTPUT (not a runnable command)
+  const looksLikeOutput = (
+    code.includes('Loaded:') ||           // systemd status output
+    code.includes('Active:') ||           // systemd status output
+    code.includes('Process:') ||          // systemd process info
+    code.startsWith('$ ') ||              // Shows a command with prompt (display, not runnable)
+    code.startsWith('# ') ||              // Root prompt display
+    /^\d{4}-\d{2}-\d{2}/.test(code) ||    // Starts with date (log output)
+    /^[A-Z][a-z]{2} \d{1,2} \d{2}:/.test(code) ||  // Log timestamp like "Dec 13 10:42:09"
+    code.split('\n').length > 10 ||       // Very long = probably output, not a command
+    /^total \d+/.test(code) ||            // ls output
+    /^-[rwx-]{9}/.test(code)              // ls -l output
+  )
+  
+  const isShellCommand = !looksLikeOutput && (
+    ['bash', 'sh', 'shell', 'zsh'].includes(lang) || 
     code.startsWith('sudo ') || 
     code.startsWith('ls ') ||
     code.includes('|')
+  )
   
   const handleRun = async () => {
     setIsRunning(true)
