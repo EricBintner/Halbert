@@ -9,6 +9,10 @@ orchestrator:
   purpose: Intent classification, simple Q&A, context selection
 specialist:
   enabled: false
+vision:
+  model: llama3.2-vision:11b
+  endpoint: http://100.74.58.17:11434  # Same as specialist endpoint
+  purpose: Image analysis, screenshot interpretation, visual troubleshooting
 routing:
   strategy: auto
   prefer_specialist_for:
