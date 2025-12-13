@@ -74,7 +74,7 @@ def get_specialist_model() -> tuple[str, str]:
     """Get the configured specialist/executor model name and endpoint from config.
     
     Returns:
-        Tuple of (model_name, endpoint_url)
+        Tuple of (model_name, endpoint_url) or (None, None) if not enabled
     """
     try:
         from ...utils.platform import get_config_dir
@@ -86,13 +86,20 @@ def get_specialist_model() -> tuple[str, str]:
                 config = yaml.safe_load(f) or {}
             
             specialist = config.get('specialist', {})
+            # Only return specialist if enabled
+            if not specialist.get('enabled', False):
+                logger.debug("Specialist not enabled in config")
+                return (None, None)
+            
             model = specialist.get('model', 'llama3.1:70b')
             endpoint = specialist.get('endpoint', get_ollama_endpoint())
+            logger.info(f"Specialist enabled: {model} at {endpoint}")
             return (model, endpoint)
         
-        return ("llama3.1:70b", get_ollama_endpoint())
-    except Exception:
-        return ("llama3.1:70b", get_ollama_endpoint())
+        return (None, None)
+    except Exception as e:
+        logger.warning(f"Error loading specialist config: {e}")
+        return (None, None)
 
 
 def get_vision_model() -> tuple[str, str]:
@@ -138,12 +145,16 @@ def _score_query_complexity(prompt: str) -> float:
         score += 0.1
     
     # Failure/diagnostic keywords → need reasoning
+    # Count how many diagnostic indicators are present
     diagnostic_keywords = [
-        'why', 'failed', 'error', 'broken', 'not working', 'troubleshoot',
+        'why', 'failed', 'fail', 'error', 'broken', 'not working', 'troubleshoot',
         'diagnose', 'investigate', 'debug', 'fix', 'issue', 'problem'
     ]
-    if any(kw in prompt_lower for kw in diagnostic_keywords):
-        score += 0.4  # High weight - diagnostics need reasoning
+    diagnostic_hits = sum(1 for kw in diagnostic_keywords if kw in prompt_lower)
+    if diagnostic_hits >= 2:
+        score += 0.5  # Multiple diagnostic keywords = complex reasoning
+    elif diagnostic_hits >= 1:
+        score += 0.4  # Single diagnostic keyword
     
     # Code/script keywords → need specialist
     code_keywords = [
