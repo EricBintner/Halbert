@@ -1269,6 +1269,16 @@ if FASTAPI_AVAILABLE:
                 # Add a hint that this query seems unclear
                 full_prompt += "NOTE: The user's query seems unclear or vague. Ask for clarification rather than guessing.\n\n"
             
+            # Add conversation history for context continuity
+            if request.history:
+                full_prompt += "**Recent conversation:**\n"
+                for msg in request.history[-6:]:  # Last 6 messages for context
+                    role_label = "User" if msg.role == "user" else "Assistant"
+                    # Truncate long messages
+                    content = msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
+                    full_prompt += f"{role_label}: {content}\n"
+                full_prompt += "\n"
+            
             # Phase 12d: Try tool-calling for real-time queries
             tool_response = None
             tool_results = []

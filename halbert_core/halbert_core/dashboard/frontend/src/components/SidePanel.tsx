@@ -1017,8 +1017,10 @@ export function SidePanel() {
         const history = messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
         response = await api.sendConfigChat(messageContent, configContext.filePath, fileContent, history, imageData)
       } else {
-        // Regular chat endpoint - pass debug flag, current page, and page context
+        // Regular chat endpoint - pass debug flag, current page, page context, and history
         const pageContext = buildPageContext()
+        // Include last 10 messages for conversation context
+        const history = messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
         response = await api.sendChat(
           messageContent, 
           userMessage.mentions || [], 
@@ -1026,7 +1028,8 @@ export function SidePanel() {
           isDebugMode,
           currentPage,
           pageContext,
-          imageData  // Vision model support
+          imageData,  // Vision model support
+          history  // Conversation history for context
         )
         
         // Clear focused item after sending (it's been included in context)
