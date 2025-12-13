@@ -15,6 +15,7 @@ import {
   Cpu,
   Container,
   Code2,
+  Camera,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SidePanel } from './SidePanel'
@@ -65,6 +66,35 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [])
   
+  // Capture window screenshot and dispatch to chat
+  const handleCaptureScreenshot = async () => {
+    try {
+      // Use html2canvas to capture the window
+      const html2canvas = (await import('html2canvas')).default
+      const canvas = await html2canvas(document.body, {
+        useCORS: true,
+        logging: false,
+      })
+      
+      // Convert to base64 (strip the data URL prefix for the API)
+      const dataUrl = canvas.toDataURL('image/png')
+      const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
+      
+      // Dispatch event to add screenshot to chat
+      window.dispatchEvent(new CustomEvent('halbert:add-screenshot', {
+        detail: {
+          dataUrl,  // Full data URL for preview
+          base64,   // Just base64 for API
+          name: `Screenshot ${new Date().toLocaleTimeString()}`
+        }
+      }))
+      
+      console.log('[Layout] Screenshot captured and dispatched to chat')
+    } catch (err) {
+      console.error('[Layout] Failed to capture screenshot:', err)
+    }
+  }
+  
   return (
     <div className="h-screen bg-background flex overflow-hidden">
       {/* Sidebar */}
@@ -100,18 +130,31 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
           {/* Footer */}
           <div className="p-4 border-t space-y-2">
-            <Button 
-              variant={isDebugMode ? "default" : "outline"}
-              size="sm" 
-              className={cn(
-                "w-full text-xs",
-                isDebugMode && "bg-emerald-600 hover:bg-emerald-700 text-white"
-              )}
-              onClick={() => setDebugMode(!isDebugMode)}
-            >
-              <Bug className="h-3 w-3 mr-2" />
-              {isDebugMode ? 'Debug Mode ON' : 'Debug Mode'}
-            </Button>
+            {/* Screenshot and Debug buttons row */}
+            <div className="flex gap-2">
+              <Button 
+                variant="outline"
+                size="sm" 
+                className="flex-1 text-xs"
+                onClick={handleCaptureScreenshot}
+                title="Capture window screenshot and add to chat"
+              >
+                <Camera className="h-3 w-3 mr-2" />
+                Screenshot
+              </Button>
+              <Button 
+                variant={isDebugMode ? "default" : "outline"}
+                size="sm" 
+                className={cn(
+                  "flex-1 text-xs",
+                  isDebugMode && "bg-emerald-600 hover:bg-emerald-700 text-white"
+                )}
+                onClick={() => setDebugMode(!isDebugMode)}
+              >
+                <Bug className="h-3 w-3 mr-2" />
+                {isDebugMode ? 'Debug ON' : 'Debug'}
+              </Button>
+            </div>
             <div className="text-xs text-muted-foreground">
               <p>v0.1.0-alpha.1</p>
             </div>
