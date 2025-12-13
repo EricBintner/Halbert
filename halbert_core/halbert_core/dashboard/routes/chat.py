@@ -70,6 +70,83 @@ def get_configured_model() -> str:
         return "llama3.1:8b"
 
 
+def get_loaded_models(endpoint: str = None) -> List[dict]:
+    """
+    Get list of currently loaded models from Ollama.
+    
+    Uses GET /api/ps endpoint.
+    Returns list of model info dicts with keys: name, size, expires_at, etc.
+    """
+    if endpoint is None:
+        endpoint = get_ollama_endpoint()
+    
+    try:
+        response = requests.get(f"{endpoint}/api/ps", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('models', [])
+        return []
+    except Exception as e:
+        logger.debug(f"Could not get loaded models: {e}")
+        return []
+
+
+def is_model_loaded(model_name: str, endpoint: str = None) -> bool:
+    """Check if a specific model is currently loaded."""
+    loaded = get_loaded_models(endpoint)
+    for m in loaded:
+        # Model names may include tags like "llama3.1:8b" or just "llama3.1"
+        loaded_name = m.get('name', '')
+        if loaded_name == model_name or loaded_name.startswith(model_name + ':'):
+            return True
+        # Also check if provided name is a prefix (user might say "llama3.1" but loaded is "llama3.1:8b")
+        if model_name.startswith(loaded_name.split(':')[0]):
+            return True
+    return False
+
+
+def get_model_status(model_name: str = None, endpoint: str = None) -> dict:
+    """
+    Get detailed status of a model.
+    
+    Returns dict with:
+        - loaded: bool - is the model currently in memory
+        - loading: bool - is the model currently loading (inferred)
+        - size_vram: int - VRAM usage in bytes (if loaded)
+        - expires_at: str - when model will be unloaded (if loaded)
+        - model: str - model name checked
+    """
+    if model_name is None:
+        model_name = get_configured_model()
+    if endpoint is None:
+        endpoint = get_ollama_endpoint()
+    
+    loaded_models = get_loaded_models(endpoint)
+    
+    for m in loaded_models:
+        loaded_name = m.get('name', '')
+        if loaded_name == model_name or loaded_name.startswith(model_name.split(':')[0]):
+            return {
+                'loaded': True,
+                'loading': False,
+                'model': loaded_name,
+                'size_vram': m.get('size_vram', 0),
+                'size': m.get('size', 0),
+                'expires_at': m.get('expires_at', ''),
+                'details': m.get('details', {})
+            }
+    
+    return {
+        'loaded': False,
+        'loading': False,  # We can't directly detect loading state
+        'model': model_name,
+        'size_vram': 0,
+        'size': 0,
+        'expires_at': '',
+        'details': {}
+    }
+
+
 # Phase 12d: Tool-use support
 def call_ollama_with_tools(prompt: str, system_prompt: str, model: str = None) -> tuple:
     """
@@ -1330,7 +1407,7 @@ if FASTAPI_AVAILABLE:
     
     
     @router.get("/models/status")
-    async def get_model_status():
+    async def get_models_router_status():
         """Get detailed model router status."""
         try:
             model_router = get_model_router()
@@ -1338,6 +1415,48 @@ if FASTAPI_AVAILABLE:
         except Exception as e:
             logger.error(f"Failed to get model status: {e}")
             return {"error": str(e)}
+    
+    
+    @router.get("/models/loaded")
+    async def get_loaded_models_endpoint():
+        """
+        Get list of currently loaded models in Ollama.
+        
+        Returns models that are currently in VRAM/memory and ready for immediate inference.
+        """
+        try:
+            endpoint = get_ollama_endpoint()
+            models = get_loaded_models(endpoint)
+            
+            # Also get the configured model to check if it's loaded
+            configured_model = get_configured_model()
+            configured_loaded = is_model_loaded(configured_model, endpoint)
+            
+            return {
+                "loaded_models": models,
+                "configured_model": configured_model,
+                "configured_loaded": configured_loaded,
+                "endpoint": endpoint
+            }
+        except Exception as e:
+            logger.error(f"Failed to get loaded models: {e}")
+            return {"loaded_models": [], "error": str(e)}
+    
+    
+    @router.get("/models/check/{model_name:path}")
+    async def check_model_loaded(model_name: str):
+        """
+        Check if a specific model is loaded and get its status.
+        
+        This can be used to determine if a request will need to wait for model loading.
+        """
+        try:
+            endpoint = get_ollama_endpoint()
+            status = get_model_status(model_name, endpoint)
+            return status
+        except Exception as e:
+            logger.error(f"Failed to check model: {e}")
+            return {"loaded": False, "error": str(e)}
 
 
 def generate_guide_response(message: str, context: str, mentions: List[dict]) -> str:

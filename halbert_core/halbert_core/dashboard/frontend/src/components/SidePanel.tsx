@@ -253,6 +253,8 @@ export function SidePanel() {
   const [messages, setMessages] = useState<Message[]>([])
   const [chatInput, setChatInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isModelLoading, setIsModelLoading] = useState(false)  // Model loading into VRAM
+  const [loadingStatus, setLoadingStatus] = useState<string>('')  // Status message for loading
   const [mentionables, setMentionables] = useState<Mentionable[]>([])
   const [showMentions, setShowMentions] = useState(false)
   const [mentionFilter, setMentionFilter] = useState('')
@@ -887,7 +889,7 @@ export function SidePanel() {
   }
 
   const handleSendChat = async () => {
-    if ((!chatInput.trim() && attachedImages.length === 0) || isLoading) return
+    if ((!chatInput.trim() && attachedImages.length === 0) || isLoading || isModelLoading) return
 
     const requestStartTime = performance.now()
     const mentions = extractMentions(chatInput)
@@ -898,6 +900,27 @@ export function SidePanel() {
       const base64Match = img.dataUrl.match(/^data:image\/\w+;base64,(.+)$/)
       return base64Match ? base64Match[1] : img.dataUrl
     })
+    
+    // Check if model is loaded - if not, show loading status
+    try {
+      const modelStatus = await api.getLoadedModels()
+      if (!modelStatus.configured_loaded) {
+        setIsModelLoading(true)
+        setLoadingStatus(`Loading ${modelStatus.configured_model}...`)
+        
+        if (isDebugMode) {
+          addLog({
+            type: 'info',
+            category: 'api',
+            message: `Model not loaded, will load on first request: ${modelStatus.configured_model}`,
+            data: { loaded_models: modelStatus.loaded_models }
+          })
+        }
+      }
+    } catch (err) {
+      // If we can't check, just proceed - the request will load the model
+      console.debug('Could not check model status:', err)
+    }
     
     // Debug logging
     if (isDebugMode) {
@@ -1107,6 +1130,8 @@ export function SidePanel() {
       }])
     } finally {
       setIsLoading(false)
+      setIsModelLoading(false)
+      setLoadingStatus('')
     }
   }
 
@@ -1509,10 +1534,13 @@ export function SidePanel() {
                     </div>
                   </div>
                 ))}
-                {isLoading && (
+                {(isLoading || isModelLoading) && (
                   <div className="flex justify-start">
-                    <div className="bg-muted rounded-lg px-3 py-2">
+                    <div className="bg-muted rounded-lg px-3 py-2 flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
+                      {loadingStatus && (
+                        <span className="text-xs text-muted-foreground">{loadingStatus}</span>
+                      )}
                     </div>
                   </div>
                 )}
