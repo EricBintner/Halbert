@@ -8,7 +8,10 @@ orchestrator:
   always_loaded: true
   purpose: Intent classification, simple Q&A, context selection
 specialist:
-  enabled: false
+  enabled: true
+  model: qwen2.5:32b  # Larger model for complex reasoning
+  endpoint: http://100.74.58.17:11434
+  purpose: Complex diagnostics, failure analysis, multi-step reasoning
 vision:
   model: qwen3-v1:32b
   endpoint: http://100.74.58.17:11434  # Same as specialist endpoint
