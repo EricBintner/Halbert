@@ -901,7 +901,7 @@ export function SidePanel() {
       return base64Match ? base64Match[1] : img.dataUrl
     })
     
-    // Check if model is loaded - if not, show loading status
+    // Check if model is loaded - show appropriate status message
     // Use specialist model for config editing, guide model for regular chat
     try {
       const modelStatus = await api.getLoadedModels()
@@ -912,6 +912,7 @@ export function SidePanel() {
       const isLoaded = isConfigEditing ? modelStatus.specialist_loaded : modelStatus.configured_loaded
       
       if (!isLoaded) {
+        // Model not in VRAM - will need to load first
         setIsModelLoading(true)
         setLoadingStatus(`Loading ${modelToCheck}...`)
         
@@ -927,9 +928,13 @@ export function SidePanel() {
             }
           })
         }
+      } else {
+        // Model already loaded - just show "Thinking..."
+        setLoadingStatus('Thinking...')
       }
     } catch (err) {
-      // If we can't check, just proceed - the request will load the model
+      // If we can't check, just show "Thinking..."
+      setLoadingStatus('Thinking...')
       console.debug('Could not check model status:', err)
     }
     
