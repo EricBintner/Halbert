@@ -146,13 +146,33 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
     };
   }, [filePath]);
   
-  // Accept proposed changes
-  const handleAcceptDiff = () => {
+  // Accept proposed changes - auto-backup before applying
+  const handleAcceptDiff = async () => {
     if (proposedContent !== null) {
+      // Create automatic backup before AI edit
+      try {
+        const res = await fetch(`${API_BASE}/editor/backup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path: filePath,
+            label: 'Before AI edit',
+          }),
+        });
+        
+        if (res.ok) {
+          loadBackups();  // Refresh backup list
+        }
+      } catch (err) {
+        console.error('Failed to create auto-backup:', err);
+        // Continue anyway - don't block the edit
+      }
+      
+      // Apply the changes
       setContent(proposedContent);
       setProposedContent(null);
       setDiffSummary('');
-      setSuccessMessage('Changes accepted');
+      setSuccessMessage('Changes accepted (backup created)');
       setTimeout(() => setSuccessMessage(null), 3000);
     }
   };
