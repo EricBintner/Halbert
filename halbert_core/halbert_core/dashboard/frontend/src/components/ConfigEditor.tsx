@@ -484,12 +484,12 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
       
       {/* AI Diff Bar - shown when there are proposed changes */}
       {proposedContent !== null && (
-        <div className="px-4 py-2 bg-blue-500/20 border-b border-blue-500/30 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-blue-400">
+        <div className="px-4 py-2 bg-sky-900/80 border-b border-sky-700 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm text-sky-100">
             <CheckCircle className="h-4 w-4" />
             <span className="font-medium">AI Proposed Changes</span>
             {diffSummary && (
-              <span className="text-blue-400/70">— {diffSummary}</span>
+              <span className="text-sky-200">— {diffSummary}</span>
             )}
           </div>
           <div className="flex items-center gap-2">

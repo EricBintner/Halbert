@@ -1583,10 +1583,10 @@ export function SidePanel() {
 
               {/* Config editing indicator */}
               {configContext && (
-                <div className="mx-3 mb-1 px-2 py-1 bg-blue-500/10 border border-blue-500/30 rounded text-[10px] text-blue-400 flex items-center gap-1">
+                <div className="mx-3 mb-1 px-2 py-1 bg-sky-900/60 border border-sky-600 rounded text-[10px] text-sky-100 flex items-center gap-1">
                   <Pencil className="h-3 w-3" />
                   <span>Editing: {configContext.filePath.split('/').pop()}</span>
-                  <span className="text-blue-400/60 ml-1">• AI can apply edits directly</span>
+                  <span className="text-sky-200 ml-1">• AI can apply edits directly</span>
                 </div>
               )}
 
