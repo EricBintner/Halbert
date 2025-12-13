@@ -1638,34 +1638,34 @@ CONFIG_EDITOR_SYSTEM_PROMPT = """You are an expert Linux system administrator an
 {file_content}
 ```
 
-When the user asks you to make changes, you MUST respond with SEARCH/REPLACE edit blocks in this EXACT format:
+When the user asks you to make changes, respond with SEARCH/REPLACE blocks using EXACTLY this format:
 
 <<<<<<< SEARCH
-exact text to find (copy from file above)
+[copy exact text from file above]
 =======
-new replacement text
+[new replacement text]
 >>>>>>> REPLACE
 
-CRITICAL RULES:
-1. Copy the SEARCH text EXACTLY from the file content above (including whitespace, comments, etc.)
-2. The ======= separator line is REQUIRED between SEARCH and REPLACE sections
-3. To add content at the end, SEARCH for the last few lines and include them in REPLACE with your addition
-4. You may include multiple edit blocks for multiple changes
-5. After the edit blocks, briefly explain what you changed
+## CRITICAL FORMAT REQUIREMENTS:
+1. The `=======` separator is MANDATORY - never omit it
+2. Copy SEARCH text character-for-character from the file (including indentation, spaces, comments)
+3. Put the replacement text between `=======` and `>>>>>>> REPLACE`
+4. To ADD at end: SEARCH for last line(s), REPLACE with same lines + your addition
 
-EXAMPLE - Adding a comment at the end of a file:
-I'll add the requested comment after the last line:
-
+## EXAMPLE - Adding a comment after last line:
 <<<<<<< SEARCH
-    dhcp6: no
+    dhcp6: no # Disable IPv6
 =======
-    dhcp6: no
-# Added by Halbert on 2024-12-12
+    dhcp6: no # Disable IPv6
+# Edited on 2024-12-13
 >>>>>>> REPLACE
 
-This adds a comment after the dhcp6 line.
+I added a comment with today's date.
 
-IMPORTANT: Always use the exact <<<<<<< SEARCH, =======, and >>>>>>> REPLACE markers on their own lines.
+## Remember:
+- Always include `=======` between SEARCH and REPLACE
+- Copy exact indentation from the file
+- Briefly explain after the edit block
 """
 
 
@@ -1680,26 +1680,44 @@ def parse_edit_blocks(response: str) -> List[dict]:
     # More flexible pattern to handle AI output variations
     # Allows optional whitespace and handles different marker styles
     patterns = [
-        # Standard format
+        # Standard format with ======= separator
         r'<<<<<<< SEARCH\s*\n([\s\S]*?)\n=======\s*\n([\s\S]*?)\n>>>>>>> REPLACE',
         # With potential extra text on marker lines
         r'<{7}\s*SEARCH[^\n]*\n([\s\S]*?)\n={7}[^\n]*\n([\s\S]*?)\n>{7}\s*REPLACE',
         # Simpler markers (just the arrows)
         r'<<<<<<< SEARCH\n(.*?)(?:\n)?=======\n(.*?)(?:\n)?>>>>>>> REPLACE',
+        # FALLBACK: Malformed blocks without ======= separator (LLM sometimes does this)
+        # Match SEARCH...REPLACE pairs and try to split the content
+        r'<<<<<<< SEARCH\s*\n([\s\S]*?)\n>>>>>>> REPLACE',
     ]
     
-    for pattern in patterns:
-        matches = list(re.finditer(pattern, response, re.MULTILINE))
+    for pattern_idx, pattern in enumerate(patterns):
+        matches = list(re.finditer(pattern, response, re.MULTILINE | re.DOTALL))
         if matches:
             for match in matches:
-                search_text = match.group(1).strip()
-                replace_text = match.group(2).strip()
+                if pattern_idx < 3:
+                    # Normal case: two capture groups (search and replace)
+                    search_text = match.group(1).strip()
+                    replace_text = match.group(2).strip()
+                else:
+                    # Fallback case: only one capture group, need to infer
+                    # This handles malformed blocks without =======
+                    content = match.group(1).strip()
+                    # The LLM sometimes puts the REPLACE content after explaining
+                    # Try to find if there's another SEARCH block right after
+                    # For now, treat this as "delete this content" (empty replace)
+                    # or log a warning
+                    logger.warning(f"Malformed edit block (no ======= separator): {content[:100]}...")
+                    # Skip malformed blocks - they're not usable
+                    continue
+                    
                 if search_text:  # Only add if there's actual content
                     blocks.append({
                         'search': search_text,
                         'replace': replace_text
                     })
-            break  # Stop after first pattern that matches
+            if blocks:  # Only break if we found valid blocks
+                break
     
     # Debug logging
     if not blocks:
