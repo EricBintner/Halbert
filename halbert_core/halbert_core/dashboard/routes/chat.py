@@ -1561,9 +1561,94 @@ def parse_edit_blocks(response: str) -> List[dict]:
     return blocks
 
 
+def normalize_whitespace(text: str) -> str:
+    """Normalize whitespace for fuzzy matching."""
+    import re
+    # Replace multiple spaces/tabs with single space, strip lines
+    lines = [re.sub(r'[ \t]+', ' ', line.strip()) for line in text.split('\n')]
+    return '\n'.join(lines)
+
+
+def find_best_match(search: str, content: str) -> tuple[int, int] | None:
+    """
+    Find the best matching location for search text in content.
+    Uses fuzzy matching to handle whitespace differences.
+    
+    Returns (start, end) indices or None if no match found.
+    """
+    import difflib
+    
+    # First try exact match
+    if search in content:
+        start = content.index(search)
+        return (start, start + len(search))
+    
+    # Try normalized whitespace match
+    search_norm = normalize_whitespace(search)
+    content_norm = normalize_whitespace(content)
+    
+    if search_norm in content_norm:
+        # Find the position in normalized content
+        norm_start = content_norm.index(search_norm)
+        
+        # Map back to original content by counting lines
+        search_lines = search_norm.count('\n') + 1
+        content_lines = content.split('\n')
+        norm_lines = content_norm.split('\n')
+        
+        # Find which original lines match
+        line_start = content_norm[:norm_start].count('\n')
+        line_end = line_start + search_lines
+        
+        # Get the original text span
+        original_start = sum(len(line) + 1 for line in content_lines[:line_start])
+        original_end = sum(len(line) + 1 for line in content_lines[:line_end])
+        
+        # Trim trailing newline if necessary
+        if original_end > len(content):
+            original_end = len(content)
+            
+        return (original_start, original_end)
+    
+    # Try line-by-line fuzzy matching
+    search_lines = search.strip().split('\n')
+    content_lines = content.split('\n')
+    
+    if len(search_lines) == 0:
+        return None
+        
+    # Use SequenceMatcher to find similar blocks
+    matcher = difflib.SequenceMatcher(None, 
+        [normalize_whitespace(l) for l in content_lines],
+        [normalize_whitespace(l) for l in search_lines]
+    )
+    
+    # Find matching blocks
+    blocks = matcher.get_matching_blocks()
+    
+    # If we have a good match (>70% of lines match), use it
+    total_matched = sum(b.size for b in blocks)
+    if total_matched >= len(search_lines) * 0.7:
+        # Find the best contiguous block
+        for block in blocks:
+            if block.size >= len(search_lines) * 0.5:
+                start_line = block.a
+                end_line = start_line + len(search_lines)
+                
+                original_start = sum(len(line) + 1 for line in content_lines[:start_line])
+                original_end = sum(len(line) + 1 for line in content_lines[:end_line])
+                
+                if original_end > len(content):
+                    original_end = len(content)
+                    
+                return (original_start, original_end)
+    
+    return None
+
+
 def apply_edit_blocks(content: str, edit_blocks: List[dict]) -> tuple[str, bool, str]:
     """
-    Apply edit blocks to file content.
+    Apply edit blocks to file content with fuzzy matching.
     
     Args:
         content: Original file content
@@ -1579,15 +1664,27 @@ def apply_edit_blocks(content: str, edit_blocks: List[dict]) -> tuple[str, bool,
     applied_count = 0
     
     for block in edit_blocks:
-        search = block.get('search', '')
+        search = block.get('search', '').strip()
         replace = block.get('replace', '')
         
-        if search and search in new_content:
-            new_content = new_content.replace(search, replace, 1)  # Replace first occurrence
+        if not search:
+            continue
+            
+        # Try exact match first
+        if search in new_content:
+            new_content = new_content.replace(search, replace, 1)
             applied_count += 1
-            logger.debug(f"Applied edit block: {len(search)} chars -> {len(replace)} chars")
+            logger.debug(f"Applied exact edit: {len(search)} chars -> {len(replace)} chars")
         else:
-            logger.warning(f"Could not find search text in content: {search[:50]}...")
+            # Try fuzzy match
+            match = find_best_match(search, new_content)
+            if match:
+                start, end = match
+                new_content = new_content[:start] + replace + new_content[end:]
+                applied_count += 1
+                logger.debug(f"Applied fuzzy edit: {end-start} chars -> {len(replace)} chars")
+            else:
+                logger.warning(f"Could not find search text (even fuzzy): {search[:50]}...")
     
     if applied_count == 0:
         return content, False, "Could not find any matching text to replace"

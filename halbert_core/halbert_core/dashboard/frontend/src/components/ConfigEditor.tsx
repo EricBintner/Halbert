@@ -121,12 +121,18 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
   
   // Listen for proposed changes from chat (Phase 18 - IDE-style diff)
   useEffect(() => {
+    console.log('[ConfigEditor] Setting up propose-edit listener for:', filePath);
+    
     const handleProposedEdit = (e: CustomEvent<{ 
       proposedContent: string; 
       summary: string;
     }>) => {
       const { proposedContent: proposed, summary } = e.detail;
-      console.log('[ConfigEditor] Received proposed edit, showing diff view');
+      console.log('[ConfigEditor] Received proposed edit:', {
+        contentLength: proposed?.length,
+        summary,
+        currentFilePath: filePath
+      });
       
       // Set proposed content to trigger diff view
       setProposedContent(proposed);
@@ -135,9 +141,10 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
     
     window.addEventListener('halbert:propose-edit', handleProposedEdit as EventListener);
     return () => {
+      console.log('[ConfigEditor] Removing propose-edit listener');
       window.removeEventListener('halbert:propose-edit', handleProposedEdit as EventListener);
     };
-  }, []);
+  }, [filePath]);
   
   // Accept proposed changes
   const handleAcceptDiff = () => {
