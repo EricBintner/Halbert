@@ -120,6 +120,58 @@ def get_vision_model() -> tuple[str, str]:
         return ("llava:34b", get_ollama_endpoint())
 
 
+def _score_query_complexity(prompt: str) -> float:
+    """
+    Score query complexity to decide guide vs specialist routing.
+    
+    Returns:
+        Float from 0.0 (simple → use 8b guide) to 1.0 (complex → use 70b specialist)
+    """
+    score = 0.0
+    prompt_lower = prompt.lower()
+    word_count = len(prompt.split())
+    
+    # Length indicator (longer = likely more complex)
+    if word_count > 50:
+        score += 0.2
+    elif word_count > 20:
+        score += 0.1
+    
+    # Failure/diagnostic keywords → need reasoning
+    diagnostic_keywords = [
+        'why', 'failed', 'error', 'broken', 'not working', 'troubleshoot',
+        'diagnose', 'investigate', 'debug', 'fix', 'issue', 'problem'
+    ]
+    if any(kw in prompt_lower for kw in diagnostic_keywords):
+        score += 0.4  # High weight - diagnostics need reasoning
+    
+    # Code/script keywords → need specialist
+    code_keywords = [
+        'write', 'create', 'script', 'function', 'code',
+        'implement', 'optimize', 'refactor'
+    ]
+    if any(kw in prompt_lower for kw in code_keywords):
+        score += 0.3
+    
+    # Multi-step indicators
+    multi_step_keywords = [
+        'step by step', 'first', 'then', 'after',
+        'compare', 'analyze', 'explain why', 'how does'
+    ]
+    if any(kw in prompt_lower for kw in multi_step_keywords):
+        score += 0.2
+    
+    # Simple query indicators (reduce score)
+    simple_indicators = [
+        'what is', 'show me', 'list', 'status', 'how many', 'which', 'where is',
+        'hi', 'hello', 'thanks', 'help'
+    ]
+    if any(prompt_lower.startswith(kw) for kw in simple_indicators) and word_count < 10:
+        score -= 0.3
+    
+    return max(0.0, min(1.0, score))
+
+
 def get_loaded_models(endpoint: str = None) -> List[dict]:
     """
     Get list of currently loaded models from Ollama.
@@ -889,6 +941,32 @@ if FASTAPI_AVAILABLE:
             # Even without specific context, knowing the page helps
             context_parts.append(f"**User is currently viewing the {current_page.title()} page.**")
         
+        # CRITICAL: When asking about failures, inject ALL failed/error discoveries
+        # This enables correlation (failed service + failed disk = hardware issue)
+        failure_keywords = ['fail', 'error', 'broken', 'down', 'not working', 'issue', 'problem', 
+                           'wrong', 'crash', 'stopped', 'unable', 'cannot', 'can\'t']
+        if any(kw in message_lower for kw in failure_keywords):
+            try:
+                # Find ALL discoveries with failed/error status
+                failed_discoveries = [
+                    d for d in engine.discoveries.values() 
+                    if d.status and any(s in d.status.lower() for s in ['fail', 'error', 'down', 'critical', 'warning', 'missing'])
+                ]
+                if failed_discoveries:
+                    failure_summary = ["**⚠️ RELATED ISSUES ON THIS SYSTEM (may be correlated):**"]
+                    for d in failed_discoveries[:15]:
+                        detail = f"- [{d.type.value.upper()}] {d.title}: {d.status}"
+                        if d.status_detail:
+                            detail += f" - {d.status_detail}"
+                        failure_summary.append(detail)
+                    context_parts.insert(0, "\n".join(failure_summary))  # Insert at top for visibility
+                    auto_injected_types.add('failures')
+                    logger.info(f"Injected {len(failed_discoveries)} correlated failure discoveries")
+                    if debug_info:
+                        debug_info['auto_injected_context'].append({'type': 'failures', 'count': len(failed_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to inject failure context: {e}")
+        
         # Storage/disk/filesystem keywords -> auto-inject storage context
         storage_keywords = ['disk', 'storage', 'drive', 'filesystem', 'mount', 'bcachefs', 
                            'btrfs', 'zfs', 'raid', 'nvme', 'ssd', 'hdd', 'partition']
@@ -1273,7 +1351,20 @@ if FASTAPI_AVAILABLE:
                     "UNCERTAINTY - Only ask when truly necessary:\n"
                     "- Only ask for clarification if the conversation history provides NO context at all.\n"
                     "- If there's ANY command output, error, or previous context - USE IT.\n"
-                    "- Asking to rephrase when context exists makes you seem incompetent - avoid this."
+                    "- Asking to rephrase when context exists makes you seem incompetent - avoid this.\n\n"
+                    
+                    "CORRELATE FAILURES - Think like a sysadmin:\n"
+                    "- When diagnosing a failure, look at ALL related issues in the context.\n"
+                    "- A failed service + failed disk = likely hardware issue, NOT misconfiguration.\n"
+                    "- If a mount fails and a disk is marked as failed, the disk is probably the cause.\n"
+                    "- Don't assume 'misconfiguration' when hardware failure is more likely.\n"
+                    "- The system knows its own state - if config was valid before, suspect hardware first.\n\n"
+                    
+                    "COMMAND VERIFICATION:\n"
+                    "- Only suggest commands you're confident exist on typical Linux systems.\n"
+                    "- For niche tools (bcachefsctl, zfs, btrfs), suggest checking if installed first.\n"
+                    "- Use standard diagnostic tools: systemctl, journalctl, dmesg, lsblk, smartctl.\n"
+                    "- If a command fails with 'not found', suggest installing the package or an alternative."
                 )
                 task_type = TaskType.CHAT
             
@@ -1393,9 +1484,26 @@ if FASTAPI_AVAILABLE:
                 # Current user message
                 messages.append({"role": "user", "content": message})
                 
-                # Use chat API instead of generate
+                # Smart routing: decide between guide (8b) and specialist (70b)
+                # Based on complexity scoring
+                use_specialist = False
+                complexity_score = 0.0
+                model = get_configured_model()  # Default: guide/orchestrator
                 endpoint = get_ollama_endpoint()
-                model = get_configured_model()
+                
+                specialist_model, specialist_endpoint = get_specialist_model()
+                if specialist_model:
+                    # Score complexity to decide routing
+                    complexity_score = _score_query_complexity(message)
+                    
+                    # Use specialist for complex queries (threshold 0.5)
+                    if complexity_score >= 0.5:
+                        model = specialist_model
+                        endpoint = specialist_endpoint
+                        use_specialist = True
+                        logger.info(f"Complexity {complexity_score:.2f} >= 0.5 → using specialist: {model}")
+                    else:
+                        logger.info(f"Complexity {complexity_score:.2f} < 0.5 → using guide: {model}")
                 
                 try:
                     chat_response = requests.post(
@@ -1432,6 +1540,8 @@ if FASTAPI_AVAILABLE:
                 # Track model info for debug
                 if debug_info:
                     debug_info['model_used'] = model
+                    debug_info['model_type'] = 'specialist' if use_specialist else 'guide'
+                    debug_info['complexity_score'] = complexity_score if specialist_model else 0.0
                     debug_info['endpoint_used'] = endpoint
                     debug_info['tokens_used'] = tokens_used
                     debug_info['generation_time_ms'] = int((time.time() - start_time) * 1000)

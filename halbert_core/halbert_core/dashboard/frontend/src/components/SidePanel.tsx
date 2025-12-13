@@ -151,7 +151,12 @@ function InlineCodeBlock({ code, lang, onRunCommand }: {
   return (
     <div className="space-y-1 min-w-0">
       <div className="relative group">
-        <pre className="bg-zinc-900 text-zinc-100 rounded p-2 text-xs font-mono overflow-x-auto max-w-full">
+        {/* Runnable commands: dark bg, Output blocks: lighter bg for visual distinction */}
+        <pre className={`rounded p-2 text-xs font-mono overflow-x-auto max-w-full ${
+          isShellCommand 
+            ? 'bg-zinc-900 text-zinc-100'  // Dark = runnable
+            : 'bg-zinc-700 text-zinc-200'  // Lighter = output/display only
+        }`}>
           <code className="break-all">{code}</code>
         </pre>
         {isShellCommand && (
