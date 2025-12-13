@@ -114,7 +114,9 @@ function InlineCodeBlock({ code, lang, onRunCommand }: {
     setIsRunning(true)
     setOutput(null)
     try {
-      const result = await onRunCommand(code)
+      // Sanitize command - remove stray backticks that LLMs sometimes add
+      const sanitizedCode = code.replace(/^`+|`+$/g, '').trim()
+      const result = await onRunCommand(sanitizedCode)
       if (result.exit_code === 0) {
         setOutput(result.output || '(no output)')
         setIsError(false)
@@ -197,8 +199,11 @@ function MessageContent({ content, onRunCommand }: {
     if (match.index > lastIndex) {
       parts.push({ type: 'text', content: content.slice(lastIndex, match.index) })
     }
-    // Add code block
-    parts.push({ type: 'code', content: match[2].trim(), lang: match[1] || 'bash' })
+    // Add code block - sanitize stray backticks that LLMs sometimes add
+    let codeContent = match[2].trim()
+    // Remove leading/trailing backticks that shouldn't be there
+    codeContent = codeContent.replace(/^`+|`+$/g, '').trim()
+    parts.push({ type: 'code', content: codeContent, lang: match[1] || 'bash' })
     lastIndex = match.index + match[0].length
   }
   
