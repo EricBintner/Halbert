@@ -941,14 +941,23 @@ export function SidePanel() {
     })
     
     // Check if model is loaded - show appropriate status message
-    // Use specialist model for config editing, guide model for regular chat
+    // Smart routing: complex queries use specialist, simple queries use guide
     try {
       const modelStatus = await api.getLoadedModels()
       
-      // Determine which model to check based on context
+      // Score query complexity (mirrors backend logic)
+      const queryLower = chatInput.toLowerCase()
+      const diagnosticKeywords = ['why', 'failed', 'fail', 'error', 'broken', 'not working', 
+        'troubleshoot', 'diagnose', 'investigate', 'debug', 'fix', 'issue', 'problem']
+      const diagnosticHits = diagnosticKeywords.filter(kw => queryLower.includes(kw)).length
+      const isComplexQuery = diagnosticHits >= 2 || 
+        (diagnosticHits >= 1 && chatInput.split(' ').length > 10)
+      
+      // Determine which model based on routing
       const isConfigEditing = !!configContext
-      const modelToCheck = isConfigEditing ? modelStatus.specialist_model : modelStatus.configured_model
-      const isLoaded = isConfigEditing ? modelStatus.specialist_loaded : modelStatus.configured_loaded
+      const useSpecialist = isConfigEditing || (isComplexQuery && modelStatus.specialist_model)
+      const modelToCheck = useSpecialist ? modelStatus.specialist_model : modelStatus.configured_model
+      const isLoaded = useSpecialist ? modelStatus.specialist_loaded : modelStatus.configured_loaded
       
       if (!isLoaded) {
         // Model not in VRAM - will need to load first
@@ -962,14 +971,16 @@ export function SidePanel() {
             message: `Model not loaded, will load on first request: ${modelToCheck}`,
             data: { 
               isConfigEditing,
+              isComplexQuery,
+              diagnosticHits,
               modelToCheck,
               loaded_models: modelStatus.loaded_models 
             }
           })
         }
       } else {
-        // Model already loaded - just show "Thinking..."
-        setLoadingStatus('Thinking...')
+        // Model already loaded - show which model is thinking
+        setLoadingStatus(`${modelToCheck} thinking...`)
       }
     } catch (err) {
       // If we can't check, just show "Thinking..."
