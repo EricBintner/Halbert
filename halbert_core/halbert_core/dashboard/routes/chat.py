@@ -1632,6 +1632,7 @@ class ConfigChatResponse(BaseModel):
 CONFIG_EDITOR_SYSTEM_PROMPT = """You are an expert Linux system administrator and configuration file editor. You are editing:
 
 **File:** {file_path}
+**Current Date/Time:** {current_datetime}
 
 **Current file content:**
 ```
@@ -1900,10 +1901,20 @@ if FASTAPI_AVAILABLE:
         file_content = request.file_content
         history = request.history
         
+        # Get current local datetime with timezone
+        from datetime import datetime
+        import time
+        # Get local time with timezone name (check if DST is currently in effect)
+        local_time = datetime.now()
+        is_dst = time.localtime().tm_isdst > 0
+        tz_name = time.tzname[1] if is_dst else time.tzname[0]
+        current_datetime = local_time.strftime(f"%Y-%m-%d %H:%M {tz_name}")
+        
         # Build system prompt with file context
         system_prompt = CONFIG_EDITOR_SYSTEM_PROMPT.format(
             file_path=file_path,
-            file_content=file_content
+            file_content=file_content,
+            current_datetime=current_datetime
         )
         
         # Add custom AI rules
