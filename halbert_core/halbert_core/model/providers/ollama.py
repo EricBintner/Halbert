@@ -190,6 +190,76 @@ class OllamaProvider(ModelProvider):
             logger.error(f"Ollama generation failed: {e}")
             raise GenerationError(f"Generation failed: {e}")
     
+    def chat(
+        self,
+        messages: List[Dict[str, str]],
+        model_id: str,
+        max_tokens: int = 2048,
+        temperature: float = 0.7,
+        **kwargs
+    ) -> ModelResponse:
+        """
+        Generate response using chat format with proper message arrays.
+        
+        This is the preferred method for conversation - LLMs understand
+        structured roles better than concatenated prompt strings.
+        
+        Args:
+            messages: List of {"role": "system|user|assistant", "content": "..."}
+            model_id: Model to use
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+        
+        Returns:
+            ModelResponse with generated text
+        """
+        start_time = time.time()
+        
+        try:
+            request_data = {
+                "model": model_id,
+                "messages": messages,
+                "stream": False,
+                "options": {
+                    "num_predict": max_tokens,
+                    "temperature": temperature,
+                    **kwargs.get("options", {})
+                }
+            }
+            
+            response = requests.post(
+                f"{self.base_url}/api/chat",
+                json=request_data,
+                timeout=180  # 3 minutes for complex responses
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            latency_ms = (time.time() - start_time) * 1000
+            
+            # Extract token counts
+            prompt_tokens = data.get("prompt_eval_count", 0)
+            completion_tokens = data.get("eval_count", 0)
+            total_tokens = prompt_tokens + completion_tokens
+            
+            return ModelResponse(
+                text=data.get("message", {}).get("content", ""),
+                model_id=model_id,
+                provider="ollama",
+                tokens_used=total_tokens,
+                latency_ms=latency_ms,
+                metadata={
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "done": data.get("done", False)
+                }
+            )
+        
+        except requests.RequestException as e:
+            logger.error(f"Ollama chat failed: {e}")
+            raise GenerationError(f"Chat generation failed: {e}")
+
     def is_loaded(self, model_id: str) -> bool:
         """Check if model is in our loaded tracking."""
         return model_id in self._loaded_models
