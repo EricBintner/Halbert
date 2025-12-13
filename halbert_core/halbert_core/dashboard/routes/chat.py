@@ -70,6 +70,31 @@ def get_configured_model() -> str:
         return "llama3.1:8b"
 
 
+def get_specialist_model() -> tuple[str, str]:
+    """Get the configured specialist/executor model name and endpoint from config.
+    
+    Returns:
+        Tuple of (model_name, endpoint_url)
+    """
+    try:
+        from ...utils.platform import get_config_dir
+        import yaml
+        
+        config_path = get_config_dir() / 'models.yml'
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f) or {}
+            
+            specialist = config.get('specialist', {})
+            model = specialist.get('model', 'llama3.1:70b')
+            endpoint = specialist.get('endpoint', get_ollama_endpoint())
+            return (model, endpoint)
+        
+        return ("llama3.1:70b", get_ollama_endpoint())
+    except Exception:
+        return ("llama3.1:70b", get_ollama_endpoint())
+
+
 def get_loaded_models(endpoint: str = None) -> List[dict]:
     """
     Get list of currently loaded models from Ollama.
@@ -1432,11 +1457,20 @@ if FASTAPI_AVAILABLE:
             configured_model = get_configured_model()
             configured_loaded = is_model_loaded(configured_model, endpoint)
             
+            # Also check specialist model (for config editing)
+            specialist_model, specialist_endpoint = get_specialist_model()
+            specialist_models = get_loaded_models(specialist_endpoint) if specialist_endpoint != endpoint else models
+            specialist_loaded = is_model_loaded(specialist_model, specialist_endpoint)
+            
             return {
                 "loaded_models": models,
                 "configured_model": configured_model,
                 "configured_loaded": configured_loaded,
-                "endpoint": endpoint
+                "endpoint": endpoint,
+                # Specialist model info for config editing
+                "specialist_model": specialist_model,
+                "specialist_endpoint": specialist_endpoint,
+                "specialist_loaded": specialist_loaded,
             }
         except Exception as e:
             logger.error(f"Failed to get loaded models: {e}")
