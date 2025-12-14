@@ -35,9 +35,12 @@ import {
   ScanSearch,
   Clock,
   Shield,
+  ShieldCheck,
   AlertTriangle,
   Eye,
   Palette,
+  Lock,
+  FileCode,
 } from 'lucide-react'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 
@@ -723,7 +726,7 @@ export function Settings() {
       </div>
 
       <Tabs defaultValue="system" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="flex flex-wrap w-full gap-1">
           <TabsTrigger value="system" className="flex items-center gap-2">
             <Cpu className="h-4 w-4" />
             System
@@ -732,12 +735,6 @@ export function Settings() {
             <Brain className="h-4 w-4" />
             AI Models
           </TabsTrigger>
-          {/* Personas feature hidden - may be revisited in future when persona behavior differentiation is implemented
-          <TabsTrigger value="personas" className="flex items-center gap-2">
-            <Users className="h-4 w-4" />
-            Personas
-          </TabsTrigger>
-          */}
           <TabsTrigger value="knowledge" className="flex items-center gap-2">
             <BookOpen className="h-4 w-4" />
             Knowledge
@@ -745,6 +742,14 @@ export function Settings() {
           <TabsTrigger value="rules" className="flex items-center gap-2">
             <Shield className="h-4 w-4" />
             AI Rules
+          </TabsTrigger>
+          <TabsTrigger value="policy" className="flex items-center gap-2">
+            <Lock className="h-4 w-4" />
+            Policy
+          </TabsTrigger>
+          <TabsTrigger value="guardrails" className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4" />
+            Guardrails
           </TabsTrigger>
           <TabsTrigger value="alerts" className="flex items-center gap-2">
             <Bell className="h-4 w-4" />
@@ -2054,6 +2059,150 @@ export function Settings() {
                     Add Rule
                   </Button>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Policy Tab */}
+        <TabsContent value="policy" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Lock className="h-5 w-5" />
+                Tool Policy
+              </CardTitle>
+              <CardDescription>
+                Control which tools the AI can execute. Tools not explicitly configured follow the default policy.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">Default Allow</p>
+                    <p className="text-sm text-muted-foreground">
+                      When enabled, tools are allowed unless explicitly denied
+                    </p>
+                  </div>
+                  <Badge variant="default">Enabled</Badge>
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <h4 className="font-medium text-sm">Tool Overrides</h4>
+                <div className="text-sm text-muted-foreground">
+                  Configure individual tool permissions in <code className="px-1.5 py-0.5 bg-muted rounded">config/policy.yml</code>
+                </div>
+                <div className="grid gap-2 mt-2">
+                  <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <FileCode className="h-4 w-4" />
+                      <span className="font-mono text-sm">write_config</span>
+                    </div>
+                    <Badge variant="default" className="bg-green-600">Allowed</Badge>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4" />
+                      <span className="font-mono text-sm">schedule_cron</span>
+                    </div>
+                    <Badge variant="default" className="bg-green-600">Allowed</Badge>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="pt-4 border-t">
+                <p className="text-xs text-muted-foreground">
+                  Policy file location: <code className="px-1 py-0.5 bg-muted rounded">config/policy.yml</code>
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Guardrails Tab */}
+        <TabsContent value="guardrails" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5" />
+                Autonomy Guardrails
+              </CardTitle>
+              <CardDescription>
+                Safety limits for autonomous operations. These prevent runaway automation.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Confidence Thresholds */}
+              <div className="space-y-2">
+                <h4 className="font-medium text-sm flex items-center gap-2">
+                  <Brain className="h-4 w-4" />
+                  Confidence Thresholds
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-3 bg-muted/30 rounded-lg">
+                    <p className="text-sm text-muted-foreground">Auto-Execute</p>
+                    <p className="text-2xl font-bold text-green-600">80%</p>
+                    <p className="text-xs text-muted-foreground">Actions above this run automatically</p>
+                  </div>
+                  <div className="p-3 bg-muted/30 rounded-lg">
+                    <p className="text-sm text-muted-foreground">Approval Required</p>
+                    <p className="text-2xl font-bold text-yellow-600">50-80%</p>
+                    <p className="text-xs text-muted-foreground">Actions in this range need approval</p>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Resource Budgets */}
+              <div className="space-y-2">
+                <h4 className="font-medium text-sm flex items-center gap-2">
+                  <Cpu className="h-4 w-4" />
+                  Resource Budgets
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-3 bg-muted/30 rounded-lg">
+                    <p className="text-sm text-muted-foreground">Max CPU</p>
+                    <p className="text-xl font-bold">50%</p>
+                  </div>
+                  <div className="p-3 bg-muted/30 rounded-lg">
+                    <p className="text-sm text-muted-foreground">Max Memory</p>
+                    <p className="text-xl font-bold">2 GB</p>
+                  </div>
+                  <div className="p-3 bg-muted/30 rounded-lg">
+                    <p className="text-sm text-muted-foreground">Max Time</p>
+                    <p className="text-xl font-bold">30 min</p>
+                  </div>
+                  <div className="p-3 bg-muted/30 rounded-lg">
+                    <p className="text-sm text-muted-foreground">Max Jobs/Hour</p>
+                    <p className="text-xl font-bold">10</p>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Safe Mode */}
+              <div className="space-y-2">
+                <h4 className="font-medium text-sm flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  Safe Mode
+                </h4>
+                <div className="p-4 bg-muted/30 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">Auto-Pause on Anomaly</p>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically enter safe mode when anomalies are detected
+                      </p>
+                    </div>
+                    <Badge variant="default">Enabled</Badge>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="pt-4 border-t">
+                <p className="text-xs text-muted-foreground">
+                  Guardrails config: <code className="px-1 py-0.5 bg-muted rounded">config/autonomy.yml</code>
+                </p>
               </div>
             </CardContent>
           </Card>

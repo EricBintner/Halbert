@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { useScan } from '@/contexts/ScanContext'
-import { ConfigEditor } from '@/components/ConfigEditor'
+// ConfigEditor is handled globally by Layout.tsx via halbert:open-config-editor event
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -159,7 +159,7 @@ export function Network() {
   const [selectedInterface, setSelectedInterface] = useState<NetworkItem | null>(null)
   const [explanation, setExplanation] = useState<string | null>(null)
   const [loadingExplanation, setLoadingExplanation] = useState(false)
-  const [editingConfig, setEditingConfig] = useState<string | null>(null)
+  // ConfigEditor state removed - now handled globally by Layout.tsx
   
   // Edit classification state
   const [editingInterface, setEditingInterface] = useState<NetworkItem | null>(null)
@@ -421,15 +421,7 @@ export function Network() {
     return <div className="flex items-center justify-center h-64">Loading...</div>
   }
 
-  // Show editor instead of normal content when editing
-  if (editingConfig) {
-    return (
-      <ConfigEditor
-        filePath={editingConfig}
-        onClose={() => setEditingConfig(null)}
-      />
-    )
-  }
+  // ConfigEditor is now handled globally by Layout.tsx
 
   return (
     <div className="space-y-6">
@@ -775,12 +767,21 @@ export function Network() {
                         className="h-7 text-xs"
                         onClick={() => {
                           const configPath = selectedInterface.data.config_path || ''
+                          const fileName = configPath.split('/').pop() || 'config'
+                          const ifaceName = selectedInterface.title
                           setSelectedInterface(null)
-                          setEditingConfig(configPath)
+                          // Open chat with configPath so the Edit Config button appears in chat
                           openChat({
-                            title: `Config: ${configPath.split('/').pop()}`,
+                            title: `Config: ${fileName}`,
                             type: 'config',
+                            context: `Editing **${ifaceName}** network configuration.\n\nFile: \`${configPath}\`\n\nI can help you modify this config file. Just tell me what changes you'd like to make.`,
+                            configPath: configPath,
+                            newConversation: true,
                           })
+                          // Also open the config editor
+                          window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {
+                            detail: { filePath: configPath }
+                          }))
                         }}
                       >
                         <Pencil className="h-3 w-3 mr-1" />

@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import { ConfigEditor } from '@/components/ConfigEditor'
+// ConfigEditor is handled globally by Layout.tsx via halbert:open-config-editor event
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -79,7 +79,7 @@ export function Backups() {
   const [loadingHistories, setLoadingHistories] = useState<Set<string>>(new Set())
   const [backupStatuses, setBackupStatuses] = useState<Record<string, BackupStatus>>({})
   const [historyLimits, setHistoryLimits] = useState<Record<string, number>>({})
-  const [editingConfig, setEditingConfig] = useState<string | null>(null)
+  // ConfigEditor state removed - now handled globally by Layout.tsx
   const DEFAULT_HISTORY_LIMIT = 10
   const HISTORY_INCREMENT = 20
 
@@ -252,15 +252,7 @@ export function Backups() {
     )
   }
 
-  // Show editor instead of normal content when editing
-  if (editingConfig) {
-    return (
-      <ConfigEditor
-        filePath={editingConfig}
-        onClose={() => setEditingConfig(null)}
-      />
-    )
-  }
+  // ConfigEditor is now handled globally by Layout.tsx
 
   return (
     <div className="space-y-6">
@@ -443,9 +435,9 @@ export function Backups() {
                               openChat({
                                 title: `Config: ${fileName}`,
                                 type: 'config',
+                                context: `Editing **${backup.name}** backup configuration.\n\nFile: \`${configPath}\`\n\nI can help you modify this config file. Just tell me what changes you'd like to make.`,
                                 configPath: configPath,
                                 newConversation: true,
-                                prefillMessage: `I want to edit the ${backup.name} backup configuration at ${configPath}`,
                               })
                               // Also open the config editor
                               window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {
