@@ -2300,6 +2300,163 @@ async def decide_approval(request_id: str, decision: ApprovalDecisionRequest):
         return {"status": "error", "error": str(e)}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Policy Configuration API
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_policy_path() -> Path:
+    """Get the policy.yml path."""
+    # Check user config first, then system
+    from ...utils.platform import get_config_dir
+    user_path = get_config_dir() / 'policy.yml'
+    if user_path.exists():
+        return user_path
+    # Fall back to project config
+    return Path("config/policy.yml")
+
+
+@router.get("/policy")
+async def get_policy():
+    """Get current policy configuration."""
+    try:
+        import yaml
+        path = _get_policy_path()
+        
+        if not path.exists():
+            return {
+                "status": "ok",
+                "policy": {"default_allow": True, "tools": {}},
+                "path": str(path),
+                "exists": False
+            }
+        
+        with open(path, 'r') as f:
+            policy = yaml.safe_load(f) or {}
+        
+        return {
+            "status": "ok",
+            "policy": policy,
+            "path": str(path),
+            "exists": True
+        }
+    except Exception as e:
+        logger.error(f"Failed to get policy: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/policy")
+async def update_policy(request: Request):
+    """Update policy configuration."""
+    try:
+        import yaml
+        data = await request.json()
+        
+        policy = data.get("policy", {})
+        path = _get_policy_path()
+        
+        # Ensure parent directory exists
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write with comments
+        content = """# Halbert Policy Configuration
+# Controls whether side-effecting tools may apply changes.
+
+# If true, tools are allowed by default unless overridden below.
+# If false, tools are denied by default unless explicitly allowed.
+default_allow: {default_allow}
+
+# Per-tool overrides
+tools:
+""".format(default_allow=str(policy.get('default_allow', True)).lower())
+        
+        tools = policy.get('tools', {})
+        for tool_name, tool_config in tools.items():
+            if isinstance(tool_config, dict):
+                content += f"  {tool_name}:\n"
+                for key, value in tool_config.items():
+                    content += f"    {key}: {str(value).lower() if isinstance(value, bool) else value}\n"
+            else:
+                content += f"  {tool_name}: {tool_config}\n"
+        
+        with open(path, 'w') as f:
+            f.write(content)
+        
+        logger.info(f"Updated policy at {path}")
+        return {"status": "ok", "path": str(path)}
+    except Exception as e:
+        logger.error(f"Failed to update policy: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/policy/tool")
+async def set_tool_policy(request: Request):
+    """Set policy for a specific tool."""
+    try:
+        import yaml
+        data = await request.json()
+        
+        tool_name = data.get("tool")
+        allow = data.get("allow", True)
+        require_approval = data.get("require_approval", False)
+        
+        if not tool_name:
+            return {"status": "error", "error": "Tool name required"}
+        
+        path = _get_policy_path()
+        
+        # Load existing policy
+        if path.exists():
+            with open(path, 'r') as f:
+                policy = yaml.safe_load(f) or {}
+        else:
+            policy = {"default_allow": True, "tools": {}}
+        
+        # Update tool config
+        if "tools" not in policy:
+            policy["tools"] = {}
+        
+        policy["tools"][tool_name] = {
+            "allow": allow,
+            "require_approval": require_approval
+        }
+        
+        # Save back
+        with open(path, 'w') as f:
+            yaml.dump(policy, f, default_flow_style=False)
+        
+        return {"status": "ok", "tool": tool_name, "config": policy["tools"][tool_name]}
+    except Exception as e:
+        logger.error(f"Failed to set tool policy: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.delete("/policy/tool/{tool_name}")
+async def delete_tool_policy(tool_name: str):
+    """Remove policy override for a specific tool."""
+    try:
+        import yaml
+        path = _get_policy_path()
+        
+        if not path.exists():
+            return {"status": "error", "error": "Policy file not found"}
+        
+        with open(path, 'r') as f:
+            policy = yaml.safe_load(f) or {}
+        
+        if "tools" in policy and tool_name in policy["tools"]:
+            del policy["tools"][tool_name]
+            
+            with open(path, 'w') as f:
+                yaml.dump(policy, f, default_flow_style=False)
+            
+            return {"status": "ok", "tool": tool_name, "deleted": True}
+        
+        return {"status": "ok", "tool": tool_name, "deleted": False}
+    except Exception as e:
+        logger.error(f"Failed to delete tool policy: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 @router.get("/guardrails/status")
 async def get_guardrails_status():
     """Get current guardrails status."""

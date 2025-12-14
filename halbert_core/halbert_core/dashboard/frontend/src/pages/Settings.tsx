@@ -105,6 +105,14 @@ export function Settings() {
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [alertRules, setAlertRules] = useState<AlertRule[]>([])
   const [discoveryStats, setDiscoveryStats] = useState<DiscoveryStats | null>(null)
+  
+  // Policy state
+  const [policy, setPolicy] = useState<{default_allow: boolean, tools: Record<string, {allow: boolean}>}>({
+    default_allow: true,
+    tools: {}
+  })
+  const [policyPath, setPolicyPath] = useState<string>('')
+  const [savingPolicy, setSavingPolicy] = useState(false)
   const [clearing, setClearing] = useState(false)
   
   // Model config state
@@ -236,6 +244,18 @@ export function Settings() {
       setDiscoveryStats(stats)
     } catch (err) {
       console.error('Failed to load discovery stats:', err)
+    }
+    
+    // Load policy
+    try {
+      const res = await fetch(`${API_BASE}/settings/policy`)
+      const data = await res.json()
+      if (data.status === 'ok') {
+        setPolicy(data.policy || { default_allow: true, tools: {} })
+        setPolicyPath(data.path || '')
+      }
+    } catch (err) {
+      console.error('Failed to load policy:', err)
     }
     
     // Load model config
@@ -2085,36 +2105,109 @@ export function Settings() {
                       When enabled, tools are allowed unless explicitly denied
                     </p>
                   </div>
-                  <Badge variant="default">Enabled</Badge>
+                  <Button
+                    variant={policy.default_allow ? "default" : "outline"}
+                    size="sm"
+                    disabled={savingPolicy}
+                    onClick={async () => {
+                      setSavingPolicy(true)
+                      try {
+                        const newPolicy = { ...policy, default_allow: !policy.default_allow }
+                        await fetch(`${API_BASE}/settings/policy`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ policy: newPolicy })
+                        })
+                        setPolicy(newPolicy)
+                      } catch (err) {
+                        console.error('Failed to update policy:', err)
+                      }
+                      setSavingPolicy(false)
+                    }}
+                  >
+                    {policy.default_allow ? (
+                      <><Check className="h-4 w-4 mr-1" /> Enabled</>
+                    ) : (
+                      <><X className="h-4 w-4 mr-1" /> Disabled</>
+                    )}
+                  </Button>
                 </div>
               </div>
               
               <div className="space-y-2">
                 <h4 className="font-medium text-sm">Tool Overrides</h4>
-                <div className="text-sm text-muted-foreground">
-                  Configure individual tool permissions in <code className="px-1.5 py-0.5 bg-muted rounded">config/policy.yml</code>
-                </div>
+                <p className="text-sm text-muted-foreground">
+                  Click to toggle individual tool permissions
+                </p>
                 <div className="grid gap-2 mt-2">
-                  <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
-                    <div className="flex items-center gap-2">
-                      <FileCode className="h-4 w-4" />
-                      <span className="font-mono text-sm">write_config</span>
+                  {Object.entries(policy.tools || {}).map(([toolName, config]) => (
+                    <div key={toolName} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4" />
+                        <span className="font-mono text-sm">{toolName}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant={config.allow ? "default" : "destructive"}
+                          size="sm"
+                          disabled={savingPolicy}
+                          onClick={async () => {
+                            setSavingPolicy(true)
+                            try {
+                              await fetch(`${API_BASE}/settings/policy/tool`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ tool: toolName, allow: !config.allow })
+                              })
+                              setPolicy(prev => ({
+                                ...prev,
+                                tools: { ...prev.tools, [toolName]: { allow: !config.allow } }
+                              }))
+                            } catch (err) {
+                              console.error('Failed to update tool policy:', err)
+                            }
+                            setSavingPolicy(false)
+                          }}
+                        >
+                          {config.allow ? 'Allowed' : 'Denied'}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={savingPolicy}
+                          onClick={async () => {
+                            setSavingPolicy(true)
+                            try {
+                              await fetch(`${API_BASE}/settings/policy/tool/${toolName}`, {
+                                method: 'DELETE'
+                              })
+                              setPolicy(prev => {
+                                const newTools = { ...prev.tools }
+                                delete newTools[toolName]
+                                return { ...prev, tools: newTools }
+                              })
+                            } catch (err) {
+                              console.error('Failed to delete tool policy:', err)
+                            }
+                            setSavingPolicy(false)
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                    <Badge variant="default" className="bg-green-600">Allowed</Badge>
-                  </div>
-                  <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
-                    <div className="flex items-center gap-2">
-                      <Clock className="h-4 w-4" />
-                      <span className="font-mono text-sm">schedule_cron</span>
-                    </div>
-                    <Badge variant="default" className="bg-green-600">Allowed</Badge>
-                  </div>
+                  ))}
+                  {Object.keys(policy.tools || {}).length === 0 && (
+                    <p className="text-sm text-muted-foreground p-3">
+                      No tool overrides configured. All tools follow the default policy.
+                    </p>
+                  )}
                 </div>
               </div>
               
               <div className="pt-4 border-t">
                 <p className="text-xs text-muted-foreground">
-                  Policy file location: <code className="px-1 py-0.5 bg-muted rounded">config/policy.yml</code>
+                  Policy file: <code className="px-1 py-0.5 bg-muted rounded">{policyPath || 'config/policy.yml'}</code>
                 </p>
               </div>
             </CardContent>
