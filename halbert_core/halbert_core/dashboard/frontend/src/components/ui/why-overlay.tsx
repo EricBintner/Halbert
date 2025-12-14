@@ -100,7 +100,9 @@ export function WhyOverlay({
           "relative z-50 w-full max-w-lg mx-4 rounded-xl border bg-card shadow-2xl",
           "animate-in fade-in-0 zoom-in-95 duration-200"
         )}
+        onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b">

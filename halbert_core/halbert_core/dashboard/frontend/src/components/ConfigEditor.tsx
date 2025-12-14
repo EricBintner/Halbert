@@ -96,30 +96,26 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
   }, [filePath]);
   
   // Set config context for chat integration (Phase 18)
+  // IMPORTANT: When there's a pending diff, return the proposed content so
+  // subsequent AI edits build on top of pending changes (not the original)
   useEffect(() => {
-    // Create a stable reference to get current content
-    const getContent = () => content;
+    // Return proposed content if there's a pending diff, otherwise current content
+    const getContent = () => proposedContent !== null ? proposedContent : content;
+    const hasPendingDiff = proposedContent !== null;
     
     // Dispatch event to set config context
     window.dispatchEvent(new CustomEvent('halbert:set-config-context', {
-      detail: { filePath, getContent }
+      detail: { filePath, getContent, hasPendingDiff }
     }));
     
     // Cleanup: clear config context when unmounting
     return () => {
       window.dispatchEvent(new CustomEvent('halbert:clear-config-context'));
     };
-  }, [filePath]);
-  
-  // Update the getContent callback when content changes
-  useEffect(() => {
-    const getContent = () => content;
-    window.dispatchEvent(new CustomEvent('halbert:set-config-context', {
-      detail: { filePath, getContent }
-    }));
-  }, [content, filePath]);
+  }, [filePath, content, proposedContent]);
   
   // Listen for proposed changes from chat (Phase 18 - IDE-style diff)
+  // NOTE: Summaries accumulate when multiple edits are made before accepting
   useEffect(() => {
     console.log('[ConfigEditor] Setting up propose-edit listener for:', filePath);
     
@@ -131,12 +127,21 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
       console.log('[ConfigEditor] Received proposed edit:', {
         contentLength: proposed?.length,
         summary,
-        currentFilePath: filePath
+        currentFilePath: filePath,
+        hadPendingDiff: proposedContent !== null
       });
       
       // Set proposed content to trigger diff view
       setProposedContent(proposed);
-      setDiffSummary(summary);
+      
+      // Accumulate summaries when building on pending changes
+      setDiffSummary(prev => {
+        if (prev && prev.trim()) {
+          // Append new summary with separator
+          return `${prev}\n\n• ${summary}`;
+        }
+        return summary;
+      });
     };
     
     window.addEventListener('halbert:propose-edit', handleProposedEdit as EventListener);
@@ -144,7 +149,7 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
       console.log('[ConfigEditor] Removing propose-edit listener');
       window.removeEventListener('halbert:propose-edit', handleProposedEdit as EventListener);
     };
-  }, [filePath]);
+  }, [filePath, proposedContent]);
   
   // Accept proposed changes - auto-backup before applying
   const handleAcceptDiff = async () => {
@@ -485,11 +490,13 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
       {/* AI Diff Bar - shown when there are proposed changes */}
       {proposedContent !== null && (
         <div className="px-4 py-2 bg-sky-900/80 border-b border-sky-700 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-sky-100">
-            <CheckCircle className="h-4 w-4" />
-            <span className="font-medium">AI Proposed Changes</span>
+          <div className="flex items-center gap-2 text-sm text-sky-100 min-w-0 flex-1">
+            <CheckCircle className="h-4 w-4 flex-shrink-0" />
+            <span className="font-medium flex-shrink-0">AI Proposed Changes</span>
             {diffSummary && (
-              <span className="text-sky-200">— {diffSummary}</span>
+              <span className="text-sky-200 truncate" title={diffSummary}>
+                — {diffSummary.split('\n')[0]}{diffSummary.includes('\n') ? ' (+more)' : ''}
+              </span>
             )}
           </div>
           <div className="flex items-center gap-2">

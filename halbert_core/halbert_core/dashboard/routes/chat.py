@@ -2854,7 +2854,7 @@ When the user asks you to make changes, respond with SEARCH/REPLACE blocks using
 3. Put the replacement text between `=======` and `>>>>>>> REPLACE`
 4. To ADD at end: SEARCH for last line(s), REPLACE with same lines + your addition
 
-## EXAMPLE - Adding a comment after last line:
+## EXAMPLE:
 <<<<<<< SEARCH
     dhcp6: no # Disable IPv6
 =======
@@ -2862,12 +2862,20 @@ When the user asks you to make changes, respond with SEARCH/REPLACE blocks using
 # Edited on 2024-12-13
 >>>>>>> REPLACE
 
-I added a comment with today's date.
+Added a comment with today's date.
+
+## RESPONSE FORMAT:
+1. Put ALL edit blocks FIRST (one after another if multiple changes)
+2. Then provide your explanation AFTER all edit blocks
+3. Keep explanations **concise** and well-formatted:
+   - Use **bold** for important terms
+   - Use bullet points for multiple items
+   - Keep paragraphs short (2-3 sentences max)
 
 ## Remember:
 - Always include `=======` between SEARCH and REPLACE
 - Copy exact indentation from the file
-- Briefly explain after the edit block
+- Multiple edits? Put ALL edit blocks together, then explain
 """
 
 
