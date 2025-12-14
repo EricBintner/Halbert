@@ -2497,6 +2497,211 @@ async def exit_safe_mode():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Anomaly Detection API
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Singleton anomaly detector
+_anomaly_detector = None
+
+def get_anomaly_detector():
+    """Get or create singleton anomaly detector."""
+    global _anomaly_detector
+    if _anomaly_detector is None:
+        from ...autonomy import AnomalyDetector
+        import yaml
+        try:
+            with open("config/autonomy.yml", "r") as f:
+                config = yaml.safe_load(f) or {}
+            anomaly_config = config.get("anomalies", {
+                "cpu_spike_threshold": 90,
+                "memory_leak_mb": 500,
+                "repeated_failures": 3,
+                "error_rate_threshold": 0.5
+            })
+        except Exception:
+            anomaly_config = {
+                "cpu_spike_threshold": 90,
+                "memory_leak_mb": 500,
+                "repeated_failures": 3,
+                "error_rate_threshold": 0.5
+            }
+        _anomaly_detector = AnomalyDetector(anomaly_config)
+    return _anomaly_detector
+
+
+@router.get("/anomaly/status")
+async def get_anomaly_status():
+    """Get anomaly detection status and recent anomalies."""
+    try:
+        detector = get_anomaly_detector()
+        summary = detector.get_summary()
+        recent = detector.get_recent_anomalies(hours=24)
+        
+        return {
+            "status": "ok",
+            "summary": summary,
+            "recent_anomalies": [
+                {
+                    "timestamp": a.timestamp.isoformat(),
+                    "type": a.anomaly_type,
+                    "severity": a.severity,
+                    "description": a.description,
+                    "metrics": a.metrics
+                }
+                for a in recent
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Failed to get anomaly status: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/anomaly/check")
+async def run_anomaly_check():
+    """Run anomaly detection checks now."""
+    try:
+        detector = get_anomaly_detector()
+        
+        results = {
+            "cpu_spike": detector.check_cpu_spike(),
+            "error_rate_high": detector.check_error_rate()
+        }
+        
+        # Get updated summary
+        summary = detector.get_summary()
+        
+        return {
+            "status": "ok",
+            "checks": results,
+            "anomalies_detected": any(results.values()),
+            "summary": summary
+        }
+    except Exception as e:
+        logger.error(f"Failed to run anomaly check: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Recovery Playbooks API
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Singleton recovery executor
+_recovery_executor = None
+
+def get_recovery_executor():
+    """Get or create singleton recovery executor."""
+    global _recovery_executor
+    if _recovery_executor is None:
+        from ...autonomy import RecoveryExecutor
+        import yaml
+        try:
+            with open("config/autonomy.yml", "r") as f:
+                config = yaml.safe_load(f) or {}
+            recovery_config = config.get("recovery", {
+                "rollback": {"enabled": True, "max_rollback_depth": 5},
+                "restart_service": {"enabled": True, "max_restart_attempts": 3},
+                "alert_user": {"enabled": True, "throttle_minutes": 30}
+            })
+        except Exception:
+            recovery_config = {
+                "rollback": {"enabled": True, "max_rollback_depth": 5},
+                "restart_service": {"enabled": True, "max_restart_attempts": 3},
+                "alert_user": {"enabled": True, "throttle_minutes": 30}
+            }
+        _recovery_executor = RecoveryExecutor(recovery_config)
+    return _recovery_executor
+
+
+@router.get("/recovery/status")
+async def get_recovery_status():
+    """Get recovery playbook status and history."""
+    try:
+        executor = get_recovery_executor()
+        summary = executor.get_summary()
+        
+        return {
+            "status": "ok",
+            "summary": summary,
+            "config": executor.config
+        }
+    except Exception as e:
+        logger.error(f"Failed to get recovery status: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/recovery/rollback")
+async def execute_rollback(request: Request):
+    """Execute rollback for a config file."""
+    try:
+        data = await request.json()
+        file_path = data.get("file_path")
+        
+        if not file_path:
+            return {"status": "error", "error": "file_path required"}
+        
+        executor = get_recovery_executor()
+        result = executor.execute_rollback(file_path)
+        
+        return {
+            "status": "ok" if result.success else "error",
+            "action": result.action.value,
+            "success": result.success,
+            "message": result.message,
+            "details": result.details
+        }
+    except Exception as e:
+        logger.error(f"Failed to execute rollback: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/recovery/restart-service")
+async def execute_restart_service(request: Request):
+    """Execute service restart recovery."""
+    try:
+        data = await request.json()
+        service_name = data.get("service")
+        
+        if not service_name:
+            return {"status": "error", "error": "service required"}
+        
+        executor = get_recovery_executor()
+        result = executor.execute_restart_service(service_name)
+        
+        return {
+            "status": "ok" if result.success else "error",
+            "action": result.action.value,
+            "success": result.success,
+            "message": result.message,
+            "details": result.details
+        }
+    except Exception as e:
+        logger.error(f"Failed to execute service restart: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/recovery/alert")
+async def execute_alert(request: Request):
+    """Send recovery alert to user."""
+    try:
+        data = await request.json()
+        message = data.get("message", "Recovery alert")
+        severity = data.get("severity", "warning")
+        
+        executor = get_recovery_executor()
+        result = executor.execute_alert_user(message, severity)
+        
+        return {
+            "status": "ok" if result.success else "error",
+            "action": result.action.value,
+            "success": result.success,
+            "message": result.message
+        }
+    except Exception as e:
+        logger.error(f"Failed to send alert: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Phase 23: Scheduler API
 # ─────────────────────────────────────────────────────────────────────────────
 
