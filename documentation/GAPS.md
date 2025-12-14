@@ -14,6 +14,7 @@ The public `documentation/` folder contains the original architecture vision fro
 - ⚠️ **Implemented, Undocumented** — Works but not in public docs
 - ❌ **Documented, Not Implemented** — Docs claim it exists but it doesn't
 - 🔄 **Partially Implemented** — Some aspects work, others don't
+- (do not enter emoji) DEPRICATED **Deprecated** — No longer used, may be removed
 
 ---
 
@@ -101,14 +102,14 @@ The public `documentation/` folder contains the original architecture vision fro
 | Feature | Documentation Claim | Actual Status |
 |---------|---------------------|---------------|
 | **LangGraph Orchestrator** | `runtime/engine.py` | ❌ Not used, direct Ollama calls |
-| **Policy Engine** | `policy/loader.py`, `engine.py` | ❌ Files may exist but not integrated |
-| **Scheduler/APScheduler** | `scheduler/*.py` | ❌ Not actively used |
-| **Guardrails/Budgets** | `autonomy/*.py` | ❌ Files exist but not integrated |
+| **Policy Engine** | `policy/loader.py`, `engine.py` | ✅ Wired into chat.py tool calls |
+| **Scheduler/APScheduler** | `scheduler/*.py` | ✅ Added to deps, starts with dashboard |
+| **Guardrails/Budgets** | `autonomy/*.py` | ✅ Wired into chat.py tool authorization |
 | **Anomaly Detector** | `autonomy/anomaly_detector.py` | ❌ Not implemented |
 | **Recovery Playbooks** | `autonomy/recovery.py` | ❌ Not implemented |
-| **journald Ingestion** | `ingestion/journald.py` | 🔄 May be partial |
-| **hwmon Ingestion** | `ingestion/hwmon.py` | 🔄 May be partial |
-| **ChromaDB Vector Index** | `index/chroma_index.py` | 🔄 Exists, unclear if used |
+| **journald Ingestion** | `ingestion/journald.py` | ✅ Complete - auto-starts with dashboard |
+| **hwmon Ingestion** | `ingestion/hwmon.py` | ✅ Complete - auto-starts with dashboard |
+| **ChromaDB Vector Index** | `index/chroma_index.py` | ✅ Used by ingestion, memory, RAG |
 | **WebSocket Real-time** | `ws://localhost:8000/ws` | ❌ Not implemented |
 | **Dry-run Mode** | "Shows what would change" | 🔄 Not consistent |
 
@@ -122,10 +123,10 @@ The public `documentation/` folder contains the original architecture vision fro
 |-------|---------|
 | "LangGraph orchestrator with Planner → Executor → Observer" | ❌ Direct API calls to Ollama, no LangGraph loop |
 | "ChromaDB for RAG" | ✅ ChromaDB now enabled by default, memory system integrated |
-| "APScheduler for background tasks" | ❌ No scheduled tasks running |
-| "Approval workflows with dry-run" | 🔄 Approval page exists but workflow minimal |
-| "Guardrails prevent runaway automation" | ❌ Guardrails not enforced |
-| "Telemetry collection from journald/hwmon" | 🔄 Discovery scanners exist, ingestion unclear |
+| "APScheduler for background tasks" | ✅ APScheduler starts with dashboard |
+| "Approval workflows with dry-run" | ✅ Full workflow: chat → ApprovalEngine → Dashboard |
+| "Guardrails prevent runaway automation" | ✅ Guardrails checked on every tool call |
+| "Telemetry collection from journald/hwmon" | ✅ Ingestion service runs at dashboard startup |
 
 ### What Actually Happens
 
@@ -207,17 +208,17 @@ These features directly improve the system's understanding of itself:
 | **API-REFERENCE.md** | ✅ Updated | All actual endpoints documented |
 | **GAPS.md** | ✅ Updated | This document, actionable priorities |
 
-### 🟡 P2: Core Feature Integration
+### 🟡 P2: Core Feature Integration ✅ COMPLETE
 
-**Note**: These modules are MORE IMPLEMENTED than originally documented. The gap is **integration**, not implementation.
+**Note**: These modules were MORE IMPLEMENTED than originally documented. The gap was **integration**, which is now done.
 
-| Module | Status | Missing Integration |
+| Module | Status | Integration Status |
 |--------|--------|---------------------|
-| **Scheduler** | ✅ Engine exists | No background loop, no dashboard triggers |
-| **Approval** | ✅ CLI works | Dashboard mode auto-rejects, no WebSocket |
-| **Guardrails** | ✅ Checks work | Not wired into chat.py tool execution |
-| **Policy** | ✅ Decisions work | Not wired into tool calls |
-| **Auto Tasks** | ✅ Health/Log tasks | Not scheduled, not run automatically |
+| **Scheduler** | ✅ Engine exists | ✅ APScheduler starts with dashboard, API endpoints |
+| **Approval** | ✅ CLI works | ✅ Chat tool calls → ApprovalEngine → Dashboard |
+| **Guardrails** | ✅ Checks work | ✅ Wired into chat.py check_tool_authorization() |
+| **Policy** | ✅ Decisions work | ✅ Wired into chat.py tool calls |
+| **Auto Tasks** | ✅ Health/Log tasks | ✅ health_check scheduled every 6 hours |
 
 **What's actually implemented**:
 - `scheduler/engine.py` — Job persistence, state management, add/list/cancel
@@ -322,9 +323,9 @@ isn't needed. The semantic search over current discoveries is the key feature.
 | Phase | Status | Summary |
 |-------|--------|---------|
 | 1-3 | 📄 Planned | Original vision, partially implemented |
-| 4 | 📄 Planned | Persona system (simplified to prompts) |
+| 4 | 📄 Planned | Persona system (simplified to prompts) | DEPRICIATED
 | 5 | 📄 Planned | Multi-model (implemented as Phase 21) |
-| 6 | 📄 Planned | macOS port (not started) |
+| 6 | 📄 Planned | macOS port (not started) | DEPRICATED
 | 17 | ✅ Complete | Sharing tab |
 | 18 | ✅ Complete | Config editor |
 | 19 | 📄 Planned | Enhancement backlog |
@@ -367,16 +368,36 @@ isn't needed. The semantic search over current discoveries is the key feature.
 3. ✅ **Policy config page** — Read-only view in Settings > Policy tab
 4. ✅ **Guardrails config page** — Read-only view in Settings > Guardrails tab
 
-### Next Priority (P4: Edit Capabilities)
-1. **Editable Policy** — Allow changing tool permissions from UI
-2. **Editable Guardrails** — Allow changing thresholds from UI  
-3. **Live Approval Test** — Create test button in UI to create sample approval
+---
 
-### Cycle Checklist
-- [x] Audit: Discovered P2 modules already implemented
-- [x] Document: Updated GAPS.md with accurate status
-- [x] Build: Wired together existing modules (backend)
-- [x] Build: Connected frontend to new APIs
-- [x] Test: Wired approval flow from chat → ApprovalEngine → Dashboard
-- [x] Dependencies: Added APScheduler + SQLAlchemy to pyproject.toml
-- [x] Settings UI: Added Policy and Guardrails tabs
+## Remaining Gaps Summary
+
+### ❌ Not Implemented (Decide: Build or Deprecate)
+
+| Item | Decision | Notes |
+|------|----------|-------|
+| **LangGraph Orchestrator** | DEPRECATED | Direct Ollama calls work fine, no complex orchestration needed |
+| **Anomaly Detector** | Low priority | Safe mode exists, anomaly detection is "nice to have" |
+| **Recovery Playbooks** | Low priority | Manual recovery is fine for now |
+| **WebSocket Real-time** | Medium priority | Would improve chat UX, not blocking |
+| **Dry-run Mode** | Low priority | Tool simulation exists, not fully consistent |
+
+### ⚠️ Undocumented (Need Public Docs)
+
+| Item | Priority | Notes |
+|------|----------|-------|
+| **Dashboard Pages** (16 pages) | High | Core user-facing features |
+| **API Routes** (18 route files) | Medium | Developer reference |
+| **Frontend Components** | Low | Internal developer docs |
+
+### Next Priority (P4)
+
+**Option A: Documentation Sprint** — Write public docs for existing features  
+**Option B: Missing Features** — Implement WebSocket, editable configs  
+**Option C: Polish** — Test coverage, error handling, edge cases  
+
+### Current Cycle Checklist
+- [x] Audit: Updated all statuses in GAPS.md
+- [ ] Decide: Which ❌ items to deprecate vs build
+- [ ] Document: Pick 3 undocumented pages to document
+- [ ] Build: Pick 1 missing feature to implement
