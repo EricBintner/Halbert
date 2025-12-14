@@ -345,15 +345,24 @@ isn't needed. The semantic search over current discoveries is the key feature.
 - ✅ WhyBrain UI (universal rationale capture)
 - ✅ Documentation: Phase 22 docs in `docs/Phase22/`
 
-### Next Priority (P2: Integration Work)
-1. **Wire Guardrails** — Add to chat.py before tool execution
-2. **Wire Policy** — Check policy before executing tool calls
-3. **Dashboard Approvals** — Connect approval engine to Approvals page
-4. **Scheduler Loop** — Add background thread to run scheduled jobs
-5. **Auto Tasks** — Schedule health_check and log_cleanup tasks
+### In Progress (Phase 23: Autonomy Integration)
+- ✅ Wire Guardrails — `check_tool_authorization()` in chat.py
+- ✅ Wire Policy — Policy check before tool execution
+- ✅ Approval API — `/api/settings/approvals/*` endpoints
+- ✅ Guardrails API — `/api/settings/guardrails/*` endpoints
+- ✅ Scheduler Loop — AutonomousExecutor starts on app launch
+- ✅ Scheduler API — `/api/settings/scheduler/*` endpoints
+- ✅ Auto Tasks — health_check scheduled every 6 hours
+- ✅ Documentation: Phase 23 docs in `docs/Phase23/`
+
+### Next Priority (P2: Dashboard UI)
+1. **Approvals Page** — Connect to approval API, show pending requests
+2. **Scheduler Page** — Show scheduled jobs, allow cancel/reschedule
+3. **Safe Mode Indicator** — Show banner when safe mode active
+4. **Guardrails Config UI** — Edit confidence thresholds, budgets
 
 ### Cycle Checklist
-- [ ] Audit: Re-check codebase vs documentation
-- [ ] Document: Update public docs for any gaps
-- [ ] Build: Implement P2 features
-- [ ] Repeat
+- [x] Audit: Discovered P2 modules already implemented
+- [x] Document: Updated GAPS.md with accurate status
+- [x] Build: Wired together existing modules
+- [ ] Repeat: Frontend integration pending
