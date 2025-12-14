@@ -1438,6 +1438,53 @@ if FASTAPI_AVAILABLE:
                                 auto_injected_types.add('process_service_correlation')
                                 break
                         break
+            
+            # If asking about heat/temperature, correlate to top CPU processes
+            thermal_keywords = ['hot', 'heat', 'temperature', 'thermal', 'throttl', 'overheat']
+            if any(kw in message_lower for kw in thermal_keywords):
+                # Find thermal discoveries with high temps
+                high_temp_found = False
+                for d in engine.get_all():
+                    if d.type.value == 'hardware' and d.data.get('is_thermal'):
+                        temp = d.data.get('temp_celsius', 0)
+                        if temp > 70:  # High temp
+                            high_temp_found = True
+                            break
+                
+                if high_temp_found:
+                    # Get top CPU consumers as likely cause
+                    cpu_hogs = []
+                    for d in engine.get_all():
+                        if d.type.value == 'process' and d.data.get('is_resource_hog'):
+                            cpu_pct = d.data.get('cpu_percent', 0)
+                            if cpu_pct > 10:
+                                cpu_hogs.append((d, cpu_pct))
+                    
+                    if cpu_hogs:
+                        cpu_hogs.sort(key=lambda x: x[1], reverse=True)
+                        thermal_context = ["**Likely causes of high temperature:**"]
+                        for proc, cpu in cpu_hogs[:5]:
+                            thermal_context.append(f"- {proc.data.get('name')}: {cpu:.1f}% CPU")
+                        context_parts.append("\n".join(thermal_context))
+                        auto_injected_types.add('thermal_process_correlation')
+            
+            # If asking about slow boot, correlate slow services to their dependencies
+            if 'slow' in message_lower and ('boot' in message_lower or 'startup' in message_lower):
+                slow_services = []
+                for d in engine.get_all():
+                    if d.type.value == 'system_preservation' and d.data.get('is_slow_boot_service'):
+                        boot_time = d.data.get('boot_time_sec', 0)
+                        if boot_time > 5:
+                            slow_services.append((d.data.get('service_name', d.name), boot_time))
+                
+                if slow_services:
+                    slow_services.sort(key=lambda x: x[1], reverse=True)
+                    boot_context = ["**Services slowing down boot:**"]
+                    for svc, secs in slow_services[:5]:
+                        boot_context.append(f"- {svc}: {secs:.1f}s")
+                    boot_context.append("\nConsider disabling non-essential services or investigating why they're slow.")
+                    context_parts.append("\n".join(boot_context))
+                    auto_injected_types.add('boot_slow_correlation')
         except Exception as e:
             logger.warning(f"Failed to inject relationship context: {e}")
         
