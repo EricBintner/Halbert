@@ -102,6 +102,28 @@ class ConnectionManager:
             'type': 'decision',
             'data': decision
         })
+    
+    async def send_chat_token(self, request_id: str, token: str, done: bool = False):
+        """Stream chat response tokens in real-time."""
+        await self.broadcast({
+            'type': 'chat_token',
+            'data': {
+                'request_id': request_id,
+                'token': token,
+                'done': done
+            }
+        })
+    
+    async def send_chat_complete(self, request_id: str, full_response: str, metadata: dict = None):
+        """Signal chat response completion."""
+        await self.broadcast({
+            'type': 'chat_complete',
+            'data': {
+                'request_id': request_id,
+                'response': full_response,
+                'metadata': metadata or {}
+            }
+        })
 
 
 def create_app(enable_cors: bool = True) -> FastAPI:
