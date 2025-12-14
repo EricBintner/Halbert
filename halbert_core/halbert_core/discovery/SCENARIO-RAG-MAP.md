@@ -171,17 +171,70 @@ Slow service at boot
 
 ## Implementation Checklist
 
+### Core Scanners (6)
+- [x] StorageScanner - SMART, pools, mount relationships
+- [x] ServiceScanner - systemd services, mount services
+- [x] NetworkScanner - interfaces, connectivity
+- [x] SecurityScanner - firewall, SSH, sudo
+- [x] BackupScanner - backup status, configs
+- [x] BaseScanner - base class
+
+### System/Performance Scanners (3)
 - [x] ProcessScanner - resource hogs, zombies
-- [x] ThermalScanner - temps, fans
+- [x] ThermalScanner - temps, fans, thermal zones
+- [x] ErrorLogScanner - journal errors, auth failures, dmesg
+
+### Boot/System Scanners (2)
 - [x] BootScanner - boot time, slow services
-- [x] PackageScanner - updates, orphans, locks
-- [x] DiskUsageScanner - space hogs, caches
-- [x] ErrorLogScanner - journal errors, auth failures
-- [x] StorageScanner - SMART, pools (enhanced)
-- [x] ServiceScanner - mount relationships (enhanced)
-- [x] Context injection by keywords
-- [x] Relationship-based retrieval (service↔storage)
-- [ ] Process → service relationship
-- [ ] Error → service correlation
-- [ ] Thermal → process correlation
-- [ ] Time-series data for trends
+- [x] BootloaderScanner - GRUB, UEFI, Secure Boot, kernel cmdline
+
+### Package Management (1)
+- [x] PackageScanner - updates, orphans, locks, held packages
+
+### Storage (1)
+- [x] DiskUsageScanner - space hogs, caches, logs, trash
+
+### Network/Wireless (1)
+- [x] WifiScanner - WiFi interfaces, signal, drivers, power save
+
+### Desktop/Display (2)
+- [x] DisplayScanner - monitors, GPUs, hybrid graphics, X11/Wayland
+- [x] AudioScanner - PulseAudio/PipeWire, sound cards, sinks/sources
+
+### Hardware (3)
+- [x] LaptopScanner - battery, power profiles, suspend, lid switch
+- [x] UsbScanner - USB devices, speed, controllers
+- [x] VirtualizationScanner - VM detection, hypervisor, VT-x/AMD-V
+
+### Containers/Automation (2)
+- [x] ContainerScanner - Docker/Podman status, disk usage
+- [x] ScheduledScanner - cron jobs, systemd timers
+
+### Context Injection Keywords (17 categories)
+- [x] Performance/thermal: slow, hot, cpu, ram, temperature
+- [x] Package: update, install, apt, dnf
+- [x] Boot: boot, startup, grub
+- [x] Errors: error, crash, failed
+- [x] Storage: space, full, cleanup
+- [x] Laptop: battery, suspend, lid
+- [x] Display: monitor, gpu, hdmi, nvidia
+- [x] Audio: sound, speaker, volume
+- [x] WiFi: wifi, signal, disconnect
+- [x] USB: usb, device, peripheral
+- [x] GRUB: grub, uefi, secure boot
+- [x] Docker: docker, container, podman
+- [x] VM: vm, kvm, virtualbox
+- [x] Scheduled: cron, timer, scheduled
+
+### Relationship-Based Retrieval (8 patterns)
+- [x] Mount service → related storage
+- [x] Storage pool → dependent services
+- [x] Error → related service
+- [x] Process → associated service
+- [x] High temp → CPU hogs (thermal→process)
+- [x] Slow boot → slow services
+
+### Future Enhancements
+- [ ] Time-series data for trending (memory leaks, gradual degradation)
+- [ ] Graph-based dependency traversal
+- [ ] Proactive anomaly detection
