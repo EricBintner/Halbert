@@ -1215,6 +1215,101 @@ if FASTAPI_AVAILABLE:
             except Exception as e:
                 logger.warning(f"Failed to auto-inject development context: {e}")
         
+        # RELATIONSHIP-BASED RETRIEVAL
+        # When a specific service or storage item is mentioned, fetch related discoveries
+        try:
+            # If asking about a mount service, also fetch its related storage
+            for d in engine.get_all():
+                if d.type.value == 'service' and d.data.get('is_mount_service'):
+                    # Check if this service is mentioned in the query
+                    service_name = d.name.lower()
+                    if service_name in message_lower or service_name.replace('-', ' ') in message_lower:
+                        mount_point = d.data.get('mount_point', '')
+                        related_devices = d.data.get('related_storage', [])
+                        
+                        # Find storage discoveries that match these devices
+                        related_storage = []
+                        for storage_d in engine.get_all():
+                            if storage_d.type.value == 'storage':
+                                # Match by device path
+                                storage_devices = storage_d.data.get('devices', [])
+                                if storage_d.data.get('device'):
+                                    storage_devices.append(storage_d.data.get('device'))
+                                
+                                # Check for overlap
+                                if any(dev in related_devices for dev in storage_devices):
+                                    related_storage.append(storage_d)
+                                # Also match by mount point
+                                elif storage_d.data.get('mountpoint') == mount_point:
+                                    related_storage.append(storage_d)
+                        
+                        if related_storage:
+                            related_summary = [f"**Related Storage for {d.name}:**"]
+                            for rs in related_storage[:5]:
+                                detail = f"- {rs.title}: {rs.status}"
+                                if rs.data.get('has_failed_disk'):
+                                    detail += " ⚠️ CONTAINS FAILED DISK"
+                                if rs.data.get('failed_devices'):
+                                    detail += f" - Failed: {', '.join(rs.data['failed_devices'])}"
+                                related_summary.append(detail)
+                            context_parts.append("\n".join(related_summary))
+                            auto_injected_types.add('related_storage')
+                            logger.info(f"Auto-injected {len(related_storage)} related storage discoveries for {d.name}")
+                            if debug_info:
+                                debug_info['auto_injected_context'].append({
+                                    'type': 'related_storage', 
+                                    'service': d.name,
+                                    'count': len(related_storage)
+                                })
+                        break  # Only process first matching service
+            
+            # Reverse: If asking about a storage pool, find services that depend on it
+            for d in engine.get_all():
+                if d.type.value == 'storage':
+                    # Check if this storage is mentioned in the query
+                    storage_name = d.name.lower()
+                    storage_label = (d.data.get('label') or '').lower()
+                    if (storage_name in message_lower or 
+                        storage_label in message_lower or 
+                        (d.data.get('mountpoint') or '').lower() in message_lower):
+                        
+                        storage_devices = d.data.get('devices', [])
+                        if d.data.get('device'):
+                            storage_devices.append(d.data.get('device'))
+                        mount_point = d.data.get('mountpoint')
+                        
+                        # Find services that use these devices or mount point
+                        related_services = []
+                        for svc in engine.get_all():
+                            if svc.type.value == 'service' and svc.data.get('is_mount_service'):
+                                svc_devices = svc.data.get('related_storage', [])
+                                svc_mount = svc.data.get('mount_point')
+                                
+                                if any(dev in storage_devices for dev in svc_devices):
+                                    related_services.append(svc)
+                                elif svc_mount and svc_mount == mount_point:
+                                    related_services.append(svc)
+                        
+                        if related_services:
+                            svc_summary = [f"**Services depending on {d.title}:**"]
+                            for svc in related_services[:5]:
+                                detail = f"- {svc.name}: {svc.status}"
+                                if svc.status and 'fail' in svc.status.lower():
+                                    detail += " ⚠️ FAILED"
+                                svc_summary.append(detail)
+                            context_parts.append("\n".join(svc_summary))
+                            auto_injected_types.add('related_services')
+                            logger.info(f"Auto-injected {len(related_services)} related services for {d.name}")
+                            if debug_info:
+                                debug_info['auto_injected_context'].append({
+                                    'type': 'related_services',
+                                    'storage': d.name,
+                                    'count': len(related_services)
+                                })
+                        break  # Only process first matching storage
+        except Exception as e:
+            logger.warning(f"Failed to inject relationship context: {e}")
+        
         for mention in mentions:
             mention_id = mention.replace('@', '')
             
