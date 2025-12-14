@@ -969,21 +969,35 @@ if FASTAPI_AVAILABLE:
         # CRITICAL: When asking about failures, inject ALL failed/error discoveries
         # This enables correlation (failed service + failed disk = hardware issue)
         failure_keywords = ['fail', 'error', 'broken', 'down', 'not working', 'issue', 'problem', 
-                           'wrong', 'crash', 'stopped', 'unable', 'cannot', 'can\'t']
+                           'wrong', 'crash', 'stopped', 'unable', 'cannot', 'can\'t', 'why']
         if any(kw in message_lower for kw in failure_keywords):
             try:
-                # Find ALL discoveries with failed/error status
+                # Find ALL discoveries with failed/error/problematic status
+                # Include: failed, error, down, critical, warning, missing, unmounted, smart (failures)
+                problem_indicators = ['fail', 'error', 'down', 'critical', 'warning', 'missing', 
+                                      'unmounted', 'smart', 'degraded', 'offline', 'inactive']
                 failed_discoveries = [
                     d for d in engine.get_all() 
-                    if d.status and any(s in d.status.lower() for s in ['fail', 'error', 'down', 'critical', 'warning', 'missing'])
+                    if d.status and any(s in d.status.lower() for s in problem_indicators)
                 ]
                 if failed_discoveries:
-                    failure_summary = ["**⚠️ RELATED ISSUES ON THIS SYSTEM (may be correlated):**"]
+                    failure_summary = ["**⚠️ RELATED ISSUES ON THIS SYSTEM (correlate these!):**"]
                     for d in failed_discoveries[:15]:
                         detail = f"- [{d.type.value.upper()}] {d.title}: {d.status}"
                         if d.status_detail:
                             detail += f" - {d.status_detail}"
+                        # Include device membership if available (critical for pool correlation)
+                        if hasattr(d, 'data') and d.data:
+                            if d.data.get('devices'):
+                                detail += f" (devices: {', '.join(d.data['devices'][:5])})"
+                            if d.data.get('pool') or d.data.get('pool_name'):
+                                detail += f" (pool: {d.data.get('pool') or d.data.get('pool_name')})"
+                            if d.data.get('mount_point'):
+                                detail += f" (mount: {d.data.get('mount_point')})"
                         failure_summary.append(detail)
+                    
+                    # Add explicit correlation hint
+                    failure_summary.append("\n**IMPORTANT**: If a disk has SMART failure and belongs to a pool that won't mount, the disk failure is likely the root cause!")
                     context_parts.insert(0, "\n".join(failure_summary))  # Insert at top for visibility
                     auto_injected_types.add('failures')
                     logger.info(f"Injected {len(failed_discoveries)} correlated failure discoveries")
@@ -1378,11 +1392,16 @@ if FASTAPI_AVAILABLE:
                     "- If there's ANY command output, error, or previous context - USE IT.\n"
                     "- Asking to rephrase when context exists makes you seem incompetent - avoid this.\n\n"
                     
-                    "CORRELATE FAILURES - Think like a sysadmin:\n"
-                    "- When diagnosing a failure, look at ALL related issues in the context.\n"
-                    "- A failed service + failed disk = likely hardware issue, NOT misconfiguration.\n"
-                    "- If a mount fails and a disk is marked as failed, the disk is probably the cause.\n"
-                    "- Don't assume 'misconfiguration' when hardware failure is more likely.\n"
+                    "CORRELATE FAILURES - Think like a senior sysadmin:\n"
+                    "- When diagnosing a failure, ALWAYS check ALL related issues in the context FIRST.\n"
+                    "- Look for the ROOT CAUSE, not just symptoms. Chain your reasoning:\n"
+                    "  * Disk SMART failure → pool can't mount → mount service fails\n"
+                    "  * If disk ST5000... has SMART failure AND backup_pool is unmounted → disk is likely cause\n"
+                    "- CRITICAL: Multiple filesystems/pools may exist. Don't confuse them:\n"
+                    "  * /mnt/Bcachefs (mounted, working) ≠ /mnt/Bcachefs_Backup (unmounted, failing)\n"
+                    "  * Check WHICH pool/mount the failed service is trying to use\n"
+                    "- A failed service + failed disk = HARDWARE ISSUE, not misconfiguration.\n"
+                    "- Don't suggest fixes for the wrong pool or mount point.\n"
                     "- The system knows its own state - if config was valid before, suspect hardware first.\n\n"
                     
                     "COMMAND VERIFICATION:\n"
