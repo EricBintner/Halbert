@@ -45,6 +45,7 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { SystemItemActions } from '@/components/domain'
+import { WhyBrain } from '@/components/ui/why-brain'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -968,6 +969,12 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
                 : `${group.diskCount} ${group.diskCount === 1 ? 'disk' : 'disks'}`
               }
             </span>
+            <WhyBrain
+              itemId={`storage:${storageItemId}`}
+              itemName={group.semanticName}
+              itemType="storage"
+              size="sm"
+            />
             <SystemItemActions
               item={{
                 name: group.semanticName,

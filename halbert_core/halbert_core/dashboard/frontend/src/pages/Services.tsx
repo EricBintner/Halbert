@@ -53,6 +53,7 @@ import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
 import { SystemItemActions } from '@/components/domain'
+import { WhyBrain } from '@/components/ui/why-brain'
 
 /**
  * Executable code block component with copy and run buttons
@@ -723,6 +724,12 @@ export function Services() {
                         {service.data.memory_mb.toFixed(0)} MB
                       </span>
                     )}
+                    <WhyBrain
+                      itemId={`service:${service.name}`}
+                      itemName={service.name}
+                      itemType="service"
+                      size="sm"
+                    />
                     <Badge
                       className={cn(
                         service.severity === 'critical' && 'bg-red-500',
