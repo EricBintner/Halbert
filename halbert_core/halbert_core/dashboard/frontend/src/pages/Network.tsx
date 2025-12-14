@@ -42,6 +42,7 @@ import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
 import { SystemItemActions } from '@/components/domain'
+import { WhyBrain } from '@/components/ui/why-brain'
 
 interface PortDetail {
   port: number
@@ -542,6 +543,12 @@ export function Network() {
                         <Pencil className="h-4 w-4" />
                       </Button>
                     )}
+                    <WhyBrain
+                      itemId={`network:${iface.data.interface || iface.name}`}
+                      itemName={iface.title}
+                      itemType="network"
+                      size="sm"
+                    />
                     <SystemItemActions
                       item={{
                         name: iface.title,
