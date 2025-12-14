@@ -61,7 +61,7 @@ LinuxBrain/
 
 | Component | File | Description |
 |-----------|------|-------------|
-| **Engine** | `runtime/engine.py` | LangGraph orchestrator, agent loop |
+| **Engine** | `runtime/engine.py` | DEPRECATED - See routes/chat.py for actual implementation |
 | **Graph** | `runtime/graph.py` | Node and edge definitions |
 | **State** | `runtime/state.py` | Conversation and agent state management |
 

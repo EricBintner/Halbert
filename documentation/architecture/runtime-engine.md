@@ -1,14 +1,32 @@
 # Runtime Engine
 
-The runtime engine orchestrates Halbert's behavior using LangGraph for state machine management.
+> **⚠️ DEPRECATED**: This document describes the original LangGraph-based architecture which was **never fully implemented**. The actual implementation uses direct Ollama API calls in `routes/chat.py`. See [overview.md](overview.md) for the current architecture.
 
 ---
 
-## Overview
+## Status: DEPRECATED
 
-The engine processes user requests through a graph of nodes, where each node represents a step in the reasoning and action pipeline.
+The LangGraph orchestrator was planned but not implemented. Instead, we use:
 
-**Code**: `halbert_core/halbert_core/runtime/langgraph_engine.py`
+| Planned | Actual |
+|---------|--------|
+| LangGraph state machine | Direct Ollama API calls |
+| `runtime/langgraph_engine.py` | `dashboard/routes/chat.py` |
+| Graph-based execution | Sequential context injection → API call |
+
+**Why**: Direct API calls are simpler, faster, and sufficient for our single-turn Q&A use case.
+
+---
+
+## Original Design (Historical)
+
+The following describes the **original plan**, kept for historical reference.
+
+### Overview
+
+The engine was planned to process user requests through a graph of nodes, where each node represents a step in the reasoning and action pipeline.
+
+**Planned Code**: `halbert_core/halbert_core/runtime/langgraph_engine.py`
 
 ---
 

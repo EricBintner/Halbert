@@ -49,11 +49,11 @@ This document provides a high-level overview of Halbert's architecture. For deta
 │                         Data Layer                                      │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────────┐   │
 │  │ RAG Pipeline│  │   Config    │  │  Approval   │  │  AI Rules     │   │
-│  │  ✅ Hybrid  │  │   Editor ✅ │  │  System 🔄  │  │     ✅        │   │
+│  │  ✅ Hybrid  │  │   Editor ✅ │  │  System ✅  │  │     ✅        │   │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └───────────────┘   │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────────┐  │
 │  │  Scheduler  │  │ Ingestion   │  │        Guardrails               │  │
-│  │    📋      │  │    📋       │  │          📋                     │  │
+│  │    ✅      │  │    ✅       │  │          ✅                     │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -165,43 +165,46 @@ Hybrid retrieval combines:
 
 AI-assisted config editing with SEARCH/REPLACE blocks and inline diff view.
 
-### 8. Ingestion Pipeline 📋
+### 8. Ingestion Pipeline ✅
 
 | Component | Location | Purpose | Status |
 |-----------|----------|---------|--------|
-| **journald** | `ingestion/journald.py` | System log collection | 📋 |
-| **hwmon** | `ingestion/hwmon.py` | Hardware sensor collection | 📋 |
-| **JSONL Writer** | `ingestion/jsonl_writer.py` | Event persistence | 📋 |
+| **Ingestion Service** | `ingestion/service.py` | Background service manager | ✅ |
+| **journald** | `ingestion/journald.py` | System log collection | ✅ |
+| **hwmon** | `ingestion/hwmon.py` | Hardware sensor collection | ✅ |
+| **JSONL Writer** | `ingestion/jsonl_writer.py` | Event persistence | ✅ |
 
-**Planned**: Continuous telemetry collection and indexing. Currently, discoveries are on-demand.
+Continuous telemetry collection auto-starts with dashboard. Events indexed into ChromaDB.
 
-### 9. Scheduler 📋
-
-| Component | Location | Purpose | Status |
-|-----------|----------|---------|--------|
-| **Scheduler Engine** | `scheduler/engine.py` | APScheduler wrapper | 📋 |
-| **Autonomous Tasks** | `scheduler/autonomous_tasks.py` | LLM-driven tasks | 📋 |
-
-**Planned**: Background tasks for health checks, trend analysis, proactive maintenance.
-
-### 10. Guardrails 📋
+### 9. Scheduler ✅
 
 | Component | Location | Purpose | Status |
 |-----------|----------|---------|--------|
-| **Guardrails** | `autonomy/guardrails.py` | Safety checks | 📋 |
-| **Budgets** | `autonomy/budgets.py` | Rate limiting | 📋 |
-| **AI Rules** | `settings/ai_rules.yml` | User-defined rules | ✅ |
+| **Scheduler Engine** | `scheduler/engine.py` | Job persistence and management | ✅ |
+| **Autonomous Executor** | `scheduler/executor.py` | APScheduler integration | ✅ |
+| **Autonomous Tasks** | `scheduler/autonomous_tasks.py` | LLM-driven tasks | ✅ |
 
-**Partial**: AI Rules implemented for user-defined guardrails. Full budget/rate-limiting planned.
+APScheduler starts with dashboard. Health check runs every 6 hours. API at `/api/settings/scheduler/*`.
 
-### 11. Approval System 🔄
+### 10. Guardrails ✅
 
 | Component | Location | Purpose | Status |
 |-----------|----------|---------|--------|
-| **Approval Routes** | `routes/approvals.py` | Approval workflow API | 🔄 |
-| **Approval Page** | `pages/Approvals.tsx` | Pending approvals UI | 🔄 |
+| **Guardrails** | `autonomy/guardrails.py` | Confidence thresholds, safety checks | ✅ |
+| **Budgets** | `autonomy/budgets.py` | CPU, memory, time limits | ✅ |
+| **AI Rules** | `~/.config/halbert/ai_rules.yml` | User-defined rules | ✅ |
 
-**Partial**: UI exists, workflow integration minimal.
+Guardrails checked on every tool call via `check_tool_authorization()` in chat.py. Settings UI at Settings > Guardrails.
+
+### 11. Approval System ✅
+
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **Approval Engine** | `approval/engine.py` | Request storage, decision tracking | ✅ |
+| **Approval Routes** | `routes/settings.py` | `/api/settings/approvals/*` API | ✅ |
+| **Approval Page** | `pages/Approvals.tsx` | Pending approvals UI | ✅ |
+
+Full workflow: chat tool calls → ApprovalEngine → Dashboard. AI Rules filter conflicting approvals.
 
 ---
 

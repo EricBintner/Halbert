@@ -29,22 +29,22 @@ This document provides a comprehensive view of Halbert's architecture, explainin
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          Orchestration Layer                                │
+│                            Chat Engine                                   │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                      Runtime Engine (LangGraph)                      │   │
+│  │                  Direct Ollama API (routes/chat.py)                 │   │
 │  │                                                                      │   │
 │  │  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────────┐   │   │
-│  │  │ Receive  │ →  │  Plan    │ →  │ Execute  │ →  │   Respond    │   │   │
-│  │  │  Input   │    │  Tools   │    │  Tools   │    │  (Grounded)  │   │   │
+│  │  │ Context  │ →  │  Model   │ →  │  Ollama  │ →  │   Response   │   │   │
+│  │  │Injection │    │ Selection│    │   API    │    │  + Actions   │   │   │
 │  │  └──────────┘    └──────────┘    └──────────┘    └──────────────┘   │   │
 │  │                        │              │                              │   │
 │  │                        ▼              ▼                              │   │
 │  │                 ┌──────────┐   ┌───────────┐                         │   │
-│  │                 │  Policy  │   │  Approval │                         │   │
-│  │                 │  Check   │   │  Workflow │                         │   │
+│  │                 │  Policy  │   │ Guardrails│                         │   │
+│  │                 │  Check   │   │ + Approval│                         │   │
 │  │                 └──────────┘   └───────────┘                         │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
-└────────────────────────────────────┬────────────────────────────────────────┘
+└───────────────────────────────────────┴─────────────────────────────────────┘
                                      │
           ┌──────────────────────────┼──────────────────────────┐
           │                          │                          │
@@ -94,15 +94,13 @@ This document provides a comprehensive view of Halbert's architecture, explainin
 ### Request Flow (User Query)
 
 1. **User Input** → CLI, Dashboard, or API receives the query
-2. **Runtime Engine** → LangGraph orchestrator plans the response
-3. **Memory Retrieval** → Relevant past events are fetched from ChromaDB
-4. **Prompt Construction** → Identity + context + query assembled
-5. **LLM Inference** → Ollama generates a response
-6. **Tool Planning** → If actions are needed, tools are identified
-7. **Policy Check** → Verify the action is allowed
-8. **Approval** → Request user confirmation if required
-9. **Tool Execution** → Run the tool with audit logging
-10. **Response** → Return grounded response to user
+2. **Context Injection** → Relevant discoveries, memory, docs injected
+3. **Model Selection** → Complexity scoring routes to Guide or Specialist
+4. **Ollama API** → Direct API call with system prompt + context
+5. **Tool Authorization** → Policy + Guardrails check before tool execution
+6. **Approval** → If required, queue for user confirmation
+7. **Tool Execution** → Run the tool with audit logging
+8. **Response** → Grounded response with suggested actions
 
 ### Background Flow (Autonomous)
 
@@ -118,15 +116,19 @@ This document provides a comprehensive view of Halbert's architecture, explainin
 
 ## Key Architectural Decisions
 
-### Why LangGraph?
+### Why Direct Ollama API? (DEPRECATED LangGraph)
 
-LangGraph provides:
-- **State management** — Conversations maintain context
-- **Graph-based execution** — Clear flow control
-- **Tool integration** — Clean interface for tool calls
-- **Streaming** — Real-time response delivery
+**Original plan**: Use LangGraph for state machine orchestration.
 
-Alternative considered: Raw LangChain. Rejected because agent loops were harder to control.
+**Actual implementation**: Direct Ollama API calls in `routes/chat.py`.
+
+Why we changed:
+- **Simplicity** — Direct API calls are easier to debug and maintain
+- **Performance** — No LangGraph overhead, faster responses
+- **Flexibility** — Custom context injection works better without framework constraints
+- **Local-first** — No dependency on external orchestration libraries
+
+LangGraph would add complexity without clear benefit for our use case (single-turn Q&A with context).
 
 ### Why ChromaDB?
 
