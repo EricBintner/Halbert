@@ -153,6 +153,39 @@ def get_telemetry_context(query: str, max_results: int = 5) -> str:
         return ""
 
 
+def get_docs_context(query: str, max_results: int = 3) -> str:
+    """
+    Retrieve relevant Linux documentation for the query.
+    
+    Uses ChromaDB semantic search over indexed man pages, Arch Wiki, etc.
+    """
+    try:
+        from ...rag.document_indexer import query_docs
+        
+        results = query_docs(query, k=max_results)
+        
+        if not results:
+            return ""
+        
+        context_parts = ["**Relevant documentation:**"]
+        for r in results:
+            title = r.get('title', 'Unknown')
+            source = r.get('source_type', r.get('source', ''))
+            content = r.get('content', r.get('text', ''))[:400]
+            
+            if title and content:
+                context_parts.append(f"- **{title}** ({source}): {content}")
+        
+        if len(context_parts) > 1:
+            logger.debug(f"Retrieved {len(results)} doc entries for context")
+            return "\n".join(context_parts)
+        
+        return ""
+    except Exception as e:
+        logger.debug(f"Doc retrieval failed: {e}")
+        return ""
+
+
 def get_ollama_endpoint() -> str:
     """Get the Ollama endpoint URL from config (guide model's endpoint)."""
     try:
@@ -1110,6 +1143,19 @@ if FASTAPI_AVAILABLE:
             if debug_info:
                 debug_info['auto_injected_context'].append({'type': 'telemetry', 'count': 5})
             logger.debug("Injected telemetry context from ChromaDB")
+        
+        # Retrieve relevant Linux documentation (man pages, Arch Wiki, etc.)
+        # Only for questions that seem to need documentation
+        doc_keywords = ['how', 'what', 'configure', 'setup', 'install', 'command', 'option', 
+                       'flag', 'syntax', 'example', 'manual', 'help', 'man', 'usage']
+        if any(kw in message_lower for kw in doc_keywords):
+            docs_context = get_docs_context(message, max_results=3)
+            if docs_context:
+                context_parts.append(docs_context)
+                auto_injected_types.add('docs')
+                if debug_info:
+                    debug_info['auto_injected_context'].append({'type': 'docs', 'count': 3})
+                logger.debug("Injected documentation context from ChromaDB")
         
         # CRITICAL: When asking about failures, inject ALL failed/error discoveries
         # This enables correlation (failed service + failed disk = hardware issue)

@@ -174,6 +174,18 @@ A comprehensive list of implemented features as of December 2025.
 - Collections: `self_journald`, `self_hwmon`
 - API endpoints: `/api/settings/ingestion/status`, `/start`, `/stop`
 
+### Document RAG
+**Linux documentation retrieval for accurate answers.**
+
+- **Sources**: Man pages (7,300+), Arch Wiki, systemd docs, network docs, etc.
+- Chunked and indexed in ChromaDB for semantic search
+- Auto-injected into chat for how-to and reference questions
+- Collection: `linux_docs`
+- API endpoints:
+  - `GET /api/settings/docs/stats` — Index statistics
+  - `POST /api/settings/docs/index` — Trigger indexing
+  - `GET /api/settings/docs/query?q=...` — Direct query
+
 ### Command Execution
 **Run commands suggested by AI.**
 
