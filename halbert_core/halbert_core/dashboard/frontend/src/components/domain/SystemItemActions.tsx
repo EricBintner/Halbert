@@ -133,10 +133,13 @@ export function SystemItemActions({
     })
   }
   
-  // Size-based classes
-  const buttonSize = size === 'sm' ? 'h-6 w-6' : 'h-8 w-8'
-  const iconSize = size === 'sm' ? 'h-3 w-3' : 'h-4 w-4'
-  const atFontSize = size === 'sm' ? 'text-xs' : 'text-sm'
+  // Size-based classes - DESIGN SYSTEM STANDARD
+  // All icon buttons: h-7 w-7 (sm) or h-8 w-8 (default)
+  // All icons: h-4 w-4 consistently
+  // @ symbol: slightly larger than icons for visual balance
+  const buttonSize = size === 'sm' ? 'h-7 w-7' : 'h-8 w-8'
+  const iconSize = 'h-4 w-4' // Always h-4 w-4 for consistency
+  const atFontSize = size === 'sm' ? 'text-sm' : 'text-base' // Larger than icons for visual weight
   
   // Icon-only variant (most compact)
   if (variant === 'icon') {
@@ -148,12 +151,12 @@ export function SystemItemActions({
             size="icon"
             className={cn(
               buttonSize,
-              "text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10"
+              "text-muted-foreground/60 hover:text-blue-500 hover:bg-blue-500/10"
             )}
             onClick={handleMention}
             title={`Mention ${item.name} in chat`}
           >
-            <span className={cn("font-semibold", atFontSize)}>@</span>
+            <span className={cn("font-bold", atFontSize)}>@</span>
           </Button>
         )}
         {showChat && (
@@ -162,7 +165,7 @@ export function SystemItemActions({
             size="icon"
             className={cn(
               buttonSize,
-              "text-muted-foreground hover:text-primary hover:bg-primary/10"
+              "text-muted-foreground/60 hover:text-primary hover:bg-primary/10"
             )}
             onClick={handleChat}
             title={`Chat about ${item.name}`}
@@ -176,7 +179,7 @@ export function SystemItemActions({
             size="icon"
             className={cn(
               buttonSize,
-              "text-muted-foreground hover:text-purple-500 hover:bg-purple-500/10"
+              "text-muted-foreground/60 hover:text-purple-500 hover:bg-purple-500/10"
             )}
             onClick={handleResearch}
             title={`Deep research on ${item.name}`}

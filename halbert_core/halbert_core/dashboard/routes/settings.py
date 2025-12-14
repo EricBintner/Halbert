@@ -2116,29 +2116,106 @@ def get_guardrail_enforcer() -> GuardrailEnforcer:
     return _guardrail_enforcer
 
 
+def _load_ai_rules() -> list:
+    """Load AI rules from config file."""
+    try:
+        from ...utils.platform import get_config_dir
+        import yaml
+        
+        config_path = get_config_dir() / 'ai_rules.yml'
+        if not config_path.exists():
+            return []
+        
+        with open(config_path, 'r') as f:
+            data = yaml.safe_load(f) or {}
+        
+        return [r for r in data.get('rules', []) if r.get('enabled', True)]
+    except Exception:
+        return []
+
+
+def _check_approval_conflicts(action: str, task: str, affected_resources: list) -> dict:
+    """
+    Check if an approval request conflicts with any AI rules.
+    
+    Returns dict with conflict info if found, else None.
+    """
+    rules = _load_ai_rules()
+    if not rules:
+        return None
+    
+    # Build searchable text from approval
+    search_text = f"{action} {task} {' '.join(affected_resources or [])}".lower()
+    
+    for rule in rules:
+        rule_text = rule.get('rule', '').lower()
+        category = rule.get('category', '')
+        
+        # Check for kernel-related rules vs kernel updates
+        if category == 'kernel' or 'kernel' in rule_text:
+            if 'kernel' in search_text and ('update' in search_text or 'upgrade' in search_text):
+                return {
+                    "has_conflict": True,
+                    "conflicting_rule": rule.get('rule'),
+                    "rule_category": category,
+                    "rule_priority": rule.get('priority', 'medium')
+                }
+        
+        # Check for general keyword matches
+        # Look for negative keywords in rules (don't, avoid, never, etc.)
+        negative_patterns = ['don\'t', 'dont', 'do not', 'avoid', 'never', 'skip', 'exclude']
+        if any(neg in rule_text for neg in negative_patterns):
+            # Extract key terms from rule
+            keywords = [w for w in rule_text.split() if len(w) > 3 and w not in negative_patterns]
+            # If any keyword appears in the approval, flag it
+            for kw in keywords[:5]:  # Check first 5 significant words
+                if kw in search_text:
+                    return {
+                        "has_conflict": True,
+                        "conflicting_rule": rule.get('rule'),
+                        "rule_category": category,
+                        "rule_priority": rule.get('priority', 'medium')
+                    }
+    
+    return None
+
+
 @router.get("/approvals/pending")
 async def get_pending_approvals():
-    """Get all pending approval requests."""
+    """Get all pending approval requests, with AI rule conflict checking."""
     try:
         engine = get_approval_engine()
         pending = engine.get_pending_requests()
+        
+        results = []
+        for req in pending:
+            item = {
+                "id": req.id,
+                "task": req.task,
+                "action": req.action,
+                "reasoning": req.reasoning,
+                "confidence": req.confidence,
+                "risk_level": req.risk_level,
+                "affected_resources": req.affected_resources,
+                "requested_at": req.requested_at,
+                "simulation_result": req.simulation_result,
+            }
+            
+            # Check for AI rule conflicts
+            conflict = _check_approval_conflicts(
+                req.action, 
+                req.task, 
+                req.affected_resources
+            )
+            if conflict:
+                item["rule_conflict"] = conflict
+            
+            results.append(item)
+        
         return {
             "status": "ok",
-            "pending": [
-                {
-                    "id": req.id,
-                    "task": req.task,
-                    "action": req.action,
-                    "reasoning": req.reasoning,
-                    "confidence": req.confidence,
-                    "risk_level": req.risk_level,
-                    "affected_resources": req.affected_resources,
-                    "requested_at": req.requested_at,
-                    "simulation_result": req.simulation_result,
-                }
-                for req in pending
-            ],
-            "count": len(pending)
+            "pending": results,
+            "count": len(results)
         }
     except Exception as e:
         logger.error(f"Failed to get pending approvals: {e}")
