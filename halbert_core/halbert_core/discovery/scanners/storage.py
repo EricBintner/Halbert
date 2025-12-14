@@ -13,7 +13,7 @@ Discovers:
 """
 
 from __future__ import annotations
-from typing import List, Optional
+from typing import Dict, List, Optional
 import glob
 import json
 import os
@@ -42,7 +42,23 @@ class StorageScanner(BaseScanner):
         """Scan system for storage."""
         discoveries = []
         
-        discoveries.extend(self._scan_disks())
+        # Build device info map for cross-referencing
+        # This maps /dev/sdX -> {smart_status, model, size, ...}
+        self._device_info: dict = {}
+        
+        disk_discoveries = self._scan_disks()
+        discoveries.extend(disk_discoveries)
+        
+        # Build device map from disk discoveries for pool cross-reference
+        for d in disk_discoveries:
+            if d.data.get('device'):
+                self._device_info[d.data['device']] = {
+                    'smart_status': d.data.get('smart_status', 'N/A'),
+                    'model': d.data.get('model', 'Unknown'),
+                    'size': d.data.get('size', 'Unknown'),
+                    'severity': d.severity.value,
+                }
+        
         discoveries.extend(self._scan_filesystems())
         discoveries.extend(self._scan_unmounted_filesystems())
         
@@ -1159,16 +1175,44 @@ class StorageScanner(BaseScanner):
             name_slug = re.sub(r'[^a-zA-Z0-9_-]', '_', label.lower())
             discovery_id = make_discovery_id(DiscoveryType.STORAGE, f"unmounted-{name_slug}")
             
+            # Cross-reference: Get SMART status of each member device
+            device_health = []
+            failed_devices = []
+            for dev in pool["devices"]:
+                # Look up device info from disk scan
+                dev_info = getattr(self, '_device_info', {}).get(dev, {})
+                smart = dev_info.get('smart_status', 'Unknown')
+                model = dev_info.get('model', 'Unknown')
+                device_health.append({
+                    "device": dev,
+                    "smart_status": smart,
+                    "model": model,
+                })
+                if smart == 'FAILED':
+                    failed_devices.append(f"{dev} ({model})")
+            
+            # Severity: CRITICAL if any device has SMART failure
+            if failed_devices:
+                severity = DiscoverySeverity.CRITICAL
+                status = "Unmounted - SMART Failure"
+                status_detail = f"Failed device{'s' if len(failed_devices) > 1 else ''}: {', '.join(failed_devices)}"
+                description = f"Unmounted {fstype} - DISK FAILURE DETECTED"
+            else:
+                severity = DiscoverySeverity.INFO
+                status = "Unmounted"
+                status_detail = f"{device_count} device{'s' if device_count > 1 else ''} available"
+                description = f"Unmounted {fstype} with {device_count} device{'s' if device_count > 1 else ''}"
+            
             discoveries.append(Discovery(
                 id=discovery_id,
                 type=DiscoveryType.STORAGE,
                 name=f"unmounted-{name_slug}",
                 title=f"{label} ({size_str})",
-                description=f"Unmounted {fstype} with {device_count} device{'s' if device_count > 1 else ''}",
-                icon="hard-drive-download",  # Indicates action needed
-                severity=DiscoverySeverity.INFO,
-                status="Unmounted",
-                status_detail=f"{device_count} device{'s' if device_count > 1 else ''} available",
+                description=description,
+                icon="hard-drive-download" if not failed_devices else "alert-triangle",
+                severity=severity,
+                status=status,
+                status_detail=status_detail,
                 source=pool["devices"][0],
                 data={
                     "uuid": uuid,
@@ -1180,6 +1224,10 @@ class StorageScanner(BaseScanner):
                     "device_count": device_count,
                     "mounted": False,
                     "mountpoint": None,
+                    # Cross-reference data for AI correlation
+                    "device_health": device_health,
+                    "failed_devices": failed_devices,
+                    "has_failed_disk": len(failed_devices) > 0,
                 },
                 actions=[
                     DiscoveryAction(
@@ -1194,7 +1242,8 @@ class StorageScanner(BaseScanner):
                     ),
                 ],
                 chat_context=f"This is an unmounted {fstype} filesystem labeled '{label}'. "
-                            f"Size: {size_str}. Devices: {', '.join(pool['devices'][:3])}{'...' if device_count > 3 else ''}.",
+                            f"Size: {size_str}. Devices: {', '.join(pool['devices'][:3])}{'...' if device_count > 3 else ''}. "
+                            f"{'⚠️ WARNING: Contains disk(s) with SMART failure: ' + ', '.join(failed_devices) if failed_devices else 'All devices healthy.'}",
             ))
         
         return discoveries
