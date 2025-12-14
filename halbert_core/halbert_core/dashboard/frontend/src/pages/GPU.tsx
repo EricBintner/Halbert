@@ -36,6 +36,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SystemItemActions } from '@/components/domain'
+import { WhyBrain } from '@/components/ui/why-brain'
 
 interface GPUInfo {
   vendor: string
@@ -326,6 +327,12 @@ export function GPU() {
                     <Badge variant="outline" className="text-xs">
                       {gpu.vram_mb ? `${(gpu.vram_mb / 1024).toFixed(0)} GB VRAM` : 'Unknown VRAM'}
                     </Badge>
+                    <WhyBrain
+                      itemId={`gpu:${gpu.pci_id}`}
+                      itemName={gpu.model}
+                      itemType="gpu"
+                      size="sm"
+                    />
                     <SystemItemActions
                       item={{
                         name: gpu.model,

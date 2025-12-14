@@ -42,6 +42,7 @@ import {
   ExternalLink,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { WhyBrain } from '@/components/ui/why-brain'
 
 interface ContainerInfo {
   id: string
@@ -482,6 +483,12 @@ export function Containers() {
                           </Button>
                         </>
                       )}
+                      <WhyBrain
+                        itemId={`container:${container.id}`}
+                        itemName={container.name}
+                        itemType="container"
+                        size="sm"
+                      />
                       <SystemItemActions
                         item={{
                           name: container.name,
