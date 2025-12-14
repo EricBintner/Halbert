@@ -163,6 +163,17 @@ A comprehensive list of implemented features as of December 2025.
 - Collections: `self_conversations`, `self_knowledge_all`
 - API endpoints: `/api/chat/memory/stats`, `/api/chat/memory/query`
 
+### Telemetry Ingestion
+**Continuous system event collection.**
+
+- **journald**: System logs (errors, warnings from key services)
+- **hwmon**: Temperature sensor readings
+- Auto-starts with dashboard, runs in background
+- Events indexed in ChromaDB for semantic search
+- Telemetry injected into chat when relevant (error keywords → logs, thermal keywords → temps)
+- Collections: `self_journald`, `self_hwmon`
+- API endpoints: `/api/settings/ingestion/status`, `/start`, `/stop`
+
 ### Command Execution
 **Run commands suggested by AI.**
 

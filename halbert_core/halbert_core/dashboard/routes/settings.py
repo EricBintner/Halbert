@@ -1732,3 +1732,54 @@ async def complete_onboarding(data: OnboardingData) -> Dict[str, Any]:
 
 # Import datetime at module level for onboarding
 from datetime import datetime
+
+
+# =============================================================================
+# Ingestion Service API
+# =============================================================================
+
+@router.get("/ingestion/status")
+async def get_ingestion_status():
+    """Get ingestion service status."""
+    try:
+        from ...ingestion.service import get_ingestion_service
+        service = get_ingestion_service()
+        return service.status()
+    except Exception as e:
+        logger.error(f"Failed to get ingestion status: {e}")
+        return {
+            "running": False,
+            "error": str(e)
+        }
+
+
+@router.post("/ingestion/start")
+async def start_ingestion():
+    """Start the ingestion service."""
+    try:
+        from ...ingestion.service import get_ingestion_service
+        service = get_ingestion_service()
+        success = service.start()
+        return {
+            "success": success,
+            "status": service.status()
+        }
+    except Exception as e:
+        logger.error(f"Failed to start ingestion: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ingestion/stop")
+async def stop_ingestion():
+    """Stop the ingestion service."""
+    try:
+        from ...ingestion.service import get_ingestion_service
+        service = get_ingestion_service()
+        success = service.stop()
+        return {
+            "success": success,
+            "status": service.status()
+        }
+    except Exception as e:
+        logger.error(f"Failed to stop ingestion: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

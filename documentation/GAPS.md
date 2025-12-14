@@ -189,12 +189,13 @@ halbert_core/
 
 These features directly improve the system's understanding of itself:
 
-| Item | Description | Impact |
+| Item | Description | Status |
 |------|-------------|--------|
-| **Ingestion Pipeline** | Continuous journald/hwmon collection into ChromaDB | System learns from its own logs |
-| **Discovery → ChromaDB** | Persist all discoveries with embeddings | Semantic search over system state |
-| **Conversation Analysis** | Analyze past conversations for patterns | Learn from user interactions |
-| **Document Indexing** | Index man pages, arch wiki into RAG | Answer Linux questions accurately |
+| **Ingestion Pipeline** | journald/hwmon → ChromaDB | ✅ Done |
+| **Conversation Memory** | Store/retrieve past conversations | ✅ Done |
+| **Telemetry Context** | Inject relevant logs into chat | ✅ Done |
+| **Discovery → ChromaDB** | Persist discoveries with embeddings | 🔄 Partial |
+| **Document Indexing** | Index man pages, arch wiki into RAG | 📋 Next |
 
 ### 🟠 P1: Documentation Updates (Completed This Session)
 
@@ -227,7 +228,7 @@ These features directly improve the system's understanding of itself:
 
 ## Implementation Backlog (RAG/Memory Focus)
 
-### Phase 22A: Ingestion Pipeline
+### Phase 22A: Ingestion Pipeline ✅ COMPLETE
 
 **Goal**: Continuous telemetry collection into ChromaDB
 
@@ -236,10 +237,14 @@ journald → Events → Embeddings → ChromaDB (self_journald)
 hwmon → Metrics → Embeddings → ChromaDB (self_hwmon)
 ```
 
-**Files to implement/connect**:
-- `ingestion/journald.py` — Collect systemd journal
-- `ingestion/hwmon.py` — Collect hardware sensors
-- `index/chroma_index.py` — Upsert events
+**Implemented**:
+- `ingestion/service.py` — Background service manager (singleton)
+- `ingestion/journald.py` — Collect systemd journal ✅
+- `ingestion/hwmon.py` — Collect hardware sensors ✅
+- `index/chroma_index.py` — Upsert events ✅
+- `dashboard/app.py` — Auto-start on app startup ✅
+- `routes/settings.py` — API endpoints for start/stop/status ✅
+- `routes/chat.py` — Telemetry context injection ✅
 
 ### Phase 22B: Discovery Persistence
 
