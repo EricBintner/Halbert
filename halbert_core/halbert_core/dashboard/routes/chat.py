@@ -21,12 +21,119 @@ from ..routes.discovery import get_engine
 from ...model.router import ModelRouter, TaskType
 from ...discovery.schema import DiscoveryType
 from ...index.chroma_index import get_index
+from ...autonomy.guardrails import GuardrailEnforcer, GuardrailViolation
+from ...policy.engine import decide as policy_decide
+from ...policy.loader import load_policy
 from pathlib import Path
 import socket
 import json
 import requests
 
 logger = logging.getLogger('halbert.dashboard.routes.chat')
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Guardrails & Policy Integration (Phase 23)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_guardrail_enforcer: Optional[GuardrailEnforcer] = None
+_policy_cache: Optional[dict] = None
+
+def get_guardrails() -> GuardrailEnforcer:
+    """Get singleton guardrail enforcer."""
+    global _guardrail_enforcer
+    if _guardrail_enforcer is None:
+        _guardrail_enforcer = GuardrailEnforcer()
+    return _guardrail_enforcer
+
+def get_policy() -> dict:
+    """Get cached policy config."""
+    global _policy_cache
+    if _policy_cache is None:
+        try:
+            _policy_cache = load_policy()
+        except Exception as e:
+            logger.warning(f"Failed to load policy, using permissive default: {e}")
+            _policy_cache = {"default_allow": True, "tools": {}}
+    return _policy_cache
+
+def check_tool_authorization(tool_name: str, tool_args: dict, confidence: float = 0.9) -> dict:
+    """
+    Check if a tool call is authorized by policy and guardrails.
+    
+    Returns:
+        {
+            "allowed": bool,
+            "reason": str or None,
+            "approval_required": bool,
+            "simulation_required": bool
+        }
+    """
+    result = {
+        "allowed": True,
+        "reason": None,
+        "approval_required": False,
+        "simulation_required": False
+    }
+    
+    # 1. Check policy first
+    try:
+        policy = get_policy()
+        decision = policy_decide(policy, tool_name, is_apply=True, ctx={"inputs": tool_args})
+        
+        if not decision.allow:
+            return {
+                "allowed": False,
+                "reason": f"Policy denied: {decision.reason}",
+                "approval_required": False,
+                "simulation_required": False
+            }
+        
+        result["simulation_required"] = decision.simulation_required
+        if decision.approvals_needed:
+            result["approval_required"] = True
+            
+    except Exception as e:
+        logger.warning(f"Policy check failed, allowing: {e}")
+    
+    # 2. Check guardrails
+    try:
+        guardrails = get_guardrails()
+        
+        # Estimate resources (conservative defaults)
+        estimated_resources = {
+            "cpu_percent": 10,
+            "memory_mb": 100,
+            "time_minutes": 1
+        }
+        
+        allowed, reason = guardrails.check_all(
+            confidence=confidence,
+            estimated_resources=estimated_resources,
+            task=f"Tool: {tool_name}"
+        )
+        
+        if not allowed:
+            if reason == "approval_required":
+                result["approval_required"] = True
+            else:
+                return {
+                    "allowed": False,
+                    "reason": f"Guardrail: {reason}",
+                    "approval_required": False,
+                    "simulation_required": False
+                }
+                
+    except GuardrailViolation as e:
+        return {
+            "allowed": False,
+            "reason": f"Guardrail violation: {str(e)}",
+            "approval_required": False,
+            "simulation_required": False
+        }
+    except Exception as e:
+        logger.warning(f"Guardrail check failed, allowing: {e}")
+    
+    return result
 
 
 def get_memory_context(query: str, conversation_id: Optional[str] = None, max_results: int = 3) -> str:
@@ -549,6 +656,25 @@ def call_ollama_with_tools(prompt: str, system_prompt: str, model: str = None) -
             func = tool_call.get("function", {})
             tool_name = func.get("name", "")
             arguments = func.get("arguments", {})
+            
+            # Phase 23: Check authorization before execution
+            auth = check_tool_authorization(tool_name, arguments)
+            
+            if not auth["allowed"]:
+                logger.warning(f"Tool {tool_name} blocked: {auth['reason']}")
+                tool_results.append({
+                    "tool": tool_name,
+                    "result": {"error": f"Blocked: {auth['reason']}", "blocked": True}
+                })
+                continue
+            
+            if auth["approval_required"]:
+                logger.info(f"Tool {tool_name} requires approval")
+                tool_results.append({
+                    "tool": tool_name,
+                    "result": {"pending_approval": True, "message": "This action requires user approval"}
+                })
+                continue
             
             # Execute the tool
             result = execute_tool(tool_name, arguments)

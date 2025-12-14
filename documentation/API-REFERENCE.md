@@ -160,6 +160,101 @@ Content-Type: application/json
 }
 ```
 
+### List Collections
+
+```
+GET /api/chat/memory/collections
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "collections": [
+    {"name": "self_conversations", "count": 150, "known": true},
+    {"name": "self_knowledge_all", "count": 500, "known": true},
+    {"name": "self_journald", "count": 0, "known": true},
+    {"name": "self_hwmon", "count": 0, "known": true}
+  ]
+}
+```
+
+### List Entries in Collection
+
+```
+GET /api/chat/memory/entries/{collection}?limit=50&offset=0
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "collection": "self_conversations",
+  "entries": [
+    {
+      "id": "conv:abc123:1702580400000",
+      "content": "Why is my bcachefs pool failing?",
+      "metadata": {
+        "role": "user",
+        "conversation_id": "abc123",
+        "timestamp": "1702580400",
+        "page": "storage"
+      }
+    }
+  ],
+  "count": 50
+}
+```
+
+### Delete Entry
+
+```
+DELETE /api/chat/memory/entry/{collection}/{entry_id}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "deleted": true
+}
+```
+
+### Bulk Delete Entries
+
+```
+POST /api/chat/memory/delete/{collection}
+Content-Type: application/json
+
+{
+  "entry_ids": ["id1", "id2", "id3"]
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "deleted": 3
+}
+```
+
+### Clear Collection
+
+```
+POST /api/chat/memory/clear/{collection}
+```
+
+⚠️ **Warning**: This permanently deletes ALL entries in the collection.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "cleared": true
+}
+```
+
 ---
 
 ## Ingestion API

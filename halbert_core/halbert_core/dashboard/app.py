@@ -21,6 +21,9 @@ except ImportError:
 
 logger = logging.getLogger('halbert.dashboard')
 
+# Phase 23: Global scheduler executor reference
+_scheduler_executor = None
+
 
 class ConnectionManager:
     """
@@ -217,11 +220,55 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             logger.info("Ingestion service auto-started")
         except Exception as e:
             logger.warning(f"Failed to auto-start ingestion: {e}")
+        
+        # Phase 23: Start scheduler (if APScheduler available)
+        try:
+            from ..scheduler.executor import AutonomousExecutor, APSCHEDULER_AVAILABLE
+            if APSCHEDULER_AVAILABLE:
+                global _scheduler_executor
+                _scheduler_executor = AutonomousExecutor(
+                    max_workers=3,
+                    enable_llm=False,  # Disable LLM for now
+                    enable_guardrails=True
+                )
+                _scheduler_executor.start()
+                
+                # Schedule default autonomous tasks
+                from ..scheduler.autonomous_tasks import SystemHealthCheckTask, LogCleanupTask
+                
+                # Health check every 6 hours
+                def run_health_check():
+                    task = SystemHealthCheckTask()
+                    return task.execute({})
+                
+                _scheduler_executor.schedule_cron_job(
+                    job_id='auto_health_check',
+                    task_func=run_health_check,
+                    cron_expr={'hour': '*/6', 'minute': 0},
+                    description='Autonomous system health check'
+                )
+                
+                logger.info("Scheduler auto-started with health check task")
+            else:
+                logger.info("APScheduler not available, scheduler disabled")
+        except Exception as e:
+            logger.warning(f"Failed to auto-start scheduler: {e}")
     
-    # Shutdown event: stop ingestion
+    # Shutdown event: stop background services
     @app.on_event("shutdown")
     async def shutdown_event():
         """Stop background services on app shutdown."""
+        global _scheduler_executor
+        
+        # Stop scheduler
+        if _scheduler_executor is not None:
+            try:
+                _scheduler_executor.stop()
+                logger.info("Scheduler stopped")
+            except Exception as e:
+                logger.warning(f"Failed to stop scheduler: {e}")
+        
+        # Stop ingestion
         try:
             from ..ingestion.service import get_ingestion_service
             service = get_ingestion_service()
