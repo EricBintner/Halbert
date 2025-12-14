@@ -1659,11 +1659,43 @@ export function SidePanel() {
                             size="sm"
                             variant="outline"
                             className="h-7 text-xs gap-1.5 w-full"
-                            onClick={() => {
-                              // Open config editor with this file
-                              window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {
-                                detail: { filePath: message.configPath }
-                              }))
+                            onClick={async () => {
+                              const filePath = message.configPath!
+                              const fileName = filePath.split('/').pop() || 'config'
+                              
+                              // Create a new conversation for editing this config
+                              try {
+                                const conv = await api.createConversation(`Edit: ${fileName}`) as Conversation
+                                setCurrentConversationId(conv.id)
+                                
+                                // Set intro message for the new conversation
+                                const introMsg: Message = {
+                                  id: Date.now().toString(),
+                                  role: 'assistant',
+                                  content: `I'll help you edit **${fileName}**. The editor is opening now - you can ask me to make changes and I'll apply them directly.`,
+                                  timestamp: new Date(),
+                                  configPath: filePath,
+                                }
+                                setMessages([introMsg])
+                                
+                                // Save intro message to conversation
+                                api.addMessageToConversation(conv.id, 'assistant', introMsg.content)
+                                  .catch(() => console.error('Failed to save intro message'))
+                                
+                                // Refresh conversation list
+                                api.listConversations().then(data => setConversations(data || [])).catch(() => {})
+                                
+                                // Open config editor with this file
+                                window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {
+                                  detail: { filePath }
+                                }))
+                              } catch (err) {
+                                console.error('Failed to create config edit conversation:', err)
+                                // Fallback: just open the editor without new conversation
+                                window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {
+                                  detail: { filePath }
+                                }))
+                              }
                             }}
                           >
                             <Pencil className="h-3 w-3" />

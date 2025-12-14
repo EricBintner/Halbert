@@ -166,7 +166,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1 ml-64 h-full overflow-hidden">
         {/* Page content with optional debug footer */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <main className="flex-1 p-8 overflow-auto relative">
+          <main className="flex-1 p-8 overflow-auto relative z-0">
             {editingConfigPath ? (
               <ConfigEditor
                 filePath={editingConfigPath}
