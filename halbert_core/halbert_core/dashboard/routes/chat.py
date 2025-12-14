@@ -24,7 +24,10 @@ from ...index.chroma_index import get_index
 from ...autonomy.guardrails import GuardrailEnforcer, GuardrailViolation
 from ...policy.engine import decide as policy_decide
 from ...policy.loader import load_policy
+from ...approval.engine import ApprovalEngine, ApprovalRequest
 from pathlib import Path
+import uuid
+from datetime import datetime, timezone
 import socket
 import json
 import requests
@@ -37,6 +40,48 @@ logger = logging.getLogger('halbert.dashboard.routes.chat')
 
 _guardrail_enforcer: Optional[GuardrailEnforcer] = None
 _policy_cache: Optional[dict] = None
+_approval_engine: Optional[ApprovalEngine] = None
+
+def get_approval_engine() -> ApprovalEngine:
+    """Get singleton approval engine."""
+    global _approval_engine
+    if _approval_engine is None:
+        _approval_engine = ApprovalEngine()
+    return _approval_engine
+
+
+def create_tool_approval_request(
+    tool_name: str, 
+    tool_args: dict,
+    reason: str,
+    confidence: float = 0.5
+) -> ApprovalRequest:
+    """
+    Create an approval request for a tool call that requires user approval.
+    
+    Returns the created ApprovalRequest (already stored in engine).
+    """
+    engine = get_approval_engine()
+    
+    request = ApprovalRequest(
+        id=f"chat_tool_{uuid.uuid4().hex[:8]}",
+        task=f"Execute Tool: {tool_name}",
+        action=f"Run '{tool_name}' with args: {json.dumps(tool_args, indent=2)}",
+        reasoning=reason,
+        confidence=confidence,
+        risk_level="medium",  # Could be dynamic based on tool
+        system_state={"source": "chat", "tool": tool_name},
+        affected_resources=[tool_name],
+        requested_at=datetime.now(timezone.utc).isoformat() + 'Z',
+        requested_by="chat_assistant"
+    )
+    
+    # Queue the request for dashboard approval
+    engine.queue_request(request)
+    
+    logger.info(f"Created approval request {request.id} for tool {tool_name}")
+    return request
+
 
 def get_guardrails() -> GuardrailEnforcer:
     """Get singleton guardrail enforcer."""
@@ -670,9 +715,19 @@ def call_ollama_with_tools(prompt: str, system_prompt: str, model: str = None) -
             
             if auth["approval_required"]:
                 logger.info(f"Tool {tool_name} requires approval")
+                # Create actual approval request
+                approval_request = create_tool_approval_request(
+                    tool_name=tool_name,
+                    tool_args=arguments,
+                    reason=auth.get("reason", "This action requires user approval before execution")
+                )
                 tool_results.append({
                     "tool": tool_name,
-                    "result": {"pending_approval": True, "message": "This action requires user approval"}
+                    "result": {
+                        "pending_approval": True, 
+                        "approval_id": approval_request.id,
+                        "message": f"Action queued for approval. Check the Approvals page to approve request {approval_request.id}"
+                    }
                 })
                 continue
             

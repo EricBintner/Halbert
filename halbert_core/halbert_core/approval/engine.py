@@ -298,6 +298,19 @@ class ApprovalEngine:
             decided_at=self._get_timestamp()
         )
     
+    def queue_request(self, request: ApprovalRequest) -> None:
+        """
+        Queue an approval request without prompting.
+        
+        Use this to add requests that will be handled via dashboard.
+        """
+        if not request.requested_at:
+            request.requested_at = self._get_timestamp()
+        
+        request.status = 'pending'
+        self._save_request(request)
+        logger.info(f"Queued approval request: {request.id}")
+    
     def get_pending_requests(self) -> List[ApprovalRequest]:
         """Get all pending approval requests."""
         pending = []

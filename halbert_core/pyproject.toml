@@ -27,6 +27,10 @@ dependencies = [
   "systemd-python>=235; platform_system == 'Linux'",
   # numpy for embeddings
   "numpy>=1.24",
+  # APScheduler for background task scheduling (Phase 23)
+  "apscheduler>=3.10",
+  # SQLAlchemy for APScheduler job persistence
+  "sqlalchemy>=2.0",
 ]
 
 [tool.setuptools.packages.find]
