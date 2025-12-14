@@ -187,6 +187,23 @@ API Endpoints:
 - `GET /api/settings/knowledge/identity` — Get core identity
 - `POST /api/settings/knowledge/bootstrap` — Re-bootstrap identity
 
+### Why Brain UI
+**Universal "Why" explanation for any item.**
+
+Visual indicator (Brain icon):
+- **Grey**: No explanation defined
+- **Pink/Magenta**: User has defined why this exists
+
+Components:
+- `WhyBrain` — Clickable brain icon with state
+- `WhyOverlay` — Full-screen overlay for editing explanation
+
+Usage:
+- Click brain icon on any discovery card
+- Type explanation for why the item exists
+- Saved to self-knowledge system
+- Context injected into future AI responses
+
 ### Telemetry Ingestion
 **Continuous system event collection.**
 
