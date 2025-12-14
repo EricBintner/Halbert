@@ -1310,6 +1310,112 @@ if FASTAPI_AVAILABLE:
             except Exception as e:
                 logger.warning(f"Failed to auto-inject disk usage context: {e}")
         
+        # Laptop/battery keywords -> inject laptop context
+        laptop_keywords = ['battery', 'laptop', 'suspend', 'hibernate', 'lid', 'power', 'tlp', 'brightness']
+        if any(kw in message_lower for kw in laptop_keywords):
+            try:
+                power_discoveries = [d for d in engine.get_all() if d.type.value == 'power']
+                if power_discoveries:
+                    laptop_items = []
+                    for d in power_discoveries:
+                        laptop_items.append(f"- {d.title}: {d.status}")
+                    if laptop_items:
+                        context_parts.append("**Laptop/Power:**\n" + "\n".join(laptop_items[:10]))
+                        auto_injected_types.add('laptop')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'laptop', 'count': len(power_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject laptop context: {e}")
+        
+        # Display/monitor keywords -> inject display context
+        display_keywords = ['monitor', 'display', 'screen', 'resolution', 'hdmi', 'gpu', 'graphics', 
+                           'nvidia', 'amd', 'wayland', 'x11', 'compositor', 'tearing', 'multi-monitor']
+        if any(kw in message_lower for kw in display_keywords):
+            try:
+                desktop_discoveries = [d for d in engine.get_all() if d.type.value in ('desktop', 'gpu')]
+                if desktop_discoveries:
+                    display_items = []
+                    for d in desktop_discoveries:
+                        display_items.append(f"- {d.title}: {d.status or d.description}")
+                    if display_items:
+                        context_parts.append("**Display/Graphics:**\n" + "\n".join(display_items[:10]))
+                        auto_injected_types.add('display')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'display', 'count': len(desktop_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject display context: {e}")
+        
+        # Audio keywords -> inject audio context
+        audio_keywords = ['audio', 'sound', 'speaker', 'headphone', 'microphone', 'volume', 'pulseaudio', 
+                         'pipewire', 'hdmi audio', 'no sound', 'mute']
+        if any(kw in message_lower for kw in audio_keywords):
+            try:
+                hw_discoveries = [d for d in engine.get_all() if d.type.value == 'hardware']
+                audio_items = []
+                for d in hw_discoveries:
+                    if d.data.get('is_audio_server') or d.data.get('is_sound_card') or d.data.get('is_audio_output') or d.data.get('is_audio_input'):
+                        audio_items.append(f"- {d.title}: {d.status}")
+                if audio_items:
+                    context_parts.append("**Audio:**\n" + "\n".join(audio_items[:10]))
+                    auto_injected_types.add('audio')
+                    if debug_info:
+                        debug_info['auto_injected_context'].append({'type': 'audio', 'count': len(audio_items)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject audio context: {e}")
+        
+        # WiFi keywords -> inject wifi context  
+        wifi_keywords = ['wifi', 'wireless', 'wlan', 'ssid', 'signal', 'disconnect', '5ghz', '2.4ghz', 
+                        'iwconfig', 'network manager']
+        if any(kw in message_lower for kw in wifi_keywords):
+            try:
+                net_discoveries = [d for d in engine.get_all() if d.type.value == 'network']
+                wifi_items = []
+                for d in net_discoveries:
+                    if d.data.get('is_wifi_interface') or d.data.get('is_wifi_connection') or d.data.get('is_regulatory') or d.data.get('is_wifi_power'):
+                        wifi_items.append(f"- {d.title}: {d.status}")
+                if wifi_items:
+                    context_parts.append("**WiFi:**\n" + "\n".join(wifi_items[:10]))
+                    auto_injected_types.add('wifi')
+                    if debug_info:
+                        debug_info['auto_injected_context'].append({'type': 'wifi', 'count': len(wifi_items)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject wifi context: {e}")
+        
+        # USB keywords -> inject usb context
+        usb_keywords = ['usb', 'device not recognized', 'peripheral', 'plug', 'unplug', 'port']
+        if any(kw in message_lower for kw in usb_keywords):
+            try:
+                hw_discoveries = [d for d in engine.get_all() if d.type.value == 'hardware']
+                usb_items = []
+                for d in hw_discoveries:
+                    if d.data.get('is_usb_device') or d.data.get('is_usb_controller'):
+                        usb_items.append(f"- {d.title}: {d.status}")
+                if usb_items:
+                    context_parts.append("**USB Devices:**\n" + "\n".join(usb_items[:10]))
+                    auto_injected_types.add('usb')
+                    if debug_info:
+                        debug_info['auto_injected_context'].append({'type': 'usb', 'count': len(usb_items)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject usb context: {e}")
+        
+        # GRUB/boot keywords -> inject bootloader context
+        grub_keywords = ['grub', 'bootloader', 'uefi', 'bios', 'secure boot', 'dual boot', 'efi', 
+                        'boot entry', 'kernel parameter', 'nomodeset']
+        if any(kw in message_lower for kw in grub_keywords):
+            try:
+                boot_discoveries = [d for d in engine.get_all() if d.type.value == 'system_preservation']
+                boot_items = []
+                for d in boot_discoveries:
+                    if d.data.get('is_boot_mode') or d.data.get('is_secure_boot') or d.data.get('is_grub_config') or d.data.get('is_cmdline') or d.data.get('is_boot_entries'):
+                        boot_items.append(f"- {d.title}: {d.status}")
+                if boot_items:
+                    context_parts.append("**Boot/GRUB:**\n" + "\n".join(boot_items[:10]))
+                    auto_injected_types.add('bootloader')
+                    if debug_info:
+                        debug_info['auto_injected_context'].append({'type': 'bootloader', 'count': len(boot_items)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject bootloader context: {e}")
+        
         # RELATIONSHIP-BASED RETRIEVAL
         # When a specific service or storage item is mentioned, fetch related discoveries
         try:
