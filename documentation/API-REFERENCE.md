@@ -511,6 +511,286 @@ POST /api/approvals/{id}/reject
 
 ---
 
+## Policy API
+
+### Get Policy
+
+```
+GET /api/settings/policy
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "policy": {
+    "default_allow": true,
+    "tools": {
+      "write_config": {"allow": true},
+      "schedule_cron": {"allow": true}
+    }
+  },
+  "path": "/home/user/.config/halbert/policy.yml"
+}
+```
+
+### Update Policy
+
+```
+POST /api/settings/policy
+Content-Type: application/json
+
+{
+  "policy": {
+    "default_allow": true,
+    "tools": {"dangerous_tool": {"allow": false}}
+  }
+}
+```
+
+### Set Tool Policy
+
+```
+POST /api/settings/policy/tool
+Content-Type: application/json
+
+{"tool": "write_config", "allow": true}
+```
+
+### Delete Tool Override
+
+```
+DELETE /api/settings/policy/tool/{tool_name}
+```
+
+---
+
+## Guardrails API
+
+### Get Status
+
+```
+GET /api/settings/guardrails/status
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "safe_mode_active": false,
+  "config": {"confidence_threshold": 0.8, "cpu_budget": 80}
+}
+```
+
+### Enter Safe Mode
+
+```
+POST /api/settings/guardrails/safe-mode/enter
+Content-Type: application/json
+
+{"reason": "Manual activation"}
+```
+
+### Exit Safe Mode
+
+```
+POST /api/settings/guardrails/safe-mode/exit
+```
+
+---
+
+## Anomaly Detection API
+
+### Get Status
+
+```
+GET /api/settings/anomaly/status
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "summary": {
+    "total_anomalies_24h": 2,
+    "critical_anomalies_24h": 0,
+    "failure_streak": 0,
+    "recent_error_rate": 0.0
+  },
+  "recent_anomalies": [
+    {
+      "timestamp": "2025-12-14T10:30:00",
+      "type": "cpu_spike",
+      "severity": "warning",
+      "description": "CPU usage 95% above threshold 90%"
+    }
+  ]
+}
+```
+
+### Run Check
+
+```
+POST /api/settings/anomaly/check
+```
+
+Runs anomaly detection checks immediately.
+
+---
+
+## Recovery Playbooks API
+
+### Get Status
+
+```
+GET /api/settings/recovery/status
+```
+
+### Execute Rollback
+
+```
+POST /api/settings/recovery/rollback
+Content-Type: application/json
+
+{"file_path": "/etc/myapp/config.yml"}
+```
+
+### Restart Service
+
+```
+POST /api/settings/recovery/restart-service
+Content-Type: application/json
+
+{"service": "nginx"}
+```
+
+### Send Alert
+
+```
+POST /api/settings/recovery/alert
+Content-Type: application/json
+
+{"message": "Recovery alert", "severity": "warning"}
+```
+
+---
+
+## Dry-run Simulation API
+
+### Simulate Tool Call
+
+```
+POST /api/settings/simulate/tool
+Content-Type: application/json
+
+{
+  "tool": "write_config",
+  "args": {"path": "/etc/app.conf", "content": "new content"}
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "simulation": {
+    "success": true,
+    "action": "Write file: /etc/app.conf",
+    "changes": [{"type": "file_modify", "path": "/etc/app.conf", "diff": "..."}],
+    "warnings": [],
+    "reversible": true,
+    "rollback_strategy": "Restore /etc/app.conf from backup",
+    "estimated_duration_s": 0.1
+  }
+}
+```
+
+### Simulate File Write
+
+```
+POST /api/settings/simulate/file-write
+Content-Type: application/json
+
+{"path": "/etc/app.conf", "content": "new content"}
+```
+
+### Simulate Command
+
+```
+POST /api/settings/simulate/command
+Content-Type: application/json
+
+{"command": "apt update", "dry_run_flag": "--dry-run"}
+```
+
+### Simulate Service Restart
+
+```
+POST /api/settings/simulate/service-restart
+Content-Type: application/json
+
+{"service": "nginx"}
+```
+
+---
+
+## WebSocket API
+
+Real-time updates via WebSocket connection.
+
+### Connect
+
+```
+ws://localhost:8000/ws
+```
+
+### Message Types
+
+| Type | Description |
+|------|-------------|
+| `system_status` | System metrics every 5s |
+| `approval_request` | New approval needed |
+| `job_update` | Scheduler job status changed |
+| `decision` | LLM decision made |
+| `chat_token` | Streaming chat token |
+| `chat_complete` | Chat response complete |
+
+**Chat Token Message:**
+```json
+{
+  "type": "chat_token",
+  "data": {
+    "request_id": "req-123",
+    "token": "Hello",
+    "done": false
+  }
+}
+```
+
+---
+
+## Scheduler API
+
+### Get Status
+
+```
+GET /api/settings/scheduler/status
+```
+
+### List Jobs
+
+```
+GET /api/settings/scheduler/jobs
+```
+
+### Cancel Job
+
+```
+POST /api/settings/scheduler/cancel/{job_id}
+```
+
+---
+
 ## Authentication
 
 No authentication by default. Dashboard binds to `127.0.0.1` only.
