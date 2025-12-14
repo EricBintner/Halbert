@@ -11,7 +11,7 @@ import {
   type ApprovalRequest,
   type ApprovalHistoryItem
 } from '@/lib/tauri'
-import { CheckCircle, XCircle, AlertTriangle, Clock, History } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Clock, History, ShieldAlert } from 'lucide-react'
 
 export function Approvals() {
   const [pending, setPending] = useState<ApprovalRequest[]>([])
@@ -118,6 +118,27 @@ export function Approvals() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {/* Rule Conflict Warning */}
+                    {request.rule_conflict && (
+                      <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                        <div className="flex items-start gap-2">
+                          <ShieldAlert className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-medium text-amber-600 dark:text-amber-400">
+                              Conflicts with AI Rule
+                            </p>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {request.rule_conflict.conflicting_rule}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Category: {request.rule_conflict.rule_category} • 
+                              Priority: {request.rule_conflict.rule_priority}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
                     <div>
                       <p className="text-sm font-medium">Reasoning:</p>
                       <p className="text-sm text-muted-foreground">{request.reasoning}</p>

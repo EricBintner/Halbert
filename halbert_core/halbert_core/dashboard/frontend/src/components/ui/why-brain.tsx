@@ -73,7 +73,7 @@ export function WhyBrain({
           "hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           isDefined 
             ? "text-pink-500 hover:text-pink-400" 
-            : "text-muted-foreground/40 hover:text-muted-foreground/70",
+            : "text-muted-foreground/60 hover:text-muted-foreground",
           className
         )}
         title={isDefined ? "View/edit why this exists" : "Add explanation for why this exists"}
