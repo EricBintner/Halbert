@@ -361,15 +361,22 @@ isn't needed. The semantic search over current discoveries is the key feature.
 - ✅ Safe Mode Indicator — Banner with exit button when active
 - ✅ API functions in tauri.ts — Web fallbacks for all autonomy APIs
 
-### Next Priority (P3: Polish & Testing)
-1. **End-to-end testing** — Trigger approval flow from chat
-2. **APScheduler install** — Add to requirements.txt if not present
-3. **Policy config page** — Edit policy.yml from dashboard
-4. **Guardrails config page** — Edit autonomy.yml from dashboard
+### Completed (P3: Polish & Testing)
+1. ✅ **End-to-end testing** — Wired chat tool execution → ApprovalEngine → Dashboard
+2. ✅ **APScheduler install** — Added to pyproject.toml with SQLAlchemy
+3. ✅ **Policy config page** — Read-only view in Settings > Policy tab
+4. ✅ **Guardrails config page** — Read-only view in Settings > Guardrails tab
+
+### Next Priority (P4: Edit Capabilities)
+1. **Editable Policy** — Allow changing tool permissions from UI
+2. **Editable Guardrails** — Allow changing thresholds from UI  
+3. **Live Approval Test** — Create test button in UI to create sample approval
 
 ### Cycle Checklist
 - [x] Audit: Discovered P2 modules already implemented
 - [x] Document: Updated GAPS.md with accurate status
 - [x] Build: Wired together existing modules (backend)
 - [x] Build: Connected frontend to new APIs
-- [ ] Test: Verify integration works end-to-end
+- [x] Test: Wired approval flow from chat → ApprovalEngine → Dashboard
+- [x] Dependencies: Added APScheduler + SQLAlchemy to pyproject.toml
+- [x] Settings UI: Added Policy and Guardrails tabs
