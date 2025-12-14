@@ -14,7 +14,7 @@ The public `documentation/` folder contains the original architecture vision fro
 - ⚠️ **Implemented, Undocumented** — Works but not in public docs
 - ❌ **Documented, Not Implemented** — Docs claim it exists but it doesn't
 - 🔄 **Partially Implemented** — Some aspects work, others don't
-- DEPRECATED **Deprecated** — No longer used, may be removed
+- ⛔ DEPRECATED **Deprecated** — No longer used, may be removed
 
 ---
 
@@ -323,9 +323,9 @@ isn't needed. The semantic search over current discoveries is the key feature.
 | Phase | Status | Summary |
 |-------|--------|---------|
 | 1-3 | 📄 Planned | Original vision, partially implemented |
-| 4 | 📄 Planned | Persona system (simplified to prompts) | DEPRICIATED
+| 4 | ⛔ Depriciated  | Persona system (simplified to prompts) | DEPRICIATED
 | 5 | 📄 Planned | Multi-model (implemented as Phase 21) |
-| 6 | 📄 Planned | macOS port (not started) | DEPRICATED
+| 6 | ⛔ Depticiated | macOS port (not started) | DEPRICATED
 | 17 | ✅ Complete | Sharing tab |
 | 18 | ✅ Complete | Config editor |
 | 19 | 📄 Planned | Enhancement backlog |
@@ -376,7 +376,7 @@ isn't needed. The semantic search over current discoveries is the key feature.
 
 | Item | Decision | Notes |
 |------|----------|-------|
-| **LangGraph Orchestrator** | DEPRECATED | Direct Ollama calls work fine, no complex orchestration needed |
+| **LangGraph Orchestrator** |⛔ DEPRECATED | Direct Ollama calls work fine, no complex orchestration needed |
 | **Anomaly Detector** | Low priority | Safe mode exists, anomaly detection is "nice to have" |
 | **Recovery Playbooks** | Low priority | Manual recovery is fine for now |
 | **WebSocket Real-time** | Medium priority | Would improve chat UX, not blocking |
@@ -386,8 +386,8 @@ isn't needed. The semantic search over current discoveries is the key feature.
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| **Dashboard Pages** (16 pages) | High | Core user-facing features |
-| **API Routes** (18 route files) | Medium | Developer reference |
+| **Dashboard Pages** (16 pages) | ✅ Done | See guides/dashboard-pages.md |
+| **API Routes** (18 route files) | Medium | See API-REFERENCE.md (partial) |
 | **Frontend Components** | Low | Internal developer docs |
 
 ### Next Priority (P4)
