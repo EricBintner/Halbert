@@ -193,10 +193,23 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             """Serve React app for frontend routes."""
             return FileResponse(frontend_dist / "index.html")
     
-    # Startup event: auto-start ingestion
+    # Startup event: auto-start services
     @app.on_event("startup")
     async def startup_event():
         """Start background services on app startup."""
+        # Bootstrap system identity (if not already done)
+        try:
+            from ..knowledge import get_self_knowledge, bootstrap_identity
+            sk = get_self_knowledge()
+            if not sk.get_identity():
+                logger.info("Bootstrapping system identity...")
+                bootstrap_identity()
+            else:
+                logger.info(f"Self-knowledge loaded: {len(sk._knowledge)} entries")
+        except Exception as e:
+            logger.warning(f"Failed to bootstrap identity: {e}")
+        
+        # Start ingestion service
         try:
             from ..ingestion.service import get_ingestion_service
             service = get_ingestion_service()

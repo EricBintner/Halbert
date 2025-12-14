@@ -1865,3 +1865,227 @@ async def query_documents(q: str, k: int = 5):
     except Exception as e:
         logger.error(f"Document query failed: {e}")
         return {"query": q, "results": [], "count": 0, "error": str(e)}
+
+
+# =============================================================================
+# Self-Knowledge API (System Ontology)
+# =============================================================================
+
+@router.get("/knowledge/stats")
+async def get_knowledge_stats():
+    """Get self-knowledge statistics."""
+    try:
+        from ...knowledge import get_self_knowledge
+        sk = get_self_knowledge()
+        return sk.stats()
+    except Exception as e:
+        logger.error(f"Failed to get knowledge stats: {e}")
+        return {"error": str(e), "total_entries": 0}
+
+
+@router.get("/knowledge/identity")
+async def get_system_identity():
+    """Get core system identity."""
+    try:
+        from ...knowledge import get_self_knowledge
+        sk = get_self_knowledge()
+        return {
+            "identity": sk.get_identity(),
+            "hardware": [
+                {"subject": e.subject, "content": e.content}
+                for e in sk.get_by_type(sk._knowledge.get('hardware', {}).get('type') or 
+                                       __import__('halbert_core.knowledge', fromlist=['KnowledgeType']).KnowledgeType.HARDWARE)
+            ] if sk._knowledge else []
+        }
+    except Exception as e:
+        logger.error(f"Failed to get identity: {e}")
+        return {"identity": {}, "error": str(e)}
+
+
+@router.post("/knowledge/bootstrap")
+async def bootstrap_system_identity():
+    """Bootstrap system identity from current system state."""
+    try:
+        from ...knowledge import bootstrap_identity
+        identity = bootstrap_identity()
+        return {"success": True, "identity": identity}
+    except Exception as e:
+        logger.error(f"Failed to bootstrap identity: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class TeachRequest(BaseModel):
+    subject: str
+    content: str
+    rationale: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+@router.post("/knowledge/teach")
+async def teach_system(request: TeachRequest):
+    """
+    Teach the system something about itself.
+    
+    Example:
+        POST /api/settings/knowledge/teach
+        {
+            "subject": "bcachefs pool",
+            "content": "The pool uses nvme0n1 and nvme1n1 in RAID1",
+            "rationale": "For redundancy on critical data",
+            "tags": ["storage", "bcachefs"]
+        }
+    """
+    try:
+        from ...knowledge import get_self_knowledge
+        sk = get_self_knowledge()
+        
+        knowledge_id = sk.teach(
+            subject=request.subject,
+            content=request.content,
+            rationale=request.rationale,
+            tags=request.tags
+        )
+        
+        return {
+            "success": True,
+            "knowledge_id": knowledge_id,
+            "message": f"Learned about: {request.subject}"
+        }
+    except Exception as e:
+        logger.error(f"Failed to teach: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ConfigRationaleRequest(BaseModel):
+    config_name: str
+    description: str
+    rationale: str
+    tags: Optional[List[str]] = None
+
+
+@router.post("/knowledge/explain-config")
+async def explain_config(request: ConfigRationaleRequest):
+    """
+    Record WHY something is configured a certain way.
+    
+    Example:
+        POST /api/settings/knowledge/explain-config
+        {
+            "config_name": "kernel version",
+            "description": "Using kernel 6.8.12",
+            "rationale": "bcachefs requires kernel 6.8 or earlier"
+        }
+    """
+    try:
+        from ...knowledge import get_self_knowledge
+        sk = get_self_knowledge()
+        
+        knowledge_id = sk.explain_config(
+            config_name=request.config_name,
+            description=request.description,
+            rationale=request.rationale,
+            tags=request.tags
+        )
+        
+        return {
+            "success": True,
+            "knowledge_id": knowledge_id,
+            "message": f"Recorded config rationale for: {request.config_name}"
+        }
+    except Exception as e:
+        logger.error(f"Failed to explain config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RoleRequest(BaseModel):
+    component: str
+    role: str
+    rationale: Optional[str] = None
+
+
+@router.post("/knowledge/assign-role")
+async def assign_role(request: RoleRequest):
+    """
+    Assign a role/purpose to a component.
+    
+    Example:
+        POST /api/settings/knowledge/assign-role
+        {
+            "component": "sda",
+            "role": "backup disk",
+            "rationale": "Dedicated to Borg backup repository"
+        }
+    """
+    try:
+        from ...knowledge import get_self_knowledge
+        sk = get_self_knowledge()
+        
+        knowledge_id = sk.assign_role(
+            component=request.component,
+            role=request.role,
+            rationale=request.rationale
+        )
+        
+        return {
+            "success": True,
+            "knowledge_id": knowledge_id,
+            "message": f"Assigned role '{request.role}' to {request.component}"
+        }
+    except Exception as e:
+        logger.error(f"Failed to assign role: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/knowledge/search")
+async def search_knowledge(q: str, k: int = 5):
+    """Search self-knowledge semantically."""
+    try:
+        from ...knowledge import get_self_knowledge
+        sk = get_self_knowledge()
+        
+        results = sk.search(q, k=k)
+        
+        return {
+            "query": q,
+            "results": [
+                {
+                    "id": e.id,
+                    "type": e.type.value,
+                    "subject": e.subject,
+                    "content": e.content,
+                    "rationale": e.rationale,
+                    "source": e.source,
+                }
+                for e in results
+            ],
+            "count": len(results)
+        }
+    except Exception as e:
+        logger.error(f"Knowledge search failed: {e}")
+        return {"query": q, "results": [], "count": 0, "error": str(e)}
+
+
+@router.get("/knowledge/all")
+async def get_all_knowledge():
+    """Get all self-knowledge entries."""
+    try:
+        from ...knowledge import get_self_knowledge
+        sk = get_self_knowledge()
+        
+        entries = []
+        for entry in sk._knowledge.values():
+            entries.append({
+                "id": entry.id,
+                "type": entry.type.value,
+                "subject": entry.subject,
+                "content": entry.content,
+                "rationale": entry.rationale,
+                "source": entry.source,
+                "created_at": entry.created_at,
+                "tags": entry.tags,
+            })
+        
+        return {"entries": entries, "count": len(entries)}
+    except Exception as e:
+        logger.error(f"Failed to get knowledge: {e}")
+        return {"entries": [], "count": 0, "error": str(e)}

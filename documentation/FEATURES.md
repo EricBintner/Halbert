@@ -163,6 +163,30 @@ A comprehensive list of implemented features as of December 2025.
 - Collections: `self_conversations`, `self_knowledge_all`
 - API endpoints: `/api/chat/memory/stats`, `/api/chat/memory/query`
 
+### Self-Knowledge System (Ontology)
+**Persistent understanding of itself - WHY things are configured.**
+
+Knowledge Types:
+- **Identity**: Hostname, OS, hardware, primary purpose
+- **Config Rationale**: WHY something is configured a certain way
+- **Roles**: What purpose a component serves
+- **Relationships**: Component dependencies and connections
+- **User-Taught**: Explicit knowledge from the user
+
+Features:
+- Persisted to `~/.local/share/halbert/knowledge/self_knowledge.json`
+- ChromaDB semantic search over knowledge
+- Auto-bootstraps identity on first run
+- **First context injected** into every chat (core identity)
+
+API Endpoints:
+- `POST /api/settings/knowledge/teach` — Teach the system something
+- `POST /api/settings/knowledge/explain-config` — Record WHY a config exists
+- `POST /api/settings/knowledge/assign-role` — Assign purpose to a component
+- `GET /api/settings/knowledge/search?q=...` — Semantic search
+- `GET /api/settings/knowledge/identity` — Get core identity
+- `POST /api/settings/knowledge/bootstrap` — Re-bootstrap identity
+
 ### Telemetry Ingestion
 **Continuous system event collection.**
 

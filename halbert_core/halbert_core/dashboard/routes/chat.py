@@ -223,6 +223,26 @@ def get_discovery_context(query: str, max_results: int = 5) -> str:
         return ""
 
 
+def get_self_knowledge_context(query: str, max_results: int = 5) -> str:
+    """
+    Retrieve relevant self-knowledge for context.
+    
+    This is the system's persistent understanding of ITSELF:
+    - Core identity (hostname, OS, hardware)
+    - Configuration rationale (WHY things are set up)
+    - Component roles and relationships
+    - User-taught knowledge
+    """
+    try:
+        from ...knowledge import get_self_knowledge
+        
+        sk = get_self_knowledge()
+        return sk.get_context_for_query(query, max_entries=max_results)
+    except Exception as e:
+        logger.debug(f"Self-knowledge retrieval failed: {e}")
+        return ""
+
+
 def get_ollama_endpoint() -> str:
     """Get the Ollama endpoint URL from config (guide model's endpoint)."""
     try:
@@ -1148,6 +1168,16 @@ if FASTAPI_AVAILABLE:
         # Auto-inject context based on message content (Phase 13 smart context)
         message_lower = message.lower()
         auto_injected_types = set()
+        
+        # FIRST: Inject self-knowledge (core identity + relevant knowledge)
+        # This gives the system its persistent understanding of itself
+        self_knowledge_context = get_self_knowledge_context(message, max_results=5)
+        if self_knowledge_context:
+            context_parts.append(self_knowledge_context)
+            auto_injected_types.add('self_knowledge')
+            if debug_info:
+                debug_info['auto_injected_context'].append({'type': 'self_knowledge', 'count': 5})
+            logger.debug("Injected self-knowledge context")
         
         # Inject page context if available (Phase 17: UI awareness)
         if current_page and page_context:
