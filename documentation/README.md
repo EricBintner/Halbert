@@ -10,6 +10,7 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 
 | Document | Description |
 |----------|-------------|
+| [FEATURES.md](FEATURES.md) | **Complete feature list (start here!)** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | High-level system design |
 | [INSTALLATION.md](INSTALLATION.md) | Getting started guide |
 | [CONFIGURATION.md](CONFIGURATION.md) | Configuration reference |

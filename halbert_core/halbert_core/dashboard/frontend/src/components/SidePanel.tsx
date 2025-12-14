@@ -1088,7 +1088,8 @@ export function SidePanel() {
           currentPage,
           pageContext,
           imageData,  // Vision model support
-          history  // Conversation history for context
+          history,  // Conversation history for context
+          convId || ''  // Conversation ID for memory storage
         )
         
         // Clear focused item after sending (it's been included in context)
@@ -1631,7 +1632,8 @@ export function SidePanel() {
                                 currentPage || '',
                                 pageContext || '',
                                 [],  // No images
-                                historyWithContext
+                                historyWithContext,
+                                currentConversationId || ''  // Memory storage
                               )
                               
                               // Only show AI's analysis (which will include the output context)

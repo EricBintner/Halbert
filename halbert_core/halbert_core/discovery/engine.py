@@ -70,23 +70,24 @@ class DiscoveryEngine:
         """Initialize ChromaDB for persistent storage."""
         try:
             import chromadb
-            from chromadb.config import Settings
             
-            # Use persistent storage
-            self._chromadb_client = chromadb.Client(Settings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory=str(self._get_data_dir() / "chromadb"),
-                anonymized_telemetry=False,
-            ))
+            # Use persistent storage with new API (chromadb >= 0.4)
+            persist_dir = str(self._get_data_dir() / "chromadb")
+            self._chromadb_client = chromadb.PersistentClient(
+                path=persist_dir,
+            )
             
             self._collection = self._chromadb_client.get_or_create_collection(
                 name="discoveries",
                 metadata={"description": "Halbert system discoveries"}
             )
             
-            logger.info("ChromaDB initialized for discovery storage")
+            logger.info(f"ChromaDB initialized at {persist_dir}")
         except ImportError:
             logger.warning("ChromaDB not installed, using in-memory storage")
+            self.use_chromadb = False
+        except Exception as e:
+            logger.warning(f"ChromaDB init failed ({e}), using in-memory storage")
             self.use_chromadb = False
     
     def _get_data_dir(self):
@@ -355,9 +356,15 @@ class DiscoveryEngine:
 _engine: Optional[DiscoveryEngine] = None
 
 
-def get_engine() -> DiscoveryEngine:
-    """Get the global discovery engine instance."""
+def get_engine(use_chromadb: bool = True) -> DiscoveryEngine:
+    """
+    Get the global discovery engine instance.
+    
+    Args:
+        use_chromadb: Enable ChromaDB for persistent vector storage.
+                      Default is True for production use.
+    """
     global _engine
     if _engine is None:
-        _engine = DiscoveryEngine()
+        _engine = DiscoveryEngine(use_chromadb=use_chromadb)
     return _engine

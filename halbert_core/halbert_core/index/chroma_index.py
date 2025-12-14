@@ -1,68 +1,124 @@
-from __future__ import annotations
-from typing import Dict, Any, List, Optional, Tuple
-
 """
-ChromaDB-backed index (Phase 1) with safe in-memory fallback.
-Collections: self_hwmon, self_journald, self_dbus, self_ebpf, self_knowledge_all
+ChromaDB-backed index for Halbert memory and knowledge storage.
+
+Uses persistent ChromaDB with separate collections for:
+- self_hwmon: Hardware sensor events
+- self_journald: System log events  
+- self_dbus: D-Bus events
+- self_conversations: Chat history for context retrieval
+- self_knowledge_all: Global knowledge index
+
 Text for embedding: f"{message} {compact(data)}"; metadata filters per docs.
 """
+from __future__ import annotations
+from typing import Dict, Any, List, Optional
+from pathlib import Path
+import logging
+
+logger = logging.getLogger('halbert.index')
 
 try:
-    import chromadb  # type: ignore
-    from chromadb.config import Settings  # type: ignore
-except Exception:
+    import chromadb
+    CHROMADB_AVAILABLE = True
+except ImportError:
     chromadb = None  # type: ignore
-    Settings = None  # type: ignore
+    CHROMADB_AVAILABLE = False
 
 
 def _compact_text(event: Dict[str, Any]) -> str:
+    """Create searchable text from event."""
     msg = str(event.get("message", ""))
     data = event.get("data")
     if isinstance(data, dict):
-        parts = []
-        for k, v in data.items():
-            parts.append(f"{k}={v}")
+        parts = [f"{k}={v}" for k, v in data.items()]
         return (msg + " " + " ".join(parts)).strip()
     return msg
 
 
 class _MemoryIndex:
-    def __init__(self) -> None:
+    """In-memory fallback when ChromaDB is unavailable."""
+    
+    def __init__(self, max_events: int = 10000) -> None:
         self.events: List[Dict[str, Any]] = []
+        self.max_events = max_events
 
     def upsert(self, *events: Dict[str, Any]) -> None:
         self.events.extend(events)
+        # Trim to max size
+        if len(self.events) > self.max_events:
+            self.events = self.events[-self.max_events:]
 
     def query(self, text: str, k: int = 5) -> List[Dict[str, Any]]:
+        """Simple recency-based retrieval."""
         return list(reversed(self.events))[:k]
+    
+    def search(self, text: str, k: int = 5) -> List[Dict[str, Any]]:
+        """Basic text matching search."""
+        text_lower = text.lower()
+        matches = []
+        for event in reversed(self.events):
+            event_text = _compact_text(event).lower()
+            if text_lower in event_text:
+                matches.append(event)
+                if len(matches) >= k:
+                    break
+        return matches if matches else self.query(text, k)
 
 
 class Index:
+    """
+    ChromaDB-backed persistent index with in-memory fallback.
+    
+    Provides semantic search over system events and conversations.
+    """
+    
     def __init__(self, persist_path: Optional[str] = None) -> None:
         self.mem = _MemoryIndex()
         self.client = None
         self.collections: Dict[str, Any] = {}
-        if chromadb is not None:
-            try:
-                self.client = chromadb.Client(Settings(persist_directory=persist_path) if persist_path else chromadb.Settings())  # type: ignore
-            except Exception:
-                self.client = None
+        self._persist_path = persist_path
+        
+        if CHROMADB_AVAILABLE:
+            self._init_chromadb()
+    
+    def _init_chromadb(self) -> None:
+        """Initialize ChromaDB client."""
+        try:
+            if self._persist_path:
+                # Persistent storage
+                Path(self._persist_path).mkdir(parents=True, exist_ok=True)
+                self.client = chromadb.PersistentClient(path=self._persist_path)
+            else:
+                # Default persistent location
+                default_path = Path.home() / ".local" / "share" / "halbert" / "chromadb"
+                default_path.mkdir(parents=True, exist_ok=True)
+                self.client = chromadb.PersistentClient(path=str(default_path))
+            
+            logger.info(f"ChromaDB initialized at {self._persist_path or default_path}")
+        except Exception as e:
+            logger.warning(f"ChromaDB init failed ({e}), using in-memory fallback")
+            self.client = None
 
     def _collection(self, name: str):
+        """Get or create a collection."""
         if self.client is None:
             return None
         if name in self.collections:
             return self.collections[name]
         try:
-            col = self.client.get_or_create_collection(name=name)  # type: ignore
+            col = self.client.get_or_create_collection(name=name)
             self.collections[name] = col
             return col
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to get collection {name}: {e}")
             return None
 
     def upsert_event(self, event: Dict[str, Any]) -> None:
+        """Store an event in the index."""
         text = _compact_text(event)
-        meta = {k: event.get(k) for k in ("source", "host", "ts", "type", "subsystem", "severity", "tags", "hash")}
+        meta = {k: str(event.get(k, "")) for k in 
+                ("source", "host", "ts", "type", "subsystem", "severity", "tags", "hash")
+                if event.get(k) is not None}
         doc_id = event.get("hash") or f"{event.get('source','evt')}:{event.get('ts','')}:{len(text)}"
         src = str(event.get("source", "misc"))
         col_name = {
@@ -70,6 +126,7 @@ class Index:
             "journald": "self_journald",
             "dbus": "self_dbus",
             "ebpf": "self_ebpf",
+            "conversation": "self_conversations",
         }.get(src, f"self_{src}")
 
         # Memory fallback
@@ -80,20 +137,157 @@ class Index:
             col = self._collection(name)
             if col is not None:
                 try:
-                    col.upsert(ids=[doc_id], documents=[text], metadatas=[meta])  # type: ignore
-                except Exception:
-                    pass
+                    col.upsert(ids=[doc_id], documents=[text], metadatas=[meta])
+                except Exception as e:
+                    logger.debug(f"Failed to upsert to {name}: {e}")
 
-    def query(self, text: str, k: int = 5) -> List[Dict[str, Any]]:
-        # If chroma is available with a global collection, query it; else memory fallback
+    def upsert_conversation(
+        self, 
+        conversation_id: str,
+        message: str,
+        role: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Store a conversation message for context retrieval.
+        
+        Args:
+            conversation_id: Unique conversation identifier
+            message: Message content
+            role: 'user' or 'assistant'
+            metadata: Additional metadata (page, mentions, etc.)
+        """
+        import time
+        
+        doc_id = f"conv:{conversation_id}:{int(time.time() * 1000)}"
+        meta = {
+            "conversation_id": conversation_id,
+            "role": role,
+            "timestamp": str(int(time.time())),
+            **(metadata or {})
+        }
+        
+        # Store in conversations collection
+        col = self._collection("self_conversations")
+        if col is not None:
+            try:
+                col.upsert(ids=[doc_id], documents=[message], metadatas=[meta])
+            except Exception as e:
+                logger.debug(f"Failed to store conversation: {e}")
+        
+        # Also store in global knowledge for cross-conversation retrieval
         col = self._collection("self_knowledge_all")
         if col is not None:
             try:
-                res = col.query(query_texts=[text], n_results=k)  # type: ignore
-            except Exception:
-                res = None
-            if res and res.get("metadatas"):
-                # Return metadatas; they include fields we stored
-                metas = res["metadatas"][0]
-                return metas
-        return self.mem.query(text, k)
+                col.upsert(ids=[doc_id], documents=[message], metadatas=[meta])
+            except Exception as e:
+                logger.debug(f"Failed to store in knowledge: {e}")
+
+    def query(self, text: str, k: int = 5, collection: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Query the index for relevant events.
+        
+        Args:
+            text: Query text
+            k: Number of results
+            collection: Specific collection to query (default: self_knowledge_all)
+            
+        Returns:
+            List of matching events with metadata
+        """
+        col_name = collection or "self_knowledge_all"
+        col = self._collection(col_name)
+        
+        if col is not None:
+            try:
+                res = col.query(query_texts=[text], n_results=k)
+                if res and res.get("metadatas") and res.get("documents"):
+                    results = []
+                    for i, meta in enumerate(res["metadatas"][0]):
+                        results.append({
+                            **meta,
+                            "content": res["documents"][0][i] if res["documents"][0] else "",
+                            "distance": res.get("distances", [[]])[0][i] if res.get("distances") else None
+                        })
+                    return results
+            except Exception as e:
+                logger.warning(f"ChromaDB query failed: {e}")
+        
+        return self.mem.search(text, k)
+    
+    def query_conversations(
+        self, 
+        query: str, 
+        k: int = 5,
+        conversation_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Query past conversations for relevant context.
+        
+        Args:
+            query: Query text
+            k: Number of results
+            conversation_id: Filter to specific conversation
+            
+        Returns:
+            List of relevant conversation snippets
+        """
+        col = self._collection("self_conversations")
+        if col is None:
+            return []
+        
+        try:
+            if conversation_id:
+                # Filter by conversation ID
+                res = col.query(
+                    query_texts=[query],
+                    n_results=k,
+                    where={"conversation_id": conversation_id}
+                )
+            else:
+                res = col.query(query_texts=[query], n_results=k)
+            
+            if res and res.get("metadatas") and res.get("documents"):
+                results = []
+                for i, meta in enumerate(res["metadatas"][0]):
+                    results.append({
+                        **meta,
+                        "content": res["documents"][0][i] if res["documents"][0] else "",
+                        "distance": res.get("distances", [[]])[0][i] if res.get("distances") else None
+                    })
+                return results
+        except Exception as e:
+            logger.warning(f"Conversation query failed: {e}")
+        
+        return []
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get index statistics."""
+        stats = {
+            "chromadb_available": self.client is not None,
+            "memory_events": len(self.mem.events),
+            "collections": {}
+        }
+        
+        if self.client is not None:
+            for name in ["self_knowledge_all", "self_conversations", "self_hwmon", "self_journald"]:
+                col = self._collection(name)
+                if col is not None:
+                    try:
+                        stats["collections"][name] = col.count()
+                    except Exception:
+                        stats["collections"][name] = "error"
+        
+        return stats
+
+
+# Singleton instance
+_index: Optional[Index] = None
+
+
+def get_index(persist_path: Optional[str] = None) -> Index:
+    """Get the global index instance."""
+    global _index
+    if _index is None:
+        _index = Index(persist_path=persist_path)
+    return _index

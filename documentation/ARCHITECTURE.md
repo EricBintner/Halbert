@@ -2,13 +2,15 @@
 
 This document provides a high-level overview of Halbert's architecture. For detailed component documentation, see the [architecture/](architecture/) directory.
 
+**Legend**: ✅ Implemented | 🔄 Partial | 📋 Planned
+
 ---
 
 ## System Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                              User Interface                             │
+│                         User Interface  ✅                              │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────────┐  │
 │  │   CLI       │  │  Dashboard  │  │        REST API                 │  │
 │  │ (main.py)   │  │  (React)    │  │       (FastAPI)                 │  │
@@ -17,11 +19,12 @@ This document provides a high-level overview of Halbert's architecture. For deta
           │                │                          │
           ▼                ▼                          ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           Runtime Engine                                │
+│                         Chat Engine  ✅                                 │
 │  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │                    LangGraph Orchestrator                        │   │
+│  │              Smart Model Router (Guide ↔ Specialist)             │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │   │
-│  │  │ Planner  │→ │ Executor │→ │ Observer │→ │ Response Builder │  │   │
+│  │  │ Context  │→ │  Model   │→ │  Ollama  │→ │    Response      │  │   │
+│  │  │ Injection│  │ Selection│  │   API    │  │    + Actions     │  │   │
 │  │  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘  │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────┬────────────────────────────────────────┘
@@ -29,14 +32,14 @@ This document provides a high-level overview of Halbert's architecture. For deta
           ┌──────────────────────┼──────────────────────┐
           ▼                      ▼                      ▼
 ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐
-│  Model System   │  │  Memory System  │  │        Tool System          │
+│  Model System ✅ │  │ Memory System ✅│  │    Discovery System  ✅     │
 │  ┌───────────┐  │  │  ┌───────────┐  │  │  ┌─────────┐ ┌───────────┐  │
-│  │  Ollama   │  │  │  │ ChromaDB  │  │  │  │read_    │ │write_     │  │
-│  │  Backend  │  │  │  │ (Vector)  │  │  │  │sensor   │ │config     │  │
+│  │  Ollama   │  │  │  │ ChromaDB  │  │  │  │Storage  │ │Network    │  │
+│  │  Backend  │  │  │  │ (Vector)  │  │  │  │Scanner  │ │Scanner    │  │
 │  └───────────┘  │  │  └───────────┘  │  │  └─────────┘ └───────────┘  │
 │  ┌───────────┐  │  │  ┌───────────┐  │  │  ┌─────────┐ ┌───────────┐  │
-│  │  Prompt   │  │  │  │ Retrieval │  │  │  │schedule │ │query_     │  │
-│  │  Manager  │  │  │  │  Engine   │  │  │  │cron     │ │journal    │  │
+│  │  Vision   │  │  │  │Conversation│ │  │  │Service  │ │Security   │  │
+│  │  Model    │  │  │  │ Retrieval │  │  │  │Scanner  │ │Scanner    │  │
 │  └───────────┘  │  │  └───────────┘  │  │  └─────────┘ └───────────┘  │
 └─────────────────┘  └─────────────────┘  └─────────────────────────────┘
           │                      │                      │
@@ -45,12 +48,12 @@ This document provides a high-level overview of Halbert's architecture. For deta
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         Data Layer                                      │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────────┐   │
-│  │  journald   │  │   hwmon     │  │   Config    │  │  Policy       │   │
-│  │  Ingestion  │  │  Ingestion  │  │  Registry   │  │  Engine       │   │
+│  │ RAG Pipeline│  │   Config    │  │  Approval   │  │  AI Rules     │   │
+│  │  ✅ Hybrid  │  │   Editor ✅ │  │  System 🔄  │  │     ✅        │   │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └───────────────┘   │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────────┐  │
-│  │  Scheduler  │  │  Approval   │  │          Guardrails             │  │
-│  │  (APScheduler) │  │  Engine    │  │  (Budgets, Limits, Controls)   │  │
+│  │  Scheduler  │  │ Ingestion   │  │        Guardrails               │  │
+│  │    📋      │  │    📋       │  │          📋                     │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -59,226 +62,226 @@ This document provides a high-level overview of Halbert's architecture. For deta
 
 ## Core Components
 
-### 1. User Interface Layer
+### 1. User Interface Layer ✅
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **CLI** | `Halbert/main.py` | Command-line interface with 50+ commands |
-| **Dashboard** | `halbert_core/dashboard/` | React + FastAPI web interface |
-| **REST API** | `halbert_core/dashboard/routes/` | Programmatic access |
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **Dashboard** | `halbert_core/dashboard/` | React + FastAPI web interface | ✅ |
+| **REST API** | `halbert_core/dashboard/routes/` | Programmatic access | ✅ |
+| **CLI** | `Halbert/main.py` | Command-line interface | 🔄 |
 
-The CLI is the primary interface for power users. The dashboard provides a web-based GUI with real-time updates via WebSocket.
+The dashboard is the primary interface with 16 pages covering system management. The REST API provides full programmatic access.
 
-### 2. Runtime Engine
+### 2. Chat Engine ✅
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Orchestrator** | `halbert_core/runtime/engine.py` | LangGraph-based agent loop |
-| **State Management** | `halbert_core/runtime/state.py` | Conversation and agent state |
-| **Graph Definition** | `halbert_core/runtime/graph.py` | Node and edge definitions |
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **Chat Routes** | `dashboard/routes/chat.py` | Main chat processing | ✅ |
+| **Model Router** | `model/router.py` | Complexity-based model selection | ✅ |
+| **Context Injection** | `routes/chat.py` | Auto-inject relevant discoveries | ✅ |
 
-The runtime engine uses [LangGraph](https://github.com/langchain-ai/langgraph) to orchestrate multi-step reasoning. It:
-1. Receives user input
-2. Plans required tool calls
-3. Executes tools with approval checks
-4. Observes results
-5. Builds grounded responses
+The chat engine processes user queries through:
+1. **Context injection** — Keywords trigger relevant discovery injection
+2. **Memory retrieval** — ChromaDB semantic search for past conversations  
+3. **Model selection** — Complexity scoring routes to Guide (8B) or Specialist (70B)
+4. **Ollama API** — Direct API calls to local LLM
+5. **Response + actions** — Response with suggested actions and tool calling
 
-### 3. Model System
+### 3. Model System ✅
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Model Loader** | `halbert_core/model/loader.py` | LLM initialization and management |
-| **Prompt Manager** | `halbert_core/model/prompt_manager.py` | System prompt construction |
-| **Model Router** | `halbert_core/model/router.py` | Task-based model selection |
-| **Providers** | `halbert_core/model/providers/` | Backend integrations (Ollama, etc.) |
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **Guide Model** | Configurable | Fast 8B model for simple queries | ✅ |
+| **Specialist Model** | Configurable | Large 70B model for complex reasoning | ✅ |
+| **Vision Model** | Configurable | Multimodal for image analysis | ✅ |
+| **Model Config** | `~/.config/halbert/models.yml` | Endpoint + model assignments | ✅ |
 
-The model system handles LLM integration. The **Prompt Manager** is critical—it injects the system's self-identity into every conversation:
-
-```python
-# Simplified example
-system_prompt = f"""
-You are {hostname}. You run {os_version}. 
-Your primary storage is {disk_info}.
-Your current temperature is {cpu_temp}°C.
-All your responses must be grounded in this reality.
-"""
-```
-
-### 4. Memory System
-
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Vector Index** | `halbert_core/index/chroma_index.py` | ChromaDB wrapper |
-| **Retrieval Engine** | `halbert_core/memory/retrieval.py` | RAG query execution |
-| **Memory Writer** | `halbert_core/memory/writer.py` | Event persistence |
-
-The memory system stores and retrieves system events. When the user asks a question, relevant past events are retrieved and included in the prompt context.
-
-### 5. Tool System
-
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Base Tool** | `halbert_core/tools/base.py` | Tool interface contract |
-| **read_sensor** | `halbert_core/tools/read_sensor.py` | Hardware sensor access |
-| **write_config** | `halbert_core/tools/write_config.py` | Configuration modification |
-| **schedule_cron** | `halbert_core/tools/schedule_cron.py` | Cron job management |
-
-Tools are the LLM's "hands"—functions it can call to interact with the system. All tools:
-- Support dry-run mode
-- Emit audit logs
-- Require approval for destructive operations
-
-### 6. Ingestion Pipeline
-
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **journald** | `halbert_core/ingestion/journald.py` | System log collection |
-| **hwmon** | `halbert_core/ingestion/hwmon.py` | Hardware sensor collection |
-| **JSONL Writer** | `halbert_core/ingestion/jsonl_writer.py` | Event persistence |
-| **Severity Mapper** | `halbert_core/ingestion/severity.py` | Log level normalization |
-| **Redaction** | `halbert_core/ingestion/redaction.py` | Sensitive data removal |
-
-Ingestion continuously collects telemetry and logs, transforms them into structured events, and indexes them for retrieval.
-
-### 7. Policy Engine
-
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Policy Loader** | `halbert_core/policy/loader.py` | YAML policy parsing |
-| **Policy Engine** | `halbert_core/policy/engine.py` | Rule evaluation |
-
-Policies define what the LLM can and cannot do:
+Models are configured per-role with separate endpoints. Complexity scoring routes queries automatically.
 
 ```yaml
-# Example policy
-rules:
-  - action: restart_service
-    requires_approval: true
-    
-  - action: read_logs
-    requires_approval: false
+# ~/.config/halbert/models.yml
+orchestrator:
+  endpoint: http://localhost:11434
+  model: llama3.1:8b
+specialist:
+  enabled: true
+  endpoint: http://remote:11434
+  model: llama3.1:70b
+vision:
+  endpoint: http://localhost:11434
+  model: llava:34b
 ```
 
-### 8. Scheduler
+### 4. Memory System ✅
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Job Definitions** | `halbert_core/scheduler/job.py` | Scheduled task schema |
-| **Scheduler Engine** | `halbert_core/scheduler/engine.py` | APScheduler wrapper |
-| **Executor** | `halbert_core/scheduler/executor.py` | Job execution with guardrails |
-| **Autonomous Tasks** | `halbert_core/scheduler/autonomous_tasks.py` | LLM-driven tasks |
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **ChromaDB Index** | `index/chroma_index.py` | Persistent vector storage | ✅ |
+| **Conversation Memory** | `self_conversations` collection | Chat history for retrieval | ✅ |
+| **Knowledge Index** | `self_knowledge_all` collection | Global knowledge base | ✅ |
+| **Memory API** | `/api/chat/memory/*` | Stats and query endpoints | ✅ |
 
-The scheduler runs background tasks:
-- Health checks
-- Log rotation
-- Trend analysis
-- Proactive maintenance
+The memory system provides semantic search over past conversations:
+- Conversations stored with embeddings in ChromaDB
+- Relevant past context auto-injected into new queries
+- Persisted to `~/.local/share/halbert/chromadb/`
 
-### 9. Approval System
+### 5. Discovery System ✅
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Approval Engine** | `halbert_core/approval/engine.py` | Approval workflow management |
-| **Simulator** | `halbert_core/approval/simulator.py` | Dry-run simulation |
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **Discovery Engine** | `discovery/engine.py` | Scanner orchestration | ✅ |
+| **Storage Scanner** | `discovery/scanners/disk_usage.py` | Disks, filesystems, SMART | ✅ |
+| **Service Scanner** | `discovery/scanners/services.py` | Systemd services | ✅ |
+| **Network Scanner** | `discovery/scanners/network.py` | Interfaces, bridges, VPN | ✅ |
+| **Security Scanner** | `discovery/scanners/security.py` | SSH, firewall, users | ✅ |
+| **Sharing Scanner** | `discovery/scanners/sharing.py` | NFS, SMB, Tailscale | ✅ |
+| **Backup Scanner** | `discovery/scanners/backup.py` | Timeshift, Borg | ✅ |
 
-When a tool requires approval, the workflow:
-1. Displays what would change (dry-run)
-2. Waits for user confirmation
-3. Executes if approved
-4. Logs the decision either way
+Scanners run on-demand per page and store results in ChromaDB for context injection.
 
-### 10. Guardrails
+### 6. RAG Pipeline ✅
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Guardrails** | `halbert_core/autonomy/guardrails.py` | Safety checks |
-| **Budgets** | `halbert_core/autonomy/budgets.py` | Rate limiting |
-| **Anomaly Detector** | `halbert_core/autonomy/anomaly_detector.py` | Unusual behavior detection |
-| **Recovery** | `halbert_core/autonomy/recovery.py` | Rollback procedures |
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **RAG Pipeline** | `rag/pipeline.py` | End-to-end retrieval | ✅ |
+| **Hybrid Retriever** | `rag/retriever.py` | BM25 + dense embeddings | ✅ |
+| **Embedding Manager** | `rag/embeddings.py` | Sentence transformers | ✅ |
+| **Index Builder** | `rag/index_builder.py` | Document indexing | ✅ |
 
-Guardrails prevent runaway automation:
-- Operation budgets (max N operations per hour)
-- Cooling-off periods between high-risk actions
-- Emergency stop capability
-- Anomaly detection for unusual patterns
+Hybrid retrieval combines:
+- **BM25** sparse retrieval for keyword matching
+- **Dense embeddings** for semantic similarity
+- **RRF fusion** to merge results
+- **Cross-encoder reranking** for precision
+
+### 7. Config Editor ✅
+
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **Editor Routes** | `routes/editor.py` | File read/write API | ✅ |
+| **Config Chat** | `routes/chat.py` | AI-assisted editing | ✅ |
+| **ConfigEditor UI** | `frontend/components/ConfigEditor.tsx` | Monaco editor + diff | ✅ |
+
+AI-assisted config editing with SEARCH/REPLACE blocks and inline diff view.
+
+### 8. Ingestion Pipeline 📋
+
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **journald** | `ingestion/journald.py` | System log collection | 📋 |
+| **hwmon** | `ingestion/hwmon.py` | Hardware sensor collection | 📋 |
+| **JSONL Writer** | `ingestion/jsonl_writer.py` | Event persistence | 📋 |
+
+**Planned**: Continuous telemetry collection and indexing. Currently, discoveries are on-demand.
+
+### 9. Scheduler 📋
+
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **Scheduler Engine** | `scheduler/engine.py` | APScheduler wrapper | 📋 |
+| **Autonomous Tasks** | `scheduler/autonomous_tasks.py` | LLM-driven tasks | 📋 |
+
+**Planned**: Background tasks for health checks, trend analysis, proactive maintenance.
+
+### 10. Guardrails 📋
+
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **Guardrails** | `autonomy/guardrails.py` | Safety checks | 📋 |
+| **Budgets** | `autonomy/budgets.py` | Rate limiting | 📋 |
+| **AI Rules** | `settings/ai_rules.yml` | User-defined rules | ✅ |
+
+**Partial**: AI Rules implemented for user-defined guardrails. Full budget/rate-limiting planned.
+
+### 11. Approval System 🔄
+
+| Component | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| **Approval Routes** | `routes/approvals.py` | Approval workflow API | 🔄 |
+| **Approval Page** | `pages/Approvals.tsx` | Pending approvals UI | 🔄 |
+
+**Partial**: UI exists, workflow integration minimal.
 
 ---
 
 ## Data Flow
 
-### Query Flow
+### Chat Query Flow (Current Implementation)
 
 ```
-User Input
+User Message
     │
     ▼
 ┌───────────────────────────────────────┐
-│ 1. Runtime Engine receives query      │
+│ 1. Parse message and @mentions        │
 └───────────────────────────────────────┘
     │
     ▼
 ┌───────────────────────────────────────┐
-│ 2. Memory retrieval (ChromaDB query)  │
-│    - Find relevant past events        │
-│    - Find relevant config state       │
+│ 2. Context Injection                  │
+│    - Page context (current view)      │
+│    - Memory retrieval (ChromaDB)      │
+│    - Keyword → discovery mapping      │
+│    - Failure correlation              │
 └───────────────────────────────────────┘
     │
     ▼
 ┌───────────────────────────────────────┐
-│ 3. Prompt construction                │
-│    - System identity                  │
-│    - Retrieved context                │
-│    - User query                       │
+│ 3. Model Selection                    │
+│    - Complexity scoring               │
+│    - Route to Guide or Specialist     │
 └───────────────────────────────────────┘
     │
     ▼
 ┌───────────────────────────────────────┐
-│ 4. LLM inference (Ollama)             │
-│    - Plan tool calls if needed        │
-│    - Generate response                │
+│ 4. Ollama API Call                    │
+│    - System prompt + context          │
+│    - Conversation history             │
+│    - Vision model if images present   │
 └───────────────────────────────────────┘
     │
     ▼
 ┌───────────────────────────────────────┐
-│ 5. Tool execution (if planned)        │
-│    - Policy check                     │
-│    - Approval if required             │
-│    - Execute with audit logging       │
+│ 5. Response Processing                │
+│    - Store in conversation memory     │
+│    - Parse tool calls if present      │
+│    - Generate suggested actions       │
 └───────────────────────────────────────┘
     │
     ▼
 Response to User
 ```
 
-### Ingestion Flow
+### Discovery Flow
 
 ```
-System Events (journald, hwmon, configs)
+Page Load (e.g., Storage)
     │
     ▼
 ┌───────────────────────────────────────┐
-│ 1. Ingestion adapters collect data    │
+│ 1. Frontend requests /api/discovery   │
 └───────────────────────────────────────┘
     │
     ▼
 ┌───────────────────────────────────────┐
-│ 2. Normalize and structure            │
-│    - Severity mapping                 │
-│    - Schema validation                │
-│    - Redaction                        │
+│ 2. Discovery Engine runs scanner      │
+│    - StorageScanner for Storage page  │
+│    - Detects disks, filesystems, etc. │
 └───────────────────────────────────────┘
     │
     ▼
 ┌───────────────────────────────────────┐
-│ 3. Write to JSONL (raw storage)       │
+│ 3. Store in ChromaDB                  │
+│    - discoveries collection           │
+│    - With embedding for search        │
 └───────────────────────────────────────┘
     │
     ▼
 ┌───────────────────────────────────────┐
-│ 4. Embed and index (ChromaDB)         │
-│    - Generate embeddings              │
-│    - Store with metadata              │
+│ 4. Return to frontend                 │
+│    - Display in page UI               │
+│    - Available for @mentions          │
 └───────────────────────────────────────┘
 ```
 
@@ -292,17 +295,19 @@ System Events (journald, hwmon, configs)
 |------|------|---------|
 | **Config** | `~/.config/halbert/` | User configuration |
 | **Data** | `~/.local/share/halbert/` | Persistent data |
-| **State** | `~/.local/state/halbert/` | Runtime state |
-| **Logs** | `~/.local/state/halbert/log/` | Application logs |
+| **ChromaDB** | `~/.local/share/halbert/chromadb/` | Vector database |
+| **Conversations** | `~/.local/share/halbert/conversations/` | Chat history |
 
 ### Key Configuration Files
 
-| File | Purpose |
-|------|---------|
-| `ingestion.yml` | Telemetry collection settings |
-| `config-registry.yml` | Tracked system configs |
-| `policy.yml` | Policy rules |
-| `autonomy.yml` | Guardrail settings |
+| File | Purpose | Status |
+|------|---------|--------|
+| `models.yml` | Model/endpoint configuration | ✅ |
+| `ai_rules.yml` | Custom AI guardrails | ✅ |
+| `personas/` | Persona definitions | ✅ |
+| `ingestion.yml` | Telemetry settings | 📋 |
+| `policy.yml` | Policy rules | 📋 |
+| `autonomy.yml` | Guardrail settings | 📋 |
 
 ---
 
@@ -310,15 +315,15 @@ System Events (journald, hwmon, configs)
 
 ### Python Packages
 
-| Package | Purpose |
-|---------|---------|
-| `langchain` / `langgraph` | LLM orchestration |
-| `chromadb` | Vector database |
-| `pydantic` | Data validation |
-| `fastapi` | REST API |
-| `apscheduler` | Task scheduling |
-| `watchdog` | File monitoring |
-| `systemd-python` | journald access |
+| Package | Purpose | Status |
+|---------|---------|--------|
+| `pydantic` | Data validation | ✅ |
+| `fastapi` | REST API | ✅ |
+| `chromadb` | Vector database | ✅ |
+| `sentence-transformers` | Embeddings | ✅ |
+| `rank-bm25` | Sparse retrieval | ✅ |
+| `pyyaml` | Config parsing | ✅ |
+| `requests` | HTTP client | ✅ |
 
 ### External Services
 
@@ -326,13 +331,26 @@ System Events (journald, hwmon, configs)
 |---------|---------|
 | **Ollama** | Local LLM inference |
 
-Halbert runs entirely locally. No external API calls are required for core functionality.
+Halbert runs entirely locally. No external API calls required.
 
 ---
 
 ## Next Steps
 
-- [architecture/self-identity.md](architecture/self-identity.md) — The self-identifying LLM concept
-- [architecture/runtime-engine.md](architecture/runtime-engine.md) — LangGraph orchestration details
-- [architecture/memory-system.md](architecture/memory-system.md) — RAG and retrieval
-- [INSTALLATION.md](INSTALLATION.md) — Getting started
+Priority items from gap analysis:
+
+1. **Ingestion Pipeline** — Continuous journald/hwmon collection
+2. **Scheduler** — Background autonomous tasks  
+3. **Guardrails** — Budget/rate limiting enforcement
+4. **Approval Workflow** — Full dry-run + approval flow
+
+See [GAPS.md](GAPS.md) for detailed gap analysis.
+
+---
+
+## Related Documentation
+
+- [FEATURES.md](FEATURES.md) — Complete feature list
+- [API-REFERENCE.md](API-REFERENCE.md) — REST API documentation  
+- [architecture/](architecture/) — Component deep-dives
+- [CONFIGURATION.md](CONFIGURATION.md) — Configuration reference
