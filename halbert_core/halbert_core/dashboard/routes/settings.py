@@ -2181,14 +2181,34 @@ def _check_approval_conflicts(action: str, task: str, affected_resources: list) 
 
 
 @router.get("/approvals/pending")
-async def get_pending_approvals():
-    """Get all pending approval requests, with AI rule conflict checking."""
+async def get_pending_approvals(include_blocked: bool = False):
+    """
+    Get all pending approval requests.
+    
+    By default, approvals that conflict with AI Rules are FILTERED OUT.
+    Set include_blocked=true to see them with warnings.
+    """
     try:
         engine = get_approval_engine()
         pending = engine.get_pending_requests()
         
         results = []
+        blocked_count = 0
+        
         for req in pending:
+            # Check for AI rule conflicts
+            conflict = _check_approval_conflicts(
+                req.action, 
+                req.task, 
+                req.affected_resources
+            )
+            
+            # By default, BLOCK approvals that conflict with rules
+            if conflict and not include_blocked:
+                blocked_count += 1
+                logger.info(f"Blocking approval '{req.id}' - conflicts with rule: {conflict.get('conflicting_rule')}")
+                continue
+            
             item = {
                 "id": req.id,
                 "task": req.task,
@@ -2201,12 +2221,6 @@ async def get_pending_approvals():
                 "simulation_result": req.simulation_result,
             }
             
-            # Check for AI rule conflicts
-            conflict = _check_approval_conflicts(
-                req.action, 
-                req.task, 
-                req.affected_resources
-            )
             if conflict:
                 item["rule_conflict"] = conflict
             
@@ -2215,7 +2229,8 @@ async def get_pending_approvals():
         return {
             "status": "ok",
             "pending": results,
-            "count": len(results)
+            "count": len(results),
+            "blocked_by_rules": blocked_count
         }
     except Exception as e:
         logger.error(f"Failed to get pending approvals: {e}")

@@ -15,6 +15,7 @@ import { CheckCircle, XCircle, AlertTriangle, Clock, History, ShieldAlert } from
 
 export function Approvals() {
   const [pending, setPending] = useState<ApprovalRequest[]>([])
+  const [blockedByRules, setBlockedByRules] = useState(0)
   const [history, setHistory] = useState<ApprovalHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -27,11 +28,12 @@ export function Approvals() {
 
   const loadAll = async () => {
     try {
-      const [approvals, hist] = await Promise.all([
+      const [approvalsResponse, hist] = await Promise.all([
         getPendingApprovals(),
         getApprovalHistory(20)
       ])
-      setPending(approvals)
+      setPending(approvalsResponse.pending)
+      setBlockedByRules(approvalsResponse.blocked_by_rules)
       setHistory(hist)
       setLoading(false)
     } catch (error) {
@@ -73,6 +75,16 @@ export function Approvals() {
           Review and approve autonomous actions
         </p>
       </div>
+
+      {/* Show blocked count if any */}
+      {blockedByRules > 0 && (
+        <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 flex items-center gap-3">
+          <ShieldAlert className="h-5 w-5 text-green-600" />
+          <span className="text-sm">
+            <strong>{blockedByRules}</strong> approval{blockedByRules > 1 ? 's' : ''} blocked by your AI Rules
+          </span>
+        </div>
+      )}
 
       <Tabs defaultValue="pending">
         <TabsList>
