@@ -1162,9 +1162,19 @@ export function SidePanel() {
         // Show a cleaner message in chat (without the raw edit blocks)
         // Extract just the explanation from the response
         const cleanContent = assistantContent
-          .replace(/<<<<<<< SEARCH[\s\S]*?>>>>>>> REPLACE/g, '')
+          .replace(/<<<<<<< SEARCH[\s\S]*?>>>>>>> REPLACE/g, '')  // Remove edit blocks
+          .replace(/\n{3,}/g, '\n\n')  // Collapse multiple newlines to max 2
           .trim()
-        assistantContent = cleanContent || `I've made the changes. ${response.summary || 'Please review the diff in the editor.'}`
+        
+        // Use clean content, or a helpful message if empty
+        if (cleanContent && cleanContent.length > 10) {
+          assistantContent = cleanContent
+        } else {
+          // Generate a helpful message when the AI only provided edit blocks
+          assistantContent = response.summary 
+            ? `**Changes made:** ${response.summary}\n\nReview the diff in the editor and click **Accept** or **Reject**.`
+            : `I've made the requested changes. Please review the diff in the editor.`
+        }
       } else {
         // Debug: Log why we didn't dispatch the event
         console.log('[SidePanel] NOT dispatching propose-edit:', {
