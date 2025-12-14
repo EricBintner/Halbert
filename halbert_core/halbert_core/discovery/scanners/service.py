@@ -113,6 +113,11 @@ class ServiceScanner(BaseScanner):
             install_source = get_installation_source(name, unit)
             context_hint = generate_context_hint(name, description, category, status)
             
+            # Extract storage relationships for mount-related services
+            storage_info = {}
+            if 'mount' in name.lower() or 'mount' in description.lower():
+                storage_info = self._get_mount_service_info(unit)
+            
             discoveries.append(service_discovery(
                 name=name,
                 description=description or f"Systemd service: {name}",
@@ -129,6 +134,8 @@ class ServiceScanner(BaseScanner):
                 is_critical=is_critical,
                 install_source=install_source,
                 context_hint=context_hint,
+                # Storage relationships for mount services
+                **storage_info,
             ))
         
         return discoveries
@@ -149,6 +156,69 @@ class ServiceScanner(BaseScanner):
                     except (ValueError, IndexError):
                         pass
         return None
+    
+    def _get_mount_service_info(self, unit: str) -> dict:
+        """
+        Extract storage relationship info from mount-related services.
+        
+        Parses the service unit file to find:
+        - Target mount point (What=, Where=)
+        - Devices involved
+        - Filesystem type
+        """
+        info = {
+            'is_mount_service': True,
+            'mount_point': None,
+            'mount_device': None,
+            'mount_fstype': None,
+            'related_storage': [],
+        }
+        
+        # Get unit file content
+        code, stdout, _ = self.run_command([
+            "systemctl", "cat", unit
+        ], timeout=5)
+        
+        if code != 0 or not stdout:
+            return info
+        
+        import re
+        
+        # Parse common mount-related patterns
+        for line in stdout.splitlines():
+            line = line.strip()
+            
+            # ExecStart with mount command
+            if 'mount' in line.lower():
+                # Look for mount -t <fstype> <device> <mountpoint>
+                mount_match = re.search(r'mount\s+(?:-t\s+(\w+)\s+)?([/\w-]+)\s+(/[\w/-]+)', line)
+                if mount_match:
+                    info['mount_fstype'] = mount_match.group(1)
+                    info['mount_device'] = mount_match.group(2)
+                    info['mount_point'] = mount_match.group(3)
+            
+            # bcachefs mount: bcachefs mount <devices> <mountpoint>
+            if 'bcachefs' in line.lower() and 'mount' in line.lower():
+                bcachefs_match = re.search(r'bcachefs\s+mount\s+([^\s]+)\s+(/[\w/-]+)', line)
+                if bcachefs_match:
+                    devices_str = bcachefs_match.group(1)
+                    info['mount_point'] = bcachefs_match.group(2)
+                    info['mount_fstype'] = 'bcachefs'
+                    # bcachefs can have multiple devices separated by :
+                    if ':' in devices_str:
+                        info['related_storage'] = devices_str.split(':')
+                    else:
+                        info['mount_device'] = devices_str
+            
+            # What= and Where= for mount units
+            if line.startswith('What='):
+                info['mount_device'] = line.split('=', 1)[1].strip()
+            if line.startswith('Where='):
+                info['mount_point'] = line.split('=', 1)[1].strip()
+            if line.startswith('Type='):
+                info['mount_fstype'] = line.split('=', 1)[1].strip()
+        
+        return info
     
     def _scan_docker(self) -> List[Discovery]:
         """Scan Docker containers."""
