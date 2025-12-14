@@ -100,10 +100,10 @@ pip install --upgrade pip
 pip install -e halbert_core/
 
 # This installs all dependencies including:
-# - langchain, langgraph (orchestration)
 # - chromadb (vector database)
 # - fastapi, uvicorn (dashboard)
 # - apscheduler (task scheduling)
+# - pydantic, pyyaml (config)
 # - watchdog (file monitoring)
 ```
 

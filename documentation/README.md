@@ -25,7 +25,7 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 |----------|-------------|
 | [architecture/overview.md](architecture/overview.md) | Component relationships |
 | [architecture/self-identity.md](architecture/self-identity.md) | The "computer as self" concept |
-| [architecture/runtime-engine.md](architecture/runtime-engine.md) | LangGraph orchestration |
+| [architecture/runtime-engine.md](architecture/runtime-engine.md) | DEPRECATED - Original LangGraph design |
 | [architecture/ingestion-pipeline.md](architecture/ingestion-pipeline.md) | Telemetry collection |
 | [architecture/memory-system.md](architecture/memory-system.md) | RAG and vector retrieval |
 | [architecture/policy-engine.md](architecture/policy-engine.md) | Policy rules |

@@ -14,7 +14,7 @@ The public `documentation/` folder contains the original architecture vision fro
 - ⚠️ **Implemented, Undocumented** — Works but not in public docs
 - ❌ **Documented, Not Implemented** — Docs claim it exists but it doesn't
 - 🔄 **Partially Implemented** — Some aspects work, others don't
-- (do not enter emoji) DEPRICATED **Deprecated** — No longer used, may be removed
+- DEPRECATED **Deprecated** — No longer used, may be removed
 
 ---
 
@@ -101,7 +101,7 @@ The public `documentation/` folder contains the original architecture vision fro
 
 | Feature | Documentation Claim | Actual Status |
 |---------|---------------------|---------------|
-| **LangGraph Orchestrator** | `runtime/engine.py` | ❌ Not used, direct Ollama calls |
+| **LangGraph Orchestrator** | `runtime/engine.py` | DEPRECATED - Direct Ollama calls work fine |
 | **Policy Engine** | `policy/loader.py`, `engine.py` | ✅ Wired into chat.py tool calls |
 | **Scheduler/APScheduler** | `scheduler/*.py` | ✅ Added to deps, starts with dashboard |
 | **Guardrails/Budgets** | `autonomy/*.py` | ✅ Wired into chat.py tool authorization |
@@ -121,7 +121,7 @@ The public `documentation/` folder contains the original architecture vision fro
 
 | Claim | Reality |
 |-------|---------|
-| "LangGraph orchestrator with Planner → Executor → Observer" | ❌ Direct API calls to Ollama, no LangGraph loop |
+| "LangGraph orchestrator with Planner → Executor → Observer" | DEPRECATED - Direct Ollama calls, no complex orchestration needed |
 | "ChromaDB for RAG" | ✅ ChromaDB now enabled by default, memory system integrated |
 | "APScheduler for background tasks" | ✅ APScheduler starts with dashboard |
 | "Approval workflows with dry-run" | ✅ Full workflow: chat → ApprovalEngine → Dashboard |
@@ -162,7 +162,7 @@ halbert_core/
 ├── ingestion/        # Exists but unclear use
 ├── memory/           # Exists but unclear use
 ├── policy/           # Exists but not integrated
-├── runtime/          # Exists but not LangGraph-based
+├── runtime/          # DEPRECATED - direct Ollama calls used instead
 ├── scheduler/        # Exists but not running
 ```
 
