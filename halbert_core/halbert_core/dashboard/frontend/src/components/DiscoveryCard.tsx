@@ -29,6 +29,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { WhyBrain } from '@/components/ui/why-brain'
 
 interface Discovery {
   id: string
@@ -41,6 +42,7 @@ interface Discovery {
   status?: string
   status_detail?: string
   mention: string
+  why?: string  // User-defined explanation for why this exists
   actions?: Array<{
     id: string
     label: string
@@ -103,9 +105,18 @@ export function DiscoveryCard({
           <p className="text-sm font-medium truncate">{discovery.name}</p>
           <p className="text-xs text-muted-foreground truncate">{discovery.status || discovery.description}</p>
         </div>
-        <Badge className={severityColors[discovery.severity]} variant="secondary">
-          {discovery.status || discovery.severity}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          <WhyBrain
+            itemId={discovery.id}
+            itemName={discovery.name}
+            itemType={discovery.type}
+            why={discovery.why}
+            size="sm"
+          />
+          <Badge className={severityColors[discovery.severity]} variant="secondary">
+            {discovery.status || discovery.severity}
+          </Badge>
+        </div>
       </div>
     )
   }
@@ -125,10 +136,19 @@ export function DiscoveryCard({
               </CardDescription>
             </div>
           </div>
-          <Badge className={severityColors[discovery.severity]} variant="secondary">
-            <SeverityIcon className="h-3 w-3 mr-1" />
-            {discovery.status || discovery.severity}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <WhyBrain
+              itemId={discovery.id}
+              itemName={discovery.name}
+              itemType={discovery.type}
+              why={discovery.why}
+              size="sm"
+            />
+            <Badge className={severityColors[discovery.severity]} variant="secondary">
+              <SeverityIcon className="h-3 w-3 mr-1" />
+              {discovery.status || discovery.severity}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
