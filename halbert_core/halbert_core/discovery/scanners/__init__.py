@@ -32,6 +32,13 @@ Desktop/Display:
 Hardware:
 - LaptopScanner: battery, power profiles, suspend
 - UsbScanner: USB devices, speed, peripherals
+
+Containers/VMs:
+- ContainerScanner: Docker/Podman status, disk usage
+- VirtualizationScanner: VM detection, hypervisor
+
+Automation:
+- ScheduledScanner: cron jobs, systemd timers
 """
 
 from .base import BaseScanner
@@ -52,6 +59,9 @@ from .audio import AudioScanner
 from .bootloader import BootloaderScanner
 from .wifi import WifiScanner
 from .usb import UsbScanner
+from .container import ContainerScanner
+from .virtualization import VirtualizationScanner
+from .scheduled import ScheduledScanner
 
 __all__ = [
     'BaseScanner',
@@ -80,4 +90,9 @@ __all__ = [
     # Hardware
     'LaptopScanner',
     'UsbScanner',
+    # Containers/VMs
+    'ContainerScanner',
+    'VirtualizationScanner',
+    # Automation
+    'ScheduledScanner',
 ]
