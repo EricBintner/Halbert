@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import { ConfigEditor } from '@/components/ConfigEditor'
+// ConfigEditor is handled globally by Layout.tsx via halbert:open-config-editor event
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -127,7 +127,7 @@ export function Sharing() {
   const [scanning, setScanning] = useState(false)
   const [selectedItem, setSelectedItem] = useState<SharingItem | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
-  const [editingConfig, setEditingConfig] = useState<string | null>(null)
+  // ConfigEditor state removed - now handled globally by Layout.tsx
 
   useEffect(() => {
     loadSharing()
@@ -191,15 +191,7 @@ export function Sharing() {
     )
   }
 
-  // Show editor instead of normal content when editing
-  if (editingConfig) {
-    return (
-      <ConfigEditor
-        filePath={editingConfig}
-        onClose={() => setEditingConfig(null)}
-      />
-    )
-  }
+  // ConfigEditor is now handled globally by Layout.tsx
 
   return (
     <div className="space-y-6">
@@ -772,15 +764,21 @@ export function Sharing() {
                     className="mt-2 ml-2 h-7 text-xs"
                     onClick={() => {
                       const configPath = selectedItem.data.config_path || ''
+                      const fileName = configPath.split('/').pop() || 'config'
+                      const itemName = selectedItem.title
                       setSelectedItem(null) // Close the drawer
-                      setEditingConfig(configPath)
-                      // Open the chat panel (don't create conversation here - 
-                      // ConfigEditor will handle finding/creating the right one)
+                      // Open chat with configPath so the Edit Config button appears in chat
                       openChat({
-                        title: `Config: ${configPath.split('/').pop()}`,
+                        title: `Config: ${fileName}`,
                         type: 'config',
-                        // Don't set newConversation - we'll handle that in ConfigEditor
+                        context: `Editing **${itemName}** sharing configuration.\n\nFile: \`${configPath}\`\n\nI can help you modify this config file. Just tell me what changes you'd like to make.`,
+                        configPath: configPath,
+                        newConversation: true,
                       })
+                      // Also open the config editor
+                      window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {
+                        detail: { filePath: configPath }
+                      }))
                     }}
                   >
                     <Pencil className="h-3 w-3 mr-1" />
