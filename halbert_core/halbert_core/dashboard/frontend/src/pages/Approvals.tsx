@@ -2,24 +2,37 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getPendingApprovals, approveRequest, rejectRequest, type ApprovalRequest } from '@/lib/tauri'
-import { CheckCircle, XCircle, AlertTriangle } from 'lucide-react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { 
+  getPendingApprovals, 
+  approveRequest, 
+  rejectRequest, 
+  getApprovalHistory,
+  type ApprovalRequest,
+  type ApprovalHistoryItem
+} from '@/lib/tauri'
+import { CheckCircle, XCircle, AlertTriangle, Clock, History } from 'lucide-react'
 
 export function Approvals() {
   const [pending, setPending] = useState<ApprovalRequest[]>([])
+  const [history, setHistory] = useState<ApprovalHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    loadApprovals()
+    loadAll()
     // Poll every 5 seconds for new approvals
-    const interval = setInterval(loadApprovals, 5000)
+    const interval = setInterval(loadAll, 5000)
     return () => clearInterval(interval)
   }, [])
 
-  const loadApprovals = async () => {
+  const loadAll = async () => {
     try {
-      const approvals = await getPendingApprovals()
+      const [approvals, hist] = await Promise.all([
+        getPendingApprovals(),
+        getApprovalHistory(20)
+      ])
       setPending(approvals)
+      setHistory(hist)
       setLoading(false)
     } catch (error) {
       console.error('Failed to load approvals:', error)
@@ -30,7 +43,7 @@ export function Approvals() {
   const handleApprove = async (requestId: string) => {
     try {
       await approveRequest(requestId)
-      loadApprovals()
+      loadAll()
     } catch (error) {
       console.error('Approval failed:', error)
     }
@@ -41,7 +54,7 @@ export function Approvals() {
     if (reason) {
       try {
         await rejectRequest(requestId, reason)
-        loadApprovals()
+        loadAll()
       } catch (error) {
         console.error('Rejection failed:', error)
       }
@@ -49,11 +62,11 @@ export function Approvals() {
   }
 
   if (loading) {
-    return <div>Loading...</div>
+    return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading approvals...</div>
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Approval Requests</h1>
         <p className="text-muted-foreground">
@@ -61,83 +74,136 @@ export function Approvals() {
         </p>
       </div>
 
-      {pending.length === 0 ? (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground">
-            No pending approval requests
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          {pending.map((request) => (
-            <Card key={request.id}>
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div>
-                    <CardTitle>{request.action}</CardTitle>
-                    <CardDescription>{request.task}</CardDescription>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {request.risk_level === 'high' && <AlertTriangle className="h-4 w-4 text-destructive" />}
-                    {request.risk_level === 'medium' && <AlertTriangle className="h-4 w-4 text-yellow-500" />}
-                    <Badge
-                      variant={
-                        request.risk_level === 'high' ? 'destructive' :
-                        request.risk_level === 'medium' ? 'default' : 'secondary'
-                      }
-                    >
-                      {request.risk_level} risk
-                    </Badge>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <p className="text-sm font-medium">Reasoning:</p>
-                  <p className="text-sm text-muted-foreground">{request.reasoning}</p>
-                </div>
+      <Tabs defaultValue="pending">
+        <TabsList>
+          <TabsTrigger value="pending" className="gap-2">
+            <Clock className="h-4 w-4" />
+            Pending {pending.length > 0 && <Badge variant="secondary">{pending.length}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="history" className="gap-2">
+            <History className="h-4 w-4" />
+            History
+          </TabsTrigger>
+        </TabsList>
 
-                <div className="flex items-center gap-4 text-sm">
-                  <span>Confidence: <strong>{(request.confidence * 100).toFixed(0)}%</strong></span>
-                  <span>•</span>
-                  <span className="text-muted-foreground">
-                    {new Date(request.requested_at).toLocaleString()}
-                  </span>
-                </div>
+        <TabsContent value="pending" className="mt-4">
+          {pending.length === 0 ? (
+            <Card>
+              <CardContent className="py-8 text-center text-muted-foreground">
+                No pending approval requests
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {pending.map((request) => (
+                <Card key={request.id}>
+                  <CardHeader>
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <CardTitle>{request.action}</CardTitle>
+                        <CardDescription>{request.task}</CardDescription>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {request.risk_level === 'high' && <AlertTriangle className="h-4 w-4 text-destructive" />}
+                        {request.risk_level === 'medium' && <AlertTriangle className="h-4 w-4 text-yellow-500" />}
+                        <Badge
+                          variant={
+                            request.risk_level === 'high' ? 'destructive' :
+                            request.risk_level === 'medium' ? 'default' : 'secondary'
+                          }
+                        >
+                          {request.risk_level} risk
+                        </Badge>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <p className="text-sm font-medium">Reasoning:</p>
+                      <p className="text-sm text-muted-foreground">{request.reasoning}</p>
+                    </div>
 
-                {request.affected_resources && request.affected_resources.length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium mb-2">Affected Resources:</p>
-                    <ul className="text-sm text-muted-foreground space-y-1">
-                      {request.affected_resources.map((resource: string, i: number) => (
-                        <li key={i} className="font-mono text-xs">• {resource}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                    <div className="flex items-center gap-4 text-sm">
+                      <span>Confidence: <strong>{(request.confidence * 100).toFixed(0)}%</strong></span>
+                      <span>•</span>
+                      <span className="text-muted-foreground">
+                        {new Date(request.requested_at).toLocaleString()}
+                      </span>
+                    </div>
 
-                <div className="flex gap-2 pt-4">
-                  <Button
-                    onClick={() => handleApprove(request.id)}
-                    className="gap-2"
-                  >
-                    <CheckCircle className="h-4 w-4" />
-                    Approve
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => handleReject(request.id)}
-                    className="gap-2"
-                  >
-                    <XCircle className="h-4 w-4" />
-                    Reject
-                  </Button>
+                    {request.affected_resources && request.affected_resources.length > 0 && (
+                      <div>
+                        <p className="text-sm font-medium mb-2">Affected Resources:</p>
+                        <ul className="text-sm text-muted-foreground space-y-1">
+                          {request.affected_resources.map((resource: string, i: number) => (
+                            <li key={i} className="font-mono text-xs">• {resource}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 pt-4">
+                      <Button
+                        onClick={() => handleApprove(request.id)}
+                        className="gap-2"
+                      >
+                        <CheckCircle className="h-4 w-4" />
+                        Approve
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleReject(request.id)}
+                        className="gap-2"
+                      >
+                        <XCircle className="h-4 w-4" />
+                        Reject
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-4">
+          {history.length === 0 ? (
+            <Card>
+              <CardContent className="py-8 text-center text-muted-foreground">
+                No approval history
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardContent className="p-0">
+                <div className="divide-y">
+                  {history.map((item, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-4">
+                      <div className="flex items-center gap-3">
+                        {item.approved ? (
+                          <CheckCircle className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-red-500" />
+                        )}
+                        <div>
+                          <p className="font-medium">{item.request_id}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {item.reason || (item.approved ? 'Approved' : 'Rejected')}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right text-sm text-muted-foreground">
+                        <p>{item.decided_by}</p>
+                        <p>{new Date(item.decided_at).toLocaleString()}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
-          ))}
-        </div>
-      )}
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
