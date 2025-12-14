@@ -731,12 +731,49 @@ def call_ollama_with_tools(prompt: str, system_prompt: str, model: str = None) -
                 })
                 continue
             
+            # Run dry-run simulation if required
+            simulation_result = None
+            if auth.get("simulation_required"):
+                logger.info(f"Running dry-run simulation for {tool_name}")
+                try:
+                    from ...approval.simulator import DryRunSimulator
+                    simulator = DryRunSimulator()
+                    
+                    # Route to appropriate simulation
+                    if tool_name == "write_config":
+                        path = arguments.get("path", "")
+                        content = arguments.get("content", "")
+                        simulation_result = simulator.simulate_file_write(path, content)
+                    elif tool_name in ["run_command", "execute_shell"]:
+                        cmd = arguments.get("command", "")
+                        simulation_result = simulator.simulate_command(cmd)
+                    elif tool_name == "restart_service":
+                        service = arguments.get("service", "")
+                        simulation_result = simulator.simulate_service_restart(service)
+                    
+                    if simulation_result and simulation_result.warnings:
+                        logger.warning(f"Simulation warnings: {simulation_result.warnings}")
+                except Exception as e:
+                    logger.error(f"Simulation failed for {tool_name}: {e}")
+            
             # Execute the tool
             result = execute_tool(tool_name, arguments)
-            tool_results.append({
+            tool_result_entry = {
                 "tool": tool_name,
                 "result": result.data if result.success else {"error": result.error}
-            })
+            }
+            
+            # Include simulation preview if available
+            if simulation_result:
+                tool_result_entry["simulation"] = {
+                    "action": simulation_result.action,
+                    "changes": simulation_result.changes,
+                    "warnings": simulation_result.warnings,
+                    "reversible": simulation_result.reversible,
+                    "rollback_strategy": simulation_result.rollback_strategy
+                }
+            
+            tool_results.append(tool_result_entry)
         
         # Add assistant message with tool calls and tool results
         messages.append({

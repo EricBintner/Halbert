@@ -7,7 +7,7 @@ Provides REST API for:
 - System preferences
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -2698,6 +2698,202 @@ async def execute_alert(request: Request):
         }
     except Exception as e:
         logger.error(f"Failed to send alert: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dry-Run Simulation API
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Singleton simulator
+_dry_run_simulator = None
+
+def get_dry_run_simulator():
+    """Get or create singleton dry-run simulator."""
+    global _dry_run_simulator
+    if _dry_run_simulator is None:
+        from ...approval.simulator import DryRunSimulator
+        _dry_run_simulator = DryRunSimulator()
+    return _dry_run_simulator
+
+
+@router.post("/simulate/file-write")
+async def simulate_file_write(request: Request):
+    """Simulate a file write operation (dry-run preview)."""
+    try:
+        data = await request.json()
+        path = data.get("path")
+        new_content = data.get("content", "")
+        current_content = data.get("current_content")
+        
+        if not path:
+            return {"status": "error", "error": "path required"}
+        
+        # Try to read current content if not provided
+        if current_content is None:
+            from pathlib import Path
+            file_path = Path(path)
+            if file_path.exists():
+                try:
+                    current_content = file_path.read_text()
+                except Exception:
+                    current_content = None
+        
+        simulator = get_dry_run_simulator()
+        result = simulator.simulate_file_write(path, new_content, current_content)
+        
+        return {
+            "status": "ok",
+            "simulation": {
+                "success": result.success,
+                "action": result.action,
+                "changes": result.changes,
+                "affected_files": result.affected_files,
+                "warnings": result.warnings,
+                "commands_to_run": result.commands_to_run,
+                "estimated_duration_s": result.estimated_duration_s,
+                "reversible": result.reversible,
+                "rollback_strategy": result.rollback_strategy
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to simulate file write: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/simulate/command")
+async def simulate_command(request: Request):
+    """Simulate a command execution (dry-run preview)."""
+    try:
+        data = await request.json()
+        command = data.get("command")
+        dry_run_flag = data.get("dry_run_flag")
+        
+        if not command:
+            return {"status": "error", "error": "command required"}
+        
+        simulator = get_dry_run_simulator()
+        result = simulator.simulate_command(command, dry_run_flag)
+        
+        return {
+            "status": "ok",
+            "simulation": {
+                "success": result.success,
+                "action": result.action,
+                "changes": result.changes,
+                "warnings": result.warnings,
+                "commands_to_run": result.commands_to_run,
+                "estimated_duration_s": result.estimated_duration_s,
+                "reversible": result.reversible
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to simulate command: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/simulate/service-restart")
+async def simulate_service_restart(request: Request):
+    """Simulate a service restart (dry-run preview)."""
+    try:
+        data = await request.json()
+        service = data.get("service")
+        
+        if not service:
+            return {"status": "error", "error": "service required"}
+        
+        simulator = get_dry_run_simulator()
+        result = simulator.simulate_service_restart(service)
+        
+        return {
+            "status": "ok",
+            "simulation": {
+                "success": result.success,
+                "action": result.action,
+                "changes": result.changes,
+                "affected_services": result.affected_services,
+                "warnings": result.warnings,
+                "commands_to_run": result.commands_to_run,
+                "estimated_duration_s": result.estimated_duration_s,
+                "reversible": result.reversible,
+                "rollback_strategy": result.rollback_strategy
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to simulate service restart: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/simulate/tool")
+async def simulate_tool_call(request: Request):
+    """
+    Simulate any tool call based on tool name and arguments.
+    Routes to appropriate simulation based on tool type.
+    """
+    try:
+        data = await request.json()
+        tool_name = data.get("tool")
+        tool_args = data.get("args", {})
+        
+        if not tool_name:
+            return {"status": "error", "error": "tool required"}
+        
+        simulator = get_dry_run_simulator()
+        
+        # Route to appropriate simulation based on tool
+        if tool_name == "write_config":
+            path = tool_args.get("path", "")
+            content = tool_args.get("content", "")
+            result = simulator.simulate_file_write(path, content)
+        elif tool_name == "run_command":
+            command = tool_args.get("command", "")
+            result = simulator.simulate_command(command)
+        elif tool_name == "restart_service":
+            service = tool_args.get("service", "")
+            result = simulator.simulate_service_restart(service)
+        elif tool_name == "update_packages":
+            packages = tool_args.get("packages", [])
+            pm = tool_args.get("package_manager", "apt")
+            result = simulator.simulate_package_update(packages, pm)
+        elif tool_name == "fan_control":
+            current = tool_args.get("current_rpm", 2000)
+            target = tool_args.get("target_rpm", 3000)
+            hwmon = tool_args.get("hwmon_path", "/sys/class/hwmon/hwmon0/pwm1")
+            result = simulator.simulate_fan_throttle(current, target, hwmon)
+        else:
+            # Generic simulation for unknown tools
+            return {
+                "status": "ok",
+                "simulation": {
+                    "success": True,
+                    "action": f"Execute tool: {tool_name}",
+                    "changes": [{"type": "tool_call", "tool": tool_name, "args": tool_args}],
+                    "warnings": [f"No specific simulation for '{tool_name}' - showing args only"],
+                    "commands_to_run": [f"{tool_name}({tool_args})"],
+                    "estimated_duration_s": 1.0,
+                    "reversible": False
+                }
+            }
+        
+        return {
+            "status": "ok",
+            "simulation": {
+                "success": result.success,
+                "action": result.action,
+                "before": result.before,
+                "after": result.after,
+                "changes": result.changes,
+                "affected_files": result.affected_files,
+                "affected_services": result.affected_services,
+                "warnings": result.warnings,
+                "commands_to_run": result.commands_to_run,
+                "estimated_duration_s": result.estimated_duration_s,
+                "reversible": result.reversible,
+                "rollback_strategy": result.rollback_strategy
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to simulate tool call: {e}")
         return {"status": "error", "error": str(e)}
 
 
