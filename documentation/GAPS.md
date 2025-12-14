@@ -196,6 +196,7 @@ These features directly improve the system's understanding of itself:
 | **Telemetry Context** | Inject relevant logs into chat | ✅ Done |
 | **Document Indexing** | Man pages, Arch Wiki → ChromaDB | ✅ Done |
 | **Discovery Search** | Semantic search over discoveries | ✅ Done |
+| **Self-Knowledge** | Persistent ontology + teachable knowledge | ✅ Done |
 
 ### 🟠 P1: Documentation Updates (Completed This Session)
 
