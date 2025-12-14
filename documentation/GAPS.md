@@ -275,6 +275,36 @@ isn't needed. The semantic search over current discoveries is the key feature.
 - `routes/chat.py` — Auto-inject docs context ✅
 - Collection: `linux_docs`
 
+### Phase 22D: Self-Knowledge System ✅ COMPLETE
+
+**Goal**: Persistent ontology for system self-understanding
+
+**Implemented**:
+- `knowledge/self_knowledge.py` — Core knowledge store ✅
+- Knowledge types: identity, hardware, config_rationale, relationships, roles ✅
+- `bootstrap_identity()` — Auto-detect hostname, OS, CPU, RAM ✅
+- `routes/settings.py` — API endpoints (teach, search, explain-config) ✅
+- `routes/chat.py` — Self-knowledge is FIRST context injected ✅
+- Collection: `self_knowledge`
+- Backup: `~/.local/share/halbert/knowledge/self_knowledge.json`
+
+### Phase 22E: WhyBrain UI ✅ COMPLETE
+
+**Goal**: Universal UI for capturing rationale ("WHY" things exist)
+
+**Implemented**:
+- `ui/why-brain.tsx` — Brain icon with two states (grey=undefined, pink=defined) ✅
+- `ui/why-overlay.tsx` — Full-screen overlay for editing explanations ✅
+- `lib/api.ts` — `saveWhy()`, `getWhy()` API functions ✅
+
+**Integrated into pages**:
+- DiscoveryCard.tsx (all discovery types)
+- Services.tsx (service rows)
+- Storage.tsx (storage group headers)
+- Network.tsx (interface rows)
+- Containers.tsx (container cards)
+- GPU.tsx (GPU cards)
+
 ---
 
 ## Phase History (from private docs)
@@ -296,15 +326,23 @@ isn't needed. The semantic search over current discoveries is the key feature.
 
 ## Next Steps
 
-### Completed This Session
+### Completed (Phase 22)
 - ✅ ChromaDB memory system (conversations)
 - ✅ Ingestion pipeline (journald/hwmon)
 - ✅ Document indexer (man pages, Arch Wiki)
-- ✅ Context injection (memory, telemetry, docs)
-- ✅ Documentation overhaul
+- ✅ Context injection (memory, telemetry, docs, self-knowledge)
+- ✅ Self-Knowledge system (persistent ontology)
+- ✅ WhyBrain UI (universal rationale capture)
+- ✅ Documentation: Phase 22 docs in `docs/Phase22/`
 
-### Next Priority
-1. **Discovery persistence** — Add embeddings to discoveries
-2. **Scheduler** — Background autonomous tasks
-3. **Test the full RAG pipeline** — End-to-end verification
-4. **Cycle back** — Re-audit docs, update gaps, build more
+### Next Priority (P2: Missing Core Features)
+1. **Scheduler** — Background autonomous tasks (`scheduler/engine.py`)
+2. **Approval Workflow** — Dry-run + approval flow (`approval/engine.py`)
+3. **Guardrails** — Budget/rate limiting (`autonomy/guardrails.py`)
+4. **Policy Engine** — Action authorization (`policy/engine.py`)
+
+### Cycle Checklist
+- [ ] Audit: Re-check codebase vs documentation
+- [ ] Document: Update public docs for any gaps
+- [ ] Build: Implement P2 features
+- [ ] Repeat
