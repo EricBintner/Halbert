@@ -1783,3 +1783,85 @@ async def stop_ingestion():
     except Exception as e:
         logger.error(f"Failed to stop ingestion: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Document Indexing API
+# =============================================================================
+
+@router.get("/docs/stats")
+async def get_docs_stats():
+    """Get document index statistics."""
+    try:
+        from ...rag.document_indexer import get_index_stats
+        return get_index_stats()
+    except Exception as e:
+        logger.error(f"Failed to get doc stats: {e}")
+        return {"error": str(e), "linux_docs_count": 0}
+
+
+@router.post("/docs/index")
+async def index_documents(max_docs: int = 1000, source: str = None):
+    """
+    Index Linux documentation into ChromaDB.
+    
+    Args:
+        max_docs: Maximum documents to index
+        source: Specific source to index (None = priority sources)
+    """
+    try:
+        from ...rag.document_indexer import index_documents as do_index, get_default_data_dir
+        
+        data_dir = get_default_data_dir()
+        
+        if source:
+            # Index specific source
+            stats = do_index(
+                data_dir=data_dir,
+                collection_name="linux_docs",
+                max_docs=max_docs,
+                sources=[source]
+            )
+            return {
+                "source": source,
+                "indexed": stats.indexed_docs,
+                "skipped": stats.skipped_docs,
+                "errors": stats.errors,
+                "duration_s": (stats.completed_at - stats.started_at).total_seconds() if stats.completed_at else 0
+            }
+        else:
+            # Index priority sources
+            from ...rag.document_indexer import index_priority_docs
+            results = index_priority_docs(max_per_source=max_docs)
+            
+            total_indexed = sum(s.indexed_docs for s in results.values())
+            return {
+                "sources_indexed": list(results.keys()),
+                "total_indexed": total_indexed,
+                "per_source": {k: v.indexed_docs for k, v in results.items()}
+            }
+    except Exception as e:
+        logger.error(f"Failed to index documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/docs/query")
+async def query_documents(q: str, k: int = 5):
+    """
+    Query indexed documents.
+    
+    Args:
+        q: Search query
+        k: Number of results
+    """
+    try:
+        from ...rag.document_indexer import query_docs
+        results = query_docs(q, k=k)
+        return {
+            "query": q,
+            "results": results,
+            "count": len(results)
+        }
+    except Exception as e:
+        logger.error(f"Document query failed: {e}")
+        return {"query": q, "results": [], "count": 0, "error": str(e)}
