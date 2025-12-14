@@ -279,6 +279,136 @@ class Index:
                         stats["collections"][name] = "error"
         
         return stats
+    
+    def list_collections(self) -> List[Dict[str, Any]]:
+        """List all collections with their counts."""
+        collections = []
+        known_names = ["self_knowledge_all", "self_conversations", "self_hwmon", "self_journald", "self_dbus", "linux_docs", "discoveries"]
+        
+        if self.client is not None:
+            try:
+                # Get all collections from ChromaDB
+                all_cols = self.client.list_collections()
+                for col in all_cols:
+                    try:
+                        count = col.count()
+                        collections.append({
+                            "name": col.name,
+                            "count": count,
+                            "known": col.name in known_names
+                        })
+                    except Exception:
+                        collections.append({"name": col.name, "count": 0, "known": col.name in known_names})
+            except Exception as e:
+                logger.warning(f"Failed to list collections: {e}")
+        
+        return sorted(collections, key=lambda c: (-c.get("count", 0), c["name"]))
+    
+    def list_entries(
+        self, 
+        collection: str, 
+        limit: int = 50, 
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """
+        List entries in a collection with pagination.
+        
+        Args:
+            collection: Collection name
+            limit: Max entries to return
+            offset: Skip this many entries
+            
+        Returns:
+            List of entries with id, content, metadata
+        """
+        col = self._collection(collection)
+        if col is None:
+            return []
+        
+        try:
+            # Get all entries (ChromaDB doesn't have great pagination)
+            result = col.get(limit=limit + offset, include=["documents", "metadatas"])
+            
+            entries = []
+            ids = result.get("ids", [])
+            docs = result.get("documents", [])
+            metas = result.get("metadatas", [])
+            
+            # Apply offset
+            for i in range(offset, min(len(ids), offset + limit)):
+                entries.append({
+                    "id": ids[i],
+                    "content": docs[i] if docs and i < len(docs) else "",
+                    "metadata": metas[i] if metas and i < len(metas) else {}
+                })
+            
+            return entries
+        except Exception as e:
+            logger.warning(f"Failed to list entries: {e}")
+            return []
+    
+    def get_entry(self, collection: str, entry_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific entry by ID."""
+        col = self._collection(collection)
+        if col is None:
+            return None
+        
+        try:
+            result = col.get(ids=[entry_id], include=["documents", "metadatas"])
+            if result and result.get("ids"):
+                return {
+                    "id": result["ids"][0],
+                    "content": result["documents"][0] if result.get("documents") else "",
+                    "metadata": result["metadatas"][0] if result.get("metadatas") else {}
+                }
+        except Exception as e:
+            logger.warning(f"Failed to get entry: {e}")
+        
+        return None
+    
+    def delete_entry(self, collection: str, entry_id: str) -> bool:
+        """Delete a specific entry."""
+        col = self._collection(collection)
+        if col is None:
+            return False
+        
+        try:
+            col.delete(ids=[entry_id])
+            logger.info(f"Deleted entry {entry_id} from {collection}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to delete entry: {e}")
+            return False
+    
+    def delete_entries(self, collection: str, entry_ids: List[str]) -> int:
+        """Delete multiple entries. Returns count deleted."""
+        col = self._collection(collection)
+        if col is None:
+            return 0
+        
+        try:
+            col.delete(ids=entry_ids)
+            logger.info(f"Deleted {len(entry_ids)} entries from {collection}")
+            return len(entry_ids)
+        except Exception as e:
+            logger.warning(f"Failed to delete entries: {e}")
+            return 0
+    
+    def clear_collection(self, collection: str) -> bool:
+        """Clear all entries from a collection."""
+        if self.client is None:
+            return False
+        
+        try:
+            # Delete and recreate the collection
+            self.client.delete_collection(name=collection)
+            if collection in self.collections:
+                del self.collections[collection]
+            logger.info(f"Cleared collection {collection}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to clear collection: {e}")
+            return False
 
 
 # Singleton instance
