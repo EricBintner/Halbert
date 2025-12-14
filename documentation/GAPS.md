@@ -380,7 +380,7 @@ isn't needed. The semantic search over current discoveries is the key feature.
 | **Anomaly Detector** | ✅ Done | API: `/api/settings/anomaly/status`, `/api/settings/anomaly/check` |
 | **Recovery Playbooks** | ✅ Done | API: rollback, restart-service, alert endpoints |
 | **WebSocket Real-time** | ✅ Done | `useChatStream()` hook, auto-reconnect, chat_token streaming |
-| **Dry-run Mode** | Low priority | Tool simulation exists, not fully consistent |
+| **Dry-run Mode** | ✅ Done | API: `/simulate/tool`, integrated in chat tool execution |
 
 ### ⚠️ Undocumented (Need Public Docs)
 
