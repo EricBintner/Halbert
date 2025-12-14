@@ -355,14 +355,21 @@ isn't needed. The semantic search over current discoveries is the key feature.
 - ✅ Auto Tasks — health_check scheduled every 6 hours
 - ✅ Documentation: Phase 23 docs in `docs/Phase23/`
 
-### Next Priority (P2: Dashboard UI)
-1. **Approvals Page** — Connect to approval API, show pending requests
-2. **Scheduler Page** — Show scheduled jobs, allow cancel/reschedule
-3. **Safe Mode Indicator** — Show banner when safe mode active
-4. **Guardrails Config UI** — Edit confidence thresholds, budgets
+### Completed (Phase 23: Dashboard UI)
+- ✅ Approvals Page — Tabs for pending/history, approve/reject buttons
+- ✅ Scheduler Page — Status cards, guardrails config, scheduled jobs list
+- ✅ Safe Mode Indicator — Banner with exit button when active
+- ✅ API functions in tauri.ts — Web fallbacks for all autonomy APIs
+
+### Next Priority (P3: Polish & Testing)
+1. **End-to-end testing** — Trigger approval flow from chat
+2. **APScheduler install** — Add to requirements.txt if not present
+3. **Policy config page** — Edit policy.yml from dashboard
+4. **Guardrails config page** — Edit autonomy.yml from dashboard
 
 ### Cycle Checklist
 - [x] Audit: Discovered P2 modules already implemented
 - [x] Document: Updated GAPS.md with accurate status
-- [x] Build: Wired together existing modules
-- [ ] Repeat: Frontend integration pending
+- [x] Build: Wired together existing modules (backend)
+- [x] Build: Connected frontend to new APIs
+- [ ] Test: Verify integration works end-to-end
