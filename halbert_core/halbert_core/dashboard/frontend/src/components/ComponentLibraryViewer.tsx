@@ -22,11 +22,13 @@ import {
   Palette,
   Box,
   Sparkles,
+  Ruler,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // Domain components
 import { SystemItemActions, StatusBadge, UsageBar, EmptyState } from '@/components/domain'
+import { WhyBrain } from '@/components/ui/why-brain'
 
 interface ComponentLibraryViewerProps {
   onClose: () => void
@@ -56,8 +58,144 @@ interface ComponentCategory {
   components: ComponentExample[]
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// DESIGN SYSTEM STANDARDS - These values are the source of truth
+// ═══════════════════════════════════════════════════════════════════════════
+const DESIGN_SYSTEM = {
+  iconButton: {
+    sm: { button: 'h-7 w-7', icon: 'h-4 w-4' },
+    default: { button: 'h-8 w-8', icon: 'h-4 w-4' },
+  },
+  // @ symbol must be larger than icons because text is optically smaller
+  atSymbol: {
+    sm: 'text-base font-bold',
+    default: 'text-lg font-bold',
+  },
+  // Inactive state for all action icons
+  inactiveColor: 'text-muted-foreground/60',
+  // Hover colors by action type
+  hoverColors: {
+    mention: 'hover:text-blue-500 hover:bg-blue-500/10',
+    chat: 'hover:text-primary hover:bg-primary/10',
+    research: 'hover:text-purple-500 hover:bg-purple-500/10',
+    whyDefined: 'text-pink-500 hover:text-pink-400',
+    whyUndefined: 'text-muted-foreground/60 hover:text-muted-foreground',
+  },
+}
+
 // Component definitions
 const COMPONENT_LIBRARY: ComponentCategory[] = [
+  {
+    id: 'design-system',
+    name: 'Design System',
+    icon: <Ruler className="h-4 w-4" />,
+    components: [
+      {
+        id: 'icon-button-sizing',
+        name: 'Icon Button Sizing',
+        description: 'Standard sizes for all icon buttons - THIS IS THE SOURCE OF TRUTH',
+        status: 'stable',
+        preview: (
+          <div className="space-y-6">
+            <div>
+              <h4 className="text-sm font-medium mb-3">Size: sm (used in row actions)</h4>
+              <div className="flex items-center gap-4 p-3 bg-muted/30 rounded-lg">
+                <div className="flex items-center gap-0">
+                  <WhyBrain itemId="sizing-demo" itemName="Demo" itemType="service" size="sm" />
+                  <SystemItemActions item={{ name: 'Demo', type: 'service', id: 'demo' }} size="sm" />
+                </div>
+                <code className="text-xs bg-muted px-2 py-1 rounded">
+                  button: {DESIGN_SYSTEM.iconButton.sm.button} | icon: {DESIGN_SYSTEM.iconButton.sm.icon}
+                </code>
+              </div>
+            </div>
+            <div>
+              <h4 className="text-sm font-medium mb-3">Size: default</h4>
+              <div className="flex items-center gap-4 p-3 bg-muted/30 rounded-lg">
+                <div className="flex items-center gap-0">
+                  <WhyBrain itemId="sizing-demo-2" itemName="Demo" itemType="service" size="md" />
+                  <SystemItemActions item={{ name: 'Demo', type: 'service', id: 'demo' }} />
+                </div>
+                <code className="text-xs bg-muted px-2 py-1 rounded">
+                  button: {DESIGN_SYSTEM.iconButton.default.button} | icon: {DESIGN_SYSTEM.iconButton.default.icon}
+                </code>
+              </div>
+            </div>
+            <div>
+              <h4 className="text-sm font-medium mb-3">@ Symbol (larger for optical balance)</h4>
+              <div className="flex items-center gap-4 p-3 bg-muted/30 rounded-lg">
+                <code className="text-xs bg-muted px-2 py-1 rounded">
+                  sm: {DESIGN_SYSTEM.atSymbol.sm} | default: {DESIGN_SYSTEM.atSymbol.default}
+                </code>
+              </div>
+            </div>
+          </div>
+        ),
+        props: [],
+        code: `// DESIGN SYSTEM STANDARDS
+const DESIGN_SYSTEM = {
+  iconButton: {
+    sm: { button: 'h-7 w-7', icon: 'h-4 w-4' },
+    default: { button: 'h-8 w-8', icon: 'h-4 w-4' },
+  },
+  atSymbol: {
+    sm: 'text-base font-bold',
+    default: 'text-lg font-bold',
+  },
+  inactiveColor: 'text-muted-foreground/60',
+}`,
+      },
+      {
+        id: 'color-system',
+        name: 'Action Colors',
+        description: 'Standard hover colors for action buttons',
+        status: 'stable',
+        preview: (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className={cn("w-8 h-8 rounded flex items-center justify-center", DESIGN_SYSTEM.hoverColors.mention.replace('hover:', ''))}>
+                <span className="text-base font-bold">@</span>
+              </div>
+              <span className="text-sm">Mention: <code className="text-xs bg-muted px-1 rounded">blue-500</code></span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className={cn("w-8 h-8 rounded flex items-center justify-center text-primary bg-primary/10")}>
+                <span className="text-sm">★</span>
+              </div>
+              <span className="text-sm">Chat: <code className="text-xs bg-muted px-1 rounded">primary</code></span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className={cn("w-8 h-8 rounded flex items-center justify-center text-purple-500 bg-purple-500/10")}>
+                <span className="text-sm">✨</span>
+              </div>
+              <span className="text-sm">Research: <code className="text-xs bg-muted px-1 rounded">purple-500</code></span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className={cn("w-8 h-8 rounded flex items-center justify-center text-pink-500")}>
+                <span className="text-sm">🧠</span>
+              </div>
+              <span className="text-sm">Why (defined): <code className="text-xs bg-muted px-1 rounded">pink-500</code></span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className={cn("w-8 h-8 rounded flex items-center justify-center text-muted-foreground/60")}>
+                <span className="text-sm">🧠</span>
+              </div>
+              <span className="text-sm">Inactive: <code className="text-xs bg-muted px-1 rounded">muted-foreground/60</code></span>
+            </div>
+          </div>
+        ),
+        props: [],
+        code: `// Hover colors by action type
+hoverColors: {
+  mention: 'hover:text-blue-500 hover:bg-blue-500/10',
+  chat: 'hover:text-primary hover:bg-primary/10',
+  research: 'hover:text-purple-500 hover:bg-purple-500/10',
+  whyDefined: 'text-pink-500 hover:text-pink-400',
+  whyUndefined: 'text-muted-foreground/60 hover:text-muted-foreground',
+}`,
+      },
+    ],
+  },
   {
     id: 'domain',
     name: 'Domain Components',
@@ -120,6 +258,51 @@ const COMPONENT_LIBRARY: ComponentCategory[] = [
   variant="icon"
   size="sm"
 />`,
+      },
+      {
+        id: 'why-brain',
+        name: 'WhyBrain',
+        description: 'Brain icon for "why" explanations - shows if item has explanation',
+        status: 'stable',
+        preview: (
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-muted-foreground w-32">undefined (sm):</span>
+              <WhyBrain itemId="demo-undefined" itemName="Demo" itemType="service" size="sm" />
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-muted-foreground w-32">with SystemItemActions:</span>
+              <div className="flex items-center gap-0">
+                <WhyBrain itemId="demo-combo" itemName="Demo" itemType="service" size="sm" />
+                <SystemItemActions 
+                  item={{ name: 'Demo', type: 'service', id: 'demo' }}
+                  size="sm"
+                />
+              </div>
+            </div>
+          </div>
+        ),
+        props: [
+          { name: 'itemId', type: 'string', description: 'Unique identifier for the item' },
+          { name: 'itemName', type: 'string', description: 'Display name of the item' },
+          { name: 'itemType', type: 'string', description: 'Type of item (service, storage, etc)' },
+          { name: 'size', type: "'sm' | 'md' | 'lg'", default: "'md'", description: 'Button size' },
+        ],
+        code: `import { WhyBrain } from '@/components/ui/why-brain'
+
+{/* Always pair with SystemItemActions for consistent spacing */}
+<div className="flex items-center gap-0">
+  <WhyBrain
+    itemId={\`service:\${name}\`}
+    itemName={name}
+    itemType="service"
+    size="sm"
+  />
+  <SystemItemActions
+    item={{ name, type: 'service', id }}
+    size="sm"
+  />
+</div>`,
       },
       {
         id: 'status-badge',
@@ -323,7 +506,7 @@ import { Archive } from 'lucide-react'
 
 export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps) {
   const [searchQuery, setSearchQuery] = useState('')
-  const [expandedCategories, setExpandedCategories] = useState<string[]>(['domain', 'primitives'])
+  const [expandedCategories, setExpandedCategories] = useState<string[]>(['design-system', 'domain', 'primitives'])
   const [selectedComponent, setSelectedComponent] = useState<ComponentExample | null>(
     COMPONENT_LIBRARY[0].components[0]
   )

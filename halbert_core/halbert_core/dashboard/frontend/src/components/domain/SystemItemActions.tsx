@@ -136,10 +136,10 @@ export function SystemItemActions({
   // Size-based classes - DESIGN SYSTEM STANDARD
   // All icon buttons: h-7 w-7 (sm) or h-8 w-8 (default)
   // All icons: h-4 w-4 consistently
-  // @ symbol: slightly larger than icons for visual balance
+  // @ symbol: must be visually same weight as icons (text is optically smaller)
   const buttonSize = size === 'sm' ? 'h-7 w-7' : 'h-8 w-8'
   const iconSize = 'h-4 w-4' // Always h-4 w-4 for consistency
-  const atFontSize = size === 'sm' ? 'text-sm' : 'text-base' // Larger than icons for visual weight
+  const atFontSize = size === 'sm' ? 'text-base' : 'text-lg' // Larger to match icon visual weight
   
   // Icon-only variant (most compact)
   if (variant === 'icon') {

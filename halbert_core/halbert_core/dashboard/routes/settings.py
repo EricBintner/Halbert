@@ -2401,3 +2401,51 @@ async def cancel_scheduler_job(job_id: str):
     except Exception as e:
         logger.error(f"Failed to cancel job: {e}")
         return {"status": "error", "error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Testing Endpoints (Development Only)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/approvals/test/create")
+async def create_test_approval(
+    task: str = "Test Action",
+    action: str = "This is a test approval request for development",
+    risk_level: str = "medium"
+):
+    """
+    Create a test approval request for development/testing.
+    
+    This helps verify the approval flow works end-to-end.
+    """
+    try:
+        import uuid
+        from datetime import datetime, timezone
+        from ...approval.engine import ApprovalRequest
+        
+        engine = get_approval_engine()
+        
+        request = ApprovalRequest(
+            id=f"test_{uuid.uuid4().hex[:8]}",
+            task=task,
+            action=action,
+            reasoning="Created via test endpoint for development purposes",
+            confidence=0.7,  # Below auto-execute threshold
+            risk_level=risk_level,
+            system_state={"source": "test_endpoint"},
+            affected_resources=["test"],
+            requested_at=datetime.now(timezone.utc).isoformat() + 'Z',
+            requested_by="test_endpoint"
+        )
+        
+        engine.queue_request(request)
+        
+        return {
+            "status": "ok",
+            "message": "Test approval created",
+            "request_id": request.id,
+            "note": "Check the Approvals page to see it"
+        }
+    except Exception as e:
+        logger.error(f"Failed to create test approval: {e}")
+        return {"status": "error", "error": str(e)}

@@ -438,11 +438,19 @@ export function Backups() {
                             className="h-6 px-2 text-xs ml-auto"
                             onClick={() => {
                               const configPath = backup.data.config_path || ''
-                              setEditingConfig(configPath)
+                              const fileName = configPath.split('/').pop() || 'config'
+                              // Open chat with configPath so the Edit Config button appears in chat
                               openChat({
-                                title: `Config: ${configPath.split('/').pop()}`,
+                                title: `Config: ${fileName}`,
                                 type: 'config',
+                                configPath: configPath,
+                                newConversation: true,
+                                prefillMessage: `I want to edit the ${backup.name} backup configuration at ${configPath}`,
                               })
+                              // Also open the config editor
+                              window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {
+                                detail: { filePath: configPath }
+                              }))
                             }}
                           >
                             <Pencil className="h-3 w-3 mr-1" />

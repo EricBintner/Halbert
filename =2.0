@@ -1,0 +1,21 @@
+Collecting apscheduler
+  Downloading apscheduler-3.11.1-py3-none-any.whl.metadata (6.4 kB)
+Collecting sqlalchemy
+  Downloading sqlalchemy-2.0.45-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (9.5 kB)
+Collecting tzlocal>=3.0 (from apscheduler)
+  Using cached tzlocal-5.3.1-py3-none-any.whl.metadata (7.6 kB)
+Collecting greenlet>=1 (from sqlalchemy)
+  Downloading greenlet-3.3.0-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl.metadata (4.1 kB)
+Requirement already satisfied: typing-extensions>=4.6.0 in ./.venv/lib/python3.12/site-packages (from sqlalchemy) (4.15.0)
+Downloading apscheduler-3.11.1-py3-none-any.whl (64 kB)
+   ━━━━━━━ 64.3/6… 4.4     eta 0:00:00
+           kB      MB/s               
+Downloading sqlalchemy-2.0.45-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (3.3 MB)
+   ━━━━━━━ 3.3/3.3 19.9    eta 0:00:00
+           MB      MB/s               
+Downloading greenlet-3.3.0-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (609 kB)
+   ━━━━━━━ 609.9/… 60.5    eta 0:00:00
+           kB      MB/s               
+Using cached tzlocal-5.3.1-py3-none-any.whl (18 kB)
+Installing collected packages: tzlocal, greenlet, sqlalchemy, apscheduler
+Successfully installed apscheduler-3.11.1 greenlet-3.3.0 sqlalchemy-2.0.45 tzlocal-5.3.1
