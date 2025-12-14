@@ -94,6 +94,65 @@ def store_conversation_memory(
         logger.warning(f"Failed to store conversation in memory: {e}")
 
 
+def get_telemetry_context(query: str, max_results: int = 5) -> str:
+    """
+    Retrieve relevant telemetry events from journald/hwmon.
+    
+    Uses ChromaDB semantic search to find relevant system events.
+    """
+    try:
+        index = get_index()
+        
+        # Check for error/warning keywords to search journald
+        error_keywords = ['error', 'fail', 'crash', 'problem', 'issue', 'broke', 'not working']
+        query_lower = query.lower()
+        has_error_keywords = any(kw in query_lower for kw in error_keywords)
+        
+        context_parts = []
+        
+        # Search journald events
+        if has_error_keywords:
+            journald_results = index.query(
+                text=query,
+                k=max_results,
+                collection="self_journald"
+            )
+            if journald_results:
+                context_parts.append("**Recent relevant system logs:**")
+                for r in journald_results[:3]:
+                    msg = r.get('message', '')[:200]
+                    sev = r.get('severity', 'info')
+                    if msg:
+                        context_parts.append(f"- [{sev}] {msg}")
+        
+        # Search hwmon events for thermal keywords
+        thermal_keywords = ['temp', 'hot', 'thermal', 'heat', 'fan', 'cooling', 'cpu', 'gpu']
+        has_thermal = any(kw in query_lower for kw in thermal_keywords)
+        
+        if has_thermal:
+            hwmon_results = index.query(
+                text=query,
+                k=3,
+                collection="self_hwmon"
+            )
+            if hwmon_results:
+                context_parts.append("**Recent sensor readings:**")
+                for r in hwmon_results[:3]:
+                    msg = r.get('message', '')
+                    label = (r.get('data') or {}).get('label', '')
+                    if msg:
+                        context_parts.append(f"- {label}: {msg}")
+        
+        if context_parts:
+            logger.debug(f"Retrieved telemetry context for query")
+            return "\n".join(context_parts)
+        
+        return ""
+    except Exception as e:
+        logger.debug(f"Telemetry retrieval failed: {e}")
+        return ""
+
+
 def get_ollama_endpoint() -> str:
     """Get the Ollama endpoint URL from config (guide model's endpoint)."""
     try:
@@ -1042,6 +1101,15 @@ if FASTAPI_AVAILABLE:
             if debug_info:
                 debug_info['auto_injected_context'].append({'type': 'memory', 'count': 3})
             logger.debug("Injected memory context from ChromaDB")
+        
+        # Retrieve relevant telemetry (journald/hwmon events)
+        telemetry_context = get_telemetry_context(message, max_results=5)
+        if telemetry_context:
+            context_parts.append(telemetry_context)
+            auto_injected_types.add('telemetry')
+            if debug_info:
+                debug_info['auto_injected_context'].append({'type': 'telemetry', 'count': 5})
+            logger.debug("Injected telemetry context from ChromaDB")
         
         # CRITICAL: When asking about failures, inject ALL failed/error discoveries
         # This enables correlation (failed service + failed disk = hardware issue)

@@ -162,6 +162,48 @@ Content-Type: application/json
 
 ---
 
+## Ingestion API
+
+Telemetry ingestion service for journald and hwmon collection.
+
+### Get Ingestion Status
+
+```
+GET /api/settings/ingestion/status
+```
+
+**Response:**
+```json
+{
+  "running": true,
+  "started_at": "2025-12-14T10:30:00",
+  "journald_events": 156,
+  "hwmon_events": 42,
+  "last_journald_event": "2025-12-14T10:35:22",
+  "last_hwmon_event": "2025-12-14T10:35:30",
+  "errors": 0,
+  "config_path": "/home/user/.config/halbert/ingestion.yml"
+}
+```
+
+### Start Ingestion
+
+```
+POST /api/settings/ingestion/start
+```
+
+Starts the background telemetry collection.
+
+### Stop Ingestion
+
+```
+POST /api/settings/ingestion/stop
+```
+
+Stops the background telemetry collection.
+
+---
+
 ## Discovery API
 
 ### Get Discoveries by Type

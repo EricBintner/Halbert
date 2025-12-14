@@ -193,6 +193,30 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             """Serve React app for frontend routes."""
             return FileResponse(frontend_dist / "index.html")
     
+    # Startup event: auto-start ingestion
+    @app.on_event("startup")
+    async def startup_event():
+        """Start background services on app startup."""
+        try:
+            from ..ingestion.service import get_ingestion_service
+            service = get_ingestion_service()
+            service.start()
+            logger.info("Ingestion service auto-started")
+        except Exception as e:
+            logger.warning(f"Failed to auto-start ingestion: {e}")
+    
+    # Shutdown event: stop ingestion
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        """Stop background services on app shutdown."""
+        try:
+            from ..ingestion.service import get_ingestion_service
+            service = get_ingestion_service()
+            service.stop()
+            logger.info("Ingestion service stopped")
+        except Exception as e:
+            logger.warning(f"Failed to stop ingestion: {e}")
+    
     logger.info("Halbert Dashboard API created")
     
     return app
