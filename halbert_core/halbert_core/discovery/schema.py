@@ -350,6 +350,32 @@ def service_discovery(
                 icon="file-text",
             ),
         ],
-        chat_context=f"This is a {service_type} service named '{name}'. "
-                     f"Status: {status}. Enabled: {enabled}.",
+        chat_context=_build_service_chat_context(name, service_type, status, enabled, extra_data),
     )
+
+
+def _build_service_chat_context(name: str, service_type: str, status: str, enabled: bool, extra_data: dict) -> str:
+    """Build rich chat context for service discoveries, including storage relationships."""
+    parts = [f"This is a {service_type} service named '{name}'. Status: {status}. Enabled: {enabled}."]
+    
+    # Add mount/storage relationship info if present
+    if extra_data.get('is_mount_service'):
+        mount_point = extra_data.get('mount_point')
+        mount_device = extra_data.get('mount_device')
+        mount_fstype = extra_data.get('mount_fstype')
+        related_storage = extra_data.get('related_storage', [])
+        
+        if mount_point:
+            parts.append(f"This service mounts to: {mount_point}")
+        if mount_fstype:
+            parts.append(f"Filesystem type: {mount_fstype}")
+        if mount_device:
+            parts.append(f"Device: {mount_device}")
+        if related_storage:
+            parts.append(f"Related devices: {', '.join(related_storage)}")
+        
+        # Critical hint for correlation
+        if status.lower() in ['failed', 'error']:
+            parts.append("⚠️ If this mount service failed, check if any of its devices have SMART failures or if the pool is healthy.")
+    
+    return " ".join(parts)
