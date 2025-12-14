@@ -20,12 +20,78 @@ except ImportError:
 from ..routes.discovery import get_engine
 from ...model.router import ModelRouter, TaskType
 from ...discovery.schema import DiscoveryType
+from ...index.chroma_index import get_index
 from pathlib import Path
 import socket
 import json
 import requests
 
 logger = logging.getLogger('halbert.dashboard.routes.chat')
+
+
+def get_memory_context(query: str, conversation_id: Optional[str] = None, max_results: int = 3) -> str:
+    """
+    Retrieve relevant context from conversation memory.
+    
+    Uses ChromaDB semantic search to find relevant past conversations.
+    """
+    try:
+        index = get_index()
+        
+        # Query past conversations for relevant context
+        results = index.query_conversations(
+            query=query,
+            k=max_results,
+            conversation_id=None  # Search across all conversations
+        )
+        
+        if not results:
+            return ""
+        
+        # Format relevant memories
+        memory_parts = ["**Relevant past context:**"]
+        for r in results:
+            role = r.get('role', 'unknown')
+            content = r.get('content', '')[:300]  # Truncate long content
+            if content:
+                memory_parts.append(f"- [{role}]: {content}")
+        
+        if len(memory_parts) > 1:
+            logger.debug(f"Retrieved {len(results)} memory entries for context")
+            return "\n".join(memory_parts)
+        
+        return ""
+    except Exception as e:
+        logger.warning(f"Memory retrieval failed: {e}")
+        return ""
+
+
+def store_conversation_memory(
+    conversation_id: str,
+    message: str,
+    role: str,
+    page: Optional[str] = None,
+    mentions: Optional[List[str]] = None
+):
+    """Store a conversation message in memory for future retrieval."""
+    try:
+        index = get_index()
+        
+        metadata = {}
+        if page:
+            metadata['page'] = page
+        if mentions:
+            metadata['mentions'] = ','.join(mentions[:5])  # Store first 5 mentions
+        
+        index.upsert_conversation(
+            conversation_id=conversation_id,
+            message=message,
+            role=role,
+            metadata=metadata
+        )
+        logger.debug(f"Stored {role} message in memory (conv={conversation_id[:8]}...)")
+    except Exception as e:
+        logger.warning(f"Failed to store conversation in memory: {e}")
 
 
 def get_ollama_endpoint() -> str:
@@ -901,6 +967,7 @@ class ChatRequest(BaseModel):
     current_page: str = ""  # Current page/tab user is on (e.g., 'network', 'storage')
     page_context: str = ""  # Visible items/state from the page
     images: List[str] = []  # Vision model: Base64 encoded images
+    conversation_id: str = ""  # Conversation ID for memory storage/retrieval
 
 
 class ChatResponse(BaseModel):
@@ -965,6 +1032,16 @@ if FASTAPI_AVAILABLE:
         elif current_page:
             # Even without specific context, knowing the page helps
             context_parts.append(f"**User is currently viewing the {current_page.title()} page.**")
+        
+        # Retrieve relevant context from memory (ChromaDB semantic search)
+        conversation_id = request.conversation_id or None
+        memory_context = get_memory_context(message, conversation_id, max_results=3)
+        if memory_context:
+            context_parts.append(memory_context)
+            auto_injected_types.add('memory')
+            if debug_info:
+                debug_info['auto_injected_context'].append({'type': 'memory', 'count': 3})
+            logger.debug("Injected memory context from ChromaDB")
         
         # CRITICAL: When asking about failures, inject ALL failed/error discoveries
         # This enables correlation (failed service + failed disk = hardware issue)
@@ -2032,6 +2109,25 @@ if FASTAPI_AVAILABLE:
             debug_info['context_parts_count'] = len(context_parts)
             debug_info['response_length'] = len(response)
         
+        # Store conversation in memory for future context retrieval
+        if conversation_id and message:
+            # Store user message
+            store_conversation_memory(
+                conversation_id=conversation_id,
+                message=message,
+                role='user',
+                page=current_page,
+                mentions=mentions
+            )
+            # Store assistant response
+            if response:
+                store_conversation_memory(
+                    conversation_id=conversation_id,
+                    message=response[:1000],  # Truncate long responses
+                    role='assistant',
+                    page=current_page
+                )
+        
         return ChatResponse(
             response=response,
             mentions_resolved=mentions_resolved,
@@ -2709,3 +2805,56 @@ if FASTAPI_AVAILABLE:
                 response=f"Error: {str(e)}",
                 edit_blocks=[]
             )
+    
+    
+    @router.get("/memory/stats")
+    async def get_memory_stats():
+        """
+        Get memory system statistics.
+        
+        Returns ChromaDB collection counts and status.
+        """
+        try:
+            index = get_index()
+            stats = index.get_stats()
+            return {
+                "status": "ok",
+                "chromadb_available": stats.get("chromadb_available", False),
+                "memory_events": stats.get("memory_events", 0),
+                "collections": stats.get("collections", {}),
+            }
+        except Exception as e:
+            logger.error(f"Memory stats error: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "chromadb_available": False,
+            }
+    
+    
+    @router.post("/memory/query")
+    async def query_memory(query: str, k: int = 5, collection: Optional[str] = None):
+        """
+        Query the memory system directly.
+        
+        Args:
+            query: Search query
+            k: Number of results
+            collection: Specific collection to search
+        """
+        try:
+            index = get_index()
+            results = index.query(query, k=k, collection=collection)
+            return {
+                "status": "ok",
+                "query": query,
+                "results": results,
+                "count": len(results),
+            }
+        except Exception as e:
+            logger.error(f"Memory query error: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "results": [],
+            }

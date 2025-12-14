@@ -334,7 +334,8 @@ export function ChatPanel() {
 
   const getAIResponse = async (userInput: string, mentions: string[]): Promise<string> => {
     try {
-      const response = await api.sendChat(userInput, mentions, 'guide')
+      // Basic chat without memory storage (legacy component)
+      const response = await api.sendChat(userInput, mentions, 'guide', false, '', '', [], [])
       return response.response || "I'm not sure how to help with that."
     } catch (error) {
       console.error('Chat API error:', error)
