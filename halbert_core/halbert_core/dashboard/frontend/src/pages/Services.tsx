@@ -718,64 +718,75 @@ export function Services() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3">
+                    {/* Memory usage */}
                     {service.data.memory_mb && (
-                      <span className="text-sm text-muted-foreground">
+                      <span className="text-xs text-muted-foreground tabular-nums">
                         {service.data.memory_mb.toFixed(0)} MB
                       </span>
                     )}
-                    <WhyBrain
-                      itemId={`service:${service.name}`}
-                      itemName={service.name}
-                      itemType="service"
-                      size="sm"
-                    />
+                    
+                    {/* Status badge */}
                     <Badge
+                      variant="outline"
                       className={cn(
-                        service.severity === 'critical' && 'bg-red-500',
-                        service.severity === 'warning' && 'bg-yellow-500',
-                        service.severity === 'success' && 'bg-green-500',
-                        service.severity === 'info' && service.status === 'Completed' && 'bg-violet-500',
-                        service.severity === 'info' && service.status !== 'Completed' && 'bg-slate-500',
+                        'text-xs font-medium border min-w-[70px] justify-center',
+                        service.severity === 'critical' && 'bg-red-500/15 text-red-700 border-red-500/40 dark:bg-red-900/40 dark:text-red-300',
+                        service.severity === 'warning' && 'bg-yellow-500/15 text-yellow-700 border-yellow-500/40 dark:bg-yellow-900/40 dark:text-yellow-300',
+                        service.severity === 'success' && 'bg-green-500/15 text-green-700 border-green-500/40 dark:bg-green-900/40 dark:text-green-300',
+                        service.severity === 'info' && service.status === 'Completed' && 'bg-violet-500/15 text-violet-700 border-violet-500/40 dark:bg-violet-900/40 dark:text-violet-300',
+                        service.severity === 'info' && service.status !== 'Completed' && 'bg-muted text-muted-foreground border-border',
                       )}
                     >
                       {service.status}
                     </Badge>
-                    <div className="flex gap-1">
+                    
+                    {/* Service control buttons */}
+                    <div className="flex items-center border rounded-md">
                       {service.status === 'Running' ? (
                         <>
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8"
+                            className="h-7 w-7 rounded-r-none text-muted-foreground hover:text-amber-600 hover:bg-amber-500/10"
                             onClick={(e) => handleAction(service, 'restart', e)}
                             title="Restart"
                           >
-                            <RotateCcw className="h-4 w-4" />
+                            <RotateCcw className="h-3.5 w-3.5" />
                           </Button>
+                          <div className="w-px h-4 bg-border" />
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8"
+                            className="h-7 w-7 rounded-l-none text-muted-foreground hover:text-red-600 hover:bg-red-500/10"
                             onClick={(e) => handleAction(service, 'stop', e)}
                             title="Stop"
                           >
-                            <Square className="h-4 w-4" />
+                            <Square className="h-3 w-3 fill-current" />
                           </Button>
                         </>
                       ) : (
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8"
+                          className="h-7 w-7 text-muted-foreground hover:text-green-600 hover:bg-green-500/10"
                           onClick={(e) => handleAction(service, 'start', e)}
                           title="Start"
                         >
-                          <Play className="h-4 w-4" />
+                          <Play className="h-3.5 w-3.5 fill-current" />
                         </Button>
                       )}
                     </div>
-                    <SystemItemActions
+                    
+                    {/* AI actions (why + mention + chat) */}
+                    <div className="flex items-center gap-0">
+                      <WhyBrain
+                        itemId={`service:${service.name}`}
+                        itemName={service.name}
+                        itemType="service"
+                        size="sm"
+                      />
+                      <SystemItemActions
                       item={{
                         name: service.name,
                         type: 'service',
@@ -787,6 +798,7 @@ export function Services() {
                       }}
                       size="sm"
                     />
+                    </div>
                     <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                   </div>
                 </div>

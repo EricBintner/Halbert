@@ -44,9 +44,15 @@ export function WhyBrain({
   const isDefined = Boolean(currentWhy && currentWhy.trim().length > 0)
   
   const sizeClasses = {
-    sm: 'h-3.5 w-3.5',
+    sm: 'h-4 w-4',
     md: 'h-4 w-4',
     lg: 'h-5 w-5',
+  }
+  
+  const buttonSizeClasses = {
+    sm: 'h-7 w-7',
+    md: 'h-8 w-8',
+    lg: 'h-9 w-9',
   }
   
   const handleSave = (newWhy: string) => {
@@ -62,11 +68,12 @@ export function WhyBrain({
           setIsOpen(true)
         }}
         className={cn(
-          "inline-flex items-center justify-center rounded-md p-1 transition-all duration-200",
-          "hover:bg-accent/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
+          "inline-flex items-center justify-center rounded-md transition-colors",
+          buttonSizeClasses[size],
+          "hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           isDefined 
-            ? "text-pink-400 hover:text-pink-300" 
-            : "text-muted-foreground/50 hover:text-muted-foreground",
+            ? "text-pink-500 hover:text-pink-400" 
+            : "text-muted-foreground/40 hover:text-muted-foreground/70",
           className
         )}
         title={isDefined ? "View/edit why this exists" : "Add explanation for why this exists"}
@@ -75,7 +82,7 @@ export function WhyBrain({
         <Brain 
           className={cn(
             sizeClasses[size],
-            isDefined && "fill-pink-400/20"
+            isDefined && "fill-pink-500/30"
           )} 
         />
       </button>

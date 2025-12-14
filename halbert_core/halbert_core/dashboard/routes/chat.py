@@ -3049,3 +3049,89 @@ if FASTAPI_AVAILABLE:
                 "error": str(e),
                 "results": [],
             }
+    
+    
+    @router.get("/memory/collections")
+    async def list_memory_collections():
+        """List all memory collections with counts."""
+        try:
+            index = get_index()
+            collections = index.list_collections()
+            return {
+                "status": "ok",
+                "collections": collections,
+            }
+        except Exception as e:
+            logger.error(f"List collections error: {e}")
+            return {"status": "error", "error": str(e), "collections": []}
+    
+    
+    @router.get("/memory/entries/{collection}")
+    async def list_memory_entries(collection: str, limit: int = 50, offset: int = 0):
+        """List entries in a specific collection."""
+        try:
+            index = get_index()
+            entries = index.list_entries(collection, limit=limit, offset=offset)
+            return {
+                "status": "ok",
+                "collection": collection,
+                "entries": entries,
+                "count": len(entries),
+            }
+        except Exception as e:
+            logger.error(f"List entries error: {e}")
+            return {"status": "error", "error": str(e), "entries": []}
+    
+    
+    @router.get("/memory/entry/{collection}/{entry_id:path}")
+    async def get_memory_entry(collection: str, entry_id: str):
+        """Get a specific entry by ID."""
+        try:
+            index = get_index()
+            entry = index.get_entry(collection, entry_id)
+            if entry:
+                return {"status": "ok", "entry": entry}
+            return {"status": "error", "error": "Entry not found"}
+        except Exception as e:
+            logger.error(f"Get entry error: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    
+    @router.delete("/memory/entry/{collection}/{entry_id:path}")
+    async def delete_memory_entry(collection: str, entry_id: str):
+        """Delete a specific entry."""
+        try:
+            index = get_index()
+            success = index.delete_entry(collection, entry_id)
+            return {"status": "ok" if success else "error", "deleted": success}
+        except Exception as e:
+            logger.error(f"Delete entry error: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    
+    class DeleteEntriesRequest(BaseModel):
+        entry_ids: List[str]
+    
+    
+    @router.post("/memory/delete/{collection}")
+    async def delete_memory_entries(collection: str, request: DeleteEntriesRequest):
+        """Delete multiple entries from a collection."""
+        try:
+            index = get_index()
+            count = index.delete_entries(collection, request.entry_ids)
+            return {"status": "ok", "deleted": count}
+        except Exception as e:
+            logger.error(f"Delete entries error: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    
+    @router.post("/memory/clear/{collection}")
+    async def clear_memory_collection(collection: str):
+        """Clear all entries from a collection. USE WITH CAUTION."""
+        try:
+            index = get_index()
+            success = index.clear_collection(collection)
+            return {"status": "ok" if success else "error", "cleared": success}
+        except Exception as e:
+            logger.error(f"Clear collection error: {e}")
+            return {"status": "error", "error": str(e)}
