@@ -2089,3 +2089,223 @@ async def get_all_knowledge():
     except Exception as e:
         logger.error(f"Failed to get knowledge: {e}")
         return {"entries": [], "count": 0, "error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 23: Approval & Guardrails API
+# ─────────────────────────────────────────────────────────────────────────────
+
+from ...approval.engine import ApprovalEngine, ApprovalRequest, ApprovalDecision
+from ...autonomy.guardrails import GuardrailEnforcer
+
+_approval_engine: Optional[ApprovalEngine] = None
+_guardrail_enforcer: Optional[GuardrailEnforcer] = None
+
+def get_approval_engine() -> ApprovalEngine:
+    """Get singleton approval engine."""
+    global _approval_engine
+    if _approval_engine is None:
+        _approval_engine = ApprovalEngine()
+    return _approval_engine
+
+def get_guardrail_enforcer() -> GuardrailEnforcer:
+    """Get singleton guardrail enforcer."""
+    global _guardrail_enforcer
+    if _guardrail_enforcer is None:
+        _guardrail_enforcer = GuardrailEnforcer()
+    return _guardrail_enforcer
+
+
+@router.get("/approvals/pending")
+async def get_pending_approvals():
+    """Get all pending approval requests."""
+    try:
+        engine = get_approval_engine()
+        pending = engine.get_pending_requests()
+        return {
+            "status": "ok",
+            "pending": [
+                {
+                    "id": req.id,
+                    "task": req.task,
+                    "action": req.action,
+                    "reasoning": req.reasoning,
+                    "confidence": req.confidence,
+                    "risk_level": req.risk_level,
+                    "affected_resources": req.affected_resources,
+                    "requested_at": req.requested_at,
+                    "simulation_result": req.simulation_result,
+                }
+                for req in pending
+            ],
+            "count": len(pending)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get pending approvals: {e}")
+        return {"status": "error", "error": str(e), "pending": [], "count": 0}
+
+
+@router.get("/approvals/history")
+async def get_approval_history(limit: int = 50, approved_only: bool = False):
+    """Get approval history."""
+    try:
+        engine = get_approval_engine()
+        history = engine.get_approval_history(limit=limit, approved_only=approved_only)
+        return {"status": "ok", "history": history, "count": len(history)}
+    except Exception as e:
+        logger.error(f"Failed to get approval history: {e}")
+        return {"status": "error", "error": str(e), "history": [], "count": 0}
+
+
+class ApprovalDecisionRequest(BaseModel):
+    approved: bool
+    reason: Optional[str] = None
+
+
+@router.post("/approvals/{request_id}/decide")
+async def decide_approval(request_id: str, decision: ApprovalDecisionRequest):
+    """Approve or reject a pending request."""
+    try:
+        engine = get_approval_engine()
+        req = engine.get_request(request_id)
+        
+        if not req:
+            return {"status": "error", "error": f"Request {request_id} not found"}
+        
+        if req.status != "pending":
+            return {"status": "error", "error": f"Request {request_id} is not pending (status: {req.status})"}
+        
+        # Create decision
+        from datetime import datetime, timezone
+        approval_decision = ApprovalDecision(
+            request_id=request_id,
+            approved=decision.approved,
+            reason=decision.reason,
+            decided_by="dashboard_user",
+            decided_at=datetime.now(timezone.utc).isoformat() + 'Z'
+        )
+        
+        # Update request
+        req.status = "approved" if decision.approved else "rejected"
+        if decision.approved:
+            req.approved_at = approval_decision.decided_at
+            req.approved_by = "dashboard_user"
+        else:
+            req.rejected_at = approval_decision.decided_at
+            req.rejection_reason = decision.reason
+        
+        engine._save_request(req)
+        engine._save_decision(approval_decision)
+        
+        return {
+            "status": "ok",
+            "request_id": request_id,
+            "decision": "approved" if decision.approved else "rejected",
+            "reason": decision.reason
+        }
+    except Exception as e:
+        logger.error(f"Failed to process approval decision: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.get("/guardrails/status")
+async def get_guardrails_status():
+    """Get current guardrails status."""
+    try:
+        enforcer = get_guardrail_enforcer()
+        return {
+            "status": "ok",
+            "safe_mode_active": enforcer.is_safe_mode_active(),
+            "config": enforcer.config
+        }
+    except Exception as e:
+        logger.error(f"Failed to get guardrails status: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/guardrails/safe-mode/enter")
+async def enter_safe_mode(reason: str = "Manual activation"):
+    """Enter safe mode (pause autonomous operations)."""
+    try:
+        enforcer = get_guardrail_enforcer()
+        enforcer.enter_safe_mode(reason)
+        return {"status": "ok", "safe_mode_active": True, "reason": reason}
+    except Exception as e:
+        logger.error(f"Failed to enter safe mode: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/guardrails/safe-mode/exit")
+async def exit_safe_mode():
+    """Exit safe mode (resume autonomous operations)."""
+    try:
+        enforcer = get_guardrail_enforcer()
+        enforcer.exit_safe_mode("dashboard_user")
+        return {"status": "ok", "safe_mode_active": False}
+    except Exception as e:
+        logger.error(f"Failed to exit safe mode: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 23: Scheduler API
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/scheduler/status")
+async def get_scheduler_status():
+    """Get scheduler status and job list."""
+    try:
+        from ..app import _scheduler_executor
+        
+        if _scheduler_executor is None:
+            return {
+                "status": "ok",
+                "scheduler": {
+                    "running": False,
+                    "reason": "Scheduler not initialized"
+                }
+            }
+        
+        status = _scheduler_executor.get_status()
+        jobs = _scheduler_executor.get_scheduled_jobs()
+        
+        return {
+            "status": "ok",
+            "scheduler": status,
+            "jobs": jobs
+        }
+    except Exception as e:
+        logger.error(f"Failed to get scheduler status: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.get("/scheduler/jobs")
+async def list_scheduler_jobs():
+    """List all scheduled jobs."""
+    try:
+        from ..app import _scheduler_executor
+        
+        if _scheduler_executor is None:
+            return {"status": "ok", "jobs": []}
+        
+        jobs = _scheduler_executor.get_scheduled_jobs()
+        return {"status": "ok", "jobs": jobs, "count": len(jobs)}
+    except Exception as e:
+        logger.error(f"Failed to list jobs: {e}")
+        return {"status": "error", "error": str(e), "jobs": []}
+
+
+@router.post("/scheduler/jobs/{job_id}/cancel")
+async def cancel_scheduler_job(job_id: str):
+    """Cancel a scheduled job."""
+    try:
+        from ..app import _scheduler_executor
+        
+        if _scheduler_executor is None:
+            return {"status": "error", "error": "Scheduler not running"}
+        
+        success = _scheduler_executor.cancel_job(job_id)
+        return {"status": "ok" if success else "error", "cancelled": success}
+    except Exception as e:
+        logger.error(f"Failed to cancel job: {e}")
+        return {"status": "error", "error": str(e)}

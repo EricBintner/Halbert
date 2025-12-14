@@ -36,7 +36,7 @@ The public `documentation/` folder contains the original architecture vision fro
 | **Approvals** | ⚠️ | Works, minimal docs |
 | **Settings** | ⚠️ | Extensive settings, not documented |
 | **Terminal** | ⚠️ | Integrated terminal - undocumented |
-| **Memory** | 🔄 | Page exists but may be legacy |
+| **Memory** | ⚠️ | ChromaDB memory management UI - browse, search, delete entries |
 | **Jobs** | 🔄 | Page exists but may be legacy |
 
 ---
@@ -50,7 +50,7 @@ The public `documentation/` folder contains the original architecture vision fro
 | `GET /health` | ✅ | Works |
 | `GET /api/status` | ✅ | Works |
 | `POST /api/chat` | ⚠️ | Works but docs are incomplete |
-| `GET /api/memory/*` | ❌ | May not exist as documented |
+| `GET /api/chat/memory/*` | ⚠️ | Works - collections, entries, search, delete |
 | `GET /api/approval/*` | ⚠️ | Works differently |
 | `GET /api/autonomy/*` | ❌ | Not implemented |
 | `ws://localhost:8000/ws` | ❌ | WebSocket not implemented |
