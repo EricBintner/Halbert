@@ -1215,6 +1215,101 @@ if FASTAPI_AVAILABLE:
             except Exception as e:
                 logger.warning(f"Failed to auto-inject development context: {e}")
         
+        # Performance/slow keywords -> inject process and thermal context
+        perf_keywords = ['slow', 'fast', 'performance', 'lag', 'freeze', 'hang', 'cpu', 'ram', 
+                        'memory', 'resource', 'hog', 'consuming', 'hot', 'temperature', 'thermal', 'fan']
+        if any(kw in message_lower for kw in perf_keywords):
+            try:
+                process_discoveries = [d for d in engine.get_all() if d.type.value == 'process']
+                hw_discoveries = [d for d in engine.get_all() if d.type.value == 'hardware']
+                
+                context_items = []
+                # Add resource hogs
+                for d in process_discoveries:
+                    if d.data.get('is_resource_hog') or d.data.get('is_problem_process'):
+                        context_items.append(f"- {d.title}: {d.status}")
+                # Add thermal info
+                for d in hw_discoveries:
+                    if d.data.get('is_thermal') or d.data.get('is_fan'):
+                        context_items.append(f"- {d.title}: {d.status}")
+                
+                if context_items:
+                    context_parts.append("**Performance/Thermal Context:**\n" + "\n".join(context_items[:15]))
+                    auto_injected_types.add('performance')
+                    if debug_info:
+                        debug_info['auto_injected_context'].append({'type': 'performance', 'count': len(context_items)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject performance context: {e}")
+        
+        # Package/update keywords -> inject package context
+        pkg_keywords = ['update', 'upgrade', 'install', 'package', 'apt', 'dnf', 'pacman', 
+                       'orphan', 'held', 'lock', 'broken']
+        if any(kw in message_lower for kw in pkg_keywords):
+            try:
+                pkg_discoveries = [d for d in engine.get_all() if d.type.value == 'package']
+                if pkg_discoveries:
+                    pkg_summary = []
+                    for d in pkg_discoveries[:10]:
+                        pkg_summary.append(f"- {d.title}: {d.status}")
+                    if pkg_summary:
+                        context_parts.append("**Package Management:**\n" + "\n".join(pkg_summary))
+                        auto_injected_types.add('package')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'package', 'count': len(pkg_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject package context: {e}")
+        
+        # Boot keywords -> inject boot context
+        boot_keywords = ['boot', 'startup', 'grub', 'kernel', 'initrd', 'systemd-analyze']
+        if any(kw in message_lower for kw in boot_keywords):
+            try:
+                boot_discoveries = [d for d in engine.get_all() if d.type.value == 'system_preservation']
+                if boot_discoveries:
+                    boot_summary = []
+                    for d in boot_discoveries[:10]:
+                        boot_summary.append(f"- {d.title}: {d.status}")
+                    if boot_summary:
+                        context_parts.append("**Boot/System:**\n" + "\n".join(boot_summary))
+                        auto_injected_types.add('boot')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'boot', 'count': len(boot_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject boot context: {e}")
+        
+        # Error keywords -> inject error/alert context
+        error_keywords = ['error', 'errors', 'log', 'journal', 'dmesg', 'crash', 'failed', 'failure']
+        if any(kw in message_lower for kw in error_keywords):
+            try:
+                alert_discoveries = [d for d in engine.get_all() if d.type.value == 'alert']
+                if alert_discoveries:
+                    alert_summary = []
+                    for d in alert_discoveries[:10]:
+                        alert_summary.append(f"- {d.title}: {d.status}")
+                    if alert_summary:
+                        context_parts.append("**Recent Errors/Alerts:**\n" + "\n".join(alert_summary))
+                        auto_injected_types.add('errors')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'errors', 'count': len(alert_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject error context: {e}")
+        
+        # Disk space keywords -> inject disk usage context  
+        space_keywords = ['space', 'full', 'disk full', 'cleanup', 'clean', 'cache', 'trash', 'large']
+        if any(kw in message_lower for kw in space_keywords):
+            try:
+                storage_discoveries = [d for d in engine.get_all() if d.type.value == 'storage']
+                cleanup_items = []
+                for d in storage_discoveries:
+                    if d.data.get('is_cache') or d.data.get('is_trash') or d.data.get('is_large_dir'):
+                        cleanup_items.append(f"- {d.title}: {d.status}")
+                if cleanup_items:
+                    context_parts.append("**Disk Space/Cleanup:**\n" + "\n".join(cleanup_items[:15]))
+                    auto_injected_types.add('disk_usage')
+                    if debug_info:
+                        debug_info['auto_injected_context'].append({'type': 'disk_usage', 'count': len(cleanup_items)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject disk usage context: {e}")
+        
         # RELATIONSHIP-BASED RETRIEVAL
         # When a specific service or storage item is mentioned, fetch related discoveries
         try:
