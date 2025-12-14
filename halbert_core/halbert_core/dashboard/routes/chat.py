@@ -186,6 +186,43 @@ def get_docs_context(query: str, max_results: int = 3) -> str:
         return ""
 
 
+def get_discovery_context(query: str, max_results: int = 5) -> str:
+    """
+    Semantic search over system discoveries.
+    
+    Uses ChromaDB to find discoveries relevant to the query,
+    even if not on the current page.
+    """
+    try:
+        from ..routes.discovery import get_engine
+        
+        engine = get_engine()
+        if not engine.use_chromadb:
+            return ""
+        
+        # Use semantic search
+        discoveries = engine.search(query, limit=max_results)
+        
+        if not discoveries:
+            return ""
+        
+        context_parts = ["**Relevant system discoveries:**"]
+        for d in discoveries:
+            status_str = f" ({d.status})" if d.status else ""
+            context_parts.append(f"- [{d.type.value}] **{d.title}**{status_str}")
+            if d.description:
+                context_parts.append(f"  {d.description[:150]}")
+        
+        if len(context_parts) > 1:
+            logger.debug(f"Retrieved {len(discoveries)} discoveries via semantic search")
+            return "\n".join(context_parts)
+        
+        return ""
+    except Exception as e:
+        logger.debug(f"Discovery search failed: {e}")
+        return ""
+
+
 def get_ollama_endpoint() -> str:
     """Get the Ollama endpoint URL from config (guide model's endpoint)."""
     try:
@@ -1156,6 +1193,16 @@ if FASTAPI_AVAILABLE:
                 if debug_info:
                     debug_info['auto_injected_context'].append({'type': 'docs', 'count': 3})
                 logger.debug("Injected documentation context from ChromaDB")
+        
+        # Semantic search over system discoveries (finds relevant discoveries across all types)
+        # This uses ChromaDB embeddings for better matching than keyword-based injection
+        discovery_context = get_discovery_context(message, max_results=5)
+        if discovery_context:
+            context_parts.append(discovery_context)
+            auto_injected_types.add('discovery_search')
+            if debug_info:
+                debug_info['auto_injected_context'].append({'type': 'discovery_search', 'count': 5})
+            logger.debug("Injected discovery context via semantic search")
         
         # CRITICAL: When asking about failures, inject ALL failed/error discoveries
         # This enables correlation (failed service + failed disk = hardware issue)

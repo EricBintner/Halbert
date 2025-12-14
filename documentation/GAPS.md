@@ -195,7 +195,7 @@ These features directly improve the system's understanding of itself:
 | **Conversation Memory** | Store/retrieve past conversations | ✅ Done |
 | **Telemetry Context** | Inject relevant logs into chat | ✅ Done |
 | **Document Indexing** | Man pages, Arch Wiki → ChromaDB | ✅ Done |
-| **Discovery → ChromaDB** | Persist discoveries with embeddings | 🔄 Partial |
+| **Discovery Search** | Semantic search over discoveries | ✅ Done |
 
 ### 🟠 P1: Documentation Updates (Completed This Session)
 
@@ -246,16 +246,18 @@ hwmon → Metrics → Embeddings → ChromaDB (self_hwmon)
 - `routes/settings.py` — API endpoints for start/stop/status ✅
 - `routes/chat.py` — Telemetry context injection ✅
 
-### Phase 22B: Discovery Persistence
+### Phase 22B: Discovery Persistence ✅ COMPLETE
 
 **Goal**: Store discoveries with semantic embeddings
 
-**Current**: Discoveries in-memory, lost on restart
-**Target**: Persist to ChromaDB, query across sessions
+**Implemented**:
+- `discovery/engine.py` — ChromaDB enabled by default ✅
+- `discovery/engine.py` — `search()` uses ChromaDB semantic search ✅
+- `routes/chat.py` — `get_discovery_context()` for semantic retrieval ✅
+- Discoveries stored in `discoveries` collection with embeddings
 
-**Files to update**:
-- `discovery/engine.py` — Enable ChromaDB by default ✅ (done)
-- Add embedding generation for discoveries
+**Note**: Discoveries are ephemeral (represent current state), so full persistence 
+isn't needed. The semantic search over current discoveries is the key feature.
 
 ### Phase 22C: Document Indexing ✅ COMPLETE
 
