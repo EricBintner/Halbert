@@ -1416,6 +1416,57 @@ if FASTAPI_AVAILABLE:
             except Exception as e:
                 logger.warning(f"Failed to auto-inject bootloader context: {e}")
         
+        # Docker/container keywords -> inject container context
+        container_keywords = ['docker', 'container', 'podman', 'image', 'volume', 'compose']
+        if any(kw in message_lower for kw in container_keywords):
+            try:
+                container_discoveries = [d for d in engine.get_all() if d.type.value == 'container']
+                if container_discoveries:
+                    container_items = []
+                    for d in container_discoveries:
+                        container_items.append(f"- {d.title}: {d.status}")
+                    if container_items:
+                        context_parts.append("**Containers:**\n" + "\n".join(container_items[:10]))
+                        auto_injected_types.add('container')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'container', 'count': len(container_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject container context: {e}")
+        
+        # VM/virtualization keywords -> inject virtualization context
+        vm_keywords = ['vm', 'virtual', 'kvm', 'qemu', 'virtualbox', 'vmware', 'hypervisor', 'guest']
+        if any(kw in message_lower for kw in vm_keywords):
+            try:
+                hw_discoveries = [d for d in engine.get_all() if d.type.value == 'hardware']
+                vm_items = []
+                for d in hw_discoveries:
+                    if d.data.get('is_virtualization') or d.data.get('is_hw_virt') or d.data.get('is_hypervisor'):
+                        vm_items.append(f"- {d.title}: {d.status}")
+                if vm_items:
+                    context_parts.append("**Virtualization:**\n" + "\n".join(vm_items[:10]))
+                    auto_injected_types.add('virtualization')
+                    if debug_info:
+                        debug_info['auto_injected_context'].append({'type': 'virtualization', 'count': len(vm_items)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject virtualization context: {e}")
+        
+        # Cron/scheduled task keywords -> inject scheduled context
+        scheduled_keywords = ['cron', 'timer', 'scheduled', 'backup schedule', 'daily', 'automatic']
+        if any(kw in message_lower for kw in scheduled_keywords):
+            try:
+                task_discoveries = [d for d in engine.get_all() if d.type.value == 'task']
+                if task_discoveries:
+                    task_items = []
+                    for d in task_discoveries:
+                        task_items.append(f"- {d.title}: {d.status}")
+                    if task_items:
+                        context_parts.append("**Scheduled Tasks:**\n" + "\n".join(task_items[:10]))
+                        auto_injected_types.add('scheduled')
+                        if debug_info:
+                            debug_info['auto_injected_context'].append({'type': 'scheduled', 'count': len(task_discoveries)})
+            except Exception as e:
+                logger.warning(f"Failed to auto-inject scheduled context: {e}")
+        
         # RELATIONSHIP-BASED RETRIEVAL
         # When a specific service or storage item is mentioned, fetch related discoveries
         try:
