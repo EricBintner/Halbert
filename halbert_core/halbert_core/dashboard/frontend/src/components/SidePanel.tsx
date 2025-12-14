@@ -1607,25 +1607,26 @@ export function SidePanel() {
                             // Auto-analyze: AI analyzes output under the hood
                             // NO visible user message - just show AI's analysis
                             
-                            // Build context for analysis (includes command output)
-                            const contextForAI = isError
-                              ? `[COMMAND EXECUTED]\nCommand: ${cmd}\nStatus: Error\nOutput:\n${output}\n\n[TASK] Analyze this error and suggest how to fix it.`
-                              : `[COMMAND EXECUTED]\nCommand: ${cmd}\nStatus: Success\nOutput:\n${output}\n\n[TASK] Analyze this output and explain what it reveals about the issue.`
+                            // Build a focused analysis request that won't trigger generic responses
+                            const analysisPrompt = isError
+                              ? `Analyze this command error and explain the root cause:\n\nCommand: \`${cmd}\`\nOutput:\n\`\`\`\n${output}\n\`\`\`\n\nWhat does this error mean and how can it be fixed?`
+                              : `Analyze this command output in the context of our conversation:\n\nCommand: \`${cmd}\`\nOutput:\n\`\`\`\n${output}\n\`\`\`\n\nWhat does this tell us?`
                             
                             setIsLoading(true)
                             
                             try {
-                              // Include command context in history but don't show as visible message
+                              // Include recent conversation for context
                               const historyWithContext = [
-                                ...messages.slice(-9).map(m => ({ role: m.role, content: m.content })),
-                                { role: 'user' as const, content: contextForAI }
+                                ...messages.slice(-6).map(m => ({ role: m.role, content: m.content })),
+                                { role: 'user' as const, content: analysisPrompt }
                               ]
                               const pageContext = buildPageContext()
                               
+                              // Use 'coder' persona for analysis to get focused technical response
                               const response = await api.sendChat(
-                                contextForAI,
+                                analysisPrompt,
                                 [],
-                                'guide',
+                                'coder',  // Use coder persona for technical analysis
                                 isDebugMode,
                                 currentPage || '',
                                 pageContext || '',
