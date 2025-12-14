@@ -153,17 +153,17 @@ The public `documentation/` folder contains the original architecture vision fro
 
 ## File Structure Discrepancies
 
-### Documented but Potentially Stale
+### Core Modules Status (Updated)
 
 ```
 halbert_core/
-├── approval/         # Exists but minimal use
-├── autonomy/         # Exists but not integrated
-├── ingestion/        # Exists but unclear use
-├── memory/           # Exists but unclear use
-├── policy/           # Exists but not integrated
+├── approval/         # ✅ Full workflow: chat → ApprovalEngine → Dashboard
+├── autonomy/         # ✅ Guardrails wired into chat.py tool authorization
+├── ingestion/        # ✅ journald/hwmon auto-start with dashboard → ChromaDB
+├── memory/           # ✅ ChromaDB for conversations, telemetry, docs, self-knowledge
+├── policy/           # ✅ Policy decisions wired into chat.py tool calls
 ├── runtime/          # DEPRECATED - direct Ollama calls used instead
-├── scheduler/        # Exists but not running
+├── scheduler/        # ✅ APScheduler starts with dashboard, health check every 6h
 ```
 
 ### Active Code Not in Docs
