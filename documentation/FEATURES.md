@@ -364,6 +364,82 @@ vision:
 
 ---
 
+## Autonomy & Safety
+
+### Policy Engine
+**Tool execution permissions.**
+
+- Default allow/deny for all tools
+- Per-tool overrides
+- Editable from Settings > Policy
+- YAML config: `~/.config/halbert/policy.yml`
+
+### Guardrails
+**Safety limits for autonomous operations.**
+
+- Confidence thresholds (require approval below threshold)
+- Resource budgets (CPU, memory, time)
+- Safe mode (pause all autonomous operations)
+- Editable from Settings > Guardrails
+
+### Anomaly Detection
+**Detect system anomalies during operation.**
+
+- CPU spike detection (sustained high usage)
+- Memory leak detection (rapid growth)
+- Repeated failure detection (consecutive errors)
+- Error rate tracking (high error percentage)
+- API: `GET /api/settings/anomaly/status`
+
+### Recovery Playbooks
+**Automated recovery actions.**
+
+- Config rollback (restore from backup)
+- Service restart
+- User alerting
+- Audit logging of all recovery actions
+- API: `POST /api/settings/recovery/rollback`
+
+### Dry-run Simulation
+**Preview actions before execution.**
+
+- File write simulation (diff preview)
+- Command simulation (dry-run flags)
+- Service restart simulation (impact preview)
+- Warnings for dangerous operations
+- API: `POST /api/settings/simulate/tool`
+
+### Approval Workflow
+**Human-in-the-loop for risky operations.**
+
+- Automatic approval requests for tool calls below confidence
+- Dashboard approval page
+- Approve/reject with reason
+- AI rules can block requests automatically
+
+---
+
+## Real-time Features
+
+### WebSocket Streaming
+**Live updates without polling.**
+
+- System status broadcasts (every 5s)
+- New approval request notifications
+- Scheduler job status updates
+- Chat token streaming (real-time response)
+- Auto-reconnect on disconnect
+
+### Scheduler
+**Background job scheduling.**
+
+- APScheduler with SQLAlchemy persistence
+- Health check job (every 6h)
+- Custom job scheduling
+- Job list and cancel via API
+
+---
+
 ## Running Halbert
 
 ### Development Mode
