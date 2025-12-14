@@ -207,14 +207,24 @@ These features directly improve the system's understanding of itself:
 | **API-REFERENCE.md** | ✅ Updated | All actual endpoints documented |
 | **GAPS.md** | ✅ Updated | This document, actionable priorities |
 
-### 🟡 P2: Missing Core Features
+### 🟡 P2: Core Feature Integration
 
-| Item | Description | Location |
-|------|-------------|----------|
-| **Scheduler** | Background autonomous tasks | `scheduler/engine.py` |
-| **Approval Workflow** | Dry-run + approval flow | `approval/engine.py` |
-| **Guardrails** | Budget/rate limiting | `autonomy/guardrails.py` |
-| **Policy Engine** | Action authorization | `policy/engine.py` |
+**Note**: These modules are MORE IMPLEMENTED than originally documented. The gap is **integration**, not implementation.
+
+| Module | Status | Missing Integration |
+|--------|--------|---------------------|
+| **Scheduler** | ✅ Engine exists | No background loop, no dashboard triggers |
+| **Approval** | ✅ CLI works | Dashboard mode auto-rejects, no WebSocket |
+| **Guardrails** | ✅ Checks work | Not wired into chat.py tool execution |
+| **Policy** | ✅ Decisions work | Not wired into tool calls |
+| **Auto Tasks** | ✅ Health/Log tasks | Not scheduled, not run automatically |
+
+**What's actually implemented**:
+- `scheduler/engine.py` — Job persistence, state management, add/list/cancel
+- `scheduler/autonomous_tasks.py` — SystemHealthCheckTask, LogCleanupTask with LLM decisions
+- `approval/engine.py` — CLI prompts, request storage, history, dry-run structure
+- `autonomy/guardrails.py` — Confidence checks, budget limits, safe mode
+- `policy/engine.py` — User/host/hours/path allow/deny decisions
 
 ### 🟢 P3: Developer Documentation
 
@@ -335,11 +345,12 @@ isn't needed. The semantic search over current discoveries is the key feature.
 - ✅ WhyBrain UI (universal rationale capture)
 - ✅ Documentation: Phase 22 docs in `docs/Phase22/`
 
-### Next Priority (P2: Missing Core Features)
-1. **Scheduler** — Background autonomous tasks (`scheduler/engine.py`)
-2. **Approval Workflow** — Dry-run + approval flow (`approval/engine.py`)
-3. **Guardrails** — Budget/rate limiting (`autonomy/guardrails.py`)
-4. **Policy Engine** — Action authorization (`policy/engine.py`)
+### Next Priority (P2: Integration Work)
+1. **Wire Guardrails** — Add to chat.py before tool execution
+2. **Wire Policy** — Check policy before executing tool calls
+3. **Dashboard Approvals** — Connect approval engine to Approvals page
+4. **Scheduler Loop** — Add background thread to run scheduled jobs
+5. **Auto Tasks** — Schedule health_check and log_cleanup tasks
 
 ### Cycle Checklist
 - [ ] Audit: Re-check codebase vs documentation
