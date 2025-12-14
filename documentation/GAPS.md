@@ -372,14 +372,14 @@ isn't needed. The semantic search over current discoveries is the key feature.
 
 ## Remaining Gaps Summary
 
-### ❌ Not Implemented (Decide: Build or Deprecate)
+### Implementation Status
 
-| Item | Decision | Notes |
-|------|----------|-------|
-| **LangGraph Orchestrator** |⛔ DEPRECATED | Direct Ollama calls work fine, no complex orchestration needed |
-| **Anomaly Detector** | Low priority | Safe mode exists, anomaly detection is "nice to have" |
-| **Recovery Playbooks** | Low priority | Manual recovery is fine for now |
-| **WebSocket Real-time** | Medium priority | Would improve chat UX, not blocking |
+| Item | Status | Notes |
+|------|--------|-------|
+| **LangGraph Orchestrator** | ⛔ DEPRECATED | Direct Ollama calls work fine, no complex orchestration needed |
+| **Anomaly Detector** | ✅ Done | API: `/api/settings/anomaly/status`, `/api/settings/anomaly/check` |
+| **Recovery Playbooks** | ✅ Done | API: rollback, restart-service, alert endpoints |
+| **WebSocket Real-time** | ✅ Done | `useChatStream()` hook, auto-reconnect, chat_token streaming |
 | **Dry-run Mode** | Low priority | Tool simulation exists, not fully consistent |
 
 ### ⚠️ Undocumented (Need Public Docs)
@@ -398,6 +398,7 @@ isn't needed. The semantic search over current discoveries is the key feature.
 
 ### Current Cycle Checklist
 - [x] Audit: Updated all statuses in GAPS.md
-- [ ] Decide: Which ❌ items to deprecate vs build
-- [ ] Document: Pick 3 undocumented pages to document
-- [ ] Build: Pick 1 missing feature to implement
+- [x] Decide: LangGraph deprecated, Anomaly/Recovery/WebSocket built
+- [x] Document: Dashboard pages documented (guides/dashboard-pages.md)
+- [x] Build: Anomaly Detection API, Recovery Playbooks API, WebSocket streaming
+- [x] Build: Editable Policy config UI
