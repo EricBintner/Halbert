@@ -1402,6 +1402,42 @@ if FASTAPI_AVAILABLE:
                                     'count': len(related_services)
                                 })
                         break  # Only process first matching storage
+            
+            # If asking about an error, correlate to the service
+            for d in engine.get_all():
+                if d.type.value == 'alert' and d.data.get('is_error_log'):
+                    unit = d.data.get('unit', '')
+                    if unit.lower() in message_lower or d.name.lower() in message_lower:
+                        # Find the service discovery for this unit
+                        for svc in engine.get_all():
+                            if svc.type.value == 'service' and svc.name in unit:
+                                svc_info = [f"**Service Info for errors in {unit}:**"]
+                                svc_info.append(f"- Status: {svc.status or 'unknown'}")
+                                if svc.data.get('is_mount_service'):
+                                    svc_info.append(f"- Mount point: {svc.data.get('mount_point', 'N/A')}")
+                                    svc_info.append(f"- Mount device: {svc.data.get('mount_device', 'N/A')}")
+                                context_parts.append("\n".join(svc_info))
+                                auto_injected_types.add('error_service_correlation')
+                                break
+                        break
+            
+            # If asking about a process, find if it's a service
+            for d in engine.get_all():
+                if d.type.value == 'process' and d.data.get('is_resource_hog'):
+                    proc_name = d.data.get('name', '').lower()
+                    if proc_name in message_lower:
+                        # Find service with matching name
+                        for svc in engine.get_all():
+                            if svc.type.value == 'service' and proc_name in svc.name.lower():
+                                proc_info = [f"**Service for process {proc_name}:**"]
+                                proc_info.append(f"- Service: {svc.name}")
+                                proc_info.append(f"- Status: {svc.status or 'unknown'}")
+                                if svc.chat_context:
+                                    proc_info.append(f"- Info: {svc.chat_context[:200]}")
+                                context_parts.append("\n".join(proc_info))
+                                auto_injected_types.add('process_service_correlation')
+                                break
+                        break
         except Exception as e:
             logger.warning(f"Failed to inject relationship context: {e}")
         
