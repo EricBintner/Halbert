@@ -149,6 +149,7 @@ class Discovery:
         Text used for generating embeddings.
         
         This is what ChromaDB indexes for semantic search.
+        Includes relationship data for better correlation search.
         """
         parts = [
             f"{self.type.value}: {self.name}",
@@ -159,6 +160,26 @@ class Discovery:
         ]
         if self.chat_context:
             parts.append(self.chat_context)
+        
+        # Include key relationship data for semantic search
+        if self.data:
+            # Storage relationships
+            if self.data.get('devices'):
+                parts.append(f"devices: {' '.join(self.data['devices'][:5])}")
+            if self.data.get('failed_devices'):
+                parts.append(f"failed devices: {' '.join(self.data['failed_devices'])}")
+            if self.data.get('mount_point'):
+                parts.append(f"mount point: {self.data['mount_point']}")
+            if self.data.get('smart_status'):
+                parts.append(f"SMART: {self.data['smart_status']}")
+            # Service relationships
+            if self.data.get('is_mount_service'):
+                parts.append("mount service")
+                if self.data.get('mount_fstype'):
+                    parts.append(f"filesystem: {self.data['mount_fstype']}")
+            if self.data.get('related_storage'):
+                parts.append(f"uses devices: {' '.join(self.data['related_storage'][:5])}")
+        
         return " ".join(filter(None, parts))
     
     def to_dict(self) -> dict:
