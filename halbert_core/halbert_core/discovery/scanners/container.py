@@ -251,6 +251,125 @@ class ContainerScanner(BaseScanner):
                     except:
                         pass
         
+        # Phase 24: Scan for Docker Compose projects
+        discoveries.extend(self._scan_compose_projects())
+        
+        return discoveries
+    
+    def _scan_compose_projects(self) -> List[Discovery]:
+        """
+        Phase 24: Detect Docker Compose projects and their containers.
+        
+        Uses docker labels to identify compose projects:
+        - com.docker.compose.project: Project name
+        - com.docker.compose.project.config_files: Path to compose file
+        - com.docker.compose.service: Service name within project
+        """
+        discoveries = []
+        
+        # Get all containers with their labels
+        code, stdout, _ = self.run_command([
+            "docker", "ps", "-a", "--format", 
+            "{{.Names}}\t{{.Labels}}\t{{.Status}}\t{{.Image}}"
+        ], timeout=15)
+        
+        if code != 0:
+            return discoveries
+        
+        # Group containers by compose project
+        compose_projects: Dict[str, Dict] = {}
+        
+        for line in stdout.strip().splitlines():
+            if not line.strip():
+                continue
+            
+            parts = line.split('\t')
+            if len(parts) < 4:
+                continue
+            
+            name, labels_str, status, image = parts[0], parts[1], parts[2], parts[3]
+            
+            # Parse labels
+            labels = {}
+            for label in labels_str.split(','):
+                if '=' in label:
+                    k, v = label.split('=', 1)
+                    labels[k.strip()] = v.strip()
+            
+            # Check if this is a compose container
+            project_name = labels.get('com.docker.compose.project')
+            if not project_name:
+                continue
+            
+            config_files = labels.get('com.docker.compose.project.config_files', '')
+            service_name = labels.get('com.docker.compose.service', name)
+            
+            # Initialize project group
+            if project_name not in compose_projects:
+                compose_projects[project_name] = {
+                    'config_path': config_files.split(',')[0] if config_files else None,
+                    'containers': [],
+                }
+            
+            # Add container to project
+            is_running = 'Up' in status
+            compose_projects[project_name]['containers'].append({
+                'name': name,
+                'service': service_name,
+                'image': image,
+                'status': status,
+                'running': is_running,
+            })
+        
+        # Create discoveries for compose projects
+        for project_name, project_data in compose_projects.items():
+            containers = project_data['containers']
+            config_path = project_data['config_path']
+            running_count = sum(1 for c in containers if c['running'])
+            total_count = len(containers)
+            
+            # Determine severity based on container status
+            if running_count == total_count:
+                severity = DiscoverySeverity.SUCCESS
+                status = f"{running_count}/{total_count} running"
+            elif running_count > 0:
+                severity = DiscoverySeverity.WARNING
+                status = f"{running_count}/{total_count} running"
+            else:
+                severity = DiscoverySeverity.INFO
+                status = f"All stopped"
+            
+            # Build container list for description
+            service_list = ", ".join(c['service'] for c in containers[:3])
+            if len(containers) > 3:
+                service_list += f" +{len(containers) - 3} more"
+            
+            discovery_id = make_discovery_id(DiscoveryType.CONTAINER, f"compose-{project_name}")
+            discoveries.append(Discovery(
+                id=discovery_id,
+                type=DiscoveryType.CONTAINER,
+                name=f"compose-{project_name}",
+                title=f"Compose: {project_name}",
+                description=f"Services: {service_list}",
+                icon="layers",
+                severity=severity,
+                status=status,
+                data={
+                    "is_compose_project": True,
+                    "project_name": project_name,
+                    "containers": containers,
+                    "running_count": running_count,
+                    "total_count": total_count,
+                    "config_path": config_path,
+                },
+                # Phase 24: Consolidation fields
+                config_path=config_path,
+                group_key=f"compose:{project_name}" if config_path else None,
+                chat_context=f"Docker Compose project '{project_name}' with {total_count} services. "
+                            f"{running_count} running. "
+                            f"{'Config: ' + config_path if config_path else 'No config path found.'}",
+            ))
+        
         return discoveries
     
     def _scan_podman(self) -> List[Discovery]:

@@ -169,6 +169,7 @@ class SharingScanner(BaseScanner):
             is_active = export_path in active_exports
             
             discovery_id = make_discovery_id(DiscoveryType.SHARING, f"nfs-export-{export_path}")
+            nfs_config = '/etc/exports'
             
             discoveries.append(Discovery(
                 id=discovery_id,
@@ -183,9 +184,12 @@ class SharingScanner(BaseScanner):
                     'export_path': export_path,
                     'clients': clients,
                     'active': is_active,
-                    'config_path': '/etc/exports',
+                    'config_path': nfs_config,
                 },
                 icon='share-2',
+                # Phase 24: Consolidation fields for grouping NFS exports
+                config_path=nfs_config,
+                group_key=f"nfs:{nfs_config}",
             ))
         
         return discoveries
@@ -302,6 +306,7 @@ class SharingScanner(BaseScanner):
         is_active = code == 0
         
         discovery_id = make_discovery_id(DiscoveryType.SHARING, f"smb-export-{name}")
+        smb_config = '/etc/samba/smb.conf'
         
         discoveries.append(Discovery(
             id=discovery_id,
@@ -320,9 +325,12 @@ class SharingScanner(BaseScanner):
                 'read_only': read_only,
                 'browseable': browseable,
                 'active': is_active,
-                'config_path': '/etc/samba/smb.conf',
+                'config_path': smb_config,
             },
             icon='share-2',
+            # Phase 24: Consolidation fields for grouping Samba shares
+            config_path=smb_config,
+            group_key=f"samba:{smb_config}",
         ))
     
     # ─────────────────────────────────────────────────────────────
@@ -531,6 +539,10 @@ class SharingScanner(BaseScanner):
         # Short key for display
         short_key = pubkey[:8] + '...'
         
+        # Phase 24: WireGuard config path for consolidation
+        config_path = f"/etc/wireguard/{interface}.conf"
+        config_exists = Path(config_path).exists()
+        
         discovery_id = make_discovery_id(DiscoveryType.SHARING, f"wg-{interface}-{pubkey[:8]}")
         
         discoveries.append(Discovery(
@@ -552,6 +564,9 @@ class SharingScanner(BaseScanner):
                 'online': is_online,
             },
             icon='shield',
+            # Phase 24: Consolidation fields
+            config_path=config_path if config_exists else None,
+            group_key=f"wireguard:{interface}" if config_exists else None,
         ))
     
     # ─────────────────────────────────────────────────────────────

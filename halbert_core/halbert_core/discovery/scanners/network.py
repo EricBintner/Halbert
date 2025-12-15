@@ -251,6 +251,13 @@ class NetworkScanner(BaseScanner):
                 # Try to find config file for this interface
                 config_path = self._find_interface_config(name, info_kind)
                 
+                # Phase 24: Generate group_key for bond/bridge consolidation
+                # Interfaces sharing the same config file should be grouped
+                group_key = None
+                if config_path and info_kind in ('bridge', 'bond'):
+                    # Bond and bridge interfaces sharing a config should be grouped
+                    group_key = f"netplan:{config_path}"
+                
                 discoveries.append(Discovery(
                     id=discovery_id,
                     type=DiscoveryType.NETWORK,
@@ -281,6 +288,9 @@ class NetworkScanner(BaseScanner):
                     chat_context=f"Network interface {name} ({iface_type}). "
                                 f"Status: {status}. IP: {ipv4 or 'None'}." +
                                 (f" Bridged to {master}." if master else ""),
+                    # Phase 24: Consolidation fields
+                    config_path=config_path,
+                    group_key=group_key,
                 ))
                 
         except json.JSONDecodeError:

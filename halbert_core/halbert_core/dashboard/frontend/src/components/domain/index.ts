@@ -8,3 +8,14 @@ export { SystemItemActions, type SystemItem, type SystemItemActionsProps } from 
 export { StatusBadge, type StatusBadgeProps } from './StatusBadge'
 export { UsageBar, type UsageBarProps } from './UsageBar'
 export { EmptyState, type EmptyStateProps } from './EmptyState'
+
+// Phase 24: Discovery Consolidation Components
+export { ConfigFileButton, getConfigPath, type ConfigFileButtonProps } from './ConfigFileButton'
+export { 
+  GroupedDiscoveryCard, 
+  groupByConfig, 
+  shouldFuse,
+  type GroupedItem, 
+  type GroupedDiscoveryCardProps,
+  type GroupedResult 
+} from './GroupedDiscoveryCard'

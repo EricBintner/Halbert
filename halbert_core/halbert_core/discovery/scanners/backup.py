@@ -237,6 +237,15 @@ class BackupScanner(BaseScanner):
         
         return discoveries
     
+    # Map backup tool timers to their config files for consolidation
+    TIMER_TO_CONFIG = {
+        "btrbk.timer": "/etc/btrbk/btrbk.conf",
+        "btrbk.service": "/etc/btrbk/btrbk.conf",
+        "snapper-timeline.timer": None,  # Uses per-config files
+        "snapper-cleanup.timer": None,
+        "sanoid.timer": "/etc/sanoid/sanoid.conf",
+    }
+    
     def _timer_to_discovery(self, timer_name: str) -> Discovery:
         """Convert a systemd timer to a discovery."""
         # Get timer info
@@ -254,14 +263,35 @@ class BackupScanner(BaseScanner):
                 elif line.startswith("ActiveState="):
                     status = line.split("=", 1)[1].title()
         
+        # Determine if this timer should be suppressed (when config-based entries exist)
+        # Timer is suppressed if it's a tool timer with a config file we also scan
+        config_path = self.TIMER_TO_CONFIG.get(timer_name)
+        suppress = config_path is not None and Path(config_path).exists()
+        
+        # Detect the actual backup tool for proper grouping
+        tool = "systemd"
+        if "btrbk" in timer_name:
+            tool = "btrbk"
+        elif "snapper" in timer_name:
+            tool = "snapper"
+        elif "sanoid" in timer_name:
+            tool = "sanoid"
+        elif "restic" in timer_name:
+            tool = "restic"
+        elif "borg" in timer_name:
+            tool = "borg"
+        
         return backup_discovery(
             name=timer_name.replace(".timer", ""),
             description=description,
             schedule="systemd timer",
-            tool="systemd",
+            tool=tool,
             status=status,
             severity=DiscoverySeverity.SUCCESS if status == "Active" else DiscoverySeverity.WARNING,
             timer_unit=timer_name,
+            # Consolidation: suppress timer when config-based entries exist
+            config_path=config_path,
+            suppress_display=suppress,
         )
     
     # ─────────────────────────────────────────────────────────────

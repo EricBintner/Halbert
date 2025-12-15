@@ -4,7 +4,7 @@
  * Based on Phase 9 research: docs/Phase9/deep-dives/02-backups-discovery.md
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 // ConfigEditor is handled globally by Layout.tsx via halbert:open-config-editor event
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -62,6 +62,19 @@ interface Backup {
     timer_unit?: string
     timeshift_config?: Record<string, unknown>
   }
+  // Consolidation fields (Phase 24)
+  config_path?: string
+  group_key?: string
+  suppress_display?: boolean
+  related_to?: string[]
+}
+
+// Grouped backup for fused display
+interface BackupGroup {
+  key: string
+  configPath: string
+  tool: string
+  items: Backup[]
 }
 
 // Status overrides from actual service state
@@ -236,6 +249,31 @@ export function Backups() {
     }
   }
 
+  // Phase 24: Group backups by config and filter suppressed items
+  const groupedBackups = useMemo((): BackupGroup[] => {
+    // Filter out suppressed items
+    const visible = backups.filter(b => !b.suppress_display)
+    
+    // Group by group_key (or treat as individual if no group_key)
+    const groups = new Map<string, BackupGroup>()
+    
+    for (const backup of visible) {
+      const key = backup.group_key || backup.id
+      
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          configPath: backup.config_path || backup.data.config_path || '',
+          tool: backup.data.tool,
+          items: [],
+        })
+      }
+      groups.get(key)!.items.push(backup)
+    }
+    
+    return Array.from(groups.values())
+  }, [backups])
+
   const stats = {
     total: backups.length,
     healthy: backups.filter(b => getEffectiveSeverity(b) === 'success').length,
@@ -321,8 +359,8 @@ export function Backups() {
         </Card>
       </div>
 
-      {/* Backup List */}
-      {backups.length === 0 ? (
+      {/* Backup List - Phase 24: Using grouped backups */}
+      {groupedBackups.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center">
             <Archive className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -338,21 +376,55 @@ export function Backups() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {backups.map((backup) => {
-            const isExpanded = expandedBackups.has(backup.id)
-            const history = backupHistories[backup.name] || []
-            const isLoadingHistory = loadingHistories.has(backup.name)
+          {groupedBackups.map((group) => {
+            const isFused = group.items.length > 1
             
             return (
-              <Card key={backup.id} className="overflow-hidden">
+              <Card key={group.key} className="overflow-hidden">
                 <CardContent className="p-0">
+                  {/* Fused header for multi-item groups */}
+                  {isFused && (
+                    <div className="p-3 bg-muted/50 border-b flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {getToolIcon(group.tool)}
+                        <span className="font-semibold">{group.tool.charAt(0).toUpperCase() + group.tool.slice(1)} Backups</span>
+                        <Badge variant="outline" className="text-xs">{group.items.length} targets</Badge>
+                      </div>
+                      {group.configPath && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {
+                              detail: { filePath: group.configPath }
+                            }))
+                          }}
+                        >
+                          <FileText className="h-4 w-4 mr-1" />
+                          Edit Config
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Render each backup in the group */}
+                  {group.items.map((backup, idx) => {
+                    const isExpanded = expandedBackups.has(backup.id)
+                    const history = backupHistories[backup.name] || []
+                    const isLoadingHistory = loadingHistories.has(backup.name)
+                    const isLast = idx === group.items.length - 1
+            
+            return (
+              <div key={backup.id} className={cn(!isLast && isFused && "border-b border-dashed")}>
                   {/* Main backup info - improved layout */}
                   <div className="p-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-start gap-3 min-w-0 flex-1">
+                        {!isFused && (
                         <div className="shrink-0 mt-0.5">
                           {getToolIcon(backup.data.tool)}
                         </div>
+                        )}
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <h3 className="font-semibold">{backup.name}</h3>
@@ -559,7 +631,8 @@ export function Backups() {
                     )}
                   </div>
 
-                  {/* Actions */}
+                  {/* Actions - only for non-fused or show per item */}
+                  {!isFused && (
                   <div className="border-t p-3 bg-muted/30 flex gap-2">
                     <Button
                       variant="outline"
@@ -578,6 +651,32 @@ export function Backups() {
                       Logs
                     </Button>
                   </div>
+                  )}
+              </div>
+            )
+          })}
+          
+          {/* Shared actions for fused groups */}
+          {isFused && (
+            <div className="border-t p-3 bg-muted/30 flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleAction(group.items[0], 'run')}
+              >
+                <Play className="h-4 w-4 mr-1" />
+                Run All
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleAction(group.items[0], 'logs')}
+              >
+                <FileText className="h-4 w-4 mr-1" />
+                Logs
+              </Button>
+            </div>
+          )}
                 </CardContent>
               </Card>
             )
