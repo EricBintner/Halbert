@@ -2252,6 +2252,7 @@ async def get_approval_history(limit: int = 50, approved_only: bool = False):
 class ApprovalDecisionRequest(BaseModel):
     approved: bool
     reason: Optional[str] = None
+    save_to_memory: bool = True  # Store rejection in AI memory for learning
 
 
 @router.post("/approvals/{request_id}/decide")
@@ -2289,11 +2290,45 @@ async def decide_approval(request_id: str, decision: ApprovalDecisionRequest):
         engine._save_request(req)
         engine._save_decision(approval_decision)
         
+        # If rejection and save_to_memory is True, store in ChromaDB for AI learning
+        if not decision.approved and decision.save_to_memory and decision.reason:
+            try:
+                from ...index.chroma_index import get_index
+                index = get_index()
+                
+                # Create a memory entry for the rejection
+                memory_content = (
+                    f"User rejected an autonomous action.\n"
+                    f"Action: {req.action}\n"
+                    f"Task: {req.task}\n"
+                    f"Reasoning: {req.reasoning}\n"
+                    f"User's rejection reason: {decision.reason}\n"
+                    f"Learn: Avoid similar actions or ask for confirmation in the future."
+                )
+                
+                from datetime import datetime, timezone
+                index.upsert_memory(
+                    collection="self_knowledge_all",
+                    doc_id=f"rejection:{request_id}",
+                    text=memory_content,
+                    metadata={
+                        "type": "user_rejection",
+                        "request_id": request_id,
+                        "action": req.action,
+                        "rejection_reason": decision.reason,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                )
+                logger.info(f"Saved rejection to memory: {request_id}")
+            except Exception as mem_err:
+                logger.warning(f"Failed to save rejection to memory: {mem_err}")
+        
         return {
             "status": "ok",
             "request_id": request_id,
             "decision": "approved" if decision.approved else "rejected",
-            "reason": decision.reason
+            "reason": decision.reason,
+            "saved_to_memory": not decision.approved and decision.save_to_memory
         }
     except Exception as e:
         logger.error(f"Failed to process approval decision: {e}")
