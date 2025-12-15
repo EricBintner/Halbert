@@ -142,7 +142,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app = FastAPI(
         title="Halbert Dashboard",
         description="Web UI for Halbert autonomous IT management",
-        version="0.1.0"
+        version="0.1.1"
     )
     
     # CORS for local development

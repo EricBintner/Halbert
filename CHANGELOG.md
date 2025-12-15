@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.1.1] - 2025-12-15
+
+### Removed
+- All LoRA-related code and CLI commands (`lora-list`, `lora-info`, `lora-set`, `lora-import`, `mlx-train-lora`, `mlx-load-lora`, `mlx-lora-status`)
+- LoRA adapter support from model providers (MLX, llama.cpp, base)
+- LoRA adapter loading from model loader
+- LoRA-related tests
+
+### Changed
+- Renamed `mlx-prepare-training-data` to `prepare-training-data`
+- Simplified model provider interfaces
+
+---
+
 ## [0.1.0-alpha.1] - 2025-12-11
 
 First public alpha release.

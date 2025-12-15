@@ -1,8 +1,7 @@
 """
 Model loader for LLM backends (Ollama, llama.cpp)
 
-Phase 3: Concrete implementation with adapter hooks
-Phase 4: Add LoRA adapter support
+Phase 3: Concrete implementation
 """
 
 from __future__ import annotations
@@ -193,7 +192,7 @@ class LlamaCppBackend:
             tool_prompt,
             max_tokens=max_tokens,
             temperature=kwargs.get('temperature', 0.7),
-            stop=['</tool_call>'],
+            stop=[''],
             echo=False
         )
         
@@ -227,8 +226,7 @@ class ModelManager:
     """
     Main model manager for Halbert.
     
-    Phase 3: Supports Ollama and llama.cpp backends
-    Phase 4: Add LoRA adapter support via load_adapter()
+    Supports Ollama and llama.cpp backends.
     """
     
     def __init__(self, config: Optional[ModelConfig] = None):
@@ -251,7 +249,6 @@ class ModelManager:
         
         self.config = config
         self.backend: Optional[ModelBackend] = None
-        self.lora_adapter: Optional[Any] = None  # Phase 4: LoRA adapter
         
         self._initialize_backend()
     
@@ -293,10 +290,6 @@ class ModelManager:
         
         temp = temperature if temperature is not None else self.config.temperature
         
-        # Phase 4: If LoRA adapter is loaded, use it
-        if self.lora_adapter is not None:
-            return self._generate_with_adapter(prompt, max_tokens, temp, stop, **kwargs)
-        
         return self.backend.generate(prompt, max_tokens, temp, stop, **kwargs)
     
     def generate_with_tools(
@@ -321,51 +314,7 @@ class ModelManager:
         if self.backend is None:
             raise RuntimeError("Model backend not initialized")
         
-        # Phase 4: LoRA adapter with tool-calling
-        if self.lora_adapter is not None:
-            return self._generate_with_tools_adapter(prompt, tools, max_tokens, **kwargs)
-        
         return self.backend.generate_with_tools(prompt, tools, max_tokens, **kwargs)
-    
-    def load_adapter(self, adapter_path: str) -> None:
-        """
-        Load LoRA adapter (Phase 4).
-        
-        Args:
-            adapter_path: Path to LoRA adapter (safetensors format)
-        """
-        # Phase 3: Placeholder (no-op)
-        # Phase 4: Implement LoRA loading with peft
-        logger.warning("LoRA adapter support not yet implemented (Phase 4)")
-        self.lora_adapter = None
-    
-    def unload_adapter(self) -> None:
-        """Unload LoRA adapter (Phase 4)."""
-        self.lora_adapter = None
-        logger.info("LoRA adapter unloaded (reverted to base model)")
-    
-    def _generate_with_adapter(
-        self,
-        prompt: str,
-        max_tokens: int,
-        temperature: float,
-        stop: Optional[List[str]],
-        **kwargs: Any
-    ) -> str:
-        """Generate with LoRA adapter (Phase 4)."""
-        # Phase 4: Implement adapter-based generation
-        raise NotImplementedError("LoRA generation not yet implemented (Phase 4)")
-    
-    def _generate_with_tools_adapter(
-        self,
-        prompt: str,
-        tools: List[Dict[str, Any]],
-        max_tokens: int,
-        **kwargs: Any
-    ) -> Dict[str, Any]:
-        """Generate with tools and LoRA adapter (Phase 4)."""
-        # Phase 4: Implement adapter-based tool calling
-        raise NotImplementedError("LoRA tool calling not yet implemented (Phase 4)")
     
     def estimate_confidence(self, response: str) -> float:
         """
@@ -398,5 +347,4 @@ class ModelManager:
             'quantization': self.config.quantization,
             'max_context': self.config.max_context,
             'backend_loaded': self.backend is not None,
-            'lora_adapter_loaded': self.lora_adapter is not None
         }

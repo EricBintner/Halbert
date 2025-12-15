@@ -1,10 +1,7 @@
 """
-MLX provider implementation (Phase 5 M1, M4).
+MLX provider implementation (Phase 5 M1).
 
 Mac Apple Silicon optimized provider using MLX/MLX-LM.
-This is the target platform for LoRA training and fast inference.
-
-Phase 5 M4: Full implementation with LoRA training and hot-swapping.
 """
 
 from __future__ import annotations
@@ -38,16 +35,10 @@ class MLXProvider(ModelProvider):
     """
     MLX provider for Mac Apple Silicon.
     
-    Phase 5 M1: Placeholder implementation
-    Phase 5 M2: Full implementation with mlx-lm
-    Phase 5 M4: LoRA training and hot-swapping
-    
     Benefits:
     - Optimized for Apple Silicon (M1/M2/M3)
     - Excellent performance on Mac
-    - Native LoRA/QLoRA support
     - Unified memory architecture
-    - Perfect for LoRA training
     
     Requirements:
     - Mac with Apple Silicon
@@ -70,8 +61,6 @@ class MLXProvider(ModelProvider):
         self.cache_dir = Path(cache_dir) if cache_dir else Path.home() / ".cache" / "huggingface" / "hub"
         
         self._loaded_models: Dict[str, Tuple[Any, Any]] = {}  # model_id -> (model, tokenizer)
-        self._active_loras: Dict[str, Path] = {}  # model_id -> lora_path
-        self._base_models: Dict[str, Tuple[Any, Any]] = {}  # Store base models for LoRA swapping
         
         # Create directories
         self.model_dir.mkdir(parents=True, exist_ok=True)
@@ -133,7 +122,6 @@ class MLXProvider(ModelProvider):
             
             # Store in cache
             self._loaded_models[model_id] = (model, tokenizer)
-            self._base_models[model_id] = (model, tokenizer)  # Keep base model for LoRA swapping
             
             load_time = time.time() - start_time
             logger.info(f"Model loaded successfully in {load_time:.2f}s: {model_id}")
@@ -153,8 +141,6 @@ class MLXProvider(ModelProvider):
         """Unload model from memory."""
         if model_id in self._loaded_models:
             del self._loaded_models[model_id]
-            if model_id in self._active_loras:
-                del self._active_loras[model_id]
             return True
         return False
     
@@ -227,252 +213,6 @@ class MLXProvider(ModelProvider):
         """Get model configuration."""
         raise ModelNotFoundError(f"Model not found: {model_id}")
     
-    def supports_lora(self) -> bool:
-        """MLX has excellent LoRA/QLoRA support."""
-        return True
-    
-    def load_lora(self, model_id: str, lora_path: str, **kwargs) -> bool:
-        """
-        Load LoRA adapter with MLX (hot-swap capable).
-        
-        MLX supports efficient LoRA hot-swapping on Apple Silicon.
-        Target: <2s for LoRA swap on 128GB unified memory.
-        
-        Args:
-            model_id: Base model identifier
-            lora_path: Path to LoRA weights directory
-            **kwargs: Additional LoRA parameters
-        
-        Returns:
-            True if successful
-        
-        Example:
-            provider.load_lora("mlx-community/Llama-3.1-8B-Instruct-4bit", 
-                             "/path/to/lora/friend_persona")
-        """
-        if model_id not in self._loaded_models:
-            raise ModelNotLoadedError(f"Base model not loaded: {model_id}")
-        
-        try:
-            lora_path_obj = Path(lora_path)
-            if not lora_path_obj.exists():
-                raise FileNotFoundError(f"LoRA path not found: {lora_path}")
-            
-            logger.info(f"Loading LoRA adapter: {lora_path}")
-            start_time = time.time()
-            
-            # Get base model
-            base_model, tokenizer = self._base_models[model_id]
-            
-            # Load LoRA weights
-            # MLX LoRA adapters are typically stored as safetensors
-            adapter_path = lora_path_obj / "adapters.safetensors"
-            if not adapter_path.exists():
-                # Try alternative path
-                adapter_path = lora_path_obj / "adapter_model.safetensors"
-            
-            if adapter_path.exists():
-                logger.info(f"Loading LoRA weights from: {adapter_path}")
-                # Load adapter weights using MLX
-                adapter_weights = mx.load(str(adapter_path))
-                
-                # Apply LoRA to model (MLX handles this efficiently)
-                # Note: mlx-lm may have specific functions for this
-                # This is a simplified version - actual implementation may vary
-                model_with_lora = base_model  # Placeholder for actual LoRA application
-                
-                # Update loaded model
-                self._loaded_models[model_id] = (model_with_lora, tokenizer)
-                self._active_loras[model_id] = lora_path_obj
-                
-                load_time = time.time() - start_time
-                logger.info(f"LoRA loaded successfully in {load_time:.3f}s")
-                
-                if load_time > 2.0:
-                    logger.warning(f"LoRA load time ({load_time:.3f}s) exceeds 2s target")
-                
-                return True
-            else:
-                raise FileNotFoundError(f"LoRA adapter weights not found in: {lora_path}")
-        
-        except Exception as e:
-            logger.error(f"Failed to load LoRA: {e}")
-            raise ModelLoadError(f"LoRA loading failed: {e}")
-    
-    def unload_lora(self, model_id: str) -> bool:
-        """
-        Unload LoRA adapter and restore base model.
-        
-        Args:
-            model_id: Model identifier
-        
-        Returns:
-            True if successful
-        """
-        if model_id not in self._active_loras:
-            logger.warning(f"No active LoRA for model: {model_id}")
-            return False
-        
-        try:
-            logger.info(f"Unloading LoRA from model: {model_id}")
-            start_time = time.time()
-            
-            # Restore base model
-            if model_id in self._base_models:
-                base_model, tokenizer = self._base_models[model_id]
-                self._loaded_models[model_id] = (base_model, tokenizer)
-            
-            del self._active_loras[model_id]
-            
-            unload_time = time.time() - start_time
-            logger.info(f"LoRA unloaded in {unload_time:.3f}s")
-            
-            return True
-        
-        except Exception as e:
-            logger.error(f"Failed to unload LoRA: {e}")
-            return False
-    
-    def train_lora(
-        self,
-        model_id: str,
-        training_data: str,
-        output_path: str,
-        **kwargs
-    ) -> bool:
-        """
-        Train a LoRA adapter on Mac Apple Silicon.
-        
-        This is optimized for your 128GB unified memory!
-        Typical training time: 2-4 hours for persona (depends on dataset size).
-        
-        Args:
-            model_id: Base model to train LoRA for
-            training_data: Path to training dataset (JSONL format)
-            output_path: Where to save LoRA weights
-            **kwargs: Training hyperparameters
-                - rank: LoRA rank (default: 8)
-                - alpha: LoRA alpha (default: 16)
-                - epochs: Training epochs (default: 3)
-                - batch_size: Batch size (default: 1)
-                - learning_rate: Learning rate (default: 1e-4)
-                - use_qlora: Use QLoRA for memory efficiency (default: True)
-        
-        Returns:
-            True if training successful
-        
-        Example:
-            provider.train_lora(
-                "mlx-community/Llama-3.1-8B-Instruct-4bit",
-                "/path/to/training_data.jsonl",
-                "/path/to/output/friend_persona",
-                rank=8,
-                alpha=16,
-                epochs=3,
-                use_qlora=True
-            )
-        """
-        if model_id not in self._loaded_models:
-            raise ModelNotLoadedError(f"Base model not loaded: {model_id}")
-        
-        try:
-            training_data_path = Path(training_data)
-            if not training_data_path.exists():
-                raise FileNotFoundError(f"Training data not found: {training_data}")
-            
-            output_path_obj = Path(output_path)
-            output_path_obj.mkdir(parents=True, exist_ok=True)
-            
-            # Extract training parameters
-            rank = kwargs.get('rank', 8)
-            alpha = kwargs.get('alpha', 16)
-            epochs = kwargs.get('epochs', 3)
-            batch_size = kwargs.get('batch_size', 1)
-            learning_rate = kwargs.get('learning_rate', 1e-4)
-            use_qlora = kwargs.get('use_qlora', True)
-            
-            logger.info("Starting LoRA training on Mac Apple Silicon (128GB unified memory)")
-            logger.info(f"Model: {model_id}")
-            logger.info(f"Training data: {training_data}")
-            logger.info(f"Output: {output_path}")
-            logger.info(f"Hyperparameters: rank={rank}, alpha={alpha}, epochs={epochs}")
-            logger.info(f"QLoRA: {use_qlora}")
-            
-            start_time = time.time()
-            
-            # Get model and tokenizer
-            model, tokenizer = self._loaded_models[model_id]
-            
-            # Load training data
-            logger.info("Loading training data...")
-            training_samples = self._load_training_data(training_data_path)
-            logger.info(f"Loaded {len(training_samples)} training samples")
-            
-            # Prepare LoRA configuration
-            lora_config = {
-                "rank": rank,
-                "alpha": alpha,
-                "dropout": 0.05,
-                "target_modules": ["q_proj", "v_proj"],  # Standard for Llama
-            }
-            
-            # Training loop (simplified - actual implementation uses mlx-lm training utilities)
-            logger.info("Training LoRA adapter...")
-            logger.info("Note: Actual training requires mlx-lm training utilities")
-            logger.info("This is a placeholder - implement full training in production")
-            
-            # Placeholder for actual training
-            # In production, this would use mlx-lm's training functions:
-            #   from mlx_lm.tuner import train
-            #   train(model, tokenizer, training_data, lora_config, ...)
-            
-            # For now, create a marker file showing training was initiated
-            config_path = output_path_obj / "lora_config.json"
-            with open(config_path, 'w') as f:
-                json.dump({
-                    "base_model": model_id,
-                    "rank": rank,
-                    "alpha": alpha,
-                    "epochs": epochs,
-                    "use_qlora": use_qlora,
-                    "training_samples": len(training_samples),
-                    "trained_at": datetime.now().isoformat(),
-                }, f, indent=2)
-            
-            training_time = time.time() - start_time
-            
-            logger.info(f"LoRA training completed in {training_time:.2f}s")
-            logger.info(f"LoRA weights saved to: {output_path}")
-            logger.info("Note: Full training implementation requires mlx-lm training utilities")
-            
-            return True
-        
-        except Exception as e:
-            logger.error(f"LoRA training failed: {e}")
-            raise ModelLoadError(f"LoRA training failed: {e}")
-    
-    def _load_training_data(self, data_path: Path) -> List[Dict[str, Any]]:
-        """
-        Load training data from JSONL file.
-        
-        Expected format:
-        {"prompt": "...", "completion": "..."}
-        or
-        {"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
-        """
-        samples = []
-        
-        with open(data_path, 'r') as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        sample = json.loads(line)
-                        samples.append(sample)
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Skipping invalid JSON line: {e}")
-        
-        return samples
-    
     def health_check(self) -> bool:
         """Check if MLX is available."""
         try:
@@ -503,11 +243,9 @@ class MLXProvider(ModelProvider):
                 "peak_mb": peak_memory_bytes // (1024 * 1024),
                 "active_mb": active_memory_bytes // (1024 * 1024),
                 "models_loaded": len(self._loaded_models),
-                "active_loras": len(self._active_loras),
             }
         except Exception as e:
             logger.debug(f"Could not get memory usage: {e}")
             return {
                 "models_loaded": len(self._loaded_models),
-                "active_loras": len(self._active_loras),
             }

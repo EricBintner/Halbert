@@ -4,7 +4,6 @@ Phase 4 Integration Tests (M5).
 Tests the complete persona system workflow end-to-end:
 - Persona switching
 - Memory isolation
-- LoRA management
 - Context detection
 - API endpoints
 """
@@ -89,39 +88,6 @@ def test_memory_isolation():
         return False
 
 
-def test_lora_catalog():
-    """Test LoRA catalog loading and listing."""
-    try:
-        from halbert_core.model import LoRAManager
-        
-        manager = LoRAManager()
-        
-        # List all LoRAs
-        loras = manager.list_loras()
-        assert len(loras) >= 1  # At least "none" should exist
-        print(f"✅ Found {len(loras)} LoRAs in catalog")
-        
-        # Get info for "none"
-        none_info = manager.get_lora_info("none")
-        assert none_info["key"] == "none"
-        assert none_info["category"] == "verified"
-        print("✅ LoRA info retrieval works")
-        
-        # Filter by category
-        verified = manager.list_loras(category="verified")
-        experimental = manager.list_loras(category="experimental")
-        print(f"✅ Verified LoRAs: {len(verified)}")
-        print(f"✅ Experimental LoRAs: {len(experimental)}")
-        
-        return True
-    
-    except Exception as e:
-        print(f"❌ LoRA catalog test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
 def test_context_detection():
     """Test context detection from running processes."""
     try:
@@ -189,41 +155,6 @@ def test_memory_purge_safety():
         return False
 
 
-def test_persona_with_lora():
-    """Test persona switching with LoRA assignment."""
-    try:
-        from halbert_core.persona import PersonaManager, Persona
-        from halbert_core.model import LoRAManager
-        
-        persona_mgr = PersonaManager()
-        lora_mgr = LoRAManager()
-        
-        # Start from IT Admin
-        persona_mgr.switch_to(Persona.IT_ADMIN, user="test", lora=None)
-        
-        # Switch to Friend with LoRA
-        persona_mgr.switch_to(Persona.FRIEND, user="test", lora="friend_casual_v1")
-        
-        state = persona_mgr.get_state()
-        assert state.active_persona == Persona.FRIEND
-        assert state.lora == "friend_casual_v1"
-        print("✅ Persona switched with LoRA assignment")
-        
-        # Switch back without LoRA
-        persona_mgr.switch_to(Persona.IT_ADMIN, user="test", lora=None)
-        state = persona_mgr.get_state()
-        assert state.lora is None
-        print("✅ LoRA cleared when switching back")
-        
-        return True
-    
-    except Exception as e:
-        print(f"❌ Persona+LoRA test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
 def test_state_persistence():
     """Test that persona state persists across manager instances."""
     try:
@@ -231,17 +162,16 @@ def test_state_persistence():
         
         # Create first instance, ensure we're in IT Admin first
         mgr1 = PersonaManager()
-        mgr1.switch_to(Persona.IT_ADMIN, user="test", lora=None)
+        mgr1.switch_to(Persona.IT_ADMIN, user="test")
         
-        # Now switch to Friend with LoRA
-        mgr1.switch_to(Persona.FRIEND, user="test", lora="test_lora")
+        # Now switch to Friend
+        mgr1.switch_to(Persona.FRIEND, user="test")
         
         # Create second instance, verify state persisted
         mgr2 = PersonaManager()
         state = mgr2.get_state()
         
         assert state.active_persona == Persona.FRIEND
-        assert state.lora == "test_lora"
         print("✅ Persona state persisted across instances")
         
         # Clean up: switch back to IT Admin
@@ -266,10 +196,8 @@ def main():
     tests = [
         ("Full Persona Workflow", test_full_persona_workflow),
         ("Memory Isolation", test_memory_isolation),
-        ("LoRA Catalog", test_lora_catalog),
         ("Context Detection", test_context_detection),
         ("Memory Purge Safety", test_memory_purge_safety),
-        ("Persona with LoRA", test_persona_with_lora),
         ("State Persistence", test_state_persistence),
     ]
     

@@ -306,14 +306,11 @@ class HardwareDetector:
             specialist_provider="mlx",
             specialist_enabled=True,
             reasoning="Mac Studio with 128GB unified memory - optimal for MLX provider. "
-                     "Can load both orchestrator and specialist simultaneously. "
-                     "Excellent for LoRA training and hot-swapping.",
+                     "Can load both orchestrator and specialist simultaneously.",
             expected_memory_mb=41000,  # 8GB + 33GB
             performance_notes=[
                 "MLX provider optimized for Apple Silicon",
                 "Unified memory enables simultaneous model loading",
-                "LoRA training supported (QLoRA recommended)",
-                "Hot-swap adapters in <2s",
                 "Expected: 20+ tokens/sec (orchestrator), 10+ tokens/sec (specialist)"
             ]
         )

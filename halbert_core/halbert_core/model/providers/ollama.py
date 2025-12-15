@@ -2,7 +2,7 @@
 Ollama provider implementation (Phase 5 M1).
 
 Ollama is the primary production provider for Halbert.
-Supports model management, generation, and LoRA adapters.
+Supports model management and generation.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ class OllamaProvider(ModelProvider):
     - Multi-model support
     
     Phase 5 M1: Basic provider implementation
-    Phase 5 M4: LoRA adapter support (if Ollama adds it)
     """
     
     def __init__(self, base_url: str = "http://localhost:11434"):

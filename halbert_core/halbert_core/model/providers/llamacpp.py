@@ -97,19 +97,6 @@ class LlamaCppProvider(ModelProvider):
         """Get model configuration."""
         raise ModelNotFoundError(f"Model not found: {model_id}")
     
-    def supports_lora(self) -> bool:
-        """llama.cpp supports LoRA adapters."""
-        return True
-    
-    def load_lora(self, model_id: str, lora_path: str, **kwargs) -> bool:
-        """
-        Load LoRA adapter with llama.cpp.
-        
-        TODO Phase 5 M4: Implement LoRA loading
-        """
-        logger.warning("llama.cpp LoRA support not yet implemented")
-        raise NotImplementedError("llama.cpp LoRA requires implementation")
-    
     def health_check(self) -> bool:
         """Check if llama.cpp is available."""
         try:

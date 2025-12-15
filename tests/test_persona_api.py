@@ -93,43 +93,6 @@ def test_persona_list_endpoint():
         return False
 
 
-def test_lora_list_endpoint():
-    """Test GET /api/persona/lora/list endpoint."""
-    try:
-        from fastapi.testclient import TestClient
-        from halbert_core.dashboard.app import create_app
-        
-        app = create_app(enable_cors=False)
-        client = TestClient(app)
-        
-        response = client.get("/api/persona/lora/list")
-        assert response.status_code == 200
-        
-        data = response.json()
-        assert isinstance(data, list)
-        assert len(data) >= 1  # At least "none" LoRA
-        
-        # Check first LoRA
-        if data:
-            lora = data[0]
-            assert "key" in lora
-            assert "category" in lora
-            assert "description" in lora
-        
-        print("✅ LoRA list endpoint test passed")
-        print(f"   Found {len(data)} LoRAs")
-        return True
-    
-    except ImportError:
-        print("⚠ Skipping API tests (FastAPI not installed)")
-        return True
-    except Exception as e:
-        print(f"❌ LoRA list endpoint test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
 def test_memory_stats_endpoint():
     """Test GET /api/persona/memory/stats endpoint."""
     try:
@@ -176,7 +139,6 @@ def main():
     tests = [
         ("Persona Status Endpoint", test_persona_status_endpoint),
         ("Persona List Endpoint", test_persona_list_endpoint),
-        ("LoRA List Endpoint", test_lora_list_endpoint),
         ("Memory Stats Endpoint", test_memory_stats_endpoint),
     ]
     

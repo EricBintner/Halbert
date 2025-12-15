@@ -63,7 +63,6 @@ class ModelProvider(ABC):
     
     Phase 5 M1: Basic provider abstraction
     Phase 5 M2: Context handoff support
-    Phase 5 M4: LoRA adapter support
     """
     
     @abstractmethod
@@ -162,44 +161,6 @@ class ModelProvider(ABC):
             ModelNotFoundError: If model not available
         """
         pass
-    
-    def supports_lora(self) -> bool:
-        """
-        Check if provider supports LoRA adapters.
-        
-        Returns:
-            True if LoRA adapters can be loaded
-        """
-        return False  # Default: no LoRA support
-    
-    def load_lora(self, model_id: str, lora_path: str, **kwargs) -> bool:
-        """
-        Load a LoRA adapter for a model (Phase 5 M4).
-        
-        Args:
-            model_id: Base model identifier
-            lora_path: Path to LoRA weights
-            **kwargs: Provider-specific LoRA parameters
-        
-        Returns:
-            True if LoRA loaded successfully
-        
-        Raises:
-            NotImplementedError: If provider doesn't support LoRA
-        """
-        raise NotImplementedError(f"{self.__class__.__name__} does not support LoRA adapters")
-    
-    def unload_lora(self, model_id: str) -> bool:
-        """
-        Unload LoRA adapter from a model.
-        
-        Args:
-            model_id: Model identifier
-        
-        Returns:
-            True if LoRA unloaded successfully
-        """
-        raise NotImplementedError(f"{self.__class__.__name__} does not support LoRA adapters")
     
     def get_memory_usage(self) -> Dict[str, int]:
         """
