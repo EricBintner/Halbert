@@ -2290,45 +2290,71 @@ async def decide_approval(request_id: str, decision: ApprovalDecisionRequest):
         engine._save_request(req)
         engine._save_decision(approval_decision)
         
-        # If rejection and save_to_memory is True, store in ChromaDB for AI learning
-        if not decision.approved and decision.save_to_memory and decision.reason:
+        # Store ALL decisions in ChromaDB for AI learning
+        saved_to_memory = False
+        if decision.save_to_memory:
             try:
                 from ...index.chroma_index import get_index
                 index = get_index()
                 
-                # Create a memory entry for the rejection
-                memory_content = (
-                    f"User rejected an autonomous action.\n"
-                    f"Action: {req.action}\n"
-                    f"Task: {req.task}\n"
-                    f"Reasoning: {req.reasoning}\n"
-                    f"User's rejection reason: {decision.reason}\n"
-                    f"Learn: Avoid similar actions or ask for confirmation in the future."
-                )
-                
                 from datetime import datetime, timezone
+                timestamp = datetime.now(timezone.utc).isoformat()
+                
+                if decision.approved:
+                    # Store approval - AI learns what user accepts
+                    memory_content = (
+                        f"User APPROVED an autonomous action.\n"
+                        f"Action: {req.action}\n"
+                        f"Task: {req.task}\n"
+                        f"AI Reasoning: {req.reasoning}\n"
+                        f"Confidence: {req.confidence:.0%}\n"
+                        f"Risk Level: {req.risk_level}\n"
+                        f"Learn: Similar actions at this confidence/risk level are acceptable to the user."
+                    )
+                    doc_id = f"approval:{request_id}"
+                    doc_type = "user_approval"
+                else:
+                    # Store rejection - AI learns what to avoid
+                    memory_content = (
+                        f"User REJECTED an autonomous action.\n"
+                        f"Action: {req.action}\n"
+                        f"Task: {req.task}\n"
+                        f"AI Reasoning: {req.reasoning}\n"
+                        f"Confidence: {req.confidence:.0%}\n"
+                        f"Risk Level: {req.risk_level}\n"
+                        f"User's rejection reason: {decision.reason or 'Not specified'}\n"
+                        f"Learn: Avoid similar actions or ask for confirmation. User prefers not to do this."
+                    )
+                    doc_id = f"rejection:{request_id}"
+                    doc_type = "user_rejection"
+                
                 index.upsert_memory(
                     collection="self_knowledge_all",
-                    doc_id=f"rejection:{request_id}",
+                    doc_id=doc_id,
                     text=memory_content,
                     metadata={
-                        "type": "user_rejection",
+                        "type": doc_type,
                         "request_id": request_id,
                         "action": req.action,
-                        "rejection_reason": decision.reason,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
+                        "task": req.task,
+                        "confidence": req.confidence,
+                        "risk_level": req.risk_level,
+                        "approved": decision.approved,
+                        "reason": decision.reason,
+                        "timestamp": timestamp
                     }
                 )
-                logger.info(f"Saved rejection to memory: {request_id}")
+                logger.info(f"Saved {doc_type} to memory: {request_id}")
+                saved_to_memory = True
             except Exception as mem_err:
-                logger.warning(f"Failed to save rejection to memory: {mem_err}")
+                logger.warning(f"Failed to save decision to memory: {mem_err}")
         
         return {
             "status": "ok",
             "request_id": request_id,
             "decision": "approved" if decision.approved else "rejected",
             "reason": decision.reason,
-            "saved_to_memory": not decision.approved and decision.save_to_memory
+            "saved_to_memory": saved_to_memory
         }
     except Exception as e:
         logger.error(f"Failed to process approval decision: {e}")
