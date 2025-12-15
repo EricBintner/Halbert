@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Input } from '@/components/ui/input'
 import { 
   getPendingApprovals, 
   approveRequest, 
@@ -11,13 +12,21 @@ import {
   type ApprovalRequest,
   type ApprovalHistoryItem
 } from '@/lib/tauri'
-import { CheckCircle, XCircle, AlertTriangle, Clock, History, ShieldAlert } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Clock, History, ShieldAlert, X, Brain } from 'lucide-react'
 
 export function Approvals() {
   const [pending, setPending] = useState<ApprovalRequest[]>([])
   const [blockedByRules, setBlockedByRules] = useState(0)
   const [history, setHistory] = useState<ApprovalHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
+  
+  // Rejection modal state
+  const [rejectModalOpen, setRejectModalOpen] = useState(false)
+  const [rejectingRequestId, setRejectingRequestId] = useState<string | null>(null)
+  const [rejectingRequestAction, setRejectingRequestAction] = useState<string>('')
+  const [rejectionReason, setRejectionReason] = useState('')
+  const [saveToMemory, setSaveToMemory] = useState(true)
+  const [rejectLoading, setRejectLoading] = useState(false)
 
   useEffect(() => {
     loadAll()
@@ -51,15 +60,27 @@ export function Approvals() {
     }
   }
 
-  const handleReject = async (requestId: string) => {
-    const reason = prompt('Rejection reason:')
-    if (reason) {
-      try {
-        await rejectRequest(requestId, reason)
-        loadAll()
-      } catch (error) {
-        console.error('Rejection failed:', error)
-      }
+  const openRejectModal = (requestId: string, action: string) => {
+    setRejectingRequestId(requestId)
+    setRejectingRequestAction(action)
+    setRejectionReason('')
+    setSaveToMemory(true)
+    setRejectModalOpen(true)
+  }
+  
+  const handleReject = async () => {
+    if (!rejectingRequestId || !rejectionReason.trim()) return
+    
+    setRejectLoading(true)
+    try {
+      // Reject the request with reason and optional memory flag
+      await rejectRequest(rejectingRequestId, rejectionReason, saveToMemory)
+      setRejectModalOpen(false)
+      loadAll()
+    } catch (error) {
+      console.error('Rejection failed:', error)
+    } finally {
+      setRejectLoading(false)
     }
   }
 
@@ -185,7 +206,7 @@ export function Approvals() {
                       </Button>
                       <Button
                         variant="outline"
-                        onClick={() => handleReject(request.id)}
+                        onClick={() => openRejectModal(request.id, request.action)}
                         className="gap-2"
                       >
                         <XCircle className="h-4 w-4" />
@@ -237,6 +258,95 @@ export function Approvals() {
           )}
         </TabsContent>
       </Tabs>
+      
+      {/* Rejection Modal */}
+      {rejectModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div 
+            className="fixed inset-0 bg-background/80 backdrop-blur-sm"
+            onClick={() => setRejectModalOpen(false)}
+          />
+          
+          {/* Modal */}
+          <div className="relative z-50 w-full max-w-lg rounded-lg border bg-card p-6 shadow-lg animate-in fade-in-0 zoom-in-95">
+            {/* Close button */}
+            <button
+              onClick={() => setRejectModalOpen(false)}
+              className="absolute right-4 top-4 rounded-sm opacity-70 hover:opacity-100 transition-opacity"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="space-y-4">
+              {/* Header */}
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <XCircle className="h-5 w-5 text-red-500" />
+                  Reject Request
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {rejectingRequestAction}
+                </p>
+              </div>
+
+              {/* Reason input */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Why are you rejecting this?</label>
+                <Input
+                  placeholder="e.g., This conflicts with my setup, Not needed right now, Wrong approach..."
+                  value={rejectionReason}
+                  onChange={(e) => setRejectionReason(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && rejectionReason.trim()) {
+                      handleReject()
+                    }
+                  }}
+                  autoFocus
+                />
+              </div>
+
+              {/* Memory checkbox */}
+              <div className="flex items-start gap-3 rounded-md bg-blue-500/10 border border-blue-500/20 p-3">
+                <input
+                  type="checkbox"
+                  id="saveToMemory"
+                  checked={saveToMemory}
+                  onChange={(e) => setSaveToMemory(e.target.checked)}
+                  className="mt-1"
+                />
+                <label htmlFor="saveToMemory" className="text-sm cursor-pointer">
+                  <span className="flex items-center gap-1.5 font-medium text-blue-600 dark:text-blue-400">
+                    <Brain className="h-4 w-4" />
+                    Remember this preference
+                  </span>
+                  <span className="text-muted-foreground block mt-0.5">
+                    Store in AI memory so similar requests are handled better in the future
+                  </span>
+                </label>
+              </div>
+
+              {/* Actions */}
+              <div className="flex justify-end gap-3 pt-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setRejectModalOpen(false)}
+                  disabled={rejectLoading}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  variant="destructive"
+                  onClick={handleReject}
+                  disabled={!rejectionReason.trim() || rejectLoading}
+                >
+                  {rejectLoading ? 'Rejecting...' : 'Reject Request'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
