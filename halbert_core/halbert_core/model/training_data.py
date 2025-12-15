@@ -1,7 +1,7 @@
 """
 Training data preparation utilities (Phase 5 M4).
 
-Utilities for preparing LoRA training data from conversations and persona definitions.
+Utilities for preparing training data from conversations and persona definitions.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ logger = logging.getLogger('halbert.model')
 
 class TrainingDataBuilder:
     """
-    Build training datasets for LoRA fine-tuning.
+    Build training datasets for fine-tuning.
     
     Supports multiple formats:
     - Conversation pairs (user/assistant)

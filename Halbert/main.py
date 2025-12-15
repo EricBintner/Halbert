@@ -38,7 +38,7 @@ try:
     from halbert_core.halbert_core.dashboard.app import create_app as create_dashboard_app
     from halbert_core.halbert_core.autonomy import GuardrailEnforcer, AnomalyDetector, RecoveryExecutor
     from halbert_core.halbert_core.persona import PersonaManager, Persona, PersonaSwitchError, MemoryPurge, ContextDetector
-    from halbert_core.halbert_core.model import LoRAManager, LoRANotFoundError, LoRADownloadError, ModelRouter, TaskType
+    from halbert_core.halbert_core.model import ModelRouter, TaskType
     from halbert_core.halbert_core.model.hardware_detector import HardwareDetector
     from halbert_core.halbert_core.model.config_wizard import ConfigWizard
 except Exception:
@@ -79,9 +79,6 @@ except Exception:
     PersonaSwitchError = None  # type: ignore
     MemoryPurge = None  # type: ignore
     ContextDetector = None  # type: ignore
-    LoRAManager = None  # type: ignore
-    LoRANotFoundError = None  # type: ignore
-    LoRADownloadError = None  # type: ignore
     ModelRouter = None  # type: ignore
     TaskType = None  # type: ignore
 
@@ -949,7 +946,6 @@ def cmd_persona_status(args):
         print("=" * 60)
         print(f"Active Persona: {state.active_persona.value}")
         print(f"Memory Directory: {state.memory_dir}")
-        print(f"LoRA: {state.lora or 'None (base model)'}")
         print(f"Switched At: {state.switched_at}")
         print(f"Switched By: {state.switched_by}")
         print("=" * 60 + "\n")
@@ -1061,138 +1057,6 @@ def cmd_memory_purge(args):
         traceback.print_exc()
 
 
-def cmd_lora_list(args):
-    """List available LoRA adapters (Phase 4 M2)."""  
-    if LoRAManager is None:
-        print('LoRA manager not available')
-        return
-    
-    try:
-        manager = LoRAManager()
-        
-        # Filter by category if specified
-        category = args.category if hasattr(args, 'category') and args.category else None
-        loras = manager.list_loras(category=category)
-        
-        if not loras:
-            print("\nNo LoRAs available")
-            if category:
-                print(f"   (filtered by category: {category})")
-            print()
-            return
-        
-        print("\nAvailable LoRA Adapters")
-        print("=" * 70)
-        
-        for lora in loras:
-            active_mark = " (ACTIVE)" if lora.get('active') else ""
-            cached_mark = " ✓" if lora.get('cached') else ""
-            
-            print(f"\n[{lora['category'].upper()}] {lora['key']}{active_mark}{cached_mark}")
-            print(f"   Description: {lora.get('description', 'No description')}")
-            print(f"   Persona: {lora.get('persona', 'N/A')}")
-            print(f"   Size: {lora.get('size_mb', 0)} MB")
-            print(f"   Format: {lora.get('format', 'N/A')}")
-            
-            if lora.get('tested'):
-                print(f"   Status: ✓ Verified")
-            else:
-                print(f"   Status: ⚠ Experimental (not verified)")
-            
-            if lora.get('note'):
-                print(f"   Note: {lora['note']}")
-        
-        print("\n" + "=" * 70)
-        print("\nLegend: ✓ = cached locally, ACTIVE = currently loaded")
-        print()
-    
-    except Exception as e:
-        print(f"Error listing LoRAs: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-def cmd_lora_info(args):
-    """Show detailed info for a specific LoRA (Phase 4 M2)."""  
-    if LoRAManager is None:
-        print('LoRA manager not available')
-        return
-    
-    try:
-        manager = LoRAManager()
-        lora_info = manager.get_lora_info(args.lora_key)
-        
-        print("\n" + "=" * 70)
-        print(f"LoRA: {lora_info['key']}")
-        print("=" * 70)
-        print(f"Category: {lora_info['category']}")
-        print(f"Description: {lora_info.get('description', 'N/A')}")
-        print(f"Persona: {lora_info.get('persona', 'N/A')}")
-        print(f"Size: {lora_info.get('size_mb', 0)} MB")
-        print(f"Format: {lora_info.get('format', 'N/A')}")
-        print(f"Source: {lora_info.get('source', 'N/A')}")
-        print(f"Tested: {'Yes' if lora_info.get('tested') else 'No'}")
-        print(f"Cached: {'Yes' if lora_info.get('cached') else 'No'}")
-        print(f"Active: {'Yes' if lora_info.get('active') else 'No'}")
-        
-        if lora_info.get('note'):
-            print(f"\nNote: {lora_info['note']}")
-        
-        print("=" * 70 + "\n")
-    
-    except LoRANotFoundError as e:
-        print(f"\n❌ {e}")
-    except Exception as e:
-        print(f"Error getting LoRA info: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-def cmd_lora_set(args):
-    """Set LoRA for a persona (Phase 4 M2)."""  
-    if LoRAManager is None or PersonaManager is None:
-        print('LoRA manager or PersonaManager not available')
-        return
-    
-    try:
-        lora_mgr = LoRAManager()
-        persona_mgr = PersonaManager()
-        
-        # Get LoRA info
-        lora_info = lora_mgr.get_lora_info(args.lora_key)
-        
-        print(f"\nSetting LoRA '{args.lora_key}' for persona '{args.persona}'...")
-        print(f"   Description: {lora_info.get('description')}")
-        print(f"   Size: {lora_info.get('size_mb')} MB")
-        
-        # Download if not cached
-        if not lora_info.get('cached'):
-            print(f"\n   Downloading from {lora_info.get('source')}...")
-            cache_path = lora_mgr.ensure_cached(args.lora_key)
-            print(f"   ✓ Downloaded to {cache_path}")
-        
-        # Set active
-        lora_mgr.set_active_lora(args.lora_key)
-        
-        # Update persona state if persona matches
-        current_persona = persona_mgr.get_active_persona()
-        if current_persona.value == args.persona:
-            persona_mgr.switch_to(current_persona, user="cli", lora=args.lora_key)
-        
-        print(f"\n✅ LoRA '{args.lora_key}' set for {args.persona} persona")
-        print(f"   Switch to {args.persona} persona to use this LoRA")
-        print()
-    
-    except LoRANotFoundError as e:
-        print(f"\n❌ {e}")
-    except LoRADownloadError as e:
-        print(f"\n❌ Download failed: {e}")
-    except Exception as e:
-        print(f"Error setting LoRA: {e}")
-        import traceback
-        traceback.print_exc()
-
-
 def cmd_context_detect(args):
     """Detect current user context from running apps (Phase 4 M4)."""  
     if ContextDetector is None:
@@ -1280,43 +1144,6 @@ def cmd_context_prefs(args):
     
     except Exception as e:
         print(f"Error managing context preferences: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-def cmd_lora_import(args):
-    """Import a community LoRA from HuggingFace (Phase 4 M2)."""  
-    if LoRAManager is None:
-        print('LoRA manager not available')
-        return
-    
-    try:
-        manager = LoRAManager()
-        
-        print(f"\nImporting LoRA '{args.lora_key}'...")
-        print(f"   Source: {args.source}")
-        print(f"   Persona: {args.persona}")
-        print(f"   Description: {args.description}")
-        
-        success = manager.import_lora(
-            lora_key=args.lora_key,
-            source=args.source,
-            persona=args.persona,
-            description=args.description
-        )
-        
-        if success:
-            print(f"\n✅ LoRA '{args.lora_key}' imported to catalog")
-            print(f"   Category: community")
-            print(f"   Use 'lora-set --lora-key {args.lora_key} --persona {args.persona}' to enable")
-            print()
-        else:
-            print(f"\n⚠ LoRA '{args.lora_key}' already exists in catalog")
-    
-    except ValueError as e:
-        print(f"\n❌ {e}")
-    except Exception as e:
-        print(f"Error importing LoRA: {e}")
         import traceback
         traceback.print_exc()
 
@@ -1616,153 +1443,6 @@ def cmd_config_validate(args):
         traceback.print_exc()
 
 
-def cmd_mlx_train_lora(args):
-    """Train a LoRA adapter for a persona (Phase 5 M4)."""
-    try:
-        from halbert_core.halbert_core.model.persona_lora import PersonaLoRAManager
-        from halbert_core.halbert_core.persona import PersonaManager
-        
-        # Initialize managers
-        persona_mgr = PersonaManager()
-        router = ModelRouter()
-        lora_mgr = PersonaLoRAManager(persona_mgr, router)
-        
-        print(f"\n🎓 Training LoRA for persona: {args.persona}")
-        print(f"   Training data: {args.data}")
-        print(f"   Model type: {args.model_type}")
-        print()
-        
-        # Training parameters
-        kwargs = {
-            "rank": args.rank,
-            "alpha": args.alpha,
-            "epochs": args.epochs,
-            "use_qlora": args.qlora,
-        }
-        
-        print("Training parameters:")
-        print(f"  Rank: {args.rank}")
-        print(f"  Alpha: {args.alpha}")
-        print(f"  Epochs: {args.epochs}")
-        print(f"  QLoRA: {args.qlora}")
-        print()
-        
-        print("⏳ Training in progress (this may take 2-4 hours)...")
-        print("   Optimized for Mac Apple Silicon (128GB unified memory)")
-        print()
-        
-        success = lora_mgr.train_persona_lora(
-            persona_name=args.persona,
-            training_data_path=args.data,
-            model_type=args.model_type,
-            **kwargs
-        )
-        
-        if success:
-            print("\n✅ LoRA training complete!")
-            print(f"   Persona: {args.persona}")
-            print(f"   Model type: {args.model_type}")
-            print()
-            print("💡 Next steps:")
-            print(f"   1. Load LoRA: halbert mlx-load-lora --persona {args.persona}")
-            print(f"   2. Test generation with persona-specific LoRA")
-        else:
-            print("\n❌ LoRA training failed")
-    
-    except Exception as e:
-        print(f"Error training LoRA: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-def cmd_mlx_load_lora(args):
-    """Load a LoRA adapter for active persona (Phase 5 M4)."""
-    try:
-        from halbert_core.halbert_core.model.persona_lora import PersonaLoRAManager
-        from halbert_core.halbert_core.persona import PersonaManager
-        
-        persona_mgr = PersonaManager()
-        router = ModelRouter()
-        lora_mgr = PersonaLoRAManager(persona_mgr, router)
-        
-        persona = args.persona or persona_mgr.current_persona
-        
-        print(f"\n🔄 Loading LoRA for persona: {persona}")
-        print(f"   Model type: {args.model_type}")
-        
-        import time
-        start_time = time.time()
-        
-        success = lora_mgr.load_persona_lora(persona, args.model_type)
-        
-        load_time = time.time() - start_time
-        
-        if success:
-            print(f"\n✅ LoRA loaded in {load_time:.3f}s")
-            print(f"   Persona: {persona}")
-            print(f"   Model type: {args.model_type}")
-            
-            if load_time > 2.0:
-                print(f"\n⚠️  Load time ({load_time:.3f}s) exceeds 2s target")
-        else:
-            print(f"\n❌ Failed to load LoRA for persona '{persona}'")
-            print(f"   No LoRA found for {args.model_type} model")
-    
-    except Exception as e:
-        print(f"Error loading LoRA: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-def cmd_mlx_lora_status(args):
-    """Show LoRA status and available adapters (Phase 5 M4)."""
-    try:
-        from halbert_core.halbert_core.model.persona_lora import PersonaLoRAManager
-        from halbert_core.halbert_core.persona import PersonaManager
-        
-        persona_mgr = PersonaManager()
-        router = ModelRouter()
-        lora_mgr = PersonaLoRAManager(persona_mgr, router)
-        
-        status = lora_mgr.get_status()
-        
-        print("\n" + "=" * 70)
-        print("LORA STATUS")
-        print("=" * 70)
-        print()
-        
-        print(f"Current Persona: {status['current_persona']}")
-        print(f"LoRA Directory: {status['lora_dir']}")
-        print()
-        
-        print("Active LoRAs:")
-        if status['active_loras']:
-            for model_id, persona in status['active_loras'].items():
-                print(f"  • {model_id}: {persona}")
-        else:
-            print("  (none)")
-        print()
-        
-        print("Available LoRAs:")
-        available = status['available_loras']
-        if available:
-            for persona, loras in available.items():
-                orch = "✅" if loras['orchestrator'] else "❌"
-                spec = "✅" if loras['specialist'] else "❌"
-                print(f"  {persona}:")
-                print(f"    Orchestrator: {orch}")
-                print(f"    Specialist: {spec}")
-        else:
-            print("  (none)")
-        
-        print("\n" + "=" * 70 + "\n")
-    
-    except Exception as e:
-        print(f"Error getting LoRA status: {e}")
-        import traceback
-        traceback.print_exc()
-
-
 def cmd_mlx_prepare_training_data(args):
     """Prepare training data for a persona (Phase 5 M4)."""
     try:
@@ -1813,10 +1493,6 @@ def cmd_mlx_prepare_training_data(args):
         print(f"\n✅ Training data prepared")
         print(f"   Total samples: {count}")
         print(f"   Saved to: {args.output}")
-        print()
-        print("💡 Next steps:")
-        print(f"   1. Review/edit: {args.output}")
-        print(f"   2. Train LoRA: halbert mlx-train-lora --persona {args.persona} --data {args.output}")
     
     except Exception as e:
         print(f"Error preparing training data: {e}")
@@ -2279,27 +1955,6 @@ def main():
     p_memory_export.add_argument('--output', required=True, help='Output JSONL file path')
     p_memory_export.set_defaults(func=cmd_memory_export)
 
-    # Phase 4: LoRA Management (M2)
-    p_lora_list = sub.add_parser('lora-list', help='List available LoRA adapters (Phase 4 M2)')
-    p_lora_list.add_argument('--category', choices=['verified', 'experimental', 'community'], help='Filter by category')
-    p_lora_list.set_defaults(func=cmd_lora_list)
-
-    p_lora_info = sub.add_parser('lora-info', help='Show detailed info for a LoRA (Phase 4 M2)')
-    p_lora_info.add_argument('--lora-key', required=True, help='LoRA identifier')
-    p_lora_info.set_defaults(func=cmd_lora_info)
-
-    p_lora_set = sub.add_parser('lora-set', help='Set LoRA for a persona (Phase 4 M2)')
-    p_lora_set.add_argument('--lora-key', required=True, help='LoRA identifier')
-    p_lora_set.add_argument('--persona', required=True, choices=['it_admin', 'friend', 'custom'], help='Target persona')
-    p_lora_set.set_defaults(func=cmd_lora_set)
-
-    p_lora_import = sub.add_parser('lora-import', help='Import community LoRA from HuggingFace (Phase 4 M2)')
-    p_lora_import.add_argument('--lora-key', required=True, help='Unique identifier for this LoRA')
-    p_lora_import.add_argument('--source', required=True, help='Source (e.g., huggingface:username/repo)')
-    p_lora_import.add_argument('--persona', required=True, choices=['friend', 'custom'], help='Target persona')
-    p_lora_import.add_argument('--description', required=True, help='Description of this LoRA')
-    p_lora_import.set_defaults(func=cmd_lora_import)
-
     # Phase 4: Context Awareness (M4)
     p_context_detect = sub.add_parser('context-detect', help='Detect current user context (Phase 4 M4)')
     p_context_detect.set_defaults(func=cmd_context_detect)
@@ -2339,26 +1994,8 @@ def main():
     p_config_validate = sub.add_parser('config-validate', help='Validate model configuration (Phase 5 M3)')
     p_config_validate.set_defaults(func=cmd_config_validate)
 
-    # Phase 5 M4: MLX & LoRA Commands
-    p_mlx_train = sub.add_parser('mlx-train-lora', help='Train LoRA adapter for persona (Phase 5 M4)')
-    p_mlx_train.add_argument('--persona', required=True, help='Persona name (e.g., friend, it_admin)')
-    p_mlx_train.add_argument('--data', required=True, help='Training data file (JSONL)')
-    p_mlx_train.add_argument('--model-type', default='orchestrator', choices=['orchestrator', 'specialist'], help='Model type to train for')
-    p_mlx_train.add_argument('--rank', type=int, default=8, help='LoRA rank (default: 8)')
-    p_mlx_train.add_argument('--alpha', type=int, default=16, help='LoRA alpha (default: 16)')
-    p_mlx_train.add_argument('--epochs', type=int, default=3, help='Training epochs (default: 3)')
-    p_mlx_train.add_argument('--qlora', action='store_true', default=True, help='Use QLoRA (default: True)')
-    p_mlx_train.set_defaults(func=cmd_mlx_train_lora)
-
-    p_mlx_load = sub.add_parser('mlx-load-lora', help='Load LoRA adapter (Phase 5 M4)')
-    p_mlx_load.add_argument('--persona', help='Persona name (defaults to current)')
-    p_mlx_load.add_argument('--model-type', default='orchestrator', choices=['orchestrator', 'specialist'], help='Model type')
-    p_mlx_load.set_defaults(func=cmd_mlx_load_lora)
-
-    p_mlx_status = sub.add_parser('mlx-lora-status', help='Show LoRA status (Phase 5 M4)')
-    p_mlx_status.set_defaults(func=cmd_mlx_lora_status)
-
-    p_mlx_prepare = sub.add_parser('mlx-prepare-training-data', help='Prepare training data for persona (Phase 5 M4)')
+    # Phase 5 M4: Training Data Preparation
+    p_mlx_prepare = sub.add_parser('prepare-training-data', help='Prepare training data for persona (Phase 5 M4)')
     p_mlx_prepare.add_argument('--persona', help='Persona name')
     p_mlx_prepare.add_argument('--output', help='Output file path (JSONL)')
     p_mlx_prepare.add_argument('--num-synthetic', type=int, default=10, help='Number of synthetic samples (default: 10)')
