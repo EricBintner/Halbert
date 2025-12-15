@@ -3,7 +3,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Input } from '@/components/ui/input'
 import { 
   getPendingApprovals, 
   approveRequest, 
@@ -20,13 +19,14 @@ export function Approvals() {
   const [history, setHistory] = useState<ApprovalHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
   
-  // Rejection modal state
-  const [rejectModalOpen, setRejectModalOpen] = useState(false)
-  const [rejectingRequestId, setRejectingRequestId] = useState<string | null>(null)
-  const [rejectingRequestAction, setRejectingRequestAction] = useState<string>('')
-  const [rejectionReason, setRejectionReason] = useState('')
+  // Unified decision modal state
+  const [decisionModalOpen, setDecisionModalOpen] = useState(false)
+  const [decisionType, setDecisionType] = useState<'approve' | 'reject'>('approve')
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
+  const [selectedRequestAction, setSelectedRequestAction] = useState<string>('')
+  const [decisionReason, setDecisionReason] = useState('')
   const [saveToMemory, setSaveToMemory] = useState(true)
-  const [rejectLoading, setRejectLoading] = useState(false)
+  const [decisionLoading, setDecisionLoading] = useState(false)
 
   useEffect(() => {
     loadAll()
@@ -51,36 +51,32 @@ export function Approvals() {
     }
   }
 
-  const handleApprove = async (requestId: string) => {
-    try {
-      await approveRequest(requestId)
-      loadAll()
-    } catch (error) {
-      console.error('Approval failed:', error)
-    }
-  }
-
-  const openRejectModal = (requestId: string, action: string) => {
-    setRejectingRequestId(requestId)
-    setRejectingRequestAction(action)
-    setRejectionReason('')
+  const openDecisionModal = (requestId: string, action: string, type: 'approve' | 'reject') => {
+    setSelectedRequestId(requestId)
+    setSelectedRequestAction(action)
+    setDecisionType(type)
+    setDecisionReason('')
     setSaveToMemory(true)
-    setRejectModalOpen(true)
+    setDecisionModalOpen(true)
   }
   
-  const handleReject = async () => {
-    if (!rejectingRequestId || !rejectionReason.trim()) return
+  const handleDecision = async () => {
+    if (!selectedRequestId) return
+    if (decisionType === 'reject' && !decisionReason.trim()) return
     
-    setRejectLoading(true)
+    setDecisionLoading(true)
     try {
-      // Reject the request with reason and optional memory flag
-      await rejectRequest(rejectingRequestId, rejectionReason, saveToMemory)
-      setRejectModalOpen(false)
+      if (decisionType === 'approve') {
+        await approveRequest(selectedRequestId, saveToMemory)
+      } else {
+        await rejectRequest(selectedRequestId, decisionReason, saveToMemory)
+      }
+      setDecisionModalOpen(false)
       loadAll()
     } catch (error) {
-      console.error('Rejection failed:', error)
+      console.error(`${decisionType} failed:`, error)
     } finally {
-      setRejectLoading(false)
+      setDecisionLoading(false)
     }
   }
 
@@ -198,7 +194,7 @@ export function Approvals() {
 
                     <div className="flex gap-2 pt-4">
                       <Button
-                        onClick={() => handleApprove(request.id)}
+                        onClick={() => openDecisionModal(request.id, request.action, 'approve')}
                         className="gap-2"
                       >
                         <CheckCircle className="h-4 w-4" />
@@ -206,7 +202,7 @@ export function Approvals() {
                       </Button>
                       <Button
                         variant="outline"
-                        onClick={() => openRejectModal(request.id, request.action)}
+                        onClick={() => openDecisionModal(request.id, request.action, 'reject')}
                         className="gap-2"
                       >
                         <XCircle className="h-4 w-4" />
@@ -259,20 +255,20 @@ export function Approvals() {
         </TabsContent>
       </Tabs>
       
-      {/* Rejection Modal */}
-      {rejectModalOpen && (
+      {/* Decision Modal - Used for both Approve and Reject */}
+      {decisionModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           {/* Backdrop */}
           <div 
             className="fixed inset-0 bg-background/80 backdrop-blur-sm"
-            onClick={() => setRejectModalOpen(false)}
+            onClick={() => setDecisionModalOpen(false)}
           />
           
           {/* Modal */}
-          <div className="relative z-50 w-full max-w-lg rounded-lg border bg-card p-6 shadow-lg animate-in fade-in-0 zoom-in-95">
+          <div className="relative z-50 w-full max-w-md rounded-lg border bg-card p-6 shadow-lg animate-in fade-in-0 zoom-in-95">
             {/* Close button */}
             <button
-              onClick={() => setRejectModalOpen(false)}
+              onClick={() => setDecisionModalOpen(false)}
               className="absolute right-4 top-4 rounded-sm opacity-70 hover:opacity-100 transition-opacity"
             >
               <X className="h-4 w-4" />
@@ -282,46 +278,52 @@ export function Approvals() {
               {/* Header */}
               <div className="space-y-2">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
-                  <XCircle className="h-5 w-5 text-red-500" />
-                  Reject Request
+                  {decisionType === 'approve' ? (
+                    <CheckCircle className="h-5 w-5 text-green-500" />
+                  ) : (
+                    <XCircle className="h-5 w-5 text-red-500" />
+                  )}
+                  {decisionType === 'approve' ? 'Approve Request' : 'Reject Request'}
                 </h3>
                 <p className="text-sm text-muted-foreground">
-                  {rejectingRequestAction}
+                  {selectedRequestAction}
                 </p>
               </div>
 
-              {/* Reason input */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Why are you rejecting this?</label>
-                <Input
-                  placeholder="e.g., This conflicts with my setup, Not needed right now, Wrong approach..."
-                  value={rejectionReason}
-                  onChange={(e) => setRejectionReason(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && rejectionReason.trim()) {
-                      handleReject()
-                    }
-                  }}
-                  autoFocus
-                />
-              </div>
+              {/* Reason input - only for rejection */}
+              {decisionType === 'reject' && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Why are you rejecting this?</label>
+                  <textarea
+                    placeholder="e.g., Conflicts with my setup, Not needed, Wrong approach..."
+                    value={decisionReason}
+                    onChange={(e) => setDecisionReason(e.target.value)}
+                    className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-none min-h-[80px]"
+                    rows={3}
+                    autoFocus
+                  />
+                </div>
+              )}
 
               {/* Memory checkbox */}
-              <div className="flex items-start gap-3 rounded-md bg-blue-500/10 border border-blue-500/20 p-3">
+              <div className="flex items-start gap-3 rounded-md bg-pink-500/10 border border-pink-500/20 p-3">
                 <input
                   type="checkbox"
                   id="saveToMemory"
                   checked={saveToMemory}
                   onChange={(e) => setSaveToMemory(e.target.checked)}
-                  className="mt-1"
+                  className="mt-1 accent-pink-500"
                 />
                 <label htmlFor="saveToMemory" className="text-sm cursor-pointer">
-                  <span className="flex items-center gap-1.5 font-medium text-blue-600 dark:text-blue-400">
+                  <span className="flex items-center gap-1.5 font-medium text-pink-600 dark:text-pink-400">
                     <Brain className="h-4 w-4" />
-                    Remember this preference
+                    Remember this decision
                   </span>
                   <span className="text-muted-foreground block mt-0.5">
-                    Store in AI memory so similar requests are handled better in the future
+                    {decisionType === 'approve' 
+                      ? 'AI will learn that similar actions are acceptable'
+                      : 'AI will learn to avoid similar actions in the future'
+                    }
                   </span>
                 </label>
               </div>
@@ -330,17 +332,20 @@ export function Approvals() {
               <div className="flex justify-end gap-3 pt-2">
                 <Button 
                   variant="outline" 
-                  onClick={() => setRejectModalOpen(false)}
-                  disabled={rejectLoading}
+                  onClick={() => setDecisionModalOpen(false)}
+                  disabled={decisionLoading}
                 >
                   Cancel
                 </Button>
                 <Button 
-                  variant="destructive"
-                  onClick={handleReject}
-                  disabled={!rejectionReason.trim() || rejectLoading}
+                  variant={decisionType === 'approve' ? 'default' : 'destructive'}
+                  onClick={handleDecision}
+                  disabled={(decisionType === 'reject' && !decisionReason.trim()) || decisionLoading}
                 >
-                  {rejectLoading ? 'Rejecting...' : 'Reject Request'}
+                  {decisionLoading 
+                    ? (decisionType === 'approve' ? 'Approving...' : 'Rejecting...')
+                    : (decisionType === 'approve' ? 'Approve' : 'Reject')
+                  }
                 </Button>
               </div>
             </div>
