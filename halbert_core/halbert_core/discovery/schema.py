@@ -138,6 +138,12 @@ class Discovery:
     mentionable: bool = True         # Can be @mentioned in chat
     chat_context: Optional[str] = None  # Context injected into chat prompts
     
+    # Consolidation (Phase 24) - for grouping related discoveries
+    config_path: Optional[str] = None    # Shared config file path (e.g., /etc/btrbk/btrbk.conf)
+    group_key: Optional[str] = None      # Key for grouping (e.g., "btrbk:/etc/btrbk/btrbk.conf")
+    suppress_display: bool = False       # Hide from main list (e.g., service when config shown)
+    related_to: list[str] = field(default_factory=list)  # IDs of related discoveries
+    
     @property
     def mention(self) -> str:
         """Get @mention string for this discovery."""
@@ -200,6 +206,11 @@ class Discovery:
             "actions": [a.to_dict() for a in self.actions],
             "mentionable": self.mentionable,
             "mention": self.mention,
+            # Consolidation fields (Phase 24)
+            "config_path": self.config_path,
+            "group_key": self.group_key,
+            "suppress_display": self.suppress_display,
+            "related_to": self.related_to,
         }
     
     def to_json(self) -> str:
@@ -228,6 +239,11 @@ class Discovery:
             actions=actions,
             mentionable=data.get("mentionable", True),
             chat_context=data.get("chat_context"),
+            # Consolidation fields (Phase 24)
+            config_path=data.get("config_path"),
+            group_key=data.get("group_key"),
+            suppress_display=data.get("suppress_display", False),
+            related_to=data.get("related_to", []),
         )
     
     def content_hash(self) -> str:
@@ -263,14 +279,29 @@ def backup_discovery(
     tool: str = "unknown",
     status: str = "unknown",
     severity: DiscoverySeverity = DiscoverySeverity.INFO,
+    # Consolidation fields (Phase 24)
+    config_path: Optional[str] = None,
+    group_key: Optional[str] = None,
+    suppress_display: bool = False,
+    related_to: Optional[list[str]] = None,
     **extra_data
 ) -> Discovery:
     """
     Factory for backup discoveries.
     
     Simplifies scanner code by providing sensible defaults.
+    
+    Consolidation fields (Phase 24):
+    - config_path: Path to shared config file (e.g., /etc/btrbk/btrbk.conf)
+    - group_key: Key for grouping related backups (e.g., "btrbk:/etc/btrbk/btrbk.conf")
+    - suppress_display: Hide from main list (for service entries when config shown)
+    - related_to: List of related discovery IDs
     """
     discovery_id = make_discovery_id(DiscoveryType.BACKUP, name)
+    
+    # Auto-generate group_key if config_path provided but group_key not
+    if config_path and not group_key:
+        group_key = f"{tool}:{config_path}"
     
     return Discovery(
         id=discovery_id,
@@ -308,6 +339,11 @@ def backup_discovery(
                 icon="message-circle",
             ),
         ],
+        # Consolidation fields
+        config_path=config_path,
+        group_key=group_key,
+        suppress_display=suppress_display,
+        related_to=related_to or [],
         chat_context=f"This is a {tool} backup named '{name}'. "
                      f"It backs up {source_path or 'files'} to {destination or 'unknown destination'}. "
                      f"Schedule: {schedule or 'unknown'}. Status: {status}.",

@@ -4,13 +4,14 @@
  * Based on Phase 9 research: docs/Phase9/deep-dives/07-network-deep-dive.md
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useScan } from '@/contexts/ScanContext'
 // ConfigEditor is handled globally by Layout.tsx via halbert:open-config-editor event
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
+import { ConfigFileButton } from '@/components/domain'
 import {
   Sheet,
   SheetContent,
@@ -60,6 +61,10 @@ interface NetworkItem {
   description: string
   status: string
   severity: string
+  // Phase 24: Consolidation fields
+  config_path?: string
+  group_key?: string
+  suppress_display?: boolean
   data: {
     interface?: string
     type?: string
@@ -79,6 +84,44 @@ interface NetworkItem {
     info_kind?: string
     config_path?: string  // Network config file path
   }
+}
+
+// Phase 24: Group interfaces by config file for bond/bridge consolidation
+interface InterfaceGroup {
+  key: string
+  configPath: string
+  type: string  // e.g., 'netplan', 'networkmanager'
+  items: NetworkItem[]
+}
+
+function groupInterfacesByConfig(items: NetworkItem[]): { grouped: InterfaceGroup[]; ungrouped: NetworkItem[] } {
+  const groups = new Map<string, InterfaceGroup>()
+  const ungrouped: NetworkItem[] = []
+  
+  for (const item of items) {
+    const configPath = item.config_path || item.data.config_path
+    const infoKind = item.data.info_kind
+    
+    // Only group bonds and bridges with config paths
+    if (!configPath || !infoKind || !['bond', 'bridge'].includes(infoKind)) {
+      ungrouped.push(item)
+      continue
+    }
+    
+    const key = `${infoKind}:${configPath}`
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        configPath,
+        type: configPath.includes('netplan') ? 'netplan' : 
+              configPath.includes('NetworkManager') ? 'networkmanager' : 'systemd-networkd',
+        items: [],
+      })
+    }
+    groups.get(key)!.items.push(item)
+  }
+  
+  return { grouped: Array.from(groups.values()), ungrouped }
 }
 
 /**
@@ -242,6 +285,11 @@ export function Network() {
   const interfaces = network.filter(n => n.name.startsWith('iface-'))
   const firewalls = network.filter(n => n.name.startsWith('firewall-'))
   const ports = network.find(n => n.name === 'listening-ports')
+
+  // Phase 24: Group bond/bridge interfaces by config file
+  const { grouped: groupedInterfaces, ungrouped: regularInterfaces } = useMemo(() => {
+    return groupInterfacesByConfig(interfaces)
+  }, [interfaces])
 
   const getIcon = (item: NetworkItem) => {
     if (item.data.type === 'WiFi') return <Wifi className="h-5 w-5 text-blue-500" />
@@ -481,6 +529,80 @@ export function Network() {
         </Card>
       </div>
 
+      {/* Phase 24: Grouped Bond/Bridge Interfaces */}
+      {groupedInterfaces.length > 0 && (
+        <div className="space-y-4">
+          {groupedInterfaces.map((group) => (
+            <Card key={group.key} className="overflow-hidden">
+              {/* Fused Header with Config Button */}
+              <div className="flex items-center justify-between p-4 bg-muted/50 border-b">
+                <div className="flex items-center gap-2">
+                  <NetworkIcon className="h-5 w-5 text-blue-500" />
+                  <span className="font-semibold">
+                    {group.items[0]?.data.info_kind === 'bridge' ? 'Network Bridge' : 'Network Bond'}
+                  </span>
+                  {group.items.length > 1 && (
+                    <Badge variant="outline" className="text-xs">
+                      {group.items.length} interfaces
+                    </Badge>
+                  )}
+                  <Badge variant="outline" className="text-xs ml-2">
+                    {group.type}
+                  </Badge>
+                </div>
+                <ConfigFileButton 
+                  path={group.configPath} 
+                  variant="full"
+                  size="sm"
+                />
+              </div>
+              
+              <CardContent className="p-0">
+                {group.items.map((iface, idx) => (
+                  <div
+                    key={iface.id}
+                    className={cn(
+                      "flex items-center justify-between p-4 hover:bg-accent/50 cursor-pointer transition-colors",
+                      idx < group.items.length - 1 && "border-b border-dashed"
+                    )}
+                    onClick={() => openInterfaceDetail(iface)}
+                  >
+                    <div className="flex items-center gap-4">
+                      {getIcon(iface)}
+                      <div>
+                        <p className="font-medium">{iface.title}</p>
+                        <div className="text-sm text-muted-foreground space-y-1">
+                          {iface.data.ipv4 && <p>IPv4: {iface.data.ipv4}</p>}
+                          {iface.data.mac && <p>MAC: {iface.data.mac}</p>}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Badge
+                        className={cn(
+                          iface.severity === 'success' && 'bg-green-500',
+                          iface.severity === 'warning' && 'bg-yellow-500',
+                          iface.severity === 'info' && 'bg-blue-500',
+                        )}
+                      >
+                        {iface.status}
+                      </Badge>
+                      <WhyBrain
+                        itemId={`network:${iface.data.interface || iface.name}`}
+                        itemName={iface.title}
+                        itemType="network"
+                        size="sm"
+                      />
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
       {/* Network Interfaces */}
       <Card>
         <CardHeader>
@@ -490,11 +612,11 @@ export function Network() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {interfaces.length === 0 ? (
+          {regularInterfaces.length === 0 ? (
             <p className="text-muted-foreground">No interfaces discovered</p>
           ) : (
             <div className="space-y-4">
-              {interfaces.map((iface) => (
+              {regularInterfaces.map((iface) => (
                 <div
                   key={iface.id}
                   className="flex items-center justify-between p-4 rounded-lg border hover:bg-accent/50 cursor-pointer transition-colors"

@@ -4,12 +4,13 @@
  * Based on Phase 17 research: docs/Phase17/SHARING-TAB-RESEARCH.md
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 // ConfigEditor is handled globally by Layout.tsx via halbert:open-config-editor event
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
+import { ConfigFileButton } from '@/components/domain'
 import {
   Sheet,
   SheetContent,
@@ -46,6 +47,10 @@ interface SharingItem {
   description: string
   status: string
   severity: string
+  // Phase 24: Consolidation fields
+  config_path?: string
+  group_key?: string
+  suppress_display?: boolean
   data: {
     share_type: string
     // NFS/SMB mount
@@ -121,6 +126,75 @@ function groupByShareType(items: SharingItem[]) {
   return groups
 }
 
+// Phase 24: Group exports by their config file for fused display
+interface ExportGroup {
+  key: string
+  configPath: string
+  type: 'nfs' | 'samba'
+  items: SharingItem[]
+}
+
+function groupExportsByConfig(items: SharingItem[]): ExportGroup[] {
+  const groups = new Map<string, ExportGroup>()
+  
+  for (const item of items) {
+    const configPath = item.config_path || item.data.config_path
+    if (!configPath) {
+      // No config path - treat as individual
+      groups.set(item.id, {
+        key: item.id,
+        configPath: '',
+        type: item.data.share_type === 'nfs-export' ? 'nfs' : 'samba',
+        items: [item],
+      })
+      continue
+    }
+    
+    const key = `${item.data.share_type}:${configPath}`
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        configPath,
+        type: item.data.share_type === 'nfs-export' ? 'nfs' : 'samba',
+        items: [],
+      })
+    }
+    groups.get(key)!.items.push(item)
+  }
+  
+  return Array.from(groups.values())
+}
+
+// Phase 24: Group WireGuard peers by interface config
+interface WireGuardGroup {
+  key: string
+  interfaceName: string
+  configPath: string | null
+  peers: SharingItem[]
+}
+
+function groupWireGuardPeers(items: SharingItem[]): WireGuardGroup[] {
+  const groups = new Map<string, WireGuardGroup>()
+  
+  for (const item of items) {
+    const interfaceName = item.data.interface || 'unknown'
+    const configPath = item.config_path || null
+    const key = `wg:${interfaceName}`
+    
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        interfaceName,
+        configPath,
+        peers: [],
+      })
+    }
+    groups.get(key)!.peers.push(item)
+  }
+  
+  return Array.from(groups.values())
+}
+
 export function Sharing() {
   const [sharing, setSharing] = useState<SharingItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -163,6 +237,17 @@ export function Sharing() {
   }
 
   const groups = groupByShareType(sharing)
+  
+  // Phase 24: Group exports by config file for fused display
+  const groupedExports = useMemo(() => {
+    const allExports = [...groups['nfs-export'], ...groups['smb-export']]
+    return groupExportsByConfig(allExports)
+  }, [groups])
+  
+  // Phase 24: Group WireGuard peers by interface
+  const groupedWireGuard = useMemo(() => {
+    return groupWireGuardPeers(groups['wireguard-peer'])
+  }, [groups])
   
   // Count totals for summary
   const mountCount = groups['nfs-mount'].length + groups['smb-mount'].length
@@ -336,54 +421,82 @@ export function Sharing() {
         </Card>
       )}
 
-      {/* Exported Shares */}
-      {(groups['nfs-export'].length > 0 || groups['smb-export'].length > 0) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Share2 className="h-5 w-5" />
-              Exported Shares
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {[...groups['nfs-export'], ...groups['smb-export']].map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center justify-between p-4 rounded-lg border hover:bg-accent/50 cursor-pointer transition-colors"
-                  onClick={() => setSelectedItem(item)}
-                >
-                  <div className="flex items-center gap-4">
-                    {getIcon(item)}
-                    <div>
-                      <p className="font-medium">{item.title}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {item.data.share_type === 'nfs-export' ? 'NFS' : 'Samba'} 
-                        {item.data.path && ` at ${item.data.path}`}
-                      </p>
+      {/* Exported Shares - Phase 24: Fused by config file */}
+      {groupedExports.length > 0 && (
+        <div className="space-y-4">
+          {groupedExports.map((group) => (
+            <Card key={group.key} className="overflow-hidden">
+              {/* Fused Header with Config Button */}
+              <div className="flex items-center justify-between p-4 bg-muted/50 border-b">
+                <div className="flex items-center gap-2">
+                  <Share2 className="h-5 w-5 text-green-500" />
+                  <span className="font-semibold">
+                    {group.type === 'nfs' ? 'NFS Exports' : 'Samba Shares'}
+                  </span>
+                  {group.items.length > 1 && (
+                    <Badge variant="outline" className="text-xs">
+                      {group.items.length} shares
+                    </Badge>
+                  )}
+                </div>
+                {group.configPath && (
+                  <ConfigFileButton 
+                    path={group.configPath} 
+                    variant="full"
+                    size="sm"
+                  />
+                )}
+              </div>
+              
+              <CardContent className="p-0">
+                {group.items.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      "flex items-center justify-between p-4 hover:bg-accent/50 cursor-pointer transition-colors",
+                      idx < group.items.length - 1 && "border-b border-dashed"
+                    )}
+                    onClick={() => setSelectedItem(item)}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="p-2 rounded-full bg-green-500/10">
+                        <FolderOpen className="h-4 w-4 text-green-500" />
+                      </div>
+                      <div>
+                        <p className="font-medium">{item.data.share_name || item.title.replace('Share: ', '')}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {item.data.path}
+                          {item.data.comment && ` — ${item.data.comment}`}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {item.data.guest_ok && (
+                        <Badge variant="outline" className="text-yellow-600 border-yellow-600">
+                          Guest OK
+                        </Badge>
+                      )}
+                      {item.data.read_only && (
+                        <Badge variant="outline" className="text-slate-500">
+                          Read Only
+                        </Badge>
+                      )}
+                      <Badge
+                        className={cn(
+                          item.data.active && 'bg-green-500',
+                          !item.data.active && 'bg-slate-500',
+                        )}
+                      >
+                        {item.status}
+                      </Badge>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    {item.data.guest_ok && (
-                      <Badge variant="outline" className="text-yellow-600 border-yellow-600">
-                        Guest OK
-                      </Badge>
-                    )}
-                    <Badge
-                      className={cn(
-                        item.data.active && 'bg-green-500',
-                        !item.data.active && 'bg-slate-500',
-                      )}
-                    >
-                      {item.status}
-                    </Badge>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                ))}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       )}
 
       {/* Tailscale Drives */}
@@ -528,55 +641,85 @@ export function Sharing() {
         </Card>
       )}
 
-      {/* WireGuard Peers */}
+      {/* Phase 24: WireGuard Peers - Grouped by Interface */}
       {groups['wireguard-peer'].length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5" />
-              WireGuard Peers
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {groups['wireguard-peer'].map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center justify-between p-4 rounded-lg border hover:bg-accent/50 cursor-pointer transition-colors"
-                  onClick={() => setSelectedItem(item)}
-                >
-                  <div className="flex items-center gap-4">
-                    {getIcon(item)}
-                    <div>
-                      <p className="font-medium font-mono text-sm">
-                        {item.data.public_key?.slice(0, 16)}...
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {item.data.interface} - {item.data.endpoint || 'No endpoint'}
-                      </p>
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Shield className="h-5 w-5" />
+            WireGuard Peers ({groups['wireguard-peer'].length})
+          </h2>
+          {groupedWireGuard.map((group) => (
+            <Card key={group.key} className="overflow-hidden">
+              {/* Fused Header with Config Button */}
+              <div className="flex items-center justify-between p-4 bg-muted/50 border-b">
+                <div className="flex items-center gap-2">
+                  <Shield className="h-5 w-5 text-orange-500" />
+                  <span className="font-semibold font-mono">{group.interfaceName}</span>
+                  <Badge variant="outline" className="text-xs">
+                    {group.peers.filter(p => p.data.online).length}/{group.peers.length} connected
+                  </Badge>
+                </div>
+                {group.configPath && (
+                  <ConfigFileButton 
+                    path={group.configPath} 
+                    variant="full"
+                    size="sm"
+                  />
+                )}
+              </div>
+              
+              <CardContent className="p-0">
+                {group.peers.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      "flex items-center justify-between p-4 hover:bg-accent/50 cursor-pointer transition-colors",
+                      idx < group.peers.length - 1 && "border-b border-dashed"
+                    )}
+                    onClick={() => setSelectedItem(item)}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className={cn(
+                        "p-2 rounded-full",
+                        item.data.online ? "bg-green-500/10" : "bg-slate-500/10"
+                      )}>
+                        <Shield className={cn(
+                          "h-4 w-4",
+                          item.data.online ? "text-green-500" : "text-slate-500"
+                        )} />
+                      </div>
+                      <div>
+                        <p className="font-medium font-mono text-sm">
+                          {item.data.public_key?.slice(0, 16)}...
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {item.data.endpoint || 'No endpoint'} • {item.data.allowed_ips || 'No allowed IPs'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Badge
+                        className={cn(
+                          "text-xs",
+                          item.data.online && 'bg-green-500',
+                          !item.data.online && 'bg-slate-500',
+                        )}
+                      >
+                        {item.status}
+                      </Badge>
+                      {item.data.latest_handshake && item.data.latest_handshake !== 'Never' && (
+                        <span className="text-xs text-muted-foreground">
+                          {item.data.latest_handshake}
+                        </span>
+                      )}
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Badge
-                      className={cn(
-                        item.data.online && 'bg-green-500',
-                        !item.data.online && 'bg-slate-500',
-                      )}
-                    >
-                      {item.status}
-                    </Badge>
-                    {item.data.latest_handshake && item.data.latest_handshake !== 'Never' && (
-                      <span className="text-xs text-muted-foreground">
-                        {item.data.latest_handshake}
-                      </span>
-                    )}
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                ))}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       )}
 
       {/* Cloud Mounts */}

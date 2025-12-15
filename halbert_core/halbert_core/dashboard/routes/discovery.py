@@ -439,8 +439,15 @@ async def _fetch_backup_history(backup_name: str, limit: int = 10) -> List[Dict[
     
     For systemd timers: queries journalctl
     For timeshift: queries timeshift --list
+    For btrbk: queries btrbk list and parses snapshot timestamps
     """
     history: List[Dict[str, Any]] = []
+    
+    # Handle btrbk snapshot configs (btrbk-@, btrbk-@home, etc.)
+    if backup_name.startswith("btrbk-"):
+        history = await _fetch_btrbk_history(backup_name, limit)
+        if history:
+            return history
     
     # Try systemd journal first (most common for timer-based backups)
     service_name = f"{backup_name}.service"
@@ -651,6 +658,110 @@ def _get_snapshot_size(snapshot_name: str) -> Optional[str]:
     # This would require parsing timeshift config or checking disk usage
     # For now, return None - can be enhanced later
     return None
+
+
+async def _fetch_btrbk_history(backup_name: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    Fetch btrbk snapshot history by scanning target directories.
+    
+    backup_name should be like 'btrbk-@' or 'btrbk-@home'
+    
+    This parses btrbk.conf to find target directories, then lists snapshots
+    directly from the filesystem (avoids needing root for btrbk list).
+    """
+    from pathlib import Path
+    
+    history: List[Dict[str, Any]] = []
+    
+    # Extract the subvolume name from backup_name (btrbk-@ -> @, btrbk-@home -> @home)
+    subvol = backup_name.replace("btrbk-", "")
+    
+    # Parse btrbk.conf to find target directory for this subvolume
+    btrbk_conf = Path("/etc/btrbk/btrbk.conf")
+    if not btrbk_conf.exists():
+        logger.warning("btrbk.conf not found")
+        return history
+    
+    try:
+        content = btrbk_conf.read_text()
+    except PermissionError:
+        logger.warning("Cannot read btrbk.conf")
+        return history
+    
+    # Find the target directory for this subvolume
+    # Config format:
+    #   volume /btrfs/root
+    #     subvolume @
+    #     target raw /mnt/Bcachefs/Backups/Ubuntu_snapshots
+    target_dir = None
+    current_volume = None
+    current_subvol = None
+    
+    for line in content.splitlines():
+        line = line.strip()
+        if line.startswith('volume '):
+            current_volume = line.split()[1] if len(line.split()) > 1 else None
+            current_subvol = None
+        elif line.startswith('subvolume '):
+            current_subvol = line.split()[1] if len(line.split()) > 1 else None
+        elif line.startswith('target ') and current_subvol == subvol:
+            # Found the target for our subvolume
+            # Format: "target raw /path" or "target /path"
+            parts = line.split()
+            if len(parts) >= 2:
+                # Last part is the path
+                target_dir = parts[-1]
+                break
+    
+    if not target_dir:
+        logger.warning(f"No target directory found for subvolume {subvol}")
+        return history
+    
+    # List snapshots in the target directory
+    target_path = Path(target_dir)
+    if not target_path.exists():
+        logger.warning(f"Target directory does not exist: {target_dir}")
+        return history
+    
+    # Pattern: @.20251214T0000.btrfs or @home.20251214T0000.btrfs
+    pattern = rf'^{re.escape(subvol)}\.(\d{{8}}T\d{{4}})(?:\.btrfs)?$'
+    
+    try:
+        for entry in target_path.iterdir():
+            match = re.match(pattern, entry.name)
+            if match:
+                ts_str = match.group(1)
+                try:
+                    timestamp = datetime.strptime(ts_str, '%Y%m%dT%H%M')
+                    # Get file size if possible
+                    size = None
+                    try:
+                        if entry.is_file():
+                            size_bytes = entry.stat().st_size
+                            if size_bytes > 1024**3:
+                                size = f"{size_bytes / 1024**3:.1f} GB"
+                            elif size_bytes > 1024**2:
+                                size = f"{size_bytes / 1024**2:.1f} MB"
+                    except OSError:
+                        pass
+                    
+                    history.append({
+                        'timestamp': timestamp.isoformat(),
+                        'status': 'success',
+                        'snapshot_name': entry.name,
+                        'size': size,
+                    })
+                except ValueError:
+                    continue
+    except PermissionError:
+        logger.warning(f"Cannot list target directory: {target_dir}")
+        return history
+    
+    # Sort by timestamp descending and limit
+    history.sort(key=lambda x: x['timestamp'], reverse=True)
+    history = history[:limit]
+    
+    return history
 
 
 def _investigate_backup(backup_name: str, backup_data: dict, status: str) -> Dict[str, Any]:

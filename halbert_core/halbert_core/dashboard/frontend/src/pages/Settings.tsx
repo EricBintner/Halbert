@@ -193,13 +193,6 @@ export function Settings() {
   } | null>(null)
   // Note: deepScanning state moved to ScanContext (isDeepScanning)
   
-  // Computer name (AI identity) state
-  const [aiName, setAiName] = useState<string>('Halbert')
-  const [userName, setUserName] = useState<string | null>(null)
-  const [editingAiName, setEditingAiName] = useState(false)
-  const [tempAiName, setTempAiName] = useState('')
-  const [savingAiName, setSavingAiName] = useState(false)
-  
   // AI Rules state
   interface AIRule {
     id: string
@@ -299,17 +292,11 @@ export function Settings() {
       console.error('Failed to load persona status:', err)
     }
     
-    // Load persona names and AI name
+    // Load persona names
     try {
       const res = await fetch(`${API_BASE}/settings/persona-names`)
       const data = await res.json()
       setPersonaNames(data.names || {})
-      if (data.ai_name) {
-        setAiName(data.ai_name)
-      }
-      if (data.user_name) {
-        setUserName(data.user_name)
-      }
     } catch (err) {
       console.error('Failed to load persona names:', err)
     }
@@ -353,29 +340,6 @@ export function Settings() {
     await new Promise(resolve => setTimeout(resolve, 1000))
     setClearing(false)
     alert('Cache cleared. Run a new scan to refresh.')
-  }
-  
-  const handleSaveAiName = async () => {
-    if (!tempAiName.trim()) return
-    
-    setSavingAiName(true)
-    try {
-      const res = await fetch(`${API_BASE}/settings/computer-name`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ai_name: tempAiName.trim() })
-      })
-      const data = await res.json()
-      if (data.success) {
-        setAiName(data.ai_name)
-        setEditingAiName(false)
-        setToast({ open: true, message: `Renamed to "${data.ai_name}"`, variant: 'success' })
-      }
-    } catch (err) {
-      console.error('Failed to save AI name:', err)
-      setToast({ open: true, message: 'Failed to save name', variant: 'error' })
-    }
-    setSavingAiName(false)
   }
   
   const handleTestEndpoint = async (endpoint: string, provider: string) => {
@@ -746,30 +710,18 @@ export function Settings() {
       </div>
 
       <Tabs defaultValue="system" className="space-y-4">
-        <TabsList className="flex flex-wrap w-full gap-1">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="system" className="flex items-center gap-2">
             <Cpu className="h-4 w-4" />
             System
           </TabsTrigger>
-          <TabsTrigger value="models" className="flex items-center gap-2">
+          <TabsTrigger value="ai" className="flex items-center gap-2">
             <Brain className="h-4 w-4" />
             AI Models
           </TabsTrigger>
-          <TabsTrigger value="knowledge" className="flex items-center gap-2">
-            <BookOpen className="h-4 w-4" />
-            Knowledge
-          </TabsTrigger>
-          <TabsTrigger value="rules" className="flex items-center gap-2">
+          <TabsTrigger value="safety" className="flex items-center gap-2">
             <Shield className="h-4 w-4" />
-            AI Rules
-          </TabsTrigger>
-          <TabsTrigger value="policy" className="flex items-center gap-2">
-            <Lock className="h-4 w-4" />
-            Policy
-          </TabsTrigger>
-          <TabsTrigger value="guardrails" className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4" />
-            Guardrails
+            Safety
           </TabsTrigger>
           <TabsTrigger value="alerts" className="flex items-center gap-2">
             <Bell className="h-4 w-4" />
@@ -822,65 +774,6 @@ export function Settings() {
             </CardContent>
           </Card>
 
-          {/* Computer Identity Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Computer Identity
-              </CardTitle>
-              <CardDescription>The name your AI assistant uses to identify itself</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div>
-                  <Label className="text-xs text-muted-foreground">AI Name</Label>
-                  {editingAiName ? (
-                    <div className="flex items-center gap-2 mt-1">
-                      <Input
-                        value={tempAiName}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTempAiName(e.target.value)}
-                        placeholder="Enter a name..."
-                        className="h-8 w-48"
-                        onKeyDown={(e) => e.key === 'Enter' && handleSaveAiName()}
-                      />
-                      <Button size="sm" onClick={handleSaveAiName} disabled={savingAiName || !tempAiName.trim()}>
-                        {savingAiName ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setEditingAiName(false)}>
-                        <X className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 mt-1">
-                      <code className="text-sm bg-muted px-2 py-1 rounded">{aiName}</code>
-                      <Button 
-                        size="sm" 
-                        variant="ghost" 
-                        className="h-7 px-2"
-                        onClick={() => {
-                          setTempAiName(aiName)
-                          setEditingAiName(true)
-                        }}
-                      >
-                        <Edit3 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-                {userName && (
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Your Name</Label>
-                    <p className="text-sm font-medium mt-1">{userName}</p>
-                  </div>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  This name appears in chat greetings, system profile, and the AI's self-references.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -904,31 +797,6 @@ export function Settings() {
                   {clearing ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
                   Clear Cache
                 </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Info className="h-5 w-5" />
-                About Halbert
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Version</span>
-                  <span className="font-medium">0.1.0-alpha.1</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">API Status</span>
-                  <Badge className="bg-green-500">Connected</Badge>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Active Scanners</span>
-                  <span className="font-medium">6</span>
-                </div>
               </div>
             </CardContent>
           </Card>
@@ -980,8 +848,8 @@ export function Settings() {
           </Card>
         </TabsContent>
 
-        {/* AI Models Tab */}
-        <TabsContent value="models" className="space-y-4">
+        {/* AI Models Tab - includes model config and knowledge sources */}
+        <TabsContent value="ai" className="space-y-4">
           {/* Connection Status Card */}
           <Card className={modelStatus?.ollama_connected 
             ? (modelStatus?.model_installed ? 'border-green-500' : 'border-yellow-500') 
@@ -1614,6 +1482,163 @@ export function Settings() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Knowledge Sources Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BookOpen className="h-5 w-5" />
+                Knowledge Base (RAG)
+              </CardTitle>
+              <CardDescription>
+                Documentation and knowledge sources the AI uses for context
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Stats summary */}
+                <div className="p-4 bg-muted/50 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="font-medium">Knowledge Sources</h4>
+                    <Button variant="ghost" size="sm" onClick={toggleDocList}>
+                      {showDocList ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
+                      {showDocList ? 'Hide' : 'View All'}
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <p className="text-muted-foreground">Total Documents</p>
+                      <p className="font-medium">{ragStats?.total_docs?.toLocaleString() || '~3,000'} docs</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Custom Added</p>
+                      <p className="font-medium">{ragStats?.user_docs || 0} docs</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Core Sources</p>
+                      <p className="font-medium text-xs">Arch Wiki, Docker, Kubernetes, man pages, Linux Kernel</p>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Expandable document list */}
+                {showDocList && (
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="max-h-80 overflow-y-auto">
+                      {loadingDocs ? (
+                        <div className="p-4 text-center text-muted-foreground">
+                          <RefreshCw className="h-4 w-4 animate-spin inline mr-2" />
+                          Loading documents...
+                        </div>
+                      ) : (
+                        <table className="w-full text-sm">
+                          <thead className="bg-muted/50 sticky top-0">
+                            <tr>
+                              <th className="text-left p-2 font-medium">Name</th>
+                              <th className="text-right p-2 font-medium">Docs</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {/* Core sources first */}
+                            <tr className="bg-muted/30">
+                              <td colSpan={2} className="p-2 text-xs font-medium text-muted-foreground">
+                                Core Knowledge Base
+                              </td>
+                            </tr>
+                            {coreSources.map((source, i) => (
+                              <tr key={`core-${i}`} className="border-t">
+                                <td className="p-2">{source.name}</td>
+                                <td className="p-2 text-right text-muted-foreground">{source.count.toLocaleString()}</td>
+                              </tr>
+                            ))}
+                            {/* Custom docs below */}
+                            {customDocs.length > 0 && (
+                              <>
+                                <tr className="border-t-2 border-muted bg-blue-50/50 dark:bg-blue-900/20">
+                                  <td colSpan={2} className="p-2 text-xs font-medium text-muted-foreground">
+                                    Custom Added ({customDocs.length})
+                                  </td>
+                                </tr>
+                                {customDocs.map((doc, i) => (
+                                  <tr key={`custom-${i}`} className="border-t bg-blue-50/30 dark:bg-blue-900/10">
+                                    <td className="p-2">
+                                      <span className="font-medium">{doc.name}</span>
+                                      {doc.url && (
+                                        <a href={doc.url} target="_blank" rel="noopener noreferrer" className="ml-2 text-muted-foreground hover:text-foreground">
+                                          <ExternalLink className="h-3 w-3 inline" />
+                                        </a>
+                                      )}
+                                    </td>
+                                    <td className="p-2 text-right">
+                                      <Badge variant="outline" className="text-xs">Custom</Badge>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </>
+                            )}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Add custom source - collapsible */}
+                <div className="border-t pt-4 space-y-4">
+                  <button 
+                    className="font-medium flex items-center gap-2 hover:text-primary transition-colors w-full text-left"
+                    onClick={() => setShowAddKnowledgeSource(!showAddKnowledgeSource)}
+                  >
+                    <Plus className={`h-4 w-4 transition-transform ${showAddKnowledgeSource ? 'rotate-45' : ''}`} />
+                    Add Custom Knowledge Source
+                    <ChevronDown className={`h-4 w-4 ml-auto transition-transform ${showAddKnowledgeSource ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showAddKnowledgeSource && (
+                  <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>URL</Label>
+                      <Input 
+                        value={newSourceUrl}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewSourceUrl(e.target.value)}
+                        placeholder="https://docs.example.com/" 
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Name (optional)</Label>
+                      <Input 
+                        value={newSourceName}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewSourceName(e.target.value)}
+                        placeholder="Example Documentation" 
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button 
+                      onClick={handleAddKnowledgeSource} 
+                      disabled={!newSourceUrl || addingSource}
+                    >
+                      {addingSource ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}
+                      Add Source
+                    </Button>
+                    {addSourceResult && (
+                      <Badge variant={addSourceResult.success ? "default" : addSourceResult.alreadyExists ? "secondary" : "destructive"}>
+                        {addSourceResult.success ? <Check className="h-3 w-3 mr-1" /> : <X className="h-3 w-3 mr-1" />}
+                        {addSourceResult.message}
+                        {addSourceResult.success && addSourceResult.title && `: ${addSourceResult.title}`}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Add any documentation URL and Halbert will index it for context-aware responses.
+                    Auto-detects docs from ReadTheDocs, wikis, /docs/ paths, and more.
+                  </p>
+                  </>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Personas Tab - HIDDEN from UI but code preserved for future use
@@ -1773,167 +1798,8 @@ export function Settings() {
           </Card>
         </TabsContent>
 
-        {/* Knowledge Tab */}
-        <TabsContent value="knowledge" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BookOpen className="h-5 w-5" />
-                Knowledge Base (RAG)
-              </CardTitle>
-              <CardDescription>
-                Documentation and knowledge sources the AI uses for context
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {/* Stats summary */}
-                <div className="p-4 bg-muted/50 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-medium">Knowledge Sources</h4>
-                    <Button variant="ghost" size="sm" onClick={toggleDocList}>
-                      {showDocList ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
-                      {showDocList ? 'Hide' : 'View All'}
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-3 gap-4 text-sm">
-                    <div>
-                      <p className="text-muted-foreground">Total Documents</p>
-                      <p className="font-medium">{ragStats?.total_docs?.toLocaleString() || '~3,000'} docs</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Custom Added</p>
-                      <p className="font-medium">{ragStats?.user_docs || 0} docs</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Core Sources</p>
-                      <p className="font-medium text-xs">Arch Wiki, Docker, Kubernetes, man pages, Linux Kernel</p>
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Expandable document list */}
-                {showDocList && (
-                  <div className="border rounded-lg overflow-hidden">
-                    <div className="max-h-80 overflow-y-auto">
-                      {loadingDocs ? (
-                        <div className="p-4 text-center text-muted-foreground">
-                          <RefreshCw className="h-4 w-4 animate-spin inline mr-2" />
-                          Loading documents...
-                        </div>
-                      ) : (
-                        <table className="w-full text-sm">
-                          <thead className="bg-muted/50 sticky top-0">
-                            <tr>
-                              <th className="text-left p-2 font-medium">Name</th>
-                              <th className="text-right p-2 font-medium">Docs</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {/* Core sources first */}
-                            <tr className="bg-muted/30">
-                              <td colSpan={2} className="p-2 text-xs font-medium text-muted-foreground">
-                                Core Knowledge Base
-                              </td>
-                            </tr>
-                            {coreSources.map((source, i) => (
-                              <tr key={`core-${i}`} className="border-t">
-                                <td className="p-2">{source.name}</td>
-                                <td className="p-2 text-right text-muted-foreground">{source.count.toLocaleString()}</td>
-                              </tr>
-                            ))}
-                            {/* Custom docs below */}
-                            {customDocs.length > 0 && (
-                              <>
-                                <tr className="border-t-2 border-muted bg-blue-50/50 dark:bg-blue-900/20">
-                                  <td colSpan={2} className="p-2 text-xs font-medium text-muted-foreground">
-                                    Custom Added ({customDocs.length})
-                                  </td>
-                                </tr>
-                                {customDocs.map((doc, i) => (
-                                  <tr key={`custom-${i}`} className="border-t bg-blue-50/30 dark:bg-blue-900/10">
-                                    <td className="p-2">
-                                      <span className="font-medium">{doc.name}</span>
-                                      {doc.url && (
-                                        <a href={doc.url} target="_blank" rel="noopener noreferrer" className="ml-2 text-muted-foreground hover:text-foreground">
-                                          <ExternalLink className="h-3 w-3 inline" />
-                                        </a>
-                                      )}
-                                    </td>
-                                    <td className="p-2 text-right">
-                                      <Badge variant="outline" className="text-xs">Custom</Badge>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </>
-                            )}
-                          </tbody>
-                        </table>
-                      )}
-                    </div>
-                  </div>
-                )}
-                
-                {/* Add custom source - collapsible */}
-                <div className="border-t pt-4 space-y-4">
-                  <button 
-                    className="font-medium flex items-center gap-2 hover:text-primary transition-colors w-full text-left"
-                    onClick={() => setShowAddKnowledgeSource(!showAddKnowledgeSource)}
-                  >
-                    <Plus className={`h-4 w-4 transition-transform ${showAddKnowledgeSource ? 'rotate-45' : ''}`} />
-                    Add Custom Knowledge Source
-                    <ChevronDown className={`h-4 w-4 ml-auto transition-transform ${showAddKnowledgeSource ? 'rotate-180' : ''}`} />
-                  </button>
-                  {showAddKnowledgeSource && (
-                  <>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>URL</Label>
-                      <Input 
-                        value={newSourceUrl}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewSourceUrl(e.target.value)}
-                        placeholder="https://docs.example.com/" 
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Name (optional)</Label>
-                      <Input 
-                        value={newSourceName}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewSourceName(e.target.value)}
-                        placeholder="Example Documentation" 
-                      />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button 
-                      onClick={handleAddKnowledgeSource} 
-                      disabled={!newSourceUrl || addingSource}
-                    >
-                      {addingSource ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}
-                      Add Source
-                    </Button>
-                    {addSourceResult && (
-                      <Badge variant={addSourceResult.success ? "default" : addSourceResult.alreadyExists ? "secondary" : "destructive"}>
-                        {addSourceResult.success ? <Check className="h-3 w-3 mr-1" /> : <X className="h-3 w-3 mr-1" />}
-                        {addSourceResult.message}
-                        {addSourceResult.success && addSourceResult.title && `: ${addSourceResult.title}`}
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Add any documentation URL and Halbert will index it for context-aware responses.
-                    Auto-detects docs from ReadTheDocs, wikis, /docs/ paths, and more.
-                  </p>
-                  </>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* AI Rules Tab */}
-        <TabsContent value="rules" className="space-y-4">
+        {/* Safety Tab - Consolidated AI Rules, Policy, and Guardrails */}
+        <TabsContent value="safety" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -2082,10 +1948,8 @@ export function Settings() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
 
-        {/* Policy Tab */}
-        <TabsContent value="policy" className="space-y-4">
+          {/* Tool Policy Section */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -2212,10 +2076,8 @@ export function Settings() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
 
-        {/* Guardrails Tab */}
-        <TabsContent value="guardrails" className="space-y-4">
+          {/* Autonomy Guardrails Section */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

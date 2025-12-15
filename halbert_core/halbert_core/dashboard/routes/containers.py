@@ -221,6 +221,74 @@ def get_disk_usage(runtime: str) -> int:
     return int(total_mb)
 
 
+def get_compose_projects(runtime: str) -> List[Dict[str, Any]]:
+    """
+    Phase 24: Get Docker Compose projects from container labels.
+    
+    Groups containers by their compose project and extracts config paths.
+    """
+    projects: Dict[str, Dict[str, Any]] = {}
+    
+    # Get containers with labels
+    cmd = [runtime, "ps", "-a", "--format", "{{.Names}}\t{{.Labels}}\t{{.Status}}\t{{.Image}}"]
+    output = run_command(cmd)
+    
+    if not output:
+        return []
+    
+    for line in output.split("\n"):
+        if not line.strip():
+            continue
+        
+        parts = line.split("\t")
+        if len(parts) < 4:
+            continue
+        
+        name, labels_str, status, image = parts[0], parts[1], parts[2], parts[3]
+        
+        # Parse labels
+        labels = {}
+        for label in labels_str.split(","):
+            if "=" in label:
+                k, v = label.split("=", 1)
+                labels[k.strip()] = v.strip()
+        
+        # Check if this is a compose container
+        project_name = labels.get("com.docker.compose.project")
+        if not project_name:
+            continue
+        
+        config_files = labels.get("com.docker.compose.project.config_files", "")
+        service_name = labels.get("com.docker.compose.service", name)
+        working_dir = labels.get("com.docker.compose.project.working_dir", "")
+        
+        # Initialize project
+        if project_name not in projects:
+            projects[project_name] = {
+                "name": project_name,
+                "config_path": config_files.split(",")[0] if config_files else None,
+                "working_dir": working_dir,
+                "services": [],
+                "running_count": 0,
+                "total_count": 0,
+            }
+        
+        # Add service
+        is_running = "Up" in status
+        projects[project_name]["services"].append({
+            "name": service_name,
+            "container_name": name,
+            "image": image,
+            "status": "running" if is_running else "stopped",
+            "running": is_running,
+        })
+        projects[project_name]["total_count"] += 1
+        if is_running:
+            projects[project_name]["running_count"] += 1
+    
+    return list(projects.values())
+
+
 def get_container_info() -> Dict[str, Any]:
     """Get full container runtime information."""
     runtime, version = detect_runtime()
@@ -231,12 +299,14 @@ def get_container_info() -> Dict[str, Any]:
             "runtime_version": None,
             "containers": [],
             "images": [],
+            "compose_projects": [],  # Phase 24
             "stats": {
                 "running": 0,
                 "stopped": 0,
                 "total": 0,
                 "images": 0,
                 "disk_usage_mb": 0,
+                "compose_projects": 0,  # Phase 24
             },
             "socket_available": False,
             "error": None,
@@ -244,6 +314,7 @@ def get_container_info() -> Dict[str, Any]:
     
     containers = get_containers(runtime)
     images = get_images(runtime)
+    compose_projects = get_compose_projects(runtime)  # Phase 24
     
     running = sum(1 for c in containers if c["status"] == "running")
     stopped = sum(1 for c in containers if c["status"] != "running")
@@ -253,12 +324,14 @@ def get_container_info() -> Dict[str, Any]:
         "runtime_version": version,
         "containers": containers,
         "images": images,
+        "compose_projects": compose_projects,  # Phase 24
         "stats": {
             "running": running,
             "stopped": stopped,
             "total": len(containers),
             "images": len(images),
             "disk_usage_mb": get_disk_usage(runtime),
+            "compose_projects": len(compose_projects),  # Phase 24
         },
         "socket_available": True,
         "error": None,

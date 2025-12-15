@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
-import { SystemItemActions } from '@/components/domain'
+import { SystemItemActions, ConfigFileButton } from '@/components/domain'
 import {
   Sheet,
   SheetContent,
@@ -40,6 +40,8 @@ import {
   MemoryStick,
   Network,
   ExternalLink,
+  Layers,  // Phase 24: Compose projects
+  ChevronRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { WhyBrain } from '@/components/ui/why-brain'
@@ -66,17 +68,37 @@ interface ImageInfo {
   created: string
 }
 
+// Phase 24: Compose project interface
+interface ComposeService {
+  name: string
+  container_name: string
+  image: string
+  status: 'running' | 'stopped'
+  running: boolean
+}
+
+interface ComposeProject {
+  name: string
+  config_path: string | null
+  working_dir: string
+  services: ComposeService[]
+  running_count: number
+  total_count: number
+}
+
 interface ContainerData {
   runtime: 'docker' | 'podman' | null
   runtime_version: string | null
   containers: ContainerInfo[]
   images: ImageInfo[]
+  compose_projects: ComposeProject[]  // Phase 24
   stats: {
     running: number
     stopped: number
     total: number
     images: number
     disk_usage_mb: number
+    compose_projects: number  // Phase 24
   }
   socket_available: boolean
   error: string | null
@@ -341,6 +363,83 @@ export function Containers() {
         }}
         researchQuestion="Analyze my container setup and identify any issues or optimizations."
       />
+
+      {/* Phase 24: Compose Projects - Fused Cards */}
+      {data.compose_projects && data.compose_projects.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Layers className="h-5 w-5" />
+            Compose Projects ({data.compose_projects.length})
+          </h2>
+          {data.compose_projects.map((project) => (
+            <Card key={project.name} className="overflow-hidden">
+              {/* Fused Header with Config Button */}
+              <div className="flex items-center justify-between p-4 bg-muted/50 border-b">
+                <div className="flex items-center gap-2">
+                  <Layers className="h-5 w-5 text-blue-500" />
+                  <span className="font-semibold">{project.name}</span>
+                  <Badge 
+                    variant="outline" 
+                    className={cn(
+                      "text-xs",
+                      project.running_count === project.total_count && "border-green-500 text-green-600",
+                      project.running_count > 0 && project.running_count < project.total_count && "border-yellow-500 text-yellow-600",
+                      project.running_count === 0 && "border-gray-500 text-gray-600",
+                    )}
+                  >
+                    {project.running_count}/{project.total_count} running
+                  </Badge>
+                </div>
+                {project.config_path && (
+                  <ConfigFileButton 
+                    path={project.config_path} 
+                    variant="full"
+                    size="sm"
+                  />
+                )}
+              </div>
+              
+              <CardContent className="p-0">
+                {project.services.map((service, idx) => (
+                  <div
+                    key={service.container_name}
+                    className={cn(
+                      "flex items-center justify-between p-4 hover:bg-accent/50 transition-colors",
+                      idx < project.services.length - 1 && "border-b border-dashed"
+                    )}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className={cn(
+                        "p-2 rounded-full",
+                        service.running ? "bg-green-500/10" : "bg-gray-500/10"
+                      )}>
+                        {service.running ? (
+                          <CheckCircle className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <Square className="h-4 w-4 text-gray-500" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="font-medium">{service.name}</p>
+                        <p className="text-sm text-muted-foreground font-mono">{service.image}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Badge className={cn(
+                        "text-xs",
+                        service.running ? "bg-green-500" : "bg-gray-500"
+                      )}>
+                        {service.status}
+                      </Badge>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Tabs for Containers and Images */}
       <Tabs defaultValue="containers" className="space-y-4">

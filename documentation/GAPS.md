@@ -332,6 +332,8 @@ isn't needed. The semantic search over current discoveries is the key feature.
 | 20 | ✅ Complete | Component library |
 | 21 | ✅ Complete | ReAct architecture, model routing |
 | 22 | ✅ Complete | RAG/Memory enhancement |
+| 23 | ✅ Complete | Autonomy integration |
+| 24 | ✅ Complete | Discovery consolidation (fused UI for shared configs) |
 
 ---
 
