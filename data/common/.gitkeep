@@ -1,0 +1,12 @@
+# Cross-platform knowledge base
+#
+# This directory contains documentation applicable to all platforms:
+# - Shell scripting (bash, zsh)
+# - Git version control
+# - SSH and remote access
+# - Vim/Neovim
+# - Docker containerization
+# - Python development
+# - General UNIX concepts
+#
+# Included in all builds (Linux and macOS)

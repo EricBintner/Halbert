@@ -77,11 +77,11 @@ node_modules/
 tmp/
 temp/
 
-# Private (Mac app code - not in public repo)
-halbert-mac/
-data/mac/
-tests/mac/
-mac-app/
+# Phase 25: Mac code is now PUBLIC
+# halbert-mac/ - now public for App Store strategy
+# data/macos/ - Mac-specific knowledge base (public)
+# data/bsd/ - BSD knowledge base (public)
+# data/common/ - Cross-platform knowledge (public)
 
 # Mac Build Artifacts
 *.app
@@ -100,9 +100,9 @@ release/
 scripts/maintenance/
 scripts/temp/
 
-# Mac-specific code (private)
-halbert-mac/
-tests/mac/
+# Mac app packaging (keep private - contains signing keys)
+mac-app/signing/
+mac-app/certificates/
 
 # Internal Documentation (keep private, not in public repo)
 docs/

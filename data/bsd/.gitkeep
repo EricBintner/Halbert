@@ -1,0 +1,9 @@
+# BSD-related knowledge base
+#
+# This directory contains documentation shared between macOS and BSD:
+# - BSD networking fundamentals
+# - BSD file permissions
+# - FreeBSD handbook excerpts
+# - UNIX fundamentals
+#
+# Included in macOS builds (Phase 25)

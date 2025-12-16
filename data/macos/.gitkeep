@@ -1,0 +1,11 @@
+# macOS-specific knowledge base
+# 
+# This directory contains documentation for macOS system administration:
+# - Homebrew package management
+# - launchd service management
+# - diskutil and APFS
+# - Time Machine backup
+# - macOS security (Gatekeeper, SIP, TCC)
+# - Apple Silicon optimization
+#
+# Only included in macOS builds (Phase 25)

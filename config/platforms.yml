@@ -1,0 +1,247 @@
+# Platform Configuration for Halbert
+# Defines platform-specific data sources and components
+#
+# Phase 25: macOS Support
+# 
+# Build Separation:
+# - Linux builds only include linux/ and common/ data
+# - macOS builds only include macos/, bsd/, and common/ data
+# - Each platform ships with appropriate knowledge base
+
+platforms:
+  linux:
+    name: "Linux"
+    description: "Full Linux system administration support"
+    
+    # Data directories to include in RAG index
+    data_dirs:
+      - data/linux
+      - data/common
+    
+    # Discovery scanners to enable
+    scanners:
+      - discovery.scanners.service
+      - discovery.scanners.storage
+      - discovery.scanners.network
+      - discovery.scanners.security
+      - discovery.scanners.process
+      - discovery.scanners.thermal
+      - discovery.scanners.boot
+      - discovery.scanners.bootloader
+      - discovery.scanners.package
+      - discovery.scanners.disk_usage
+      - discovery.scanners.error_log
+      - discovery.scanners.laptop
+      - discovery.scanners.display
+      - discovery.scanners.audio
+      - discovery.scanners.wifi
+      - discovery.scanners.usb
+      - discovery.scanners.container
+      - discovery.scanners.virtualization
+      - discovery.scanners.scheduled
+      - discovery.scanners.backup
+    
+    # Platform adapters
+    adapters:
+      module: halbert-linux.adapters
+      classes:
+        - HwmonAdapter
+        - JournaldAdapter
+        - SystemdAdapter
+    
+    # Model provider preference
+    preferred_providers:
+      - ollama
+      - llamacpp
+
+  macos:
+    name: "macOS"
+    description: "macOS system support (App Store edition)"
+    
+    # Data directories to include in RAG index
+    data_dirs:
+      - data/macos
+      - data/bsd
+      - data/common
+    
+    # Discovery scanners to enable (macOS versions)
+    scanners:
+      # Cross-platform (work as-is)
+      - discovery.scanners.process
+      - discovery.scanners.disk_usage
+      - discovery.scanners.container
+      - discovery.scanners.virtualization
+      # macOS-specific
+      - discovery.scanners.macos.launchd
+      - discovery.scanners.macos.homebrew
+      - discovery.scanners.macos.thermal
+      - discovery.scanners.macos.network
+      - discovery.scanners.macos.wifi
+      - discovery.scanners.macos.display
+      - discovery.scanners.macos.audio
+      - discovery.scanners.macos.laptop
+      - discovery.scanners.macos.usb
+      - discovery.scanners.macos.storage
+      - discovery.scanners.macos.security
+      - discovery.scanners.macos.error_log
+      - discovery.scanners.macos.timemachine
+      - discovery.scanners.macos.scheduled
+    
+    # Platform adapters
+    adapters:
+      module: halbert-mac.adapters
+      classes:
+        - UnifiedLoggingAdapter
+        - IOKitAdapter
+        - LaunchdAdapter
+    
+    # Model provider preference (MLX optimal for Apple Silicon)
+    preferred_providers:
+      - mlx
+      - ollama
+
+# Data categories and their platform assignments
+data_categories:
+  # Linux-only
+  systemd:
+    platforms: [linux]
+    description: "systemd service manager documentation"
+  
+  journald:
+    platforms: [linux]
+    description: "systemd journal logging"
+  
+  apt:
+    platforms: [linux]
+    description: "Debian/Ubuntu package management"
+  
+  pacman:
+    platforms: [linux]
+    description: "Arch Linux package management"
+  
+  dnf:
+    platforms: [linux]
+    description: "Fedora/RHEL package management"
+  
+  grub:
+    platforms: [linux]
+    description: "GRUB bootloader configuration"
+  
+  xorg:
+    platforms: [linux]
+    description: "X.Org display server"
+  
+  wayland:
+    platforms: [linux]
+    description: "Wayland compositor"
+  
+  nvidia_linux:
+    platforms: [linux]
+    description: "NVIDIA drivers for Linux"
+  
+  amd_rocm:
+    platforms: [linux]
+    description: "AMD ROCm for Linux"
+
+  # macOS-only
+  homebrew:
+    platforms: [macos]
+    description: "Homebrew package manager"
+  
+  launchd:
+    platforms: [macos]
+    description: "macOS launchd service manager"
+  
+  unified_logging:
+    platforms: [macos]
+    description: "macOS Unified Logging system"
+  
+  diskutil:
+    platforms: [macos]
+    description: "macOS disk utilities and APFS"
+  
+  timemachine:
+    platforms: [macos]
+    description: "Time Machine backup"
+  
+  gatekeeper:
+    platforms: [macos]
+    description: "macOS Gatekeeper and code signing"
+  
+  sip:
+    platforms: [macos]
+    description: "System Integrity Protection"
+  
+  apple_silicon:
+    platforms: [macos]
+    description: "Apple Silicon optimization"
+
+  # BSD (shared with macOS)
+  bsd_networking:
+    platforms: [macos, bsd]
+    description: "BSD networking fundamentals"
+  
+  bsd_permissions:
+    platforms: [macos, bsd]
+    description: "BSD file permissions"
+
+  # Common (all platforms)
+  shell:
+    platforms: [linux, macos]
+    description: "Shell scripting (bash, zsh)"
+  
+  git:
+    platforms: [linux, macos]
+    description: "Git version control"
+  
+  ssh:
+    platforms: [linux, macos]
+    description: "SSH and remote access"
+  
+  vim:
+    platforms: [linux, macos]
+    description: "Vim/Neovim text editor"
+  
+  docker:
+    platforms: [linux, macos]
+    description: "Docker containerization"
+  
+  python:
+    platforms: [linux, macos]
+    description: "Python development"
+
+# Build configuration
+build:
+  linux:
+    bundle_id: "ai.halbert.linux"
+    app_name: "Halbert"
+    include_data:
+      - linux
+      - common
+  
+  macos:
+    bundle_id: "ai.halbert.macos"
+    app_name: "Halbert"
+    include_data:
+      - macos
+      - bsd
+      - common
+    # App Store specific
+    app_store:
+      category: "developer-tools"
+      price: "free"  # or "tier_1" for $0.99
+      keywords:
+        - system administration
+        - terminal
+        - AI assistant
+        - homebrew
+        - developer tools
+      marketing:
+        tagline: "AI-Powered System Assistant"
+        description: |
+          Halbert is an intelligent system assistant that helps you manage 
+          your Mac with natural language. Ask questions about system 
+          configuration, troubleshoot issues, and automate tasks.
+          
+          🐧 For the full Linux experience with 40+ knowledge collections,
+          visit github.com/halbert-ai/halbert
