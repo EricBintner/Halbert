@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
-import { ConfigFileButton } from '@/components/domain'
+import { ConfigFileButton, PageHeader } from '@/components/domain'
 import {
   Sheet,
   SheetContent,
@@ -281,26 +281,13 @@ export function Sharing() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Sharing</h1>
-          <p className="text-muted-foreground">
-            Network shares, VPN peers, and cloud mounts
-          </p>
-        </div>
-        <Button 
-          onClick={handleScan} 
-          disabled={scanning}
-          variant="outline"
-        >
-          {scanning ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4 mr-2" />
-          )}
-          Scan
-        </Button>
-      </div>
+      <PageHeader
+        icon={<Share2 className="h-8 w-8" />}
+        title="Sharing"
+        description="Network shares, VPN peers, and cloud mounts"
+        scanning={scanning}
+        onScan={handleScan}
+      />
 
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-4">

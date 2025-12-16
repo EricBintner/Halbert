@@ -2122,6 +2122,23 @@ async def delete_knowledge(entry_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/knowledge/stats")
+async def get_knowledge_stats():
+    """
+    Get memory operation statistics.
+    
+    Sprint 1: Mem0-style memory tracking.
+    Returns counts of ADD/UPDATE/DELETE/NOOP operations.
+    """
+    try:
+        from ...knowledge import get_self_knowledge
+        sk = get_self_knowledge()
+        return sk.get_memory_stats()
+    except Exception as e:
+        logger.error(f"Failed to get memory stats: {e}")
+        return {"error": str(e)}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase 23: Approval & Guardrails API
 # ─────────────────────────────────────────────────────────────────────────────

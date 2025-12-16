@@ -43,6 +43,7 @@ import {
   FileCode,
 } from 'lucide-react'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
+import { PageHeader } from '@/components/domain'
 
 const API_BASE = '/api'
 
@@ -772,15 +773,12 @@ export function Settings() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold flex items-center gap-2">
-          <SettingsIcon className="h-8 w-8" />
-          Settings
-        </h1>
-        <p className="text-muted-foreground">
-          Configure Halbert behavior, AI models, and personas
-        </p>
-      </div>
+      <PageHeader
+        icon={<SettingsIcon className="h-8 w-8" />}
+        title="Settings"
+        description="Configure Halbert behavior, AI models, and personas"
+        hideScanButton
+      />
 
       <Tabs defaultValue="system" className="space-y-4">
         <TabsList className="grid w-full grid-cols-6">

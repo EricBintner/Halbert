@@ -23,6 +23,7 @@ import {
   Box,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { PageHeader } from '@/components/domain'
 
 interface LanguageInfo {
   name: string
@@ -185,20 +186,14 @@ export function Development() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Development</h1>
-          <p className="text-muted-foreground">
-            {data.stats.total_languages} languages • {data.stats.total_tools} tools
-            {data.stats.total_version_managers > 0 && ` • ${data.stats.total_version_managers} version managers`}
-            {data.stats.total_virtual_environments > 0 && ` • ${data.stats.total_virtual_environments} envs`}
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
-          <RefreshCw className={cn("h-4 w-4 mr-2", refreshing && "animate-spin")} />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        icon={<Code2 className="h-8 w-8" />}
+        title="Development"
+        description={`${data.stats.total_languages} languages • ${data.stats.total_tools} tools${data.stats.total_version_managers > 0 ? ` • ${data.stats.total_version_managers} version managers` : ''}${data.stats.total_virtual_environments > 0 ? ` • ${data.stats.total_virtual_environments} envs` : ''}`}
+        scanning={refreshing}
+        onScan={handleRefresh}
+        scanText="Refresh"
+      />
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

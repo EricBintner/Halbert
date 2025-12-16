@@ -35,7 +35,7 @@ import {
   Clock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { SystemItemActions } from '@/components/domain'
+import { SystemItemActions, PageHeader } from '@/components/domain'
 import { WhyBrain } from '@/components/ui/why-brain'
 
 interface GPUInfo {
@@ -242,21 +242,15 @@ export function GPU() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">GPU</h1>
-          <p className="text-muted-foreground">
-            {gpuData.gpus.length} GPU{gpuData.gpus.length !== 1 ? 's' : ''} detected
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {getDriverStatusBadge(gpuData.driver_status)}
-          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
-            <RefreshCw className={cn("h-4 w-4 mr-2", refreshing && "animate-spin")} />
-            Refresh
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Cpu className="h-8 w-8" />}
+        title="GPU"
+        description={`${gpuData.gpus.length} GPU${gpuData.gpus.length !== 1 ? 's' : ''} detected`}
+        scanning={refreshing}
+        onScan={handleRefresh}
+        scanText="Refresh"
+        actions={getDriverStatusBadge(gpuData.driver_status)}
+      />
 
       {/* Issues Alert */}
       {gpuData.issues.length > 0 && (

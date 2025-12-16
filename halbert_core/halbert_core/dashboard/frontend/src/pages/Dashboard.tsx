@@ -11,7 +11,6 @@ import {
   HardDrive, 
   Clock, 
   AlertCircle, 
-  RefreshCw, 
   Archive,
   Server,
   CheckCircle,
@@ -19,7 +18,7 @@ import {
   ArrowRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { StatusBadge } from '@/components/domain'
+import { StatusBadge, PageHeader } from '@/components/domain'
 
 interface Discovery {
   id: string
@@ -103,18 +102,14 @@ export function Dashboard() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">
-            System overview and health status
-          </p>
-        </div>
-        <Button variant="outline" onClick={handleScan} disabled={scanning}>
-          <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
-          {scanning ? 'Scanning...' : 'Scan System'}
-        </Button>
-      </div>
+      <PageHeader
+        icon={<Cpu className="h-8 w-8" />}
+        title="Dashboard"
+        description="System overview and health status"
+        scanning={scanning}
+        onScan={handleScan}
+        scanText="Scan System"
+      />
 
       {/* Alert Banner */}
       {(criticalCount > 0 || warningCount > 0) && (

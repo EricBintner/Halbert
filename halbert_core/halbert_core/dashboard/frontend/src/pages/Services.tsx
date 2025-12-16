@@ -21,7 +21,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { 
   Server, 
-  RefreshCw, 
   Play, 
   Square, 
   RotateCcw,
@@ -49,7 +48,7 @@ import {
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
-import { SystemItemActions, MarkdownRenderer } from '@/components/domain'
+import { SystemItemActions, MarkdownRenderer, PageHeader } from '@/components/domain'
 import { WhyBrain } from '@/components/ui/why-brain'
 
 // CodeBlock and MarkdownRenderer imported from @/components/domain
@@ -383,21 +382,13 @@ export function Services() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Server className="h-8 w-8" />
-            Services
-          </h1>
-          <p className="text-muted-foreground">
-            Manage system services and containers
-          </p>
-        </div>
-        <Button variant="outline" onClick={handleScan} disabled={scanning}>
-          <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
-          {scanning ? 'Scanning...' : 'Scan'}
-        </Button>
-      </div>
+      <PageHeader
+        icon={<Server className="h-8 w-8" />}
+        title="Services"
+        description="Manage system services and containers"
+        scanning={scanning}
+        onScan={handleScan}
+      />
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-4">

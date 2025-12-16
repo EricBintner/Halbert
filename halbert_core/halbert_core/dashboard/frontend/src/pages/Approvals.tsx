@@ -12,6 +12,7 @@ import {
   type ApprovalHistoryItem
 } from '@/lib/tauri'
 import { CheckCircle, XCircle, AlertTriangle, Clock, History, ShieldAlert, X, Brain } from 'lucide-react'
+import { PageHeader } from '@/components/domain'
 
 export function Approvals() {
   const [pending, setPending] = useState<ApprovalRequest[]>([])
@@ -86,12 +87,12 @@ export function Approvals() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Approval Requests</h1>
-        <p className="text-muted-foreground">
-          Review and approve autonomous actions
-        </p>
-      </div>
+      <PageHeader
+        icon={<ShieldAlert className="h-8 w-8" />}
+        title="Approval Requests"
+        description="Review and approve autonomous actions"
+        hideScanButton
+      />
 
       {/* Show blocked count if any */}
       {blockedByRules > 0 && (

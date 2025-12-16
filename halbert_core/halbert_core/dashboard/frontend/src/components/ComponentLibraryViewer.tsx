@@ -30,7 +30,7 @@ import {
 import { cn } from '@/lib/utils'
 
 // Domain components
-import { SystemItemActions, StatusBadge, UsageBar, EmptyState, CodeBlock, MarkdownRenderer } from '@/components/domain'
+import { SystemItemActions, StatusBadge, UsageBar, EmptyState, CodeBlock, MarkdownRenderer, PageHeader } from '@/components/domain'
 import { WhyBrain } from '@/components/ui/why-brain'
 
 interface ComponentLibraryViewerProps {
@@ -461,6 +461,43 @@ This component handles **markdown** from AI responses.
     const result = await executeCommand(cmd)
     return result
   }}
+/>`,
+      },
+      {
+        id: 'page-header',
+        name: 'PageHeader',
+        description: 'Consistent page header with title, icon, description, and scan button',
+        status: 'stable',
+        preview: (
+          <div className="w-full max-w-2xl border rounded-lg p-4 bg-background">
+            <PageHeader
+              icon={<Box className="h-8 w-8" />}
+              title="Example Page"
+              description="A description of what this page shows"
+              scanning={false}
+              onScan={() => {}}
+            />
+          </div>
+        ),
+        props: [
+          { name: 'icon', type: 'React.ReactNode', description: 'Icon next to title' },
+          { name: 'title', type: 'string', description: 'Page title' },
+          { name: 'description', type: 'string', description: 'Subtitle text' },
+          { name: 'scanning', type: 'boolean', default: 'false', description: 'Show loading state' },
+          { name: 'onScan', type: '() => void', description: 'Scan button callback' },
+          { name: 'scanText', type: 'string', default: "'Scan'", description: 'Custom button text' },
+          { name: 'actions', type: 'React.ReactNode', description: 'Additional action buttons' },
+          { name: 'hideScanButton', type: 'boolean', default: 'false', description: 'Hide scan button' },
+        ],
+        code: `import { PageHeader } from '@/components/domain'
+import { Archive } from 'lucide-react'
+
+<PageHeader
+  icon={<Archive className="h-8 w-8" />}
+  title="Backups"
+  description="Discovered backup configurations on your system"
+  scanning={scanning}
+  onScan={handleScan}
 />`,
       },
     ],

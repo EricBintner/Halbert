@@ -8,6 +8,7 @@ import {
   RefreshCw, MessageSquare, Cpu, FileText, Brain 
 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { PageHeader } from '@/components/domain'
 
 interface Collection {
   name: string
@@ -168,18 +169,13 @@ export function Memory() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Memory</h1>
-          <p className="text-muted-foreground">
-            ChromaDB vector memory — {totalEntries.toLocaleString()} total entries
-          </p>
-        </div>
-        <Button variant="outline" onClick={loadCollections}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        icon={<Database className="h-8 w-8" />}
+        title="Memory"
+        description={`ChromaDB vector memory — ${totalEntries.toLocaleString()} total entries`}
+        onScan={loadCollections}
+        scanText="Refresh"
+      />
 
       {/* Search */}
       <Card>

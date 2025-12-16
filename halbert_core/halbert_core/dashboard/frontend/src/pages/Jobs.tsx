@@ -13,6 +13,7 @@ import {
   type GuardrailsStatus
 } from '@/lib/tauri'
 import { Activity, Clock, XCircle, Calendar, Shield, ShieldOff, Trash2, AlertTriangle } from 'lucide-react'
+import { PageHeader } from '@/components/domain'
 
 export function Jobs() {
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null)
@@ -87,12 +88,12 @@ export function Jobs() {
       )}
 
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold">Scheduler & Jobs</h1>
-        <p className="text-muted-foreground">
-          Autonomous task scheduling and execution
-        </p>
-      </div>
+      <PageHeader
+        icon={<Calendar className="h-8 w-8" />}
+        title="Scheduler & Jobs"
+        description="Autonomous task scheduling and execution"
+        hideScanButton
+      />
 
       {/* Scheduler Status */}
       <div className="grid gap-4 md:grid-cols-4">

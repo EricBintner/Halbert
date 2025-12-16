@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
-import { ConfigFileButton, MarkdownRenderer } from '@/components/domain'
+import { ConfigFileButton, MarkdownRenderer, PageHeader } from '@/components/domain'
 import {
   Sheet,
   SheetContent,
@@ -21,7 +21,6 @@ import {
 } from '@/components/ui/sheet'
 import { 
   Wifi, 
-  RefreshCw, 
   Shield,
   Network as NetworkIcon,
   Globe,
@@ -407,21 +406,13 @@ export function Network() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <NetworkIcon className="h-8 w-8" />
-            Network
-          </h1>
-          <p className="text-muted-foreground">
-            Network interfaces, firewall, and connectivity
-          </p>
-        </div>
-        <Button variant="outline" onClick={handleScan} disabled={scanning}>
-          <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
-          {scanning ? 'Scanning...' : 'Scan'}
-        </Button>
-      </div>
+      <PageHeader
+        icon={<NetworkIcon className="h-8 w-8" />}
+        title="Network"
+        description="Network interfaces, firewall, and connectivity"
+        scanning={scanning}
+        onScan={handleScan}
+      />
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-3">

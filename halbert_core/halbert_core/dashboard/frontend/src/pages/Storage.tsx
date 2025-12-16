@@ -24,7 +24,6 @@ import { Collapsible } from '@/components/ui/collapsible'
 import { api } from '@/lib/api'
 import { 
   HardDrive, 
-  RefreshCw, 
   Folder,
   AlertCircle,
   CheckCircle,
@@ -44,7 +43,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
-import { SystemItemActions } from '@/components/domain'
+import { SystemItemActions, PageHeader } from '@/components/domain'
 import { WhyBrain } from '@/components/ui/why-brain'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1655,17 +1654,13 @@ export function Storage() {
     <ShowUUIDsContext.Provider value={showUUIDs}>
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <HardDrive className="h-8 w-8" />
-            Storage
-          </h1>
-          <p className="text-muted-foreground">
-            Filesystems and disk health
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
+      <PageHeader
+        icon={<HardDrive className="h-8 w-8" />}
+        title="Storage"
+        description="Filesystems and disk health"
+        scanning={scanning}
+        onScan={handleScan}
+        actions={
           <button
             type="button"
             onClick={() => setShowUUIDs(!showUUIDs)}
@@ -1678,12 +1673,8 @@ export function Storage() {
           >
             {showUUIDs ? 'Hide UUIDs' : 'Show UUIDs'}
           </button>
-          <Button variant="outline" onClick={handleScan} disabled={scanning}>
-            <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
-            {scanning ? 'Scanning...' : 'Scan'}
-          </Button>
-        </div>
-      </div>
+        }
+      />
 
       {/* Overview Stats */}
       <Card>

@@ -23,3 +23,4 @@ export {
 // Phase 20D: Shared Utilities
 export { CodeBlock } from './CodeBlock'
 export { MarkdownRenderer } from './MarkdownRenderer'
+export { PageHeader, type PageHeaderProps } from './PageHeader'

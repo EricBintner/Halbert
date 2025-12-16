@@ -20,6 +20,9 @@ from .arch_wiki import ArchWikiScraper
 from .stackoverflow import StackOverflowScraper
 from .homebrew import HomebrewScraper
 from .macos_support import MacOSSupportScraper
+from .flatpak_docs import FlatpakDocsScraper
+from .snap_docs import SnapDocsScraper
+from .appimage_docs import AppImageDocsScraper
 
 __all__ = [
     'BaseScraper',
@@ -28,6 +31,10 @@ __all__ = [
     # Linux
     'ArchWikiScraper',
     'StackOverflowScraper',
+    # Linux App Formats (Phase 26)
+    'FlatpakDocsScraper',
+    'SnapDocsScraper',
+    'AppImageDocsScraper',
     # macOS
     'HomebrewScraper',
     'MacOSSupportScraper',

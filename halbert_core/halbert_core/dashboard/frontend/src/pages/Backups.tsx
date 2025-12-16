@@ -33,7 +33,7 @@ import {
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
-import { SystemItemActions } from '@/components/domain'
+import { SystemItemActions, PageHeader } from '@/components/domain'
 
 interface BackupHistory {
   timestamp: string
@@ -295,21 +295,13 @@ export function Backups() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Archive className="h-8 w-8" />
-            Backups
-          </h1>
-          <p className="text-muted-foreground">
-            Discovered backup configurations on your system
-          </p>
-        </div>
-        <Button variant="outline" onClick={handleScan} disabled={scanning}>
-          <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
-          {scanning ? 'Scanning...' : 'Scan'}
-        </Button>
-      </div>
+      <PageHeader
+        icon={<Archive className="h-8 w-8" />}
+        title="Backups"
+        description="Discovered backup configurations on your system"
+        scanning={scanning}
+        onScan={handleScan}
+      />
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-4">

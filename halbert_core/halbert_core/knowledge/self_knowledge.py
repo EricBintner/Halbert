@@ -23,6 +23,18 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+class MemoryOperation(str, Enum):
+    """
+    Memory operations for intelligent knowledge management.
+    
+    Inspired by Mem0's approach to preventing duplicates and contradictions.
+    """
+    ADD = "add"           # New knowledge added
+    UPDATE = "update"     # Existing knowledge updated (same subject, new content)
+    DELETE = "delete"     # Knowledge removed (contradiction resolved)
+    NOOP = "noop"         # No operation (duplicate detected)
+
+
 class KnowledgeType(str, Enum):
     """Types of self-knowledge."""
     # Core identity
@@ -102,6 +114,14 @@ class SelfKnowledge:
         self._knowledge: Dict[str, KnowledgeEntry] = {}
         self._data_path = self._get_data_path()
         self._chroma_collection = None
+        
+        # Memory operation statistics (Sprint 1: Mem0-style tracking)
+        self._memory_stats: Dict[str, int] = {
+            MemoryOperation.ADD.value: 0,
+            MemoryOperation.UPDATE.value: 0,
+            MemoryOperation.DELETE.value: 0,
+            MemoryOperation.NOOP.value: 0,
+        }
         
         # Load existing knowledge
         self._load_from_disk()
@@ -221,6 +241,148 @@ class SelfKnowledge:
         logger.info(f"Added knowledge: {entry.type.value}/{entry.subject}")
         return entry.id
     
+    def smart_add(
+        self, 
+        entry: KnowledgeEntry,
+        similarity_threshold: float = 0.85
+    ) -> tuple[MemoryOperation, str, Optional[str]]:
+        """
+        Intelligently add knowledge with duplicate/contradiction detection.
+        
+        Inspired by Mem0's memory management approach:
+        1. Check for semantic duplicates → NOOP
+        2. Check for same-subject updates → UPDATE  
+        3. Otherwise → ADD
+        
+        Args:
+            entry: The knowledge entry to add
+            similarity_threshold: Threshold for considering entries as duplicates (0-1)
+        
+        Returns:
+            Tuple of (operation, reason, affected_id)
+            - operation: MemoryOperation that was performed
+            - reason: Human-readable explanation
+            - affected_id: ID of entry that was added/updated/kept, or None for NOOP
+        """
+        # Step 1: Check for exact ID match (direct update)
+        if entry.id in self._knowledge:
+            existing = self._knowledge[entry.id]
+            if self._content_matches(entry, existing):
+                self._memory_stats[MemoryOperation.NOOP.value] += 1
+                logger.info(f"Memory NOOP: {entry.id} - content unchanged")
+                return (MemoryOperation.NOOP, "Content unchanged", entry.id)
+            else:
+                self.add(entry)
+                self._memory_stats[MemoryOperation.UPDATE.value] += 1
+                logger.info(f"Memory UPDATE: {entry.id} - same ID, new content")
+                return (MemoryOperation.UPDATE, "Updated existing entry", entry.id)
+        
+        # Step 2: Search for semantically similar entries
+        similar_entries = self._find_similar(entry, k=5)
+        
+        for existing, similarity in similar_entries:
+            # Check for near-duplicate (same meaning)
+            if similarity >= similarity_threshold:
+                if self._content_matches(entry, existing):
+                    self._memory_stats[MemoryOperation.NOOP.value] += 1
+                    logger.info(f"Memory NOOP: Duplicate of {existing.id} (similarity: {similarity:.2f})")
+                    return (MemoryOperation.NOOP, f"Duplicate of existing: {existing.subject}", existing.id)
+            
+            # Check for contradiction (same subject + type, different content)
+            if self._is_contradiction(entry, existing):
+                # Update the existing entry with new information
+                self._memory_stats[MemoryOperation.UPDATE.value] += 1
+                logger.info(f"Memory UPDATE: {existing.id} - contradiction resolved")
+                entry.id = existing.id  # Keep the same ID
+                entry.created_at = existing.created_at  # Preserve creation time
+                self.add(entry)
+                return (MemoryOperation.UPDATE, f"Updated contradicting entry: {existing.subject}", entry.id)
+        
+        # Step 3: Truly new knowledge
+        self.add(entry)
+        self._memory_stats[MemoryOperation.ADD.value] += 1
+        logger.info(f"Memory ADD: {entry.id} - new knowledge")
+        return (MemoryOperation.ADD, "New knowledge added", entry.id)
+    
+    def _content_matches(self, a: KnowledgeEntry, b: KnowledgeEntry) -> bool:
+        """Check if two entries have essentially the same content."""
+        # Normalize and compare
+        content_a = a.content.lower().strip()
+        content_b = b.content.lower().strip()
+        
+        # Exact match
+        if content_a == content_b:
+            return True
+        
+        # Very similar (allowing for minor differences)
+        if len(content_a) > 0 and len(content_b) > 0:
+            # Simple similarity: ratio of common characters
+            shorter = min(len(content_a), len(content_b))
+            longer = max(len(content_a), len(content_b))
+            if shorter / longer > 0.95:
+                common = sum(1 for c1, c2 in zip(content_a, content_b) if c1 == c2)
+                if common / longer > 0.95:
+                    return True
+        
+        return False
+    
+    def _is_contradiction(self, new: KnowledgeEntry, existing: KnowledgeEntry) -> bool:
+        """
+        Check if new entry contradicts existing entry.
+        
+        Contradiction = same subject AND same type AND different content
+        """
+        # Must be same type
+        if new.type != existing.type:
+            return False
+        
+        # Must be same subject (case-insensitive)
+        if new.subject.lower().strip() != existing.subject.lower().strip():
+            return False
+        
+        # Content must be different
+        if self._content_matches(new, existing):
+            return False
+        
+        # Same subject + type + different content = contradiction
+        return True
+    
+    def _find_similar(
+        self, 
+        entry: KnowledgeEntry, 
+        k: int = 5
+    ) -> List[tuple[KnowledgeEntry, float]]:
+        """
+        Find semantically similar entries using ChromaDB.
+        
+        Returns list of (entry, similarity_score) tuples.
+        """
+        if not self._chroma_collection or not self._knowledge:
+            return []
+        
+        try:
+            results = self._chroma_collection.query(
+                query_texts=[entry.to_embedding_text()],
+                n_results=min(k, len(self._knowledge)),
+                include=['distances']
+            )
+            
+            ids = results.get('ids', [[]])[0]
+            distances = results.get('distances', [[]])[0]
+            
+            similar = []
+            for id_, distance in zip(ids, distances):
+                if id_ in self._knowledge and id_ != entry.id:
+                    # Convert distance to similarity (ChromaDB uses L2 distance)
+                    # Lower distance = more similar
+                    similarity = max(0, 1 - (distance / 2))  # Normalize to 0-1
+                    similar.append((self._knowledge[id_], similarity))
+            
+            return similar
+        except Exception as e:
+            logger.warning(f"Similarity search failed: {e}")
+            return []
+    
     def get(self, knowledge_id: str) -> Optional[KnowledgeEntry]:
         """Get a knowledge entry by ID."""
         return self._knowledge.get(knowledge_id)
@@ -268,6 +430,8 @@ class SelfKnowledge:
         
         del self._knowledge[knowledge_id]
         self._save_to_disk()
+        self._memory_stats[MemoryOperation.DELETE.value] += 1
+        logger.info(f"Memory DELETE: {knowledge_id}")
         
         if self._chroma_collection:
             try:
@@ -276,6 +440,32 @@ class SelfKnowledge:
                 pass
         
         return True
+    
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """
+        Get memory operation statistics.
+        
+        Returns dict with:
+        - operations: counts of ADD/UPDATE/DELETE/NOOP
+        - total_entries: current number of knowledge entries
+        - types: breakdown by KnowledgeType
+        """
+        type_counts = {}
+        for entry in self._knowledge.values():
+            type_name = entry.type.value
+            type_counts[type_name] = type_counts.get(type_name, 0) + 1
+        
+        return {
+            "operations": dict(self._memory_stats),
+            "total_entries": len(self._knowledge),
+            "types": type_counts,
+            "total_operations": sum(self._memory_stats.values()),
+        }
+    
+    def reset_memory_stats(self):
+        """Reset memory operation counters."""
+        for key in self._memory_stats:
+            self._memory_stats[key] = 0
     
     # ─────────────────────────────────────────────────────────────
     # Convenience Methods

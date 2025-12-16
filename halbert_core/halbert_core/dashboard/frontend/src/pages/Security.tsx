@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
-import { SystemItemActions, StatusBadge } from '@/components/domain'
+import { SystemItemActions, StatusBadge, PageHeader } from '@/components/domain'
 
 interface SecurityItem {
   id: string
@@ -86,21 +86,13 @@ export function Security() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Shield className="h-8 w-8" />
-            Security
-          </h1>
-          <p className="text-muted-foreground">
-            Security configuration and hardening status
-          </p>
-        </div>
-        <Button variant="outline" onClick={handleScan} disabled={scanning}>
-          <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
-          {scanning ? 'Scanning...' : 'Scan'}
-        </Button>
-      </div>
+      <PageHeader
+        icon={<Shield className="h-8 w-8" />}
+        title="Security"
+        description="Security configuration and hardening status"
+        scanning={scanning}
+        onScan={handleScan}
+      />
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-4">

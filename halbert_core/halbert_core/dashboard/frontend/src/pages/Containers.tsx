@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
-import { SystemItemActions, ConfigFileButton } from '@/components/domain'
+import { SystemItemActions, ConfigFileButton, PageHeader } from '@/components/domain'
 import {
   Sheet,
   SheetContent,
@@ -265,23 +265,19 @@ export function Containers() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Containers</h1>
-          <p className="text-muted-foreground">
-            {data.runtime} {data.runtime_version} • {data.stats.running} running
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+      <PageHeader
+        icon={<Container className="h-8 w-8" />}
+        title="Containers"
+        description={`${data.runtime} ${data.runtime_version} • ${data.stats.running} running`}
+        scanning={refreshing}
+        onScan={handleRefresh}
+        scanText="Refresh"
+        actions={
           <Badge variant="outline" className="text-xs">
             {data.runtime === 'docker' ? '🐳' : '🦭'} {data.runtime}
           </Badge>
-          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
-            <RefreshCw className={cn("h-4 w-4 mr-2", refreshing && "animate-spin")} />
-            Refresh
-          </Button>
-        </div>
-      </div>
+        }
+      />
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
