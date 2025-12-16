@@ -1441,10 +1441,12 @@ async def scan_system_profile() -> Dict[str, Any]:
     This is the "Deep Scan" - it scans:
     1. System profile (hardware, OS, etc.)
     2. All discovery types (storage, services, network, backups, security)
+    3. Populates self-knowledge from the profile (Genesis vision)
     """
     try:
         from ...discovery.scanners.system_profile import get_system_profiler
         from ...discovery.engine import get_engine
+        from ...knowledge import bootstrap_from_profile
         
         profiler = get_system_profiler()
         
@@ -1461,12 +1463,21 @@ async def scan_system_profile() -> Dict[str, Any]:
         discovery_count = len(discoveries)
         logger.info(f"Discovery scan complete: {discovery_count} items found")
         
+        # Populate self-knowledge from the profile
+        # This implements Genesis: "The system's data is its biography"
+        logger.info("Populating self-knowledge from profile...")
+        knowledge_counts = bootstrap_from_profile(profile)
+        total_knowledge = sum(knowledge_counts.values())
+        logger.info(f"Self-knowledge populated: {total_knowledge} entries")
+        
         return {
             "status": "complete",
             "profile": profile,
             "summary": profiler.get_summary(),
             "saved_to": str(save_path),
             "discoveries_scanned": discovery_count,
+            "self_knowledge_added": total_knowledge,
+            "knowledge_breakdown": knowledge_counts,
         }
     
     except Exception as e:
@@ -2089,6 +2100,26 @@ async def get_all_knowledge():
     except Exception as e:
         logger.error(f"Failed to get knowledge: {e}")
         return {"entries": [], "count": 0, "error": str(e)}
+
+
+@router.delete("/knowledge/{entry_id:path}")
+async def delete_knowledge(entry_id: str):
+    """Delete a self-knowledge entry by ID."""
+    try:
+        from ...knowledge import get_self_knowledge
+        sk = get_self_knowledge()
+        
+        if entry_id in sk._knowledge:
+            del sk._knowledge[entry_id]
+            sk._save()
+            return {"success": True, "deleted": entry_id}
+        else:
+            raise HTTPException(status_code=404, detail=f"Knowledge entry not found: {entry_id}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete knowledge: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

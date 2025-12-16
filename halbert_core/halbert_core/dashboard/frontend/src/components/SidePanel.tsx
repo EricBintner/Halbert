@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { ThinkingSteps } from '@/components/ui/thinking-steps'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useDebug } from '@/contexts/DebugContext'
@@ -46,6 +47,17 @@ interface AttachedImage {
   name: string
 }
 
+// Phase 21: ThinkingStep for ReAct UI
+interface ThinkingStep {
+  type: 'thought' | 'action' | 'observation' | 'final'
+  content: string
+  duration_ms?: number
+  tool_name?: string
+  tool_args?: Record<string, unknown>
+  tool_result?: Record<string, unknown>
+  error?: string
+}
+
 interface Message {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -56,6 +68,9 @@ interface Message {
   configPath?: string  // Path to config file for "Edit Config" button
   images?: string[]  // Vision model: base64 image data
   isCommandOutput?: boolean  // True for inline command output messages (shown in history, styled differently)
+  // Phase 21: ReAct thinking steps
+  thinkingSteps?: ThinkingStep[]
+  thinkingDurationMs?: number
 }
 
 interface Mentionable {
@@ -1055,7 +1070,11 @@ export function SidePanel() {
         edit_blocks?: Array<{search: string, replace: string}>; 
         proposed_content?: string;  // IDE-style diff: applied edits
         summary?: string;  // Brief description of changes
-        debug?: unknown 
+        debug?: unknown;
+        // Phase 21: ReAct thinking steps
+        thinking_steps?: ThinkingStep[];
+        thinking_duration_ms?: number;
+        used_react?: boolean;
       }
       const apiStartTime = performance.now()
       
@@ -1190,6 +1209,9 @@ export function SidePanel() {
         content: assistantContent,
         timestamp: new Date(),
         // Don't store edit blocks - they're now shown as diff in editor
+        // Phase 21: Include thinking steps from ReAct response
+        thinkingSteps: response.thinking_steps || undefined,
+        thinkingDurationMs: response.thinking_duration_ms || undefined,
       }
 
       setMessages(prev => [...prev, assistantMessage])
@@ -1587,6 +1609,15 @@ export function SidePanel() {
                           : "bg-muted"
                       )}
                     >
+                      {/* Phase 21: Show thinking steps for assistant messages */}
+                      {message.role === 'assistant' && message.thinkingSteps && message.thinkingSteps.length > 0 && (
+                        <div className="mb-2">
+                          <ThinkingSteps 
+                            steps={message.thinkingSteps} 
+                            totalDurationMs={message.thinkingDurationMs}
+                          />
+                        </div>
+                      )}
                       <div className="text-xs overflow-hidden min-w-0">
                         <MessageContent 
                           content={message.content} 

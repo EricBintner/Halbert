@@ -32,7 +32,7 @@ This document provides a high-level overview of Halbert's architecture. For deta
           ┌──────────────────────┼──────────────────────┐
           ▼                      ▼                      ▼
 ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐
-│  Model System ✅ │  │ Memory System ✅│  │    Discovery System  ✅     │
+│ Model System ✅ │  │ Memory System ✅│  │    Discovery System  ✅     │
 │  ┌───────────┐  │  │  ┌───────────┐  │  │  ┌─────────┐ ┌───────────┐  │
 │  │  Ollama   │  │  │  │ ChromaDB  │  │  │  │Storage  │ │Network    │  │
 │  │  Backend  │  │  │  │ (Vector)  │  │  │  │Scanner  │ │Scanner    │  │
@@ -53,7 +53,7 @@ This document provides a high-level overview of Halbert's architecture. For deta
 │  └─────────────┘  └─────────────┘  └─────────────┘  └───────────────┘   │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────────┐  │
 │  │  Scheduler  │  │ Ingestion   │  │        Guardrails               │  │
-│  │    ✅      │  │    ✅       │  │          ✅                     │  │
+│  │     ✅      │  │    ✅       │  │          ✅                     │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```

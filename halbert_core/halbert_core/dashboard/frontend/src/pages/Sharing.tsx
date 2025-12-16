@@ -387,7 +387,7 @@ export function Sharing() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     <Badge
                       className={cn(
                         item.data.connected && 'bg-green-500',
@@ -396,10 +396,23 @@ export function Sharing() {
                     >
                       {item.status}
                     </Badge>
+                    <SystemItemActions
+                      item={{
+                        name: item.data.mount_point || item.title,
+                        type: 'sharing',
+                        id: `sharing/${item.id}`,
+                        description: item.description,
+                        context: `${item.data.share_type === 'nfs-mount' ? 'NFS' : 'SMB'} mount from ${item.data.server}\nMount: ${item.data.mount_point}`,
+                        data: item.data,
+                      }}
+                      variant="icon"
+                      size="sm"
+                      showChat={false}
+                    />
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-8 w-8 p-0"
+                      className="h-7 w-7 p-0"
                       title="Copy path"
                       onClick={(e) => {
                         e.stopPropagation()
@@ -426,7 +439,7 @@ export function Sharing() {
         <div className="space-y-4">
           {groupedExports.map((group) => (
             <Card key={group.key} className="overflow-hidden">
-              {/* Fused Header with Config Button */}
+              {/* Fused Header with Config Button and AI Actions */}
               <div className="flex items-center justify-between p-4 bg-muted/50 border-b">
                 <div className="flex items-center gap-2">
                   <Share2 className="h-5 w-5 text-green-500" />
@@ -439,13 +452,29 @@ export function Sharing() {
                     </Badge>
                   )}
                 </div>
-                {group.configPath && (
-                  <ConfigFileButton 
-                    path={group.configPath} 
-                    variant="full"
+                <div className="flex items-center gap-2">
+                  {/* AI @ mention for the whole config group */}
+                  <SystemItemActions
+                    item={{
+                      name: group.type === 'nfs' ? 'NFS Exports' : 'Samba Shares',
+                      type: 'sharing',
+                      id: `sharing/${group.key}`,
+                      description: `${group.items.length} ${group.type === 'nfs' ? 'NFS exports' : 'Samba shares'}${group.configPath ? ` in ${group.configPath}` : ''}`,
+                      context: `${group.type === 'nfs' ? 'NFS Exports' : 'Samba Shares'}:\n${group.items.map(i => `- ${i.data.share_name || i.title}: ${i.data.path}`).join('\n')}${group.configPath ? `\n\nConfig: ${group.configPath}` : ''}`,
+                      data: { shares: group.items.map(i => i.data), config_path: group.configPath },
+                    }}
+                    variant="icon"
                     size="sm"
+                    showChat={false}
                   />
-                )}
+                  {group.configPath && (
+                    <ConfigFileButton 
+                      path={group.configPath} 
+                      variant="full"
+                      size="sm"
+                    />
+                  )}
+                </div>
               </div>
               
               <CardContent className="p-0">
@@ -470,7 +499,7 @@ export function Sharing() {
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       {item.data.guest_ok && (
                         <Badge variant="outline" className="text-yellow-600 border-yellow-600">
                           Guest OK
@@ -489,6 +518,19 @@ export function Sharing() {
                       >
                         {item.status}
                       </Badge>
+                      <SystemItemActions
+                        item={{
+                          name: item.data.share_name || item.title,
+                          type: 'sharing',
+                          id: `sharing/${item.id}`,
+                          description: item.description,
+                          context: `Share: ${item.data.share_name || item.title}\nPath: ${item.data.path}${item.data.comment ? `\nComment: ${item.data.comment}` : ''}`,
+                          data: item.data,
+                        }}
+                        variant="icon"
+                        size="sm"
+                        showChat={false}
+                      />
                       <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     </div>
                   </div>
@@ -528,7 +570,7 @@ export function Sharing() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     <Badge
                       className={cn(
                         item.data.active && 'bg-green-500',
@@ -537,10 +579,23 @@ export function Sharing() {
                     >
                       {item.status}
                     </Badge>
+                    <SystemItemActions
+                      item={{
+                        name: item.title,
+                        type: 'sharing',
+                        id: `sharing/${item.id}`,
+                        description: item.description,
+                        context: `Tailscale Drive: ${item.title}\nPath: ${item.data.path}${item.data.user ? `\nUser: ${item.data.user}` : ''}`,
+                        data: item.data,
+                      }}
+                      variant="icon"
+                      size="sm"
+                      showChat={false}
+                    />
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-8 w-8 p-0"
+                      className="h-7 w-7 p-0"
                       title="Copy path"
                       onClick={(e) => {
                         e.stopPropagation()
@@ -599,7 +654,7 @@ export function Sharing() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     {item.data.is_exit_node && (
                       <Badge variant="outline">Exit Node</Badge>
                     )}
@@ -616,10 +671,23 @@ export function Sharing() {
                         {item.status}
                       </span>
                     </div>
+                    <SystemItemActions
+                      item={{
+                        name: item.data.hostname || item.title,
+                        type: 'sharing',
+                        id: `sharing/${item.id}`,
+                        description: item.description,
+                        context: `Tailscale Peer: ${item.data.hostname}\nIP: ${item.data.ip}${item.data.os ? `\nOS: ${item.data.os}` : ''}${item.data.dns_name ? `\nDNS: ${item.data.dns_name}` : ''}\nStatus: ${item.data.online ? 'Online' : 'Offline'}`,
+                        data: item.data,
+                      }}
+                      variant="icon"
+                      size="sm"
+                      showChat={false}
+                    />
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-8 w-8 p-0"
+                      className="h-7 w-7 p-0"
                       title="Copy IP"
                       onClick={(e) => {
                         e.stopPropagation()
@@ -650,7 +718,7 @@ export function Sharing() {
           </h2>
           {groupedWireGuard.map((group) => (
             <Card key={group.key} className="overflow-hidden">
-              {/* Fused Header with Config Button */}
+              {/* Fused Header with Config Button and AI Actions */}
               <div className="flex items-center justify-between p-4 bg-muted/50 border-b">
                 <div className="flex items-center gap-2">
                   <Shield className="h-5 w-5 text-orange-500" />
@@ -659,13 +727,29 @@ export function Sharing() {
                     {group.peers.filter(p => p.data.online).length}/{group.peers.length} connected
                   </Badge>
                 </div>
-                {group.configPath && (
-                  <ConfigFileButton 
-                    path={group.configPath} 
-                    variant="full"
+                <div className="flex items-center gap-2">
+                  {/* AI @ mention for the whole WireGuard interface */}
+                  <SystemItemActions
+                    item={{
+                      name: `WireGuard ${group.interfaceName}`,
+                      type: 'sharing',
+                      id: `sharing/wireguard-${group.interfaceName}`,
+                      description: `WireGuard interface ${group.interfaceName} with ${group.peers.length} peers`,
+                      context: `WireGuard Interface: ${group.interfaceName}\nPeers: ${group.peers.length} (${group.peers.filter(p => p.data.online).length} connected)\n${group.peers.map(p => `- ${p.data.public_key?.slice(0, 16)}... → ${p.data.allowed_ips || 'N/A'} (${p.data.online ? 'connected' : 'offline'})`).join('\n')}${group.configPath ? `\n\nConfig: ${group.configPath}` : ''}`,
+                      data: { interface: group.interfaceName, peers: group.peers.map(p => p.data), config_path: group.configPath },
+                    }}
+                    variant="icon"
                     size="sm"
+                    showChat={false}
                   />
-                )}
+                  {group.configPath && (
+                    <ConfigFileButton 
+                      path={group.configPath} 
+                      variant="full"
+                      size="sm"
+                    />
+                  )}
+                </div>
               </div>
               
               <CardContent className="p-0">
@@ -697,7 +781,7 @@ export function Sharing() {
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       <Badge
                         className={cn(
                           "text-xs",
@@ -712,6 +796,19 @@ export function Sharing() {
                           {item.data.latest_handshake}
                         </span>
                       )}
+                      <SystemItemActions
+                        item={{
+                          name: `WireGuard Peer ${item.data.public_key?.slice(0, 8)}...`,
+                          type: 'sharing',
+                          id: `sharing/${item.id}`,
+                          description: item.description,
+                          context: `WireGuard Peer\nPublic Key: ${item.data.public_key}\nEndpoint: ${item.data.endpoint || 'N/A'}\nAllowed IPs: ${item.data.allowed_ips || 'N/A'}\nStatus: ${item.data.online ? 'Connected' : 'Offline'}`,
+                          data: item.data,
+                        }}
+                        variant="icon"
+                        size="sm"
+                        showChat={false}
+                      />
                       <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     </div>
                   </div>
@@ -748,7 +845,7 @@ export function Sharing() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     <Badge
                       className={cn(
                         item.data.connected && 'bg-green-500',
@@ -757,6 +854,19 @@ export function Sharing() {
                     >
                       {item.status}
                     </Badge>
+                    <SystemItemActions
+                      item={{
+                        name: item.data.mount_point || item.title,
+                        type: 'sharing',
+                        id: `sharing/${item.id}`,
+                        description: item.description,
+                        context: `Cloud Mount: ${item.data.mount_point}\nRemote: ${item.data.remote || item.data.label || 'N/A'}\nStatus: ${item.data.connected ? 'Connected' : 'Disconnected'}`,
+                        data: item.data,
+                      }}
+                      variant="icon"
+                      size="sm"
+                      showChat={false}
+                    />
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </div>
                 </div>

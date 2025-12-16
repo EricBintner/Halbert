@@ -1335,6 +1335,18 @@ class ChatRequest(BaseModel):
     page_context: str = ""  # Visible items/state from the page
     images: List[str] = []  # Vision model: Base64 encoded images
     conversation_id: str = ""  # Conversation ID for memory storage/retrieval
+    use_react: bool = False  # Phase 21: Enable ReAct reasoning loop
+
+
+class ThinkingStepModel(BaseModel):
+    """A single step in the ReAct thinking process."""
+    type: str  # thought, action, observation, final
+    content: str
+    duration_ms: int = 0
+    tool_name: Optional[str] = None
+    tool_args: Optional[dict] = None
+    tool_result: Optional[dict] = None
+    error: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -1342,6 +1354,10 @@ class ChatResponse(BaseModel):
     mentions_resolved: List[dict] = []
     suggested_actions: List[dict] = []
     debug: Optional[dict] = None  # Debug info when requested
+    # Phase 21: ReAct thinking steps
+    thinking_steps: List[ThinkingStepModel] = []
+    thinking_duration_ms: int = 0
+    used_react: bool = False  # Whether ReAct loop was used
 
 
 if FASTAPI_AVAILABLE:
@@ -2374,21 +2390,81 @@ if FASTAPI_AVAILABLE:
                 full_prompt += "---END HISTORY---\n\n"
                 full_prompt += "REMINDER: If the user asks about something 'failing' or 'broken', look at the command output above!\n\n"
             
-            # Phase 12d: Try tool-calling for real-time queries
-            tool_response = None
-            tool_results = []
-            if should_use_tools(message):
+            # Phase 21: ReAct reasoning loop (if enabled)
+            react_response = None
+            thinking_steps = []
+            thinking_duration_ms = 0
+            used_react = False
+            tool_results = []  # Initialize for debug tracking
+            response = None  # Initialize response variable
+            
+            if request.use_react and should_use_tools(message):
+                logger.info("Using ReAct reasoning loop for this query")
+                try:
+                    from ...agents.react_agent import ReActAgent
+                    from ...tools.system_tools import SYSTEM_TOOLS, execute_tool
+                    
+                    # Get model - prefer specialist for ReAct reasoning
+                    react_model = get_configured_model()
+                    react_endpoint = get_ollama_endpoint()
+                    specialist_model, specialist_endpoint = get_specialist_model()
+                    if specialist_model:
+                        complexity_score = _score_query_complexity(message)
+                        if complexity_score >= 0.4:  # Lower threshold for ReAct
+                            react_model = specialist_model
+                            react_endpoint = specialist_endpoint
+                    
+                    agent = ReActAgent(
+                        model=react_model,
+                        endpoint=react_endpoint,
+                        tools=SYSTEM_TOOLS,
+                        execute_tool_fn=lambda name, args: execute_tool(name, args),
+                        check_auth_fn=check_tool_authorization,
+                        max_iterations=5,
+                    )
+                    
+                    # Convert history to dict format
+                    history_dicts = [{"role": msg.role, "content": msg.content} for msg in request.history] if request.history else []
+                    
+                    react_result = agent.run(
+                        query=message,
+                        system_prompt=system_prompt,
+                        context=context,
+                        history=history_dicts,
+                    )
+                    
+                    react_response = react_result.final_response
+                    thinking_steps = [s.to_dict() for s in react_result.thinking_steps]
+                    thinking_duration_ms = react_result.total_duration_ms
+                    used_react = True
+                    
+                    if debug_info:
+                        debug_info['model_used'] = react_result.model_used
+                        debug_info['react_iterations'] = react_result.iterations
+                        debug_info['react_tool_calls'] = react_result.tool_calls_count
+                    
+                    logger.info(f"ReAct completed: {len(thinking_steps)} steps, {react_result.iterations} iterations")
+                    
+                except Exception as e:
+                    logger.error(f"ReAct agent failed, falling back to standard: {e}")
+                    react_response = None
+            
+            if react_response:
+                response = react_response
+            # Phase 12d: Try tool-calling for real-time queries (fallback if not using ReAct)
+            elif not request.use_react and should_use_tools(message):
                 logger.info("Query may benefit from tool use, trying tool-calling...")
                 tool_response, tool_results = call_ollama_with_tools(
                     prompt=message,
                     system_prompt=system_prompt
                 )
+                if tool_response:
+                    response = tool_response
+                    if tool_results:
+                        logger.info(f"Tool-calling succeeded with {len(tool_results)} tool calls")
             
-            if tool_response:
-                response = tool_response
-                if tool_results:
-                    logger.info(f"Tool-calling succeeded with {len(tool_results)} tool calls")
-            elif request.images:
+            # Handle images separately (vision model)
+            if request.images and not react_response:
                 # Vision model: Use direct Ollama call with images and history
                 logger.info(f"Processing {len(request.images)} images with vision model")
                 # Convert history to dict format for vision call
@@ -2407,8 +2483,9 @@ if FASTAPI_AVAILABLE:
                     debug_info['endpoint_used'] = vision_endpoint
                     debug_info['vision_mode'] = True
                     debug_info['image_count'] = len(request.images)
-            else:
+            elif not react_response and not response:
                 # Phase 21: Use proper chat API with message arrays
+                # Only if we don't already have a response from React or tool calling
                 # LLMs understand structured roles better than concatenated strings
                 
                 # Build messages array
@@ -2542,6 +2619,10 @@ if FASTAPI_AVAILABLE:
             mentions_resolved=mentions_resolved,
             suggested_actions=get_suggested_actions(message, mentions_resolved),
             debug=debug_info,
+            # Phase 21: ReAct thinking steps
+            thinking_steps=[ThinkingStepModel(**s) for s in thinking_steps] if thinking_steps else [],
+            thinking_duration_ms=thinking_duration_ms,
+            used_react=used_react,
         )
     
     

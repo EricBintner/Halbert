@@ -533,3 +533,443 @@ def bootstrap_identity():
     
     logger.info(f"Bootstrapped system identity: {hostname}")
     return sk.get_identity()
+
+
+def bootstrap_from_profile(profile: Dict[str, Any]) -> Dict[str, int]:
+    """
+    Bootstrap comprehensive self-knowledge from a deep scan profile.
+    
+    This implements the Genesis vision: "The system's data is its biography,
+    its configuration is its physiology."
+    
+    Args:
+        profile: The system profile from SystemProfiler.scan_all()
+    
+    Returns:
+        Dict with counts of knowledge entries added by category
+    """
+    sk = get_self_knowledge()
+    counts = {"identity": 0, "hardware": 0, "config": 0, "role": 0, "observation": 0}
+    
+    # ─────────────────────────────────────────────────────────────
+    # Core Identity - "Who am I?"
+    # ─────────────────────────────────────────────────────────────
+    
+    if "hostname" in profile:
+        sk.set_identity("hostname", profile["hostname"])
+        counts["identity"] += 1
+    
+    os_info = profile.get("os", {})
+    if os_info:
+        if os_info.get("distribution"):
+            sk.set_identity("distribution", os_info["distribution"])
+            counts["identity"] += 1
+        if os_info.get("kernel"):
+            sk.set_identity("kernel", os_info["kernel"])
+            counts["identity"] += 1
+        if os_info.get("uptime"):
+            sk.set_identity("uptime", os_info["uptime"])
+            counts["identity"] += 1
+        if os_info.get("boot_time"):
+            sk.set_identity("last_boot", os_info["boot_time"])
+            counts["identity"] += 1
+    
+    # ─────────────────────────────────────────────────────────────
+    # Hardware - "What is my body?"
+    # ─────────────────────────────────────────────────────────────
+    
+    hw = profile.get("hardware", {})
+    if hw:
+        cpu = hw.get("cpu", {})
+        if cpu:
+            cpu_desc = f"{cpu.get('model', 'Unknown')} ({cpu.get('cores', '?')} cores)"
+            sk.record_hardware("cpu", cpu_desc)
+            counts["hardware"] += 1
+        
+        mem = hw.get("memory", {})
+        if mem:
+            mem_desc = f"{mem.get('total_gb', '?')} GB total"
+            sk.record_hardware("memory", mem_desc)
+            counts["hardware"] += 1
+        
+        gpus = hw.get("gpus", [])
+        for i, gpu in enumerate(gpus):
+            gpu_name = gpu.get("name", f"GPU {i}")
+            gpu_mem = gpu.get("memory_mb", "?")
+            sk.record_hardware(f"gpu_{i}", f"{gpu_name} ({gpu_mem} MB)")
+            counts["hardware"] += 1
+    
+    # ─────────────────────────────────────────────────────────────
+    # Storage - "What are my organs?" (with roles)
+    # ─────────────────────────────────────────────────────────────
+    
+    storage = profile.get("storage", {})
+    if storage:
+        filesystems = storage.get("filesystems", [])
+        for fs in filesystems:
+            device = fs.get("device", "")
+            fstype = fs.get("fstype", "")
+            mountpoint = fs.get("mountpoint", "")
+            size = fs.get("size", "")
+            
+            if device and mountpoint:
+                # Create a role for significant mountpoints
+                if mountpoint == "/":
+                    sk.assign_role(device, "root filesystem",
+                                  rationale=f"{fstype} filesystem, {size} capacity")
+                    counts["role"] += 1
+                elif mountpoint == "/home":
+                    sk.assign_role(device, "user data storage",
+                                  rationale=f"{fstype} filesystem for user home directories")
+                    counts["role"] += 1
+                elif "backup" in mountpoint.lower():
+                    sk.assign_role(device, "backup storage",
+                                  rationale=f"Mounted at {mountpoint}")
+                    counts["role"] += 1
+                elif mountpoint.startswith("/mnt") or mountpoint.startswith("/media"):
+                    sk.assign_role(device, f"mounted storage at {mountpoint}",
+                                  rationale=f"{fstype} filesystem, {size}")
+                    counts["role"] += 1
+        
+        # Note special filesystem capabilities
+        if storage.get("has_bcachefs"):
+            sk.add(KnowledgeEntry(
+                id="config:filesystem_bcachefs",
+                type=KnowledgeType.CONFIG_RATIONALE,
+                subject="bcachefs usage",
+                content="This system uses bcachefs, an advanced copy-on-write filesystem",
+                rationale="bcachefs provides snapshots, checksums, compression, and multi-device support",
+                source="system",
+                tags=["storage", "filesystem", "bcachefs"]
+            ))
+            counts["config"] += 1
+        
+        if storage.get("has_zfs"):
+            sk.add(KnowledgeEntry(
+                id="config:filesystem_zfs",
+                type=KnowledgeType.CONFIG_RATIONALE,
+                subject="ZFS usage",
+                content="This system uses ZFS for storage management",
+                rationale="ZFS provides data integrity, snapshots, and RAID-like features",
+                source="system",
+                tags=["storage", "filesystem", "zfs"]
+            ))
+            counts["config"] += 1
+    
+    # ─────────────────────────────────────────────────────────────
+    # Services - "What processes keep me alive?"
+    # ─────────────────────────────────────────────────────────────
+    
+    services = profile.get("services", {})
+    if services:
+        notable = services.get("notable_services", [])
+        for svc in notable:
+            name = svc.get("name", "")
+            state = svc.get("state", "")
+            
+            if name and state == "running":
+                # Assign roles to key services
+                if "docker" in name.lower():
+                    sk.assign_role(name, "container runtime",
+                                  rationale="Manages Docker containers for application isolation")
+                    counts["role"] += 1
+                elif "ssh" in name.lower():
+                    sk.assign_role(name, "remote access service",
+                                  rationale="Enables secure remote shell connections")
+                    counts["role"] += 1
+                elif any(db in name.lower() for db in ["postgres", "mysql", "mariadb", "mongodb", "redis"]):
+                    sk.assign_role(name, "database service",
+                                  rationale="Provides data persistence for applications")
+                    counts["role"] += 1
+                elif any(web in name.lower() for web in ["nginx", "apache", "caddy"]):
+                    sk.assign_role(name, "web server",
+                                  rationale="Serves web content and/or reverse proxy")
+                    counts["role"] += 1
+        
+        # Record service health observations
+        failed = services.get("failed_count", 0)
+        if failed > 0:
+            sk.add(KnowledgeEntry(
+                id=f"observation:failed_services:{datetime.now().strftime('%Y%m%d')}",
+                type=KnowledgeType.OBSERVATION,
+                subject="service health",
+                content=f"{failed} systemd services are in failed state",
+                source="system",
+                tags=["services", "health", "warning"]
+            ))
+            counts["observation"] += 1
+    
+    # ─────────────────────────────────────────────────────────────
+    # Security - "How am I protected?"
+    # ─────────────────────────────────────────────────────────────
+    
+    security = profile.get("security", {})
+    if security:
+        firewall = security.get("firewall", {})
+        if firewall:
+            fw_type = firewall.get("type", "unknown")
+            fw_status = firewall.get("status", "unknown")
+            sk.add(KnowledgeEntry(
+                id="config:firewall",
+                type=KnowledgeType.CONFIG_RATIONALE,
+                subject="firewall",
+                content=f"Using {fw_type} firewall, status: {fw_status}",
+                rationale="Network security boundary protection",
+                source="system",
+                tags=["security", "firewall"]
+            ))
+            counts["config"] += 1
+        
+        ssh_config = security.get("ssh_config", {})
+        if ssh_config:
+            password_auth = ssh_config.get("password_auth", True)
+            root_login = ssh_config.get("root_login", "prohibit-password")
+            
+            if not password_auth:
+                sk.add(KnowledgeEntry(
+                    id="config:ssh_key_only",
+                    type=KnowledgeType.CONFIG_RATIONALE,
+                    subject="SSH authentication",
+                    content="SSH is configured for key-based authentication only",
+                    rationale="Password authentication is disabled for improved security",
+                    source="system",
+                    tags=["security", "ssh"]
+                ))
+                counts["config"] += 1
+    
+    # ─────────────────────────────────────────────────────────────
+    # Network - "How do I connect to the world?"
+    # ─────────────────────────────────────────────────────────────
+    
+    network = profile.get("network", {})
+    if network:
+        interfaces = network.get("interfaces", [])
+        for iface in interfaces:
+            name = iface.get("name", "")
+            ip = iface.get("ip", "")
+            if name and ip and not name.startswith("lo"):
+                sk.add(KnowledgeEntry(
+                    id=f"identity:network_{name}",
+                    type=KnowledgeType.IDENTITY,
+                    subject=f"network interface {name}",
+                    content=f"IP address: {ip}",
+                    source="system",
+                    tags=["network", "identity"]
+                ))
+                counts["identity"] += 1
+    
+    # ─────────────────────────────────────────────────────────────
+    # Users - "Who uses me?"
+    # ─────────────────────────────────────────────────────────────
+    
+    users = profile.get("users", {})
+    if users:
+        current = users.get("current_user", "")
+        if current:
+            sk.set_identity("primary_user", current)
+            counts["identity"] += 1
+        
+        sudo_users = users.get("sudo_users", [])
+        if sudo_users:
+            sk.add(KnowledgeEntry(
+                id="identity:administrators",
+                type=KnowledgeType.IDENTITY,
+                subject="administrators",
+                content=f"Users with sudo access: {', '.join(sudo_users)}",
+                source="system",
+                tags=["users", "security"]
+            ))
+            counts["identity"] += 1
+    
+    # ─────────────────────────────────────────────────────────────
+    # Packages - "What software defines me?"
+    # ─────────────────────────────────────────────────────────────
+    
+    packages = profile.get("packages", {})
+    if packages:
+        pkg_manager = packages.get("package_manager", "")
+        total = packages.get("total_count", 0)
+        notable = packages.get("notable_packages", [])
+        
+        if pkg_manager and total:
+            sk.add(KnowledgeEntry(
+                id="identity:package_manager",
+                type=KnowledgeType.IDENTITY,
+                subject="package management",
+                content=f"Using {pkg_manager} with {total} packages installed",
+                source="system",
+                tags=["packages", "identity"]
+            ))
+            counts["identity"] += 1
+        
+        # Record notable development tools
+        dev_tools = [p for p in notable if any(t in p for t in ['python', 'node', 'go', 'rust', 'gcc', 'git'])]
+        if dev_tools:
+            sk.add(KnowledgeEntry(
+                id="observation:development_environment",
+                type=KnowledgeType.OBSERVATION,
+                subject="development environment",
+                content=f"Development tools installed: {', '.join(dev_tools[:10])}",
+                source="system",
+                tags=["development", "packages"]
+            ))
+            counts["observation"] += 1
+    
+    # ─────────────────────────────────────────────────────────────
+    # Containers - "What applications live inside me?"
+    # ─────────────────────────────────────────────────────────────
+    
+    containers = profile.get("containers", {})
+    if containers:
+        docker_running = containers.get("docker_running", 0)
+        if docker_running > 0:
+            sk.add(KnowledgeEntry(
+                id="observation:docker_containers",
+                type=KnowledgeType.OBSERVATION,
+                subject="Docker containers",
+                content=f"{docker_running} Docker containers currently running",
+                source="system",
+                tags=["containers", "docker"]
+            ))
+            counts["observation"] += 1
+    
+    logger.info(f"Bootstrapped self-knowledge from profile: {sum(counts.values())} entries added")
+    logger.info(f"  Identity: {counts['identity']}, Hardware: {counts['hardware']}, "
+                f"Config: {counts['config']}, Roles: {counts['role']}, Observations: {counts['observation']}")
+    
+    return counts
+
+
+def parse_config_comments(config_path: str) -> List[Dict[str, str]]:
+    """
+    Parse a config file and extract settings with their comments as rationale.
+    
+    This implements the Genesis vision: comments in config files are the WHY.
+    
+    Args:
+        config_path: Path to config file (e.g., /etc/fstab, /etc/ssh/sshd_config)
+    
+    Returns:
+        List of {setting, value, comment} dicts
+    """
+    from pathlib import Path
+    import re
+    
+    results = []
+    path = Path(config_path)
+    
+    if not path.exists():
+        return results
+    
+    try:
+        with open(path, 'r') as f:
+            lines = f.readlines()
+        
+        pending_comment = []
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Skip empty lines
+            if not line:
+                pending_comment = []
+                continue
+            
+            # Collect comments (potential rationale for next setting)
+            if line.startswith('#'):
+                comment_text = line.lstrip('#').strip()
+                if comment_text and not comment_text.startswith('!'):  # Skip shebang-like
+                    pending_comment.append(comment_text)
+                continue
+            
+            # This is a setting line
+            # Handle inline comments
+            inline_comment = ""
+            if '#' in line:
+                parts = line.split('#', 1)
+                line = parts[0].strip()
+                inline_comment = parts[1].strip()
+            
+            # Parse the setting (handle different formats)
+            setting = None
+            value = None
+            
+            # Key=Value format
+            if '=' in line:
+                parts = line.split('=', 1)
+                setting = parts[0].strip()
+                value = parts[1].strip() if len(parts) > 1 else ""
+            # Key Value format (space separated)
+            elif ' ' in line or '\t' in line:
+                parts = line.split(None, 1)
+                setting = parts[0]
+                value = parts[1] if len(parts) > 1 else ""
+            else:
+                setting = line
+                value = ""
+            
+            if setting:
+                # Combine pending comments and inline comment as rationale
+                rationale_parts = pending_comment + ([inline_comment] if inline_comment else [])
+                rationale = " ".join(rationale_parts) if rationale_parts else None
+                
+                results.append({
+                    "setting": setting,
+                    "value": value,
+                    "comment": rationale,
+                    "source": config_path
+                })
+            
+            pending_comment = []
+    
+    except Exception as e:
+        logger.warning(f"Failed to parse config {config_path}: {e}")
+    
+    return results
+
+
+def learn_from_config(config_path: str, config_name: Optional[str] = None) -> int:
+    """
+    Learn self-knowledge from a config file, including comments as rationale.
+    
+    Args:
+        config_path: Path to config file
+        config_name: Human-readable name for the config (default: filename)
+    
+    Returns:
+        Number of knowledge entries added
+    """
+    from pathlib import Path
+    
+    sk = get_self_knowledge()
+    path = Path(config_path)
+    name = config_name or path.name
+    
+    entries = parse_config_comments(config_path)
+    count = 0
+    
+    for entry in entries:
+        setting = entry["setting"]
+        value = entry["value"]
+        comment = entry.get("comment")
+        
+        # Skip common/uninteresting settings
+        if not value or setting.startswith('_'):
+            continue
+        
+        knowledge = KnowledgeEntry(
+            id=f"config:{name}:{setting.lower().replace(' ', '_')}",
+            type=KnowledgeType.CONFIG_RATIONALE,
+            subject=f"{name}: {setting}",
+            content=f"{setting} = {value}",
+            rationale=comment,
+            source="config_file",
+            metadata={"config_path": config_path},
+            tags=["config", name.lower().replace('.', '_')]
+        )
+        
+        sk.add(knowledge)
+        count += 1
+    
+    logger.info(f"Learned {count} settings from {config_path}")
+    return count

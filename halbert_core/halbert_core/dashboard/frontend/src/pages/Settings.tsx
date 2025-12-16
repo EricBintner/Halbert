@@ -169,6 +169,23 @@ export function Settings() {
   const [showDocList, setShowDocList] = useState(false)
   const [loadingDocs, setLoadingDocs] = useState(false)
   
+  // Self-Knowledge state
+  interface SelfKnowledgeEntry {
+    id: string
+    type: string
+    subject: string
+    content: string
+    rationale?: string
+    source: string
+    created_at?: string
+  }
+  const [selfKnowledge, setSelfKnowledge] = useState<SelfKnowledgeEntry[]>([])
+  const [loadingSelfKnowledge, setLoadingSelfKnowledge] = useState(false)
+  const [editingKnowledge, setEditingKnowledge] = useState<SelfKnowledgeEntry | null>(null)
+  const [newKnowledge, setNewKnowledge] = useState({ subject: '', content: '', rationale: '' })
+  const [addingKnowledge, setAddingKnowledge] = useState(false)
+  const [showAddKnowledge, setShowAddKnowledge] = useState(false)
+  
   // Delete confirmation dialog state
   const [deleteConfirm, setDeleteConfirm] = useState<{
     open: boolean
@@ -211,6 +228,7 @@ export function Settings() {
     loadSettings()
     loadSystemProfile()
     loadAiRules()
+    loadSelfKnowledge()
   }, [])
 
   const loadSettings = async () => {
@@ -695,6 +713,61 @@ export function Settings() {
     }
     setShowDocList(!showDocList)
   }
+  
+  // Self-Knowledge management functions
+  const loadSelfKnowledge = async () => {
+    setLoadingSelfKnowledge(true)
+    try {
+      const res = await fetch(`${API_BASE}/settings/knowledge/all`)
+      const data = await res.json()
+      setSelfKnowledge(data.entries || [])
+    } catch (err) {
+      console.error('Failed to load self-knowledge:', err)
+    }
+    setLoadingSelfKnowledge(false)
+  }
+  
+  const handleAddSelfKnowledge = async () => {
+    if (!newKnowledge.subject || !newKnowledge.content) return
+    
+    setAddingKnowledge(true)
+    try {
+      const res = await fetch(`${API_BASE}/settings/knowledge/teach`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: newKnowledge.subject,
+          content: newKnowledge.content,
+          rationale: newKnowledge.rationale || undefined
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setNewKnowledge({ subject: '', content: '', rationale: '' })
+        setShowAddKnowledge(false)
+        loadSelfKnowledge()
+        setToast({ open: true, message: 'Knowledge saved!', variant: 'success' })
+      }
+    } catch (err) {
+      console.error('Failed to add knowledge:', err)
+      setToast({ open: true, message: 'Failed to save knowledge', variant: 'error' })
+    }
+    setAddingKnowledge(false)
+  }
+  
+  const handleDeleteKnowledge = async (id: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/settings/knowledge/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      })
+      if (res.ok) {
+        loadSelfKnowledge()
+        setToast({ open: true, message: 'Knowledge deleted', variant: 'info' })
+      }
+    } catch (err) {
+      console.error('Failed to delete knowledge:', err)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -710,7 +783,7 @@ export function Settings() {
       </div>
 
       <Tabs defaultValue="system" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="system" className="flex items-center gap-2">
             <Cpu className="h-4 w-4" />
             System
@@ -718,6 +791,10 @@ export function Settings() {
           <TabsTrigger value="ai" className="flex items-center gap-2">
             <Brain className="h-4 w-4" />
             AI Models
+          </TabsTrigger>
+          <TabsTrigger value="knowledge" className="flex items-center gap-2">
+            <BookOpen className="h-4 w-4" />
+            Knowledge
           </TabsTrigger>
           <TabsTrigger value="safety" className="flex items-center gap-2">
             <Shield className="h-4 w-4" />
@@ -1483,15 +1560,130 @@ export function Settings() {
             </CardContent>
           </Card>
 
-          {/* Knowledge Sources Section */}
+        </TabsContent>
+
+        {/* Knowledge Tab - Self-Knowledge + RAG */}
+        <TabsContent value="knowledge" className="space-y-4">
+          {/* Self-Knowledge Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Brain className="h-5 w-5" />
+                  Self-Knowledge
+                </div>
+                <Button variant="ghost" size="sm" onClick={loadSelfKnowledge}>
+                  <RefreshCw className={`h-4 w-4 ${loadingSelfKnowledge ? 'animate-spin' : ''}`} />
+                </Button>
+              </CardTitle>
+              <CardDescription>
+                What Halbert knows about itself and your system. Teach it new things or edit existing knowledge.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Add new knowledge - collapsible */}
+                <div className="space-y-3">
+                  <button 
+                    className="font-medium flex items-center gap-2 hover:text-primary transition-colors w-full text-left"
+                    onClick={() => setShowAddKnowledge(!showAddKnowledge)}
+                  >
+                    <Plus className={`h-4 w-4 transition-transform ${showAddKnowledge ? 'rotate-45' : ''}`} />
+                    Teach Something New
+                    <ChevronDown className={`h-4 w-4 ml-auto transition-transform ${showAddKnowledge ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showAddKnowledge && (
+                    <div className="p-4 border rounded-lg space-y-3 bg-muted/30">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Subject</Label>
+                          <Input 
+                            value={newKnowledge.subject}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewKnowledge({...newKnowledge, subject: e.target.value})}
+                            placeholder="e.g., bcachefs pool, main server" 
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Content</Label>
+                          <Input 
+                            value={newKnowledge.content}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewKnowledge({...newKnowledge, content: e.target.value})}
+                            placeholder="What is it? What does it do?" 
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Why does it exist? (optional)</Label>
+                        <Input 
+                          value={newKnowledge.rationale}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewKnowledge({...newKnowledge, rationale: e.target.value})}
+                          placeholder="The reason or purpose behind this..." 
+                        />
+                      </div>
+                      <Button 
+                        onClick={handleAddSelfKnowledge} 
+                        disabled={!newKnowledge.subject || !newKnowledge.content || addingKnowledge}
+                      >
+                        {addingKnowledge ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}
+                        Save Knowledge
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Knowledge entries list */}
+                {loadingSelfKnowledge ? (
+                  <div className="p-4 text-center text-muted-foreground">
+                    <RefreshCw className="h-4 w-4 animate-spin inline mr-2" />
+                    Loading...
+                  </div>
+                ) : selfKnowledge.length === 0 ? (
+                  <div className="p-4 text-center text-muted-foreground border rounded-lg">
+                    No self-knowledge yet. Teach Halbert something!
+                  </div>
+                ) : (
+                  <div className="border rounded-lg divide-y max-h-96 overflow-y-auto">
+                    {selfKnowledge.map((entry) => (
+                      <div key={entry.id} className="p-3 hover:bg-muted/30 transition-colors">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Badge variant="outline" className="text-xs">{entry.type.replace(/_/g, ' ')}</Badge>
+                              <span className="font-medium">{entry.subject}</span>
+                            </div>
+                            <p className="text-sm text-muted-foreground line-clamp-2">{entry.content}</p>
+                            {entry.rationale && entry.rationale !== entry.content && (
+                              <p className="text-xs text-muted-foreground mt-1 italic">Why: {entry.rationale}</p>
+                            )}
+                          </div>
+                          {entry.source === 'user' && (
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteKnowledge(entry.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* RAG Knowledge Sources Section */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <BookOpen className="h-5 w-5" />
-                Knowledge Base (RAG)
+                Documentation (RAG)
               </CardTitle>
               <CardDescription>
-                Documentation and knowledge sources the AI uses for context
+                Linux documentation and knowledge sources the AI uses for context
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -1499,7 +1691,7 @@ export function Settings() {
                 {/* Stats summary */}
                 <div className="p-4 bg-muted/50 rounded-lg">
                   <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-medium">Knowledge Sources</h4>
+                    <h4 className="font-medium">Indexed Sources</h4>
                     <Button variant="ghost" size="sm" onClick={toggleDocList}>
                       {showDocList ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
                       {showDocList ? 'Hide' : 'View All'}
@@ -1590,7 +1782,7 @@ export function Settings() {
                     onClick={() => setShowAddKnowledgeSource(!showAddKnowledgeSource)}
                   >
                     <Plus className={`h-4 w-4 transition-transform ${showAddKnowledgeSource ? 'rotate-45' : ''}`} />
-                    Add Custom Knowledge Source
+                    Add Custom Documentation
                     <ChevronDown className={`h-4 w-4 ml-auto transition-transform ${showAddKnowledgeSource ? 'rotate-180' : ''}`} />
                   </button>
                   {showAddKnowledgeSource && (
