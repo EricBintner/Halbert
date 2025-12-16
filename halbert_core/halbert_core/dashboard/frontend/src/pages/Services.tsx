@@ -45,188 +45,14 @@ import {
   Loader2,
   MessageCircle,
   Stethoscope,
-  Copy,
-  Check,
-  Terminal,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
-import { SystemItemActions } from '@/components/domain'
+import { SystemItemActions, MarkdownRenderer } from '@/components/domain'
 import { WhyBrain } from '@/components/ui/why-brain'
 
-/**
- * Executable code block component with copy and run buttons
- */
-function CodeBlock({ code, lang }: { code: string; lang: string }) {
-  const [copied, setCopied] = useState(false)
-  
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-  
-  const handleExecute = () => {
-    window.dispatchEvent(new CustomEvent('halbert:run-command', { 
-      detail: { command: code } 
-    }))
-  }
-  
-  const isExecutable = ['bash', 'sh', 'shell', 'zsh', ''].includes(lang.toLowerCase())
-  
-  return (
-    <div className="rounded-md overflow-hidden border border-border/50 bg-zinc-900 my-2">
-      <div className="flex items-center justify-between px-2 py-1 bg-zinc-800 border-b border-border/30">
-        <div className="flex items-center gap-1.5">
-          <Terminal className="h-3 w-3 text-green-400" />
-          <span className="text-[10px] text-zinc-400 font-mono">{lang || 'bash'}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={handleCopy}
-            className="p-1 rounded hover:bg-zinc-700 transition-colors"
-            title="Copy"
-          >
-            {copied ? (
-              <Check className="h-3 w-3 text-green-400" />
-            ) : (
-              <Copy className="h-3 w-3 text-zinc-400" />
-            )}
-          </button>
-          {isExecutable && (
-            <button
-              onClick={handleExecute}
-              className="p-1 rounded hover:bg-zinc-700 transition-colors"
-              title="Run in Terminal"
-            >
-              <Play className="h-3 w-3 text-green-400" />
-            </button>
-          )}
-        </div>
-      </div>
-      <pre className="p-2 text-[11px] font-mono text-green-300 overflow-x-auto">
-        <code>{code}</code>
-      </pre>
-    </div>
-  )
-}
-
-/**
- * Simple markdown renderer for LLM output.
- * Handles: **bold**, headers, bullet points, code blocks, and paragraphs.
- */
-function renderMarkdown(text: string): React.ReactNode {
-  if (!text) return null
-  
-  // First, extract and replace code blocks with placeholders
-  const codeBlocks: Array<{ lang: string; code: string }> = []
-  const textWithPlaceholders = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    codeBlocks.push({ lang: lang || 'bash', code: code.trim() })
-    return `__CODE_BLOCK_${codeBlocks.length - 1}__`
-  })
-  
-  // Split into paragraphs (but keep single newlines within bullet lists)
-  const paragraphs = textWithPlaceholders.split(/\n\n+/)
-  
-  return paragraphs.map((paragraph, pIndex) => {
-    const trimmed = paragraph.trim()
-    
-    // Check if this is a code block placeholder
-    const codeMatch = trimmed.match(/^__CODE_BLOCK_(\d+)__$/)
-    if (codeMatch) {
-      const block = codeBlocks[parseInt(codeMatch[1])]
-      return <CodeBlock key={pIndex} code={block.code} lang={block.lang} />
-    }
-    
-    // Handle ## headers (section headers)
-    if (trimmed.startsWith('## ')) {
-      return (
-        <h3 key={pIndex} className="font-semibold text-sm text-primary mt-4 mb-2 pb-1 border-b border-border first:mt-0">
-          {trimmed.slice(3)}
-        </h3>
-      )
-    }
-    
-    // Handle # headers (main title)
-    if (trimmed.startsWith('# ')) {
-      return (
-        <h2 key={pIndex} className="font-bold text-base mt-3 mb-2 first:mt-0">
-          {trimmed.slice(2)}
-        </h2>
-      )
-    }
-    
-    // Handle bullet points (lines starting with - or *)
-    if (trimmed.match(/^[-*•]\s/m)) {
-      const items = trimmed.split(/\n/).filter(line => line.trim())
-      return (
-        <ul key={pIndex} className="space-y-1.5 my-2 ml-1">
-          {items.map((item, iIndex) => (
-            <li key={iIndex} className="text-sm flex items-start gap-2">
-              <span className="text-muted-foreground mt-1.5 text-[6px]">●</span>
-              <span className="flex-1">{formatInlineMarkdown(item.replace(/^[-*•]\s*/, ''))}</span>
-            </li>
-          ))}
-        </ul>
-      )
-    }
-    
-    // Regular paragraph with inline formatting
-    return (
-      <p key={pIndex} className="text-sm leading-relaxed mb-3 last:mb-0 text-foreground/90">
-        {formatInlineMarkdown(trimmed)}
-      </p>
-    )
-  })
-}
-
-/**
- * Format inline markdown: **bold**, [links](url)
- */
-function formatInlineMarkdown(text: string): React.ReactNode {
-  const parts: React.ReactNode[] = []
-  let keyIndex = 0
-  
-  // Combined regex for **bold** and [link](url)
-  const combinedRegex = /\*\*(.+?)\*\*|\[([^\]]+)\]\(([^)]+)\)/g
-  let lastIndex = 0
-  let match
-  
-  while ((match = combinedRegex.exec(text)) !== null) {
-    // Add text before the match
-    if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index))
-    }
-    
-    if (match[1]) {
-      // Bold text
-      parts.push(<strong key={keyIndex++} className="font-semibold">{match[1]}</strong>)
-    } else if (match[2] && match[3]) {
-      // Link [text](url)
-      parts.push(
-        <a 
-          key={keyIndex++} 
-          href={match[3]} 
-          target="_blank" 
-          rel="noopener noreferrer"
-          className="text-primary hover:underline"
-        >
-          {match[2]}
-        </a>
-      )
-    }
-    
-    lastIndex = match.index + match[0].length
-  }
-  
-  // Add remaining text
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex))
-  }
-  
-  return parts.length > 0 ? parts : text
-}
+// CodeBlock and MarkdownRenderer imported from @/components/domain
 
 interface Service {
   id: string
@@ -923,7 +749,7 @@ export function Services() {
                             </div>
                           ) : (
                             <div className="prose prose-sm dark:prose-invert max-w-none">
-                              {renderMarkdown(llmExplanation || selectedService.data.context_hint || 'No explanation available.')}
+                              <MarkdownRenderer text={llmExplanation || selectedService.data.context_hint || 'No explanation available.'} />
                             </div>
                           )}
                         </div>
@@ -952,7 +778,7 @@ export function Services() {
                             </div>
                           ) : (
                             <div className="prose prose-sm dark:prose-invert max-w-none">
-                              {renderMarkdown(failureDiagnosis || 'Click this tab to diagnose why the service failed.')}
+                              <MarkdownRenderer text={failureDiagnosis || 'Click this tab to diagnose why the service failed.'} />
                             </div>
                           )}
                         </div>
@@ -988,7 +814,7 @@ export function Services() {
                           </div>
                         ) : (
                           <div className="prose prose-sm dark:prose-invert max-w-none">
-                            {renderMarkdown(llmExplanation || selectedService.data.context_hint || 'No explanation available.')}
+                            <MarkdownRenderer text={llmExplanation || selectedService.data.context_hint || 'No explanation available.'} />
                           </div>
                         )}
                       </div>

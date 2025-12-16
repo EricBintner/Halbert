@@ -17,7 +17,6 @@ import {
   Loader2,
   AtSign,
   GripVertical,
-  Play,
   Plus,
   Pencil,
   Trash2,
@@ -30,6 +29,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { ThinkingSteps } from '@/components/ui/thinking-steps'
+import { CodeBlock } from '@/components/domain'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useDebug } from '@/contexts/DebugContext'
@@ -109,125 +109,7 @@ interface Conversation {
   messages: Message[]
 }
 
-// Inline code block with run button and output display
-function InlineCodeBlock({ code, lang, onRunCommand, onAutoAnalyze }: { 
-  code: string, 
-  lang: string, 
-  onRunCommand: (cmd: string) => Promise<{output?: string, error?: string, exit_code?: number}>,
-  onAutoAnalyze?: (command: string, output: string, isError: boolean) => void
-}) {
-  const [isRunning, setIsRunning] = useState(false)
-  const [output, setOutput] = useState<string | null>(null)
-  const [isError, setIsError] = useState(false)
-  const [isCollapsed, setIsCollapsed] = useState(false)
-  
-  // Detect if this looks like command OUTPUT (not a runnable command)
-  const looksLikeOutput = (
-    code.includes('Loaded:') ||           // systemd status output
-    code.includes('Active:') ||           // systemd status output
-    code.includes('Process:') ||          // systemd process info
-    code.startsWith('$ ') ||              // Shows a command with prompt (display, not runnable)
-    code.startsWith('# ') ||              // Root prompt display
-    /^\d{4}-\d{2}-\d{2}/.test(code) ||    // Starts with date (log output)
-    /^[A-Z][a-z]{2} \d{1,2} \d{2}:/.test(code) ||  // Log timestamp like "Dec 13 10:42:09"
-    code.split('\n').length > 10 ||       // Very long = probably output, not a command
-    /^total \d+/.test(code) ||            // ls output
-    /^-[rwx-]{9}/.test(code)              // ls -l output
-  )
-  
-  const isShellCommand = !looksLikeOutput && (
-    ['bash', 'sh', 'shell', 'zsh'].includes(lang) || 
-    code.startsWith('sudo ') || 
-    code.startsWith('ls ') ||
-    code.includes('|')
-  )
-  
-  const handleRun = async () => {
-    setIsRunning(true)
-    setOutput(null)
-    try {
-      // Sanitize command - remove stray backticks that LLMs sometimes add
-      const sanitizedCode = code.replace(/^`+|`+$/g, '').trim()
-      const result = await onRunCommand(sanitizedCode)
-      const outputText = result.exit_code === 0 
-        ? (result.output || '(no output)')
-        : (result.error || result.output || `Exit code: ${result.exit_code}`)
-      const hasError = result.exit_code !== 0
-      
-      setOutput(outputText)
-      setIsError(hasError)
-      
-      // Auto-analyze: send output back to AI for analysis
-      if (onAutoAnalyze) {
-        onAutoAnalyze(sanitizedCode, outputText, hasError)
-      }
-    } catch (err) {
-      const errorMsg = `Error: ${err}`
-      setOutput(errorMsg)
-      setIsError(true)
-      if (onAutoAnalyze) {
-        onAutoAnalyze(code, errorMsg, true)
-      }
-    } finally {
-      setIsRunning(false)
-    }
-  }
-  
-  return (
-    <div className="space-y-1 min-w-0">
-      <div className="relative group">
-        {/* Runnable commands: dark bg, Output blocks: lighter bg for visual distinction */}
-        <pre className={`rounded p-2 text-xs font-mono overflow-x-auto max-w-full ${
-          isShellCommand 
-            ? 'bg-zinc-900 text-zinc-100'  // Dark = runnable
-            : 'bg-zinc-700 text-zinc-200'  // Lighter = output/display only
-        }`}>
-          <code className="break-all">{code}</code>
-        </pre>
-        {isShellCommand && (
-          <button
-            onClick={handleRun}
-            disabled={isRunning}
-            className="absolute top-1 right-1 p-1 rounded bg-zinc-700 hover:bg-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
-            title="Run inline"
-          >
-            {isRunning ? (
-              <Loader2 className="h-3 w-3 text-blue-400 animate-spin" />
-            ) : (
-              <Play className="h-3 w-3 text-green-400" />
-            )}
-          </button>
-        )}
-      </div>
-      
-      {/* Inline output display */}
-      {output && (
-        <div className={cn(
-          "rounded text-xs font-mono overflow-hidden",
-          isError ? "bg-red-950/50 border border-red-900" : "bg-zinc-800/50 border border-zinc-700"
-        )}>
-          <div 
-            className="flex items-center justify-between px-2 py-1 bg-zinc-800/50 cursor-pointer"
-            onClick={() => setIsCollapsed(!isCollapsed)}
-          >
-            <span className={cn("text-[10px]", isError ? "text-red-400" : "text-zinc-400")}>
-              {isError ? "Error" : "Output"}
-            </span>
-            <ChevronDown className={cn("h-3 w-3 text-zinc-500 transition-transform", isCollapsed && "-rotate-90")} />
-          </div>
-          {!isCollapsed && (
-            <pre className={cn(
-              "p-2 overflow-x-auto max-h-32 overflow-y-auto",
-              isError ? "text-red-300" : "text-zinc-300"
-            )}>
-              {output}
-            </pre>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
+// CodeBlock imported from @/components/domain - provides run button and output display
 
 // Helper to render message content with code blocks and terminal buttons
 function MessageContent({ content, onRunCommand, onAutoAnalyze }: { 
@@ -269,12 +151,13 @@ function MessageContent({ content, onRunCommand, onAutoAnalyze }: {
       {parts.map((part, i) => {
         if (part.type === 'code') {
           return (
-            <InlineCodeBlock 
+            <CodeBlock 
               key={i} 
               code={part.content} 
               lang={part.lang || 'bash'} 
-              onRunCommand={onRunCommand}
+              onRun={onRunCommand}
               onAutoAnalyze={onAutoAnalyze}
+              compact
             />
           )
         } else {

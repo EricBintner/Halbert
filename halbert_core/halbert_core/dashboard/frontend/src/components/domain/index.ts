@@ -19,3 +19,7 @@ export {
   type GroupedDiscoveryCardProps,
   type GroupedResult 
 } from './GroupedDiscoveryCard'
+
+// Phase 20D: Shared Utilities
+export { CodeBlock } from './CodeBlock'
+export { MarkdownRenderer } from './MarkdownRenderer'

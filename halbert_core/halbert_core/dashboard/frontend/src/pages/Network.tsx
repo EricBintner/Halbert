@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
-import { ConfigFileButton } from '@/components/domain'
+import { ConfigFileButton, MarkdownRenderer } from '@/components/domain'
 import {
   Sheet,
   SheetContent,
@@ -124,74 +124,7 @@ function groupInterfacesByConfig(items: NetworkItem[]): { grouped: InterfaceGrou
   return { grouped: Array.from(groups.values()), ungrouped }
 }
 
-/**
- * Simple markdown renderer for explanations
- */
-function renderMarkdown(text: string): React.ReactNode {
-  if (!text) return null
-  
-  const paragraphs = text.split(/\n\n+/)
-  
-  return paragraphs.map((paragraph, pIndex) => {
-    const trimmed = paragraph.trim()
-    
-    if (trimmed.startsWith('## ')) {
-      return (
-        <h3 key={pIndex} className="font-semibold text-sm text-primary mt-4 mb-2 pb-1 border-b border-border first:mt-0">
-          {trimmed.slice(3)}
-        </h3>
-      )
-    }
-    
-    if (trimmed.match(/^[-*•]\s/m)) {
-      const items = trimmed.split(/\n/).filter(line => line.trim())
-      return (
-        <ul key={pIndex} className="space-y-1.5 my-2 ml-1">
-          {items.map((item, iIndex) => (
-            <li key={iIndex} className="text-sm flex items-start gap-2">
-              <span className="text-muted-foreground mt-1.5 text-[6px]">●</span>
-              <span className="flex-1">{formatInlineMarkdown(item.replace(/^[-*•]\s*/, ''))}</span>
-            </li>
-          ))}
-        </ul>
-      )
-    }
-    
-    return (
-      <p key={pIndex} className="text-sm leading-relaxed mb-3 last:mb-0 text-foreground/90">
-        {formatInlineMarkdown(trimmed)}
-      </p>
-    )
-  })
-}
-
-function formatInlineMarkdown(text: string): React.ReactNode {
-  const parts: React.ReactNode[] = []
-  let keyIndex = 0
-  const combinedRegex = /\*\*(.+?)\*\*|\[([^\]]+)\]\(([^)]+)\)/g
-  let lastIndex = 0
-  let match
-  
-  while ((match = combinedRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index))
-    }
-    if (match[1]) {
-      parts.push(<strong key={keyIndex++} className="font-semibold">{match[1]}</strong>)
-    } else if (match[2] && match[3]) {
-      parts.push(
-        <a key={keyIndex++} href={match[3]} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-          {match[2]}
-        </a>
-      )
-    }
-    lastIndex = match.index + match[0].length
-  }
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex))
-  }
-  return parts.length > 0 ? parts : text
-}
+// MarkdownRenderer imported from @/components/domain
 
 export function Network() {
   const { refreshTrigger } = useScan()
@@ -955,7 +888,7 @@ export function Network() {
                       </div>
                     ) : (
                       <div className="prose prose-sm dark:prose-invert max-w-none">
-                        {renderMarkdown(explanation || 'No explanation available.')}
+                        <MarkdownRenderer text={explanation || 'No explanation available.'} />
                       </div>
                     )}
                   </div>

@@ -23,11 +23,14 @@ import {
   Box,
   Sparkles,
   Ruler,
+  Sun,
+  Moon,
+  Monitor,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // Domain components
-import { SystemItemActions, StatusBadge, UsageBar, EmptyState } from '@/components/domain'
+import { SystemItemActions, StatusBadge, UsageBar, EmptyState, CodeBlock, MarkdownRenderer } from '@/components/domain'
 import { WhyBrain } from '@/components/ui/why-brain'
 
 interface ComponentLibraryViewerProps {
@@ -387,6 +390,79 @@ import { Archive } from 'lucide-react'
   action={<Button onClick={handleScan}>Scan Now</Button>}
 />`,
       },
+      {
+        id: 'code-block',
+        name: 'CodeBlock',
+        description: 'Executable code block with copy and run buttons for shell commands',
+        status: 'stable',
+        preview: (
+          <div className="space-y-4 w-full max-w-lg">
+            <CodeBlock 
+              code="sudo systemctl status nginx" 
+              lang="bash"
+            />
+            <CodeBlock 
+              code={`# This is output (non-runnable)
+Active: active (running) since Mon 2025-12-16
+Main PID: 1234 (nginx)`}
+              lang="output"
+            />
+          </div>
+        ),
+        props: [
+          { name: 'code', type: 'string', description: 'Code content to display' },
+          { name: 'lang', type: 'string', default: "'bash'", description: 'Language for syntax hint' },
+          { name: 'onRun', type: '(cmd: string) => Promise<Result>', description: 'Run callback' },
+          { name: 'showRunButton', type: 'boolean', default: 'true', description: 'Show run button for shell' },
+          { name: 'compact', type: 'boolean', default: 'false', description: 'Compact padding mode' },
+        ],
+        code: `import { CodeBlock } from '@/components/domain'
+
+{/* Runnable shell command */}
+<CodeBlock 
+  code="sudo systemctl restart nginx" 
+  lang="bash"
+/>
+
+{/* Display-only output */}
+<CodeBlock 
+  code="Active: running since..." 
+  lang="output"
+  showRunButton={false}
+/>`,
+      },
+      {
+        id: 'markdown-renderer',
+        name: 'MarkdownRenderer',
+        description: 'Renders LLM markdown output with headers, bullets, bold, links, and code blocks',
+        status: 'stable',
+        preview: (
+          <div className="p-4 bg-muted/30 rounded-lg max-w-lg">
+            <MarkdownRenderer text={`## Overview
+
+This component handles **markdown** from AI responses.
+
+- Supports headers (# and ##)
+- **Bold text** and [links](https://example.com)
+- Bullet lists like this one
+- Embedded code blocks with run buttons`} />
+          </div>
+        ),
+        props: [
+          { name: 'text', type: 'string', description: 'Markdown text to render' },
+          { name: 'onRunCommand', type: '(cmd: string) => Promise<Result>', description: 'Callback for code block execution' },
+          { name: 'compact', type: 'boolean', default: 'false', description: 'Tighter spacing mode' },
+        ],
+        code: `import { MarkdownRenderer } from '@/components/domain'
+
+<MarkdownRenderer 
+  text={llmResponse}
+  onRunCommand={async (cmd) => {
+    const result = await executeCommand(cmd)
+    return result
+  }}
+/>`,
+      },
     ],
   },
   {
@@ -511,6 +587,7 @@ export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps)
     COMPONENT_LIBRARY[0].components[0]
   )
   const [copiedCode, setCopiedCode] = useState(false)
+  const [previewTheme, setPreviewTheme] = useState<'system' | 'light' | 'dark'>('system')
 
   const toggleCategory = (categoryId: string) => {
     setExpandedCategories(prev =>
@@ -544,7 +621,7 @@ export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps)
   }
 
   return (
-    <div className="fixed inset-0 z-[100] bg-background flex flex-col">
+    <div className="fixed inset-0 z-[9999] bg-background flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b">
         <div className="flex items-center gap-3">
@@ -631,11 +708,53 @@ export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps)
 
                 {/* Live preview */}
                 <Card className="mb-6">
-                  <CardHeader>
+                  <CardHeader className="flex flex-row items-center justify-between">
                     <CardTitle className="text-base">Preview</CardTitle>
+                    <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+                      <button
+                        onClick={() => setPreviewTheme('light')}
+                        className={cn(
+                          "p-1.5 rounded transition-colors",
+                          previewTheme === 'light' ? "bg-background shadow-sm" : "hover:bg-background/50"
+                        )}
+                        title="Light mode"
+                      >
+                        <Sun className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => setPreviewTheme('system')}
+                        className={cn(
+                          "p-1.5 rounded transition-colors",
+                          previewTheme === 'system' ? "bg-background shadow-sm" : "hover:bg-background/50"
+                        )}
+                        title="System theme"
+                      >
+                        <Monitor className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => setPreviewTheme('dark')}
+                        className={cn(
+                          "p-1.5 rounded transition-colors",
+                          previewTheme === 'dark' ? "bg-background shadow-sm" : "hover:bg-background/50"
+                        )}
+                        title="Dark mode"
+                      >
+                        <Moon className="h-4 w-4" />
+                      </button>
+                    </div>
                   </CardHeader>
-                  <CardContent className="bg-muted/30 rounded-b-lg p-6">
-                    {selectedComponent.preview}
+                  <CardContent className={cn(
+                    "rounded-b-lg p-6 transition-colors",
+                    previewTheme === 'light' && "bg-white text-zinc-900",
+                    previewTheme === 'dark' && "bg-zinc-900 text-zinc-100",
+                    previewTheme === 'system' && "bg-muted/30"
+                  )}>
+                    <div className={cn(
+                      previewTheme === 'light' && "[&_*]:text-zinc-900 [&_.text-muted-foreground]:text-zinc-500",
+                      previewTheme === 'dark' && "[&_*]:text-zinc-100 [&_.text-muted-foreground]:text-zinc-400"
+                    )}>
+                      {selectedComponent.preview}
+                    </div>
                   </CardContent>
                 </Card>
 
