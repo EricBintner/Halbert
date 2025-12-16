@@ -36,6 +36,9 @@ from .network import MacNetworkScanner
 from .storage import MacStorageScanner
 from .security import MacSecurityScanner
 from .timemachine import TimeMachineScanner
+# Phase 26: Apps tab scanners
+from .homebrew_apps import HomebrewAppScanner
+from .mas import MacAppStoreScanner
 
 __all__ = [
     'LaunchdScanner',
@@ -45,4 +48,7 @@ __all__ = [
     'MacStorageScanner',
     'MacSecurityScanner',
     'TimeMachineScanner',
+    # Phase 26: Apps tab
+    'HomebrewAppScanner',
+    'MacAppStoreScanner',
 ]
