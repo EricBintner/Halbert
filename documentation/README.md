@@ -4,6 +4,14 @@
 
 The key innovation: **the LLM identifies as the computer itself**, not as an external assistant. System state becomes its biography; configuration files become its physiology. When you ask "how are you doing?", it answers with its actual CPU temperature and memory pressure.
 
+## What's New (December 2024)
+
+- **14,000+ RAG documents** — Comprehensive Linux documentation covering systemd, networking, filesystems, security, containers, and more
+- **Universal App Management** — Flatpak, Snap, and AppImage discovery and documentation
+- **Enhanced Discovery** — 12 system scanners detect services, storage, network, security, apps, and more
+- **Self-Knowledge System** — Persistent understanding of WHY things are configured
+- **macOS Beta** — Limited support available via App Store
+
 ---
 
 ## Quick Navigation
@@ -130,19 +138,21 @@ LinuxBrain/
 │       ├── autonomy/         # Guardrails and budgets
 │       ├── config/           # Config registry
 │       ├── dashboard/        # FastAPI + React UI
-│       ├── discovery/        # System discovery
+│       ├── discovery/        # System discovery (12 scanners)
+│       │   └── scanners/
+│       │       ├── apps/     # Flatpak, Snap, AppImage
+│       │       └── ...       # Storage, network, security, etc.
 │       ├── index/            # Vector database (ChromaDB)
 │       ├── ingestion/        # Telemetry collection
 │       ├── memory/           # RAG retrieval
 │       ├── model/            # LLM integration
-│       ├── obs/              # Observability (logging, tracing)
-│       ├── policy/           # Policy engine
-│       ├── rag/              # RAG pipeline
-│       ├── runtime/          # LangGraph orchestration
+│       ├── rag/              # RAG pipeline (14,000+ docs)
+│       │   └── scrapers/     # 20+ documentation scrapers
 │       ├── scheduler/        # Autonomous tasks
 │       ├── tools/            # Agent tools
 │       └── utils/            # Utilities
 ├── config/                   # Configuration templates
+├── data/linux/               # RAG data (14,000+ documents)
 ├── documentation/            # This documentation
 ├── scripts/                  # Utility scripts
 └── tests/                    # Test suite

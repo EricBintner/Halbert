@@ -1,0 +1,42 @@
+# Halbert API Systemd Service
+# 
+# For users who want to run the backend as a system service
+# instead of using the Tauri sidecar.
+#
+# Installation:
+#   mkdir -p ~/.config/systemd/user
+#   cp scripts/halbert-api.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable halbert-api
+#   systemctl --user start halbert-api
+#
+# Logs:
+#   journalctl --user -u halbert-api -f
+
+[Unit]
+Description=Halbert AI Assistant Backend API
+Documentation=https://github.com/halbert-ai/halbert
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m halbert_core.dashboard --port 8000
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=HALBERT_LOG_LEVEL=INFO
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+
+# Allow access to config and data directories
+ReadWritePaths=%h/.config/halbert
+ReadWritePaths=%h/.local/share/halbert
+
+[Install]
+WantedBy=default.target

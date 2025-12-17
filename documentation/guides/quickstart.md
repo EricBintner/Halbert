@@ -101,7 +101,19 @@ python Halbert/main.py snapshot-configs
 ```bash
 python Halbert/main.py ask "Why did my docker service fail?"
 python Halbert/main.py ask "How do I free up disk space?"
+python Halbert/main.py ask "How do I use systemd timers?"
+python Halbert/main.py ask "What's the difference between iptables and nftables?"
 ```
+
+### Explore the Dashboard
+
+The dashboard includes pages for:
+- **Services** — Systemd service management
+- **Storage** — Disk and filesystem monitoring
+- **Network** — Interface and VPN status
+- **Apps** — Flatpak, Snap, and AppImage management
+- **Security** — SSH, firewall, and user audit
+- **Settings** — AI model configuration
 
 ---
 

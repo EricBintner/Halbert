@@ -33,6 +33,24 @@ dependencies = [
   "sqlalchemy>=2.0",
 ]
 
+[project.optional-dependencies]
+dashboard = [
+  "fastapi>=0.109",
+  "uvicorn[standard]>=0.27",
+  "httpx>=0.26",
+  "requests>=2.31",
+  "psutil>=5.9",
+  "aiofiles>=23.2",
+]
+
+dev = [
+  "pytest>=7.4",
+  "pyinstaller>=6.0",
+]
+
+[project.scripts]
+halbert = "halbert_core.dashboard.__main__:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["halbert_core*"]

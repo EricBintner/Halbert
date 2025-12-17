@@ -195,6 +195,9 @@ export function SidePanel() {
   const [mentionables, setMentionables] = useState<Mentionable[]>([])
   const [showMentions, setShowMentions] = useState(false)
   const [mentionFilter, setMentionFilter] = useState('')
+  // Phase 30: Streaming response state
+  const [streamingContent, setStreamingContent] = useState<string>('')
+  const [isStreaming, setIsStreaming] = useState(false)
   
   // Terminal state - intro message will be updated after AI name loads
   const [terminalLines, setTerminalLines] = useState<TerminalLine[]>([])

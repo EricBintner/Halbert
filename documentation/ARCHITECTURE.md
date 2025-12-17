@@ -137,6 +137,9 @@ The memory system provides semantic search over past conversations:
 | **Security Scanner** | `discovery/scanners/security.py` | SSH, firewall, users | ✅ |
 | **Sharing Scanner** | `discovery/scanners/sharing.py` | NFS, SMB, Tailscale | ✅ |
 | **Backup Scanner** | `discovery/scanners/backup.py` | Timeshift, Borg | ✅ |
+| **Flatpak Scanner** | `discovery/scanners/apps/flatpak.py` | Flatpak apps, remotes | ✅ |
+| **Snap Scanner** | `discovery/scanners/apps/snap.py` | Snap packages, channels | ✅ |
+| **AppImage Scanner** | `discovery/scanners/apps/appimage.py` | AppImage files | ✅ |
 
 Scanners run on-demand per page and store results in ChromaDB for context injection.
 
@@ -148,6 +151,14 @@ Scanners run on-demand per page and store results in ChromaDB for context inject
 | **Hybrid Retriever** | `rag/retriever.py` | BM25 + dense embeddings | ✅ |
 | **Embedding Manager** | `rag/embeddings.py` | Sentence transformers | ✅ |
 | **Index Builder** | `rag/index_builder.py` | Document indexing | ✅ |
+| **Scrapers** | `rag/scrapers/` | 20+ documentation scrapers | ✅ |
+
+**14,000+ RAG documents** from:
+- Man pages, Arch Wiki, Stack Exchange
+- systemd, Ubuntu, networking, filesystem guides
+- Shell scripting, security, containers, Git
+- Scheduling, logging, performance monitoring
+- Flatpak, Snap, AppImage documentation
 
 Hybrid retrieval combines:
 - **BM25** sparse retrieval for keyword matching

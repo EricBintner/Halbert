@@ -4,6 +4,16 @@ A comprehensive list of implemented features as of December 2025.
 
 ---
 
+## Platform Support
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| **Linux** | ✅ Full Support | Primary platform, all features |
+| **macOS** | 🔄 Beta | Available via App Store, limited features |
+| **Windows** | 📋 Planned | WSL support planned |
+
+---
+
 ## Dashboard Pages
 
 ### Dashboard
@@ -79,6 +89,14 @@ A comprehensive list of implemented features as of December 2025.
 - Temperature, memory, utilization
 - Ollama model loading status
 - CUDA/ROCm version
+
+### Apps
+**Universal application management.**
+- **Flatpak**: Installed apps, available updates, Flathub integration
+- **Snap**: Snap packages, channels, confinement status
+- **AppImage**: Detected AppImages, desktop integration status
+- Package health and update status
+- AI-assisted app troubleshooting
 
 ### Development
 **Developer environment status.**
@@ -216,11 +234,31 @@ Usage:
 - API endpoints: `/api/settings/ingestion/status`, `/start`, `/stop`
 
 ### Document RAG
-**Linux documentation retrieval for accurate answers.**
+**Comprehensive Linux documentation retrieval for accurate answers.**
 
-- **Sources**: Man pages (7,300+), Arch Wiki, systemd docs, network docs, etc.
-- Chunked and indexed in ChromaDB for semantic search
-- Auto-injected into chat for how-to and reference questions
+**14,000+ documents** covering:
+
+| Category | Documents | Topics |
+|----------|-----------|--------|
+| Man Pages | 7,300+ | Command references |
+| Arch Wiki | 2,100+ | Tutorials, troubleshooting |
+| systemd | 10 | Unit files, services, timers, journald |
+| Ubuntu/Debian | 8 | APT, dpkg, netplan, UFW, AppArmor |
+| Networking | 8 | ip, ss/netstat, DNS, iptables, SSH |
+| Filesystem | 8 | fdisk, LVM, RAID, ext4, Btrfs |
+| Shell | 8 | Bash, AWK, sed, grep, scripting |
+| Security | 8 | Users, sudo, SELinux, hardening |
+| Containers | 8 | Docker, Podman, Compose |
+| Git | 8 | Branching, remotes, workflows |
+| Scheduling | 6 | Cron, systemd timers, at, anacron |
+| Logging | 6 | journalctl, rsyslog, logrotate |
+| Performance | 6 | top/htop, memory, CPU, I/O |
+| App Formats | 15 | Flatpak, Snap, AppImage guides |
+
+Features:
+- Hybrid retrieval (BM25 + dense embeddings)
+- Cross-encoder reranking for precision
+- Auto-injected into chat for how-to questions
 - Collection: `linux_docs`
 - API endpoints:
   - `GET /api/settings/docs/stats` — Index statistics
@@ -300,6 +338,9 @@ Usage:
 | `gpu.py` | NVIDIA, AMD, Ollama |
 | `containers.py` | Docker, Podman |
 | `development.py` | Git, dev tools |
+| `flatpak.py` | Flatpak apps, remotes, updates |
+| `snap.py` | Snap packages, channels |
+| `appimage.py` | AppImage files, desktop integration |
 
 ---
 
@@ -457,3 +498,30 @@ make serve
 ### Access
 - Dashboard: http://localhost:8000
 - API Docs: http://localhost:8000/docs
+
+---
+
+## macOS Support (Beta)
+
+Halbert is available for macOS via the App Store with limited functionality.
+
+### Supported Features
+- **Homebrew Integration**: Detect installed formulas and casks
+- **App Store Apps**: List installed Mac App Store applications
+- **System Info**: Basic hardware and OS information
+- **Chat Interface**: AI assistant with macOS-specific knowledge
+
+### Limitations
+- No systemd (macOS uses launchd)
+- Limited telemetry collection
+- Reduced discovery scanner coverage
+- Some Linux-specific features unavailable
+
+### Installation
+Available via the Mac App Store. Search for "Halbert" or visit the App Store link.
+
+### RAG Documentation
+macOS-specific documentation includes:
+- Homebrew package management
+- macOS troubleshooting guides
+- Apple support documentation
