@@ -41,6 +41,7 @@ import {
   Palette,
   Lock,
   FileCode,
+  Sparkles,
 } from 'lucide-react'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { PageHeader } from '@/components/domain'
@@ -183,6 +184,23 @@ export function Settings() {
     info: string
   } | null>(null)
   
+  // Documentation Suggestions state (self-learning)
+  interface DocSuggestion {
+    doc_key: string
+    doc_name: string
+    doc_url: string
+    doc_description: string
+    doc_category: string
+    discovery_id: string
+    discovery_name: string
+    confidence: number
+    reason: string
+    priority: number
+  }
+  const [docSuggestions, setDocSuggestions] = useState<DocSuggestion[]>([])
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
+  const [addingSuggestion, setAddingSuggestion] = useState<string | null>(null)
+  
   // Self-Knowledge state
   interface SelfKnowledgeEntry {
     id: string
@@ -244,7 +262,50 @@ export function Settings() {
     loadAiRules()
     loadSelfKnowledge()
     checkIndexingStatus()
+    loadDocSuggestions()
   }, [])
+  
+  // Load documentation suggestions based on system discoveries
+  const loadDocSuggestions = async () => {
+    setLoadingSuggestions(true)
+    try {
+      const res = await fetch(`${API_BASE}/rag/suggestions`)
+      const data = await res.json()
+      setDocSuggestions(data.suggestions || [])
+    } catch (err) {
+      console.error('Failed to load doc suggestions:', err)
+    }
+    setLoadingSuggestions(false)
+  }
+  
+  const handleAddSuggestion = async (docKey: string) => {
+    setAddingSuggestion(docKey)
+    try {
+      const res = await fetch(`${API_BASE}/rag/suggestions/${docKey}/add`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        setToast({ open: true, message: `Added ${data.title || docKey} to knowledge base`, variant: 'success' })
+        // Remove from suggestions list
+        setDocSuggestions(prev => prev.filter(s => s.doc_key !== docKey))
+        loadSettings() // Refresh stats
+      } else {
+        setToast({ open: true, message: data.error || 'Failed to add documentation', variant: 'error' })
+      }
+    } catch (err) {
+      console.error('Failed to add suggestion:', err)
+      setToast({ open: true, message: 'Failed to add documentation', variant: 'error' })
+    }
+    setAddingSuggestion(null)
+  }
+  
+  const handleDismissSuggestion = async (docKey: string) => {
+    try {
+      await fetch(`${API_BASE}/rag/suggestions/${docKey}/dismiss`, { method: 'POST' })
+      setDocSuggestions(prev => prev.filter(s => s.doc_key !== docKey))
+    } catch (err) {
+      console.error('Failed to dismiss suggestion:', err)
+    }
+  }
   
   // Check if indexing is already running on page load and load freshness info
   const checkIndexingStatus = async () => {
@@ -1902,6 +1963,71 @@ export function Settings() {
                         </table>
                       )}
                     </div>
+                  </div>
+                )}
+                
+                {/* Suggested Documentation (Self-Learning) */}
+                {docSuggestions.length > 0 && (
+                  <div className="border-t pt-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-yellow-500" />
+                        <span className="font-medium">Suggested Documentation</span>
+                        <Badge variant="secondary" className="text-xs">{docSuggestions.length} found</Badge>
+                      </div>
+                      <span className="text-xs text-muted-foreground">Based on your system</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Halbert detected services on your system that have documentation available.
+                    </p>
+                    <div className="space-y-2">
+                      {docSuggestions.slice(0, 5).map((suggestion) => (
+                        <div 
+                          key={suggestion.doc_key}
+                          className="flex items-center justify-between p-2 bg-yellow-500/5 border border-yellow-500/20 rounded-lg"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-sm">{suggestion.doc_name}</span>
+                              <Badge variant="outline" className="text-xs">{suggestion.doc_category}</Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {suggestion.reason}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 ml-2">
+                            <Button 
+                              size="sm" 
+                              variant="ghost"
+                              className="h-7 px-2"
+                              onClick={() => handleAddSuggestion(suggestion.doc_key)}
+                              disabled={addingSuggestion === suggestion.doc_key}
+                            >
+                              {addingSuggestion === suggestion.doc_key ? (
+                                <RefreshCw className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Plus className="h-3 w-3" />
+                              )}
+                              <span className="ml-1 text-xs">Add</span>
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              variant="ghost"
+                              className="h-7 px-2 text-muted-foreground hover:text-foreground"
+                              onClick={() => handleDismissSuggestion(suggestion.doc_key)}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {loadingSuggestions && (
+                      <div className="text-xs text-muted-foreground flex items-center gap-2">
+                        <RefreshCw className="h-3 w-3 animate-spin" />
+                        Loading suggestions...
+                      </div>
+                    )}
                   </div>
                 )}
                 
