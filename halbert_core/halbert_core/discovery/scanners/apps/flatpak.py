@@ -77,12 +77,16 @@ class FlatpakScanner(BaseScanner):
                 origin = parts[3] if len(parts) > 3 else 'unknown'
                 installation = parts[4] if len(parts) > 4 else 'system'
                 
+                # Find icon path for the app
+                icon_path = self._find_flatpak_icon(app_id, installation)
+                
                 apps_info.append({
                     'app_id': app_id,
                     'name': name,
                     'version': version,
                     'origin': origin,
                     'installation': installation,
+                    'icon': icon_path,
                 })
                 app_count += 1
         
@@ -244,3 +248,37 @@ class FlatpakScanner(BaseScanner):
             ))
         
         return discoveries
+    
+    def _find_flatpak_icon(self, app_id: str, installation: str = 'system') -> Optional[str]:
+        """
+        Find the icon path for a Flatpak app.
+        
+        Icons are typically exported to:
+        - System: /var/lib/flatpak/exports/share/icons/hicolor/*/apps/<app_id>.png
+        - User: ~/.local/share/flatpak/exports/share/icons/hicolor/*/apps/<app_id>.png
+        """
+        from pathlib import Path
+        
+        # Determine base path based on installation type
+        if installation == 'user':
+            base_paths = [
+                Path.home() / '.local/share/flatpak/exports/share/icons',
+            ]
+        else:
+            base_paths = [
+                Path('/var/lib/flatpak/exports/share/icons'),
+            ]
+        
+        # Preferred icon sizes (larger first for better quality)
+        sizes = ['512x512', '256x256', '128x128', '64x64', '48x48', 'scalable']
+        extensions = ['.png', '.svg']
+        
+        for base_path in base_paths:
+            for size in sizes:
+                for ext in extensions:
+                    # Try hicolor theme first
+                    icon_path = base_path / 'hicolor' / size / 'apps' / f"{app_id}{ext}"
+                    if icon_path.exists():
+                        return str(icon_path)
+        
+        return None

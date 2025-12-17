@@ -330,27 +330,6 @@ export function Settings() {
     }
   }
   
-  // Auto-load models for first endpoint when Guide not configured
-  useEffect(() => {
-    const autoLoadModels = async () => {
-      if (!modelConfig?.orchestrator?.model && 
-          modelConfig?.saved_endpoints && 
-          modelConfig.saved_endpoints.length > 0 &&
-          guideModels.length === 0 &&
-          !loadingGuideModels) {
-        const firstEndpoint = modelConfig.saved_endpoints[0]
-        if (firstEndpoint?.id) {
-          setGuideEndpointId(firstEndpoint.id)
-          setLoadingGuideModels(true)
-          const models = await fetchEndpointModels(firstEndpoint.id)
-          setGuideModels(models)
-          setLoadingGuideModels(false)
-        }
-      }
-    }
-    autoLoadModels()
-  }, [modelConfig])
-
   const handleClearDiscoveries = async () => {
     if (!confirm('Clear all cached discoveries? They will be re-scanned on next scan.')) {
       return
@@ -1115,51 +1094,50 @@ export function Settings() {
                 ) : (
                   <p className="text-sm text-muted-foreground">Not configured</p>
                 )}
-                {/* Only show endpoint/model selection if not yet configured */}
-                {!modelConfig?.orchestrator?.model && modelConfig?.saved_endpoints && modelConfig.saved_endpoints.length > 0 && (
-                  <div className="space-y-2 pt-2 border-t">
-                    <Label className="text-xs">Endpoint</Label>
-                    <select 
-                      className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
-                      value={guideEndpointId || modelConfig.saved_endpoints[0]?.id || ''}
-                      onChange={async (e) => {
-                        setGuideEndpointId(e.target.value)
-                        if (e.target.value) {
-                          setLoadingGuideModels(true)
-                          const models = await fetchEndpointModels(e.target.value)
-                          setGuideModels(models)
-                          setLoadingGuideModels(false)
-                        }
-                      }}
-                    >
-                      {modelConfig.saved_endpoints.map(ep => (
-                        <option key={ep.id} value={ep.id}>{ep.name}</option>
-                      ))}
-                    </select>
-                    <Label className="text-xs">Model</Label>
-                    <select 
-                      className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
-                      disabled={loadingGuideModels}
-                      onChange={async (e) => {
-                        if (e.target.value) {
-                          const epId = guideEndpointId || modelConfig.saved_endpoints[0]?.id
-                          if (epId) {
-                            await handleAssignModel('guide', epId, e.target.value)
+                {/* Only show selection if not configured */}
+                {!modelConfig?.orchestrator?.model && (
+                <div className="space-y-2 pt-2 border-t">
+                  <Label className="text-xs">Endpoint</Label>
+                  <select 
+                    className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
+                    value={guideEndpointId}
+                    onChange={async (e) => {
+                      setGuideEndpointId(e.target.value)
+                      if (e.target.value) {
+                        setLoadingGuideModels(true)
+                        const models = await fetchEndpointModels(e.target.value)
+                        setGuideModels(models)
+                        setLoadingGuideModels(false)
+                      }
+                    }}
+                  >
+                    <option value="">Select endpoint...</option>
+                    {modelConfig?.saved_endpoints.map(ep => (
+                      <option key={ep.id} value={ep.id}>{ep.name}</option>
+                    ))}
+                  </select>
+                  {guideEndpointId && (
+                    <>
+                      <Label className="text-xs">Model</Label>
+                      <select 
+                        className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
+                        disabled={loadingGuideModels}
+                        onChange={async (e) => {
+                          if (e.target.value) {
+                            await handleAssignModel('guide', guideEndpointId, e.target.value)
                             setGuideEndpointId('')
                             setGuideModels([])
                           }
-                        }
-                      }}
-                    >
-                      <option value="">{loadingGuideModels ? 'Loading...' : 'Select model...'}</option>
-                      {guideModels.map((m: string) => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                    {guideModels.length === 0 && !loadingGuideModels && (
-                      <p className="text-xs text-muted-foreground">Select an endpoint to see available models</p>
-                    )}
-                  </div>
+                        }}
+                      >
+                        <option value="">{loadingGuideModels ? 'Loading...' : 'Select model...'}</option>
+                        {guideModels.map((m: string) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </>
+                  )}
+                </div>
                 )}
               </CardContent>
             </Card>

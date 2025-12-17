@@ -196,8 +196,7 @@ export function SidePanel() {
   const [showMentions, setShowMentions] = useState(false)
   const [mentionFilter, setMentionFilter] = useState('')
   // Phase 30: Streaming response state
-  const [streamingContent, setStreamingContent] = useState<string>('')
-  const [isStreaming, setIsStreaming] = useState(false)
+  const streamingRef = useRef<{ content: string; isStreaming: boolean }>({ content: '', isStreaming: false })
   
   // Terminal state - intro message will be updated after AI name loads
   const [terminalLines, setTerminalLines] = useState<TerminalLine[]>([])
@@ -979,35 +978,89 @@ export function SidePanel() {
         const history = historyMessages.map(m => ({ role: m.role, content: m.content }))
         response = await api.sendConfigChat(messageContent, configContext.filePath, fileContent, history, imageData)
       } else {
-        // Regular chat endpoint - pass debug flag, current page, page context, and history
+        // Regular chat endpoint - use streaming for real-time response (Phase 30)
         const pageContext = buildPageContext()
-        // Include last 10 messages for conversation context
-        // IMPORTANT: Add current userMessage since setMessages is async and messages doesn't include it yet
         const historyMessages = [...messages.slice(-9), userMessage]
         const history = historyMessages.map(m => ({ role: m.role, content: m.content }))
-        response = await api.sendChat(
-          messageContent, 
-          userMessage.mentions || [], 
-          'guide', 
-          isDebugMode,
+        
+        // Create placeholder for streaming response
+        const streamingMessageId = (Date.now() + 1).toString()
+        streamingRef.current = { content: '', isStreaming: true }
+        
+        // Add empty assistant message that will be updated
+        setMessages(prev => [...prev, {
+          id: streamingMessageId,
+          role: 'assistant',
+          content: '',
+          timestamp: new Date(),
+        }])
+        
+        // Stream response tokens
+        await api.sendChatStream(
+          messageContent,
+          userMessage.mentions || [],
+          'guide',
           currentPage,
           pageContext,
-          imageData,  // Vision model support
-          history,  // Conversation history for context
-          convId || ''  // Conversation ID for memory storage
+          history,
+          convId || '',
+          // onToken: update streaming content
+          (token: string) => {
+            streamingRef.current.content += token
+            // Update the message in place
+            setMessages(prev => prev.map(msg => 
+              msg.id === streamingMessageId 
+                ? { ...msg, content: msg.content + token }
+                : msg
+            ))
+          },
+          // onComplete: finalize the message
+          (fullResponse: string, thinkingSteps?: ThinkingStep[]) => {
+            setMessages(prev => prev.map(msg =>
+              msg.id === streamingMessageId
+                ? { 
+                    ...msg, 
+                    content: fullResponse || "I'm not sure how to help with that.",
+                    thinkingSteps: thinkingSteps,
+                  }
+                : msg
+            ))
+            streamingRef.current = { content: '', isStreaming: false }
+            
+            // Save assistant message to conversation
+            if (convId) {
+              api.addMessageToConversation(convId, 'assistant', fullResponse || '')
+                .catch(err => console.error('Failed to save assistant message:', err))
+            }
+          },
+          // onError: handle errors
+          (error: string) => {
+            console.error('Streaming error:', error)
+            setMessages(prev => prev.map(msg =>
+              msg.id === streamingMessageId
+                ? { ...msg, content: `Error: ${error}` }
+                : msg
+            ))
+            streamingRef.current = { content: '', isStreaming: false }
+          }
         )
         
-        // Clear focused item after sending (it's been included in context)
+        // Clear focused item after sending
         if (focusedItem) {
           setFocusedItem(null)
         }
+        
+        // For streaming, we handle the response in callbacks above
+        // Skip the rest of the response handling
+        setIsLoading(false)
+        return
       }
       
       const apiEndTime = performance.now()
       const apiDuration = apiEndTime - apiStartTime
       const totalDuration = apiEndTime - requestStartTime
       
-      // Debug logging for response
+      // Debug logging for response (non-streaming only)
       if (isDebugMode) {
         const responseLength = response.response?.length || 0
         const estimatedTokens = Math.ceil((messageContent.length + responseLength) / 4)

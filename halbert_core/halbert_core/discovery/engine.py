@@ -52,7 +52,8 @@ class DiscoveryEngine:
         Args:
             use_chromadb: Enable ChromaDB storage (requires chromadb package)
         """
-        self._scanners: Dict[DiscoveryType, BaseScanner] = {}
+        # Changed: Use list of scanners per type to support multiple scanners (e.g., Flatpak, Snap, AppImage all use PACKAGE type)
+        self._scanners: Dict[DiscoveryType, List[BaseScanner]] = {}
         self._discoveries: Dict[str, Discovery] = {}
         self._lock = threading.Lock()
         self._last_scan: Optional[datetime] = None
@@ -126,17 +127,23 @@ class DiscoveryEngine:
             logger.info(f"Scanner {scanner.name} not available on this system")
             return
         
-        self._scanners[scanner.discovery_type] = scanner
+        # Support multiple scanners per type (e.g., Flatpak, Snap, AppImage all use PACKAGE)
+        if scanner.discovery_type not in self._scanners:
+            self._scanners[scanner.discovery_type] = []
+        self._scanners[scanner.discovery_type].append(scanner)
         logger.debug(f"Registered scanner: {scanner.name}")
     
-    def get_scanner(self, discovery_type: DiscoveryType) -> Optional[BaseScanner]:
-        """Get scanner for a discovery type."""
-        return self._scanners.get(discovery_type)
+    def get_scanners(self, discovery_type: DiscoveryType) -> List[BaseScanner]:
+        """Get scanners for a discovery type."""
+        return self._scanners.get(discovery_type, [])
     
     @property
     def registered_scanners(self) -> List[str]:
         """Get names of registered scanners."""
-        return [s.name for s in self._scanners.values()]
+        names = []
+        for scanner_list in self._scanners.values():
+            names.extend([s.name for s in scanner_list])
+        return names
     
     # ─────────────────────────────────────────────────────────────
     # Scanning
@@ -151,18 +158,19 @@ class DiscoveryEngine:
         """
         all_discoveries = []
         
-        for scanner in self._scanners.values():
-            try:
-                logger.info(f"Running scanner: {scanner.name}")
-                discoveries = scanner.scan()
-                all_discoveries.extend(discoveries)
-                
-                # Store discoveries
-                for d in discoveries:
-                    self._store_discovery(d)
+        # Iterate over lists of scanners per type
+        for scanner_list in self._scanners.values():
+            for scanner in scanner_list:
+                try:
+                    logger.info(f"Running scanner: {scanner.name}")
+                    discoveries = scanner.scan()
+                    all_discoveries.extend(discoveries)
                     
-            except Exception as e:
-                logger.error(f"Scanner {scanner.name} failed: {e}")
+                    # Store discoveries in batch for performance
+                    self._store_discoveries_batch(discoveries)
+                        
+                except Exception as e:
+                    logger.error(f"Scanner {scanner.name} failed: {e}")
         
         self._last_scan = datetime.now()
         logger.info(f"Scan complete. Found {len(all_discoveries)} discoveries.")
@@ -171,7 +179,7 @@ class DiscoveryEngine:
     
     def scan_type(self, discovery_type: DiscoveryType) -> List[Discovery]:
         """
-        Run scanner for a specific type.
+        Run all scanners for a specific type.
         
         Args:
             discovery_type: Type of discoveries to scan for.
@@ -179,19 +187,22 @@ class DiscoveryEngine:
         Returns:
             List of discoveries found.
         """
-        scanner = self._scanners.get(discovery_type)
-        if not scanner:
+        scanners = self._scanners.get(discovery_type, [])
+        if not scanners:
             logger.warning(f"No scanner registered for {discovery_type}")
             return []
         
-        try:
-            discoveries = scanner.scan()
-            for d in discoveries:
-                self._store_discovery(d)
-            return discoveries
-        except Exception as e:
-            logger.error(f"Scanner {scanner.name} failed: {e}")
-            return []
+        all_discoveries = []
+        for scanner in scanners:
+            try:
+                logger.info(f"Running scanner: {scanner.name}")
+                discoveries = scanner.scan()
+                self._store_discoveries_batch(discoveries)
+                all_discoveries.extend(discoveries)
+            except Exception as e:
+                logger.error(f"Scanner {scanner.name} failed: {e}")
+        
+        return all_discoveries
     
     # ─────────────────────────────────────────────────────────────
     # Storage
@@ -202,20 +213,33 @@ class DiscoveryEngine:
         with self._lock:
             self._discoveries[discovery.id] = discovery
         
+        # Skip ChromaDB for single items - use batch instead
+    
+    def _store_discoveries_batch(self, discoveries: List[Discovery]):
+        """Store discoveries in batch for performance."""
+        if not discoveries:
+            return
+        
+        # Store in memory
+        with self._lock:
+            for d in discoveries:
+                self._discoveries[d.id] = d
+        
+        # Batch upsert to ChromaDB
         if self.use_chromadb and self._collection:
             try:
                 self._collection.upsert(
-                    ids=[discovery.id],
-                    documents=[discovery.embedding_text],
+                    ids=[d.id for d in discoveries],
+                    documents=[d.embedding_text for d in discoveries],
                     metadatas=[{
-                        "type": discovery.type.value,
-                        "severity": discovery.severity.value,
-                        "status": discovery.status or "",
-                        "name": discovery.name,
-                    }],
+                        "type": d.type.value,
+                        "severity": d.severity.value,
+                        "status": d.status or "",
+                        "name": d.name,
+                    } for d in discoveries],
                 )
             except Exception as e:
-                logger.error(f"Failed to store in ChromaDB: {e}")
+                logger.error(f"Failed to batch store in ChromaDB: {e}")
     
     # ─────────────────────────────────────────────────────────────
     # Query Interface

@@ -25,10 +25,16 @@ import {
   Loader2,
   ExternalLink,
   ArrowUpCircle,
+  MessageSquare,
+  Terminal,
+  Search,
+  HardDrive,
+  Shield,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { PageHeader } from '@/components/domain'
 import { useScanPage } from '@/hooks'
+import { openChat } from '@/components/SendToChat'
 
 // App discovery from scanner
 interface AppDiscovery {
@@ -50,6 +56,7 @@ interface AppDiscovery {
       size_mb?: number
       executable?: boolean
       classic?: boolean
+      icon?: string | null
     }>
     updates?: Array<{
       name: string
@@ -63,6 +70,7 @@ interface AppDiscovery {
       tracking: string
       publisher: string
       classic: boolean
+      icon?: string | null
     }>
     appimages?: Array<{
       name: string
@@ -106,7 +114,8 @@ export function Apps() {
     try {
       const data = await api.getDiscoveries('package')
       // Filter to only app-related discoveries (flatpak, snap, appimage)
-      const appDiscoveries = data.filter((d: AppDiscovery) => 
+      const discoveries = data.discoveries || []
+      const appDiscoveries = discoveries.filter((d: AppDiscovery) => 
         d.name.includes('flatpak') || 
         d.name.includes('snap') || 
         d.name.includes('appimage')
@@ -329,15 +338,103 @@ export function Apps() {
 
               {expandedCards.has(app.id) && (
                 <CardContent className="pt-0">
+                  {/* Tools Section */}
+                  <div className="mt-4 p-3 bg-muted/20 rounded-lg border">
+                    <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+                      <Search className="h-4 w-4" />
+                      Tools
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openChat({ title: app.title, type: 'app', prefillMessage: `Tell me about ${app.title}. What does this application do and how can I use it effectively?` })}
+                      >
+                        <MessageSquare className="h-3 w-3 mr-1" />
+                        Ask Halbert
+                      </Button>
+                      {app.name.includes('flatpak') && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => window.open('https://flathub.org', '_blank')}
+                        >
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                          Flathub
+                        </Button>
+                      )}
+                      {app.name.includes('snap') && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => window.open('https://snapcraft.io/store', '_blank')}
+                        >
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                          Snap Store
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openChat({ title: app.title, type: 'app', prefillMessage: `Show me how to manage ${app.title}. What commands can I use?` })}
+                      >
+                        <Terminal className="h-3 w-3 mr-1" />
+                        Commands
+                      </Button>
+                      {app.name.includes('flatpak') && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openChat({ title: 'Flatpak Permissions', type: 'app', prefillMessage: `What permissions do my Flatpak apps have? Are there any security concerns?` })}
+                        >
+                          <Shield className="h-3 w-3 mr-1" />
+                          Permissions
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openChat({ title: app.title, type: 'app', prefillMessage: `How much disk space are my ${app.name.includes('flatpak') ? 'Flatpak' : app.name.includes('snap') ? 'Snap' : 'AppImage'} apps using?` })}
+                      >
+                        <HardDrive className="h-3 w-3 mr-1" />
+                        Disk Usage
+                      </Button>
+                    </div>
+                  </div>
+
                   {/* Flatpak Apps List */}
                   {app.data.apps && app.data.apps.length > 0 && (
                     <div className="mt-4">
-                      <h4 className="text-sm font-medium mb-2">Installed Apps</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                      <h4 className="text-sm font-medium mb-2">Installed Apps ({app.data.apps.length})</h4>
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
                         {app.data.apps.map((item, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-2 bg-muted/30 rounded">
-                            <span className="text-sm">{item.name}</span>
-                            <span className="text-xs text-muted-foreground">{item.version}</span>
+                          <div key={idx} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors">
+                            {item.icon ? (
+                              <img 
+                                src={`/api/discoveries/icon?path=${encodeURIComponent(item.icon)}`}
+                                alt={item.name}
+                                className="w-10 h-10 rounded-lg flex-shrink-0 object-contain bg-white/5"
+                                onError={(e) => {
+                                  // Fallback to placeholder on error
+                                  e.currentTarget.style.display = 'none'
+                                  e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                                }}
+                              />
+                            ) : null}
+                            <div className={cn(
+                              "w-10 h-10 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-lg flex items-center justify-center flex-shrink-0",
+                              item.icon && "hidden"
+                            )}>
+                              <Package className="h-5 w-5 text-blue-500" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-sm truncate">{item.name}</div>
+                              <div className="text-xs text-muted-foreground truncate">{item.app_id || item.version}</div>
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              <div className="text-xs text-muted-foreground">{item.version}</div>
+                              <div className="text-xs text-muted-foreground/70">{item.origin}</div>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -347,17 +444,40 @@ export function Apps() {
                   {/* Snap Apps List */}
                   {app.data.snaps && app.data.snaps.length > 0 && (
                     <div className="mt-4">
-                      <h4 className="text-sm font-medium mb-2">Installed Snaps</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                      <h4 className="text-sm font-medium mb-2">Installed Snaps ({app.data.snaps.length})</h4>
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
                         {app.data.snaps.map((snap, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-2 bg-muted/30 rounded">
-                            <div>
-                              <span className="text-sm">{snap.name}</span>
-                              {snap.classic && (
-                                <Badge variant="outline" className="ml-2 text-xs">classic</Badge>
-                              )}
+                          <div key={idx} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors">
+                            {snap.icon ? (
+                              <img 
+                                src={`/api/discoveries/icon?path=${encodeURIComponent(snap.icon)}`}
+                                alt={snap.name}
+                                className="w-10 h-10 rounded-lg flex-shrink-0 object-contain bg-white/5"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none'
+                                  e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                                }}
+                              />
+                            ) : null}
+                            <div className={cn(
+                              "w-10 h-10 bg-gradient-to-br from-orange-500/20 to-red-500/20 rounded-lg flex items-center justify-center flex-shrink-0",
+                              snap.icon && "hidden"
+                            )}>
+                              <Layers className="h-5 w-5 text-orange-500" />
                             </div>
-                            <span className="text-xs text-muted-foreground">{snap.version}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-sm truncate flex items-center gap-2">
+                                {snap.name}
+                                {snap.classic && (
+                                  <Badge variant="outline" className="text-[10px] px-1 py-0">classic</Badge>
+                                )}
+                              </div>
+                              <div className="text-xs text-muted-foreground truncate">{snap.publisher}</div>
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              <div className="text-xs text-muted-foreground">{snap.version}</div>
+                              <div className="text-xs text-muted-foreground/70">rev {snap.revision}</div>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -367,17 +487,25 @@ export function Apps() {
                   {/* AppImage List */}
                   {app.data.appimages && app.data.appimages.length > 0 && (
                     <div className="mt-4">
-                      <h4 className="text-sm font-medium mb-2">AppImage Files</h4>
-                      <div className="space-y-2">
+                      <h4 className="text-sm font-medium mb-2">AppImage Files ({app.data.appimages.length})</h4>
+                      <div className="grid grid-cols-1 gap-2">
                         {app.data.appimages.map((ai, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-2 bg-muted/30 rounded">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm">{ai.name}</span>
-                              {!ai.executable && (
-                                <Badge variant="destructive" className="text-xs">Not Executable</Badge>
-                              )}
+                          <div key={idx} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors">
+                            <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-teal-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                              <FileArchive className="h-5 w-5 text-green-500" />
                             </div>
-                            <span className="text-xs text-muted-foreground">{ai.size_mb} MB</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-sm truncate flex items-center gap-2">
+                                {ai.name}
+                                {!ai.executable && (
+                                  <Badge variant="destructive" className="text-[10px] px-1 py-0">Not Executable</Badge>
+                                )}
+                              </div>
+                              <div className="text-xs text-muted-foreground truncate">{ai.path}</div>
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              <div className="text-xs text-muted-foreground">{ai.size_mb} MB</div>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -389,12 +517,18 @@ export function Apps() {
                     <div className="mt-4">
                       <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
                         <ArrowUpCircle className="h-4 w-4 text-yellow-500" />
-                        Available Updates
+                        Available Updates ({app.data.updates.length})
                       </h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
                         {app.data.updates.map((update, idx) => (
-                          <div key={idx} className="p-2 bg-yellow-500/10 border border-yellow-500/30 rounded">
-                            <span className="text-sm">{update.name}</span>
+                          <div key={idx} className="flex items-center gap-3 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                            <ArrowUpCircle className="h-5 w-5 text-yellow-500 flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-sm">{update.name}</div>
+                              {update.version && (
+                                <div className="text-xs text-muted-foreground">New version: {update.version}</div>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>

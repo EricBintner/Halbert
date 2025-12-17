@@ -13,6 +13,7 @@ import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import {
   Code2,
   RefreshCw,
+  Loader2,
   FolderGit2,
   Package,
   AlertTriangle,
@@ -153,7 +154,7 @@ export function Development() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     )
   }

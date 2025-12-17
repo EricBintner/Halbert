@@ -19,12 +19,14 @@ from typing import Optional, List, Dict, Any
 
 try:
     from fastapi import APIRouter, HTTPException, Query
+    from fastapi.responses import FileResponse
     from pydantic import BaseModel
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
     APIRouter = object
     BaseModel = object
+    FileResponse = object
 
 from ...discovery import DiscoveryType
 from ...discovery.engine import get_engine  # Use the singleton from engine.py
@@ -100,6 +102,46 @@ if FASTAPI_AVAILABLE:
         return {
             "mentionables": special_mentionables + mentionables
         }
+    
+    
+    @router.get("/icon")
+    async def get_app_icon(path: str = Query(..., description="Icon file path")):
+        """
+        Serve an app icon file.
+        
+        Used to display Flatpak/Snap icons in the Apps page.
+        Only serves files from allowed icon directories for security.
+        """
+        from pathlib import Path
+        import mimetypes
+        
+        icon_path = Path(path)
+        
+        # Security: Only allow serving from known icon directories
+        allowed_prefixes = [
+            '/var/lib/flatpak/',
+            '/var/lib/snapd/',
+            '/snap/',
+            str(Path.home() / '.local/share/flatpak/'),
+        ]
+        
+        path_str = str(icon_path.resolve())
+        if not any(path_str.startswith(prefix) for prefix in allowed_prefixes):
+            raise HTTPException(403, "Icon path not allowed")
+        
+        if not icon_path.exists():
+            raise HTTPException(404, "Icon not found")
+        
+        # Determine content type
+        content_type, _ = mimetypes.guess_type(str(icon_path))
+        if content_type is None:
+            content_type = 'application/octet-stream'
+        
+        return FileResponse(
+            path=str(icon_path),
+            media_type=content_type,
+            filename=icon_path.name
+        )
     
     
     @router.post("/scan")

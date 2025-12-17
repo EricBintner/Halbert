@@ -142,6 +142,7 @@ class WriteConfig(BaseTool):
 
     def _apply_ini(self, path: str, changes: Dict[str, Any], backup: bool, apply: bool) -> tuple[str, bool]:
         parser = configparser.ConfigParser(interpolation=None)
+        parser.optionxform = str  # Preserve key case (don't lowercase)
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -149,6 +150,7 @@ class WriteConfig(BaseTool):
             except Exception:
                 # Start with empty config
                 parser = configparser.ConfigParser(interpolation=None)
+                parser.optionxform = str
         before_io = StringIO()
         parser.write(before_io)
         before_txt = before_io.getvalue()

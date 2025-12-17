@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { Dashboard } from './pages/Dashboard'
@@ -23,6 +23,7 @@ import { PageContextProvider } from './contexts/PageContext'
 function App() {
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [checkingOnboarding, setCheckingOnboarding] = useState(true)
+  const startupScanTriggered = useRef(false)
 
   // Check onboarding status and run quick scan on app startup
   useEffect(() => {
@@ -35,8 +36,9 @@ function App() {
         if (!status.onboarding_complete) {
           // First time - show onboarding
           setShowOnboarding(true)
-        } else if (status.has_system_profile) {
-          // Run full scan on startup to refresh all system data
+        } else if (status.has_system_profile && !startupScanTriggered.current) {
+          // Run full scan on startup to refresh all system data (only once)
+          startupScanTriggered.current = true
           console.log('Running full scan on startup...')
           fetch('/api/settings/system-profile/scan', { method: 'POST' })
             .then(res => res.json())

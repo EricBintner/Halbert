@@ -13,6 +13,7 @@ import { Progress } from '@/components/ui/progress'
 import {
   Cpu,
   RefreshCw,
+  Loader2,
   AlertTriangle,
   CheckCircle,
   ExternalLink,
@@ -209,7 +210,7 @@ export function GPU() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     )
   }

@@ -14,6 +14,9 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 
+// Module-level flag to prevent concurrent deep scans (survives re-renders)
+let globalScanInProgress = false
+
 interface ScanContextType {
   // Scan states
   isDeepScanning: boolean
@@ -72,8 +75,13 @@ export function ScanProvider({ children }: ScanProviderProps) {
 
   // Deep scan - comprehensive system profile scan
   const triggerDeepScan = useCallback(async () => {
-    if (isDeepScanning) return
+    // Prevent concurrent scans using both state and global flag
+    if (isDeepScanning || globalScanInProgress) {
+      console.log('[Scan] Scan already in progress, skipping')
+      return
+    }
     
+    globalScanInProgress = true
     setIsDeepScanning(true)
     console.log('[Scan] Starting deep scan...')
     
@@ -95,6 +103,7 @@ export function ScanProvider({ children }: ScanProviderProps) {
     } catch (err) {
       console.error('[Scan] Deep scan failed:', err)
     } finally {
+      globalScanInProgress = false
       setIsDeepScanning(false)
     }
   }, [isDeepScanning])

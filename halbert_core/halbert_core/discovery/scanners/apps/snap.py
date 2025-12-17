@@ -85,6 +85,9 @@ class SnapScanner(BaseScanner):
                 if name in ['core', 'core18', 'core20', 'core22', 'snapd', 'bare']:
                     continue
                 
+                # Find icon path for the snap
+                icon_path = self._find_snap_icon(name)
+                
                 snaps.append({
                     'name': name,
                     'version': version,
@@ -93,6 +96,7 @@ class SnapScanner(BaseScanner):
                     'publisher': publisher,
                     'notes': notes,
                     'classic': 'classic' in notes,
+                    'icon': icon_path,
                 })
         
         if snaps:
@@ -246,3 +250,30 @@ class SnapScanner(BaseScanner):
             ))
         
         return discoveries
+    
+    def _find_snap_icon(self, snap_name: str) -> str | None:
+        """
+        Find the icon path for a Snap package.
+        
+        Snap icons are typically at:
+        - /snap/<name>/current/meta/gui/icon.png (or .svg)
+        - /var/lib/snapd/snap/<name>/current/meta/gui/icon.png
+        """
+        from pathlib import Path
+        
+        # Common icon locations for snaps
+        possible_paths = [
+            Path(f'/snap/{snap_name}/current/meta/gui/icon.png'),
+            Path(f'/snap/{snap_name}/current/meta/gui/icon.svg'),
+            Path(f'/var/lib/snapd/snap/{snap_name}/current/meta/gui/icon.png'),
+            Path(f'/var/lib/snapd/snap/{snap_name}/current/meta/gui/icon.svg'),
+            # Also check desktop file exports
+            Path(f'/var/lib/snapd/desktop/icons/hicolor/256x256/apps/snap.{snap_name}.png'),
+            Path(f'/var/lib/snapd/desktop/icons/hicolor/512x512/apps/snap.{snap_name}.png'),
+        ]
+        
+        for icon_path in possible_paths:
+            if icon_path.exists():
+                return str(icon_path)
+        
+        return None
