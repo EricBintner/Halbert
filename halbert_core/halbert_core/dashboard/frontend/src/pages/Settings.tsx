@@ -169,6 +169,8 @@ export function Settings() {
   const [coreSources, setCoreSources] = useState<Array<{name: string, count: number}>>([])
   const [showDocList, setShowDocList] = useState(false)
   const [loadingDocs, setLoadingDocs] = useState(false)
+  const [indexing, setIndexing] = useState(false)
+  const [indexResult, setIndexResult] = useState<{total: number, sources: string[]} | null>(null)
   
   // Self-Knowledge state
   interface SelfKnowledgeEntry {
@@ -692,6 +694,24 @@ export function Settings() {
       loadRagDocuments()
     }
     setShowDocList(!showDocList)
+  }
+  
+  const handleReindex = async () => {
+    setIndexing(true)
+    setIndexResult(null)
+    try {
+      const res = await fetch(`${API_BASE}/settings/docs/index?max_docs=10000`, { method: 'POST' })
+      const data = await res.json()
+      setIndexResult({ total: data.total_indexed || 0, sources: data.sources_indexed || [] })
+      // Reload stats after indexing
+      loadSettings()
+      if (showDocList) loadRagDocuments()
+      setToast({ open: true, message: `Indexed ${data.total_indexed || 0} documents`, variant: 'success' })
+    } catch (err) {
+      console.error('Indexing failed:', err)
+      setToast({ open: true, message: 'Indexing failed', variant: 'error' })
+    }
+    setIndexing(false)
   }
   
   // Self-Knowledge management functions
@@ -1668,15 +1688,29 @@ export function Settings() {
                 <div className="p-4 bg-muted/50 rounded-lg">
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="font-medium">Indexed Sources</h4>
-                    <Button variant="ghost" size="sm" onClick={toggleDocList}>
-                      {showDocList ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
-                      {showDocList ? 'Hide' : 'View All'}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={handleReindex}
+                        disabled={indexing}
+                      >
+                        {indexing ? (
+                          <><RefreshCw className="h-4 w-4 mr-1 animate-spin" />Indexing...</>
+                        ) : (
+                          <><Database className="h-4 w-4 mr-1" />Re-index</>
+                        )}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={toggleDocList}>
+                        {showDocList ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
+                        {showDocList ? 'Hide' : 'View All'}
+                      </Button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-3 gap-4 text-sm">
                     <div>
                       <p className="text-muted-foreground">Total Documents</p>
-                      <p className="font-medium">{ragStats?.total_docs?.toLocaleString() || '~3,000'} docs</p>
+                      <p className="font-medium">{ragStats?.total_docs?.toLocaleString() || 'Loading...'} docs</p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Custom Added</p>
@@ -1684,9 +1718,15 @@ export function Settings() {
                     </div>
                     <div>
                       <p className="text-muted-foreground">Core Sources</p>
-                      <p className="font-medium text-xs">Arch Wiki, Docker, Kubernetes, man pages, Linux Kernel</p>
+                      <p className="font-medium text-xs">Phase 27: systemd, shell, git, security, networking + more</p>
                     </div>
                   </div>
+                  {indexing && (
+                    <div className="mt-3 p-2 bg-blue-500/10 rounded text-sm text-blue-600 dark:text-blue-400">
+                      <RefreshCw className="h-3 w-3 inline mr-2 animate-spin" />
+                      Indexing documents... This may take a few minutes.
+                    </div>
+                  )}
                 </div>
                 
                 {/* Expandable document list */}
@@ -2066,7 +2106,7 @@ export function Settings() {
                     id="new-rule"
                     value={newRule.rule}
                     onChange={(e) => setNewRule(prev => ({ ...prev, rule: e.target.value }))}
-                    placeholder="e.g., bcachefs requires kernel 6.8 or earlier - do not recommend kernel upgrades"
+                    placeholder="e.g., My NAS mounts may be offline - don't treat unmounted network shares as errors"
                     className="text-sm"
                   />
                 </div>

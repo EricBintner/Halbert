@@ -11,7 +11,7 @@ import {
   type ApprovalRequest,
   type ApprovalHistoryItem
 } from '@/lib/tauri'
-import { CheckCircle, XCircle, AlertTriangle, Clock, History, ShieldAlert, X, Brain } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Clock, History, ShieldAlert, X, Brain, Loader2 } from 'lucide-react'
 import { PageHeader } from '@/components/domain'
 
 export function Approvals() {
@@ -82,7 +82,11 @@ export function Approvals() {
   }
 
   if (loading) {
-    return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading approvals...</div>
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
   }
 
   return (

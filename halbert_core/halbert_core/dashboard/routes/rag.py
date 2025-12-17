@@ -58,29 +58,17 @@ def _get_repo_root() -> Path:
 
 @router.get("/stats", response_model=RAGStatsResponse)
 async def get_rag_stats():
-    """Get RAG corpus statistics with source breakdown."""
+    """Get RAG corpus statistics from ChromaDB."""
     try:
+        # Get actual count from ChromaDB
+        from halbert_core.rag.document_indexer import get_index_stats
+        stats = get_index_stats()
+        total_docs = stats.get('linux_docs_count', 0)
+        
+        # Get user docs count from file
         repo_root = _get_repo_root()
-        data_dir = repo_root / 'data' / 'linux'
-        merged_file = data_dir / 'merged' / 'rag_corpus_merged.jsonl'
-        user_file = data_dir / 'user-sources' / 'user_added.jsonl'
-        
-        total_docs = 0
+        user_file = repo_root / 'data' / 'linux' / 'user-sources' / 'user_added.jsonl'
         user_docs = 0
-        sources = defaultdict(int)
-        
-        if merged_file.exists():
-            with open(merged_file) as f:
-                for line in f:
-                    total_docs += 1
-                    try:
-                        doc = json.loads(line)
-                        meta = doc.get('metadata', {})
-                        source = meta.get('source_name') or meta.get('source_type', 'unknown')
-                        sources[source] += 1
-                    except:
-                        sources['unknown'] += 1
-        
         if user_file.exists():
             with open(user_file) as f:
                 user_docs = sum(1 for _ in f)
@@ -88,7 +76,7 @@ async def get_rag_stats():
         return RAGStatsResponse(
             total_docs=total_docs, 
             user_docs=user_docs,
-            sources=dict(sources)
+            sources=stats.get('collections', {})
         )
         
     except Exception as e:
@@ -212,21 +200,40 @@ async def list_documents():
                     except:
                         pass
         
-        # Hardcoded core sources (don't parse 3000 docs every time)
-        # These are the known sources in our corpus
-        core_sources = [
-            {"name": "Arch Wiki", "count": 1200},
-            {"name": "man pages", "count": 800},
-            {"name": "Docker Docs", "count": 350},
-            {"name": "Kubernetes Docs", "count": 300},
-            {"name": "Linux Kernel Docs", "count": 200},
-            {"name": "systemd", "count": 150},
-        ]
+        # Get actual doc counts from ChromaDB
+        try:
+            from halbert_core.rag.document_indexer import get_index_stats
+            stats = get_index_stats()
+            total_indexed = stats.get('linux_docs_count', 0)
+            
+            # Build core sources from available data directories
+            data_dir = repo_root / 'data' / 'linux'
+            core_sources = []
+            if data_dir.exists():
+                for subdir in sorted(data_dir.iterdir()):
+                    if subdir.is_dir() and subdir.name not in ['merged', 'user-sources', '__pycache__']:
+                        # Count JSONL files in this source
+                        doc_count = 0
+                        for jsonl in subdir.glob('*.jsonl'):
+                            with open(jsonl) as f:
+                                doc_count += sum(1 for _ in f)
+                        if doc_count > 0:
+                            # Format name nicely
+                            name = subdir.name.replace('-', ' ').replace('_', ' ').title()
+                            core_sources.append({"name": name, "count": doc_count})
+            
+            # Sort by count descending
+            core_sources.sort(key=lambda x: x['count'], reverse=True)
+            
+        except Exception as e:
+            logger.warning(f"Could not get dynamic stats: {e}")
+            total_indexed = 0
+            core_sources = []
         
         return {
             "custom_docs": custom_docs,
-            "core_sources": core_sources,
-            "total_core": 3000
+            "core_sources": core_sources[:20],  # Top 20 sources
+            "total_core": total_indexed
         }
         
     except Exception as e:

@@ -2,11 +2,11 @@
  * Apps Page - View and manage installed applications across package formats.
  * 
  * Phase 26: Universal App Management
- * Displays Flatpak, Snap, AppImage, and native package discoveries.
+ * Unified app list with inline update status indicators.
  */
 
 import { useEffect, useState, useMemo } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
@@ -14,9 +14,6 @@ import {
   Package,
   RefreshCw, 
   CheckCircle,
-  AlertCircle,
-  AlertTriangle,
-  Info,
   Box,
   Layers,
   FileArchive,
@@ -30,38 +27,65 @@ import {
   Search,
   HardDrive,
   Shield,
+  Cog,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { PageHeader } from '@/components/domain'
 import { useScanPage } from '@/hooks'
 import { openChat } from '@/components/SendToChat'
 
-// App discovery from scanner
+// Unified app item - normalized from both Flatpak and Snap
+interface UnifiedApp {
+  id: string
+  name: string
+  displayName: string
+  version: string
+  source: 'flatpak' | 'snap' | 'appimage'
+  hasUpdate: boolean
+  icon?: string | null
+  // Flatpak-specific
+  appId?: string
+  origin?: string
+  installation?: string
+  // Snap-specific
+  revision?: string
+  tracking?: string
+  publisher?: string
+  classic?: boolean
+  // AppImage-specific
+  path?: string
+  sizeMb?: number
+  executable?: boolean
+}
+
+// Runtime/extension update
+interface RuntimeUpdate {
+  name: string
+  appId: string
+  ref?: string
+}
+
+// Discovery response from API
 interface AppDiscovery {
   id: string
   name: string
   title: string
   description: string
-  status: string
   severity: string
   data: {
     count?: number
+    update_count?: number
+    source?: string
+    is_runtime?: boolean
     apps?: Array<{
       name: string
       version?: string
       app_id?: string
       origin?: string
       installation?: string
-      path?: string
-      size_mb?: number
-      executable?: boolean
-      classic?: boolean
       icon?: string | null
-    }>
-    updates?: Array<{
-      name: string
-      app_id?: string
-      version?: string
+      has_update?: boolean
+      status?: string
     }>
     snaps?: Array<{
       name: string
@@ -71,6 +95,13 @@ interface AppDiscovery {
       publisher: string
       classic: boolean
       icon?: string | null
+      has_update?: boolean
+      status?: string
+    }>
+    runtimes?: Array<{
+      name: string
+      app_id: string
+      ref?: string
     }>
     appimages?: Array<{
       name: string
@@ -78,49 +109,33 @@ interface AppDiscovery {
       size_mb: number
       executable: boolean
     }>
-    services?: Array<{
-      name: string
-      startup: string
-      current: string
-      running: boolean
-    }>
-    remotes?: Array<{
-      name: string
-      url: string
-    }>
-    has_flathub?: boolean
-    classic_count?: number
-    total_size_mb?: number
-    non_executable?: number
   }
-  actions?: Array<{
-    id: string
-    label: string
-    command?: string
-    requires_approval?: boolean
-  }>
 }
 
+type StatusFilter = 'all' | 'has_update'
 type SourceFilter = 'all' | 'flatpak' | 'snap' | 'appimage'
 
 export function Apps() {
-  const [apps, setApps] = useState<AppDiscovery[]>([])
+  const [discoveries, setDiscoveries] = useState<AppDiscovery[]>([])
   const [loading, setLoading] = useState(true)
-  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set())
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
+  const [expandedApp, setExpandedApp] = useState<string | null>(null)
+  const [runtimesExpanded, setRuntimesExpanded] = useState(false)
 
   const loadApps = async () => {
     setLoading(true)
     try {
       const data = await api.getDiscoveries('package')
+      const allDiscoveries = data.discoveries || []
       // Filter to only app-related discoveries (flatpak, snap, appimage)
-      const discoveries = data.discoveries || []
-      const appDiscoveries = discoveries.filter((d: AppDiscovery) => 
+      const appDiscoveries = allDiscoveries.filter((d: AppDiscovery) => 
         d.name.includes('flatpak') || 
         d.name.includes('snap') || 
         d.name.includes('appimage')
       )
-      setApps(appDiscoveries)
+      setDiscoveries(appDiscoveries)
     } catch (error) {
       console.error('Failed to load apps:', error)
     } finally {
@@ -128,7 +143,6 @@ export function Apps() {
     }
   }
 
-  // Scan hook for refresh functionality
   const { scanning, handleScan } = useScanPage({
     scanType: 'all',
     onScanComplete: loadApps,
@@ -138,66 +152,140 @@ export function Apps() {
     loadApps()
   }, [])
 
-  const handleRefresh = async () => {
-    await handleScan()
-  }
+  // Build unified app list from discoveries
+  const { apps, runtimeUpdates, stats } = useMemo(() => {
+    const appList: UnifiedApp[] = []
+    const runtimes: RuntimeUpdate[] = []
+    let flatpakCount = 0
+    let snapCount = 0
+    let appimageCount = 0
+    let updateCount = 0
 
-  const toggleExpanded = (id: string) => {
-    const newExpanded = new Set(expandedCards)
-    if (newExpanded.has(id)) {
-      newExpanded.delete(id)
-    } else {
-      newExpanded.add(id)
+    for (const discovery of discoveries) {
+      // Flatpak apps
+      if (discovery.name === 'flatpak-apps' && discovery.data.apps) {
+        for (const app of discovery.data.apps) {
+          flatpakCount++
+          if (app.has_update) updateCount++
+          appList.push({
+            id: `flatpak-${app.app_id || app.name}`,
+            name: app.name,
+            displayName: app.name,
+            version: app.version || '',
+            source: 'flatpak',
+            hasUpdate: app.has_update || false,
+            icon: app.icon,
+            appId: app.app_id,
+            origin: app.origin,
+            installation: app.installation,
+          })
+        }
+      }
+
+      // Snap apps
+      if (discovery.name === 'snap-apps' && discovery.data.snaps) {
+        for (const snap of discovery.data.snaps) {
+          snapCount++
+          if (snap.has_update) updateCount++
+          appList.push({
+            id: `snap-${snap.name}`,
+            name: snap.name,
+            displayName: snap.name,
+            version: snap.version,
+            source: 'snap',
+            hasUpdate: snap.has_update || false,
+            icon: snap.icon,
+            revision: snap.revision,
+            tracking: snap.tracking,
+            publisher: snap.publisher,
+            classic: snap.classic,
+          })
+        }
+      }
+
+      // AppImage apps
+      if (discovery.name === 'appimage-apps' && discovery.data.appimages) {
+        for (const ai of discovery.data.appimages) {
+          appimageCount++
+          appList.push({
+            id: `appimage-${ai.name}`,
+            name: ai.name,
+            displayName: ai.name,
+            version: '',
+            source: 'appimage',
+            hasUpdate: false,
+            path: ai.path,
+            sizeMb: ai.size_mb,
+            executable: ai.executable,
+          })
+        }
+      }
+
+      // Runtime updates (separate)
+      if (discovery.name === 'flatpak-runtimes' && discovery.data.runtimes) {
+        for (const rt of discovery.data.runtimes) {
+          runtimes.push({
+            name: rt.name,
+            appId: rt.app_id,
+            ref: rt.ref,
+          })
+        }
+      }
     }
-    setExpandedCards(newExpanded)
-  }
-
-  // Filter apps by source
-  const filteredApps = useMemo(() => {
-    if (sourceFilter === 'all') return apps
-    return apps.filter(app => app.name.includes(sourceFilter))
-  }, [apps, sourceFilter])
-
-  // Summary stats
-  const stats = useMemo(() => {
-    const flatpakApps = apps.find(a => a.name === 'flatpak-apps')
-    const snapApps = apps.find(a => a.name === 'snap-apps')
-    const appimageApps = apps.find(a => a.name === 'appimage-apps')
-    const flatpakUpdates = apps.find(a => a.name === 'flatpak-updates')
-    const snapUpdates = apps.find(a => a.name === 'snap-updates')
 
     return {
-      flatpak: flatpakApps?.data?.count || 0,
-      snap: snapApps?.data?.count || 0,
-      appimage: appimageApps?.data?.count || 0,
-      flatpakUpdates: flatpakUpdates?.data?.count || 0,
-      snapUpdates: snapUpdates?.data?.count || 0,
-      total: (flatpakApps?.data?.count || 0) + (snapApps?.data?.count || 0) + (appimageApps?.data?.count || 0),
-      totalUpdates: (flatpakUpdates?.data?.count || 0) + (snapUpdates?.data?.count || 0),
+      apps: appList,
+      runtimeUpdates: runtimes,
+      stats: {
+        total: appList.length,
+        flatpak: flatpakCount,
+        snap: snapCount,
+        appimage: appimageCount,
+        updates: updateCount,
+      },
     }
-  }, [apps])
+  }, [discoveries])
 
-  const getSeverityIcon = (severity: string) => {
-    switch (severity) {
-      case 'critical': return <AlertCircle className="h-5 w-5 text-red-500" />
-      case 'warning': return <AlertTriangle className="h-5 w-5 text-yellow-500" />
-      case 'success': return <CheckCircle className="h-5 w-5 text-green-500" />
-      default: return <Info className="h-5 w-5 text-blue-500" />
+  // Filter apps
+  const filteredApps = useMemo(() => {
+    return apps.filter(app => {
+      // Source filter
+      if (sourceFilter !== 'all' && app.source !== sourceFilter) return false
+      
+      // Status filter
+      if (statusFilter === 'has_update' && !app.hasUpdate) return false
+      
+      // Search
+      if (search) {
+        const searchLower = search.toLowerCase()
+        return (
+          app.name.toLowerCase().includes(searchLower) ||
+          app.displayName.toLowerCase().includes(searchLower) ||
+          (app.appId && app.appId.toLowerCase().includes(searchLower)) ||
+          (app.publisher && app.publisher.toLowerCase().includes(searchLower))
+        )
+      }
+      
+      return true
+    })
+  }, [apps, sourceFilter, statusFilter, search])
+
+  const getSourceIcon = (source: string) => {
+    switch (source) {
+      case 'flatpak': return <Box className="h-5 w-5 text-blue-500" />
+      case 'snap': return <Layers className="h-5 w-5 text-orange-500" />
+      case 'appimage': return <FileArchive className="h-5 w-5 text-purple-500" />
+      default: return <Package className="h-5 w-5" />
     }
   }
 
-  const getSourceIcon = (name: string) => {
-    if (name.includes('flatpak')) return <Box className="h-5 w-5" />
-    if (name.includes('snap')) return <Layers className="h-5 w-5" />
-    if (name.includes('appimage')) return <FileArchive className="h-5 w-5" />
-    return <Package className="h-5 w-5" />
-  }
-
-  const getSourceBadge = (name: string) => {
-    if (name.includes('flatpak')) return <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/30">Flatpak</Badge>
-    if (name.includes('snap')) return <Badge variant="outline" className="bg-orange-500/10 text-orange-400 border-orange-500/30">Snap</Badge>
-    if (name.includes('appimage')) return <Badge variant="outline" className="bg-purple-500/10 text-purple-400 border-purple-500/30">AppImage</Badge>
-    return <Badge variant="outline">Package</Badge>
+  const getSourceBadge = (source: string) => {
+    switch (source) {
+      case 'flatpak': return <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-blue-500/10 text-blue-400 border-blue-500/30">Flatpak</Badge>
+      case 'snap': return <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-orange-500/10 text-orange-400 border-orange-500/30">Snap</Badge>
+      case 'appimage': return <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-purple-500/10 text-purple-400 border-purple-500/30">AppImage</Badge>
+      default: return null
+    }
   }
 
   if (loading) {
@@ -218,7 +306,7 @@ export function Apps() {
           <Button 
             variant="outline" 
             size="sm" 
-            onClick={handleRefresh}
+            onClick={handleScan}
             disabled={scanning}
           >
             <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
@@ -228,8 +316,8 @@ export function Apps() {
       />
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="bg-card/50">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <Card className="cursor-pointer hover:bg-accent/50" onClick={() => { setSourceFilter('all'); setStatusFilter('all') }}>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -241,19 +329,19 @@ export function Apps() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50">
+        <Card className="cursor-pointer hover:bg-accent/50" onClick={() => setStatusFilter('has_update')}>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Updates Available</p>
-                <p className="text-2xl font-bold text-yellow-500">{stats.totalUpdates}</p>
+                <p className="text-sm text-muted-foreground">Updates</p>
+                <p className="text-2xl font-bold text-yellow-500">{stats.updates}</p>
               </div>
               <ArrowUpCircle className="h-8 w-8 text-yellow-500" />
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50">
+        <Card className="cursor-pointer hover:bg-accent/50" onClick={() => setSourceFilter('flatpak')}>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -265,7 +353,7 @@ export function Apps() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50">
+        <Card className="cursor-pointer hover:bg-accent/50" onClick={() => setSourceFilter('snap')}>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -276,301 +364,334 @@ export function Apps() {
             </div>
           </CardContent>
         </Card>
+
+        <Card className="cursor-pointer hover:bg-accent/50" onClick={() => setSourceFilter('appimage')}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">AppImage</p>
+                <p className="text-2xl font-bold">{stats.appimage}</p>
+              </div>
+              <FileArchive className="h-8 w-8 text-purple-500" />
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Source Filter */}
-      <div className="flex gap-2">
-        {(['all', 'flatpak', 'snap', 'appimage'] as SourceFilter[]).map((filter) => (
+      {/* Search & Filters */}
+      <div className="flex gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search apps..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 rounded-md border bg-background"
+          />
+        </div>
+        <div className="flex gap-2">
           <Button
-            key={filter}
-            variant={sourceFilter === filter ? 'default' : 'outline'}
+            variant={statusFilter === 'all' ? 'default' : 'outline'}
             size="sm"
-            onClick={() => setSourceFilter(filter)}
+            onClick={() => setStatusFilter('all')}
           >
-            {filter === 'all' ? 'All Sources' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+            All
           </Button>
-        ))}
+          <Button
+            variant={statusFilter === 'has_update' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setStatusFilter('has_update')}
+            className="gap-1"
+          >
+            <ArrowUpCircle className="h-3 w-3" />
+            Has Update
+            {stats.updates > 0 && (
+              <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-xs">{stats.updates}</Badge>
+            )}
+          </Button>
+        </div>
       </div>
 
-      {/* App Discovery Cards */}
-      <div className="space-y-4">
-        {filteredApps.length === 0 ? (
-          <Card className="bg-card/50">
-            <CardContent className="p-8 text-center">
-              <Package className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">No apps found for this filter.</p>
-              <p className="text-sm text-muted-foreground mt-2">
-                Try running a scan to discover installed applications.
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          filteredApps.map((app) => (
-            <Card key={app.id} className="bg-card/50 hover:bg-card/70 transition-colors">
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    {getSourceIcon(app.name)}
-                    <div>
-                      <CardTitle className="text-lg flex items-center gap-2">
-                        {app.title}
-                        {getSourceBadge(app.name)}
-                      </CardTitle>
-                      <p className="text-sm text-muted-foreground">{app.description}</p>
+      {/* Source Filters */}
+      <div className="flex flex-wrap gap-2">
+        {(['all', 'flatpak', 'snap', 'appimage'] as SourceFilter[]).map((source) => {
+          const count = source === 'all' ? stats.total : stats[source]
+          const icons = {
+            all: <Package className="h-4 w-4" />,
+            flatpak: <Box className="h-4 w-4" />,
+            snap: <Layers className="h-4 w-4" />,
+            appimage: <FileArchive className="h-4 w-4" />,
+          }
+          const colors = {
+            all: 'text-muted-foreground',
+            flatpak: 'text-blue-500',
+            snap: 'text-orange-500',
+            appimage: 'text-purple-500',
+          }
+          
+          return (
+            <Button
+              key={source}
+              variant={sourceFilter === source ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setSourceFilter(source)}
+              className="gap-1.5"
+            >
+              <span className={cn(sourceFilter !== source && colors[source])}>
+                {icons[source]}
+              </span>
+              {source === 'all' ? 'All Sources' : source.charAt(0).toUpperCase() + source.slice(1)}
+              <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-xs">{count}</Badge>
+            </Button>
+          )
+        })}
+      </div>
+
+      {/* App List */}
+      <Card>
+        <CardContent className="p-0">
+          <div className="divide-y">
+            {filteredApps.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground">
+                {apps.length === 0 
+                  ? "No apps discovered. Click Refresh to scan for installed applications."
+                  : "No apps match your filters."}
+              </div>
+            ) : (
+              filteredApps.map((app) => (
+                <div key={app.id}>
+                  <div
+                    className="flex items-center justify-between p-4 hover:bg-accent/30 cursor-pointer group"
+                    onClick={() => setExpandedApp(expandedApp === app.id ? null : app.id)}
+                  >
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                      {/* App Icon */}
+                      {app.icon ? (
+                        <img 
+                          src={`/api/discoveries/icon?path=${encodeURIComponent(app.icon)}`}
+                          alt={app.name}
+                          className="w-10 h-10 rounded-lg flex-shrink-0 object-contain bg-white/5"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none'
+                            const fallback = e.currentTarget.nextElementSibling
+                            if (fallback) fallback.classList.remove('hidden')
+                          }}
+                        />
+                      ) : null}
+                      <div className={cn(
+                        "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0",
+                        app.source === 'flatpak' && "bg-gradient-to-br from-blue-500/20 to-purple-500/20",
+                        app.source === 'snap' && "bg-gradient-to-br from-orange-500/20 to-red-500/20",
+                        app.source === 'appimage' && "bg-gradient-to-br from-purple-500/20 to-pink-500/20",
+                        app.icon && "hidden"
+                      )}>
+                        {getSourceIcon(app.source)}
+                      </div>
+                      
+                      {/* App Info */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium">{app.displayName}</p>
+                          {getSourceBadge(app.source)}
+                          {app.hasUpdate && (
+                            <Badge className="text-[10px] px-1.5 py-0 bg-yellow-500/20 text-yellow-400 border-yellow-500/40">
+                              <ArrowUpCircle className="h-3 w-3 mr-1" />
+                              Update
+                            </Badge>
+                          )}
+                          {app.classic && (
+                            <Badge variant="outline" className="text-[10px] px-1 py-0">classic</Badge>
+                          )}
+                          {app.executable === false && (
+                            <Badge variant="destructive" className="text-[10px] px-1 py-0">Not Executable</Badge>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground truncate">
+                          {app.appId || app.publisher || app.path || ''}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {getSeverityIcon(app.severity)}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => toggleExpanded(app.id)}
-                    >
-                      {expandedCards.has(app.id) ? (
-                        <ChevronDown className="h-4 w-4" />
+                    
+                    {/* Right side */}
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        {app.version}{app.revision && ` (rev ${app.revision})`}
+                        {app.sizeMb && ` • ${app.sizeMb} MB`}
+                      </span>
+                      {app.hasUpdate ? (
+                        <CheckCircle className="h-4 w-4 text-yellow-500" />
                       ) : (
-                        <ChevronRight className="h-4 w-4" />
+                        <CheckCircle className="h-4 w-4 text-green-500" />
                       )}
-                    </Button>
+                      <ChevronRight className={cn(
+                        "h-4 w-4 text-muted-foreground transition-transform",
+                        expandedApp === app.id && "rotate-90"
+                      )} />
+                    </div>
                   </div>
+                  
+                  {/* Expanded App Tools */}
+                  {expandedApp === app.id && (
+                    <div className="px-4 pb-4 bg-muted/10">
+                      <div className="p-3 bg-muted/20 rounded-lg border">
+                        <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+                          <Search className="h-4 w-4" />
+                          Tools
+                        </h4>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openChat({ title: app.displayName, type: 'app', prefillMessage: `Tell me about ${app.displayName}. What does this application do?` })
+                            }}
+                          >
+                            <MessageSquare className="h-3 w-3 mr-1" />
+                            Ask Halbert
+                          </Button>
+                          {app.source === 'flatpak' && app.appId && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                window.open(`https://flathub.org/apps/${app.appId}`, '_blank')
+                              }}
+                            >
+                              <ExternalLink className="h-3 w-3 mr-1" />
+                              Flathub
+                            </Button>
+                          )}
+                          {app.source === 'snap' && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                window.open(`https://snapcraft.io/${app.name}`, '_blank')
+                              }}
+                            >
+                              <ExternalLink className="h-3 w-3 mr-1" />
+                              Snap Store
+                            </Button>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openChat({ title: app.displayName, type: 'app', prefillMessage: `Show me commands to manage ${app.displayName} (${app.source})` })
+                            }}
+                          >
+                            <Terminal className="h-3 w-3 mr-1" />
+                            Commands
+                          </Button>
+                          {app.source === 'flatpak' && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                openChat({ title: app.displayName, type: 'app', prefillMessage: `What permissions does ${app.displayName} (${app.appId}) have?` })
+                              }}
+                            >
+                              <Shield className="h-3 w-3 mr-1" />
+                              Permissions
+                            </Button>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openChat({ title: app.displayName, type: 'app', prefillMessage: `How much disk space does ${app.displayName} use?` })
+                            }}
+                          >
+                            <HardDrive className="h-3 w-3 mr-1" />
+                            Disk Usage
+                          </Button>
+                          {app.hasUpdate && (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="bg-yellow-600 hover:bg-yellow-700"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                openChat({ 
+                                  title: app.displayName, 
+                                  type: 'app', 
+                                  prefillMessage: `Update ${app.displayName} to the latest version using ${app.source}` 
+                                })
+                              }}
+                            >
+                              <ArrowUpCircle className="h-3 w-3 mr-1" />
+                              Update
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </CardHeader>
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-              {expandedCards.has(app.id) && (
-                <CardContent className="pt-0">
-                  {/* Tools Section */}
-                  <div className="mt-4 p-3 bg-muted/20 rounded-lg border">
-                    <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                      <Search className="h-4 w-4" />
-                      Tools
-                    </h4>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openChat({ title: app.title, type: 'app', prefillMessage: `Tell me about ${app.title}. What does this application do and how can I use it effectively?` })}
-                      >
-                        <MessageSquare className="h-3 w-3 mr-1" />
-                        Ask Halbert
-                      </Button>
-                      {app.name.includes('flatpak') && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => window.open('https://flathub.org', '_blank')}
-                        >
-                          <ExternalLink className="h-3 w-3 mr-1" />
-                          Flathub
-                        </Button>
-                      )}
-                      {app.name.includes('snap') && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => window.open('https://snapcraft.io/store', '_blank')}
-                        >
-                          <ExternalLink className="h-3 w-3 mr-1" />
-                          Snap Store
-                        </Button>
-                      )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openChat({ title: app.title, type: 'app', prefillMessage: `Show me how to manage ${app.title}. What commands can I use?` })}
-                      >
-                        <Terminal className="h-3 w-3 mr-1" />
-                        Commands
-                      </Button>
-                      {app.name.includes('flatpak') && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openChat({ title: 'Flatpak Permissions', type: 'app', prefillMessage: `What permissions do my Flatpak apps have? Are there any security concerns?` })}
-                        >
-                          <Shield className="h-3 w-3 mr-1" />
-                          Permissions
-                        </Button>
-                      )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openChat({ title: app.title, type: 'app', prefillMessage: `How much disk space are my ${app.name.includes('flatpak') ? 'Flatpak' : app.name.includes('snap') ? 'Snap' : 'AppImage'} apps using?` })}
-                      >
-                        <HardDrive className="h-3 w-3 mr-1" />
-                        Disk Usage
-                      </Button>
+      {/* Runtime Updates Section (Collapsible) */}
+      {runtimeUpdates.length > 0 && (
+        <Card className="bg-muted/30">
+          <CardContent className="p-0">
+            <div
+              className="flex items-center justify-between p-4 cursor-pointer hover:bg-accent/30"
+              onClick={() => setRuntimesExpanded(!runtimesExpanded)}
+            >
+              <div className="flex items-center gap-3">
+                <Cog className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="font-medium">Flatpak Runtimes & Extensions</p>
+                  <p className="text-sm text-muted-foreground">
+                    {runtimeUpdates.length} update{runtimeUpdates.length !== 1 ? 's' : ''} available
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openChat({ title: 'Runtime Updates', type: 'app', prefillMessage: 'Update all Flatpak runtimes with: flatpak update --runtime' })
+                  }}
+                >
+                  Update All
+                </Button>
+                {runtimesExpanded ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+              </div>
+            </div>
+            
+            {runtimesExpanded && (
+              <div className="px-4 pb-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {runtimeUpdates.map((rt, idx) => (
+                    <div key={idx} className="flex items-center gap-2 p-2 bg-muted/30 rounded text-sm">
+                      <Cog className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      <span className="truncate">{rt.name}</span>
                     </div>
-                  </div>
-
-                  {/* Flatpak Apps List */}
-                  {app.data.apps && app.data.apps.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="text-sm font-medium mb-2">Installed Apps ({app.data.apps.length})</h4>
-                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
-                        {app.data.apps.map((item, idx) => (
-                          <div key={idx} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors">
-                            {item.icon ? (
-                              <img 
-                                src={`/api/discoveries/icon?path=${encodeURIComponent(item.icon)}`}
-                                alt={item.name}
-                                className="w-10 h-10 rounded-lg flex-shrink-0 object-contain bg-white/5"
-                                onError={(e) => {
-                                  // Fallback to placeholder on error
-                                  e.currentTarget.style.display = 'none'
-                                  e.currentTarget.nextElementSibling?.classList.remove('hidden')
-                                }}
-                              />
-                            ) : null}
-                            <div className={cn(
-                              "w-10 h-10 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-lg flex items-center justify-center flex-shrink-0",
-                              item.icon && "hidden"
-                            )}>
-                              <Package className="h-5 w-5 text-blue-500" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-sm truncate">{item.name}</div>
-                              <div className="text-xs text-muted-foreground truncate">{item.app_id || item.version}</div>
-                            </div>
-                            <div className="text-right flex-shrink-0">
-                              <div className="text-xs text-muted-foreground">{item.version}</div>
-                              <div className="text-xs text-muted-foreground/70">{item.origin}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Snap Apps List */}
-                  {app.data.snaps && app.data.snaps.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="text-sm font-medium mb-2">Installed Snaps ({app.data.snaps.length})</h4>
-                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
-                        {app.data.snaps.map((snap, idx) => (
-                          <div key={idx} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors">
-                            {snap.icon ? (
-                              <img 
-                                src={`/api/discoveries/icon?path=${encodeURIComponent(snap.icon)}`}
-                                alt={snap.name}
-                                className="w-10 h-10 rounded-lg flex-shrink-0 object-contain bg-white/5"
-                                onError={(e) => {
-                                  e.currentTarget.style.display = 'none'
-                                  e.currentTarget.nextElementSibling?.classList.remove('hidden')
-                                }}
-                              />
-                            ) : null}
-                            <div className={cn(
-                              "w-10 h-10 bg-gradient-to-br from-orange-500/20 to-red-500/20 rounded-lg flex items-center justify-center flex-shrink-0",
-                              snap.icon && "hidden"
-                            )}>
-                              <Layers className="h-5 w-5 text-orange-500" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-sm truncate flex items-center gap-2">
-                                {snap.name}
-                                {snap.classic && (
-                                  <Badge variant="outline" className="text-[10px] px-1 py-0">classic</Badge>
-                                )}
-                              </div>
-                              <div className="text-xs text-muted-foreground truncate">{snap.publisher}</div>
-                            </div>
-                            <div className="text-right flex-shrink-0">
-                              <div className="text-xs text-muted-foreground">{snap.version}</div>
-                              <div className="text-xs text-muted-foreground/70">rev {snap.revision}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* AppImage List */}
-                  {app.data.appimages && app.data.appimages.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="text-sm font-medium mb-2">AppImage Files ({app.data.appimages.length})</h4>
-                      <div className="grid grid-cols-1 gap-2">
-                        {app.data.appimages.map((ai, idx) => (
-                          <div key={idx} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors">
-                            <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-teal-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                              <FileArchive className="h-5 w-5 text-green-500" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-sm truncate flex items-center gap-2">
-                                {ai.name}
-                                {!ai.executable && (
-                                  <Badge variant="destructive" className="text-[10px] px-1 py-0">Not Executable</Badge>
-                                )}
-                              </div>
-                              <div className="text-xs text-muted-foreground truncate">{ai.path}</div>
-                            </div>
-                            <div className="text-right flex-shrink-0">
-                              <div className="text-xs text-muted-foreground">{ai.size_mb} MB</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Updates List */}
-                  {app.data.updates && app.data.updates.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                        <ArrowUpCircle className="h-4 w-4 text-yellow-500" />
-                        Available Updates ({app.data.updates.length})
-                      </h4>
-                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
-                        {app.data.updates.map((update, idx) => (
-                          <div key={idx} className="flex items-center gap-3 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-                            <ArrowUpCircle className="h-5 w-5 text-yellow-500 flex-shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-sm">{update.name}</div>
-                              {update.version && (
-                                <div className="text-xs text-muted-foreground">New version: {update.version}</div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Remotes */}
-                  {app.data.remotes && app.data.remotes.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="text-sm font-medium mb-2">Configured Remotes</h4>
-                      <div className="space-y-1">
-                        {app.data.remotes.map((remote, idx) => (
-                          <div key={idx} className="flex items-center gap-2 text-sm">
-                            <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                            <span>{remote.name}</span>
-                            <span className="text-xs text-muted-foreground truncate">{remote.url}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  {app.actions && app.actions.length > 0 && (
-                    <div className="mt-4 flex gap-2">
-                      {app.actions.map((action) => (
-                        <Button
-                          key={action.id}
-                          variant={action.requires_approval ? 'destructive' : 'outline'}
-                          size="sm"
-                        >
-                          {action.label}
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              )}
-            </Card>
-          ))
-        )}
-      </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
