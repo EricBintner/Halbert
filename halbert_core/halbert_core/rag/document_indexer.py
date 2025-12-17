@@ -30,14 +30,19 @@ class IndexStats:
     collection: str = ""
 
 
-def chunk_text(text: str, max_chars: int = 1500, overlap: int = 200) -> List[str]:
+def chunk_text(text: str, max_chars: int = 1200, overlap: int = 150) -> List[str]:
     """
-    Split text into overlapping chunks for better retrieval.
+    Split text into overlapping chunks with semantic boundary awareness.
+    
+    Research-aligned chunking strategy (DataCamp/RAPTOR):
+    - Target ~300-400 tokens (1200 chars ≈ 300 tokens)
+    - 10-15% overlap for context continuity
+    - Respect semantic boundaries (headers, code blocks, lists)
     
     Args:
         text: Full document text
-        max_chars: Maximum characters per chunk
-        overlap: Overlap between chunks
+        max_chars: Maximum characters per chunk (~300 tokens)
+        overlap: Overlap between chunks (~10% of max_chars)
     
     Returns:
         List of text chunks
@@ -48,30 +53,67 @@ def chunk_text(text: str, max_chars: int = 1500, overlap: int = 200) -> List[str
     chunks = []
     start = 0
     
+    # Semantic boundary markers (priority order)
+    HEADER_MARKERS = ['## ', '### ', '#### ', '# ', '\n---', '\n===']
+    CODE_MARKERS = ['```', '~~~']
+    
     while start < len(text):
         end = start + max_chars
         
-        # Try to break at paragraph or sentence boundary
-        if end < len(text):
-            # Look for paragraph break
-            para_break = text.rfind('\n\n', start, end)
-            if para_break > start + max_chars // 2:
-                end = para_break + 2
-            else:
-                # Look for sentence break
-                for sep in ['. ', '.\n', '! ', '? ']:
-                    sent_break = text.rfind(sep, start, end)
-                    if sent_break > start + max_chars // 2:
-                        end = sent_break + len(sep)
-                        break
+        # Don't split past end of text
+        if end >= len(text):
+            chunk = text[start:].strip()
+            if chunk:
+                chunks.append(chunk)
+            break
         
-        chunk = text[start:end].strip()
+        # Try to find best break point (priority order)
+        best_break = None
+        min_pos = start + max_chars // 3  # Don't break too early
+        
+        # 1. Try header boundaries (strongest semantic break)
+        for marker in HEADER_MARKERS:
+            pos = text.rfind(marker, min_pos, end)
+            if pos > min_pos:
+                best_break = pos
+                break
+        
+        # 2. Try paragraph break
+        if best_break is None:
+            para_break = text.rfind('\n\n', min_pos, end)
+            if para_break > min_pos:
+                best_break = para_break + 2
+        
+        # 3. Try list item break
+        if best_break is None:
+            for list_marker in ['\n- ', '\n* ', '\n• ', '\n1. ', '\n2. ']:
+                pos = text.rfind(list_marker, min_pos, end)
+                if pos > min_pos:
+                    best_break = pos + 1  # Keep newline with next chunk
+                    break
+        
+        # 4. Try sentence break
+        if best_break is None:
+            for sep in ['. ', '.\n', '! ', '? ', ':\n']:
+                pos = text.rfind(sep, min_pos, end)
+                if pos > min_pos:
+                    best_break = pos + len(sep)
+                    break
+        
+        # 5. Fallback to word boundary
+        if best_break is None:
+            space_pos = text.rfind(' ', min_pos, end)
+            if space_pos > min_pos:
+                best_break = space_pos + 1
+            else:
+                best_break = end  # Hard cut as last resort
+        
+        chunk = text[start:best_break].strip()
         if chunk:
             chunks.append(chunk)
         
-        start = end - overlap
-        if start >= len(text):
-            break
+        # Move start with overlap, but not past the break point
+        start = max(best_break - overlap, start + 1)
     
     return chunks
 
@@ -185,19 +227,25 @@ def index_documents(
                 doc.get("title", "")
             )
             
-            # Chunk long documents
-            chunks = chunk_text(text, max_chars=1500)
+            # Extract freshness info
+            scraped_at = doc.get("scraped_at") or metadata.get("scraped_at", "")
+            
+            # Chunk long documents (using improved semantic chunking)
+            chunks = chunk_text(text, max_chars=1200)
             
             for i, chunk in enumerate(chunks):
                 # Use source_name + doc number + chunk for unique IDs (avoids duplicates from same titles)
                 doc_id = f"{source_name}:{stats.total_docs}:{i}"
                 
+                # Include freshness metadata for retrieval scoring
                 meta = {
                     "source": source_name,
                     "source_type": str(source_type),
                     "title": str(title)[:100],
                     "chunk": str(i),
                     "total_chunks": str(len(chunks)),
+                    "indexed_at": datetime.now().isoformat(),
+                    "scraped_at": str(scraped_at)[:25] if scraped_at else "",
                 }
                 
                 batch_ids.append(doc_id)
@@ -304,13 +352,66 @@ def index_priority_docs(max_per_source: int = 500) -> Dict[str, IndexStats]:
     return results
 
 
-def query_docs(query: str, k: int = 5) -> List[Dict[str, Any]]:
+def expand_query(query: str) -> List[str]:
     """
-    Query indexed documents.
+    Expand query with synonyms and related terms for better recall.
+    
+    Research-aligned (HyDE-lite, multi-query retrieval):
+    - Add common Linux command synonyms
+    - Include related concepts
+    """
+    expansions = [query]  # Original query first
+    query_lower = query.lower()
+    
+    # Common Linux synonyms and related terms
+    SYNONYMS = {
+        'folder': ['directory', 'dir'],
+        'directory': ['folder', 'dir'],
+        'delete': ['remove', 'rm'],
+        'remove': ['delete', 'rm'],
+        'copy': ['cp'],
+        'move': ['mv'],
+        'list': ['ls'],
+        'permission': ['chmod', 'access rights'],
+        'owner': ['chown', 'ownership'],
+        'process': ['pid', 'task'],
+        'service': ['systemd', 'daemon', 'unit'],
+        'package': ['apt', 'dnf', 'pacman'],
+        'network': ['ip', 'interface', 'connection'],
+        'disk': ['storage', 'drive', 'partition'],
+        'memory': ['ram', 'swap'],
+        'cpu': ['processor', 'core'],
+    }
+    
+    # Add synonyms if found
+    for term, syns in SYNONYMS.items():
+        if term in query_lower:
+            for syn in syns[:2]:  # Limit expansions
+                expanded = query_lower.replace(term, syn)
+                if expanded != query_lower:
+                    expansions.append(expanded)
+    
+    return expansions[:3]  # Max 3 query variants
+
+
+def query_docs(
+    query: str, 
+    k: int = 5, 
+    use_reranking: bool = True,
+    use_expansion: bool = True
+) -> List[Dict[str, Any]]:
+    """
+    Query indexed documents with optional reranking and query expansion.
+    
+    Research-aligned retrieval (Self-RAG, CRAG):
+    - Query expansion for better recall
+    - Cross-encoder reranking for better precision
     
     Args:
         query: Search query
         k: Number of results
+        use_reranking: Enable cross-encoder reranking (slower but better)
+        use_expansion: Enable query expansion
     
     Returns:
         List of relevant document chunks with metadata
@@ -318,8 +419,50 @@ def query_docs(query: str, k: int = 5) -> List[Dict[str, Any]]:
     from ..index.chroma_index import get_index
     
     index = get_index()
-    results = index.query(text=query, k=k, collection="linux_docs")
-    return results
+    
+    # Expand query if enabled
+    queries = expand_query(query) if use_expansion else [query]
+    
+    # Retrieve more candidates if reranking
+    retrieve_k = k * 3 if use_reranking else k
+    
+    # Collect results from all query variants
+    all_results = []
+    seen_ids = set()
+    
+    for q in queries:
+        results = index.query(text=q, k=retrieve_k, collection="linux_docs")
+        for r in results:
+            # Deduplicate by content hash
+            content_key = r.get('content', '')[:100]
+            if content_key not in seen_ids:
+                seen_ids.add(content_key)
+                all_results.append(r)
+    
+    # Rerank if enabled and we have results
+    if use_reranking and len(all_results) > k:
+        try:
+            from .embeddings import EmbeddingManager
+            em = EmbeddingManager()
+            
+            # Extract content for reranking
+            contents = [r.get('content', '') for r in all_results]
+            
+            # Rerank
+            reranked = em.rerank(query, contents, top_k=k)
+            
+            # Rebuild results in new order with rerank scores
+            final_results = []
+            for idx, score in reranked:
+                result = all_results[idx].copy()
+                result['rerank_score'] = float(score)
+                final_results.append(result)
+            
+            return final_results
+        except Exception as e:
+            logger.warning(f"Reranking failed, returning unranked: {e}")
+    
+    return all_results[:k]
 
 
 def get_index_stats() -> Dict[str, Any]:

@@ -2,6 +2,12 @@
 End-to-end RAG pipeline for Halbert.
 
 Orchestrates retrieval, context building, and integration with LLM.
+
+DEPRECATED: This pipeline uses in-memory indexing which is separate from
+the main ChromaDB-based system. Use document_indexer.py + chroma_index.py
+for production RAG. This file is kept for reference/testing only.
+
+See: documentation/RAG_AUDIT_REPORT.md for architecture details.
 """
 
 import logging
