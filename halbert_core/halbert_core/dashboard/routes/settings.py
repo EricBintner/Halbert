@@ -2140,6 +2140,314 @@ async def get_knowledge_stats():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Sprint 2: Knowledge Graph API
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/knowledge/graph/stats")
+async def get_graph_stats():
+    """Get knowledge graph statistics."""
+    try:
+        from ...knowledge import get_knowledge_graph
+        graph = get_knowledge_graph()
+        return graph.get_stats()
+    except Exception as e:
+        logger.error(f"Failed to get graph stats: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/knowledge/graph/relations")
+async def get_all_relations():
+    """Get all relations in the knowledge graph."""
+    try:
+        from ...knowledge import get_knowledge_graph
+        graph = get_knowledge_graph()
+        return {
+            "relations": [r.to_dict() for r in graph._relations.values()],
+            "count": len(graph._relations),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get relations: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/knowledge/graph/node/{node_id:path}")
+async def get_node_relations(node_id: str):
+    """Get all relations for a specific node."""
+    try:
+        from ...knowledge import get_knowledge_graph
+        graph = get_knowledge_graph()
+        
+        outgoing = [r.to_dict() for r in graph.get_outgoing(node_id)]
+        incoming = [r.to_dict() for r in graph.get_incoming(node_id)]
+        
+        return {
+            "node": node_id,
+            "outgoing": outgoing,
+            "incoming": incoming,
+            "total": len(outgoing) + len(incoming),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get node relations: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/knowledge/graph/impact/{node_id:path}")
+async def get_impact_analysis(node_id: str):
+    """
+    Analyze what would be affected if a node fails.
+    
+    Sprint 2: Graph-based impact analysis.
+    """
+    try:
+        from ...knowledge import get_knowledge_graph
+        graph = get_knowledge_graph()
+        return graph.impact_analysis(node_id)
+    except Exception as e:
+        logger.error(f"Failed to perform impact analysis: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/knowledge/graph/dependents/{node_id:path}")
+async def get_dependents(node_id: str):
+    """Get what depends on this node."""
+    try:
+        from ...knowledge import get_knowledge_graph
+        graph = get_knowledge_graph()
+        return {
+            "node": node_id,
+            "dependents": graph.get_dependents(node_id),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get dependents: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/knowledge/graph/dependencies/{node_id:path}")
+async def get_dependencies(node_id: str):
+    """Get what this node depends on."""
+    try:
+        from ...knowledge import get_knowledge_graph
+        graph = get_knowledge_graph()
+        return {
+            "node": node_id,
+            "dependencies": graph.get_dependencies(node_id),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get dependencies: {e}")
+        return {"error": str(e)}
+
+
+@router.post("/knowledge/graph/relation")
+async def add_relation(
+    source: str,
+    target: str,
+    relation_type: str,
+    strength: float = 1.0,
+    bidirectional: bool = False
+):
+    """Add a new relation to the knowledge graph."""
+    try:
+        from ...knowledge import get_knowledge_graph, RelationType
+        graph = get_knowledge_graph()
+        
+        # Validate relation type
+        try:
+            rel_type = RelationType(relation_type)
+        except ValueError:
+            valid_types = [rt.value for rt in RelationType]
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid relation_type. Must be one of: {valid_types}"
+            )
+        
+        rel_id = graph.add_relation(
+            source=source,
+            target=target,
+            relation_type=rel_type,
+            strength=strength,
+            bidirectional=bidirectional,
+        )
+        
+        return {"success": True, "relation_id": rel_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add relation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/knowledge/graph/relation/{rel_id:path}")
+async def delete_relation(rel_id: str):
+    """Delete a relation from the knowledge graph."""
+    try:
+        from ...knowledge import get_knowledge_graph
+        graph = get_knowledge_graph()
+        
+        if graph.remove_relation(rel_id):
+            return {"success": True, "deleted": rel_id}
+        else:
+            raise HTTPException(status_code=404, detail=f"Relation not found: {rel_id}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete relation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint 3: Self-Reflection API
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/knowledge/reflect")
+async def reflect_on_query(query: str, max_contexts: int = 10):
+    """
+    Reflect on a query before answering.
+    
+    Sprint 3: Self-RAG inspired reflection.
+    Analyzes query, retrieves relevant knowledge, scores relevance,
+    and provides confidence assessment.
+    """
+    try:
+        from ...knowledge import reflect_before_answer
+        result = reflect_before_answer(query, max_contexts=max_contexts)
+        return result.to_dict()
+    except Exception as e:
+        logger.error(f"Failed to reflect on query: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/knowledge/reflect/context")
+async def get_reflection_context(query: str, max_entries: int = 5):
+    """
+    Get formatted context string for LLM consumption.
+    
+    Returns a human-readable summary of relevant self-knowledge.
+    """
+    try:
+        from ...knowledge import reflect_before_answer
+        result = reflect_before_answer(query)
+        return {
+            "query": query,
+            "confidence": result.confidence.value,
+            "context": result.get_context_string(max_entries),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get reflection context: {e}")
+        return {"error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint 4: Hierarchical Knowledge API
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/knowledge/hierarchical/stats")
+async def get_hierarchical_stats():
+    """Get hierarchical knowledge statistics."""
+    try:
+        from ...knowledge import get_hierarchical_knowledge
+        hk = get_hierarchical_knowledge()
+        return hk.get_stats()
+    except Exception as e:
+        logger.error(f"Failed to get hierarchical stats: {e}")
+        return {"error": str(e)}
+
+
+@router.post("/knowledge/hierarchical/build")
+async def build_hierarchy():
+    """
+    Build hierarchical documents from self-knowledge.
+    
+    Sprint 4: RAPTOR-style document organization.
+    Creates LEAF, CLUSTER, and SUMMARY tier documents.
+    """
+    try:
+        from ...knowledge import get_hierarchical_knowledge
+        hk = get_hierarchical_knowledge()
+        counts = hk.build_from_knowledge()
+        return {"success": True, "counts": counts}
+    except Exception as e:
+        logger.error(f"Failed to build hierarchy: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/knowledge/hierarchical/retrieve")
+async def retrieve_hierarchical(
+    query: str, 
+    tier: Optional[str] = None,
+    max_results: int = 5
+):
+    """
+    Retrieve documents at appropriate abstraction level.
+    
+    Args:
+        query: Search query
+        tier: Preferred tier (leaf, cluster, summary) or auto
+        max_results: Maximum documents to return
+    """
+    try:
+        from ...knowledge import get_hierarchical_knowledge, DocumentTier
+        hk = get_hierarchical_knowledge()
+        
+        preferred_tier = None
+        if tier:
+            try:
+                preferred_tier = DocumentTier(tier)
+            except ValueError:
+                pass
+        
+        docs = hk.retrieve(query, preferred_tier=preferred_tier, max_results=max_results)
+        return {
+            "query": query,
+            "tier": tier or "auto",
+            "results": [d.to_dict() for d in docs],
+            "count": len(docs),
+        }
+    except Exception as e:
+        logger.error(f"Failed to retrieve hierarchical: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/knowledge/hierarchical/tier/{tier}")
+async def get_tier_documents(tier: str):
+    """Get all documents at a specific tier."""
+    try:
+        from ...knowledge import get_hierarchical_knowledge, DocumentTier
+        hk = get_hierarchical_knowledge()
+        
+        try:
+            doc_tier = DocumentTier(tier)
+        except ValueError:
+            return {"error": f"Invalid tier: {tier}. Must be leaf, cluster, or summary"}
+        
+        docs = hk.get_by_tier(doc_tier)
+        return {
+            "tier": tier,
+            "documents": [d.to_dict() for d in docs],
+            "count": len(docs),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get tier documents: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/knowledge/hierarchical/category/{category}")
+async def get_category_documents(category: str):
+    """Get all documents in a category."""
+    try:
+        from ...knowledge import get_hierarchical_knowledge
+        hk = get_hierarchical_knowledge()
+        docs = hk.get_by_category(category)
+        return {
+            "category": category,
+            "documents": [d.to_dict() for d in docs],
+            "count": len(docs),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get category documents: {e}")
+        return {"error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Phase 23: Approval & Guardrails API
 # ─────────────────────────────────────────────────────────────────────────────
 

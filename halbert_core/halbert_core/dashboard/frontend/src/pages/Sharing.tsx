@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { ConfigFileButton, PageHeader } from '@/components/domain'
+import { useScanPage, useCopyToClipboard } from '@/hooks'
 import {
   Sheet,
   SheetContent,
@@ -198,9 +199,7 @@ function groupWireGuardPeers(items: SharingItem[]): WireGuardGroup[] {
 export function Sharing() {
   const [sharing, setSharing] = useState<SharingItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [scanning, setScanning] = useState(false)
   const [selectedItem, setSelectedItem] = useState<SharingItem | null>(null)
-  const [copied, setCopied] = useState<string | null>(null)
   // ConfigEditor state removed - now handled globally by Layout.tsx
 
   useEffect(() => {
@@ -218,23 +217,12 @@ export function Sharing() {
     }
   }
 
-  const handleScan = async () => {
-    setScanning(true)
-    try {
-      await api.scanDiscoveries('sharing')
-      await loadSharing()
-    } catch (error) {
-      console.error('Scan failed:', error)
-    } finally {
-      setScanning(false)
-    }
-  }
+  const { scanning, handleScan } = useScanPage({
+    scanType: 'sharing',
+    onScanComplete: loadSharing,
+  })
 
-  const copyToClipboard = (text: string, id: string) => {
-    navigator.clipboard.writeText(text)
-    setCopied(id)
-    setTimeout(() => setCopied(null), 2000)
-  }
+  const { copiedId: copied, copy: copyToClipboard } = useCopyToClipboard()
 
   const groups = groupByShareType(sharing)
   

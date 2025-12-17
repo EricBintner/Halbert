@@ -615,6 +615,102 @@ import { Archive } from 'lucide-react'
       },
     ],
   },
+  {
+    id: 'hooks',
+    name: 'Hooks',
+    icon: <Sparkles className="h-4 w-4" />,
+    components: [
+      {
+        id: 'use-scan-page',
+        name: 'useScanPage',
+        description: 'Hook for managing page scan state and triggering discovery scans',
+        status: 'stable',
+        preview: (
+          <div className="w-full max-w-md space-y-4 p-4 border rounded-lg bg-background">
+            <div className="text-sm font-mono bg-muted p-3 rounded">
+              <div className="text-muted-foreground">// Usage in a page component</div>
+              <div className="mt-2">
+                <span className="text-blue-500">const</span> {'{'} scanning, handleScan {'}'} = <span className="text-purple-500">useScanPage</span>({'{'}
+              </div>
+              <div className="pl-4">scanType: <span className="text-green-500">'backup'</span>,</div>
+              <div className="pl-4">onScanComplete: loadBackups,</div>
+              <div>{'}'})</div>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Returns <code className="bg-muted px-1 rounded">scanning</code> (boolean) and <code className="bg-muted px-1 rounded">handleScan</code> (async function)
+            </div>
+          </div>
+        ),
+        props: [
+          { name: 'scanType', type: "'backup' | 'service' | 'storage' | 'network' | 'security' | 'sharing' | 'all'", description: 'Scanner to run' },
+          { name: 'onScanComplete', type: '() => Promise<void>', description: 'Callback after scan finishes' },
+          { name: 'onError', type: '(error: unknown) => void', description: 'Optional error handler' },
+        ],
+        code: `import { useScanPage } from '@/hooks'
+import { PageHeader } from '@/components/domain'
+
+function BackupsPage() {
+  const [backups, setBackups] = useState([])
+  
+  const loadBackups = async () => {
+    const data = await api.getDiscoveries('backup')
+    setBackups(data.discoveries || [])
+  }
+
+  const { scanning, handleScan } = useScanPage({
+    scanType: 'backup',
+    onScanComplete: loadBackups,
+  })
+
+  return (
+    <PageHeader
+      title="Backups"
+      scanning={scanning}
+      onScan={handleScan}
+    />
+  )
+}`,
+      },
+      {
+        id: 'use-copy-to-clipboard',
+        name: 'useCopyToClipboard',
+        description: 'Hook for clipboard operations with visual feedback',
+        status: 'stable',
+        preview: (
+          <div className="w-full max-w-md space-y-4 p-4 border rounded-lg bg-background">
+            <div className="text-sm font-mono bg-muted p-3 rounded">
+              <div className="text-muted-foreground">// Copy with feedback</div>
+              <div className="mt-2">
+                <span className="text-blue-500">const</span> {'{'} copy, isCopied {'}'} = <span className="text-purple-500">useCopyToClipboard</span>()
+              </div>
+              <div className="mt-2 text-muted-foreground">// In JSX:</div>
+              <div>{'<button onClick={() => copy(text, id)>'}</div>
+              <div className="pl-4">{'{isCopied(id) ? <Check /> : <Copy />}'}</div>
+              <div>{'</button>'}</div>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Auto-clears after 2 seconds (configurable via <code className="bg-muted px-1 rounded">timeout</code> option)
+            </div>
+          </div>
+        ),
+        props: [
+          { name: 'timeout', type: 'number', default: '2000', description: 'Ms before clearing copied state' },
+        ],
+        code: `import { useCopyToClipboard } from '@/hooks'
+import { Copy, Check } from 'lucide-react'
+
+function CopyButton({ text, id }: { text: string; id: string }) {
+  const { copy, isCopied } = useCopyToClipboard()
+
+  return (
+    <button onClick={() => copy(text, id)}>
+      {isCopied(id) ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+    </button>
+  )
+}`,
+      },
+    ],
+  },
 ]
 
 export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps) {

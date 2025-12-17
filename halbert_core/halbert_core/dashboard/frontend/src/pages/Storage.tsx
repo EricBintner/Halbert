@@ -44,6 +44,7 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { SystemItemActions, PageHeader } from '@/components/domain'
+import { useScanPage } from '@/hooks'
 import { WhyBrain } from '@/components/ui/why-brain'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1541,7 +1542,6 @@ export function Storage() {
   
   const [storage, setStorage] = useState<StorageItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [scanning, setScanning] = useState(false)
   const [showUnmounted, setShowUnmounted] = useState(false)
   const [showUUIDs, setShowUUIDs] = useState(false)
   const [customNames, setCustomNames] = useState<Record<string, string>>(() => loadCustomNames())
@@ -1593,17 +1593,10 @@ export function Storage() {
     }
   }
 
-  const handleScan = async () => {
-    setScanning(true)
-    try {
-      await api.scanDiscoveries('storage')
-      await loadStorage()
-    } catch (error) {
-      console.error('Scan failed:', error)
-    } finally {
-      setScanning(false)
-    }
-  }
+  const { scanning, handleScan } = useScanPage({
+    scanType: 'storage',
+    onScanComplete: loadStorage,
+  })
 
   // Process storage data
   const { diskGroups, disks, unmountedVolumes, stats } = useMemo(() => {

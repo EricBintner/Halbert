@@ -21,6 +21,7 @@ import {
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { SystemItemActions, StatusBadge, PageHeader } from '@/components/domain'
+import { useScanPage } from '@/hooks'
 
 interface SecurityItem {
   id: string
@@ -35,7 +36,6 @@ interface SecurityItem {
 export function Security() {
   const [security, setSecurity] = useState<SecurityItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [scanning, setScanning] = useState(false)
 
   useEffect(() => {
     loadSecurity()
@@ -52,17 +52,10 @@ export function Security() {
     }
   }
 
-  const handleScan = async () => {
-    setScanning(true)
-    try {
-      await api.scanDiscoveries('security')
-      await loadSecurity()
-    } catch (error) {
-      console.error('Scan failed:', error)
-    } finally {
-      setScanning(false)
-    }
-  }
+  const { scanning, handleScan } = useScanPage({
+    scanType: 'security',
+    onScanComplete: loadSecurity,
+  })
 
   const getIcon = (item: SecurityItem) => {
     if (item.name.includes('ssh')) return <Key className="h-5 w-5 text-blue-500" />

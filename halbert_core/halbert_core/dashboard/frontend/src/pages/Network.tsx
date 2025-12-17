@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { ConfigFileButton, MarkdownRenderer, PageHeader } from '@/components/domain'
+import { useScanPage, useCopyToClipboard } from '@/hooks'
 import {
   Sheet,
   SheetContent,
@@ -130,7 +131,6 @@ export function Network() {
   
   const [network, setNetwork] = useState<NetworkItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [scanning, setScanning] = useState(false)
   const [selectedInterface, setSelectedInterface] = useState<NetworkItem | null>(null)
   const [explanation, setExplanation] = useState<string | null>(null)
   const [loadingExplanation, setLoadingExplanation] = useState(false)
@@ -142,13 +142,7 @@ export function Network() {
   const [editDescription, setEditDescription] = useState('')
   const [identifying, setIdentifying] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [copied, setCopied] = useState<string | null>(null)
-
-  const copyToClipboard = (text: string, id: string) => {
-    navigator.clipboard.writeText(text)
-    setCopied(id)
-    setTimeout(() => setCopied(null), 2000)
-  }
+  const { copiedId: copied, copy: copyToClipboard } = useCopyToClipboard()
 
   // Cache helpers for persistent explanations
   const CACHE_KEY = 'halbert_network_explanations'
@@ -201,17 +195,10 @@ export function Network() {
     }
   }
 
-  const handleScan = async () => {
-    setScanning(true)
-    try {
-      await api.scanDiscoveries('network')
-      await loadNetwork()
-    } catch (error) {
-      console.error('Scan failed:', error)
-    } finally {
-      setScanning(false)
-    }
-  }
+  const { scanning, handleScan } = useScanPage({
+    scanType: 'network',
+    onScanComplete: loadNetwork,
+  })
 
   // Separate by type
   const interfaces = network.filter(n => n.name.startsWith('iface-'))

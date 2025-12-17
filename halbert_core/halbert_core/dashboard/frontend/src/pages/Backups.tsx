@@ -34,6 +34,7 @@ import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
 import { SystemItemActions, PageHeader } from '@/components/domain'
+import { useScanPage } from '@/hooks'
 
 interface BackupHistory {
   timestamp: string
@@ -86,7 +87,6 @@ interface BackupStatus {
 export function Backups() {
   const [backups, setBackups] = useState<Backup[]>([])
   const [loading, setLoading] = useState(true)
-  const [scanning, setScanning] = useState(false)
   const [expandedBackups, setExpandedBackups] = useState<Set<string>>(new Set())
   const [backupHistories, setBackupHistories] = useState<Record<string, BackupHistory[]>>({})
   const [loadingHistories, setLoadingHistories] = useState<Set<string>>(new Set())
@@ -137,17 +137,10 @@ export function Backups() {
     return backup.status
   }
 
-  const handleScan = async () => {
-    setScanning(true)
-    try {
-      await api.scanDiscoveries('backup')
-      await loadBackups()
-    } catch (error) {
-      console.error('Scan failed:', error)
-    } finally {
-      setScanning(false)
-    }
-  }
+  const { scanning, handleScan } = useScanPage({
+    scanType: 'backup',
+    onScanComplete: loadBackups,
+  })
 
   const handleAction = async (backup: Backup, action: string) => {
     console.log(`Action ${action} on ${backup.name}`)

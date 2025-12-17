@@ -49,6 +49,7 @@ import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
 import { SystemItemActions, MarkdownRenderer, PageHeader } from '@/components/domain'
+import { useScanPage } from '@/hooks'
 import { WhyBrain } from '@/components/ui/why-brain'
 
 // CodeBlock and MarkdownRenderer imported from @/components/domain
@@ -109,7 +110,6 @@ export function Services() {
   
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
-  const [scanning, setScanning] = useState(false)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all')
   const [search, setSearch] = useState('')
@@ -203,17 +203,10 @@ export function Services() {
     }
   }
 
-  const handleScan = async () => {
-    setScanning(true)
-    try {
-      await api.scanDiscoveries('service')
-      await loadServices()
-    } catch (error) {
-      console.error('Scan failed:', error)
-    } finally {
-      setScanning(false)
-    }
-  }
+  const { scanning, handleScan } = useScanPage({
+    scanType: 'service',
+    onScanComplete: loadServices,
+  })
 
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [actionResult, setActionResult] = useState<{ success: boolean; message: string } | null>(null)
