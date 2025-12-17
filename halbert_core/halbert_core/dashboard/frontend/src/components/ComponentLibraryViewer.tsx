@@ -242,7 +242,7 @@ text-red-500     /* Error */`,
                   <WhyBrain itemId="sizing-demo" itemName="Demo" itemType="service" size="sm" />
                   <SystemItemActions item={{ name: 'Demo', type: 'service', id: 'demo' }} size="sm" />
                 </div>
-                <code className="text-xs bg-muted px-2 py-1 rounded">
+                <code className="text-xs bg-muted text-foreground px-2 py-1 rounded border">
                   button: {DESIGN_SYSTEM.iconButton.sm.button} | icon: {DESIGN_SYSTEM.iconButton.sm.icon}
                 </code>
               </div>
@@ -254,7 +254,7 @@ text-red-500     /* Error */`,
                   <WhyBrain itemId="sizing-demo-2" itemName="Demo" itemType="service" size="md" />
                   <SystemItemActions item={{ name: 'Demo', type: 'service', id: 'demo' }} />
                 </div>
-                <code className="text-xs bg-muted px-2 py-1 rounded">
+                <code className="text-xs bg-muted text-foreground px-2 py-1 rounded border">
                   button: {DESIGN_SYSTEM.iconButton.default.button} | icon: {DESIGN_SYSTEM.iconButton.default.icon}
                 </code>
               </div>
@@ -262,7 +262,7 @@ text-red-500     /* Error */`,
             <div>
               <h4 className="text-sm font-medium mb-3">@ Symbol (larger for optical balance)</h4>
               <div className="flex items-center gap-4 p-3 bg-muted/30 rounded-lg">
-                <code className="text-xs bg-muted px-2 py-1 rounded">
+                <code className="text-xs bg-muted text-foreground px-2 py-1 rounded border">
                   sm: {DESIGN_SYSTEM.atSymbol.sm} | default: {DESIGN_SYSTEM.atSymbol.default}
                 </code>
               </div>
@@ -294,31 +294,31 @@ const DESIGN_SYSTEM = {
               <div className={cn("w-8 h-8 rounded flex items-center justify-center", DESIGN_SYSTEM.hoverColors.mention.replace('hover:', ''))}>
                 <span className="text-base font-bold">@</span>
               </div>
-              <span className="text-sm">Mention: <code className="text-xs bg-muted px-1 rounded">blue-500</code></span>
+              <span className="text-sm">Mention: <code className="text-xs bg-muted text-foreground px-1 rounded border">blue-500</code></span>
             </div>
             <div className="flex items-center gap-3">
               <div className={cn("w-8 h-8 rounded flex items-center justify-center text-primary bg-primary/10")}>
                 <span className="text-sm">★</span>
               </div>
-              <span className="text-sm">Chat: <code className="text-xs bg-muted px-1 rounded">primary</code></span>
+              <span className="text-sm">Chat: <code className="text-xs bg-muted text-foreground px-1 rounded border">primary</code></span>
             </div>
             <div className="flex items-center gap-3">
               <div className={cn("w-8 h-8 rounded flex items-center justify-center text-purple-500 bg-purple-500/10")}>
                 <span className="text-sm">✨</span>
               </div>
-              <span className="text-sm">Research: <code className="text-xs bg-muted px-1 rounded">purple-500</code></span>
+              <span className="text-sm">Research: <code className="text-xs bg-muted text-foreground px-1 rounded border">purple-500</code></span>
             </div>
             <div className="flex items-center gap-3">
               <div className={cn("w-8 h-8 rounded flex items-center justify-center text-pink-500")}>
                 <span className="text-sm">🧠</span>
               </div>
-              <span className="text-sm">Why (defined): <code className="text-xs bg-muted px-1 rounded">pink-500</code></span>
+              <span className="text-sm">Why (defined): <code className="text-xs bg-muted text-foreground px-1 rounded border">pink-500</code></span>
             </div>
             <div className="flex items-center gap-3">
               <div className={cn("w-8 h-8 rounded flex items-center justify-center text-muted-foreground/60")}>
                 <span className="text-sm">🧠</span>
               </div>
-              <span className="text-sm">Inactive: <code className="text-xs bg-muted px-1 rounded">muted-foreground/60</code></span>
+              <span className="text-sm">Inactive: <code className="text-xs bg-muted text-foreground px-1 rounded border">muted-foreground/60</code></span>
             </div>
           </div>
         ),
@@ -1014,13 +1014,13 @@ export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps)
                   </CardHeader>
                   <CardContent className={cn(
                     "rounded-b-lg p-6 transition-colors",
-                    previewTheme === 'light' && "bg-white text-zinc-900",
-                    previewTheme === 'dark' && "bg-zinc-900 text-zinc-100",
+                    previewTheme === 'light' && "bg-white",
+                    previewTheme === 'dark' && "bg-zinc-950",
                     previewTheme === 'system' && "bg-muted/30"
                   )}>
                     <div className={cn(
-                      previewTheme === 'light' && "[&_*]:text-zinc-900 [&_.text-muted-foreground]:text-zinc-500",
-                      previewTheme === 'dark' && "[&_*]:text-zinc-100 [&_.text-muted-foreground]:text-zinc-400"
+                      previewTheme === 'light' && "light [&_*]:text-zinc-900 [&_.text-muted-foreground]:text-zinc-500 [&_.bg-card]:bg-white [&_.text-card-foreground]:text-zinc-900 [&_.bg-muted]:bg-zinc-100 [&_.border]:border-zinc-200",
+                      previewTheme === 'dark' && "dark [&_*]:text-zinc-100 [&_.text-muted-foreground]:text-zinc-400 [&_.bg-card]:bg-zinc-900 [&_.text-card-foreground]:text-zinc-100 [&_.bg-muted]:bg-zinc-800 [&_.border]:border-zinc-700"
                     )}>
                       {selectedComponent.preview}
                     </div>

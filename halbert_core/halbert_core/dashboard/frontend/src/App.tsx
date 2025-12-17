@@ -12,6 +12,7 @@ import { Network } from './pages/Network'
 import { Sharing } from './pages/Sharing'
 import { Security } from './pages/Security'
 import { Backups } from './pages/Backups'
+import { Apps } from './pages/Apps'
 import { Approvals } from './pages/Approvals'
 import { Settings } from './pages/Settings'
 import { Onboarding } from './components/Onboarding'
@@ -91,6 +92,7 @@ function App() {
                 <Route path="/sharing" element={<Sharing />} />
                 <Route path="/security" element={<Security />} />
                 <Route path="/backups" element={<Backups />} />
+                <Route path="/apps" element={<Apps />} />
                 <Route path="/approvals" element={<Approvals />} />
                 <Route path="/settings" element={<Settings />} />
               </Routes>

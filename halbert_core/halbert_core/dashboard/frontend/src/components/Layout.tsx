@@ -16,6 +16,7 @@ import {
   Container,
   Code2,
   Camera,
+  Package,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SidePanel } from './SidePanel'
@@ -30,6 +31,7 @@ const navigation = [
   { name: 'Services', href: '/services', icon: Server },
   { name: 'Storage', href: '/storage', icon: HardDrive },
   { name: 'Backups', href: '/backups', icon: Archive },
+  { name: 'Apps', href: '/apps', icon: Package },
   { name: 'Security', href: '/security', icon: Shield },
   
   // Networking
