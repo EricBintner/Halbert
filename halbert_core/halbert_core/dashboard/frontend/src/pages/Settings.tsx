@@ -171,6 +171,12 @@ export function Settings() {
   const [loadingDocs, setLoadingDocs] = useState(false)
   const [indexing, setIndexing] = useState(false)
   const [indexResult, setIndexResult] = useState<{total: number, sources: string[]} | null>(null)
+  const [indexProgress, setIndexProgress] = useState<{
+    percent: number, 
+    currentSource: string | null, 
+    completed: number, 
+    total: number
+  }>({ percent: 0, currentSource: null, completed: 0, total: 0 })
   
   // Self-Knowledge state
   interface SelfKnowledgeEntry {
@@ -751,24 +757,35 @@ export function Settings() {
         const data = await res.json()
         const status = data.indexing
         
-        if (status && !status.is_running) {
-          // Indexing completed
-          clearInterval(interval)
-          setIndexing(false)
+        if (status) {
+          // Update progress bar
+          setIndexProgress({
+            percent: status.progress_percent || 0,
+            currentSource: status.current_source,
+            completed: status.sources_completed?.length || 0,
+            total: status.sources_total || 0
+          })
           
-          if (status.error) {
-            setToast({ open: true, message: `Indexing failed: ${status.error}`, variant: 'error' })
-          } else {
-            setIndexResult({ total: status.total_indexed || 0, sources: status.sources_completed || [] })
-            setToast({ open: true, message: `Indexed ${status.total_indexed || 0} documents`, variant: 'success' })
-            loadSettings()
-            if (showDocList) loadRagDocuments()
+          if (!status.is_running) {
+            // Indexing completed
+            clearInterval(interval)
+            setIndexing(false)
+            setIndexProgress({ percent: 100, currentSource: null, completed: 0, total: 0 })
+            
+            if (status.error) {
+              setToast({ open: true, message: `Indexing failed: ${status.error}`, variant: 'error' })
+            } else {
+              setIndexResult({ total: status.total_indexed || 0, sources: status.sources_completed || [] })
+              setToast({ open: true, message: `Indexed ${status.total_indexed || 0} documents`, variant: 'success' })
+              loadSettings()
+              if (showDocList) loadRagDocuments()
+            }
           }
         }
       } catch (err) {
         console.error('Failed to poll indexing status:', err)
       }
-    }, 3000) // Poll every 3 seconds
+    }, 2000) // Poll every 2 seconds for smoother progress
     
     // Store interval ID for cleanup
     return () => clearInterval(interval)
@@ -1782,9 +1799,24 @@ export function Settings() {
                     </div>
                   </div>
                   {indexing && (
-                    <div className="mt-3 p-2 bg-blue-500/10 rounded text-sm text-blue-600 dark:text-blue-400">
-                      <RefreshCw className="h-3 w-3 inline mr-2 animate-spin" />
-                      Indexing documents... This may take a few minutes.
+                    <div className="mt-3 p-3 bg-blue-500/10 rounded text-sm text-blue-600 dark:text-blue-400">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center">
+                          <RefreshCw className="h-3 w-3 mr-2 animate-spin" />
+                          <span>Indexing documents...</span>
+                        </div>
+                        <span className="text-xs">You can navigate away safely</span>
+                      </div>
+                      <div className="w-full bg-blue-200 dark:bg-blue-900 rounded-full h-2.5 mb-1">
+                        <div 
+                          className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                          style={{ width: `${indexProgress.percent}%` }}
+                        ></div>
+                      </div>
+                      <div className="flex justify-between text-xs text-blue-500 dark:text-blue-400">
+                        <span>{indexProgress.currentSource ? `Processing: ${indexProgress.currentSource}` : 'Starting...'}</span>
+                        <span>{indexProgress.percent}% ({indexProgress.completed}/{indexProgress.total} sources)</span>
+                      </div>
                     </div>
                   )}
                 </div>

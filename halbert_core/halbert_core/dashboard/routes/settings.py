@@ -1808,22 +1808,26 @@ _indexing_state = {
     "total_indexed": 0,
     "current_source": None,
     "sources_completed": [],
+    "sources_total": 0,
+    "progress_percent": 0,
     "error": None
 }
 
 def _run_background_index(max_docs: int, source: str = None):
-    """Run indexing in background thread."""
+    """Run indexing in background thread with progress tracking."""
     global _indexing_state
     import threading
     
     def do_index_work():
         global _indexing_state
         try:
-            from ...rag.document_indexer import index_documents as do_index, get_default_data_dir, index_priority_docs
+            from ...rag.document_indexer import index_documents as do_index, get_default_data_dir
             
             data_dir = get_default_data_dir()
             
             if source:
+                # Single source
+                _indexing_state["sources_total"] = 1
                 _indexing_state["current_source"] = source
                 stats = do_index(
                     data_dir=data_dir,
@@ -1833,10 +1837,45 @@ def _run_background_index(max_docs: int, source: str = None):
                 )
                 _indexing_state["total_indexed"] = stats.indexed_docs
                 _indexing_state["sources_completed"] = [source]
+                _indexing_state["progress_percent"] = 100
             else:
-                results = index_priority_docs(max_per_source=max_docs)
-                _indexing_state["total_indexed"] = sum(s.indexed_docs for s in results.values())
-                _indexing_state["sources_completed"] = list(results.keys())
+                # Index priority sources one by one with progress updates
+                priority_sources = [
+                    "man-pages", "arch-wiki", "arch-wiki-ext", "3k-push",
+                    "automation-docs", "linux-manual", "systemd-docs", "shell-docs",
+                    "security-docs", "networking-docs", "git-docs", "scheduling-docs",
+                    "logging-docs", "performance-docs", "flatpak-docs", "snap-docs",
+                    "appimage-docs", "network-docs", "docker-docs", "backup-docs",
+                ]
+                
+                # Filter to existing sources
+                existing_sources = []
+                for src in priority_sources:
+                    src_path = data_dir / src
+                    if src_path.exists():
+                        existing_sources.append(src)
+                
+                _indexing_state["sources_total"] = len(existing_sources)
+                total_docs = 0
+                
+                for i, src in enumerate(existing_sources):
+                    _indexing_state["current_source"] = src
+                    _indexing_state["progress_percent"] = int((i / len(existing_sources)) * 100)
+                    
+                    try:
+                        stats = do_index(
+                            data_dir=data_dir,
+                            collection_name="linux_docs",
+                            max_docs=max_docs,
+                            sources=[src]
+                        )
+                        total_docs += stats.indexed_docs
+                        _indexing_state["sources_completed"].append(src)
+                        _indexing_state["total_indexed"] = total_docs
+                    except Exception as e:
+                        logger.warning(f"Failed to index {src}: {e}")
+                
+                _indexing_state["progress_percent"] = 100
             
             _indexing_state["completed_at"] = datetime.now(timezone.utc).isoformat()
             _indexing_state["error"] = None
@@ -1856,6 +1895,8 @@ def _run_background_index(max_docs: int, source: str = None):
     _indexing_state["completed_at"] = None
     _indexing_state["total_indexed"] = 0
     _indexing_state["sources_completed"] = []
+    _indexing_state["sources_total"] = 0
+    _indexing_state["progress_percent"] = 0
     _indexing_state["error"] = None
     
     thread = threading.Thread(target=do_index_work, daemon=True)
@@ -1868,7 +1909,7 @@ async def get_docs_stats():
     try:
         from ...rag.document_indexer import get_index_stats
         stats = get_index_stats()
-        # Include indexing status
+        # Include indexing status with progress
         stats["indexing"] = {
             "is_running": _indexing_state["is_running"],
             "started_at": _indexing_state["started_at"],
@@ -1876,6 +1917,8 @@ async def get_docs_stats():
             "total_indexed": _indexing_state["total_indexed"],
             "current_source": _indexing_state["current_source"],
             "sources_completed": _indexing_state["sources_completed"],
+            "sources_total": _indexing_state["sources_total"],
+            "progress_percent": _indexing_state["progress_percent"],
             "error": _indexing_state["error"]
         }
         return stats
