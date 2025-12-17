@@ -371,3 +371,94 @@ async def merge_corpus():
     except Exception as e:
         logger.error(f"Failed to merge corpus: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Documentation Suggestions API (Self-Learning)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/suggestions")
+async def get_doc_suggestions():
+    """
+    Get documentation suggestions based on discovered services/apps.
+    
+    This implements the self-learning concept: Halbert analyzes what's
+    running on your system and suggests relevant documentation to add.
+    """
+    try:
+        from ...rag.doc_suggester import get_suggestions_for_system, get_all_doc_sources
+        
+        suggestions = get_suggestions_for_system()
+        all_sources = get_all_doc_sources()
+        
+        return {
+            "suggestions": suggestions,
+            "all_sources": all_sources,
+            "total_available": len(all_sources),
+            "suggestions_count": len(suggestions),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get suggestions: {e}")
+        return {"suggestions": [], "all_sources": [], "error": str(e)}
+
+
+@router.post("/suggestions/{doc_key}/dismiss")
+async def dismiss_suggestion(doc_key: str):
+    """Dismiss a documentation suggestion."""
+    try:
+        from ...rag.doc_suggester import get_suggester
+        
+        suggester = get_suggester()
+        suggester.dismiss_suggestion(doc_key)
+        
+        return {"success": True, "dismissed": doc_key}
+    except Exception as e:
+        logger.error(f"Failed to dismiss suggestion: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/suggestions/{doc_key}/add")
+async def add_suggested_doc(doc_key: str):
+    """
+    Add a suggested documentation source to RAG.
+    
+    This fetches the documentation and indexes it into ChromaDB.
+    """
+    try:
+        from ...rag.doc_suggester import get_suggester, DOC_SOURCE_REGISTRY
+        
+        if doc_key not in DOC_SOURCE_REGISTRY:
+            return {"success": False, "error": f"Unknown doc key: {doc_key}"}
+        
+        doc_source = DOC_SOURCE_REGISTRY[doc_key]
+        
+        # Create request and call add_source
+        request = AddSourceRequest(url=doc_source.url, name=doc_source.name)
+        result = await add_source(request)
+        
+        if result.success:
+            # Mark as indexed
+            suggester = get_suggester()
+            suggester.mark_indexed(doc_key)
+            return {"success": True, "title": result.title, "source_name": result.source_name}
+        
+        return {"success": False, "error": result.error}
+        
+    except Exception as e:
+        logger.error(f"Failed to add suggested doc: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/suggestions/reset")
+async def reset_dismissed_suggestions():
+    """Reset all dismissed suggestions."""
+    try:
+        from ...rag.doc_suggester import get_suggester
+        
+        suggester = get_suggester()
+        suggester.reset_dismissed()
+        
+        return {"success": True, "message": "All dismissed suggestions have been reset"}
+    except Exception as e:
+        logger.error(f"Failed to reset suggestions: {e}")
+        return {"success": False, "error": str(e)}

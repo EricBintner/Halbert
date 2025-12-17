@@ -1813,6 +1813,33 @@ _indexing_state = {
     "error": None
 }
 
+# Persistent last indexed timestamp (saved to file for persistence across restarts)
+def _get_last_indexed_info() -> dict:
+    """Get last indexed timestamp from persistent storage."""
+    try:
+        index_info_file = Path.home() / ".local" / "share" / "halbert" / "index_info.json"
+        if index_info_file.exists():
+            import json
+            with open(index_info_file) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {"last_indexed_at": None, "docs_count": 0}
+
+def _save_last_indexed_info(docs_count: int):
+    """Save last indexed timestamp to persistent storage."""
+    try:
+        index_info_file = Path.home() / ".local" / "share" / "halbert" / "index_info.json"
+        index_info_file.parent.mkdir(parents=True, exist_ok=True)
+        import json
+        with open(index_info_file, 'w') as f:
+            json.dump({
+                "last_indexed_at": datetime.now(timezone.utc).isoformat(),
+                "docs_count": docs_count
+            }, f)
+    except Exception as e:
+        logger.warning(f"Failed to save index info: {e}")
+
 def _run_background_index(max_docs: int, source: str = None):
     """Run indexing in background thread with progress tracking."""
     global _indexing_state
@@ -1879,6 +1906,8 @@ def _run_background_index(max_docs: int, source: str = None):
             
             _indexing_state["completed_at"] = datetime.now(timezone.utc).isoformat()
             _indexing_state["error"] = None
+            # Save persistent last indexed info
+            _save_last_indexed_info(_indexing_state["total_indexed"])
             logger.info(f"Background indexing complete: {_indexing_state['total_indexed']} docs")
             
         except Exception as e:
@@ -1909,6 +1938,7 @@ async def get_docs_stats():
     try:
         from ...rag.document_indexer import get_index_stats
         stats = get_index_stats()
+        
         # Include indexing status with progress
         stats["indexing"] = {
             "is_running": _indexing_state["is_running"],
@@ -1921,6 +1951,16 @@ async def get_docs_stats():
             "progress_percent": _indexing_state["progress_percent"],
             "error": _indexing_state["error"]
         }
+        
+        # Include last indexed info (persistent across restarts)
+        last_indexed = _get_last_indexed_info()
+        stats["freshness"] = {
+            "last_indexed_at": last_indexed.get("last_indexed_at"),
+            "docs_at_last_index": last_indexed.get("docs_count", 0),
+            "update_mechanism": "manual",  # Could be "scheduled" in future
+            "info": "Click Re-index to update documentation. Core sources are bundled with Halbert and updated with each release."
+        }
+        
         return stats
     except Exception as e:
         logger.error(f"Failed to get doc stats: {e}")

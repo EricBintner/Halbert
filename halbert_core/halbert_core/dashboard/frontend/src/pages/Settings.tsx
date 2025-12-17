@@ -177,6 +177,11 @@ export function Settings() {
     completed: number, 
     total: number
   }>({ percent: 0, currentSource: null, completed: 0, total: 0 })
+  const [docFreshness, setDocFreshness] = useState<{
+    last_indexed_at: string | null,
+    docs_at_last_index: number,
+    info: string
+  } | null>(null)
   
   // Self-Knowledge state
   interface SelfKnowledgeEntry {
@@ -241,11 +246,18 @@ export function Settings() {
     checkIndexingStatus()
   }, [])
   
-  // Check if indexing is already running on page load
+  // Check if indexing is already running on page load and load freshness info
   const checkIndexingStatus = async () => {
     try {
       const res = await fetch(`${API_BASE}/settings/docs/stats`)
       const data = await res.json()
+      
+      // Set freshness info
+      if (data.freshness) {
+        setDocFreshness(data.freshness)
+      }
+      
+      // Check if indexing is running
       if (data.indexing?.is_running) {
         setIndexing(true)
         pollIndexingStatus()
@@ -1784,7 +1796,7 @@ export function Settings() {
                       </Button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-4 text-sm">
+                  <div className="grid grid-cols-4 gap-4 text-sm">
                     <div>
                       <p className="text-muted-foreground">Total Documents</p>
                       <p className="font-medium">{ragStats?.total_docs?.toLocaleString() || 'Loading...'} docs</p>
@@ -1794,8 +1806,18 @@ export function Settings() {
                       <p className="font-medium">{ragStats?.user_docs || 0} docs</p>
                     </div>
                     <div>
-                      <p className="text-muted-foreground">Core Sources</p>
-                      <p className="font-medium text-xs">Man pages, Arch Wiki, systemd, shell, security, networking + more</p>
+                      <p className="text-muted-foreground">Last Indexed</p>
+                      <p className="font-medium text-xs">
+                        {docFreshness?.last_indexed_at 
+                          ? new Date(docFreshness.last_indexed_at).toLocaleDateString() 
+                          : 'Never'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Updates</p>
+                      <p className="font-medium text-xs text-green-600 dark:text-green-400">
+                        Core docs updated with releases
+                      </p>
                     </div>
                   </div>
                   {indexing && (
