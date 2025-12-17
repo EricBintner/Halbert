@@ -23,18 +23,26 @@ from .macos_support import MacOSSupportScraper
 from .flatpak_docs import FlatpakDocsScraper
 from .snap_docs import SnapDocsScraper
 from .appimage_docs import AppImageDocsScraper
+# Phase 27: RAG Coverage
+from .systemd_docs import SystemdDocsScraper
+from .unix_se import UnixSEScraper
+from .serverfault import ServerFaultScraper
 
 __all__ = [
     'BaseScraper',
     'ScraperConfig',
     'ScrapedDocument',
-    # Linux
+    # Linux Core
     'ArchWikiScraper',
     'StackOverflowScraper',
     # Linux App Formats (Phase 26)
     'FlatpakDocsScraper',
     'SnapDocsScraper',
     'AppImageDocsScraper',
+    # Phase 27: RAG Coverage
+    'SystemdDocsScraper',
+    'UnixSEScraper',
+    'ServerFaultScraper',
     # macOS
     'HomebrewScraper',
     'MacOSSupportScraper',

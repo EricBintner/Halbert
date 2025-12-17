@@ -182,7 +182,7 @@ export function Settings() {
   }
   const [selfKnowledge, setSelfKnowledge] = useState<SelfKnowledgeEntry[]>([])
   const [loadingSelfKnowledge, setLoadingSelfKnowledge] = useState(false)
-  const [editingKnowledge, setEditingKnowledge] = useState<SelfKnowledgeEntry | null>(null)
+  // editingKnowledge removed - was unused (future: inline editing)
   const [newKnowledge, setNewKnowledge] = useState({ subject: '', content: '', rationale: '' })
   const [addingKnowledge, setAddingKnowledge] = useState(false)
   const [showAddKnowledge, setShowAddKnowledge] = useState(false)

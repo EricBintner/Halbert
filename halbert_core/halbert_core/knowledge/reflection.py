@@ -3,18 +3,21 @@ Self-Reflection Module
 
 Sprint 3: Self-RAG inspired reflection before answering.
 
-Implements the ability to:
-1. Evaluate retrieved knowledge relevance
-2. Estimate confidence in answers
-3. Decide when to retrieve more context
-4. Provide reasoning traces
+Enhanced with research from:
+- Self-RAG (ICLR 2024): Reflection tokens for retrieve/critique decisions
+- CRAG: Corrective RAG with CORRECT/INCORRECT/AMBIGUOUS decision flow
+- Mem0: Quality + freshness + relevance scoring
 
-Based on Self-RAG paper concepts: reflect on retrieval quality
-before generating responses.
+Implements:
+1. Reflection tokens (Retrieve, IsRel, IsSup, IsUse) for decision making
+2. CRAG-style corrective evaluation (CORRECT/INCORRECT/AMBIGUOUS)
+3. Multi-factor scoring (relevance * 0.6 + quality * 0.3 + freshness * 0.1)
+4. Epistemic awareness (knows what it knows vs doesn't know)
 """
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -24,6 +27,46 @@ from .self_knowledge import KnowledgeEntry, KnowledgeType, get_self_knowledge
 from .graph import KnowledgeGraph, RelationType, get_knowledge_graph
 
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Self-RAG Reflection Tokens (Research-based)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ReflectionToken(str, Enum):
+    """
+    Self-RAG inspired reflection tokens.
+    
+    These represent the model's self-assessment at each stage:
+    - RETRIEVE: Should we retrieve external knowledge?
+    - IS_REL: Is the retrieved content relevant to the query?
+    - IS_SUP: Is the response supported by the evidence?
+    - IS_USE: Is the response useful/complete?
+    """
+    RETRIEVE_YES = "[Retrieve:Yes]"      # Retrieval needed
+    RETRIEVE_NO = "[Retrieve:No]"        # No retrieval needed (parametric ok)
+    IS_REL_YES = "[IsRel:Yes]"           # Retrieved content is relevant
+    IS_REL_PARTIAL = "[IsRel:Partial]"   # Partially relevant
+    IS_REL_NO = "[IsRel:No]"             # Not relevant
+    IS_SUP_FULL = "[IsSup:Full]"         # Fully supported by evidence
+    IS_SUP_PARTIAL = "[IsSup:Partial]"   # Partially supported
+    IS_SUP_NO = "[IsSup:No]"             # Not supported
+    IS_USE_YES = "[IsUse:Yes]"           # Response is useful
+    IS_USE_PARTIAL = "[IsUse:Partial]"   # Partially useful
+    IS_USE_NO = "[IsUse:No]"             # Not useful
+
+
+class CRAGAction(str, Enum):
+    """
+    CRAG-style corrective actions based on retrieval evaluation.
+    
+    - CORRECT: High confidence, use retrieved docs directly
+    - INCORRECT: Low confidence, need external search or more data
+    - AMBIGUOUS: Mixed signals, combine internal + external sources
+    """
+    CORRECT = "correct"         # Retrieval is good, proceed
+    INCORRECT = "incorrect"     # Retrieval failed, need fallback
+    AMBIGUOUS = "ambiguous"     # Uncertain, combine sources
 
 
 class RetrievalDecision(str, Enum):
@@ -44,20 +87,35 @@ class ConfidenceLevel(str, Enum):
 
 @dataclass
 class RetrievedContext:
-    """A piece of retrieved knowledge with scoring."""
+    """
+    A piece of retrieved knowledge with CRAG-style scoring.
+    
+    Scoring formula (from CRAG research):
+    combined = 0.6 * relevance + 0.3 * quality + 0.1 * freshness
+    """
     entry: KnowledgeEntry
     relevance_score: float      # 0-1, how relevant to query
-    freshness_score: float      # 0-1, how recent
-    source_reliability: float   # 0-1, how reliable the source
+    freshness_score: float      # 0-1, how recent (CRAG: decay over time)
+    source_reliability: float   # 0-1, quality/reliability of source
     combined_score: float = 0.0
+    is_relevant: ReflectionToken = ReflectionToken.IS_REL_NO  # Self-RAG token
     
     def __post_init__(self):
-        # Weighted combination
+        # CRAG-style weighted combination
+        # combined = 0.6*similarity + 0.3*quality + 0.1*freshness
         self.combined_score = (
-            self.relevance_score * 0.5 +
-            self.freshness_score * 0.3 +
-            self.source_reliability * 0.2
+            self.relevance_score * 0.6 +
+            self.source_reliability * 0.3 +
+            self.freshness_score * 0.1
         )
+        
+        # Set Self-RAG relevance token
+        if self.relevance_score >= 0.5:
+            self.is_relevant = ReflectionToken.IS_REL_YES
+        elif self.relevance_score >= 0.2:
+            self.is_relevant = ReflectionToken.IS_REL_PARTIAL
+        else:
+            self.is_relevant = ReflectionToken.IS_REL_NO
 
 
 @dataclass  
@@ -65,6 +123,7 @@ class ReflectionResult:
     """
     Result of self-reflection on a query.
     
+    Enhanced with Self-RAG tokens and CRAG corrective actions.
     Provides reasoning about what we know and how confident we are.
     """
     query: str
@@ -75,6 +134,14 @@ class ReflectionResult:
     suggested_actions: List[str] = field(default_factory=list)
     graph_context: Optional[Dict] = None    # Related graph nodes
     reflection_time_ms: float = 0.0
+    
+    # Self-RAG reflection tokens
+    retrieve_token: ReflectionToken = ReflectionToken.RETRIEVE_YES
+    support_token: ReflectionToken = ReflectionToken.IS_SUP_NO
+    utility_token: ReflectionToken = ReflectionToken.IS_USE_NO
+    
+    # CRAG corrective action
+    crag_action: CRAGAction = CRAGAction.AMBIGUOUS
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -89,6 +156,7 @@ class ReflectionResult:
                     "type": ctx.entry.type.value,
                     "relevance": ctx.relevance_score,
                     "combined_score": ctx.combined_score,
+                    "is_relevant": ctx.is_relevant.value,
                 }
                 for ctx in self.retrieved_contexts
             ],
@@ -96,6 +164,14 @@ class ReflectionResult:
             "suggested_actions": self.suggested_actions,
             "graph_context": self.graph_context,
             "reflection_time_ms": self.reflection_time_ms,
+            # Self-RAG tokens
+            "reflection_tokens": {
+                "retrieve": self.retrieve_token.value,
+                "support": self.support_token.value,
+                "utility": self.utility_token.value,
+            },
+            # CRAG action
+            "crag_action": self.crag_action.value,
         }
     
     def get_context_string(self, max_entries: int = 5) -> str:
@@ -103,7 +179,10 @@ class ReflectionResult:
         if not self.retrieved_contexts:
             return "No relevant self-knowledge found for this query."
         
+        # Include Self-RAG tokens in output for transparency
         lines = [f"[Self-Reflection: {self.confidence.value} confidence]"]
+        lines.append(f"Tokens: {self.retrieve_token.value} {self.support_token.value} {self.utility_token.value}")
+        lines.append(f"CRAG Action: {self.crag_action.value}")
         lines.append(f"Reasoning: {self.reasoning}")
         lines.append("")
         lines.append("Relevant Knowledge:")
@@ -218,6 +297,14 @@ class SelfReflector:
         # Step 6: Suggest actions if needed
         actions = self._suggest_actions(decision, intent, scored_contexts)
         
+        # Step 7: Compute Self-RAG reflection tokens
+        retrieve_token, support_token, utility_token = self._compute_reflection_tokens(
+            scored_contexts, decision, confidence
+        )
+        
+        # Step 8: Determine CRAG corrective action
+        crag_action = self._determine_crag_action(scored_contexts, confidence)
+        
         elapsed = (time.time() - start) * 1000
         
         result = ReflectionResult(
@@ -229,9 +316,13 @@ class SelfReflector:
             suggested_actions=actions,
             graph_context=graph_context,
             reflection_time_ms=elapsed,
+            retrieve_token=retrieve_token,
+            support_token=support_token,
+            utility_token=utility_token,
+            crag_action=crag_action,
         )
         
-        logger.info(f"Reflection complete: {confidence.value} confidence, {len(scored_contexts)} contexts")
+        logger.info(f"Reflection complete: {confidence.value} confidence, CRAG={crag_action.value}, {len(scored_contexts)} contexts")
         return result
     
     def _classify_intent(self, query: str) -> str:
@@ -456,6 +547,86 @@ class SelfReflector:
             ConfidenceLevel.LOW,
             "Query is ambiguous. Please be more specific about what system information you need."
         )
+    
+    def _compute_reflection_tokens(
+        self,
+        contexts: List[RetrievedContext],
+        decision: RetrievalDecision,
+        confidence: ConfidenceLevel
+    ) -> Tuple[ReflectionToken, ReflectionToken, ReflectionToken]:
+        """
+        Compute Self-RAG reflection tokens based on retrieval results.
+        
+        Returns:
+            Tuple of (retrieve_token, support_token, utility_token)
+        """
+        # Retrieve token: Did we need to retrieve?
+        if decision == RetrievalDecision.NO_MATCH:
+            retrieve_token = ReflectionToken.RETRIEVE_NO
+        else:
+            retrieve_token = ReflectionToken.RETRIEVE_YES
+        
+        # Support token: Is response supported by evidence?
+        if not contexts:
+            support_token = ReflectionToken.IS_SUP_NO
+        else:
+            # Count how many contexts are relevant
+            relevant_count = sum(1 for c in contexts if c.is_relevant == ReflectionToken.IS_REL_YES)
+            partial_count = sum(1 for c in contexts if c.is_relevant == ReflectionToken.IS_REL_PARTIAL)
+            
+            if relevant_count >= 2 or (relevant_count >= 1 and confidence == ConfidenceLevel.HIGH):
+                support_token = ReflectionToken.IS_SUP_FULL
+            elif relevant_count >= 1 or partial_count >= 2:
+                support_token = ReflectionToken.IS_SUP_PARTIAL
+            else:
+                support_token = ReflectionToken.IS_SUP_NO
+        
+        # Utility token: Is the response useful?
+        if confidence == ConfidenceLevel.HIGH:
+            utility_token = ReflectionToken.IS_USE_YES
+        elif confidence == ConfidenceLevel.MEDIUM:
+            utility_token = ReflectionToken.IS_USE_PARTIAL
+        else:
+            utility_token = ReflectionToken.IS_USE_NO
+        
+        return retrieve_token, support_token, utility_token
+    
+    def _determine_crag_action(
+        self,
+        contexts: List[RetrievedContext],
+        confidence: ConfidenceLevel
+    ) -> CRAGAction:
+        """
+        Determine CRAG corrective action based on retrieval quality.
+        
+        CRAG Decision Flow:
+        - CORRECT: High relevance scores → use retrieved docs directly
+        - INCORRECT: Low relevance → need external search or more data
+        - AMBIGUOUS: Mixed signals → combine internal + external sources
+        """
+        if not contexts:
+            return CRAGAction.INCORRECT
+        
+        # Calculate aggregate quality metrics
+        avg_combined = sum(c.combined_score for c in contexts) / len(contexts)
+        top_score = contexts[0].combined_score
+        
+        # Count relevance distribution
+        highly_relevant = sum(1 for c in contexts if c.relevance_score >= 0.5)
+        partially_relevant = sum(1 for c in contexts if 0.2 <= c.relevance_score < 0.5)
+        
+        # CRAG decision thresholds
+        if confidence == ConfidenceLevel.HIGH and top_score >= 0.6:
+            return CRAGAction.CORRECT
+        elif confidence == ConfidenceLevel.NONE or (top_score < 0.3 and highly_relevant == 0):
+            return CRAGAction.INCORRECT
+        elif highly_relevant >= 1 or (partially_relevant >= 2 and avg_combined >= 0.4):
+            # Mixed signals - some relevant, some not
+            if confidence == ConfidenceLevel.MEDIUM:
+                return CRAGAction.CORRECT  # Good enough
+            return CRAGAction.AMBIGUOUS
+        else:
+            return CRAGAction.AMBIGUOUS
     
     def _suggest_actions(
         self,

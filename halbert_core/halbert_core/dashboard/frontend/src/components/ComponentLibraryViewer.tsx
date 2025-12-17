@@ -715,7 +715,7 @@ function CopyButton({ text, id }: { text: string; id: string }) {
 
 export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps) {
   const [searchQuery, setSearchQuery] = useState('')
-  const [expandedCategories, setExpandedCategories] = useState<string[]>(['design-system', 'domain', 'primitives'])
+  const [expandedCategories, setExpandedCategories] = useState<string[]>(['design-system', 'domain', 'primitives', 'hooks'])
   const [selectedComponent, setSelectedComponent] = useState<ComponentExample | null>(
     COMPONENT_LIBRARY[0].components[0]
   )

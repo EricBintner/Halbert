@@ -31,6 +31,8 @@ from .reflection import (
     RetrievalDecision,
     ConfidenceLevel,
     RetrievedContext,
+    ReflectionToken,
+    CRAGAction,
     get_reflector,
     reflect_before_answer,
 )
@@ -58,12 +60,14 @@ __all__ = [
     'RelationType',
     'get_knowledge_graph',
     'discover_relations_from_profile',
-    # Self-Reflection (Sprint 3)
+    # Self-Reflection (Sprint 3) - Enhanced with Self-RAG + CRAG
     'SelfReflector',
     'ReflectionResult',
     'RetrievalDecision',
     'ConfidenceLevel',
     'RetrievedContext',
+    'ReflectionToken',
+    'CRAGAction',
     'get_reflector',
     'reflect_before_answer',
     # Hierarchical Knowledge (Sprint 4)
