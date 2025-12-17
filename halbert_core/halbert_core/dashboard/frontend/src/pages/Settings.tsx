@@ -1795,7 +1795,7 @@ export function Settings() {
                     </div>
                     <div>
                       <p className="text-muted-foreground">Core Sources</p>
-                      <p className="font-medium text-xs">Phase 27: systemd, shell, git, security, networking + more</p>
+                      <p className="font-medium text-xs">Man pages, Arch Wiki, systemd, shell, security, networking + more</p>
                     </div>
                   </div>
                   {indexing && (

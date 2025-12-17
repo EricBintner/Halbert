@@ -206,6 +206,72 @@ async def list_documents():
             stats = get_index_stats()
             total_indexed = stats.get('linux_docs_count', 0)
             
+            # Semantic display names for documentation sources
+            SOURCE_DISPLAY_NAMES = {
+                # Core Linux documentation
+                "man-pages": "Linux Man Pages",
+                "arch-wiki": "Arch Wiki",
+                "arch-wiki-ext": "Arch Wiki Extended",
+                "more-arch": "Arch Linux Guides",
+                "ubuntu-docs": "Ubuntu Documentation",
+                "ubuntu-server": "Ubuntu Server Guide",
+                "linux-core-docs": "Linux Core Concepts",
+                "linux-utils-docs": "Linux Utilities",
+                "commands": "Command Reference",
+                
+                # System administration
+                "systemd-docs": "Systemd Services",
+                "systemd-ext": "Systemd Advanced",
+                "shell-docs": "Shell Scripting",
+                "scheduling-docs": "Task Scheduling (Cron)",
+                "logging-docs": "System Logging",
+                "performance-docs": "Performance Tuning",
+                "monitoring-docs": "System Monitoring",
+                "backup-docs": "Backup & Recovery",
+                "automation-docs": "Automation & Scripting",
+                
+                # Security & networking
+                "security-docs": "Security & Hardening",
+                "ssl-certs-docs": "SSL/TLS Certificates",
+                "network-docs": "Network Configuration",
+                "networking-docs": "Networking Tools",
+                
+                # Containers & virtualization
+                "docker-docs": "Docker",
+                "podman-docs": "Podman",
+                "containers-docs": "Container Management",
+                "kubernetes-docs": "Kubernetes",
+                "helm-k8s": "Helm & K8s Tools",
+                
+                # Development tools
+                "git-docs": "Git Version Control",
+                "devtools-docs": "Developer Tools",
+                "python-tools-docs": "Python Tools",
+                
+                # Package managers
+                "flatpak-docs": "Flatpak Apps",
+                "snap-docs": "Snap Packages",
+                "appimage-docs": "AppImage",
+                
+                # Databases & infrastructure
+                "database-docs": "Database Administration",
+                "message-queues-docs": "Message Queues",
+                "caching-docs": "Caching Systems",
+                "webserver-docs": "Web Servers",
+                
+                # Cloud & vendor
+                "aws-cli": "AWS CLI",
+                "nvidia-docs": "NVIDIA GPU",
+                "rocm-docs": "AMD ROCm",
+                "vendor-docs": "Vendor Documentation",
+                
+                # Misc (rename unclear ones)
+                "3k-push": "Linux Administration Tips",
+                "final-push": "Advanced Linux Topics",
+                "hf-datasets": "ML/AI Documentation",
+                "filesystem-docs": "Filesystem Management",
+            }
+            
             # Build core sources from available data directories
             data_dir = repo_root / 'data' / 'linux'
             core_sources = []
@@ -218,8 +284,11 @@ async def list_documents():
                             with open(jsonl) as f:
                                 doc_count += sum(1 for _ in f)
                         if doc_count > 0:
-                            # Format name nicely
-                            name = subdir.name.replace('-', ' ').replace('_', ' ').title()
+                            # Use semantic display name or format nicely
+                            name = SOURCE_DISPLAY_NAMES.get(
+                                subdir.name,
+                                subdir.name.replace('-', ' ').replace('_', ' ').title()
+                            )
                             core_sources.append({"name": name, "count": doc_count})
             
             # Sort by count descending
