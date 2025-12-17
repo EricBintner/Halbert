@@ -35,6 +35,8 @@ from .security_docs import SecurityDocsScraper
 from .containers_docs import ContainersDocsScraper
 from .git_docs import GitDocsScraper
 from .scheduling_docs import SchedulingDocsScraper
+from .logging_docs import LoggingDocsScraper
+from .performance_docs import PerformanceDocsScraper
 
 __all__ = [
     'BaseScraper',
@@ -59,6 +61,8 @@ __all__ = [
     'ContainersDocsScraper',
     'GitDocsScraper',
     'SchedulingDocsScraper',
+    'LoggingDocsScraper',
+    'PerformanceDocsScraper',
     # macOS
     'HomebrewScraper',
     'MacOSSupportScraper',

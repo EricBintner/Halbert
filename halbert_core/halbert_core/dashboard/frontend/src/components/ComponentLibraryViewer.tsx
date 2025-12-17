@@ -97,13 +97,13 @@ const COMPONENT_LIBRARY: ComponentCategory[] = [
       {
         id: 'typography',
         name: 'Typography',
-        description: 'Montserrat font family with consistent type scale',
+        description: 'Karla font family with consistent type scale',
         status: 'stable',
         preview: (
           <div className="space-y-6 w-full">
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground uppercase tracking-wide">Font Family</p>
-              <p className="text-2xl">Montserrat</p>
+              <p className="text-2xl">Karla</p>
             </div>
             <div className="space-y-4">
               <div className="flex items-baseline gap-4">
@@ -143,7 +143,7 @@ const COMPONENT_LIBRARY: ComponentCategory[] = [
           </div>
         ),
         props: [],
-        code: `/* Brand Typography - Montserrat */
+        code: `/* Brand Typography - Karla */
 
 /* Headings (auto-applied via index.css) */
 h1 { @apply text-3xl font-bold tracking-tight; }

@@ -377,24 +377,54 @@ def get_discovery_context(query: str, max_results: int = 5) -> str:
         return ""
 
 
-def get_self_knowledge_context(query: str, max_results: int = 5) -> str:
+def get_self_knowledge_context(query: str, max_results: int = 5) -> tuple[str, dict]:
     """
-    Retrieve relevant self-knowledge for context.
+    Retrieve relevant self-knowledge for context using Self-RAG reflection.
     
     This is the system's persistent understanding of ITSELF:
     - Core identity (hostname, OS, hardware)
     - Configuration rationale (WHY things are set up)
     - Component roles and relationships
     - User-taught knowledge
+    
+    Uses Phase 28/29 Self-RAG and CRAG evaluation for quality retrieval.
+    
+    Returns:
+        Tuple of (context_string, reflection_metadata)
     """
     try:
-        from ...knowledge import get_self_knowledge
+        from ...knowledge import get_self_knowledge, SelfReflector
         
-        sk = get_self_knowledge()
-        return sk.get_context_for_query(query, max_entries=max_results)
+        # Use SelfReflector for quality-scored retrieval (Phase 28/29)
+        reflector = SelfReflector()
+        result = reflector.reflect(query, max_contexts=max_results)
+        
+        # Build context from scored results
+        context_parts = []
+        for ctx in result.retrieved_contexts:
+            context_parts.append(f"[{ctx.entry.type.value}] {ctx.entry.subject}: {ctx.entry.content}")
+        
+        # Add graph context if available
+        if result.graph_context:
+            context_parts.append(f"[Relationships] {result.graph_context}")
+        
+        context = "\n".join(context_parts) if context_parts else ""
+        
+        # Return metadata for debugging/display
+        metadata = {
+            "crag_action": result.crag_action.value,
+            "confidence": result.confidence.value,
+            "retrieve_token": result.retrieve_token.value if result.retrieve_token else None,
+            "contexts_found": len(result.retrieved_contexts),
+            "reflection_time_ms": result.reflection_time_ms,
+        }
+        
+        logger.debug(f"Self-RAG reflection: CRAG={result.crag_action.value}, confidence={result.confidence.value}")
+        
+        return context, metadata
     except Exception as e:
         logger.debug(f"Self-knowledge retrieval failed: {e}")
-        return ""
+        return "", {}
 
 
 def get_ollama_endpoint() -> str:
@@ -539,6 +569,18 @@ def _score_query_complexity(prompt: str) -> float:
         'compare', 'analyze', 'explain why', 'how does'
     ]
     if any(kw in prompt_lower for kw in multi_step_keywords):
+        score += 0.2
+    
+    # Analysis/recommendation keywords → need reasoning
+    analysis_keywords = [
+        'analyze', 'recommend', 'suggest', 'identify', 'find',
+        'bottleneck', 'performance', 'optimize', 'improve', 'best',
+        'based on', 'according to', 'evaluate', 'assess'
+    ]
+    analysis_hits = sum(1 for kw in analysis_keywords if kw in prompt_lower)
+    if analysis_hits >= 2:
+        score += 0.4  # Multiple analysis keywords = complex reasoning
+    elif analysis_hits >= 1:
         score += 0.2
     
     # Simple query indicators (reduce score)
@@ -1407,13 +1449,15 @@ if FASTAPI_AVAILABLE:
         
         # FIRST: Inject self-knowledge (core identity + relevant knowledge)
         # This gives the system its persistent understanding of itself
-        self_knowledge_context = get_self_knowledge_context(message, max_results=5)
+        # Uses Phase 28/29 Self-RAG reflection and CRAG evaluation
+        self_knowledge_context, reflection_metadata = get_self_knowledge_context(message, max_results=5)
         if self_knowledge_context:
             context_parts.append(self_knowledge_context)
             auto_injected_types.add('self_knowledge')
             if debug_info:
                 debug_info['auto_injected_context'].append({'type': 'self_knowledge', 'count': 5})
-            logger.debug("Injected self-knowledge context")
+                debug_info['self_rag_reflection'] = reflection_metadata
+            logger.debug(f"Injected self-knowledge context (CRAG: {reflection_metadata.get('crag_action', 'unknown')})")
         
         # Inject page context if available (Phase 17: UI awareness)
         if current_page and page_context:

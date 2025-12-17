@@ -55,7 +55,7 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: 'Montserrat', system-ui, sans-serif;
+    font-family: 'Karla', system-ui, sans-serif;
   }
   
   /* Brand Typography */
