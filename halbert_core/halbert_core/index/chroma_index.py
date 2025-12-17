@@ -99,14 +99,36 @@ class Index:
             logger.warning(f"ChromaDB init failed ({e}), using in-memory fallback")
             self.client = None
 
+    def _get_embedding_function(self):
+        """Get ChromaDB embedding function for consistent embeddings."""
+        if not hasattr(self, '_embedding_fn'):
+            try:
+                from chromadb.utils import embedding_functions
+                # Use same model as EmbeddingManager for consistency
+                self._embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name="all-MiniLM-L6-v2"
+                )
+            except Exception as e:
+                logger.warning(f"Could not load embedding function: {e}")
+                self._embedding_fn = None
+        return self._embedding_fn
+    
     def _collection(self, name: str):
-        """Get or create a collection."""
+        """Get or create a collection with explicit embedding function."""
         if self.client is None:
             return None
         if name in self.collections:
             return self.collections[name]
         try:
-            col = self.client.get_or_create_collection(name=name)
+            # Use explicit embedding function for consistency
+            embedding_fn = self._get_embedding_function()
+            if embedding_fn:
+                col = self.client.get_or_create_collection(
+                    name=name,
+                    embedding_function=embedding_fn
+                )
+            else:
+                col = self.client.get_or_create_collection(name=name)
             self.collections[name] = col
             return col
         except Exception as e:
@@ -183,14 +205,23 @@ class Index:
             except Exception as e:
                 logger.debug(f"Failed to store in knowledge: {e}")
 
-    def query(self, text: str, k: int = 5, collection: Optional[str] = None) -> List[Dict[str, Any]]:
+    def query(
+        self, 
+        text: str, 
+        k: int = 5, 
+        collection: Optional[str] = None,
+        where: Optional[Dict[str, Any]] = None,
+        where_document: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Query the index for relevant events.
+        Query the index for relevant events with optional metadata filtering.
         
         Args:
             text: Query text
             k: Number of results
             collection: Specific collection to query (default: self_knowledge_all)
+            where: Metadata filter (e.g., {"source": "arch-wiki"})
+            where_document: Document content filter (e.g., {"$contains": "systemd"})
             
         Returns:
             List of matching events with metadata
@@ -200,7 +231,14 @@ class Index:
         
         if col is not None:
             try:
-                res = col.query(query_texts=[text], n_results=k)
+                # Build query kwargs
+                query_kwargs = {"query_texts": [text], "n_results": k}
+                if where:
+                    query_kwargs["where"] = where
+                if where_document:
+                    query_kwargs["where_document"] = where_document
+                
+                res = col.query(**query_kwargs)
                 if res and res.get("metadatas") and res.get("documents"):
                     results = []
                     for i, meta in enumerate(res["metadatas"][0]):
