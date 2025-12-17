@@ -234,25 +234,63 @@ class SnapScanner(BaseScanner):
         """
         Find the icon path for a Snap package.
         
-        Snap icons are typically at:
-        - /snap/<name>/current/meta/gui/icon.png (or .svg)
-        - /var/lib/snapd/snap/<name>/current/meta/gui/icon.png
+        Snap icons can be in many locations:
+        - /snap/<name>/current/meta/gui/icon.png (standard)
+        - /snap/<name>/current/meta/gui/<name>.png (app-specific naming)
+        - /snap/<name>/current/<name>.png (root level)
+        - /snap/<name>/current/usr/share/icons/hicolor/*/apps/<name>.png
         """
         from pathlib import Path
+        import glob
         
-        # Common icon locations for snaps
-        possible_paths = [
-            Path(f'/snap/{snap_name}/current/meta/gui/icon.png'),
-            Path(f'/snap/{snap_name}/current/meta/gui/icon.svg'),
-            Path(f'/var/lib/snapd/snap/{snap_name}/current/meta/gui/icon.png'),
-            Path(f'/var/lib/snapd/snap/{snap_name}/current/meta/gui/icon.svg'),
-            # Also check desktop file exports
+        snap_base = Path(f'/snap/{snap_name}/current')
+        
+        # Check standard icon.png/svg first
+        standard_paths = [
+            snap_base / 'meta/gui/icon.png',
+            snap_base / 'meta/gui/icon.svg',
+        ]
+        for p in standard_paths:
+            if p.exists():
+                return str(p)
+        
+        # Check app-specific names in meta/gui (e.g., vscode.png, arduino.png)
+        gui_dir = snap_base / 'meta/gui'
+        if gui_dir.exists():
+            for ext in ['.png', '.svg']:
+                # Try exact snap name
+                specific = gui_dir / f'{snap_name}{ext}'
+                if specific.exists():
+                    return str(specific)
+                # Try any PNG/SVG in gui folder (except desktop files)
+                for icon_file in gui_dir.glob(f'*{ext}'):
+                    if icon_file.is_file():
+                        return str(icon_file)
+        
+        # Check root level (e.g., /snap/0ad/current/0ad.png)
+        for ext in ['.png', '.svg']:
+            root_icon = snap_base / f'{snap_name}{ext}'
+            if root_icon.exists():
+                return str(root_icon)
+        
+        # Check hicolor icon theme inside snap
+        hicolor_base = snap_base / 'usr/share/icons/hicolor'
+        if hicolor_base.exists():
+            for size in ['256x256', '512x512', '128x128', '64x64', '48x48', 'scalable']:
+                size_dir = hicolor_base / size / 'apps'
+                if size_dir.exists():
+                    for ext in ['.png', '.svg']:
+                        icon = size_dir / f'{snap_name}{ext}'
+                        if icon.exists():
+                            return str(icon)
+        
+        # Check snapd desktop exports
+        desktop_exports = [
             Path(f'/var/lib/snapd/desktop/icons/hicolor/256x256/apps/snap.{snap_name}.png'),
             Path(f'/var/lib/snapd/desktop/icons/hicolor/512x512/apps/snap.{snap_name}.png'),
         ]
-        
-        for icon_path in possible_paths:
-            if icon_path.exists():
-                return str(icon_path)
+        for p in desktop_exports:
+            if p.exists():
+                return str(p)
         
         return None

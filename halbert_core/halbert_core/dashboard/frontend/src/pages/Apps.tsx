@@ -534,23 +534,9 @@ export function Apps() {
                   {/* Expanded App Tools */}
                   {expandedApp === app.id && (
                     <div className="px-4 pb-4 bg-muted/10">
-                      <div className="p-3 bg-muted/20 rounded-lg border">
-                        <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                          <Search className="h-4 w-4" />
-                          Tools
-                        </h4>
+                      <div className="p-3 bg-muted/20 rounded-lg border flex items-start justify-between gap-4">
+                        {/* Left side - App-specific actions */}
                         <div className="flex flex-wrap gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              openChat({ title: app.displayName, type: 'app', prefillMessage: `Tell me about ${app.displayName}. What does this application do?` })
-                            }}
-                          >
-                            <MessageSquare className="h-3 w-3 mr-1" />
-                            Ask Halbert
-                          </Button>
                           {app.source === 'flatpak' && app.appId && (
                             <Button
                               variant="outline"
@@ -577,41 +563,6 @@ export function Apps() {
                               Snap Store
                             </Button>
                           )}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              openChat({ title: app.displayName, type: 'app', prefillMessage: `Show me commands to manage ${app.displayName} (${app.source})` })
-                            }}
-                          >
-                            <Terminal className="h-3 w-3 mr-1" />
-                            Commands
-                          </Button>
-                          {app.source === 'flatpak' && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                openChat({ title: app.displayName, type: 'app', prefillMessage: `What permissions does ${app.displayName} (${app.appId}) have?` })
-                              }}
-                            >
-                              <Shield className="h-3 w-3 mr-1" />
-                              Permissions
-                            </Button>
-                          )}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              openChat({ title: app.displayName, type: 'app', prefillMessage: `How much disk space does ${app.displayName} use?` })
-                            }}
-                          >
-                            <HardDrive className="h-3 w-3 mr-1" />
-                            Disk Usage
-                          </Button>
                           {app.hasUpdate && (
                             <Button
                               variant="default"
@@ -630,6 +581,61 @@ export function Apps() {
                               Update
                             </Button>
                           )}
+                        </div>
+                        
+                        {/* Right side - Mentions & Chat */}
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <span className="text-xs text-muted-foreground mr-1">Mentions:</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2"
+                            title="Ask about this app"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openChat({ title: app.displayName, type: 'app', prefillMessage: `Tell me about ${app.displayName}. What does this application do?` })
+                            }}
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2"
+                            title="Commands & usage"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openChat({ title: app.displayName, type: 'app', prefillMessage: `Show me commands to manage ${app.displayName} (${app.source})` })
+                            }}
+                          >
+                            <Terminal className="h-3.5 w-3.5" />
+                          </Button>
+                          {app.source === 'flatpak' && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2"
+                              title="Check permissions"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                openChat({ title: app.displayName, type: 'app', prefillMessage: `What permissions does ${app.displayName} (${app.appId}) have?` })
+                              }}
+                            >
+                              <Shield className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2"
+                            title="Check disk usage"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openChat({ title: app.displayName, type: 'app', prefillMessage: `How much disk space does ${app.displayName} use?` })
+                            }}
+                          >
+                            <HardDrive className="h-3.5 w-3.5" />
+                          </Button>
                         </div>
                       </div>
                     </div>

@@ -28,14 +28,7 @@
   },
   "plugins": {
     "shell": {
-      "sidecar": true,
-      "scope": [
-        {
-          "name": "halbert-api",
-          "sidecar": true,
-          "args": true
-        }
-      ]
+      "open": true
     }
   },
   "bundle": {
@@ -67,7 +60,13 @@
         "bundleMediaFramework": false
       },
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"],
+        "section": "utils",
+        "priority": "optional"
+      },
+      "rpm": {
+        "release": "1",
+        "epoch": 0
       }
     }
   }
