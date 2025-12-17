@@ -63,6 +63,9 @@ from .container import ContainerScanner
 from .virtualization import VirtualizationScanner
 from .scheduled import ScheduledScanner
 
+# Phase 26: App scanners
+from .apps import FlatpakScanner, SnapScanner, AppImageScanner
+
 __all__ = [
     'BaseScanner',
     # Core
@@ -95,4 +98,8 @@ __all__ = [
     'VirtualizationScanner',
     # Automation
     'ScheduledScanner',
+    # Phase 26: Apps
+    'FlatpakScanner',
+    'SnapScanner',
+    'AppImageScanner',
 ]

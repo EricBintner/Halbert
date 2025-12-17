@@ -27,6 +27,8 @@ from .appimage_docs import AppImageDocsScraper
 from .systemd_docs import SystemdDocsScraper
 from .unix_se import UnixSEScraper
 from .serverfault import ServerFaultScraper
+from .ubuntu_docs import UbuntuDocsScraper
+from .networking_docs import NetworkingDocsScraper
 
 __all__ = [
     'BaseScraper',
@@ -43,6 +45,8 @@ __all__ = [
     'SystemdDocsScraper',
     'UnixSEScraper',
     'ServerFaultScraper',
+    'UbuntuDocsScraper',
+    'NetworkingDocsScraper',
     # macOS
     'HomebrewScraper',
     'MacOSSupportScraper',

@@ -8,6 +8,7 @@
  */
 
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -93,6 +94,140 @@ const COMPONENT_LIBRARY: ComponentCategory[] = [
     name: 'Design System',
     icon: <Ruler className="h-4 w-4" />,
     components: [
+      {
+        id: 'typography',
+        name: 'Typography',
+        description: 'Montserrat font family with consistent type scale',
+        status: 'stable',
+        preview: (
+          <div className="space-y-6 w-full">
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">Font Family</p>
+              <p className="text-2xl">Montserrat</p>
+            </div>
+            <div className="space-y-4">
+              <div className="flex items-baseline gap-4">
+                <span className="text-3xl font-bold">H1</span>
+                <span className="text-xs text-muted-foreground">30px / Bold / tracking-tight</span>
+              </div>
+              <div className="flex items-baseline gap-4">
+                <span className="text-2xl font-semibold">H2</span>
+                <span className="text-xs text-muted-foreground">24px / SemiBold / tracking-tight</span>
+              </div>
+              <div className="flex items-baseline gap-4">
+                <span className="text-lg font-semibold">H3</span>
+                <span className="text-xs text-muted-foreground">18px / SemiBold</span>
+              </div>
+              <div className="flex items-baseline gap-4">
+                <span className="text-base font-semibold">H4</span>
+                <span className="text-xs text-muted-foreground">16px / SemiBold</span>
+              </div>
+              <div className="flex items-baseline gap-4">
+                <span className="text-sm">Body</span>
+                <span className="text-xs text-muted-foreground">14px / Regular</span>
+              </div>
+              <div className="flex items-baseline gap-4">
+                <span className="text-xs">Small</span>
+                <span className="text-xs text-muted-foreground">12px / Regular</span>
+              </div>
+            </div>
+            <div className="pt-4 border-t space-y-2">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">Font Weights</p>
+              <div className="flex gap-6">
+                <span className="font-normal">400</span>
+                <span className="font-medium">500</span>
+                <span className="font-semibold">600</span>
+                <span className="font-bold">700</span>
+              </div>
+            </div>
+          </div>
+        ),
+        props: [],
+        code: `/* Brand Typography - Montserrat */
+
+/* Headings (auto-applied via index.css) */
+h1 { @apply text-3xl font-bold tracking-tight; }
+h2 { @apply text-2xl font-semibold tracking-tight; }
+h3 { @apply text-lg font-semibold; }
+h4 { @apply text-base font-semibold; }
+
+/* Manual usage */
+<h1 className="text-3xl font-bold">Page Title</h1>
+<p className="text-sm">Body text</p>
+<span className="text-xs text-muted-foreground">Caption</span>`,
+      },
+      {
+        id: 'colors',
+        name: 'Colors',
+        description: 'Semantic color tokens for light and dark themes',
+        status: 'stable',
+        preview: (
+          <div className="space-y-6 w-full">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">Core</p>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded bg-primary" />
+                  <span className="text-xs">primary</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded bg-secondary border" />
+                  <span className="text-xs">secondary</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded bg-muted border" />
+                  <span className="text-xs">muted</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded bg-destructive" />
+                  <span className="text-xs">destructive</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">Brand Accents</p>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded bg-pink-500" />
+                  <span className="text-xs">Brain Pink</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded bg-purple-500" />
+                  <span className="text-xs">Research</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded bg-blue-500" />
+                  <span className="text-xs">Mention</span>
+                </div>
+              </div>
+            </div>
+            <div className="pt-4 border-t space-y-2">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">Status</p>
+              <div className="flex gap-4">
+                <span className="text-green-500">Success</span>
+                <span className="text-yellow-500">Warning</span>
+                <span className="text-red-500">Error</span>
+                <span className="text-blue-500">Info</span>
+              </div>
+            </div>
+          </div>
+        ),
+        props: [],
+        code: `/* Semantic Color Tokens */
+bg-background / text-foreground   /* Main surfaces */
+bg-primary / text-primary         /* Brand actions */
+bg-secondary / text-secondary     /* Alternative */
+bg-muted / text-muted-foreground  /* Subdued */
+bg-destructive                    /* Danger */
+
+/* Brand Accents */
+text-pink-500    /* WhyBrain, AI */
+text-purple-500  /* Research */
+text-blue-500    /* Mentions */
+
+/* Status Colors */
+text-green-500   /* Success */
+text-yellow-500  /* Warning */
+text-red-500     /* Error */`,
+      },
       {
         id: 'icon-button-sizing',
         name: 'Icon Button Sizing',
@@ -753,7 +888,8 @@ export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps)
     deprecated: 'bg-red-500/10 text-red-600 border-red-500/30',
   }
 
-  return (
+  // Use portal to render at document body level, escaping all parent layout constraints
+  return createPortal(
     <div className="fixed inset-0 z-[9999] bg-background flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b">
@@ -956,7 +1092,8 @@ export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps)
             )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

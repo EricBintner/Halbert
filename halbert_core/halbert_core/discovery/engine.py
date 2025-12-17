@@ -23,6 +23,7 @@ from .scanners.storage import StorageScanner
 from .scanners.network import NetworkScanner
 from .scanners.security import SecurityScanner
 from .scanners.sharing import SharingScanner
+from .scanners.apps import FlatpakScanner, SnapScanner, AppImageScanner
 
 
 logger = logging.getLogger('halbert.discovery.engine')
@@ -105,6 +106,10 @@ class DiscoveryEngine:
         self.register_scanner(NetworkScanner())
         self.register_scanner(SecurityScanner())
         self.register_scanner(SharingScanner())
+        # Phase 26: App scanners
+        self.register_scanner(FlatpakScanner())
+        self.register_scanner(SnapScanner())
+        self.register_scanner(AppImageScanner())
     
     # ─────────────────────────────────────────────────────────────
     # Scanner Management

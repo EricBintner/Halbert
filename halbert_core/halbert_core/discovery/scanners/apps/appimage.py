@@ -156,7 +156,7 @@ class AppImageScanner(BaseScanner):
             title=f"AppImage: {len(appimages)} Apps Found",
             description=f"Found: {', '.join(names)}{more}{desc_suffix}",
             severity=severity,
-            details={
+            data={
                 'count': len(appimages),
                 'total_size_mb': round(total_size, 1),
                 'non_executable': len(non_exec),
@@ -167,18 +167,15 @@ class AppImageScanner(BaseScanner):
                     id="list-appimages",
                     label="List Locations",
                     command="find ~ -name '*.AppImage' 2>/dev/null",
-                    dry_run=True,
                 ),
             ] + ([
                 DiscoveryAction(
                     id="fix-permissions",
                     label="Fix Permissions",
                     command=f"chmod +x {' '.join(a['path'] for a in non_exec[:5])}",
-                    dry_run=True,
                     requires_approval=True,
                 )
             ] if non_exec else []),
-            tags=['package', 'appimage', 'apps', 'linux'],
         )
     
     def _check_integration(self) -> List[Discovery]:
@@ -202,7 +199,7 @@ class AppImageScanner(BaseScanner):
                 title="AppImageLauncher Not Installed",
                 description="AppImageLauncher provides desktop integration for AppImages",
                 severity=DiscoverySeverity.INFO,
-                details={
+                data={
                     'suggestion': 'Install AppImageLauncher for better integration',
                     'benefits': [
                         'Automatic desktop menu integration',
@@ -215,10 +212,8 @@ class AppImageScanner(BaseScanner):
                         id="learn-launcher",
                         label="Learn More",
                         command="echo 'Visit: https://github.com/TheAssassin/AppImageLauncher'",
-                        dry_run=True,
                     ),
                 ],
-                tags=['package', 'appimage', 'integration', 'linux'],
             ))
         
         return discoveries

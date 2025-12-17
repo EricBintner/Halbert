@@ -112,7 +112,7 @@ class SnapScanner(BaseScanner):
                 description=f"Installed: {', '.join(snap_names)}{more}" + 
                            (f" ({classic_count} classic)" if classic_count else ""),
                 severity=DiscoverySeverity.INFO,
-                details={
+                data={
                     'count': len(snaps),
                     'classic_count': classic_count,
                     'snaps': snaps,
@@ -122,17 +122,14 @@ class SnapScanner(BaseScanner):
                         id="list-snaps",
                         label="List All Snaps",
                         command="snap list",
-                        dry_run=True,
                     ),
                     DiscoveryAction(
                         id="refresh-snaps",
                         label="Update All",
                         command="sudo snap refresh",
-                        dry_run=True,
                         requires_approval=True,
                     ),
                 ],
-                tags=['package', 'snap', 'apps', 'linux'],
             ))
         
         return discoveries
@@ -174,7 +171,7 @@ class SnapScanner(BaseScanner):
                 title=f"Snap: {len(updates)} Updates Pending",
                 description=f"Updates: {', '.join(update_names)}{more}",
                 severity=DiscoverySeverity.INFO,
-                details={
+                data={
                     'count': len(updates),
                     'updates': updates,
                 },
@@ -183,17 +180,14 @@ class SnapScanner(BaseScanner):
                         id="show-updates",
                         label="Show Updates",
                         command="snap refresh --list",
-                        dry_run=True,
                     ),
                     DiscoveryAction(
                         id="refresh-all",
                         label="Update All",
                         command="sudo snap refresh",
-                        dry_run=True,
                         requires_approval=True,
                     ),
                 ],
-                tags=['package', 'snap', 'updates', 'linux'],
             ))
         
         return discoveries
@@ -237,7 +231,7 @@ class SnapScanner(BaseScanner):
                 title=f"Snap Services: {running}/{len(services)} Running",
                 description=f"{len(services)} snap services configured",
                 severity=DiscoverySeverity.INFO,
-                details={
+                data={
                     'total': len(services),
                     'running': running,
                     'services': services,
@@ -247,10 +241,8 @@ class SnapScanner(BaseScanner):
                         id="list-services",
                         label="List Services",
                         command="snap services",
-                        dry_run=True,
                     ),
                 ],
-                tags=['package', 'snap', 'services', 'linux'],
             ))
         
         return discoveries

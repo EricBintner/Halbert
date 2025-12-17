@@ -101,7 +101,7 @@ class FlatpakScanner(BaseScanner):
                 title=f"Flatpak: {app_count} Apps Installed",
                 description=f"Installed: {', '.join(app_names)}{more}",
                 severity=DiscoverySeverity.INFO,
-                details={
+                data={
                     'count': app_count,
                     'apps': apps_info,
                 },
@@ -110,17 +110,14 @@ class FlatpakScanner(BaseScanner):
                         id="list-flatpak",
                         label="List All Apps",
                         command="flatpak list --app",
-                        dry_run=True,
                     ),
                     DiscoveryAction(
                         id="update-flatpak",
                         label="Update All",
                         command="flatpak update -y",
-                        dry_run=True,
                         requires_approval=True,
                     ),
                 ],
-                tags=['package', 'flatpak', 'apps', 'linux'],
             ))
         
         return discoveries
@@ -155,7 +152,7 @@ class FlatpakScanner(BaseScanner):
                 title=f"Flatpak: {len(updates)} Updates Available",
                 description=f"Updates: {', '.join(update_names)}{more}",
                 severity=DiscoverySeverity.WARNING if len(updates) > 5 else DiscoverySeverity.INFO,
-                details={
+                data={
                     'count': len(updates),
                     'updates': updates,
                 },
@@ -164,17 +161,14 @@ class FlatpakScanner(BaseScanner):
                         id="show-updates",
                         label="Show Updates",
                         command="flatpak remote-ls --updates",
-                        dry_run=True,
                     ),
                     DiscoveryAction(
                         id="update-all",
                         label="Update All",
                         command="flatpak update -y",
-                        dry_run=True,
                         requires_approval=True,
                     ),
                 ],
-                tags=['package', 'flatpak', 'updates', 'linux'],
             ))
         
         return discoveries
@@ -212,7 +206,7 @@ class FlatpakScanner(BaseScanner):
                 title=f"Flatpak Remotes: {', '.join(remote_names)}",
                 description=f"{len(remotes)} remote(s) configured" + (" (Flathub enabled)" if has_flathub else ""),
                 severity=DiscoverySeverity.SUCCESS if has_flathub else DiscoverySeverity.INFO,
-                details={
+                data={
                     'remotes': remotes,
                     'has_flathub': has_flathub,
                 },
@@ -221,10 +215,8 @@ class FlatpakScanner(BaseScanner):
                         id="list-remotes",
                         label="List Remotes",
                         command="flatpak remotes -d",
-                        dry_run=True,
                     ),
                 ],
-                tags=['package', 'flatpak', 'remotes', 'linux'],
             ))
         
         # Suggest Flathub if not configured
@@ -238,7 +230,7 @@ class FlatpakScanner(BaseScanner):
                 title="Flathub Not Configured",
                 description="Flathub is the main Flatpak repository with thousands of apps",
                 severity=DiscoverySeverity.INFO,
-                details={
+                data={
                     'suggestion': 'Add Flathub for more apps',
                 },
                 actions=[
@@ -246,11 +238,9 @@ class FlatpakScanner(BaseScanner):
                         id="add-flathub",
                         label="Add Flathub",
                         command="flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo",
-                        dry_run=True,
                         requires_approval=True,
                     ),
                 ],
-                tags=['package', 'flatpak', 'flathub', 'linux'],
             ))
         
         return discoveries
