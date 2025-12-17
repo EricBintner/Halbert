@@ -113,22 +113,41 @@ class Index:
                 self._embedding_fn = None
         return self._embedding_fn
     
-    def _collection(self, name: str):
-        """Get or create a collection with explicit embedding function."""
+    def _collection(self, name: str, use_custom_embedding: bool = False):
+        """
+        Get or create a collection.
+        
+        Args:
+            name: Collection name
+            use_custom_embedding: If True and creating new collection, use custom embedding.
+                                  Existing collections keep their original embedding function.
+        """
         if self.client is None:
             return None
         if name in self.collections:
             return self.collections[name]
         try:
-            # Use explicit embedding function for consistency
-            embedding_fn = self._get_embedding_function()
-            if embedding_fn:
-                col = self.client.get_or_create_collection(
-                    name=name,
-                    embedding_function=embedding_fn
-                )
+            # First try to get existing collection (preserves its embedding function)
+            try:
+                col = self.client.get_collection(name=name)
+                self.collections[name] = col
+                return col
+            except Exception:
+                pass  # Collection doesn't exist, create it
+            
+            # Create new collection - use custom embedding for new linux_docs collections
+            if use_custom_embedding:
+                embedding_fn = self._get_embedding_function()
+                if embedding_fn:
+                    col = self.client.create_collection(
+                        name=name,
+                        embedding_function=embedding_fn
+                    )
+                else:
+                    col = self.client.create_collection(name=name)
             else:
-                col = self.client.get_or_create_collection(name=name)
+                col = self.client.create_collection(name=name)
+            
             self.collections[name] = col
             return col
         except Exception as e:
