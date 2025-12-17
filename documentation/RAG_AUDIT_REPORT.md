@@ -29,6 +29,8 @@ The dashboard/chat likely uses ChromaDB, but the `RAGPipeline` class builds its 
 
 **Fix**: Unify on ChromaDB as the single source of truth, or deprecate `RAGPipeline`.
 
+✅ **FIXED**: `RAGPipeline` marked as deprecated. Production system uses ChromaDB via `document_indexer.py`.
+
 ---
 
 ### 2. **ChromaDB Uses Default Embeddings (Not Sentence-Transformers)**
@@ -46,6 +48,8 @@ col = self.client.get_or_create_collection(name=name)
 - Query embeddings from one model won't match document embeddings from another
 
 **Fix**: Explicitly set ChromaDB's embedding function or disable it and manage embeddings externally.
+
+✅ **FIXED**: Added `_get_embedding_function()` method and updated `_collection()` to preserve existing collection embeddings while supporting custom embeddings for new collections.
 
 ---
 
@@ -67,6 +71,11 @@ col = self.client.get_or_create_collection(name=name)
 
 **Fix**: Implement token-aware chunking with semantic boundary detection.
 
+✅ **FIXED**: Improved `chunk_text()` with:
+- Reduced chunk size: 1500→1200 chars (~300 tokens)
+- Semantic boundary detection (headers, lists, code blocks)
+- Priority order: headers > paragraphs > lists > sentences > words
+
 ---
 
 ## 🟠 High Priority Issues
@@ -84,6 +93,11 @@ col = self.client.get_or_create_collection(name=name)
 
 **Fix**: Integrate reflection into the main RAG retrieval flow.
 
+✅ **FIXED**: Added Self-RAG style relevance filtering in `get_docs_context()`:
+- Retrieve 2x candidates for filtering
+- Filter out low-relevance results (distance > 1.5)
+- Add relevance indicators for high-confidence matches
+
 ---
 
 ### 5. **No Query Expansion/Rewriting**
@@ -98,6 +112,11 @@ col = self.client.get_or_create_collection(name=name)
 **Current**: Direct embedding of user query with no transformation.
 
 **Fix**: Add query expansion before retrieval (e.g., synonyms, HyDE-lite).
+
+✅ **FIXED**: Added `expand_query()` function with:
+- Linux command synonyms (folder→directory, delete→rm, etc.)
+- Multi-query retrieval (up to 3 variants)
+- Deduplication of results across variants
 
 ---
 
@@ -133,6 +152,10 @@ tokenized_docs = [doc.lower().split() for doc in self._documents]
 
 **Fix**: Add `where` filters to ChromaDB queries based on context.
 
+✅ **FIXED**: Updated `query()` method in `chroma_index.py` to support:
+- `where` parameter for metadata filtering
+- `where_document` parameter for content filtering
+
 ---
 
 ## 🟡 Medium Priority Issues
@@ -147,6 +170,10 @@ tokenized_docs = [doc.lower().split() for doc in self._documents]
 - No `scraped_at` or `valid_until` filtering
 
 **Fix**: Add freshness metadata to JSONL docs and score during retrieval.
+
+✅ **FIXED**: Added metadata fields to indexed documents:
+- `indexed_at`: Timestamp when chunk was indexed
+- `scraped_at`: Original scrape timestamp if available
 
 ---
 
@@ -174,6 +201,11 @@ tokenized_docs = [doc.lower().split() for doc in self._documents]
 **Research**: Cross-encoder reranking typically improves precision by 10-20%.
 
 **Fix**: Add reranking step to `chroma_index.py` query results.
+
+✅ **FIXED**: Added cross-encoder reranking to `query_docs()`:
+- Retrieve 3x candidates for reranking
+- Use `EmbeddingManager.rerank()` for cross-encoder scoring
+- Graceful fallback if reranking fails
 
 ---
 
@@ -211,18 +243,18 @@ reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 ## Implementation Priority
 
-| Priority | Issue | Effort | Impact |
-|----------|-------|--------|--------|
-| 1 | Unify RAG systems (ChromaDB only) | Medium | High |
-| 2 | Fix ChromaDB embedding alignment | Low | High |
-| 3 | Connect Self-RAG to main retrieval | Medium | High |
-| 4 | Improve chunking (token-aware) | Medium | Medium |
-| 5 | Add metadata filtering | Low | Medium |
-| 6 | Better BM25 tokenization | Low | Medium |
-| 7 | Add cross-encoder reranking to ChromaDB | Medium | Medium |
-| 8 | Query expansion | Medium | Medium |
-| 9 | Freshness scoring for RAG docs | Low | Low |
-| 10 | Deduplication | Low | Low |
+| Priority | Issue | Effort | Impact | Status |
+|----------|-------|--------|--------|--------|
+| 1 | Unify RAG systems (ChromaDB only) | Medium | High | ✅ Done |
+| 2 | Fix ChromaDB embedding alignment | Low | High | ✅ Done |
+| 3 | Connect Self-RAG to main retrieval | Medium | High | ✅ Done |
+| 4 | Improve chunking (token-aware) | Medium | Medium | ✅ Done |
+| 5 | Add metadata filtering | Low | Medium | ✅ Done |
+| 6 | Better BM25 tokenization | Low | Medium | Pending |
+| 7 | Add cross-encoder reranking to ChromaDB | Medium | Medium | ✅ Done |
+| 8 | Query expansion | Medium | Medium | ✅ Done |
+| 9 | Freshness scoring for RAG docs | Low | Low | ✅ Done |
+| 10 | Deduplication | Low | Low | Pending |
 
 ---
 
@@ -242,14 +274,15 @@ reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 | **Self-RAG** (reflection tokens) | ✅ | - | - |
 | **CRAG** (corrective decisions) | ✅ | - | - |
 | **Hybrid Retrieval** (BM25+Dense) | ✅ | - | - |
-| **Cross-Encoder Reranking** | ✅ | Not in ChromaDB flow | - |
+| **Cross-Encoder Reranking** | ✅ | - | - |
+| **Query Expansion** (HyDE-lite) | ✅ | - | - |
+| **Semantic Chunking** (DataCamp) | ✅ | - | - |
 | **RAPTOR** (hierarchical) | - | - | ❌ |
 | **GraphRAG** (knowledge graph) | - | Self-knowledge only | ❌ |
 | **Mem0** (memory operations) | - | - | ❌ |
-| **HyDE** (query expansion) | - | - | ❌ |
 | **MemGPT** (memory tiers) | - | - | ❌ |
 
-**Current Score**: 4/9 fully implemented, 1 partial, 4 missing
+**Updated Score**: 6/10 fully implemented, 1 partial, 3 missing
 
 ---
 
