@@ -212,6 +212,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         @app.get("/sharing")
         @app.get("/security")
         @app.get("/backups")
+        @app.get("/apps")
         @app.get("/approvals")
         @app.get("/settings")
         async def serve_spa():

@@ -1079,7 +1079,7 @@ export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps)
                     </Button>
                   </CardHeader>
                   <CardContent>
-                    <pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm">
+                    <pre className="bg-muted text-foreground p-4 rounded-lg overflow-x-auto text-sm border">
                       <code>{selectedComponent.code}</code>
                     </pre>
                   </CardContent>

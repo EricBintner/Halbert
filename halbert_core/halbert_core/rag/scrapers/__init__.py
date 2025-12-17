@@ -31,6 +31,8 @@ from .ubuntu_docs import UbuntuDocsScraper
 from .networking_docs import NetworkingDocsScraper
 from .filesystem_docs import FilesystemDocsScraper
 from .shell_docs import ShellDocsScraper
+from .security_docs import SecurityDocsScraper
+from .containers_docs import ContainersDocsScraper
 
 __all__ = [
     'BaseScraper',
@@ -51,6 +53,8 @@ __all__ = [
     'NetworkingDocsScraper',
     'FilesystemDocsScraper',
     'ShellDocsScraper',
+    'SecurityDocsScraper',
+    'ContainersDocsScraper',
     # macOS
     'HomebrewScraper',
     'MacOSSupportScraper',
