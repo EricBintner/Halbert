@@ -45,21 +45,44 @@ class SnapScanner(BaseScanner):
         return code == 0
     
     def scan(self) -> List[Discovery]:
-        """Scan for Snap packages."""
+        """Scan for Snap packages with unified app list and update status."""
         discoveries = []
         
         if not self.is_available():
             return discoveries
         
-        discoveries.extend(self._scan_installed())
-        discoveries.extend(self._scan_updates())
+        # Get updates first so we can merge status into snaps
+        snap_updates = self._get_updates()
+        
+        # Scan installed snaps with update status merged in
+        discoveries.extend(self._scan_installed(snap_updates))
         discoveries.extend(self._scan_services())
         
         self.logger.info(f"Found {len(discoveries)} Snap discoveries")
         return discoveries
     
-    def _scan_installed(self) -> List[Discovery]:
-        """Scan installed Snap packages."""
+    def _get_updates(self) -> set[str]:
+        """Get set of snap names that have updates available."""
+        updates = set()
+        
+        # snap refresh --list shows pending updates
+        code, stdout, _ = self.run_command(['snap', 'refresh', '--list'])
+        
+        if code != 0:
+            return updates
+        
+        lines = stdout.strip().splitlines()
+        for line in lines:
+            if line.startswith('Name') or not line.strip():
+                continue
+            parts = line.split()
+            if parts:
+                updates.add(parts[0])
+        
+        return updates
+    
+    def _scan_installed(self, snap_updates: set[str]) -> List[Discovery]:
+        """Scan installed Snap packages with update status merged in."""
         discoveries = []
         
         code, stdout, _ = self.run_command(['snap', 'list'])
@@ -68,6 +91,7 @@ class SnapScanner(BaseScanner):
             return discoveries
         
         snaps = []
+        update_count = 0
         lines = stdout.strip().splitlines()
         
         # Skip header
@@ -88,6 +112,11 @@ class SnapScanner(BaseScanner):
                 # Find icon path for the snap
                 icon_path = self._find_snap_icon(name)
                 
+                # Check if this snap has an update available
+                has_update = name in snap_updates
+                if has_update:
+                    update_count += 1
+                
                 snaps.append({
                     'name': name,
                     'version': version,
@@ -97,29 +126,37 @@ class SnapScanner(BaseScanner):
                     'notes': notes,
                     'classic': 'classic' in notes,
                     'icon': icon_path,
+                    'has_update': has_update,
+                    'status': 'update_available' if has_update else 'current',
                 })
         
         if snaps:
-            discovery_id = make_discovery_id(DiscoveryType.PACKAGE, "snap-installed")
-            
-            snap_names = [s['name'] for s in snaps[:5]]
-            more = f" (+{len(snaps) - 5} more)" if len(snaps) > 5 else ""
+            discovery_id = make_discovery_id(DiscoveryType.PACKAGE, "snap-apps")
             
             # Count classic vs confined
             classic_count = sum(1 for s in snaps if s['classic'])
+            
+            # Build description
+            if update_count > 0:
+                desc = f"{len(snaps)} snaps installed, {update_count} update{'s' if update_count != 1 else ''} available"
+            else:
+                desc = f"{len(snaps)} snaps installed, all up to date"
+            if classic_count:
+                desc += f" ({classic_count} classic)"
             
             discoveries.append(Discovery(
                 id=discovery_id,
                 type=DiscoveryType.PACKAGE,
                 name="snap-apps",
-                title=f"Snap: {len(snaps)} Packages Installed",
-                description=f"Installed: {', '.join(snap_names)}{more}" + 
-                           (f" ({classic_count} classic)" if classic_count else ""),
-                severity=DiscoverySeverity.INFO,
+                title=f"Snap Apps",
+                description=desc,
+                severity=DiscoverySeverity.WARNING if update_count > 0 else DiscoverySeverity.SUCCESS,
                 data={
                     'count': len(snaps),
+                    'update_count': update_count,
                     'classic_count': classic_count,
                     'snaps': snaps,
+                    'source': 'snap',
                 },
                 actions=[
                     DiscoveryAction(
@@ -129,64 +166,6 @@ class SnapScanner(BaseScanner):
                     ),
                     DiscoveryAction(
                         id="refresh-snaps",
-                        label="Update All",
-                        command="sudo snap refresh",
-                        requires_approval=True,
-                    ),
-                ],
-            ))
-        
-        return discoveries
-    
-    def _scan_updates(self) -> List[Discovery]:
-        """Check for available Snap updates."""
-        discoveries = []
-        
-        # Note: snap refresh --list shows pending updates
-        code, stdout, _ = self.run_command(['snap', 'refresh', '--list'])
-        
-        if code != 0:
-            return discoveries
-        
-        updates = []
-        lines = stdout.strip().splitlines()
-        
-        # Skip header if present
-        for line in lines:
-            if line.startswith('Name') or not line.strip():
-                continue
-            parts = line.split()
-            if parts:
-                updates.append({
-                    'name': parts[0],
-                    'version': parts[1] if len(parts) > 1 else '',
-                })
-        
-        if updates:
-            discovery_id = make_discovery_id(DiscoveryType.PACKAGE, "snap-updates")
-            
-            update_names = [u['name'] for u in updates[:5]]
-            more = f" (+{len(updates) - 5} more)" if len(updates) > 5 else ""
-            
-            discoveries.append(Discovery(
-                id=discovery_id,
-                type=DiscoveryType.PACKAGE,
-                name="snap-updates",
-                title=f"Snap: {len(updates)} Updates Pending",
-                description=f"Updates: {', '.join(update_names)}{more}",
-                severity=DiscoverySeverity.INFO,
-                data={
-                    'count': len(updates),
-                    'updates': updates,
-                },
-                actions=[
-                    DiscoveryAction(
-                        id="show-updates",
-                        label="Show Updates",
-                        command="snap refresh --list",
-                    ),
-                    DiscoveryAction(
-                        id="refresh-all",
                         label="Update All",
                         command="sudo snap refresh",
                         requires_approval=True,

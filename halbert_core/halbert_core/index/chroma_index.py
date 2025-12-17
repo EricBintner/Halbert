@@ -270,7 +270,8 @@ class Index:
         }
         
         if self.client is not None:
-            for name in ["self_knowledge_all", "self_conversations", "self_hwmon", "self_journald"]:
+            # Include linux_docs and other important collections
+            for name in ["linux_docs", "self_knowledge_all", "self_conversations", "self_hwmon", "self_journald", "discoveries"]:
                 col = self._collection(name)
                 if col is not None:
                     try:

@@ -327,12 +327,21 @@ def get_index_stats() -> Dict[str, Any]:
     from ..index.chroma_index import get_index
     
     index = get_index()
-    stats = index.stats()
+    stats = index.get_stats()
     
+    # Get linux_docs count
     linux_docs = stats.get("collections", {}).get("linux_docs", 0)
+    if linux_docs == "error":
+        linux_docs = 0
+    
+    # Build collections dict with only numeric values
+    collections = {}
+    for name, count in stats.get("collections", {}).items():
+        if isinstance(count, int):
+            collections[name] = count
     
     return {
         "linux_docs_count": linux_docs,
-        "total_docs": sum(stats.get("collections", {}).values()),
-        "collections": stats.get("collections", {}),
+        "total_docs": sum(v for v in collections.values() if isinstance(v, int)),
+        "collections": collections,
     }

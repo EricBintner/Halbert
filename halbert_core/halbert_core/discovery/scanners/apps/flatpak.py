@@ -40,21 +40,65 @@ class FlatpakScanner(BaseScanner):
         return self.command_exists('flatpak')
     
     def scan(self) -> List[Discovery]:
-        """Scan for Flatpak apps."""
+        """Scan for Flatpak apps with unified app list and update status."""
         discoveries = []
         
         if not self.is_available():
             return discoveries
         
-        discoveries.extend(self._scan_installed_apps())
-        discoveries.extend(self._scan_updates())
+        # Get updates first so we can merge status into apps
+        app_updates, runtime_updates = self._get_updates()
+        
+        # Scan installed apps with update status merged in
+        discoveries.extend(self._scan_installed_apps(app_updates))
+        
+        # Add runtime updates as separate discovery (collapsed in UI)
+        if runtime_updates:
+            discoveries.extend(self._create_runtime_updates_discovery(runtime_updates))
+        
         discoveries.extend(self._scan_remotes())
         
         self.logger.info(f"Found {len(discoveries)} Flatpak discoveries")
         return discoveries
     
-    def _scan_installed_apps(self) -> List[Discovery]:
-        """Scan installed Flatpak applications."""
+    def _get_updates(self) -> tuple[dict[str, dict], list[dict]]:
+        """
+        Get available updates, separated into app updates and runtime updates.
+        
+        Returns:
+            Tuple of (app_updates dict keyed by app_id, runtime_updates list)
+        """
+        app_updates = {}
+        runtime_updates = []
+        
+        # Get updates with ref type to distinguish apps from runtimes
+        code, stdout, _ = self.run_command([
+            'flatpak', 'remote-ls', '--updates', '--columns=application,name,ref'
+        ])
+        
+        if code != 0:
+            return app_updates, runtime_updates
+        
+        for line in stdout.strip().splitlines():
+            if not line:
+                continue
+            parts = line.split('\t')
+            app_id = parts[0]
+            name = parts[1] if len(parts) > 1 else app_id
+            ref = parts[2] if len(parts) > 2 else ''
+            
+            update_info = {'app_id': app_id, 'name': name, 'ref': ref}
+            
+            # Check if it's an app or runtime based on ref
+            if '/app/' in ref:
+                app_updates[app_id] = update_info
+            else:
+                runtime_updates.append(update_info)
+        
+        return app_updates, runtime_updates
+    
+    def _scan_installed_apps(self, app_updates: dict[str, dict]) -> List[Discovery]:
+        """Scan installed Flatpak applications with update status merged in."""
         discoveries = []
         
         # Get installed apps with details
@@ -65,8 +109,8 @@ class FlatpakScanner(BaseScanner):
         if code != 0:
             return discoveries
         
-        app_count = 0
         apps_info = []
+        update_count = 0
         
         for line in stdout.strip().splitlines():
             parts = line.split('\t')
@@ -80,6 +124,11 @@ class FlatpakScanner(BaseScanner):
                 # Find icon path for the app
                 icon_path = self._find_flatpak_icon(app_id, installation)
                 
+                # Check if this app has an update available
+                has_update = app_id in app_updates
+                if has_update:
+                    update_count += 1
+                
                 apps_info.append({
                     'app_id': app_id,
                     'name': name,
@@ -87,27 +136,32 @@ class FlatpakScanner(BaseScanner):
                     'origin': origin,
                     'installation': installation,
                     'icon': icon_path,
+                    'has_update': has_update,
+                    'status': 'update_available' if has_update else 'current',
                 })
-                app_count += 1
         
-        # Create summary discovery
-        if app_count > 0:
-            discovery_id = make_discovery_id(DiscoveryType.PACKAGE, "flatpak-apps-summary")
+        # Create unified discovery with all apps
+        if apps_info:
+            discovery_id = make_discovery_id(DiscoveryType.PACKAGE, "flatpak-apps")
             
-            # Show first few apps
-            app_names = [a['name'] for a in apps_info[:5]]
-            more = f" (+{app_count - 5} more)" if app_count > 5 else ""
+            # Build description
+            if update_count > 0:
+                desc = f"{len(apps_info)} apps installed, {update_count} update{'s' if update_count != 1 else ''} available"
+            else:
+                desc = f"{len(apps_info)} apps installed, all up to date"
             
             discoveries.append(Discovery(
                 id=discovery_id,
                 type=DiscoveryType.PACKAGE,
                 name="flatpak-apps",
-                title=f"Flatpak: {app_count} Apps Installed",
-                description=f"Installed: {', '.join(app_names)}{more}",
-                severity=DiscoverySeverity.INFO,
+                title=f"Flatpak Apps",
+                description=desc,
+                severity=DiscoverySeverity.WARNING if update_count > 0 else DiscoverySeverity.SUCCESS,
                 data={
-                    'count': app_count,
+                    'count': len(apps_info),
+                    'update_count': update_count,
                     'apps': apps_info,
+                    'source': 'flatpak',
                 },
                 actions=[
                     DiscoveryAction(
@@ -126,56 +180,35 @@ class FlatpakScanner(BaseScanner):
         
         return discoveries
     
-    def _scan_updates(self) -> List[Discovery]:
-        """Check for available Flatpak updates."""
-        discoveries = []
+    def _create_runtime_updates_discovery(self, runtime_updates: list[dict]) -> List[Discovery]:
+        """Create a separate discovery for runtime/extension updates."""
+        discovery_id = make_discovery_id(DiscoveryType.PACKAGE, "flatpak-runtimes")
         
-        code, stdout, _ = self.run_command(['flatpak', 'remote-ls', '--updates', '--columns=application,name'])
+        runtime_names = [r['name'] for r in runtime_updates[:3]]
+        more = f" (+{len(runtime_updates) - 3} more)" if len(runtime_updates) > 3 else ""
         
-        if code != 0:
-            return discoveries
-        
-        updates = []
-        for line in stdout.strip().splitlines():
-            if line:
-                parts = line.split('\t')
-                app_id = parts[0]
-                name = parts[1] if len(parts) > 1 else app_id
-                updates.append({'app_id': app_id, 'name': name})
-        
-        if updates:
-            discovery_id = make_discovery_id(DiscoveryType.PACKAGE, "flatpak-updates")
-            
-            update_names = [u['name'] for u in updates[:5]]
-            more = f" (+{len(updates) - 5} more)" if len(updates) > 5 else ""
-            
-            discoveries.append(Discovery(
-                id=discovery_id,
-                type=DiscoveryType.PACKAGE,
-                name="flatpak-updates",
-                title=f"Flatpak: {len(updates)} Updates Available",
-                description=f"Updates: {', '.join(update_names)}{more}",
-                severity=DiscoverySeverity.WARNING if len(updates) > 5 else DiscoverySeverity.INFO,
-                data={
-                    'count': len(updates),
-                    'updates': updates,
-                },
-                actions=[
-                    DiscoveryAction(
-                        id="show-updates",
-                        label="Show Updates",
-                        command="flatpak remote-ls --updates",
-                    ),
-                    DiscoveryAction(
-                        id="update-all",
-                        label="Update All",
-                        command="flatpak update -y",
-                        requires_approval=True,
-                    ),
-                ],
-            ))
-        
-        return discoveries
+        return [Discovery(
+            id=discovery_id,
+            type=DiscoveryType.PACKAGE,
+            name="flatpak-runtimes",
+            title=f"Flatpak Runtimes: {len(runtime_updates)} Updates",
+            description=f"Runtime updates: {', '.join(runtime_names)}{more}",
+            severity=DiscoverySeverity.INFO,
+            data={
+                'count': len(runtime_updates),
+                'runtimes': runtime_updates,
+                'source': 'flatpak',
+                'is_runtime': True,
+            },
+            actions=[
+                DiscoveryAction(
+                    id="update-runtimes",
+                    label="Update Runtimes",
+                    command="flatpak update --runtime -y",
+                    requires_approval=True,
+                ),
+            ],
+        )]
     
     def _scan_remotes(self) -> List[Discovery]:
         """Scan Flatpak remotes (repositories)."""
