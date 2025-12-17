@@ -312,26 +312,51 @@ def get_docs_context(query: str, max_results: int = 3) -> str:
     Retrieve relevant Linux documentation for the query.
     
     Uses ChromaDB semantic search over indexed man pages, Arch Wiki, etc.
+    Enhanced with Self-RAG inspired relevance filtering.
     """
     try:
         from ...rag.document_indexer import query_docs
         
-        results = query_docs(query, k=max_results)
+        # Retrieve more candidates for filtering (Self-RAG style)
+        results = query_docs(query, k=max_results * 2, use_reranking=False)
         
         if not results:
             return ""
         
-        context_parts = ["**Relevant documentation:**"]
+        # Self-RAG inspired relevance filtering
+        # Filter out low-relevance results based on distance score
+        filtered_results = []
         for r in results:
+            distance = r.get('distance')
+            # ChromaDB distance: lower is better, typically 0.0-2.0 range
+            # Filter out results with distance > 1.5 (weak matches)
+            if distance is None or distance < 1.5:
+                filtered_results.append(r)
+        
+        # Take top results after filtering
+        filtered_results = filtered_results[:max_results]
+        
+        if not filtered_results:
+            return ""
+        
+        context_parts = ["**Relevant documentation:**"]
+        for r in filtered_results:
             title = r.get('title', 'Unknown')
             source = r.get('source_type', r.get('source', ''))
             content = r.get('content', r.get('text', ''))[:400]
             
+            # Include relevance indicator if rerank score available
+            score_info = ""
+            if r.get('rerank_score'):
+                score = r['rerank_score']
+                if score > 5:
+                    score_info = " ★"  # High confidence
+            
             if title and content:
-                context_parts.append(f"- **{title}** ({source}): {content}")
+                context_parts.append(f"- **{title}** ({source}){score_info}: {content}")
         
         if len(context_parts) > 1:
-            logger.debug(f"Retrieved {len(results)} doc entries for context")
+            logger.debug(f"Retrieved {len(filtered_results)} doc entries for context (filtered from {len(results)})")
             return "\n".join(context_parts)
         
         return ""
