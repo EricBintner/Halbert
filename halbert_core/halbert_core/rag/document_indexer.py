@@ -168,22 +168,29 @@ def index_documents(
             
             stats.total_docs += 1
             
-            text = doc.get("text", "")
+            # Handle both old schema (text/metadata) and new schema (content/title/source)
+            text = doc.get("text") or doc.get("content", "")
             metadata = doc.get("metadata", {})
             
             if not text or len(text) < 50:
                 stats.skipped_docs += 1
                 continue
             
-            # Extract key metadata
-            source_type = metadata.get("source_type", source_name)
-            title = metadata.get("man_page") or metadata.get("title") or metadata.get("name", "")
+            # Extract key metadata - support both schemas
+            source_type = metadata.get("source_type") or doc.get("source", source_name)
+            title = (
+                metadata.get("man_page") or 
+                metadata.get("title") or 
+                metadata.get("name") or
+                doc.get("title", "")
+            )
             
             # Chunk long documents
             chunks = chunk_text(text, max_chars=1500)
             
             for i, chunk in enumerate(chunks):
-                doc_id = f"{source_type}:{title}:{i}" if title else f"{source_name}:{stats.total_docs}:{i}"
+                # Use source_name + doc number + chunk for unique IDs (avoids duplicates from same titles)
+                doc_id = f"{source_name}:{stats.total_docs}:{i}"
                 
                 meta = {
                     "source": source_name,
@@ -256,12 +263,27 @@ def index_priority_docs(max_per_source: int = 500) -> Dict[str, IndexStats]:
     
     # Priority sources for system administration
     priority_sources = [
+        # Core documentation
         "man-pages",
-        "systemd-docs",
         "arch-wiki-ext",
-        "network-docs",
+        # Phase 27 comprehensive guides
+        "systemd-docs",
+        "ubuntu-docs",
+        "networking-docs",
         "filesystem-docs",
+        "shell-docs",
         "security-docs",
+        "containers-docs",
+        "git-docs",
+        "scheduling-docs",
+        "logging-docs",
+        "performance-docs",
+        # Phase 26 app formats
+        "flatpak-docs",
+        "snap-docs",
+        "appimage-docs",
+        # Legacy sources
+        "network-docs",
         "docker-docs",
         "backup-docs",
     ]
