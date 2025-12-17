@@ -1800,26 +1800,118 @@ async def stop_ingestion():
 # Document Indexing API
 # =============================================================================
 
+# Background indexing state (survives page navigation)
+_indexing_state = {
+    "is_running": False,
+    "started_at": None,
+    "completed_at": None,
+    "total_indexed": 0,
+    "current_source": None,
+    "sources_completed": [],
+    "error": None
+}
+
+def _run_background_index(max_docs: int, source: str = None):
+    """Run indexing in background thread."""
+    global _indexing_state
+    import threading
+    
+    def do_index_work():
+        global _indexing_state
+        try:
+            from ...rag.document_indexer import index_documents as do_index, get_default_data_dir, index_priority_docs
+            
+            data_dir = get_default_data_dir()
+            
+            if source:
+                _indexing_state["current_source"] = source
+                stats = do_index(
+                    data_dir=data_dir,
+                    collection_name="linux_docs",
+                    max_docs=max_docs,
+                    sources=[source]
+                )
+                _indexing_state["total_indexed"] = stats.indexed_docs
+                _indexing_state["sources_completed"] = [source]
+            else:
+                results = index_priority_docs(max_per_source=max_docs)
+                _indexing_state["total_indexed"] = sum(s.indexed_docs for s in results.values())
+                _indexing_state["sources_completed"] = list(results.keys())
+            
+            _indexing_state["completed_at"] = datetime.now(timezone.utc).isoformat()
+            _indexing_state["error"] = None
+            logger.info(f"Background indexing complete: {_indexing_state['total_indexed']} docs")
+            
+        except Exception as e:
+            logger.error(f"Background indexing failed: {e}")
+            _indexing_state["error"] = str(e)
+            _indexing_state["completed_at"] = datetime.now(timezone.utc).isoformat()
+        finally:
+            _indexing_state["is_running"] = False
+            _indexing_state["current_source"] = None
+    
+    # Start background thread
+    _indexing_state["is_running"] = True
+    _indexing_state["started_at"] = datetime.now(timezone.utc).isoformat()
+    _indexing_state["completed_at"] = None
+    _indexing_state["total_indexed"] = 0
+    _indexing_state["sources_completed"] = []
+    _indexing_state["error"] = None
+    
+    thread = threading.Thread(target=do_index_work, daemon=True)
+    thread.start()
+
+
 @router.get("/docs/stats")
 async def get_docs_stats():
     """Get document index statistics."""
     try:
         from ...rag.document_indexer import get_index_stats
-        return get_index_stats()
+        stats = get_index_stats()
+        # Include indexing status
+        stats["indexing"] = {
+            "is_running": _indexing_state["is_running"],
+            "started_at": _indexing_state["started_at"],
+            "completed_at": _indexing_state["completed_at"],
+            "total_indexed": _indexing_state["total_indexed"],
+            "current_source": _indexing_state["current_source"],
+            "sources_completed": _indexing_state["sources_completed"],
+            "error": _indexing_state["error"]
+        }
+        return stats
     except Exception as e:
         logger.error(f"Failed to get doc stats: {e}")
         return {"error": str(e), "linux_docs_count": 0}
 
 
 @router.post("/docs/index")
-async def index_documents(max_docs: int = 1000, source: str = None):
+async def index_documents(max_docs: int = 1000, source: str = None, background: bool = True):
     """
     Index Linux documentation into ChromaDB.
     
     Args:
         max_docs: Maximum documents to index
         source: Specific source to index (None = priority sources)
+        background: Run in background (default True) - allows page navigation
     """
+    # Check if already running
+    if _indexing_state["is_running"]:
+        return {
+            "status": "already_running",
+            "message": "Indexing is already in progress. Check /docs/stats for status.",
+            "started_at": _indexing_state["started_at"]
+        }
+    
+    if background:
+        # Start background indexing - user can navigate away
+        _run_background_index(max_docs, source)
+        return {
+            "status": "started",
+            "message": "Indexing started in background. You can navigate away - check /docs/stats for progress.",
+            "started_at": _indexing_state["started_at"]
+        }
+    
+    # Synchronous indexing (legacy behavior)
     try:
         from ...rag.document_indexer import index_documents as do_index, get_default_data_dir
         

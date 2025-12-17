@@ -232,7 +232,22 @@ export function Settings() {
     loadSystemProfile()
     loadAiRules()
     loadSelfKnowledge()
+    checkIndexingStatus()
   }, [])
+  
+  // Check if indexing is already running on page load
+  const checkIndexingStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/settings/docs/stats`)
+      const data = await res.json()
+      if (data.indexing?.is_running) {
+        setIndexing(true)
+        pollIndexingStatus()
+      }
+    } catch (err) {
+      console.error('Failed to check indexing status:', err)
+    }
+  }
 
   const loadSettings = async () => {
     // Load system info
@@ -702,16 +717,61 @@ export function Settings() {
     try {
       const res = await fetch(`${API_BASE}/settings/docs/index?max_docs=10000`, { method: 'POST' })
       const data = await res.json()
-      setIndexResult({ total: data.total_indexed || 0, sources: data.sources_indexed || [] })
-      // Reload stats after indexing
-      loadSettings()
-      if (showDocList) loadRagDocuments()
-      setToast({ open: true, message: `Indexed ${data.total_indexed || 0} documents`, variant: 'success' })
+      
+      if (data.status === 'started') {
+        // Background indexing started - user can navigate away
+        setToast({ 
+          open: true, 
+          message: 'Indexing started in background. You can navigate away safely.', 
+          variant: 'success' 
+        })
+        // Poll for completion
+        pollIndexingStatus()
+      } else if (data.status === 'already_running') {
+        setToast({ open: true, message: 'Indexing already in progress', variant: 'success' })
+      } else {
+        // Legacy sync response
+        setIndexResult({ total: data.total_indexed || 0, sources: data.sources_indexed || [] })
+        loadSettings()
+        if (showDocList) loadRagDocuments()
+        setToast({ open: true, message: `Indexed ${data.total_indexed || 0} documents`, variant: 'success' })
+        setIndexing(false)
+      }
     } catch (err) {
       console.error('Indexing failed:', err)
       setToast({ open: true, message: 'Indexing failed', variant: 'error' })
+      setIndexing(false)
     }
-    setIndexing(false)
+  }
+  
+  const pollIndexingStatus = () => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/settings/docs/stats`)
+        const data = await res.json()
+        const status = data.indexing
+        
+        if (status && !status.is_running) {
+          // Indexing completed
+          clearInterval(interval)
+          setIndexing(false)
+          
+          if (status.error) {
+            setToast({ open: true, message: `Indexing failed: ${status.error}`, variant: 'error' })
+          } else {
+            setIndexResult({ total: status.total_indexed || 0, sources: status.sources_completed || [] })
+            setToast({ open: true, message: `Indexed ${status.total_indexed || 0} documents`, variant: 'success' })
+            loadSettings()
+            if (showDocList) loadRagDocuments()
+          }
+        }
+      } catch (err) {
+        console.error('Failed to poll indexing status:', err)
+      }
+    }, 3000) // Poll every 3 seconds
+    
+    // Store interval ID for cleanup
+    return () => clearInterval(interval)
   }
   
   // Self-Knowledge management functions
