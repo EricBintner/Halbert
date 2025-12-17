@@ -546,7 +546,7 @@ def get_suggestions_for_system() -> List[dict]:
         
         engine = get_engine()
         # Get cached discoveries (don't trigger new scan)
-        discoveries = [d.to_dict() for d in engine.get_all_discoveries()]
+        discoveries = [d.to_dict() for d in engine.get_all()]
         
         suggester = get_suggester()
         suggestions = suggester.analyze_discoveries(discoveries)
