@@ -508,10 +508,43 @@ Respond in JSON format only:
 }}"""
 
 
+def get_configured_model() -> tuple[str, str]:
+    """
+    Get the configured guide/orchestrator model from models.yml.
+    
+    Returns:
+        (endpoint_url, model_name) tuple
+    """
+    try:
+        from pathlib import Path
+        import yaml
+        
+        # Try to find config
+        config_dir = Path.home() / '.config' / 'halbert'
+        config_path = config_dir / 'models.yml'
+        
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f) or {}
+            
+            orchestrator = config.get('orchestrator', {})
+            endpoint = orchestrator.get('endpoint', 'http://localhost:11434')
+            model = orchestrator.get('model', 'llama3.1:8b-instruct')
+            return endpoint, model
+        
+        # Fallback defaults
+        return 'http://localhost:11434', 'llama3.1:8b-instruct'
+        
+    except Exception as e:
+        logger.warning(f"Failed to load model config: {e}")
+        return 'http://localhost:11434', 'llama3.1:8b-instruct'
+
+
 async def analyze_repo_with_llm(
     repo: TrendingRepo,
     user_stack: Dict[str, List[str]],
-    llm_endpoint: str = "http://localhost:11434"
+    llm_endpoint: str = None,
+    model: str = None
 ) -> Optional[LLMAnalysis]:
     """
     Use LLM to analyze a trending repository.
@@ -527,6 +560,12 @@ async def analyze_repo_with_llm(
     try:
         import aiohttp
         import json
+        
+        # Get configured model if not specified
+        if llm_endpoint is None or model is None:
+            cfg_endpoint, cfg_model = get_configured_model()
+            llm_endpoint = llm_endpoint or cfg_endpoint
+            model = model or cfg_model
         
         # Format user stack for prompt
         stack_str = ", ".join([
@@ -544,16 +583,18 @@ async def analyze_repo_with_llm(
             user_stack=stack_str or "general Linux user"
         )
         
+        logger.info(f"Analyzing {repo.name} with {model} at {llm_endpoint}")
+        
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{llm_endpoint}/api/generate",
                 json={
-                    "model": "llama3.2:3b",  # Use smaller model for speed
+                    "model": model,  # Use configured guide model
                     "prompt": prompt,
                     "stream": False,
                     "format": "json"
                 },
-                timeout=aiohttp.ClientTimeout(total=30)
+                timeout=aiohttp.ClientTimeout(total=60)  # Longer timeout for larger models
             ) as response:
                 if response.status != 200:
                     logger.warning(f"LLM request failed: {response.status}")
@@ -590,7 +631,8 @@ async def analyze_repo_with_llm(
 def analyze_repo_with_llm_sync(
     repo: TrendingRepo,
     user_stack: Dict[str, List[str]],
-    llm_endpoint: str = "http://localhost:11434"
+    llm_endpoint: str = None,
+    model: str = None
 ) -> Optional[LLMAnalysis]:
     """
     Synchronous wrapper for LLM analysis.
@@ -600,6 +642,12 @@ def analyze_repo_with_llm_sync(
     try:
         import requests
         import json
+        
+        # Get configured model if not specified
+        if llm_endpoint is None or model is None:
+            cfg_endpoint, cfg_model = get_configured_model()
+            llm_endpoint = llm_endpoint or cfg_endpoint
+            model = model or cfg_model
         
         # Format user stack for prompt
         stack_str = ", ".join([
@@ -617,15 +665,17 @@ def analyze_repo_with_llm_sync(
             user_stack=stack_str or "general Linux user"
         )
         
+        logger.info(f"Analyzing {repo.name} with {model} at {llm_endpoint}")
+        
         response = requests.post(
             f"{llm_endpoint}/api/generate",
             json={
-                "model": "llama3.2:3b",
+                "model": model,  # Use configured guide model
                 "prompt": prompt,
                 "stream": False,
                 "format": "json"
             },
-            timeout=30
+            timeout=60  # Longer timeout for larger models
         )
         
         if response.status_code != 200:
