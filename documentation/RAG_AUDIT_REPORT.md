@@ -250,11 +250,11 @@ reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 | 3 | Connect Self-RAG to main retrieval | Medium | High | ✅ Done |
 | 4 | Improve chunking (token-aware) | Medium | Medium | ✅ Done |
 | 5 | Add metadata filtering | Low | Medium | ✅ Done |
-| 6 | Better BM25 tokenization | Low | Medium | Pending |
+| 6 | Better BM25 tokenization | Low | Medium | ✅ Done |
 | 7 | Add cross-encoder reranking to ChromaDB | Medium | Medium | ✅ Done |
 | 8 | Query expansion | Medium | Medium | ✅ Done |
 | 9 | Freshness scoring for RAG docs | Low | Low | ✅ Done |
-| 10 | Deduplication | Low | Low | Pending |
+| 10 | Deduplication | Low | Low | ✅ Done |
 
 ---
 
@@ -282,7 +282,7 @@ reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 | **Mem0** (memory operations) | - | - | ❌ |
 | **MemGPT** (memory tiers) | - | - | ❌ |
 
-**Updated Score**: 6/10 fully implemented, 1 partial, 3 missing
+**Updated Score**: 8/10 fully implemented, 1 partial, 1 missing (GraphRAG for Linux docs)
 
 ---
 

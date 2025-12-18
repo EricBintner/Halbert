@@ -6,6 +6,7 @@ for semantic search during chat.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -234,8 +235,9 @@ def index_documents(
             chunks = chunk_text(text, max_chars=1200)
             
             for i, chunk in enumerate(chunks):
-                # Use source_name + doc number + chunk for unique IDs (avoids duplicates from same titles)
-                doc_id = f"{source_name}:{stats.total_docs}:{i}"
+                # Use content hash for deduplication - same content = same ID = upsert
+                content_hash = hashlib.md5(chunk.encode()).hexdigest()[:12]
+                doc_id = f"{source_name}:{title[:30]}:{i}:{content_hash}"
                 
                 # Include freshness metadata for retrieval scoring
                 meta = {

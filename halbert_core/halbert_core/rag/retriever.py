@@ -103,6 +103,52 @@ class HybridRetriever:
         
         logger.info("Document indexing complete")
     
+    # Common English stopwords for BM25 filtering
+    STOPWORDS = {
+        'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from',
+        'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the',
+        'to', 'was', 'were', 'will', 'with', 'the', 'this', 'but', 'they',
+        'have', 'had', 'what', 'when', 'where', 'who', 'which', 'why', 'how',
+        'all', 'each', 'every', 'both', 'few', 'more', 'most', 'other',
+        'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so',
+        'than', 'too', 'very', 'can', 'just', 'should', 'now', 'or', 'if'
+    }
+    
+    def _tokenize(self, text: str) -> List[str]:
+        """
+        Improved tokenizer for BM25 with:
+        - Lowercase normalization
+        - Word boundary splitting (handles punctuation)
+        - Stopword removal
+        - Basic stemming for common suffixes
+        """
+        import re
+        
+        # Lowercase
+        text = text.lower()
+        
+        # Split on word boundaries (keeps hyphenated terms like "apt-get")
+        tokens = re.findall(r'[a-z0-9][-a-z0-9]*[a-z0-9]|[a-z0-9]', text)
+        
+        # Remove stopwords and very short tokens
+        tokens = [t for t in tokens if t not in self.STOPWORDS and len(t) > 1]
+        
+        # Basic suffix stripping (poor man's stemming)
+        def stem(word):
+            if word.endswith('ing') and len(word) > 5:
+                return word[:-3]
+            if word.endswith('ed') and len(word) > 4:
+                return word[:-2]
+            if word.endswith('ly') and len(word) > 4:
+                return word[:-2]
+            if word.endswith('s') and len(word) > 3 and not word.endswith('ss'):
+                return word[:-1]
+            return word
+        
+        tokens = [stem(t) for t in tokens]
+        
+        return tokens
+    
     def _build_bm25_index(self):
         """Build BM25 sparse index."""
         try:
@@ -110,8 +156,8 @@ class HybridRetriever:
             
             logger.info("Building BM25 index")
             
-            # Tokenize documents (simple whitespace split)
-            tokenized_docs = [doc.lower().split() for doc in self._documents]
+            # Tokenize documents with improved preprocessing
+            tokenized_docs = [self._tokenize(doc) for doc in self._documents]
             
             self._bm25 = BM25Okapi(tokenized_docs)
             
@@ -151,8 +197,8 @@ class HybridRetriever:
             logger.warning("BM25 index not built")
             return []
         
-        # Tokenize query
-        tokenized_query = query.lower().split()
+        # Tokenize query with same preprocessing as documents
+        tokenized_query = self._tokenize(query)
         
         # Get scores
         scores = self._bm25.get_scores(tokenized_query)

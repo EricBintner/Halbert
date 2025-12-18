@@ -432,9 +432,9 @@ async def add_suggested_doc(doc_key: str):
         
         doc_source = DOC_SOURCE_REGISTRY[doc_key]
         
-        # Create request and call add_source
+        # Create request and call add_knowledge_source
         request = AddSourceRequest(url=doc_source.url, name=doc_source.name)
-        result = await add_source(request)
+        result = await add_knowledge_source(request)
         
         if result.success:
             # Mark as indexed

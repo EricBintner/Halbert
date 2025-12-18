@@ -1848,9 +1848,40 @@ def _run_background_index(max_docs: int, source: str = None):
     def do_index_work():
         global _indexing_state
         try:
-            from ...rag.document_indexer import index_documents as do_index, get_default_data_dir
+            logger.info("Background indexing thread started")
             
-            data_dir = get_default_data_dir()
+            # Update state immediately so UI shows progress
+            _indexing_state["current_source"] = "Starting..."
+            
+            # Get data directory path (fast operation, no ChromaDB)
+            from pathlib import Path
+            data_dir = Path.home() / "LinuxBrain" / "data" / "linux"
+            if not data_dir.exists():
+                # Try alternate location
+                data_dir = Path(__file__).parent.parent.parent.parent.parent / "data" / "linux"
+            
+            logger.info(f"Using data directory: {data_dir}")
+            
+            if not data_dir.exists():
+                logger.error(f"Data directory does not exist: {data_dir}")
+                _indexing_state["error"] = f"Data directory not found: {data_dir}"
+                return
+            
+            # Find sources BEFORE initializing ChromaDB (which can be slow)
+            priority_sources = [
+                "man-pages", "arch-wiki", "arch-wiki-ext", "3k-push",
+                "automation-docs", "linux-manual", "systemd-docs", "shell-docs",
+                "security-docs", "networking-docs", "git-docs", "scheduling-docs",
+                "logging-docs", "performance-docs", "flatpak-docs", "snap-docs",
+                "appimage-docs", "network-docs", "docker-docs", "backup-docs",
+            ]
+            existing_sources = [src for src in priority_sources if (data_dir / src).exists()]
+            logger.info(f"Found {len(existing_sources)} sources to index")
+            _indexing_state["sources_total"] = len(existing_sources)
+            _indexing_state["current_source"] = "Initializing..."
+            
+            # Now import the indexer (this triggers ChromaDB init which is slow)
+            from ...rag.document_indexer import index_documents as do_index
             
             if source:
                 # Single source
@@ -1866,28 +1897,18 @@ def _run_background_index(max_docs: int, source: str = None):
                 _indexing_state["sources_completed"] = [source]
                 _indexing_state["progress_percent"] = 100
             else:
-                # Index priority sources one by one with progress updates
-                priority_sources = [
-                    "man-pages", "arch-wiki", "arch-wiki-ext", "3k-push",
-                    "automation-docs", "linux-manual", "systemd-docs", "shell-docs",
-                    "security-docs", "networking-docs", "git-docs", "scheduling-docs",
-                    "logging-docs", "performance-docs", "flatpak-docs", "snap-docs",
-                    "appimage-docs", "network-docs", "docker-docs", "backup-docs",
-                ]
+                # Use existing_sources we found earlier (before ChromaDB init)
+                if not existing_sources:
+                    logger.warning("No source directories found!")
+                    _indexing_state["error"] = "No source directories found"
+                    return
                 
-                # Filter to existing sources
-                existing_sources = []
-                for src in priority_sources:
-                    src_path = data_dir / src
-                    if src_path.exists():
-                        existing_sources.append(src)
-                
-                _indexing_state["sources_total"] = len(existing_sources)
                 total_docs = 0
                 
                 for i, src in enumerate(existing_sources):
                     _indexing_state["current_source"] = src
                     _indexing_state["progress_percent"] = int((i / len(existing_sources)) * 100)
+                    logger.info(f"Indexing source {i+1}/{len(existing_sources)}: {src}")
                     
                     try:
                         stats = do_index(
