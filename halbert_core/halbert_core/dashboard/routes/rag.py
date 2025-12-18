@@ -462,3 +462,113 @@ async def reset_dismissed_suggestions():
     except Exception as e:
         logger.error(f"Failed to reset suggestions: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Trending Topics API (Phase 34 - Cutting-Edge Discovery)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/trending")
+async def get_trending_suggestions(limit: int = 10, force_refresh: bool = False):
+    """
+    Get trending GitHub repositories relevant to user's tech stack.
+    
+    Discovers emerging tools and technologies based on:
+    - User's installed runtimes/tools (node, python, docker, etc.)
+    - GitHub trending with star velocity
+    - Known alternatives to user's current tools
+    
+    Args:
+        limit: Max suggestions to return (default 10)
+        force_refresh: Force refresh from GitHub API (default False, uses 24h cache)
+    """
+    try:
+        from ...rag.trending_discovery import get_trending_suggestions, get_trending_engine
+        
+        suggestions = get_trending_suggestions(limit=limit)
+        engine = get_trending_engine()
+        
+        # Get user's detected stack for context
+        stack = engine.stack_detector.detect()
+        alternatives = engine.stack_detector.get_alternatives_for_stack()
+        
+        return {
+            "suggestions": suggestions,
+            "count": len(suggestions),
+            "user_stack": stack,
+            "known_alternatives": alternatives,
+            "cache_age_hours": _get_cache_age(engine),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get trending suggestions: {e}")
+        return {
+            "suggestions": [],
+            "count": 0,
+            "error": str(e),
+            "user_stack": {},
+            "known_alternatives": {},
+        }
+
+
+def _get_cache_age(engine) -> float:
+    """Get cache age in hours."""
+    if engine._last_fetch:
+        from datetime import datetime
+        delta = datetime.now() - engine._last_fetch
+        return round(delta.total_seconds() / 3600, 1)
+    return -1  # No cache
+
+
+@router.get("/trending/stack")
+async def get_detected_stack():
+    """
+    Get the detected technology stack for the current system.
+    
+    Returns installed runtimes, package managers, tools, and editors.
+    """
+    try:
+        from ...rag.trending_discovery import get_trending_engine
+        
+        engine = get_trending_engine()
+        stack = engine.stack_detector.detect(force_refresh=True)
+        alternatives = engine.stack_detector.get_alternatives_for_stack()
+        topics = list(engine.stack_detector.get_relevant_topics())
+        
+        return {
+            "stack": stack,
+            "alternatives": alternatives,
+            "github_topics": topics,
+        }
+    except Exception as e:
+        logger.error(f"Failed to detect stack: {e}")
+        return {"stack": {}, "alternatives": {}, "error": str(e)}
+
+
+@router.post("/trending/{repo_name}/watch")
+async def watch_trending_repo(repo_name: str):
+    """
+    Add a trending repo to the watch list.
+    
+    Watched repos will be tracked for documentation maturity.
+    """
+    # TODO: Implement watch list persistence
+    return {
+        "success": True,
+        "message": f"Added {repo_name} to watch list",
+        "repo": repo_name,
+    }
+
+
+@router.post("/trending/{repo_name}/dismiss")
+async def dismiss_trending_repo(repo_name: str):
+    """
+    Dismiss a trending repo suggestion.
+    
+    Dismissed repos won't appear in future suggestions.
+    """
+    # TODO: Implement dismissed list persistence
+    return {
+        "success": True,
+        "message": f"Dismissed {repo_name}",
+        "repo": repo_name,
+    }

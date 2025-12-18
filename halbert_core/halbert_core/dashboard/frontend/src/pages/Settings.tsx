@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ConfirmDialog, Toast } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/api'
@@ -201,6 +202,32 @@ export function Settings() {
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [addingSuggestion, setAddingSuggestion] = useState<string | null>(null)
   
+  // Trending Topics state (Phase 34 - Cutting-Edge Discovery)
+  interface TrendingSuggestion {
+    name: string
+    full_name: string
+    description: string
+    url: string
+    doc_url: string
+    stars: number
+    language: string
+    relevance_score: number
+    reason: string
+    stack_match: string[]
+    has_docs: boolean
+  }
+  interface UserStack {
+    runtimes: string[]
+    package_managers: string[]
+    tools: string[]
+    editors: string[]
+  }
+  const [trendingSuggestions, setTrendingSuggestions] = useState<TrendingSuggestion[]>([])
+  const [loadingTrending, setLoadingTrending] = useState(false)
+  const [userStack, setUserStack] = useState<UserStack | null>(null)
+  const [showTrending, setShowTrending] = useState(true)
+  const [trendingEnabled, setTrendingEnabled] = useState(true)
+  
   // Self-Knowledge state
   interface SelfKnowledgeEntry {
     id: string
@@ -263,7 +290,24 @@ export function Settings() {
     loadSelfKnowledge()
     checkIndexingStatus()
     loadDocSuggestions()
+    loadTrendingSuggestions()
   }, [])
+  
+  // Load trending suggestions from GitHub
+  const loadTrendingSuggestions = async () => {
+    if (!trendingEnabled) return
+    setLoadingTrending(true)
+    try {
+      const res = await fetch(`${API_BASE}/rag/trending?limit=10`)
+      const data = await res.json()
+      setTrendingSuggestions(data.suggestions || [])
+      setUserStack(data.user_stack || null)
+    } catch (err) {
+      console.error('Failed to load trending suggestions:', err)
+    } finally {
+      setLoadingTrending(false)
+    }
+  }
   
   // Load documentation suggestions based on system discoveries
   const loadDocSuggestions = async () => {
@@ -1268,8 +1312,8 @@ export function Settings() {
                 {!modelConfig?.orchestrator?.model && (
                 <div className="space-y-2 pt-2 border-t">
                   <Label className="text-xs">Endpoint</Label>
-                  <select 
-                    className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
+                  <Select 
+                    variant="sm"
                     value={guideEndpointId}
                     onChange={async (e) => {
                       setGuideEndpointId(e.target.value)
@@ -1285,12 +1329,12 @@ export function Settings() {
                     {modelConfig?.saved_endpoints.map(ep => (
                       <option key={ep.id} value={ep.id}>{ep.name}</option>
                     ))}
-                  </select>
+                  </Select>
                   {guideEndpointId && (
                     <>
                       <Label className="text-xs">Model</Label>
-                      <select 
-                        className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
+                      <Select 
+                        variant="sm"
                         disabled={loadingGuideModels}
                         onChange={async (e) => {
                           if (e.target.value) {
@@ -1304,7 +1348,7 @@ export function Settings() {
                         {guideModels.map((m: string) => (
                           <option key={m} value={m}>{m}</option>
                         ))}
-                      </select>
+                      </Select>
                     </>
                   )}
                 </div>
@@ -1350,8 +1394,8 @@ export function Settings() {
                 {!(modelConfig?.specialist?.enabled && modelConfig?.specialist?.model) && (
                 <div className="space-y-2 pt-2 border-t">
                   <Label className="text-xs">Endpoint</Label>
-                  <select 
-                    className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
+                  <Select 
+                    variant="sm"
                     value={specialistEndpointId}
                     onChange={async (e) => {
                       setSpecialistEndpointId(e.target.value)
@@ -1367,12 +1411,12 @@ export function Settings() {
                     {modelConfig?.saved_endpoints.map(ep => (
                       <option key={ep.id} value={ep.id}>{ep.name}</option>
                     ))}
-                  </select>
+                  </Select>
                   {specialistEndpointId && (
                     <>
                       <Label className="text-xs">Model</Label>
-                      <select 
-                        className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
+                      <Select 
+                        variant="sm"
                         disabled={loadingSpecialistModels}
                         onChange={async (e) => {
                           if (e.target.value) {
@@ -1386,7 +1430,7 @@ export function Settings() {
                         {specialistModels.map((m: string) => (
                           <option key={m} value={m}>{m}</option>
                         ))}
-                      </select>
+                      </Select>
                     </>
                   )}
                 </div>
@@ -1432,8 +1476,8 @@ export function Settings() {
                 {!(modelConfig?.vision?.enabled && modelConfig?.vision?.model) && (
                 <div className="space-y-2 pt-2 border-t">
                   <Label className="text-xs">Endpoint</Label>
-                  <select 
-                    className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
+                  <Select 
+                    variant="sm"
                     value={visionEndpointId}
                     onChange={async (e) => {
                       setVisionEndpointId(e.target.value)
@@ -1449,12 +1493,12 @@ export function Settings() {
                     {modelConfig?.saved_endpoints.map(ep => (
                       <option key={ep.id} value={ep.id}>{ep.name}</option>
                     ))}
-                  </select>
+                  </Select>
                   {visionEndpointId && (
                     <>
                       <Label className="text-xs">Model</Label>
-                      <select 
-                        className="h-8 w-full text-xs rounded-md border border-input bg-background px-2"
+                      <Select 
+                        variant="sm"
                         disabled={loadingVisionModels}
                         onChange={async (e) => {
                           if (e.target.value) {
@@ -1468,7 +1512,7 @@ export function Settings() {
                         {visionModels.map((m: string) => (
                           <option key={m} value={m}>{m}</option>
                         ))}
-                      </select>
+                      </Select>
                     </>
                   )}
                 </div>
@@ -1515,14 +1559,13 @@ export function Settings() {
                           />
                         </div>
                         <div className="grid grid-cols-2 gap-2">
-                          <select 
+                          <Select 
                             value={editingEndpoint.provider}
                             onChange={(e) => setEditingEndpoint({...editingEndpoint, provider: e.target.value})}
-                            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                           >
                             <option value="ollama">Ollama</option>
                             <option value="openai">OpenAI-compatible</option>
-                          </select>
+                          </Select>
                           <Input 
                             value={editingEndpoint.api_key || ''}
                             onChange={(e) => setEditingEndpoint({...editingEndpoint, api_key: e.target.value})}
@@ -1659,14 +1702,13 @@ export function Settings() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Provider</Label>
-                    <select 
+                    <Select 
                       value={newEndpoint.provider}
                       onChange={(e) => setNewEndpoint({...newEndpoint, provider: e.target.value})}
-                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                     >
                       <option value="ollama">Ollama</option>
                       <option value="openai">OpenAI-compatible</option>
-                    </select>
+                    </Select>
                   </div>
                   <div className="space-y-2">
                     <Label>API Key (optional)</Label>
@@ -2031,6 +2073,128 @@ export function Settings() {
                   </div>
                 )}
                 
+                {/* Trending Topics (Phase 34 - Cutting-Edge Discovery) */}
+                <div className="border-t pt-4 space-y-3">
+                  <button 
+                    className="font-medium flex items-center gap-2 hover:text-primary transition-colors w-full text-left"
+                    onClick={() => setShowTrending(!showTrending)}
+                  >
+                    <Zap className={`h-4 w-4 text-orange-500 transition-transform ${showTrending ? '' : '-rotate-90'}`} />
+                    <span>Trending on GitHub</span>
+                    {trendingSuggestions.length > 0 && (
+                      <Badge variant="secondary" className="text-xs bg-orange-500/10 text-orange-600">
+                        {trendingSuggestions.length} found
+                      </Badge>
+                    )}
+                    <ChevronDown className={`h-4 w-4 ml-auto transition-transform ${showTrending ? 'rotate-180' : ''}`} />
+                  </button>
+                  
+                  {showTrending && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-muted-foreground">
+                          Emerging tools relevant to your tech stack
+                          {userStack && (
+                            <span className="ml-1">
+                              ({[...userStack.runtimes, ...userStack.tools].slice(0, 3).join(', ')})
+                            </span>
+                          )}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <label className="flex items-center gap-2 text-xs">
+                            <input
+                              type="checkbox"
+                              checked={trendingEnabled}
+                              onChange={(e) => setTrendingEnabled(e.target.checked)}
+                              className="h-3 w-3"
+                            />
+                            Auto-discover
+                          </label>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2"
+                            onClick={() => loadTrendingSuggestions()}
+                            disabled={loadingTrending}
+                          >
+                            <RefreshCw className={`h-3 w-3 ${loadingTrending ? 'animate-spin' : ''}`} />
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      {loadingTrending ? (
+                        <div className="text-xs text-muted-foreground flex items-center gap-2 py-4">
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                          Fetching trending repos from GitHub...
+                        </div>
+                      ) : trendingSuggestions.length > 0 ? (
+                        <div className="space-y-2">
+                          {trendingSuggestions.slice(0, 5).map((repo) => (
+                            <div 
+                              key={repo.full_name}
+                              className="flex items-center justify-between p-2 bg-orange-500/5 border border-orange-500/20 rounded-lg"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <a 
+                                    href={repo.url} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="font-medium text-sm hover:underline flex items-center gap-1"
+                                  >
+                                    {repo.name}
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                  <Badge variant="outline" className="text-xs">{repo.language || 'Multi'}</Badge>
+                                  <span className="text-xs text-muted-foreground">⭐ {repo.stars.toLocaleString()}</span>
+                                </div>
+                                <p className="text-xs text-muted-foreground truncate">
+                                  {repo.description || repo.reason}
+                                </p>
+                                {repo.stack_match.length > 0 && (
+                                  <div className="flex items-center gap-1 mt-1">
+                                    <span className="text-xs text-orange-600">Related to:</span>
+                                    {repo.stack_match.slice(0, 3).map((match) => (
+                                      <Badge key={match} variant="secondary" className="text-xs px-1 py-0">
+                                        {match}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1 ml-2">
+                                {repo.has_docs && (
+                                  <Button 
+                                    size="sm" 
+                                    variant="ghost"
+                                    className="h-7 px-2"
+                                    onClick={() => window.open(repo.doc_url || repo.url, '_blank')}
+                                  >
+                                    <BookOpen className="h-3 w-3" />
+                                    <span className="ml-1 text-xs">Docs</span>
+                                  </Button>
+                                )}
+                                <Button 
+                                  size="sm" 
+                                  variant="ghost"
+                                  className="h-7 px-2 text-muted-foreground hover:text-foreground"
+                                  onClick={() => setTrendingSuggestions(prev => prev.filter(s => s.full_name !== repo.full_name))}
+                                >
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground py-2">
+                          No trending repos found for your stack. Try refreshing or check your GitHub token.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+                
                 {/* Add custom source - collapsible */}
                 <div className="border-t pt-4 space-y-4">
                   <button 
@@ -2354,11 +2518,10 @@ export function Settings() {
                 <div className="flex gap-4 items-end">
                   <div className="space-y-2 flex-1">
                     <Label htmlFor="rule-category">Category</Label>
-                    <select
+                    <Select
                       id="rule-category"
                       value={newRule.category}
                       onChange={(e) => setNewRule(prev => ({ ...prev, category: e.target.value }))}
-                      className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                     >
                       <option value="general">General</option>
                       <option value="storage">Storage</option>
@@ -2367,21 +2530,20 @@ export function Settings() {
                       <option value="security">Security</option>
                       <option value="docker">Docker/Containers</option>
                       <option value="packages">Packages</option>
-                    </select>
+                    </Select>
                   </div>
                   
                   <div className="space-y-2 flex-1">
                     <Label htmlFor="rule-priority">Priority</Label>
-                    <select
+                    <Select
                       id="rule-priority"
                       value={newRule.priority}
                       onChange={(e) => setNewRule(prev => ({ ...prev, priority: e.target.value }))}
-                      className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                     >
                       <option value="high">High (Always apply)</option>
                       <option value="medium">Medium</option>
                       <option value="low">Low (Context-dependent)</option>
-                    </select>
+                    </Select>
                   </div>
                   
                   <Button 
