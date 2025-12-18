@@ -235,14 +235,22 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         except Exception as e:
             logger.warning(f"Failed to bootstrap identity: {e}")
         
-        # Start ingestion service
-        try:
-            from ..ingestion.service import get_ingestion_service
-            service = get_ingestion_service()
-            service.start()
-            logger.info("Ingestion service auto-started")
-        except Exception as e:
-            logger.warning(f"Failed to auto-start ingestion: {e}")
+        # Start ingestion service (in background thread to avoid blocking startup)
+        def start_ingestion_delayed():
+            import time
+            time.sleep(2)  # Wait for startup to complete
+            try:
+                from ..ingestion.service import get_ingestion_service
+                service = get_ingestion_service()
+                service.start()
+                logger.info("Ingestion service auto-started (delayed)")
+            except Exception as e:
+                logger.warning(f"Failed to auto-start ingestion: {e}")
+        
+        import threading
+        ingestion_thread = threading.Thread(target=start_ingestion_delayed, daemon=True)
+        ingestion_thread.start()
+        logger.info("Ingestion service scheduled for delayed start")
         
         # Phase 23: Start scheduler (if APScheduler available)
         try:
