@@ -466,3 +466,239 @@ def get_trending_suggestions(limit: int = 10) -> List[Dict]:
         }
         for s in suggestions
     ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LLM-Enhanced Tool Classification
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class LLMAnalysis:
+    """LLM-generated analysis of a trending repo."""
+    category: str  # e.g., "javascript-runtime", "package-manager", "linter"
+    is_alternative_to: List[str]  # Tools this replaces/competes with
+    key_features: List[str]  # Top 3-5 features
+    one_liner: str  # One sentence description
+    should_user_care: bool  # Is this relevant to the user?
+    reason: str  # Why should user care (or not)
+    maturity: str  # experimental, growing, stable, mature
+    learning_curve: str  # easy, moderate, steep
+
+
+LLM_ANALYSIS_PROMPT = """Analyze this GitHub repository for a Linux power user.
+
+Repository: {full_name}
+Description: {description}
+Language: {language}
+Stars: {stars}
+Topics: {topics}
+
+User's current tech stack: {user_stack}
+
+Respond in JSON format only:
+{{
+    "category": "what type of tool is this? (e.g., javascript-runtime, package-manager, linter, web-server)",
+    "is_alternative_to": ["list of tools this replaces or competes with"],
+    "key_features": ["top 3 distinguishing features"],
+    "one_liner": "one sentence description for a developer",
+    "should_user_care": true or false,
+    "reason": "why this user specifically should or shouldn't care",
+    "maturity": "experimental/growing/stable/mature",
+    "learning_curve": "easy/moderate/steep"
+}}"""
+
+
+async def analyze_repo_with_llm(
+    repo: TrendingRepo,
+    user_stack: Dict[str, List[str]],
+    llm_endpoint: str = "http://localhost:11434"
+) -> Optional[LLMAnalysis]:
+    """
+    Use LLM to analyze a trending repository.
+    
+    Args:
+        repo: The trending repo to analyze
+        user_stack: User's detected tech stack
+        llm_endpoint: Ollama endpoint URL
+    
+    Returns:
+        LLMAnalysis or None if analysis fails
+    """
+    try:
+        import aiohttp
+        import json
+        
+        # Format user stack for prompt
+        stack_str = ", ".join([
+            f"{k}: {', '.join(v)}" 
+            for k, v in user_stack.items() 
+            if v
+        ])
+        
+        prompt = LLM_ANALYSIS_PROMPT.format(
+            full_name=repo.full_name,
+            description=repo.description,
+            language=repo.language,
+            stars=repo.stars,
+            topics=", ".join(repo.topics),
+            user_stack=stack_str or "general Linux user"
+        )
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{llm_endpoint}/api/generate",
+                json={
+                    "model": "llama3.2:3b",  # Use smaller model for speed
+                    "prompt": prompt,
+                    "stream": False,
+                    "format": "json"
+                },
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status != 200:
+                    logger.warning(f"LLM request failed: {response.status}")
+                    return None
+                
+                data = await response.json()
+                result_text = data.get("response", "")
+                
+                # Parse JSON response
+                try:
+                    result = json.loads(result_text)
+                    return LLMAnalysis(
+                        category=result.get("category", "unknown"),
+                        is_alternative_to=result.get("is_alternative_to", []),
+                        key_features=result.get("key_features", []),
+                        one_liner=result.get("one_liner", repo.description),
+                        should_user_care=result.get("should_user_care", True),
+                        reason=result.get("reason", ""),
+                        maturity=result.get("maturity", "unknown"),
+                        learning_curve=result.get("learning_curve", "moderate")
+                    )
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse LLM response: {result_text[:200]}")
+                    return None
+                    
+    except ImportError:
+        logger.warning("aiohttp not installed, cannot use LLM analysis")
+        return None
+    except Exception as e:
+        logger.error(f"LLM analysis failed: {e}")
+        return None
+
+
+def analyze_repo_with_llm_sync(
+    repo: TrendingRepo,
+    user_stack: Dict[str, List[str]],
+    llm_endpoint: str = "http://localhost:11434"
+) -> Optional[LLMAnalysis]:
+    """
+    Synchronous wrapper for LLM analysis.
+    
+    Uses requests instead of aiohttp for sync contexts.
+    """
+    try:
+        import requests
+        import json
+        
+        # Format user stack for prompt
+        stack_str = ", ".join([
+            f"{k}: {', '.join(v)}" 
+            for k, v in user_stack.items() 
+            if v
+        ])
+        
+        prompt = LLM_ANALYSIS_PROMPT.format(
+            full_name=repo.full_name,
+            description=repo.description,
+            language=repo.language,
+            stars=repo.stars,
+            topics=", ".join(repo.topics),
+            user_stack=stack_str or "general Linux user"
+        )
+        
+        response = requests.post(
+            f"{llm_endpoint}/api/generate",
+            json={
+                "model": "llama3.2:3b",
+                "prompt": prompt,
+                "stream": False,
+                "format": "json"
+            },
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            logger.warning(f"LLM request failed: {response.status_code}")
+            return None
+        
+        data = response.json()
+        result_text = data.get("response", "")
+        
+        try:
+            result = json.loads(result_text)
+            return LLMAnalysis(
+                category=result.get("category", "unknown"),
+                is_alternative_to=result.get("is_alternative_to", []),
+                key_features=result.get("key_features", []),
+                one_liner=result.get("one_liner", repo.description),
+                should_user_care=result.get("should_user_care", True),
+                reason=result.get("reason", ""),
+                maturity=result.get("maturity", "unknown"),
+                learning_curve=result.get("learning_curve", "moderate")
+            )
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse LLM response: {result_text[:200]}")
+            return None
+            
+    except ImportError:
+        logger.warning("requests not installed")
+        return None
+    except Exception as e:
+        logger.error(f"LLM analysis failed: {e}")
+        return None
+
+
+async def get_enhanced_suggestions(limit: int = 5) -> List[Dict]:
+    """
+    Get trending suggestions with LLM-enhanced analysis.
+    
+    This is slower but provides much richer context about each tool.
+    """
+    engine = get_trending_engine()
+    suggestions = engine.get_suggestions(limit=limit)
+    stack = engine.stack_detector.detect()
+    
+    enhanced = []
+    for s in suggestions:
+        base = {
+            "name": s.repo.name,
+            "full_name": s.repo.full_name,
+            "description": s.repo.description,
+            "url": s.repo.url,
+            "doc_url": s.doc_url,
+            "stars": s.repo.stars,
+            "language": s.repo.language,
+            "relevance_score": round(s.relevance_score, 2),
+            "reason": s.reason,
+            "stack_match": s.stack_match,
+            "has_docs": s.repo.has_docs,
+        }
+        
+        # Try to get LLM analysis
+        analysis = await analyze_repo_with_llm(s.repo, stack)
+        if analysis:
+            base["llm_analysis"] = {
+                "category": analysis.category,
+                "is_alternative_to": analysis.is_alternative_to,
+                "key_features": analysis.key_features,
+                "one_liner": analysis.one_liner,
+                "should_user_care": analysis.should_user_care,
+                "reason": analysis.reason,
+                "maturity": analysis.maturity,
+                "learning_curve": analysis.learning_curve,
+            }
+        
+        enhanced.append(base)
+    
+    return enhanced

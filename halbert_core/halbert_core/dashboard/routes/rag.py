@@ -572,3 +572,92 @@ async def dismiss_trending_repo(repo_name: str):
         "message": f"Dismissed {repo_name}",
         "repo": repo_name,
     }
+
+
+@router.get("/trending/enhanced")
+async def get_enhanced_trending(limit: int = 5):
+    """
+    Get trending repos with LLM-enhanced analysis.
+    
+    This endpoint uses the local LLM to analyze each trending repo
+    and provide richer context like:
+    - Category classification
+    - Alternative tools it replaces
+    - Key features
+    - Whether user should care based on their stack
+    - Maturity and learning curve assessment
+    
+    Note: This is slower than /trending as it makes LLM calls.
+    """
+    try:
+        from ...rag.trending_discovery import get_enhanced_suggestions
+        
+        suggestions = await get_enhanced_suggestions(limit=limit)
+        
+        return {
+            "suggestions": suggestions,
+            "count": len(suggestions),
+            "llm_enhanced": True,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get enhanced trending: {e}")
+        return {
+            "suggestions": [],
+            "count": 0,
+            "error": str(e),
+            "llm_enhanced": False,
+        }
+
+
+@router.post("/trending/{repo_name}/analyze")
+async def analyze_single_repo(repo_name: str):
+    """
+    Get LLM analysis for a single trending repo.
+    
+    Use this to get detailed analysis for a specific repo
+    without fetching all trending suggestions.
+    """
+    try:
+        from ...rag.trending_discovery import (
+            get_trending_engine, 
+            analyze_repo_with_llm,
+            TrendingRepo
+        )
+        
+        engine = get_trending_engine()
+        stack = engine.stack_detector.detect()
+        
+        # Find the repo in current suggestions
+        suggestions = engine.get_suggestions(limit=20)
+        repo = None
+        for s in suggestions:
+            if s.repo.name.lower() == repo_name.lower() or s.repo.full_name.lower() == repo_name.lower():
+                repo = s.repo
+                break
+        
+        if not repo:
+            return {"success": False, "error": f"Repo '{repo_name}' not found in trending"}
+        
+        analysis = await analyze_repo_with_llm(repo, stack)
+        
+        if analysis:
+            return {
+                "success": True,
+                "repo": repo_name,
+                "analysis": {
+                    "category": analysis.category,
+                    "is_alternative_to": analysis.is_alternative_to,
+                    "key_features": analysis.key_features,
+                    "one_liner": analysis.one_liner,
+                    "should_user_care": analysis.should_user_care,
+                    "reason": analysis.reason,
+                    "maturity": analysis.maturity,
+                    "learning_curve": analysis.learning_curve,
+                }
+            }
+        
+        return {"success": False, "error": "LLM analysis failed - check if Ollama is running"}
+        
+    except Exception as e:
+        logger.error(f"Failed to analyze repo: {e}")
+        return {"success": False, "error": str(e)}
