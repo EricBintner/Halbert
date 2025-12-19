@@ -29,6 +29,7 @@ import {
   ExternalLink,
   Loader2,
   Pencil,
+  X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
@@ -92,6 +93,10 @@ export function Backups() {
   const [loadingHistories, setLoadingHistories] = useState<Set<string>>(new Set())
   const [backupStatuses, setBackupStatuses] = useState<Record<string, BackupStatus>>({})
   const [historyLimits, setHistoryLimits] = useState<Record<string, number>>({})
+  // Logs modal state
+  const [logsBackup, setLogsBackup] = useState<Backup | null>(null)
+  const [logsContent, setLogsContent] = useState<string>('')
+  const [logsLoading, setLogsLoading] = useState(false)
   // ConfigEditor state removed - now handled globally by Layout.tsx
   const DEFAULT_HISTORY_LIMIT = 10
   const HISTORY_INCREMENT = 20
@@ -144,7 +149,24 @@ export function Backups() {
 
   const handleAction = async (backup: Backup, action: string) => {
     console.log(`Action ${action} on ${backup.name}`)
-    alert(`Would ${action} backup: ${backup.name}`)
+    
+    if (action === 'logs') {
+      setLogsBackup(backup)
+      setLogsLoading(true)
+      setLogsContent('')
+      try {
+        const data = await api.getBackupLogs(backup.name)
+        setLogsContent(data.logs || 'No logs available')
+      } catch (error) {
+        console.error('Failed to fetch logs:', error)
+        setLogsContent('Failed to fetch logs. The backup service may not have run yet.')
+      } finally {
+        setLogsLoading(false)
+      }
+    } else if (action === 'run') {
+      // TODO: Implement run backup
+      alert(`Would run backup: ${backup.name}`)
+    }
   }
 
   const toggleBackupExpanded = async (backup: Backup) => {
@@ -677,6 +699,45 @@ export function Backups() {
         buildContext={buildBackupContext}
         researchQuestion="Give me a detailed analysis of my backup strategy, including potential risks and improvement suggestions."
       />
+
+      {/* Logs Modal */}
+      {logsBackup && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card border rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col m-4">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h2 className="text-lg font-semibold">Logs: {logsBackup.name}</h2>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setLogsBackup(null)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {logsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <span className="ml-2 text-muted-foreground">Loading logs...</span>
+                </div>
+              ) : (
+                <pre className="text-xs font-mono whitespace-pre-wrap bg-muted/50 p-4 rounded-lg overflow-x-auto">
+                  {logsContent}
+                </pre>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setLogsBackup(null)}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

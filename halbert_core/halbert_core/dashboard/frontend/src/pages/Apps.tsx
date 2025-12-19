@@ -33,6 +33,7 @@ import { cn } from '@/lib/utils'
 import { PageHeader } from '@/components/domain'
 import { useScanPage } from '@/hooks'
 import { openChat } from '@/components/SendToChat'
+import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 
 // Unified app item - normalized from both Flatpak and Snap
 interface UnifiedApp {
@@ -698,6 +699,40 @@ export function Apps() {
           </CardContent>
         </Card>
       )}
+
+      {/* AI App Compatibility Analysis */}
+      <AIAnalysisPanel
+        type="package"
+        title="App Compatibility"
+        canAnalyze={apps.length > 0}
+        buildContext={() => {
+          const flatpakApps = apps.filter(a => a.source === 'flatpak')
+          const snapApps = apps.filter(a => a.source === 'snap')
+          const classicSnaps = snapApps.filter(a => a.classic)
+          const appsWithUpdates = apps.filter(a => a.hasUpdate)
+          
+          return `## Installed Applications Summary
+
+**Total Apps:** ${apps.length}
+- Flatpak: ${flatpakApps.length} apps
+- Snap: ${snapApps.length} apps (${classicSnaps.length} classic/unconfined)
+- AppImage: ${apps.filter(a => a.source === 'appimage').length} files
+
+**Updates Available:** ${appsWithUpdates.length}
+${appsWithUpdates.slice(0, 5).map(a => `- ${a.displayName} (${a.source})`).join('\n')}
+${appsWithUpdates.length > 5 ? `... and ${appsWithUpdates.length - 5} more` : ''}
+
+**Runtime Updates:** ${runtimeUpdates.length} pending
+
+## Apps List
+${apps.slice(0, 20).map(a => `- ${a.displayName} (${a.source})${a.hasUpdate ? ' [UPDATE]' : ''}${a.classic ? ' [CLASSIC]' : ''}`).join('\n')}
+${apps.length > 20 ? `... and ${apps.length - 20} more apps` : ''}`
+        }}
+        researchQuestion="Analyze my installed applications for potential compatibility issues. Check for: 1) Flatpak apps that may have permission issues or sandbox limitations, 2) Classic snaps that run unconfined (security risk), 3) Outdated apps that may have known vulnerabilities, 4) Any conflicts between similar apps from different sources."
+        gradientFrom="from-violet-50/70"
+        gradientTo="to-fuchsia-50/70"
+        iconColor="text-violet-700 dark:text-violet-300"
+      />
     </div>
   )
 }

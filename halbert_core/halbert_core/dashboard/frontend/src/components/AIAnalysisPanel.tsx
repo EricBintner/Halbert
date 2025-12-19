@@ -15,9 +15,10 @@ import {
   Info, 
   Loader2,
   RefreshCw,
+  MessageSquare,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { ResearchButton } from '@/components/SendToChat'
+import { openChat } from '@/components/SendToChat'
 import { api } from '@/lib/api'
 
 export interface AIAnalysis {
@@ -63,7 +64,7 @@ export function AIAnalysisPanel({
   const runAnalysis = async () => {
     setAnalyzing(true)
     try {
-      const result = await api.analyzeDiscoveries(type, false)
+      const result = await api.analyzeDiscoveries(type, true)  // Use specialist model for deep analysis
       setAnalysis(result)
     } catch (error) {
       console.error('AI analysis failed:', error)
@@ -181,12 +182,21 @@ export function AIAnalysisPanel({
               )}
             </Button>
             {analysis && (
-              <ResearchButton
-                context={buildContext ? buildContext() : defaultContext()}
-                title={title}
-                type={type}
-                question={researchQuestion || defaultQuestion}
-              />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                title="Continue in chat"
+                onClick={() => openChat({
+                  title,
+                  type,
+                  context: buildContext ? buildContext() : defaultContext(),
+                  newConversation: true,
+                  prefillMessage: researchQuestion || defaultQuestion,
+                })}
+              >
+                <MessageSquare className="h-4 w-4" />
+              </Button>
             )}
           </div>
         </div>
@@ -207,14 +217,21 @@ interface AIQuickAnalysisProps {
 export function AIQuickAnalysis({ type, itemName, context }: AIQuickAnalysisProps) {
   return (
     <div className="flex items-center gap-2 mt-2">
-      <ResearchButton
-        context={context}
-        title={itemName}
-        type={type}
-        question={`Analyze ${itemName} and suggest improvements.`}
-        size="sm"
+      <Button
         variant="ghost"
-      />
+        size="sm"
+        className="gap-1"
+        onClick={() => openChat({
+          title: itemName,
+          type,
+          context,
+          newConversation: true,
+          prefillMessage: `Analyze ${itemName} and suggest improvements.`,
+        })}
+      >
+        <MessageSquare className="h-3 w-3" />
+        Ask AI
+      </Button>
     </div>
   )
 }

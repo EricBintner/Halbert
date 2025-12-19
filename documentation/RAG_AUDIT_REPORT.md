@@ -1,8 +1,8 @@
 # RAG System Architecture Audit Report
 
-**Date**: December 17, 2024  
+**Date**: December 17, 2024 (Updated: December 19, 2024)  
 **Scope**: End-to-end RAG pipeline, ChromaDB integration, Self-RAG/CRAG implementation  
-**Reference**: Phase 28 (RAG Research) + Phase 29 (Epistemology)
+**Reference**: Phase 28 (RAG Research) + Phase 29 (Epistemology) + Phase 32 (Self-Building RAG)
 
 ---
 
@@ -296,3 +296,154 @@ reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 ---
 
 *Audit conducted by Cascade AI Assistant*
+
+---
+
+## December 19, 2024 - Live Verification
+
+### System Status: ✅ OPERATIONAL
+
+All core RAG components verified as connected and running:
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| **ChromaDB** | ✅ Working | 9,715 docs across 5 collections |
+| **Self-RAG Reflection** | ✅ Working | SelfReflector returns CRAG decisions |
+| **Document Retrieval** | ✅ Working | query_docs with reranking + expansion |
+| **Doc Suggester** | ✅ Working | 32 sources in 10 categories |
+| **Knowledge Graph** | ✅ Working | 6 nodes, 6 relations |
+| **Embedding Manager** | ✅ Working | Reranking available |
+| **Chat Integration** | ✅ Working | Self-RAG integrated into chat flow |
+
+### ChromaDB Collections (Live)
+
+| Collection | Documents | Purpose |
+|------------|-----------|---------|
+| `linux_docs` | 9,048 | Linux documentation (Arch Wiki, man pages) |
+| `self_journald` | 353 | System journal entries |
+| `discoveries` | 291 | Discovered services/apps |
+| `self_knowledge` | 23 | User-taught facts |
+| `self_conversations` | 0 | Conversation history |
+
+### Issues Fixed During Verification
+
+1. **Corrupted ChromaDB Collections** - Deleted `self_hwmon` and `self_knowledge_all` (caused segfaults on `count()`)
+2. **ChromaDB Stats Crash** - Re-enabled with verbose logging to identify corrupted collections
+
+### Components Verified as Connected
+
+```
+User Query
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│ Chat Route (chat.py)                                     │
+│ ├── get_self_knowledge_context() ← Self-RAG Reflection  │
+│ ├── get_docs_context() ← Document Retrieval + Reranking │
+│ └── Context injection into LLM prompt                    │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│ SelfReflector (reflection.py)                            │
+│ ├── CRAG Actions: CORRECT / INCORRECT / AMBIGUOUS        │
+│ ├── Retrieval Decisions: SUFFICIENT / PARTIAL / NO_MATCH │
+│ └── Confidence Levels: HIGH / MEDIUM / LOW / NONE        │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│ Document Indexer (document_indexer.py)                   │
+│ ├── query_docs() with reranking (default: True)          │
+│ ├── Query expansion (default: True)                      │
+│ └── Semantic chunking (1200 chars, boundary-aware)       │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│ ChromaDB (chroma_index.py)                               │
+│ ├── Shared PersistentClient (no double-init)             │
+│ ├── Metadata filtering support (where, where_document)   │
+│ └── 5 active collections                                 │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Remaining Work
+
+| Item | Status | Priority |
+|------|--------|----------|
+| Re-enable ingestion service | ✅ Done | Medium |
+| Re-enable scheduler | ✅ Done | Medium |
+| RAPTOR hierarchical indexing | ✅ Done | Low |
+| GraphRAG for Linux docs | ✅ Done | Low |
+
+### New Implementations (Dec 19, 2024)
+
+#### RAPTOR - Hierarchical Document Summaries
+**File**: `halbert_core/rag/raptor.py`
+
+Based on Stanford NLP research (2024) - 20% improvement on QA benchmarks.
+
+```
+Level 0: Original document chunks
+Level 1: Summaries of chunk clusters  
+Level 2: Summaries of Level 1 summaries
+...
+Level N: Root summary (single document overview)
+```
+
+**Features**:
+- `RaptorIndex.build_tree(chunks, doc_id)` - Build hierarchical tree
+- `RaptorIndex.query(query, levels=[0,1,2])` - Query at multiple abstraction levels
+- `get_context_with_hierarchy(query)` - Get combined context from all levels
+- Clustering via embeddings (sklearn KMeans)
+- LLM-powered summarization at each level
+
+#### GraphRAG - Entity Extraction & Relationships
+**File**: `halbert_core/rag/graphrag.py`
+
+Based on Microsoft Research GraphRAG (2024) - excels at multi-hop reasoning.
+
+**Linux Entity Types**:
+- `command`, `service`, `config_file`, `package`, `concept`
+- `directory`, `port`, `protocol`, `filesystem`, `kernel_module`
+
+**Relationship Types**:
+- `configures`, `manages`, `requires`, `provides`, `uses`
+- `listens_on`, `depends_on`, `related_to`, `alternative_to`
+
+**Features**:
+- Pattern-based extraction (fast) + LLM extraction (comprehensive)
+- `extract_from_text(text, doc_id)` - Extract entities & relations
+- `query_related(entity_name)` - Find related entities
+- `get_graph_context(query)` - Get graph-based context for RAG
+
+#### Enhanced Query Function
+**File**: `halbert_core/rag/document_indexer.py`
+
+```python
+query_docs_enhanced(query, k=5, use_raptor=True, use_graphrag=True)
+```
+
+Combines all three sources:
+1. **Vector search** - Standard ChromaDB semantic similarity
+2. **RAPTOR context** - Hierarchical summaries at multiple levels
+3. **GraphRAG context** - Entity relationships and graph traversal
+
+### Services Re-enabled (Dec 19, 2024)
+
+Both services now start with delayed initialization to avoid blocking startup:
+
+1. **Ingestion Service** - Starts 2s after app startup
+   - Journald log ingestion (errors, warnings, key services)
+   - Hwmon temperature monitoring
+   - Rate-limited, daemon threads
+
+2. **Scheduler (APScheduler)** - Starts 3s after app startup
+   - SQLite job persistence
+   - ThreadPoolExecutor (3 workers)
+   - Guardrails enabled, LLM disabled for jobs
+
+---
+
+*Verification completed: December 19, 2024*

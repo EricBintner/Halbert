@@ -15,8 +15,8 @@ import {
   Cpu,
   Container,
   Code2,
-  Camera,
   Package,
+  Loader2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SidePanel } from './SidePanel'
@@ -55,6 +55,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
   // Global config editor state (triggered from chat "Edit Config" button)
   const [editingConfigPath, setEditingConfigPath] = useState<string | null>(null)
   
+  // Indexing status state (moved from Settings)
+  const [indexing, setIndexing] = useState(false)
+  const [indexProgress, setIndexProgress] = useState<{
+    percent: number
+    currentSource: string | null
+    completed: number
+    total: number
+  }>({ percent: 0, currentSource: null, completed: 0, total: 0 })
+  
   // Listen for open-config-editor events from chat
   useEffect(() => {
     const handleOpenConfigEditor = (e: CustomEvent<{ filePath: string }>) => {
@@ -68,34 +77,73 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [])
   
-  // Capture window screenshot and dispatch to chat
-  const handleCaptureScreenshot = async () => {
-    try {
-      // Use html2canvas to capture the window
-      const html2canvas = (await import('html2canvas')).default
-      const canvas = await html2canvas(document.body, {
-        useCORS: true,
-        logging: false,
-      })
-      
-      // Convert to base64 (strip the data URL prefix for the API)
-      const dataUrl = canvas.toDataURL('image/png')
-      const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
-      
-      // Dispatch event to add screenshot to chat
-      window.dispatchEvent(new CustomEvent('halbert:add-screenshot', {
-        detail: {
-          dataUrl,  // Full data URL for preview
-          base64,   // Just base64 for API
-          name: `Screenshot ${new Date().toLocaleTimeString()}`
+  // Poll for indexing status
+  useEffect(() => {
+    const checkIndexingStatus = async () => {
+      try {
+        const res = await fetch('/api/settings/docs/stats')
+        const data = await res.json()
+        const status = data.indexing
+        
+        if (status?.is_running) {
+          setIndexing(true)
+          setIndexProgress({
+            percent: status.progress_percent || 0,
+            currentSource: status.current_source,
+            completed: status.sources_completed?.length || 0,
+            total: status.sources_total || 0
+          })
+        } else {
+          setIndexing(false)
         }
-      }))
-      
-      console.log('[Layout] Screenshot captured and dispatched to chat')
-    } catch (err) {
-      console.error('[Layout] Failed to capture screenshot:', err)
+      } catch (err) {
+        // Silently fail - indexing status is non-critical
+      }
     }
-  }
+    
+    // Check immediately on mount
+    checkIndexingStatus()
+    
+    // Poll every 3 seconds
+    const interval = setInterval(checkIndexingStatus, 3000)
+    return () => clearInterval(interval)
+  }, [])
+  
+  // Listen for screenshot capture requests from chat input
+  useEffect(() => {
+    const handleCaptureScreenshot = async () => {
+      try {
+        // Use html2canvas to capture the window
+        const html2canvas = (await import('html2canvas')).default
+        const canvas = await html2canvas(document.body, {
+          useCORS: true,
+          logging: false,
+        })
+        
+        // Convert to base64 (strip the data URL prefix for the API)
+        const dataUrl = canvas.toDataURL('image/png')
+        const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
+        
+        // Dispatch event to add screenshot to chat
+        window.dispatchEvent(new CustomEvent('halbert:add-screenshot', {
+          detail: {
+            dataUrl,  // Full data URL for preview
+            base64,   // Just base64 for API
+            name: `Screenshot ${new Date().toLocaleTimeString()}`
+          }
+        }))
+        
+        console.log('[Layout] Screenshot captured and dispatched to chat')
+      } catch (err) {
+        console.error('[Layout] Failed to capture screenshot:', err)
+      }
+    }
+    
+    window.addEventListener('halbert:capture-screenshot', handleCaptureScreenshot)
+    return () => {
+      window.removeEventListener('halbert:capture-screenshot', handleCaptureScreenshot)
+    }
+  }, [])
   
   return (
     <div className="h-screen bg-background flex overflow-hidden">
@@ -132,33 +180,40 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
           {/* Footer */}
           <div className="p-4 border-t space-y-2">
-            {/* Screenshot and Debug buttons row */}
-            <div className="flex gap-2">
+            {/* Indexing Status */}
+            {indexing && (
+              <div className="p-2 bg-blue-500/10 border border-blue-500/30 rounded text-xs text-blue-600 dark:text-blue-400">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span className="font-medium">Indexing...</span>
+                  <span className="text-[10px] ml-auto">{indexProgress.percent}%</span>
+                </div>
+                <div className="w-full bg-blue-200 dark:bg-blue-900 rounded-full h-1.5">
+                  <div 
+                    className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${indexProgress.percent}%` }}
+                  />
+                </div>
+                <p className="text-[10px] mt-1 truncate">
+                  {indexProgress.currentSource || 'Starting...'}
+                </p>
+              </div>
+            )}
+            {/* Version and Debug row */}
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <p>v0.1.1</p>
               <Button 
-                variant="outline"
-                size="sm" 
-                className="flex-1 text-xs"
-                onClick={handleCaptureScreenshot}
-                title="Capture window screenshot and add to chat"
-              >
-                <Camera className="h-3 w-3 mr-2" />
-                Screenshot
-              </Button>
-              <Button 
-                variant={isDebugMode ? "default" : "outline"}
-                size="sm" 
+                variant={isDebugMode ? "default" : "ghost"}
+                size="icon"
                 className={cn(
-                  "flex-1 text-xs",
+                  "h-6 w-6",
                   isDebugMode && "bg-emerald-600 hover:bg-emerald-700 text-white"
                 )}
                 onClick={() => setDebugMode(!isDebugMode)}
+                title={isDebugMode ? 'Debug ON' : 'Debug'}
               >
-                <Bug className="h-3 w-3 mr-2" />
-                {isDebugMode ? 'Debug ON' : 'Debug'}
+                <Bug className="h-3 w-3" />
               </Button>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              <p>v0.1.0-alpha.1</p>
             </div>
           </div>
         </div>

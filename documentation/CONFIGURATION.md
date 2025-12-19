@@ -2,6 +2,14 @@
 
 Halbert uses YAML configuration files following XDG Base Directory standards.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/docs/settings-ai-models-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="../assets/screenshots/docs/settings-ai-models-light.png">
+    <img alt="AI Model Configuration" src="../assets/screenshots/docs/settings-ai-models-light.png" width="700">
+  </picture>
+</p>
+
 ---
 
 ## Configuration Paths

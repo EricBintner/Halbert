@@ -1,0 +1,64 @@
+app-id: ai.halbert.dashboard
+runtime: org.gnome.Platform
+runtime-version: '45'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node18
+
+command: halbert
+
+finish-args:
+  # Network access for Ollama API
+  - --share=network
+  # Display
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  # Home directory access for configs
+  - --filesystem=home
+  # System monitoring
+  - --filesystem=/proc:ro
+  - --filesystem=/sys:ro
+  - --talk-name=org.freedesktop.Notifications
+
+modules:
+  # Halbert - single module that builds everything
+  - name: halbert
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node18/bin
+      env:
+        CARGO_HOME: /run/build/halbert/cargo
+        npm_config_nodedir: /usr/lib/sdk/node18
+    build-commands:
+      # Install Python backend
+      - pip3 install --prefix=/app ./halbert_core[dashboard]
+      # Build frontend
+      - cd halbert_core/halbert_core/dashboard/frontend && npm install && npm run build
+      # Build Tauri
+      - cd halbert_core/halbert_core/dashboard/frontend && npm run tauri build -- --no-bundle
+      # Install Tauri binary
+      - install -Dm755 halbert_core/halbert_core/dashboard/frontend/src-tauri/target/release/halbert /app/bin/halbert
+      # Create wrapper for Python backend
+      - |
+        cat > /app/bin/halbert-api << 'EOF'
+        #!/bin/bash
+        exec python3 -m halbert_core.dashboard "$@"
+        EOF
+        chmod +x /app/bin/halbert-api
+      # Desktop file
+      - install -Dm644 /dev/stdin /app/share/applications/ai.halbert.dashboard.desktop << 'DESKTOP'
+        [Desktop Entry]
+        Name=Halbert
+        Comment=AI-Powered System Administration Assistant
+        Exec=halbert
+        Icon=ai.halbert.dashboard
+        Terminal=false
+        Type=Application
+        Categories=System;Utility;
+        DESKTOP
+    sources:
+      - type: git
+        url: https://github.com/halbert-ai/halbert.git
+        branch: main

@@ -241,6 +241,58 @@ if FASTAPI_AVAILABLE:
         return {"statuses": statuses}
     
     
+    @router.get("/backup/{backup_name}/logs")
+    async def get_backup_logs(
+        backup_name: str,
+        lines: int = Query(100, description="Number of log lines to fetch"),
+    ):
+        """
+        Get journal logs for a backup service/timer.
+        
+        Fetches from both the .service and .timer units.
+        """
+        logs = []
+        errors = []
+        
+        # Try service unit first
+        service_name = f"{backup_name}.service"
+        try:
+            result = subprocess.run(
+                ["journalctl", "-u", service_name, "-n", str(lines), "--no-pager", "-o", "short"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.stdout.strip():
+                logs.append(f"=== {service_name} ===\n{result.stdout}")
+        except Exception as e:
+            errors.append(f"Failed to get {service_name} logs: {e}")
+        
+        # Also try timer unit
+        timer_name = f"{backup_name}.timer"
+        try:
+            result = subprocess.run(
+                ["journalctl", "-u", timer_name, "-n", str(min(lines, 50)), "--no-pager", "-o", "short"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.stdout.strip():
+                logs.append(f"=== {timer_name} ===\n{result.stdout}")
+        except Exception as e:
+            errors.append(f"Failed to get {timer_name} logs: {e}")
+        
+        # If no logs found, provide helpful message
+        if not logs:
+            logs.append(f"No journal logs found for {backup_name}.\n\nThis backup may use a different logging mechanism or hasn't run yet.")
+        
+        return {
+            "backup_name": backup_name,
+            "logs": "\n\n".join(logs),
+            "errors": errors if errors else None,
+        }
+    
+    
     # ============== Learned Classifications ==============
     # Allows the system to learn and remember what components are
     
@@ -1009,6 +1061,16 @@ def _build_analysis_context(
             "3. Are user permissions configured correctly?",
             "4. What security improvements are most critical?",
         ])
+    elif analysis_type == "package":
+        context_parts.extend([
+            "## Analysis Questions:",
+            "1. Are there any Flatpak apps with restrictive sandbox permissions that may cause functionality issues?",
+            "2. Are there any classic (unconfined) Snaps that pose security risks?",
+            "3. Are there outdated apps with known security vulnerabilities?",
+            "4. Are there duplicate apps installed from different sources (Flatpak vs Snap)?",
+            "5. Are there apps with pending updates that should be applied?",
+            "6. Are there any Wayland/X11 compatibility concerns with installed apps?",
+        ])
     
     return "\n".join(context_parts)
 
@@ -1017,12 +1079,26 @@ async def _call_llm_analysis(context: str, use_specialist: bool = False) -> Dict
     """
     Call the LLM for analysis.
     
-    Uses orchestrator (7b) by default, or specialist (70b) if requested.
+    Uses configured guide model by default, or specialist if requested and configured.
     """
     import json
+    from .chat import get_configured_model, get_specialist_model, get_ollama_endpoint
     
-    # Determine model to use
-    model = "llama3.1:70b" if use_specialist else "llama3.1:8b"
+    # Get configured models from settings
+    endpoint = get_ollama_endpoint()
+    
+    if use_specialist:
+        specialist_model, specialist_endpoint = get_specialist_model()
+        if specialist_model:
+            model = specialist_model
+            endpoint = specialist_endpoint
+            logger.info(f"Using specialist model for analysis: {model}")
+        else:
+            model = get_configured_model()
+            logger.info(f"Specialist not configured, using guide model: {model}")
+    else:
+        model = get_configured_model()
+        logger.info(f"Using guide model for analysis: {model}")
     
     system_prompt = """You are a Linux system analyst and debugger. You have access to actual script contents, logs, and configuration files from this system.
 
@@ -1055,23 +1131,25 @@ Health scores:
 - 0-39: Critical failures"""
 
     try:
+        # Use /api/generate (works with older Ollama versions)
+        full_prompt = f"{system_prompt}\n\nUser request:\n{context}"
+        logger.info(f"Calling Ollama /api/generate with model={model} at {endpoint}")
         response = requests.post(
-            "http://localhost:11434/api/chat",
+            f"{endpoint}/api/generate",
             json={
                 "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": context}
-                ],
+                "prompt": full_prompt,
                 "stream": False,
                 "format": "json",
             },
             timeout=120 if use_specialist else 60
         )
+        logger.info(f"Ollama response status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
         
-        content = data.get("message", {}).get("content", "{}")
+        content = data.get("response", "{}")
+        logger.info(f"Ollama response content length: {len(content)}")
         
         # Parse JSON response
         try:

@@ -1,0 +1,105 @@
+name: halbert
+version: '0.1.1'
+summary: AI-powered system administration assistant
+description: |
+  Halbert is an AI-powered system administration assistant that helps you 
+  manage your Linux computer with natural language. It provides intelligent 
+  insights about services, storage, network, security, and more.
+  
+  Features:
+  - Natural language system queries
+  - Service and process monitoring
+  - Storage analysis and recommendations
+  - Network troubleshooting
+  - Security scanning
+  - Automated task scheduling
+  
+  Requires Ollama for AI features (install separately).
+
+grade: stable
+confinement: classic  # Needs system access for monitoring
+base: core22
+
+architectures:
+  - build-on: amd64
+
+apps:
+  halbert:
+    command: bin/halbert
+    desktop: share/applications/halbert.desktop
+    # Note: gnome extension incompatible with classic confinement
+    environment:
+      GTK_USE_PORTAL: '1'
+  
+  halbert-api:
+    command: bin/halbert-api
+    daemon: simple
+    restart-condition: on-failure
+    environment:
+      PYTHONPATH: $SNAP/lib/python3/dist-packages
+
+parts:
+  # Python backend
+  halbert-core:
+    plugin: python
+    source: halbert_core
+    python-packages:
+      - fastapi>=0.109
+      - uvicorn[standard]>=0.27
+      - httpx>=0.26
+      - requests>=2.31
+      - psutil>=5.9
+      - pydantic>=2.6
+      - chromadb>=0.5
+      - sentence-transformers>=2.2
+    stage-packages:
+      - python3
+      - python3-pip
+
+  # Frontend build
+  frontend:
+    plugin: npm
+    source: halbert_core/halbert_core/dashboard/frontend
+    npm-node-version: '18.19.0'
+    override-build: |
+      npm install
+      npm run build
+      craftctl default
+
+  # Tauri app
+  halbert-tauri:
+    plugin: nil
+    source: halbert_core/halbert_core/dashboard/frontend/src-tauri
+    build-packages:
+      - cargo
+      - rustc
+      - libwebkit2gtk-4.1-dev
+      - libgtk-3-dev
+      - libayatana-appindicator3-dev
+    stage-packages:
+      - libwebkit2gtk-4.1-0
+      - libgtk-3-0
+    override-build: |
+      cargo build --release
+      install -Dm755 target/release/halbert $CRAFT_PART_INSTALL/bin/halbert
+    after: [frontend]
+
+  # Desktop integration
+  desktop-file:
+    plugin: dump
+    source: .
+    organize:
+      halbert.desktop: share/applications/halbert.desktop
+    override-build: |
+      mkdir -p $CRAFT_PART_INSTALL/share/applications
+      cat > $CRAFT_PART_INSTALL/share/applications/halbert.desktop << 'EOF'
+      [Desktop Entry]
+      Name=Halbert
+      Comment=AI-Powered System Administration Assistant
+      Exec=halbert
+      Icon=${SNAP}/share/icons/halbert.png
+      Terminal=false
+      Type=Application
+      Categories=System;Utility;
+      Keywords=ai;assistant;system;admin;linux;
+      EOF

@@ -1629,14 +1629,15 @@ async def get_onboarding_status() -> Dict[str, Any]:
     Returns whether the user has completed first-time setup.
     """
     try:
-        from ...discovery.scanners.system_profile import get_system_profiler
-        from ...utils.platform import get_data_dir
         import socket
+        from ...utils.platform import get_data_dir
+        
+        logger.info("Checking onboarding status...")
         
         config_dir = get_config_dir()
         data_dir = get_data_dir()
         onboarding_file = config_dir / "onboarding_complete"
-        profile_file = data_dir / "system_profile.json"  # Profile is in data_dir, not config_dir
+        profile_file = data_dir / "system_profile.json"
         
         # Check if onboarding was completed
         is_complete = onboarding_file.exists() and profile_file.exists()
@@ -1644,16 +1645,29 @@ async def get_onboarding_status() -> Dict[str, Any]:
         # Get hostname for prefill
         hostname = socket.gethostname()
         
-        # Check if profile exists
-        profiler = get_system_profiler()
-        has_profile = profiler.load_profile() is not None
+        # Check profile without loading full profiler (avoid heavy imports)
+        has_profile = profile_file.exists()
+        last_deep_scan = None
+        last_quick_scan = None
+        
+        if has_profile:
+            try:
+                import json
+                with open(profile_file) as f:
+                    profile_data = json.load(f)
+                last_deep_scan = profile_data.get("scan_time")
+                last_quick_scan = profile_data.get("quick_scan_time")
+            except Exception:
+                pass
+        
+        logger.info(f"Onboarding status: complete={is_complete}, has_profile={has_profile}")
         
         return {
             "onboarding_complete": is_complete,
             "has_system_profile": has_profile,
             "suggested_name": hostname,
-            "last_deep_scan": profiler.profile.get("scan_time") if profiler.profile else None,
-            "last_quick_scan": profiler.profile.get("quick_scan_time") if profiler.profile else None,
+            "last_deep_scan": last_deep_scan,
+            "last_quick_scan": last_quick_scan,
         }
     
     except Exception as e:
@@ -1957,8 +1971,11 @@ def _run_background_index(max_docs: int, source: str = None):
 async def get_docs_stats():
     """Get document index statistics."""
     try:
+        logger.info("Getting docs stats...")
         from ...rag.document_indexer import get_index_stats
+        logger.info("Imported get_index_stats, calling...")
         stats = get_index_stats()
+        logger.info(f"Got stats: {stats.get('total_docs', 0)} total docs")
         
         # Include indexing status with progress
         stats["indexing"] = {

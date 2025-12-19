@@ -1,0 +1,116 @@
+# Maintainer: Halbert Team
+pkgname=halbert
+pkgver=0.1.1
+pkgrel=1
+pkgdesc="AI-powered system administration assistant"
+arch=('x86_64')
+url="https://github.com/halbert-ai/halbert"
+license=('MIT')
+depends=(
+    'webkit2gtk-4.1'
+    'gtk3'
+    'python>=3.10'
+    'python-pip'
+)
+optdepends=(
+    'ollama: Local LLM inference (required for AI features)'
+)
+makedepends=(
+    'rust'
+    'cargo'
+    'nodejs'
+    'npm'
+    'python-pip'
+)
+source=("$pkgname-$pkgver.tar.gz::https://github.com/halbert-ai/halbert/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    
+    # Build frontend
+    cd halbert_core/halbert_core/dashboard/frontend
+    npm install
+    npm run build
+    
+    # Build Tauri app
+    npm run tauri build -- --no-bundle
+    
+    cd ../../../..
+    
+    # Install Python package to staging dir (not editable in packaging)
+    pip install --target="$srcdir/python-deps" --no-deps ./halbert_core
+    pip install --target="$srcdir/python-deps" \
+        'pydantic>=2.6' 'chromadb>=0.5' 'sentence-transformers>=2.2' \
+        'rank-bm25>=0.2.2' 'pyyaml>=6.0' 'watchdog>=4.0' 'jsonschema>=4.19' \
+        'numpy>=1.24' 'apscheduler>=3.10' 'sqlalchemy>=2.0' \
+        'fastapi>=0.109' 'uvicorn[standard]>=0.27' 'httpx>=0.26' \
+        'requests>=2.31' 'psutil>=5.9' 'aiofiles>=23.2'
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+    
+    # Install Tauri binary
+    install -Dm755 "halbert_core/halbert_core/dashboard/frontend/src-tauri/target/release/halbert" \
+        "$pkgdir/usr/bin/halbert"
+    
+    # Install Python package
+    install -d "$pkgdir/usr/lib/halbert"
+    cp -r "$srcdir/python-deps/"* "$pkgdir/usr/lib/halbert/"
+    
+    # Install halbert-core Python module
+    cp -r halbert_core/halbert_core "$pkgdir/usr/lib/halbert/"
+    
+    # Create wrapper script for Python backend
+    cat > "$pkgdir/usr/bin/halbert-api" << 'EOF'
+#!/bin/bash
+export PYTHONPATH="/usr/lib/halbert:$PYTHONPATH"
+exec python3 -m halbert_core.dashboard "$@"
+EOF
+    chmod +x "$pkgdir/usr/bin/halbert-api"
+    
+    # Install systemd user service
+    install -Dm644 scripts/halbert-api.service \
+        "$pkgdir/usr/lib/systemd/user/halbert-api.service"
+    
+    # Install desktop file
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/halbert.desktop" << 'EOF'
+[Desktop Entry]
+Name=Halbert
+Comment=AI-Powered System Administration Assistant
+Exec=halbert
+Icon=halbert
+Terminal=false
+Type=Application
+Categories=System;Utility;
+Keywords=ai;assistant;system;admin;linux;
+EOF
+    
+    # Install icons (if available)
+    for size in 32 128 256; do
+        if [ -f "halbert_core/halbert_core/dashboard/frontend/src-tauri/icons/${size}x${size}.png" ]; then
+            install -Dm644 "halbert_core/halbert_core/dashboard/frontend/src-tauri/icons/${size}x${size}.png" \
+                "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/halbert.png"
+        fi
+    done
+    
+    # Install license
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE" 2>/dev/null || true
+}
+
+post_install() {
+    echo "=============================================="
+    echo "Halbert installed successfully!"
+    echo ""
+    echo "IMPORTANT: Install Ollama for AI features:"
+    echo "  curl -fsSL https://ollama.com/install.sh | sh"
+    echo "  ollama pull llama3.2:3b"
+    echo ""
+    echo "Start the backend service:"
+    echo "  systemctl --user enable --now halbert-api"
+    echo ""
+    echo "Then launch Halbert from your application menu"
+    echo "or run: halbert"
+    echo "=============================================="
+}

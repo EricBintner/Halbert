@@ -58,6 +58,23 @@
     font-family: 'Karla', system-ui, sans-serif;
   }
   
+  /* Custom select styling for dark/light mode */
+  select {
+    @apply bg-background text-foreground;
+    color-scheme: light dark;
+  }
+  select option {
+    @apply bg-background text-foreground;
+  }
+  .dark select {
+    background-color: hsl(222.2 84% 4.9%);
+    color: hsl(210 40% 98%);
+  }
+  .dark select option {
+    background-color: hsl(217.2 32.6% 12%);
+    color: hsl(210 40% 98%);
+  }
+  
   /* Brand Typography */
   h1 {
     @apply text-3xl font-bold tracking-tight;

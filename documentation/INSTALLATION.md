@@ -2,6 +2,14 @@
 
 This guide covers installing Halbert on Linux systems.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/docs/settings-system-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="../assets/screenshots/docs/settings-system-light.png">
+    <img alt="Halbert Settings" src="../assets/screenshots/docs/settings-system-light.png" width="700">
+  </picture>
+</p>
+
 ---
 
 ## Requirements

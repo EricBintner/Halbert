@@ -344,6 +344,7 @@ fn get_documents() -> Vec<Document> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             greet,
             get_system_info,

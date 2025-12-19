@@ -68,9 +68,10 @@ check_command node
 check_command npm
 check_command cargo
 
-# Check Python version
+# Check Python version (use Python itself, not bc which may not be installed)
 PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-if [[ $(echo "$PYTHON_VERSION < 3.10" | bc -l) -eq 1 ]]; then
+PYTHON_OK=$(python3 -c 'import sys; print(1 if sys.version_info >= (3, 10) else 0)')
+if [[ "$PYTHON_OK" != "1" ]]; then
     echo -e "${RED}Error: Python 3.10+ required (found $PYTHON_VERSION)${NC}"
     exit 1
 fi
@@ -143,10 +144,28 @@ if [ "$SKIP_BACKEND" = false ]; then
     
     # Hidden imports for packages that PyInstaller misses
     PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import chromadb"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import chromadb.config"
     PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import sentence_transformers"
     PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import uvicorn"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import uvicorn.logging"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import uvicorn.loops"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import uvicorn.loops.auto"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import uvicorn.protocols"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import uvicorn.protocols.http"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import uvicorn.protocols.http.auto"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import uvicorn.protocols.websockets"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import uvicorn.protocols.websockets.auto"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import uvicorn.lifespan"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import uvicorn.lifespan.on"
     PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import fastapi"
     PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import pydantic"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import pydantic_core"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import httpx"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import requests"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import psutil"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import aiofiles"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import apscheduler"
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import sqlalchemy"
     
     pyinstaller $PYINSTALLER_OPTS halbert_core/dashboard/__main__.py
     

@@ -11,7 +11,11 @@ Halbert runs on your machine using local LLMs by default—no cloud required. Op
 ---
 
 <p align="center">
-  <img src="assets/img/_llm2.png" alt="LLM Interface" width="600">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/screenshots/hero/dashboard-overview-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/screenshots/hero/dashboard-overview-light.png">
+    <img alt="Halbert Dashboard" src="./assets/screenshots/hero/dashboard-overview-light.png" width="800">
+  </picture>
 </p>
 
 ## Features
@@ -61,6 +65,7 @@ make dev
 
 | Document | Description |
 |----------|-------------|
+| [**Visual Walkthrough**](documentation/WALKTHROUGH.md) | **Screenshot tour of every feature** |
 | [Installation](documentation/INSTALLATION.md) | Full setup guide |
 | [CLI Reference](documentation/CLI-REFERENCE.md) | All commands |
 | [Configuration](documentation/CONFIGURATION.md) | Config files |
@@ -107,9 +112,29 @@ python Halbert/main.py snapshot-configs
 ```
 
 <p align="center">
-  <img src="assets/img/_storage2.png" alt="Storage Management" width="45%">
-  &nbsp;&nbsp;
-  <img src="assets/img/_network2.png" alt="Network Monitoring" width="45%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/screenshots/hero/chat-conversation-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/screenshots/hero/chat-conversation-light.png">
+    <img alt="AI Chat Assistant" src="./assets/screenshots/hero/chat-conversation-light.png" width="800">
+  </picture>
+</p>
+
+<p align="center">
+  <em>Ask questions in natural language — Halbert knows your system</em>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/screenshots/hero/storage-overview-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/screenshots/hero/storage-overview-light.png">
+    <img alt="Storage Management" src="./assets/screenshots/hero/storage-overview-light.png" width="48%">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/screenshots/hero/gpu-overview-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/screenshots/hero/gpu-overview-light.png">
+    <img alt="GPU Monitoring" src="./assets/screenshots/hero/gpu-overview-light.png" width="48%">
+  </picture>
 </p>
 
 ---

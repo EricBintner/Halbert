@@ -25,6 +25,7 @@ import {
   ChevronDown,
   Image as ImageIcon,
   X as XIcon,
+  Camera,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -1733,27 +1734,37 @@ export function SidePanel() {
                   </div>
                 )}
                 
-                <div className="flex gap-2 items-end">
-                  <textarea
-                    ref={chatInputRef}
-                    value={chatInput}
-                    onChange={(e) => {
-                      handleChatInputChange(e)
-                      autoResizeTextarea()
-                    }}
-                    onKeyDown={handleChatKeyDown}
-                    onPaste={handlePaste}
-                    placeholder={configContext ? "Ask to modify this file..." : "Ask... (@ to mention, paste/drop images)"}
-                    className="flex-1 px-2 py-1.5 rounded-md border bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary resize-none overflow-hidden min-h-[30px]"
-                    disabled={isLoading}
-                    rows={1}
-                    style={{ maxHeight: '150px' }}
-                  />
+                <div className="flex gap-1.5 items-stretch">
+                  <div className="flex-1 relative flex items-center">
+                    <textarea
+                      ref={chatInputRef}
+                      value={chatInput}
+                      onChange={(e) => {
+                        handleChatInputChange(e)
+                        autoResizeTextarea()
+                      }}
+                      onKeyDown={handleChatKeyDown}
+                      onPaste={handlePaste}
+                      placeholder={configContext ? "Ask to modify this file..." : "Ask... (@ to mention, paste/drop images)"}
+                      className="w-full px-2 py-1.5 pr-7 rounded-md border bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary resize-none overflow-hidden min-h-[30px]"
+                      disabled={isLoading}
+                      rows={1}
+                      style={{ maxHeight: '150px' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => window.dispatchEvent(new CustomEvent('halbert:capture-screenshot'))}
+                      className="absolute right-1.5 bottom-[7px] text-muted-foreground hover:text-foreground transition-colors"
+                      title="Screenshot"
+                    >
+                      <Camera className="h-4 w-4" />
+                    </button>
+                  </div>
                   <Button 
                     onClick={handleSendChat} 
                     disabled={isLoading || (!chatInput.trim() && attachedImages.length === 0)}
                     size="icon"
-                    className="h-7 w-7 flex-shrink-0"
+                    className="h-[30px] w-[30px] flex-shrink-0 self-end"
                   >
                     {isLoading ? (
                       <Loader2 className="h-3 w-3 animate-spin" />

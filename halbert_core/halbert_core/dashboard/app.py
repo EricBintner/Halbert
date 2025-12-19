@@ -235,55 +235,49 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         except Exception as e:
             logger.warning(f"Failed to bootstrap identity: {e}")
         
-        # Start ingestion service (in background thread to avoid blocking startup)
+        # Start ingestion service in background (non-blocking)
+        # Uses daemon threads so won't block shutdown
         def start_ingestion_delayed():
+            """Start ingestion after a short delay to let ChromaDB initialize."""
             import time
-            time.sleep(2)  # Wait for startup to complete
+            time.sleep(2)  # Wait for ChromaDB to be ready
             try:
                 from ..ingestion.service import get_ingestion_service
                 service = get_ingestion_service()
                 service.start()
-                logger.info("Ingestion service auto-started (delayed)")
+                logger.info("Ingestion service started (journald + hwmon)")
             except Exception as e:
-                logger.warning(f"Failed to auto-start ingestion: {e}")
+                logger.warning(f"Failed to start ingestion: {e}")
         
         import threading
-        ingestion_thread = threading.Thread(target=start_ingestion_delayed, daemon=True)
-        ingestion_thread.start()
-        logger.info("Ingestion service scheduled for delayed start")
+        ingestion_starter = threading.Thread(target=start_ingestion_delayed, daemon=True)
+        ingestion_starter.start()
+        logger.info("Ingestion service starting in background...")
         
-        # Phase 23: Start scheduler (if APScheduler available)
-        try:
-            from ..scheduler.executor import AutonomousExecutor, APSCHEDULER_AVAILABLE
-            if APSCHEDULER_AVAILABLE:
-                global _scheduler_executor
-                _scheduler_executor = AutonomousExecutor(
-                    max_workers=3,
-                    enable_llm=False,  # Disable LLM for now
-                    enable_guardrails=True
-                )
-                _scheduler_executor.start()
-                
-                # Schedule default autonomous tasks
-                from ..scheduler.autonomous_tasks import SystemHealthCheckTask, LogCleanupTask
-                
-                # Health check every 6 hours
-                def run_health_check():
-                    task = SystemHealthCheckTask()
-                    return task.execute({})
-                
-                _scheduler_executor.schedule_cron_job(
-                    job_id='auto_health_check',
-                    task_func=run_health_check,
-                    cron_expr={'hour': '*/6', 'minute': 0},
-                    description='Autonomous system health check'
-                )
-                
-                logger.info("Scheduler auto-started with health check task")
-            else:
-                logger.info("APScheduler not available, scheduler disabled")
-        except Exception as e:
-            logger.warning(f"Failed to auto-start scheduler: {e}")
+        # Phase 23: Start scheduler (re-enabled with delayed start)
+        def start_scheduler_delayed():
+            """Start scheduler after a short delay."""
+            import time
+            time.sleep(3)  # Wait for other services to initialize
+            try:
+                from ..scheduler.executor import AutonomousExecutor, APSCHEDULER_AVAILABLE
+                if APSCHEDULER_AVAILABLE:
+                    global _scheduler_executor
+                    _scheduler_executor = AutonomousExecutor(
+                        max_workers=3,
+                        enable_llm=False,  # Disable LLM for scheduler jobs
+                        enable_guardrails=True
+                    )
+                    _scheduler_executor.start()
+                    logger.info("Scheduler started successfully")
+                else:
+                    logger.info("APScheduler not available, scheduler disabled")
+            except Exception as e:
+                logger.warning(f"Failed to start scheduler: {e}")
+        
+        scheduler_starter = threading.Thread(target=start_scheduler_delayed, daemon=True)
+        scheduler_starter.start()
+        logger.info("Scheduler starting in background...")
     
     # Shutdown event: stop background services
     @app.on_event("shutdown")

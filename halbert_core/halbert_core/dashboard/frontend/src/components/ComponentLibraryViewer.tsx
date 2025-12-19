@@ -24,9 +24,6 @@ import {
   Box,
   Sparkles,
   Ruler,
-  Sun,
-  Moon,
-  Monitor,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -855,7 +852,6 @@ export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps)
     COMPONENT_LIBRARY[0].components[0]
   )
   const [copiedCode, setCopiedCode] = useState(false)
-  const [previewTheme, setPreviewTheme] = useState<'system' | 'light' | 'dark'>('system')
 
   const toggleCategory = (categoryId: string) => {
     setExpandedCategories(prev =>
@@ -977,53 +973,11 @@ export function ComponentLibraryViewer({ onClose }: ComponentLibraryViewerProps)
 
                 {/* Live preview */}
                 <Card className="mb-6">
-                  <CardHeader className="flex flex-row items-center justify-between">
+                  <CardHeader>
                     <CardTitle className="text-base">Preview</CardTitle>
-                    <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
-                      <button
-                        onClick={() => setPreviewTheme('light')}
-                        className={cn(
-                          "p-1.5 rounded transition-colors",
-                          previewTheme === 'light' ? "bg-background shadow-sm" : "hover:bg-background/50"
-                        )}
-                        title="Light mode"
-                      >
-                        <Sun className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => setPreviewTheme('system')}
-                        className={cn(
-                          "p-1.5 rounded transition-colors",
-                          previewTheme === 'system' ? "bg-background shadow-sm" : "hover:bg-background/50"
-                        )}
-                        title="System theme"
-                      >
-                        <Monitor className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => setPreviewTheme('dark')}
-                        className={cn(
-                          "p-1.5 rounded transition-colors",
-                          previewTheme === 'dark' ? "bg-background shadow-sm" : "hover:bg-background/50"
-                        )}
-                        title="Dark mode"
-                      >
-                        <Moon className="h-4 w-4" />
-                      </button>
-                    </div>
                   </CardHeader>
-                  <CardContent className={cn(
-                    "rounded-b-lg p-6 transition-colors",
-                    previewTheme === 'light' && "bg-white",
-                    previewTheme === 'dark' && "bg-zinc-950",
-                    previewTheme === 'system' && "bg-muted/30"
-                  )}>
-                    <div className={cn(
-                      previewTheme === 'light' && "light [&_*]:text-zinc-900 [&_.text-muted-foreground]:text-zinc-500 [&_.bg-card]:bg-white [&_.text-card-foreground]:text-zinc-900 [&_.bg-muted]:bg-zinc-100 [&_.border]:border-zinc-200",
-                      previewTheme === 'dark' && "dark [&_*]:text-zinc-100 [&_.text-muted-foreground]:text-zinc-400 [&_.bg-card]:bg-zinc-900 [&_.text-card-foreground]:text-zinc-100 [&_.bg-muted]:bg-zinc-800 [&_.border]:border-zinc-700"
-                    )}>
-                      {selectedComponent.preview}
-                    </div>
+                  <CardContent className="rounded-b-lg p-6 bg-muted/30">
+                    {selectedComponent.preview}
                   </CardContent>
                 </Card>
 

@@ -69,22 +69,24 @@ class DiscoveryEngine:
         self._register_default_scanners()
     
     def _init_chromadb(self):
-        """Initialize ChromaDB for persistent storage."""
+        """Initialize ChromaDB for persistent storage using shared client."""
         try:
-            import chromadb
+            # Use the shared index client to avoid SQLite lock contention
+            from ..index.chroma_index import get_index
+            shared_index = get_index()
             
-            # Use persistent storage with new API (chromadb >= 0.4)
-            persist_dir = str(self._get_data_dir() / "chromadb")
-            self._chromadb_client = chromadb.PersistentClient(
-                path=persist_dir,
-            )
+            if shared_index.client is None:
+                logger.warning("Shared ChromaDB client not available, using in-memory storage")
+                self.use_chromadb = False
+                return
             
+            self._chromadb_client = shared_index.client
             self._collection = self._chromadb_client.get_or_create_collection(
                 name="discoveries",
                 metadata={"description": "Halbert system discoveries"}
             )
             
-            logger.info(f"ChromaDB initialized at {persist_dir}")
+            logger.debug("Discovery engine using shared ChromaDB client")
         except ImportError:
             logger.warning("ChromaDB not installed, using in-memory storage")
             self.use_chromadb = False

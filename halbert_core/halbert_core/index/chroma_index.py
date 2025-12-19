@@ -320,23 +320,46 @@ class Index:
     
     def get_stats(self) -> Dict[str, Any]:
         """Get index statistics."""
-        stats = {
-            "chromadb_available": self.client is not None,
-            "memory_events": len(self.mem.events),
-            "collections": {}
-        }
+        import sys
+        collections = {}
+        
+        logger.info("get_stats: starting...")
+        logger.info(f"get_stats: client={self.client is not None}")
         
         if self.client is not None:
-            # Include linux_docs and other important collections
-            for name in ["linux_docs", "self_knowledge_all", "self_conversations", "self_hwmon", "self_journald", "discoveries"]:
-                col = self._collection(name)
-                if col is not None:
+            try:
+                logger.info("get_stats: calling list_collections...")
+                sys.stdout.flush()
+                all_cols = self.client.list_collections()
+                logger.info(f"get_stats: found {len(all_cols)} collections")
+                
+                for i, col in enumerate(all_cols):
+                    col_name = col.name
+                    logger.info(f"get_stats: [{i+1}/{len(all_cols)}] processing '{col_name}'...")
+                    sys.stdout.flush()
                     try:
-                        stats["collections"][name] = col.count()
-                    except Exception:
-                        stats["collections"][name] = "error"
+                        logger.info(f"get_stats: [{i+1}] calling count() on '{col_name}'...")
+                        sys.stdout.flush()
+                        count = col.count()
+                        logger.info(f"get_stats: [{i+1}] '{col_name}' count = {count}")
+                        collections[col_name] = count
+                    except Exception as e:
+                        logger.warning(f"get_stats: [{i+1}] FAILED to count '{col_name}': {e}")
+                        collections[col_name] = "error"
+                        
+                logger.info(f"get_stats: finished all collections, total={sum(v for v in collections.values() if isinstance(v, int))}")
+            except Exception as e:
+                logger.error(f"get_stats: FAILED to list collections: {e}")
+        else:
+            logger.info("get_stats: no client available")
         
-        return stats
+        result = {
+            "chromadb_available": self.client is not None,
+            "memory_events": len(self.mem.events),
+            "collections": collections
+        }
+        logger.info(f"get_stats: returning result with {len(collections)} collections")
+        return result
     
     def list_collections(self) -> List[Dict[str, Any]]:
         """List all collections with their counts."""

@@ -1,9 +1,10 @@
-.PHONY: help dev dev-web build install-units uninstall-units install-configs show-config-dir
+.PHONY: help dev dev-web dev-restart build install-units uninstall-units install-configs show-config-dir
 
 help:
 	@echo "Development:"
 	@echo "  dev                - Start Tauri desktop app + backend (full development)"
 	@echo "  dev-web            - Start backend only (browser at http://localhost:8000)"
+	@echo "  dev-restart        - Kill ALL dev processes and restart fresh"
 	@echo "  build              - Build Tauri production app"
 	@echo ""
 	@echo "Installation:"
@@ -21,6 +22,9 @@ dev:
 
 dev-web:
 	@./scripts/dev-dashboard-web.sh
+
+dev-restart:
+	@./scripts/dev-restart.sh
 
 build:
 	@echo "Building Halbert Tauri app..."

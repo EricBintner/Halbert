@@ -467,26 +467,125 @@ def query_docs(
     return all_results[:k]
 
 
+def query_docs_enhanced(
+    query: str,
+    k: int = 5,
+    use_reranking: bool = True,
+    use_raptor: bool = True,
+    use_graphrag: bool = True
+) -> Dict[str, Any]:
+    """
+    Enhanced document query combining vector search, RAPTOR, and GraphRAG.
+    
+    Research-aligned multi-source retrieval:
+    - Vector search: Standard semantic similarity
+    - RAPTOR: Hierarchical context at multiple abstraction levels
+    - GraphRAG: Entity relationships and graph context
+    
+    Args:
+        query: Search query
+        k: Number of results from each source
+        use_reranking: Enable cross-encoder reranking
+        use_raptor: Include RAPTOR hierarchical context
+        use_graphrag: Include GraphRAG entity context
+    
+    Returns:
+        Dict with results from each source and combined context
+    """
+    results = {
+        "query": query,
+        "vector_results": [],
+        "raptor_context": "",
+        "graph_context": "",
+        "combined_context": "",
+    }
+    
+    # 1. Standard vector search
+    results["vector_results"] = query_docs(query, k=k, use_reranking=use_reranking)
+    
+    # 2. RAPTOR hierarchical context
+    if use_raptor:
+        try:
+            from .raptor import get_raptor_index
+            raptor = get_raptor_index()
+            if raptor._nodes:  # Only if RAPTOR index has data
+                results["raptor_context"] = raptor.get_context_with_hierarchy(query, k_per_level=2)
+        except Exception as e:
+            logger.debug(f"RAPTOR query failed: {e}")
+    
+    # 3. GraphRAG entity context
+    if use_graphrag:
+        try:
+            from .graphrag import get_linux_graphrag
+            graph = get_linux_graphrag()
+            if graph._entities:  # Only if graph has data
+                results["graph_context"] = graph.get_graph_context(query, max_entities=5)
+        except Exception as e:
+            logger.debug(f"GraphRAG query failed: {e}")
+    
+    # 4. Combine all context
+    context_parts = []
+    
+    # Vector search results
+    if results["vector_results"]:
+        context_parts.append("=== Relevant Documentation ===")
+        for i, doc in enumerate(results["vector_results"][:k], 1):
+            title = doc.get("metadata", {}).get("title", "Untitled")
+            content = doc.get("content", "")[:500]
+            context_parts.append(f"\n[{i}] {title}\n{content}")
+    
+    # RAPTOR hierarchical context
+    if results["raptor_context"]:
+        context_parts.append(f"\n{results['raptor_context']}")
+    
+    # GraphRAG entity context
+    if results["graph_context"]:
+        context_parts.append(f"\n{results['graph_context']}")
+    
+    results["combined_context"] = "\n".join(context_parts)
+    
+    return results
+
+
 def get_index_stats() -> Dict[str, Any]:
     """Get statistics about the document index."""
-    from ..index.chroma_index import get_index
+    import logging
+    logger = logging.getLogger('halbert.rag.document_indexer')
     
-    index = get_index()
-    stats = index.get_stats()
-    
-    # Get linux_docs count
-    linux_docs = stats.get("collections", {}).get("linux_docs", 0)
-    if linux_docs == "error":
-        linux_docs = 0
-    
-    # Build collections dict with only numeric values
-    collections = {}
-    for name, count in stats.get("collections", {}).items():
-        if isinstance(count, int):
-            collections[name] = count
-    
-    return {
-        "linux_docs_count": linux_docs,
-        "total_docs": sum(v for v in collections.values() if isinstance(v, int)),
-        "collections": collections,
-    }
+    try:
+        logger.info("get_index_stats: importing get_index...")
+        from ..index.chroma_index import get_index
+        
+        logger.info("get_index_stats: calling get_index()...")
+        index = get_index()
+        
+        logger.info("get_index_stats: calling index.get_stats()...")
+        stats = index.get_stats()
+        logger.info(f"get_index_stats: got stats, processing...")
+        
+        # Get linux_docs count
+        linux_docs = stats.get("collections", {}).get("linux_docs", 0)
+        if linux_docs == "error":
+            linux_docs = 0
+        
+        # Build collections dict with only numeric values
+        collections = {}
+        for name, count in stats.get("collections", {}).items():
+            if isinstance(count, int):
+                collections[name] = count
+        
+        result = {
+            "linux_docs_count": linux_docs,
+            "total_docs": sum(v for v in collections.values() if isinstance(v, int)),
+            "collections": collections,
+        }
+        logger.info(f"get_index_stats: returning {result.get('total_docs', 0)} total docs")
+        return result
+    except Exception as e:
+        logger.error(f"get_index_stats CRASHED: {e}", exc_info=True)
+        return {
+            "linux_docs_count": 0,
+            "total_docs": 0,
+            "collections": {},
+            "error": str(e)
+        }

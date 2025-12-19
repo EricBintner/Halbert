@@ -37,6 +37,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SystemItemActions, PageHeader } from '@/components/domain'
+import { Select } from '@/components/ui/select'
 import { WhyBrain } from '@/components/ui/why-brain'
 
 interface GPUInfo {
@@ -298,7 +299,8 @@ export function GPU() {
                   </div>
                   <div className="flex items-center gap-2">
                     {/* GPU Role Selector */}
-                    <select
+                    <Select
+                      variant="sm"
                       value={gpu.role || 'auto'}
                       onChange={async (e) => {
                         const newRole = e.target.value
@@ -312,13 +314,12 @@ export function GPU() {
                           console.error('Failed to set GPU role:', err)
                         }
                       }}
-                      className="h-8 px-2 text-xs rounded-md border border-input bg-background"
                       title="Set GPU role for multi-GPU systems"
                     >
                       <option value="auto">Auto</option>
                       <option value="display">Display</option>
                       <option value="compute">Compute</option>
-                    </select>
+                    </Select>
                     <Badge variant="outline" className="text-xs">
                       {gpu.vram_mb ? `${(gpu.vram_mb / 1024).toFixed(0)} GB VRAM` : 'Unknown VRAM'}
                     </Badge>
