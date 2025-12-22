@@ -11,7 +11,7 @@
  */
 
 import { useState } from 'react'
-import { Terminal, Copy, Check, Play, Loader2 } from 'lucide-react'
+import { Terminal, Copy, Check, Play, Loader2, SkipForward } from 'lucide-react'
 
 interface CodeBlockProps {
   code: string
@@ -20,10 +20,14 @@ interface CodeBlockProps {
   onRun?: (command: string) => Promise<{ output?: string; error?: string; exit_code?: number }>
   /** Auto-analyze callback after command execution */
   onAutoAnalyze?: (command: string, output: string, isError: boolean) => void
+  /** Callback when command is skipped */
+  onSkip?: (command: string) => void
   /** Show/hide the run button even for shell commands */
   showRunButton?: boolean
   /** Compact mode - smaller padding */
   compact?: boolean
+  /** Unique ID for this code block (for tracking) */
+  blockId?: string
 }
 
 export function CodeBlock({ 
@@ -31,14 +35,18 @@ export function CodeBlock({
   lang = 'bash',
   onRun,
   onAutoAnalyze,
+  onSkip,
   showRunButton = true,
   compact = false,
+  blockId: _blockId,
 }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
   const [output, setOutput] = useState<string | null>(null)
   const [isError, setIsError] = useState(false)
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const [isSkipped, setIsSkipped] = useState(false)
+  const [isHandled, setIsHandled] = useState(false)  // Track if run or skipped
   
   // Detect if this looks like command OUTPUT (not a runnable command)
   const looksLikeOutput = (
@@ -68,6 +76,8 @@ export function CodeBlock({
   }
   
   const handleRun = async () => {
+    if (isHandled) return  // Already handled
+    
     if (!onRun) {
       // Fallback: dispatch event to terminal
       window.dispatchEvent(new CustomEvent('halbert:run-command', { 
@@ -89,6 +99,7 @@ export function CodeBlock({
       
       setOutput(outputText)
       setIsError(hasError)
+      setIsHandled(true)
       
       // Auto-analyze: send output back to AI for analysis
       if (onAutoAnalyze) {
@@ -98,11 +109,21 @@ export function CodeBlock({
       const errorMsg = `Error: ${err}`
       setOutput(errorMsg)
       setIsError(true)
+      setIsHandled(true)
       if (onAutoAnalyze) {
         onAutoAnalyze(code, errorMsg, true)
       }
     } finally {
       setIsRunning(false)
+    }
+  }
+  
+  const handleSkip = () => {
+    if (isHandled) return  // Already handled
+    setIsSkipped(true)
+    setIsHandled(true)
+    if (onSkip) {
+      onSkip(code)
     }
   }
   
@@ -127,19 +148,32 @@ export function CodeBlock({
                 <Copy className="h-3 w-3 text-zinc-400" />
               )}
             </button>
-            {isShellCommand && showRunButton && (
-              <button
-                onClick={handleRun}
-                disabled={isRunning}
-                className="p-1 rounded hover:bg-zinc-700 transition-colors disabled:opacity-50"
-                title="Run in Terminal"
-              >
-                {isRunning ? (
-                  <Loader2 className="h-3 w-3 text-blue-400 animate-spin" />
-                ) : (
-                  <Play className="h-3 w-3 text-green-400" />
-                )}
-              </button>
+            {isShellCommand && showRunButton && !isHandled && (
+              <>
+                <button
+                  onClick={handleRun}
+                  disabled={isRunning}
+                  className="p-1 rounded hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                  title="Run in Terminal"
+                >
+                  {isRunning ? (
+                    <Loader2 className="h-3 w-3 text-blue-400 animate-spin" />
+                  ) : (
+                    <Play className="h-3 w-3 text-green-400" />
+                  )}
+                </button>
+                <button
+                  onClick={handleSkip}
+                  disabled={isRunning}
+                  className="p-1 rounded hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                  title="Skip this command"
+                >
+                  <SkipForward className="h-3 w-3 text-zinc-400" />
+                </button>
+              </>
+            )}
+            {isSkipped && (
+              <span className="text-[10px] text-zinc-500 italic">skipped</span>
             )}
           </div>
         </div>

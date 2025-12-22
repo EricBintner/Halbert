@@ -1,0 +1,61 @@
+<!--
+  Tool: read_file
+  Phase 41: Tool Schema System
+  Permission: show_first (display content before action)
+-->
+
+<tool name="read_file" permission="show_first">
+  <description>Read the contents of a file on the system</description>
+  
+  <when_to_use>
+    <trigger>User asks to see file contents</trigger>
+    <trigger>User asks "what's in [file]"</trigger>
+    <trigger>Need to inspect configuration files</trigger>
+    <trigger>Troubleshooting requires checking file content</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="path" type="string" required="true">
+      Absolute or relative path to the file to read
+    </param>
+    <param name="lines" type="integer" required="false" default="100">
+      Maximum number of lines to return (head/tail behavior)
+    </param>
+    <param name="offset" type="integer" required="false" default="0">
+      Line offset to start reading from (0-indexed)
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="CRITICAL">Never read files in /etc/shadow, /etc/gshadow, or private key files</rule>
+    <rule severity="CRITICAL">Refuse to read files containing API keys, tokens, or credentials</rule>
+    <rule severity="IMPORTANT">Warn before reading very large files (>10MB)</rule>
+    <rule severity="IMPORTANT">Check file permissions before attempting to read</rule>
+    <rule severity="PREFERRED">Suggest head/tail for log files instead of full read</rule>
+  </safety_rules>
+  
+  <examples>
+    <example 
+      input="Show me /etc/fstab" 
+      call="read_file(path='/etc/fstab')" 
+    />
+    <example 
+      input="What's in my nginx config?" 
+      call="read_file(path='/etc/nginx/nginx.conf')" 
+    />
+    <example 
+      input="Show last 50 lines of syslog" 
+      call="read_file(path='/var/log/syslog', lines=50, offset=-50)" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "content": string,    // File contents
+      "path": string,       // Resolved absolute path
+      "size_bytes": integer,
+      "line_count": integer,
+      "truncated": boolean  // True if content was truncated
+    }
+  </output_format>
+</tool>

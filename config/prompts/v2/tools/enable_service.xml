@@ -1,0 +1,50 @@
+<!--
+  Tool: enable_service
+  Phase 41: Tool Schema System
+  Permission: confirm_required (system configuration change)
+-->
+
+<tool name="enable_service" permission="confirm_required">
+  <description>Enable a systemd service to start at boot</description>
+  
+  <when_to_use>
+    <trigger>User asks to enable a service at boot</trigger>
+    <trigger>User asks to make a service start automatically</trigger>
+    <trigger>After installing a new service that should run on startup</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="service" type="string" required="true">
+      Service name to enable
+    </param>
+    <param name="now" type="boolean" required="false" default="false">
+      Also start the service immediately
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="IMPORTANT">Verify service exists before enabling</rule>
+    <rule severity="IMPORTANT">Warn about resource usage for heavy services</rule>
+    <rule severity="PREFERRED">Suggest checking service status after enabling</rule>
+  </safety_rules>
+  
+  <examples>
+    <example 
+      input="Enable nginx at boot" 
+      call="enable_service(service='nginx')" 
+    />
+    <example 
+      input="Enable and start docker" 
+      call="enable_service(service='docker', now=true)" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "service": string,
+      "enabled": boolean,
+      "started": boolean,
+      "message": string
+    }
+  </output_format>
+</tool>

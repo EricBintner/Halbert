@@ -24,3 +24,6 @@ export {
 export { CodeBlock } from './CodeBlock'
 export { MarkdownRenderer } from './MarkdownRenderer'
 export { PageHeader, type PageHeaderProps } from './PageHeader'
+
+// Phase 52: ChromaDB Storage Management
+export { ChromaDBSettings } from './ChromaDBSettings'

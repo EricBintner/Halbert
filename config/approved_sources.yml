@@ -87,6 +87,14 @@ tier_1_official:
     name: "Tailscale"
     trust: official_docs
 
+  - pattern: "docs.trychroma.com"
+    name: "ChromaDB"
+    trust: official_docs
+
+  - pattern: "cookbook.chromadb.dev"
+    name: "ChromaDB Cookbook"
+    trust: official_docs
+
 tier_2_community:
   # Community-curated wikis - high trust
   - pattern: "wiki.debian.org"

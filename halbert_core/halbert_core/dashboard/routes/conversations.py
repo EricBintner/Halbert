@@ -63,6 +63,7 @@ class Message(BaseModel):
     timestamp: str
     mentions: List[str] = Field(default_factory=list)
     tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
+    reasoning: Optional[str] = None  # Phase 32: Reasoning model thinking content
 
 
 class Conversation(BaseModel):
@@ -102,6 +103,7 @@ class AddMessageRequest(BaseModel):
     role: str
     content: str
     mentions: List[str] = Field(default_factory=list)
+    reasoning: Optional[str] = None  # Phase 32: Reasoning model thinking content
 
 
 def ensure_storage_dir():
@@ -270,6 +272,7 @@ if FASTAPI_AVAILABLE:
             content=request.content,
             timestamp=datetime.now().isoformat(),
             mentions=request.mentions,
+            reasoning=request.reasoning,
         )
         
         conversation.messages.append(message)

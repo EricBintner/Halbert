@@ -1,0 +1,31 @@
+<!-- Template for system context injection -->
+<!-- Variables are replaced at runtime by ContextInjector -->
+
+<system_context>
+  <os>{os_name} {os_version}</os>
+  <hostname>{hostname}</hostname>
+  <user>{username}</user>
+  <shell>{shell}</shell>
+  
+  <system_info>
+    <uptime>{uptime}</uptime>
+    <load_average>{load_avg}</load_average>
+    <memory>{memory_used} / {memory_total} ({memory_percent}%)</memory>
+  </system_info>
+  
+  <disk_usage>
+    {disk_usage_formatted}
+  </disk_usage>
+  
+  <package_manager>{package_manager}</package_manager>
+  <init_system>{init_system}</init_system>
+  
+  <active_services>
+    {active_services}
+  </active_services>
+  
+  <recent_activity>
+    <last_command>{last_command}</last_command>
+    <current_directory>{cwd}</current_directory>
+  </recent_activity>
+</system_context>

@@ -212,18 +212,152 @@ class ArchWikiScraper(BaseScraper):
     
     def get_category_pages(self, category: str) -> List[str]:
         """
-        Get list of pages in a category (future enhancement).
+        Get list of pages in a category using MediaWiki API.
         
         Args:
-            category: Category name
+            category: Category name (e.g., 'System_administration')
             
         Returns:
             List of page titles
         """
-        # This would use the Arch Wiki API to get all pages in a category
-        # For now, we use the hardcoded PRIORITY_PAGES list
-        logger.info(f"Category scraping not yet implemented: {category}")
-        return []
+        pages = []
+        api_url = f"{self.BASE_URL}/api.php"
+        
+        params = {
+            'action': 'query',
+            'list': 'categorymembers',
+            'cmtitle': f'Category:{category}',
+            'cmlimit': '500',
+            'cmtype': 'page',
+            'format': 'json',
+        }
+        
+        try:
+            import time
+            import requests
+            
+            while True:
+                response = requests.get(api_url, params=params, timeout=30, headers={'User-Agent': self.config.user_agent})
+                data = response.json()
+                
+                for member in data.get('query', {}).get('categorymembers', []):
+                    pages.append(member['title'])
+                
+                # Check for continuation
+                if 'continue' in data:
+                    params['cmcontinue'] = data['continue']['cmcontinue']
+                    time.sleep(0.5)  # Rate limit
+                else:
+                    break
+            
+            logger.info(f"Found {len(pages)} pages in category {category}")
+            
+        except Exception as e:
+            logger.error(f"Failed to get category pages for {category}: {e}")
+        
+        return pages
+    
+    def get_all_pages(self, namespace: int = 0) -> List[str]:
+        """
+        Get ALL pages from Arch Wiki using MediaWiki API.
+        
+        Args:
+            namespace: Namespace (0 = main content pages)
+            
+        Returns:
+            List of all page titles
+        """
+        pages = []
+        api_url = f"{self.BASE_URL}/api.php"
+        
+        params = {
+            'action': 'query',
+            'list': 'allpages',
+            'apnamespace': str(namespace),
+            'aplimit': '500',
+            'format': 'json',
+        }
+        
+        logger.info("Fetching ALL Arch Wiki pages (this may take a while)...")
+        
+        try:
+            import time
+            import requests
+            
+            while True:
+                response = requests.get(api_url, params=params, timeout=30, headers={'User-Agent': self.config.user_agent})
+                data = response.json()
+                
+                for page in data.get('query', {}).get('allpages', []):
+                    title = page['title']
+                    # Skip talk pages, user pages, etc.
+                    if not any(title.startswith(prefix) for prefix in ['Talk:', 'User:', 'Template:', 'Category:', 'Help:']):
+                        pages.append(title)
+                
+                # Check for continuation
+                if 'continue' in data:
+                    params['apcontinue'] = data['continue']['apcontinue']
+                    time.sleep(0.3)  # Rate limit
+                    
+                    if len(pages) % 1000 == 0:
+                        logger.info(f"Progress: {len(pages)} pages found...")
+                else:
+                    break
+            
+            logger.info(f"Found {len(pages)} total content pages")
+            
+        except Exception as e:
+            logger.error(f"Failed to get all pages: {e}")
+        
+        return pages
+    
+    def scrape_all(self, max_pages: int = None, rate_limit: float = 0.5) -> List[ScrapedDocument]:
+        """
+        Scrape ALL Arch Wiki pages.
+        
+        Args:
+            max_pages: Optional limit (None = all pages)
+            rate_limit: Seconds between requests
+            
+        Returns:
+            List of scraped documents
+        """
+        import time
+        
+        # Get all page titles
+        all_pages = self.get_all_pages()
+        
+        if max_pages:
+            all_pages = all_pages[:max_pages]
+        
+        total = len(all_pages)
+        logger.info(f"Scraping {total} Arch Wiki pages...")
+        
+        documents = []
+        errors = 0
+        
+        for i, page_title in enumerate(all_pages):
+            doc = self.scrape_page(page_title)
+            
+            if doc and self.validate_document(doc):
+                documents.append(doc)
+            else:
+                errors += 1
+            
+            # Rate limiting
+            time.sleep(rate_limit)
+            
+            # Progress logging
+            if (i + 1) % 100 == 0:
+                logger.info(f"Progress: {i + 1}/{total} pages ({len(documents)} successful, {errors} errors)")
+        
+        logger.info(f"Scraped {len(documents)} pages from Arch Wiki ({errors} errors)")
+        
+        # Deduplicate and save
+        documents = self.deduplicate_documents(documents)
+        self.save_documents(documents)
+        
+        return documents
 
 
 def scrape_arch_wiki_cli():
@@ -243,14 +377,19 @@ def scrape_arch_wiki_cli():
     parser.add_argument(
         '--max-pages',
         type=int,
-        default=50,
-        help='Maximum pages to scrape'
+        default=None,
+        help='Maximum pages to scrape (default: ALL pages)'
     )
     parser.add_argument(
         '--rate-limit',
         type=float,
-        default=1.0,
+        default=0.5,
         help='Seconds between requests'
+    )
+    parser.add_argument(
+        '--all',
+        action='store_true',
+        help='Scrape ALL pages (recommended for full coverage)'
     )
     
     args = parser.parse_args()
@@ -269,8 +408,12 @@ def scrape_arch_wiki_cli():
     
     scraper = ArchWikiScraper(config)
     
-    # Scrape
-    documents = scraper.scrape(max_pages=args.max_pages)
+    # Scrape - use scrape_all for full coverage
+    if args.all or args.max_pages is None:
+        logger.info("Scraping ALL Arch Wiki pages (this will take a while)...")
+        documents = scraper.scrape_all(max_pages=args.max_pages, rate_limit=args.rate_limit)
+    else:
+        documents = scraper.scrape(max_pages=args.max_pages)
     
     logger.info(f"Scraped {len(documents)} documents")
     logger.info(f"Output: {args.output_dir / 'arch_wiki.jsonl'}")

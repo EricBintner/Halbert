@@ -31,4 +31,18 @@
     </defaults>
   </action>
 
+  <!-- Policy for executing privileged commands (read-only/diagnostic) -->
+  <action id="com.halbert.exec">
+    <description>Execute privileged command</description>
+    <message>Authentication is required to run this command with elevated privileges</message>
+    <icon_name>utilities-terminal</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/halbert-exec-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
 </policyconfig>

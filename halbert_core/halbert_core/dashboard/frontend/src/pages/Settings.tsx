@@ -45,7 +45,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
-import { PageHeader } from '@/components/domain'
+import { PageHeader, ChromaDBSettings } from '@/components/domain'
 
 const API_BASE = '/api'
 
@@ -98,7 +98,33 @@ interface ModelStatus {
   endpoint: string
   available_models: string[]
   recommended_model: string | null
-  auto_configured?: boolean
+}
+
+// Helper to detect model capabilities from name
+function getModelCapabilities(modelName: string): { thinking: boolean; vision: boolean; code: boolean } {
+  const name = modelName.toLowerCase()
+  return {
+    // Thinking/reasoning models
+    thinking: name.includes('thinking') || 
+              name.includes('-r1') || 
+              name.includes('deepseek-r1') ||
+              name.includes('qwen3') ||  // qwen3 has thinking by default
+              name.includes('qwq') ||
+              name.includes('reasoning'),
+    // Vision/multimodal models  
+    vision: name.includes('vision') || 
+            name.includes('llava') || 
+            name.includes('llama3.2-vision') ||
+            name.includes('gemma3') ||  // gemma3 is multimodal
+            name.includes('pixtral') ||
+            name.includes('bakllava'),
+    // Code-focused models
+    code: name.includes('coder') || 
+          name.includes('codestral') ||
+          name.includes('starcoder') ||
+          name.includes('deepseek-coder') ||
+          name.includes('qwen2.5-coder')
+  }
 }
 
 export function Settings() {
@@ -172,7 +198,7 @@ export function Settings() {
   const [showDocList, setShowDocList] = useState(false)
   const [loadingDocs, setLoadingDocs] = useState(false)
   const [indexing, setIndexing] = useState(false)
-  const [indexResult, setIndexResult] = useState<{total: number, sources: string[]} | null>(null)
+  const [_indexResult, setIndexResult] = useState<{total: number, sources: string[]} | null>(null)
   const [indexProgress, setIndexProgress] = useState<{
     percent: number, 
     currentSource: string | null, 
@@ -733,6 +759,23 @@ export function Settings() {
   const [testingEndpointId, setTestingEndpointId] = useState<string | null>(null)
   const [endpointTestResults, setEndpointTestResults] = useState<Record<string, {success: boolean, message: string}>>({})
   
+  // Test specialist model
+  const [testingSpecialist, setTestingSpecialist] = useState(false)
+  const [specialistTestResult, setSpecialistTestResult] = useState<{success: boolean, message: string} | null>(null)
+  
+  const handleTestSpecialist = async () => {
+    setTestingSpecialist(true)
+    setSpecialistTestResult(null)
+    try {
+      const res = await fetch(`${API_BASE}/settings/specialist/test`, { method: 'POST' })
+      const data = await res.json()
+      setSpecialistTestResult(data)
+    } catch (err) {
+      setSpecialistTestResult({ success: false, message: 'Request failed' })
+    }
+    setTestingSpecialist(false)
+  }
+  
   const handleTestSavedEndpoint = async (endpointId: string) => {
     setTestingEndpointId(endpointId)
     try {
@@ -1262,7 +1305,19 @@ export function Settings() {
                 {modelConfig?.orchestrator?.model ? (
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">{modelConfig.orchestrator.name || 'Endpoint'}</p>
-                    <code className="text-sm bg-muted px-2 py-1 rounded inline-block">{modelConfig.orchestrator.model}</code>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <code className="text-sm bg-muted px-2 py-1 rounded inline-block">{modelConfig.orchestrator.model}</code>
+                      {(() => {
+                        const caps = getModelCapabilities(modelConfig.orchestrator.model)
+                        return (
+                          <>
+                            {caps.thinking && <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">Thinking</Badge>}
+                            {caps.vision && <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">Vision</Badge>}
+                            {caps.code && <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Code</Badge>}
+                          </>
+                        )
+                      })()}
+                    </div>
                     
                     {/* Show warning if configured but not connected */}
                     {!modelStatus?.ollama_connected && (
@@ -1364,21 +1419,63 @@ export function Settings() {
                   Specialist Model
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Code generation & complex analysis
+                  Code generation & complex analysis.
+                  {modelConfig?.specialist?.provider === 'openai' && (
+                    <span className="block mt-1 text-yellow-600">
+                      Tip: Set context length to 16K+ tokens in LM Studio for best results.
+                    </span>
+                  )}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 {modelConfig?.specialist?.enabled && modelConfig?.specialist?.model ? (
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">{modelConfig.specialist.name || 'Endpoint'}</p>
-                    <code className="text-sm bg-muted px-2 py-1 rounded inline-block">{modelConfig.specialist.model}</code>
-                    <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <code className="text-sm bg-muted px-2 py-1 rounded inline-block">{modelConfig.specialist.model}</code>
+                      {(() => {
+                        const caps = getModelCapabilities(modelConfig.specialist.model)
+                        return (
+                          <>
+                            {caps.thinking && <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">Thinking</Badge>}
+                            {caps.vision && <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">Vision</Badge>}
+                            {caps.code && <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Code</Badge>}
+                          </>
+                        )
+                      })()}
+                    </div>
+                    {/* Test result */}
+                    {specialistTestResult && (
+                      <Badge 
+                        variant={specialistTestResult.success ? "default" : "destructive"} 
+                        className="text-xs"
+                      >
+                        {specialistTestResult.success ? <Check className="h-3 w-3 mr-1" /> : <X className="h-3 w-3 mr-1" />}
+                        {specialistTestResult.message}
+                      </Badge>
+                    )}
+                    <div className="flex gap-1">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="h-7 px-2 text-xs"
+                        onClick={handleTestSpecialist}
+                        disabled={testingSpecialist}
+                      >
+                        {testingSpecialist ? (
+                          <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                        ) : (
+                          <Zap className="h-3 w-3 mr-1" />
+                        )}
+                        Test
+                      </Button>
                       <Button 
                         variant="ghost" 
                         size="sm" 
                         className="h-7 px-2 text-xs text-muted-foreground"
                         onClick={async () => {
                           await fetch(`${API_BASE}/settings/specialist/clear`, { method: 'POST' })
+                          setSpecialistTestResult(null)
                           loadSettings()
                         }}
                       >
@@ -1453,7 +1550,19 @@ export function Settings() {
                 {modelConfig?.vision?.enabled && modelConfig?.vision?.model ? (
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">{modelConfig.vision.name || 'Endpoint'}</p>
-                    <code className="text-sm bg-muted px-2 py-1 rounded inline-block">{modelConfig.vision.model}</code>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <code className="text-sm bg-muted px-2 py-1 rounded inline-block">{modelConfig.vision.model}</code>
+                      {(() => {
+                        const caps = getModelCapabilities(modelConfig.vision.model)
+                        return (
+                          <>
+                            {caps.thinking && <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">Thinking</Badge>}
+                            {caps.vision && <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">Vision</Badge>}
+                            {caps.code && <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Code</Badge>}
+                          </>
+                        )
+                      })()}
+                    </div>
                     <div>
                       <Button 
                         variant="ghost" 
@@ -1750,8 +1859,11 @@ export function Settings() {
 
         </TabsContent>
 
-        {/* Knowledge Tab - Self-Knowledge + RAG */}
+        {/* Knowledge Tab - ChromaDB + Self-Knowledge + RAG */}
         <TabsContent value="knowledge" className="space-y-4">
+          {/* ChromaDB Storage Overview - Phase 52 (centerpiece) */}
+          <ChromaDBSettings />
+
           {/* Self-Knowledge Section */}
           <Card>
             <CardHeader>

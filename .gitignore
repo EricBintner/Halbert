@@ -109,3 +109,7 @@ docs/
 
 # Keep these public:
 !docs/README.md
+
+# Large data files
+data/linux/arch-wiki-full/arch_wiki.jsonl
+data/linux/man-pages/linux_man_pages.jsonl

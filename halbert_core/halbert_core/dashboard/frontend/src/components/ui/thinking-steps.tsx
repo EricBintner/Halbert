@@ -49,10 +49,10 @@ const stepColors: Record<string, string> = {
 }
 
 const stepLabels: Record<string, string> = {
-  thought: 'Thought',
-  action: 'Action',
-  observation: 'Observation',
-  final: 'Answer',
+  thought: 'Analyzing',
+  action: 'Executed',
+  observation: 'Result',
+  final: 'Complete',
 }
 
 function formatDuration(ms: number): string {
@@ -166,11 +166,12 @@ function ThinkingStepItem({ step, index }: { step: ThinkingStep; index: number }
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
           <span className={cn(
-            "text-xs font-medium uppercase tracking-wide",
+            "text-xs font-medium",
             step.error ? "text-amber-500" : "text-muted-foreground"
           )}>
-            {stepLabels[step.type]}
-            {step.tool_name && `: ${step.tool_name}`}
+            {step.type === 'action' && step.tool_name 
+              ? <><span className="text-green-500">✓</span> {stepLabels[step.type]}: <code className="bg-muted px-1 rounded">{step.tool_name}</code></>
+              : stepLabels[step.type]}
           </span>
           {step.duration_ms !== undefined && step.duration_ms > 0 && (
             <span className="text-xs text-muted-foreground flex items-center gap-1">

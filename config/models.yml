@@ -12,6 +12,10 @@ specialist:
   model: qwen2.5:32b  # Larger model for complex reasoning
   endpoint: http://100.74.58.17:11434
   purpose: Complex diagnostics, failure analysis, multi-step reasoning
+  # Phase 32: To use a reasoning model (shows <think> blocks in UI), set model to:
+  # - qwq:32b (QwQ reasoning model)
+  # - deepseek-r1:70b (DeepSeek R1)
+  # Reasoning models output chain-of-thought in collapsible "Reasoned for Xs" UI
 vision:
   model: qwen3-v1:32b
   endpoint: http://100.74.58.17:11434  # Same as specialist endpoint

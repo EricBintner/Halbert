@@ -1,0 +1,50 @@
+<!--
+  Tool: disable_service
+  Phase 41: Tool Schema System
+  Permission: confirm_required (system configuration change)
+-->
+
+<tool name="disable_service" permission="confirm_required">
+  <description>Disable a systemd service from starting at boot</description>
+  
+  <when_to_use>
+    <trigger>User asks to disable a service</trigger>
+    <trigger>User asks to prevent a service from starting at boot</trigger>
+    <trigger>Service is consuming resources and user wants it off</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="service" type="string" required="true">
+      Service name to disable
+    </param>
+    <param name="now" type="boolean" required="false" default="false">
+      Also stop the service immediately
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="CRITICAL">Warn before disabling critical services (sshd, NetworkManager)</rule>
+    <rule severity="IMPORTANT">Explain impact of disabling the service</rule>
+    <rule severity="PREFERRED">Suggest masking if service should never run</rule>
+  </safety_rules>
+  
+  <examples>
+    <example 
+      input="Disable bluetooth service" 
+      call="disable_service(service='bluetooth')" 
+    />
+    <example 
+      input="Stop and disable cups" 
+      call="disable_service(service='cups', now=true)" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "service": string,
+      "disabled": boolean,
+      "stopped": boolean,
+      "message": string
+    }
+  </output_format>
+</tool>

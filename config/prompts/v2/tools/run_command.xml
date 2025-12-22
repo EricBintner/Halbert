@@ -1,0 +1,80 @@
+<!--
+  Tool: run_command
+  Phase 41: Tool Schema System
+  Permission: confirm_required (user must approve execution)
+-->
+
+<tool name="run_command" permission="confirm_required">
+  <description>Execute a shell command on the system</description>
+  
+  <when_to_use>
+    <trigger>User asks to run a specific command</trigger>
+    <trigger>Need real-time system information not available via other tools</trigger>
+    <trigger>User asks to install, update, or remove packages</trigger>
+    <trigger>User asks to perform system maintenance tasks</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="command" type="string" required="true">
+      Shell command to execute
+    </param>
+    <param name="cwd" type="string" required="false">
+      Working directory for command execution
+    </param>
+    <param name="timeout" type="integer" required="false" default="60">
+      Timeout in seconds (max 300)
+    </param>
+    <param name="sudo" type="boolean" required="false" default="false">
+      Run with sudo privileges (requires additional confirmation)
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="CRITICAL">NEVER execute: rm -rf /, dd if=/dev/zero, mkfs on mounted volumes</rule>
+    <rule severity="CRITICAL">NEVER execute commands that could wipe data without explicit confirmation</rule>
+    <rule severity="CRITICAL">NEVER pipe curl/wget output directly to shell (curl | bash)</rule>
+    <rule severity="IMPORTANT">Always explain what the command will do before running</rule>
+    <rule severity="IMPORTANT">Warn about irreversible operations</rule>
+    <rule severity="IMPORTANT">Suggest --dry-run or -n flags for destructive commands</rule>
+    <rule severity="IMPORTANT">Limit sudo usage to operations that truly require it</rule>
+    <rule severity="PREFERRED">Prefer specific tools over general shell commands when available</rule>
+  </safety_rules>
+  
+  <dangerous_patterns>
+    <pattern>rm -rf /</pattern>
+    <pattern>rm -rf /*</pattern>
+    <pattern>dd if=/dev/zero</pattern>
+    <pattern>:(){ :|:& };:</pattern>
+    <pattern>mkfs</pattern>
+    <pattern>chmod -R 777 /</pattern>
+    <pattern>> /dev/sda</pattern>
+    <pattern>curl .* | .*sh</pattern>
+    <pattern>wget .* | .*sh</pattern>
+  </dangerous_patterns>
+  
+  <examples>
+    <example 
+      input="Check disk usage" 
+      call="run_command(command='df -h')" 
+    />
+    <example 
+      input="Update packages on Ubuntu" 
+      call="run_command(command='apt update && apt upgrade -y', sudo=true)" 
+    />
+    <example 
+      input="Find large files" 
+      call="run_command(command='find /home -size +100M -type f 2>/dev/null')" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "stdout": string,      // Command output
+      "stderr": string,      // Error output
+      "exit_code": integer,  // 0 = success
+      "duration_ms": integer,
+      "command": string,     // Executed command
+      "truncated": boolean   // True if output was truncated
+    }
+  </output_format>
+</tool>

@@ -1,0 +1,66 @@
+<!--
+  Tool: restart_service
+  Phase 41: Tool Schema System
+  Permission: confirm_required (service state change)
+-->
+
+<tool name="restart_service" permission="confirm_required">
+  <description>Restart a systemd service</description>
+  
+  <when_to_use>
+    <trigger>User asks to restart a service</trigger>
+    <trigger>Service needs to reload after config change</trigger>
+    <trigger>User asks to apply configuration changes to a running service</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="service" type="string" required="true">
+      Service name (e.g., "nginx", "postgresql", "docker")
+    </param>
+    <param name="action" type="string" required="false" default="restart">
+      Action: "restart", "reload", "start", "stop"
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="CRITICAL">Never stop critical system services: systemd, dbus, NetworkManager without warning</rule>
+    <rule severity="IMPORTANT">Warn about potential downtime for user-facing services</rule>
+    <rule severity="IMPORTANT">Check service status before and after action</rule>
+    <rule severity="IMPORTANT">Prefer "reload" over "restart" when configuration supports it</rule>
+    <rule severity="PREFERRED">Suggest checking logs if service fails to start</rule>
+  </safety_rules>
+  
+  <critical_services>
+    <service>systemd-*</service>
+    <service>dbus</service>
+    <service>NetworkManager</service>
+    <service>sshd</service>
+    <service>getty@*</service>
+  </critical_services>
+  
+  <examples>
+    <example 
+      input="Restart nginx" 
+      call="restart_service(service='nginx', action='restart')" 
+    />
+    <example 
+      input="Reload nginx config" 
+      call="restart_service(service='nginx', action='reload')" 
+    />
+    <example 
+      input="Stop docker" 
+      call="restart_service(service='docker', action='stop')" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "service": string,
+      "action": string,
+      "success": boolean,
+      "previous_state": string,
+      "current_state": string,
+      "message": string
+    }
+  </output_format>
+</tool>

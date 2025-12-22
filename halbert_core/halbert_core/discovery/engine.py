@@ -9,7 +9,7 @@ The engine:
 """
 
 from __future__ import annotations
-from typing import List, Optional, Dict, Type
+from typing import List, Optional, Dict, Type, Callable
 from datetime import datetime
 import logging
 import threading
@@ -151,28 +151,43 @@ class DiscoveryEngine:
     # Scanning
     # ─────────────────────────────────────────────────────────────
     
-    def scan_all(self) -> List[Discovery]:
+    def scan_all(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> List[Discovery]:
         """
         Run all registered scanners.
+        
+        Args:
+            progress_callback: Optional callback(scanner_name, current, total) for progress updates.
         
         Returns:
             List of all discoveries found.
         """
         all_discoveries = []
         
-        # Iterate over lists of scanners per type
+        # Count total scanners for progress
+        all_scanners = []
         for scanner_list in self._scanners.values():
-            for scanner in scanner_list:
-                try:
-                    logger.info(f"Running scanner: {scanner.name}")
-                    discoveries = scanner.scan()
-                    all_discoveries.extend(discoveries)
+            all_scanners.extend(scanner_list)
+        total_scanners = len(all_scanners)
+        
+        # Iterate over all scanners
+        for idx, scanner in enumerate(all_scanners):
+            try:
+                if progress_callback:
+                    progress_callback(scanner.name, idx, total_scanners)
+                
+                logger.info(f"Running scanner: {scanner.name}")
+                discoveries = scanner.scan()
+                all_discoveries.extend(discoveries)
+                
+                # Store discoveries in batch for performance
+                self._store_discoveries_batch(discoveries)
                     
-                    # Store discoveries in batch for performance
-                    self._store_discoveries_batch(discoveries)
-                        
-                except Exception as e:
-                    logger.error(f"Scanner {scanner.name} failed: {e}")
+            except Exception as e:
+                logger.error(f"Scanner {scanner.name} failed: {e}")
+        
+        # Final callback
+        if progress_callback:
+            progress_callback("Complete", total_scanners, total_scanners)
         
         self._last_scan = datetime.now()
         logger.info(f"Scan complete. Found {len(all_discoveries)} discoveries.")

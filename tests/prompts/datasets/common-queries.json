@@ -1,0 +1,77 @@
+{
+  "description": "Common user queries for prompt testing",
+  "queries": [
+    {
+      "id": "disk-space-1",
+      "query": "How much disk space do I have?",
+      "expected_tool": "check_disk_space",
+      "category": "system_info"
+    },
+    {
+      "id": "disk-space-2",
+      "query": "Is my disk full?",
+      "expected_tool": "check_disk_space",
+      "category": "system_info"
+    },
+    {
+      "id": "service-status-1",
+      "query": "Is nginx running?",
+      "expected_tool": "get_service_status",
+      "category": "service"
+    },
+    {
+      "id": "service-status-2",
+      "query": "Check docker status",
+      "expected_tool": "get_service_status",
+      "category": "service"
+    },
+    {
+      "id": "process-1",
+      "query": "Is Python running?",
+      "expected_tool": "check_process",
+      "category": "process"
+    },
+    {
+      "id": "load-1",
+      "query": "What's my system load?",
+      "expected_tool": "get_system_load",
+      "category": "system_info"
+    },
+    {
+      "id": "load-2",
+      "query": "How much memory is being used?",
+      "expected_tool": "get_system_load",
+      "category": "system_info"
+    },
+    {
+      "id": "logs-1",
+      "query": "Show me recent syslog entries",
+      "expected_tool": "read_log_tail",
+      "category": "logs"
+    },
+    {
+      "id": "network-1",
+      "query": "What's my IP address?",
+      "expected_tool": "get_network_info",
+      "category": "network"
+    },
+    {
+      "id": "command-1",
+      "query": "How do I restart nginx?",
+      "expected_answer_contains": "systemctl restart nginx",
+      "category": "howto"
+    },
+    {
+      "id": "command-2",
+      "query": "How do I update packages?",
+      "expected_answer_contains": "apt update",
+      "category": "howto"
+    },
+    {
+      "id": "command-3",
+      "query": "How do I check open ports?",
+      "expected_answer_contains": ["netstat", "ss", "lsof"],
+      "category": "howto"
+    }
+  ]
+}

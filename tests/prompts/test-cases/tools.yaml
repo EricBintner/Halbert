@@ -1,0 +1,150 @@
+# Tool Selection Test Cases for Halbert Prompts
+# Phase 46: Prompt Testing Framework
+
+tests:
+  # ─────────────────────────────────────────────────────────────
+  # check_disk_space
+  # ─────────────────────────────────────────────────────────────
+
+  - description: "Tool: check_disk_space for disk query"
+    vars:
+      query: "How much disk space do I have?"
+    assert:
+      - type: contains-any
+        value: ["check_disk_space", "df"]
+
+  - description: "Tool: check_disk_space for storage query"
+    vars:
+      query: "Is my /home partition running out of space?"
+    assert:
+      - type: contains-any
+        value: ["check_disk_space", "df", "/home"]
+
+  - description: "Tool: check_disk_space for no space error"
+    vars:
+      query: "I'm getting 'no space left on device' error"
+    assert:
+      - type: contains-any
+        value: ["check_disk_space", "df", "disk"]
+
+  # ─────────────────────────────────────────────────────────────
+  # get_service_status
+  # ─────────────────────────────────────────────────────────────
+
+  - description: "Tool: get_service_status for nginx"
+    vars:
+      query: "Is nginx running?"
+    assert:
+      - type: contains-any
+        value: ["get_service_status", "systemctl", "nginx"]
+
+  - description: "Tool: get_service_status for docker"
+    vars:
+      query: "Check if docker is active"
+    assert:
+      - type: contains-any
+        value: ["get_service_status", "systemctl", "docker"]
+
+  - description: "Tool: get_service_status for SSH"
+    vars:
+      query: "Is the SSH daemon running?"
+    assert:
+      - type: contains-any
+        value: ["get_service_status", "sshd", "ssh"]
+
+  # ─────────────────────────────────────────────────────────────
+  # list_running_services
+  # ─────────────────────────────────────────────────────────────
+
+  - description: "Tool: list_running_services for all services"
+    vars:
+      query: "What services are running?"
+    assert:
+      - type: contains-any
+        value: ["list_running_services", "systemctl list"]
+
+  - description: "Tool: list_running_services with filter"
+    vars:
+      query: "Show me all docker-related services"
+    assert:
+      - type: contains-any
+        value: ["list_running_services", "docker"]
+
+  # ─────────────────────────────────────────────────────────────
+  # check_process
+  # ─────────────────────────────────────────────────────────────
+
+  - description: "Tool: check_process for python"
+    vars:
+      query: "Is Python running?"
+    assert:
+      - type: contains-any
+        value: ["check_process", "ps", "python"]
+
+  - description: "Tool: check_process for resource usage"
+    vars:
+      query: "How much CPU is ollama using?"
+    assert:
+      - type: contains-any
+        value: ["check_process", "ps", "ollama"]
+
+  # ─────────────────────────────────────────────────────────────
+  # get_system_load
+  # ─────────────────────────────────────────────────────────────
+
+  - description: "Tool: get_system_load for load query"
+    vars:
+      query: "What's my system load?"
+    assert:
+      - type: contains-any
+        value: ["get_system_load", "load", "uptime"]
+
+  - description: "Tool: get_system_load for memory"
+    vars:
+      query: "How much memory is being used?"
+    assert:
+      - type: contains-any
+        value: ["get_system_load", "free", "memory"]
+
+  - description: "Tool: get_system_load for performance"
+    vars:
+      query: "Is my system overloaded?"
+    assert:
+      - type: contains-any
+        value: ["get_system_load", "load"]
+
+  # ─────────────────────────────────────────────────────────────
+  # read_log_tail
+  # ─────────────────────────────────────────────────────────────
+
+  - description: "Tool: read_log_tail for syslog"
+    vars:
+      query: "Show me recent syslog entries"
+    assert:
+      - type: contains-any
+        value: ["read_log_tail", "/var/log/syslog", "journalctl"]
+
+  - description: "Tool: read_log_tail for errors"
+    vars:
+      query: "Check nginx error log"
+    assert:
+      - type: contains-any
+        value: ["read_log_tail", "/var/log/nginx", "error"]
+
+  # ─────────────────────────────────────────────────────────────
+  # get_network_info
+  # ─────────────────────────────────────────────────────────────
+
+  - description: "Tool: get_network_info for IP"
+    vars:
+      query: "What's my IP address?"
+    assert:
+      - type: contains-any
+        value: ["get_network_info", "ip addr", "ifconfig"]
+
+  - description: "Tool: get_network_info for interfaces"
+    vars:
+      query: "Show network interfaces"
+    assert:
+      - type: contains-any
+        value: ["get_network_info", "ip", "interface"]

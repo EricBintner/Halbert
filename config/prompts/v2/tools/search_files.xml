@@ -1,0 +1,66 @@
+<!--
+  Tool: search_files
+  Phase 41: Tool Schema System
+  Permission: auto_approve (read-only search)
+-->
+
+<tool name="search_files" permission="auto_approve">
+  <description>Search for files by name or content using find/grep</description>
+  
+  <when_to_use>
+    <trigger>User asks to find files by name or pattern</trigger>
+    <trigger>User asks to search for text in files</trigger>
+    <trigger>User asks "where is [file]"</trigger>
+    <trigger>Need to locate configuration files or logs</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="path" type="string" required="true">
+      Directory to search in
+    </param>
+    <param name="pattern" type="string" required="false">
+      Filename pattern (glob or regex)
+    </param>
+    <param name="content" type="string" required="false">
+      Text content to search for (grep)
+    </param>
+    <param name="type" type="string" required="false" default="any">
+      File type: "file", "directory", "symlink", "any"
+    </param>
+    <param name="max_results" type="integer" required="false" default="50">
+      Maximum number of results to return
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="IMPORTANT">Limit search scope to prevent excessive resource usage</rule>
+    <rule severity="IMPORTANT">Exclude binary files from content search by default</rule>
+    <rule severity="PREFERRED">Suggest more specific paths to narrow results</rule>
+  </safety_rules>
+  
+  <examples>
+    <example 
+      input="Find all .conf files in /etc" 
+      call="search_files(path='/etc', pattern='*.conf', type='file')" 
+    />
+    <example 
+      input="Search for 'error' in log files" 
+      call="search_files(path='/var/log', content='error', pattern='*.log')" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "results": [
+        {
+          "path": string,
+          "type": string,
+          "match_line": string,  // If content search
+          "line_number": integer // If content search
+        }
+      ],
+      "total_matches": integer,
+      "truncated": boolean
+    }
+  </output_format>
+</tool>

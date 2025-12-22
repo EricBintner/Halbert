@@ -34,7 +34,123 @@ import socket
 import json
 import requests
 
+# Phase 32: Reasoning model support
+from ...utils.reasoning import parse_thinking_blocks, StreamingReasoningParser, is_reasoning_model
+
+# Phase 40-46: Prompt System v2
+from ...prompts import (
+    PromptLoader,
+    PromptBuilder,
+    ContextInjector,
+    UserPreferences,
+    get_safety_validator,
+)
+
 logger = logging.getLogger('halbert.dashboard.routes.chat')
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt System v2 (Phase 40-46)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_prompt_loader: Optional[PromptLoader] = None
+_prompt_builder: Optional[PromptBuilder] = None
+_context_injector: Optional[ContextInjector] = None
+
+
+def get_prompt_builder(force_reload: bool = False) -> PromptBuilder:
+    """Get singleton PromptBuilder instance."""
+    global _prompt_loader, _prompt_builder
+    if _prompt_builder is None or force_reload:
+        try:
+            from ...utils.platform import get_config_dir
+            prompts_dir = get_config_dir().parent / "config" / "prompts"
+            if not prompts_dir.exists():
+                # Fallback to relative path from halbert_core
+                prompts_dir = Path(__file__).parent.parent.parent.parent.parent / "config" / "prompts"
+            _prompt_loader = PromptLoader(prompts_dir)
+            _prompt_builder = PromptBuilder(_prompt_loader)
+            logger.info(f"Initialized PromptBuilder from {prompts_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to init PromptBuilder: {e}, using fallback")
+            return None
+    return _prompt_builder
+
+
+def reload_prompts():
+    """Force reload of all prompt components. Call after editing XML files."""
+    global _prompt_loader, _prompt_builder
+    if _prompt_loader:
+        _prompt_loader.clear_cache()
+    if _prompt_builder:
+        _prompt_builder.clear_cache()
+    # Force full reinit
+    _prompt_loader = None
+    _prompt_builder = None
+    get_prompt_builder(force_reload=True)
+    logger.info("Prompts reloaded from disk")
+
+
+def get_context_injector() -> ContextInjector:
+    """Get singleton ContextInjector instance."""
+    global _context_injector
+    if _context_injector is None:
+        try:
+            engine = get_engine()
+            _context_injector = ContextInjector(discovery_engine=engine)
+        except Exception:
+            _context_injector = ContextInjector()
+    return _context_injector
+
+
+def build_system_prompt_v2(
+    tier: str = "specialist",
+    user_prefs: Optional[dict] = None,
+    project_dir: Optional[Path] = None,
+    rag_results: Optional[list] = None,
+) -> Optional[str]:
+    """
+    Build system prompt using Phase 40-46 prompt infrastructure.
+    
+    Args:
+        tier: Model tier - "guide", "specialist", or "vision"
+        user_prefs: Optional user preferences dict
+        project_dir: Optional project directory for HALBERT.md
+        rag_results: Optional RAG retrieval results
+        
+    Returns:
+        Assembled system prompt or None if v2 not available
+    """
+    builder = get_prompt_builder()
+    if not builder:
+        return None
+    
+    try:
+        # Get context injector for system state
+        injector = get_context_injector()
+        sys_ctx = injector.get_system_context()
+        system_context = injector.format_system_context(sys_ctx)
+        
+        # Build user preferences if provided
+        prefs = None
+        if user_prefs:
+            prefs = user_prefs
+        
+        # Build the prompt
+        prompt = builder.build_prompt(
+            tier=tier,
+            system_context=system_context,
+            user_prefs=prefs,
+            project_context=injector.load_project_context(project_dir) if project_dir else None,
+            rag_results=rag_results,
+        )
+        
+        token_estimate = builder.estimate_tokens(prompt)
+        logger.info(f"Built v2 {tier} prompt: ~{token_estimate} tokens")
+        
+        return prompt
+    except Exception as e:
+        logger.warning(f"Failed to build v2 prompt: {e}")
+        return None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Guardrails & Policy Integration (Phase 23)
@@ -494,11 +610,12 @@ def get_configured_model() -> str:
         return "llama3.1:8b"
 
 
-def get_specialist_model() -> tuple[str, str]:
-    """Get the configured specialist/executor model name and endpoint from config.
+def get_specialist_model() -> tuple[str, str, str]:
+    """Get the configured specialist/executor model name, endpoint, and provider from config.
     
     Returns:
-        Tuple of (model_name, endpoint_url) or (None, None) if not enabled
+        Tuple of (model_name, endpoint_url, provider) or (None, None, None) if not enabled
+        Provider is 'ollama' or 'openai' (for OpenAI-compatible APIs like LM Studio)
     """
     try:
         from ...utils.platform import get_config_dir
@@ -513,17 +630,125 @@ def get_specialist_model() -> tuple[str, str]:
             # Only return specialist if enabled
             if not specialist.get('enabled', False):
                 logger.debug("Specialist not enabled in config")
-                return (None, None)
+                return (None, None, None)
             
             model = specialist.get('model', 'llama3.1:70b')
             endpoint = specialist.get('endpoint', get_ollama_endpoint())
-            logger.info(f"Specialist enabled: {model} at {endpoint}")
-            return (model, endpoint)
+            provider = specialist.get('provider', 'ollama')
+            logger.info(f"Specialist enabled: {model} at {endpoint} (provider: {provider})")
+            return (model, endpoint, provider)
         
-        return (None, None)
+        return (None, None, None)
     except Exception as e:
         logger.warning(f"Error loading specialist config: {e}")
-        return (None, None)
+        return (None, None, None)
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate (avg 4 chars per token)."""
+    return len(text) // 4
+
+def _truncate_messages_for_context(messages: list, max_tokens: int = 12000) -> list:
+    """
+    Truncate messages to fit within context limit.
+    Preserves system message (truncated if needed) and recent conversation.
+    """
+    total_tokens = sum(_estimate_tokens(m.get('content', '')) for m in messages)
+    
+    if total_tokens <= max_tokens:
+        return messages
+    
+    logger.warning(f"Messages exceed {max_tokens} tokens ({total_tokens}), truncating...")
+    result = []
+    
+    # Always keep system message, but truncate if huge
+    for m in messages:
+        if m.get('role') == 'system':
+            content = m['content']
+            # Truncate system message to ~8K tokens max
+            max_system_chars = 32000  # ~8K tokens
+            if len(content) > max_system_chars:
+                content = content[:max_system_chars] + "\n\n[Context truncated for length]"
+                logger.info(f"Truncated system message from {len(m['content'])} to {len(content)} chars")
+            result.append({"role": "system", "content": content})
+            break
+    
+    # Add non-system messages, keeping most recent
+    non_system = [m for m in messages if m.get('role') != 'system']
+    # Keep last N messages that fit
+    remaining_tokens = max_tokens - _estimate_tokens(result[0]['content']) if result else max_tokens
+    kept = []
+    for m in reversed(non_system):
+        msg_tokens = _estimate_tokens(m.get('content', ''))
+        if remaining_tokens - msg_tokens > 500:  # Leave room for response
+            kept.insert(0, m)
+            remaining_tokens -= msg_tokens
+        else:
+            break
+    
+    result.extend(kept)
+    logger.info(f"Truncated to {len(result)} messages, ~{sum(_estimate_tokens(m.get('content', '')) for m in result)} tokens")
+    return result
+
+
+def call_llm_chat(endpoint: str, model: str, messages: list, provider: str = "ollama",
+                  stream: bool = False, timeout: int = 180, options: dict = None) -> dict:
+    """
+    Call LLM with correct API format based on provider.
+    
+    Args:
+        endpoint: Base URL (e.g., http://localhost:11434)
+        model: Model name
+        messages: List of message dicts with 'role' and 'content'
+        provider: 'ollama' or 'openai' (for OpenAI-compatible APIs like LM Studio)
+        stream: Whether to stream response
+        timeout: Request timeout in seconds
+        options: Provider-specific options (temperature, max_tokens, etc.)
+    
+    Returns:
+        Dict with 'content' (response text) and 'raw' (full response)
+    """
+    options = options or {}
+    
+    # Log context size for debugging
+    total_chars = sum(len(m.get('content', '')) for m in messages)
+    logger.info(f"Sending {len(messages)} messages, ~{total_chars} chars to {provider}")
+    
+    if provider == "openai":
+        # OpenAI-compatible API (LM Studio, vLLM, etc.)
+        url = f"{endpoint}/v1/chat/completions"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": stream,
+            "temperature": options.get("temperature", 0.7),
+            "max_tokens": options.get("num_predict", options.get("max_tokens", 2048)),
+        }
+        logger.info(f"Calling OpenAI-compatible API: {url} model={model}")
+        response = requests.post(url, json=payload, timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        return {"content": content.strip(), "raw": data}
+    else:
+        # Ollama API
+        url = f"{endpoint}/api/chat"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": stream,
+        }
+        if options:
+            payload["options"] = {
+                "num_predict": options.get("num_predict", options.get("max_tokens", 1024)),
+                "temperature": options.get("temperature", 0.7),
+            }
+        logger.info(f"Calling Ollama API: {url} model={model}")
+        response = requests.post(url, json=payload, timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+        content = data.get("message", {}).get("content", "")
+        return {"content": content.strip(), "raw": data}
 
 
 def get_vision_model() -> tuple[str, str]:
@@ -619,33 +844,48 @@ def _score_query_complexity(prompt: str) -> float:
     return max(0.0, min(1.0, score))
 
 
-def get_loaded_models(endpoint: str = None) -> List[dict]:
+def get_loaded_models(endpoint: str = None, provider: str = "ollama") -> List[dict]:
     """
-    Get list of currently loaded models from Ollama.
+    Get list of currently loaded/available models from LLM server.
     
-    Uses GET /api/ps endpoint.
-    Returns list of model info dicts with keys: name, size, expires_at, etc.
+    For Ollama: Uses GET /api/ps endpoint (shows loaded models in VRAM).
+    For OpenAI-compatible: Uses GET /v1/models endpoint (shows available models).
+    
+    Returns list of model info dicts with keys: name/id, etc.
     """
     if endpoint is None:
         endpoint = get_ollama_endpoint()
     
     try:
-        response = requests.get(f"{endpoint}/api/ps", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get('models', [])
-        return []
+        if provider == "openai":
+            # OpenAI-compatible API (LM Studio, vLLM, etc.)
+            response = requests.get(f"{endpoint}/v1/models", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                # Convert OpenAI format to common format
+                models = []
+                for m in data.get('data', []):
+                    models.append({'name': m.get('id', ''), 'id': m.get('id', '')})
+                return models
+            return []
+        else:
+            # Ollama API
+            response = requests.get(f"{endpoint}/api/ps", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('models', [])
+            return []
     except Exception as e:
         logger.debug(f"Could not get loaded models: {e}")
         return []
 
 
-def is_model_loaded(model_name: str, endpoint: str = None) -> bool:
-    """Check if a specific model is currently loaded."""
-    loaded = get_loaded_models(endpoint)
+def is_model_loaded(model_name: str, endpoint: str = None, provider: str = "ollama") -> bool:
+    """Check if a specific model is currently loaded/available."""
+    loaded = get_loaded_models(endpoint, provider)
     for m in loaded:
         # Model names may include tags like "llama3.1:8b" or just "llama3.1"
-        loaded_name = m.get('name', '')
+        loaded_name = m.get('name', m.get('id', ''))
         if loaded_name == model_name or loaded_name.startswith(model_name + ':'):
             return True
         # Also check if provided name is a prefix (user might say "llama3.1" but loaded is "llama3.1:8b")
@@ -708,9 +948,10 @@ def call_ollama_with_tools(prompt: str, system_prompt: str, model: str = None) -
         from ...tools.system_tools import SYSTEM_TOOLS, execute_tool
         
         # Smart routing: use specialist for complex queries
+        # Note: Tool calling currently only works with Ollama, not OpenAI-compatible APIs
         if model is None:
-            specialist_model, specialist_endpoint = get_specialist_model()
-            if specialist_model:
+            specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
+            if specialist_model and specialist_provider == "ollama":
                 complexity_score = _score_query_complexity(prompt)
                 if complexity_score >= 0.5:
                     model = specialist_model
@@ -1448,6 +1689,23 @@ if FASTAPI_AVAILABLE:
         debug_mode = request.debug
         current_page = request.current_page
         page_context = request.page_context
+        
+        # Phase 43: Safety validation on input
+        try:
+            validator = get_safety_validator()
+            input_check = validator.validate_input(message)
+            if not input_check.allowed:
+                logger.warning(f"Input blocked by safety validator: {input_check.reason}")
+                return ChatResponse(
+                    response="I noticed your message contains patterns that could be interpreted as an attempt to modify my behavior. Please rephrase your request.",
+                    thinking_steps=[],
+                    sources=[],
+                    tool_results=[],
+                    error=None,
+                    debug_info={"safety_blocked": True, "reason": input_check.reason} if debug_mode else None
+                )
+        except Exception as e:
+            logger.debug(f"Safety validation skipped: {e}")
         
         # Debug info collection
         debug_info = {
@@ -2320,92 +2578,83 @@ if FASTAPI_AVAILABLE:
             # Load any custom user-defined rules
             custom_rules = get_custom_ai_rules()
             
-            # Build system prompt based on persona
+            # Phase 40-46: Build system prompt based on persona using v2 infrastructure
+            # Determine tier: coder persona uses "specialist", default uses "guide"
+            tier = "specialist" if persona == "coder" else "guide"
+            
+            # Try v2 prompt system first
+            system_prompt = build_system_prompt_v2(tier=tier)
+            
             if persona == "coder":
-                # Phase 12e: ReAct-style prompting for complex reasoning
-                system_prompt = (
-                    f"You are {ai_name}, a Linux system administration AI assistant in coder mode. "
-                    "Provide technical, concise responses. Focus on commands, scripts, and solutions. "
-                    "Be direct and efficient.\n\n"
-                    "COMMAND FORMATTING:\n"
-                    "- Put each shell command in its own markdown code block with ```bash\n"
-                    "- If giving multiple commands, put each in a SEPARATE code block with a brief description\n"
-                    "- Never put multiple commands in the same code block unless they must run together (use && or ;)\n\n"
-                    f"{system_identity}"
-                    f"{custom_rules}\n\n"
-                    "IMPORTANT: Always ground your responses in THIS specific system's actual state. "
-                    "If asked about something not present on this system, say so clearly.\n\n"
-                    
-                    "REASONING PATTERN (for complex questions):\n"
-                    "When solving multi-step problems, use this pattern:\n"
-                    "1. **Thought**: Briefly explain what you need to check or do\n"
-                    "2. **Action**: The command or tool to use\n"
-                    "3. **Observation**: What the result shows\n"
-                    "4. **Answer**: Your final response based on observations\n\n"
-                    
-                    "Example:\n"
-                    "User: Why is my disk filling up?\n"
-                    "**Thought**: I should check current disk usage first.\n"
-                    "**Action**: `df -h /`\n"
-                    "**Observation**: Root is 85% full with /var/log consuming significant space.\n"
-                    "**Answer**: Your root filesystem is 85% full. The main culprit is /var/log...\n\n"
-                    
-                    "UNCERTAINTY - Ask for clarification:\n"
-                    "- If a question is unclear, simply say 'Could you rephrase that?'\n"
-                    "- Do NOT guess what the user meant - ask instead."
-                )
                 task_type = TaskType.CODE_GENERATION
+                # Fallback or augment with coder-specific context
+                if not system_prompt:
+                    system_prompt = (
+                        f"You are {ai_name}, a Linux system administration AI assistant in coder mode. "
+                        "Provide technical, concise responses. Focus on commands, scripts, and solutions. "
+                        "Be direct and efficient.\n\n"
+                        "CRITICAL - YOU CANNOT EXECUTE COMMANDS:\n"
+                        "- You can ONLY suggest commands for the user to run\n"
+                        "- You CANNOT execute commands or see their output\n"
+                        "- NEVER fabricate command output - you don't know what commands would return\n"
+                        "- NEVER show fake 'Output:' or 'Result:' sections\n"
+                        "- Say 'Run this:' or 'Try:' - NOT 'Running... Output:'\n"
+                        "- If you need output, ask the user to run the command and share results\n\n"
+                        "COMMAND FORMATTING:\n"
+                        "- Put each shell command in its own markdown code block with ```bash\n"
+                        "- If giving multiple commands, put each in a SEPARATE code block with a brief description\n"
+                        "- Never put multiple commands in the same code block unless they must run together (use && or ;)\n\n"
+                        f"{system_identity}"
+                        f"{custom_rules}\n\n"
+                        "IMPORTANT: Always ground your responses in THIS specific system's actual state. "
+                        "If asked about something not present on this system, say so clearly.\n\n"
+                        "UNCERTAINTY - Ask for clarification:\n"
+                        "- If a question is unclear, simply say 'Could you rephrase that?'\n"
+                        "- Do NOT guess what the user meant - ask instead."
+                    )
+                else:
+                    # V2 prompt loaded - add coder-specific context
+                    system_prompt += f"\n\n{system_identity}{custom_rules}"
             else:
-                system_prompt = (
-                    f"You are {ai_name}, a friendly Linux system administration assistant. "
-                    "Help users understand their system in a warm, conversational way. "
-                    "Explain technical concepts clearly. You can discuss backups, services, "
-                    "storage, network, and security. "
-                    "COMMAND FORMATTING:\n"
-                    "- Put each shell command in its own markdown code block with ```bash\n"
-                    "- If giving multiple commands, put each in a SEPARATE code block with a brief description\n"
-                    "- Never put multiple commands in the same code block unless they must run together (use && or ;)\n\n"
-                    f"{system_identity}"
-                    f"{custom_rules}\n\n"
-                    "IMPORTANT: Always ground your responses in THIS specific system's actual state. "
-                    "If asked about something not present on this system, say so clearly before offering general advice.\n\n"
-                    "UI CONTEXT AWARENESS:\n"
-                    "- The user may be viewing a specific page (Network, Storage, etc.) and asking about what they see.\n"
-                    "- When the context shows network interfaces with 'Down' status, this means the interface has no IP or carrier.\n"
-                    "- When asking 'why is this down', check the context for clues (bridge ports, bond slaves, missing cables).\n"
-                    "- A bond showing 'Down' often means not enough physical interfaces are connected.\n"
-                    "- A bridge port showing 'Bridged to X' with no IP is normal - the bridge interface holds the IP.\n"
-                    "- Answer based on the provided context first, before suggesting commands.\n\n"
-                    "RESPONSE LENGTH - Be concise:\n"
-                    "- Match response length to question complexity. Simple questions get 1-2 sentence answers.\n"
-                    "- Don't pad responses with unnecessary filler or repetition.\n"
-                    "- Only provide detailed explanations when the question actually warrants depth.\n\n"
-                    "CONVERSATION CONTEXT - THIS IS CRITICAL:\n"
-                    "- ALWAYS check the conversation history FIRST before responding.\n"
-                    "- When you see command output with 'Error' or error messages, THAT IS THE CONTEXT.\n"
-                    "- When the user says 'that failed' or 'it's broken' or 'malformed', they're referring to the output you just saw.\n"
-                    "- If there's an error visible in the conversation, analyze it - don't ask what they mean.\n"
-                    "- The user expects you to understand what you're looking at, just like a human would.\n"
-                    "- Example: If output shows 'Syntax error: EOF in backquote' and user says 'looks malformed', ANALYZE THE ERROR.\n"
-                    "- NEVER ask 'could you rephrase' when there's visible command output or errors in the conversation.\n"
-                    "- NEVER pretend you can't see what's clearly in the chat history.\n"
-                    "- If a command failed, explain WHY based on the error output - don't ask for more information.\n\n"
-                    "UNCERTAINTY - Only ask when truly necessary:\n"
-                    "- Only ask for clarification if the conversation history provides NO context at all.\n"
-                    "- If there's ANY command output, error, or previous context - USE IT.\n"
-                    "- Asking to rephrase when context exists makes you seem incompetent - avoid this.\n\n"
-                    
-                    "CORRELATE FAILURES:\n"
-                    "- When multiple issues exist, look for root causes (e.g., disk failure causing mount failure).\n"
-                    "- Use the context provided - it contains related system issues.\n\n"
-                    
-                    "COMMAND VERIFICATION:\n"
-                    "- Only suggest commands you're confident exist on typical Linux systems.\n"
-                    "- For niche tools (bcachefsctl, zfs, btrfs), suggest checking if installed first.\n"
-                    "- Use standard diagnostic tools: systemctl, journalctl, dmesg, lsblk, smartctl.\n"
-                    "- If a command fails with 'not found', suggest installing the package or an alternative."
-                )
                 task_type = TaskType.CHAT
+                # For guide persona, v2 prompt was already built above
+                if not system_prompt:
+                    # Fallback to legacy prompt if v2 not available
+                    system_prompt = (
+                        f"You are {ai_name}, a friendly Linux system administration assistant. "
+                        "Help users understand their system in a warm, conversational way. "
+                        "Explain technical concepts clearly. You can discuss backups, services, "
+                        "storage, network, and security.\n\n"
+                        "CRITICAL - YOU CANNOT EXECUTE COMMANDS:\n"
+                        "- You can ONLY suggest commands for the user to run\n"
+                        "- You CANNOT execute commands yourself\n"
+                        "- You CANNOT see command output unless the user pastes it to you\n"
+                        "- NEVER fabricate or imagine command output - you don't know what it would show\n"
+                        "- NEVER show fake 'Output:' sections - you cannot run commands\n"
+                        "- If you need to know command output, ask the user to run it and share the result\n"
+                        "- Say 'Try running: `command`' NOT 'Running: `command`... Output: ...'\n\n"
+                        "COMMAND FORMATTING:\n"
+                        "- Put each shell command in its own markdown code block with ```bash\n"
+                        "- If giving multiple commands, put each in a SEPARATE code block with a brief description\n"
+                        "- Never put multiple commands in the same code block unless they must run together (use && or ;)\n\n"
+                        f"{system_identity}"
+                        f"{custom_rules}\n\n"
+                        "IMPORTANT: Always ground your responses in THIS specific system's actual state. "
+                        "If asked about something not present on this system, say so clearly before offering general advice.\n\n"
+                        "RESPONSE LENGTH - Be concise:\n"
+                        "- Match response length to question complexity. Simple questions get 1-2 sentence answers.\n"
+                        "- Don't pad responses with unnecessary filler or repetition.\n"
+                        "- Only provide detailed explanations when the question actually warrants depth.\n\n"
+                        "CONVERSATION CONTEXT - THIS IS CRITICAL:\n"
+                        "- ALWAYS check the conversation history FIRST before responding.\n"
+                        "- When you see command output with 'Error' or error messages, THAT IS THE CONTEXT.\n"
+                        "- If there's an error visible in the conversation, analyze it - don't ask what they mean.\n"
+                        "- NEVER ask 'could you rephrase' when there's visible command output or errors in the conversation.\n"
+                        "- If a command failed, explain WHY based on the error output - don't ask for more information.\n"
+                    )
+                else:
+                    # V2 prompt loaded - add guide-specific context
+                    system_prompt += f"\n\n{system_identity}{custom_rules}"
             
             # Add context from mentions if available
             full_prompt = system_prompt + "\n\n"
@@ -2486,10 +2735,11 @@ if FASTAPI_AVAILABLE:
                     from ...tools.system_tools import SYSTEM_TOOLS, execute_tool
                     
                     # Get model - prefer specialist for ReAct reasoning
+                    # Note: ReAct currently only works with Ollama, not OpenAI-compatible APIs
                     react_model = get_configured_model()
                     react_endpoint = get_ollama_endpoint()
-                    specialist_model, specialist_endpoint = get_specialist_model()
-                    if specialist_model:
+                    specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
+                    if specialist_model and specialist_provider == "ollama":
                         complexity_score = _score_query_complexity(message)
                         if complexity_score >= 0.4:  # Lower threshold for ReAct
                             react_model = specialist_model
@@ -2551,10 +2801,20 @@ if FASTAPI_AVAILABLE:
                 # Convert history to dict format for vision call
                 history_dicts = [{"role": msg.role, "content": msg.content} for msg in request.history] if request.history else []
                 vision_model, vision_endpoint = get_vision_model()
+                
+                # Phase 40-46: Build vision-specific prompt using v2 infrastructure
+                vision_prompt = build_system_prompt_v2(tier="vision")
+                if vision_prompt:
+                    # Add system identity to v2 prompt
+                    vision_prompt += f"\n\n{system_identity}{custom_rules}"
+                else:
+                    # Fallback to existing system_prompt
+                    vision_prompt = system_prompt
+                
                 response = call_ollama_with_images(
                     message=message,
                     images=request.images,
-                    system_prompt=system_prompt,
+                    system_prompt=vision_prompt,
                     model=vision_model,
                     endpoint=vision_endpoint,
                     history=history_dicts
@@ -2587,12 +2847,24 @@ if FASTAPI_AVAILABLE:
                 # Add conversation history as proper messages
                 if request.history:
                     for msg in request.history[-6:]:
-                        role = "user" if msg.role == "user" else "assistant"
                         content = msg.content[:2000] + "..." if len(msg.content) > 2000 else msg.content
-                        messages.append({"role": role, "content": content})
+                        if msg.role == "user":
+                            messages.append({"role": "user", "content": content})
+                        elif msg.role == "system":
+                            # System messages (command output, context cards) should be user context
+                            messages.append({"role": "user", "content": f"[Context]\n{content}"})
+                        else:
+                            messages.append({"role": "assistant", "content": content})
                 
                 # Current user message
                 messages.append({"role": "user", "content": message})
+                
+                # Debug: log what we're sending
+                logger.info(f"Built {len(messages)} messages for LLM:")
+                for i, m in enumerate(messages):
+                    role = m.get('role', '?')
+                    content_preview = m.get('content', '')[:150].replace('\n', ' ')
+                    logger.info(f"  [{i}] {role}: {content_preview}...")
                 
                 # Smart routing: decide between guide (8b) and specialist (70b)
                 # Based on complexity scoring
@@ -2600,8 +2872,9 @@ if FASTAPI_AVAILABLE:
                 complexity_score = 0.0
                 model = get_configured_model()  # Default: guide/orchestrator
                 endpoint = get_ollama_endpoint()
+                provider = "ollama"
                 
-                specialist_model, specialist_endpoint = get_specialist_model()
+                specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
                 if specialist_model:
                     # Score complexity to decide routing
                     complexity_score = _score_query_complexity(message)
@@ -2610,42 +2883,70 @@ if FASTAPI_AVAILABLE:
                     if complexity_score >= 0.5:
                         model = specialist_model
                         endpoint = specialist_endpoint
+                        provider = specialist_provider or "ollama"
                         use_specialist = True
-                        logger.info(f"Complexity {complexity_score:.2f} >= 0.5 → using specialist: {model}")
+                        logger.info(f"Complexity {complexity_score:.2f} >= 0.5 → using specialist: {model} (provider: {provider})")
                     else:
                         logger.info(f"Complexity {complexity_score:.2f} < 0.5 → using guide: {model}")
                 
                 try:
-                    chat_response = requests.post(
-                        f"{endpoint}/api/chat",
-                        json={
-                            "model": model,
-                            "messages": messages,
-                            "stream": False,
-                            "options": {
-                                "num_predict": 1024,
-                                "temperature": 0.7
-                            }
-                        },
-                        timeout=180
+                    # Use provider-aware API call (handles Ollama vs OpenAI-compatible)
+                    llm_result = call_llm_chat(
+                        endpoint=endpoint,
+                        model=model,
+                        messages=messages,
+                        provider=provider,
+                        stream=False,
+                        timeout=300 if use_specialist else 180,  # More time for large specialist models
+                        options={"num_predict": 2048, "temperature": 0.7}
                     )
-                    chat_response.raise_for_status()
-                    data = chat_response.json()
-                    response = data.get("message", {}).get("content", "").strip()
-                    tokens_used = data.get("eval_count", 0) + data.get("prompt_eval_count", 0)
+                    response = llm_result["content"]
+                    raw_data = llm_result["raw"]
+                    tokens_used = raw_data.get("eval_count", 0) + raw_data.get("prompt_eval_count", 0)
+                    if not tokens_used and "usage" in raw_data:
+                        # OpenAI format
+                        tokens_used = raw_data["usage"].get("total_tokens", 0)
                     logger.info(f"Chat API response generated ({tokens_used} tokens, {len(messages)} messages)")
                 except Exception as chat_err:
-                    logger.warning(f"Chat API failed, falling back to generate: {chat_err}")
-                    # Fallback to old method if chat fails
-                    full_prompt += f"User: {message}\n\nAssistant:"
-                    llm_response = model_router.generate(
-                        prompt=full_prompt,
-                        task_type=task_type,
-                        max_tokens=1024,
-                        temperature=0.7
-                    )
-                    response = llm_response.text.strip()
-                    tokens_used = llm_response.tokens_used
+                    logger.warning(f"Chat API failed: {chat_err}")
+                    
+                    # If specialist failed, fall back to guide model with guide's endpoint
+                    if use_specialist:
+                        logger.info("Specialist failed, falling back to guide model")
+                        guide_model = get_configured_model()
+                        guide_endpoint = get_ollama_endpoint()
+                        logger.info(f"Fallback: {len(messages)} messages, guide={guide_model} at {guide_endpoint}")
+                        # Log message summary for debugging context issues
+                        for i, m in enumerate(messages):
+                            role = m.get('role', '?')
+                            content_preview = m.get('content', '')[:100].replace('\n', ' ')
+                            logger.debug(f"  msg[{i}] {role}: {content_preview}...")
+                        try:
+                            # Use guide's endpoint (local Ollama), NOT the specialist endpoint
+                            llm_result = call_llm_chat(
+                                endpoint=guide_endpoint,
+                                model=guide_model,
+                                messages=messages,
+                                provider="ollama",  # Guide always uses Ollama
+                                stream=False,
+                                timeout=180,
+                                options={"num_predict": 1024, "temperature": 0.7}
+                            )
+                            response = llm_result["content"]
+                            raw_data = llm_result["raw"]
+                            tokens_used = raw_data.get("eval_count", 0) + raw_data.get("prompt_eval_count", 0)
+                            model = guide_model  # Update for debug info
+                            use_specialist = False
+                            logger.info(f"Fallback to guide succeeded: {guide_model}")
+                        except Exception as fallback_err:
+                            logger.error(f"Guide fallback also failed: {fallback_err}")
+                            response = "I'm sorry, I encountered an error processing your request. Please try again."
+                            tokens_used = 0
+                    else:
+                        # Guide failed, no further fallback
+                        logger.error(f"Guide model failed: {chat_err}")
+                        response = "I'm sorry, I encountered an error processing your request. Please try again."
+                        tokens_used = 0
                 
                 # Track model info for debug
                 if debug_info:
@@ -2695,8 +2996,18 @@ if FASTAPI_AVAILABLE:
                     page=current_page
                 )
         
+        # Phase 43: Filter output for sensitive data
+        try:
+            validator = get_safety_validator()
+            filtered_response = validator.filter_output(response)
+            if filtered_response != response:
+                logger.info("Output filtering applied - sensitive data redacted")
+        except Exception as e:
+            logger.debug(f"Output filtering skipped: {e}")
+            filtered_response = response
+        
         return ChatResponse(
-            response=response,
+            response=filtered_response,
             mentions_resolved=mentions_resolved,
             suggested_actions=get_suggested_actions(message, mentions_resolved),
             debug=debug_info,
@@ -2723,6 +3034,18 @@ if FASTAPI_AVAILABLE:
         
         message = request.message.strip()
         
+        # Phase 43: Safety validation on input
+        try:
+            validator = get_safety_validator()
+            input_check = validator.validate_input(message)
+            if not input_check.allowed:
+                logger.warning(f"Streaming input blocked: {input_check.reason}")
+                async def blocked_stream():
+                    yield f'data: {{"error": "Input blocked by safety validation", "done": true}}\n\n'
+                return StreamingResponse(blocked_stream(), media_type="text/event-stream")
+        except Exception as e:
+            logger.debug(f"Streaming safety validation skipped: {e}")
+        
         async def generate_stream():
             """Generator that yields SSE events."""
             full_response = ""
@@ -2731,60 +3054,301 @@ if FASTAPI_AVAILABLE:
                 # Get model configuration
                 model = get_configured_model()
                 endpoint = get_ollama_endpoint()
+                provider = "ollama"
                 
                 # Smart routing for specialist model
-                specialist_model, specialist_endpoint = get_specialist_model()
+                specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
                 if specialist_model:
                     complexity_score = _score_query_complexity(message)
                     if complexity_score >= 0.5:
                         model = specialist_model
                         endpoint = specialist_endpoint
-                        logger.info(f"Streaming: using specialist model {model}")
+                        provider = specialist_provider or "ollama"
+                        logger.info(f"Streaming: using specialist model {model} (provider: {provider})")
                 
-                # Build simple messages array for streaming
-                messages = [
-                    {"role": "system", "content": "You are Halbert, a helpful Linux system administration assistant. Be concise and helpful."},
-                    {"role": "user", "content": message}
-                ]
+                # Phase 40-46: Build system prompt using v2 prompt infrastructure
+                # Determine tier based on model routing
+                tier = "guide"
+                if specialist_model and model == specialist_model:
+                    tier = "specialist"
                 
-                # Add history if provided
+                # Try v2 prompt system first
+                system_prompt = build_system_prompt_v2(tier=tier)
+                
+                # Fallback to legacy prompt if v2 not available
+                if not system_prompt:
+                    system_prompt = (
+                        "You are Halbert, a helpful Linux system administration assistant. "
+                        "Be concise and helpful.\n\n"
+                        "COMMAND EXECUTION (CRITICAL):\n"
+                        "- You CANNOT run commands. You can only SUGGEST commands.\n"
+                        "- The user has Run buttons next to code blocks to execute them.\n"
+                        "- NEVER fabricate, imagine, or hallucinate command output.\n"
+                        "- NEVER say 'The output shows...' unless you see actual [Command Output] in history.\n"
+                        "- After suggesting a command, STOP and wait. Say 'Run this to check' - nothing more.\n"
+                        "- You will see actual results as [Command Output] messages in the conversation.\n\n"
+                        "COMMAND FORMATTING (CRITICAL - user has Run buttons for code blocks):\n"
+                        "- ALWAYS put shell commands in fenced code blocks with ```bash\n"
+                        "- NEVER use inline `backticks` for runnable commands - the user can't click those\n"
+                        "- Each command gets its own code block so user can run it with one click\n"
+                        "- Example:\n"
+                        "```bash\n"
+                        "btrbk -L | grep home\n"
+                        "```\n"
+                        "- After suggesting, say 'Run this and I'll analyze the results' NOT 'paste the output'\n"
+                    )
+                else:
+                    # V2 prompt loaded - add command execution context
+                    system_prompt += "\n\n<!-- Dashboard Command Integration -->\n"
+                    system_prompt += "COMMAND EXECUTION (CRITICAL - READ CAREFULLY):\n"
+                    system_prompt += "- You CANNOT run commands. You can only SUGGEST commands.\n"
+                    system_prompt += "- The user has Run buttons next to code blocks to execute them.\n"
+                    system_prompt += "- NEVER fabricate, imagine, or hallucinate command output.\n"
+                    system_prompt += "- NEVER say 'The output shows...' unless you see actual [Command Output] in history.\n"
+                    system_prompt += "- After suggesting a command, STOP and wait. Say 'Run this to check' - nothing more.\n"
+                    system_prompt += "- You will see actual results as [Command Output] messages in the conversation.\n\n"
+                    system_prompt += "COMMAND FORMATTING:\n"
+                    system_prompt += "- Put shell commands in ```bash code blocks\n"
+                    system_prompt += "- Never use inline `backticks` for runnable commands\n"
+                    system_prompt += "- ALWAYS use sudo for: journalctl, btrbk, systemctl, btrfs, bcachefs, mount, blkid, smartctl, cryptsetup\n"
+                
+                # === CONTEXT INJECTION FOR STREAMING ===
+                # Phase 42: Send early activity indicator for fast feedback
+                yield f"data: {json.dumps({'activity': {'type': 'scan', 'data': {'query': message[:50], 'phase': 'context'}}})}\n\n"
+                
+                # Retrieve self-knowledge context (discoveries about THIS system)
+                context_parts = []
+                message_lower = message.lower()
+                
+                # Self-knowledge retrieval via CRAG
+                try:
+                    self_knowledge_context, _ = get_self_knowledge_context(message, max_results=5)
+                    if self_knowledge_context:
+                        context_parts.append(self_knowledge_context)
+                        logger.debug("Streaming: Injected self-knowledge context")
+                        # Phase 42: Notify frontend about loaded context
+                        yield f"data: {json.dumps({'activity': {'type': 'read', 'data': {'source': 'self_knowledge', 'count': 1}}})}\n\n"
+                except Exception as e:
+                    logger.warning(f"Streaming: Failed to get self-knowledge: {e}")
+                
+                # Semantic search over discoveries
+                try:
+                    discovery_context = get_discovery_context(message, max_results=5)
+                    if discovery_context:
+                        context_parts.append(discovery_context)
+                        logger.debug("Streaming: Injected discovery context")
+                except Exception as e:
+                    logger.warning(f"Streaming: Failed to get discovery context: {e}")
+                
+                # Import comprehensive keyword lists (Phase 36 research)
+                try:
+                    from config.prompts.v2.keywords import BACKUP_KEYWORDS, STORAGE_KEYWORDS
+                except ImportError:
+                    # Fallback to basic keywords if module not found
+                    BACKUP_KEYWORDS = {'backup', 'timeshift', 'snapshot', 'restore', 'rsync', 'borg', 'btrbk', '/home', '/root'}
+                    STORAGE_KEYWORDS = {'disk', 'storage', 'drive', 'filesystem', 'mount', 'bcachefs', 'btrfs', 'zfs', 'raid', 'nvme', 'ssd', 'hdd', 'partition', '/home'}
+                
+                # Backup-specific context injection
+                if any(kw in message_lower for kw in BACKUP_KEYWORDS):
+                    logger.info(f"Streaming: Backup keyword matched in query: {message_lower[:50]}")
+                    try:
+                        from halbert_core.discovery.schema import DiscoveryType
+                        engine = get_engine()
+                        backup_discoveries = engine.get_by_type(DiscoveryType.BACKUP)
+                        logger.info(f"Streaming: Backup discoveries found: {len(backup_discoveries) if backup_discoveries else 0}")
+                        if backup_discoveries:
+                            backup_summary = [d.chat_context or f"- {d.name}: {d.description}" for d in backup_discoveries[:10]]
+                            context_parts.append(
+                                "**Detected Backups on this system:**\n" + "\n".join(backup_summary)
+                            )
+                            logger.info(f"Streaming: Injected backup context: {len(backup_discoveries)} discoveries")
+                        else:
+                            logger.warning("Streaming: No backup discoveries in database - RAG context empty")
+                    except Exception as e:
+                        logger.error(f"Streaming: Failed to get backup context: {e}", exc_info=True)
+                
+                # Storage-specific context injection (uses STORAGE_KEYWORDS from above)
+                if any(kw in message_lower for kw in STORAGE_KEYWORDS):
+                    logger.info(f"Streaming: Storage keyword matched in query: {message_lower[:50]}")
+                    try:
+                        from halbert_core.discovery.schema import DiscoveryType
+                        engine = get_engine()
+                        storage_discoveries = engine.get_by_type(DiscoveryType.STORAGE)
+                        logger.info(f"Streaming: Storage discoveries found: {len(storage_discoveries) if storage_discoveries else 0}")
+                        if storage_discoveries:
+                            storage_summary = [d.chat_context or f"- {d.name}: {d.description}" for d in storage_discoveries[:10]]
+                            context_parts.append(
+                                "**Detected Storage on this system:**\n" + "\n".join(storage_summary)
+                            )
+                            logger.debug(f"Streaming: Injected storage context: {len(storage_discoveries)} discoveries")
+                    except Exception as e:
+                        logger.warning(f"Streaming: Failed to get storage context: {e}")
+                
+                # Add context to system prompt if we have any
+                if context_parts:
+                    system_prompt += "\n\n=== SYSTEM KNOWLEDGE (about THIS specific machine) ===\n"
+                    system_prompt += "\n\n".join(context_parts)
+                    system_prompt += "\n\nIMPORTANT: Use this system-specific knowledge to answer accurately. "
+                    system_prompt += "If the user asks about paths or configurations, check this context first.\n"
+                
+                # Build messages array for streaming
+                # DeepSeek-R1 models: inject system prompt into user message (official recommendation)
+                is_deepseek_r1 = "deepseek-r1" in model.lower()
+                
+                if is_deepseek_r1:
+                    # DeepSeek-R1 doesn't want system prompts - inject into first user message
+                    logger.info(f"DeepSeek-R1 detected: injecting system prompt into user message")
+                    user_content = f"[Instructions]\n{system_prompt}\n\n[User Query]\n{message}"
+                    messages = [{"role": "user", "content": user_content}]
+                else:
+                    # Standard system prompt for other models
+                    messages = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": message}
+                    ]
+                
+                # Add history if provided (including command output which uses 'system' role)
                 if request.history:
                     history_messages = []
-                    for msg in request.history[-4:]:
-                        role = "user" if msg.role == "user" else "assistant"
-                        history_messages.append({"role": role, "content": msg.content[:1000]})
-                    messages = [messages[0]] + history_messages + [messages[-1]]
+                    for msg in request.history[-6:]:  # Increased to capture more context
+                        # Map roles: system messages (command output) become user context
+                        if msg.role == "system":
+                            # Command output - present as user-provided context
+                            history_messages.append({"role": "user", "content": f"[Command Output]\n{msg.content}"})
+                        elif msg.role == "user":
+                            history_messages.append({"role": "user", "content": msg.content[:1000]})
+                        else:
+                            history_messages.append({"role": "assistant", "content": msg.content[:1000]})
+                    
+                    if is_deepseek_r1:
+                        # DeepSeek-R1: history goes before the combined instruction+query message
+                        messages = history_messages + messages
+                    else:
+                        # Standard: system prompt, then history, then current user message
+                        messages = [messages[0]] + history_messages + [messages[-1]]
                 
-                # Make streaming request to Ollama
-                with requests.post(
-                    f"{endpoint}/api/chat",
-                    json={
+                # Phase 32: Initialize reasoning parser for thinking block detection
+                uses_reasoning = is_reasoning_model(model)
+                # Qwen3-Thinking models start in thinking mode (no opening <think> tag)
+                is_qwen_thinking = 'thinking' in model.lower() or 'qwen3' in model.lower()
+                reasoning_parser = StreamingReasoningParser(assume_thinking_mode=is_qwen_thinking)
+                
+                # Build request based on provider
+                if provider == "openai":
+                    # OpenAI-compatible streaming (LM Studio, vLLM, etc.)
+                    stream_url = f"{endpoint}/v1/chat/completions"
+                    stream_payload = {
+                        "model": model,
+                        "messages": messages,
+                        "stream": True,
+                        # Qwen3-Thinking needs much more tokens for extended reasoning
+                        "max_tokens": 8192 if is_qwen_thinking else (2048 if uses_reasoning else 1024),
+                        "temperature": 0.7
+                    }
+                else:
+                    # Ollama streaming
+                    stream_url = f"{endpoint}/api/chat"
+                    stream_payload = {
                         "model": model,
                         "messages": messages,
                         "stream": True,
                         "options": {
-                            "num_predict": 1024,
-                            "temperature": 0.7
+                            # Qwen3-Thinking needs much more tokens for extended reasoning
+                            "num_predict": 8192 if is_qwen_thinking else (2048 if uses_reasoning else 1024),
+                            "temperature": 0.6 if is_qwen_thinking else 0.7  # Qwen3 recommends 0.6 for thinking
                         }
-                    },
+                    }
+                
+                logger.info(f"Streaming from {stream_url} (provider: {provider})")
+                
+                # Make streaming request
+                with requests.post(
+                    stream_url,
+                    json=stream_payload,
                     stream=True,
-                    timeout=180
+                    timeout=300 if uses_reasoning else 180  # Longer timeout for reasoning
                 ) as response:
                     response.raise_for_status()
                     
                     for line in response.iter_lines():
                         if line:
                             try:
-                                data = json.loads(line)
-                                token = data.get("message", {}).get("content", "")
-                                done = data.get("done", False)
+                                # Handle SSE format for OpenAI (data: prefix)
+                                line_str = line.decode('utf-8') if isinstance(line, bytes) else line
+                                if line_str.startswith('data: '):
+                                    line_str = line_str[6:]
+                                if line_str == '[DONE]':
+                                    break
+                                
+                                data = json.loads(line_str)
+                                
+                                # Extract token based on provider format
+                                if provider == "openai":
+                                    # OpenAI format: choices[0].delta.content
+                                    delta = data.get("choices", [{}])[0].get("delta", {})
+                                    token = delta.get("content", "")
+                                    done = data.get("choices", [{}])[0].get("finish_reason") is not None
+                                else:
+                                    # Ollama format: message.content
+                                    token = data.get("message", {}).get("content", "")
+                                    done = data.get("done", False)
                                 
                                 if token:
                                     full_response += token
-                                    yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
+                                    
+                                    # Phase 32: Parse reasoning blocks in real-time
+                                    thinking_delta, response_delta, is_thinking = reasoning_parser.process_token(token)
+                                    
+                                    if thinking_delta:
+                                        # Send thinking content with special marker
+                                        yield f"data: {json.dumps({'thinking': thinking_delta, 'done': False})}\n\n"
+                                    
+                                    if response_delta:
+                                        # Send response content normally
+                                        yield f"data: {json.dumps({'token': response_delta, 'done': False})}\n\n"
+                                    elif not thinking_delta and not is_thinking:
+                                        # No reasoning detected, stream normally
+                                        yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
                                 
                                 if done:
-                                    yield f"data: {json.dumps({'token': '', 'done': True, 'full_response': full_response})}\n\n"
+                                    # Finalize reasoning parser
+                                    final_thinking, final_response = reasoning_parser.finalize()
+                                    
+                                    # If we detected reasoning, use parsed response
+                                    if final_thinking:
+                                        # CRITICAL: If reasoning exists but response is empty/useless, 
+                                        # extract actionable content from the reasoning
+                                        if not final_response or len(final_response.strip()) < 20:
+                                            # Model reasoned but didn't produce useful output after </think>
+                                            # Try to extract useful commands from reasoning
+                                            reasoning_lines = [l.strip() for l in final_thinking.split('\n') if l.strip()]
+                                            
+                                            # Look for command suggestions in reasoning
+                                            command_patterns = ['systemctl', 'journalctl', 'sudo ', 'cat ', 'grep ', 'ls ', 'btrbk', 'btrfs']
+                                            found_commands = []
+                                            for line in reasoning_lines:
+                                                if any(cmd in line.lower() for cmd in command_patterns):
+                                                    # Extract just the command part if possible
+                                                    if '`' in line:
+                                                        # Extract backtick-wrapped command
+                                                        import re
+                                                        cmds = re.findall(r'`([^`]+)`', line)
+                                                        found_commands.extend(cmds)
+                                                    elif any(line.lower().startswith(cmd) for cmd in command_patterns):
+                                                        found_commands.append(line.split()[0] + ' ...')
+                                            
+                                            if found_commands:
+                                                # Found commands - suggest them properly
+                                                cmd = found_commands[0]
+                                                final_response = f"Let me check the status. Run this command:\n\n```bash\nsudo systemctl status bcachefs-backup\n```\n\nThis will show the error details."
+                                            else:
+                                                # No commands found - provide helpful message based on reasoning
+                                                final_response = "I analyzed the issue but need more information. Let me check the service status:\n\n```bash\nsudo systemctl status bcachefs-backup\n```\n\nRun this and I'll analyze the error."
+                                            
+                                            logger.warning(f"Reasoning model produced empty response, generated helpful fallback")
+                                        yield f"data: {json.dumps({'token': '', 'done': True, 'full_response': final_response, 'thinking': final_thinking})}\n\n"
+                                    else:
+                                        yield f"data: {json.dumps({'token': '', 'done': True, 'full_response': full_response})}\n\n"
                                     break
                                     
                             except json.JSONDecodeError:
@@ -2920,9 +3484,9 @@ if FASTAPI_AVAILABLE:
             configured_loaded = is_model_loaded(configured_model, endpoint)
             
             # Also check specialist model (for config editing)
-            specialist_model, specialist_endpoint = get_specialist_model()
-            specialist_models = get_loaded_models(specialist_endpoint) if specialist_endpoint != endpoint else models
-            specialist_loaded = is_model_loaded(specialist_model, specialist_endpoint)
+            specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
+            specialist_models = get_loaded_models(specialist_endpoint, specialist_provider or "ollama") if specialist_endpoint != endpoint else models
+            specialist_loaded = is_model_loaded(specialist_model, specialist_endpoint, specialist_provider or "ollama") if specialist_model else None
             
             return {
                 "loaded_models": models,

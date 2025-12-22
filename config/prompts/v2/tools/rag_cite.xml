@@ -1,0 +1,74 @@
+<!--
+  Tool: rag_cite
+  Phase 41: Tool Schema System
+  Permission: auto_approve (documentation only)
+-->
+
+<tool name="rag_cite" permission="auto_approve">
+  <description>Format and include citations from RAG results in responses</description>
+  
+  <when_to_use>
+    <trigger>After retrieving RAG results that will be used in response</trigger>
+    <trigger>When referencing documentation, man pages, or knowledge base</trigger>
+    <trigger>When providing factual information that came from sources</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="source_id" type="string" required="true">
+      Source identifier from RAG results (e.g., "man:rsync", "arch:systemd")
+    </param>
+    <param name="quote" type="string" required="false">
+      Direct quote from source (if citing specific text)
+    </param>
+    <param name="relevance" type="float" required="false">
+      Relevance score from RAG retrieval (0.0-1.0)
+    </param>
+  </parameters>
+  
+  <citation_formats>
+    <format type="inline">
+      [source_type:index] - e.g., [man:1], [arch:2], [doc:3]
+    </format>
+    <format type="block">
+      > "Quoted text here"
+      > — Source: [man:rsync]
+    </format>
+    <format type="reference">
+      See: [arch:systemd/user] for more details
+    </format>
+  </citation_formats>
+  
+  <confidence_levels>
+    <level min="0.9" description="High confidence - state as fact" />
+    <level min="0.7" description="Medium - prefix with 'Based on documentation...'" />
+    <level min="0.5" description="Low - prefix with 'This might help, but verify...'" />
+    <level min="0.0" description="Very low - prefix with 'I'm not certain, but...'" />
+  </confidence_levels>
+  
+  <safety_rules>
+    <rule severity="IMPORTANT">Always cite sources when using retrieved information</rule>
+    <rule severity="IMPORTANT">Never fabricate sources not present in RAG results</rule>
+    <rule severity="IMPORTANT">Indicate confidence based on relevance score</rule>
+    <rule severity="PREFERRED">Prioritize official documentation over community sources</rule>
+  </safety_rules>
+  
+  <examples>
+    <example 
+      input="User asks about rsync (RAG returned man page)" 
+      output="According to the man page [man:1], rsync uses delta-transfer algorithm..."
+    />
+    <example 
+      input="Low relevance result about systemd" 
+      output="I'm not entirely certain, but based on Arch Wiki [arch:2], you might try..."
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "citation": string,      // Formatted citation string
+      "source_type": string,   // "man", "arch", "doc", "web", "note"
+      "confidence": string,    // "high", "medium", "low", "very_low"
+      "url": string            // Source URL if available
+    }
+  </output_format>
+</tool>

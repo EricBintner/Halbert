@@ -162,7 +162,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, chat, alerts, rag, conversations, services, web_search, gpu, containers, development, editor
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, chat, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(approvals.router, prefix="/api/approvals", tags=["approvals"])
@@ -183,6 +183,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(editor.router, tags=["editor"])  # Phase 18: Config Editor
     app.include_router(persona.router, tags=["persona"])  # Phase 4 M3
     app.include_router(websocket.router, tags=["websocket"])
+    app.include_router(storage.router, prefix="/api/storage", tags=["storage"])  # Phase 52: ChromaDB management
     
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"
@@ -223,6 +224,14 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     @app.on_event("startup")
     async def startup_event():
         """Start background services on app startup."""
+        # Reset indexing state to prevent stuck state from hot-reload
+        try:
+            from .routes.settings import _reset_indexing_state
+            _reset_indexing_state()
+            logger.info("Indexing state reset on startup")
+        except Exception as e:
+            logger.warning(f"Failed to reset indexing state: {e}")
+        
         # Bootstrap system identity (if not already done)
         try:
             from ..knowledge import get_self_knowledge, bootstrap_identity

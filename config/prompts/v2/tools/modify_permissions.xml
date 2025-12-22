@@ -1,0 +1,67 @@
+<!--
+  Tool: modify_permissions
+  Phase 41: Tool Schema System
+  Permission: explicit_confirm (security-sensitive)
+-->
+
+<tool name="modify_permissions" permission="explicit_confirm">
+  <description>Change file or directory permissions (chmod/chown)</description>
+  
+  <when_to_use>
+    <trigger>User asks to change file permissions</trigger>
+    <trigger>User asks to make a file executable</trigger>
+    <trigger>User asks to change file ownership</trigger>
+    <trigger>Permission denied errors need to be fixed</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="path" type="string" required="true">
+      Path to file or directory
+    </param>
+    <param name="mode" type="string" required="false">
+      Permission mode (e.g., "755", "u+x", "go-w")
+    </param>
+    <param name="owner" type="string" required="false">
+      New owner (user or user:group)
+    </param>
+    <param name="recursive" type="boolean" required="false" default="false">
+      Apply recursively to directory contents
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="CRITICAL">NEVER set 777 on system directories</rule>
+    <rule severity="CRITICAL">NEVER change ownership of system files to non-root</rule>
+    <rule severity="IMPORTANT">Warn about security implications of world-readable/writable</rule>
+    <rule severity="IMPORTANT">Show current permissions before changing</rule>
+    <rule severity="PREFERRED">Suggest least-privilege permissions</rule>
+  </safety_rules>
+  
+  <dangerous_patterns>
+    <pattern>chmod -R 777 /</pattern>
+    <pattern>chmod 777 /etc/*</pattern>
+    <pattern>chown -R * /</pattern>
+  </dangerous_patterns>
+  
+  <examples>
+    <example 
+      input="Make script.sh executable" 
+      call="modify_permissions(path='script.sh', mode='u+x')" 
+    />
+    <example 
+      input="Set permissions to 644 on config" 
+      call="modify_permissions(path='/etc/myconfig', mode='644')" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "path": string,
+      "previous_mode": string,
+      "new_mode": string,
+      "previous_owner": string,
+      "new_owner": string,
+      "success": boolean
+    }
+  </output_format>
+</tool>

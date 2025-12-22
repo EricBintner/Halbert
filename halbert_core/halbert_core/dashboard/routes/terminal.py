@@ -98,6 +98,15 @@ if FASTAPI_AVAILABLE:
         if not is_safe:
             raise HTTPException(403, warning)
         
+        # Handle sudo commands: In web context, pkexec hangs waiting for GUI dialog
+        # Instead, run without sudo and let the command fail with a clear message
+        # OR suggest copying the command to run in a real terminal
+        if command.startswith('sudo '):
+            # Try running without sudo first - many read-only commands work
+            actual_command = command[5:].strip()
+            logger.info(f"Sudo command requested: {actual_command[:50]} - trying without sudo")
+            command = actual_command  # Run without sudo, will fail if privileges needed
+        
         try:
             # Run command
             process = await asyncio.create_subprocess_shell(
@@ -123,6 +132,12 @@ if FASTAPI_AVAILABLE:
             
             output = stdout.decode('utf-8', errors='replace')
             error = stderr.decode('utf-8', errors='replace')
+            
+            # Improve error messages for common privilege failures
+            if 'Permission denied' in error or 'Operation not permitted' in error:
+                error = f"Permission denied. This command requires sudo. Copy and run in terminal:\n\nsudo {request.command[5:].strip() if request.command.startswith('sudo ') else request.command}"
+            elif 'sudo: a password is required' in error or 'sudo: a terminal is required' in error:
+                error = "This command requires sudo privileges. Run it manually in a terminal where you can enter your password."
             
             # Combine stdout and stderr for display
             combined = output

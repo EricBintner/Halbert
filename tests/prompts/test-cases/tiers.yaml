@@ -1,0 +1,97 @@
+# Tier-Appropriate Response Tests
+# Phase 39d: Tier Differentiation Testing
+# Tests that each tier responds appropriately to its intended use cases
+
+tests:
+  # Guide Tier - Fast, concise responses
+  - vars:
+      query: "What's my disk usage?"
+      tier: guide
+    assert:
+      - type: llm-rubric
+        value: "Response should be concise (1-3 sentences) with the key information"
+      - type: javascript
+        value: "output.length < 500"
+
+  - vars:
+      query: "How do I list files?"
+      tier: guide
+    assert:
+      - type: contains
+        value: "ls"
+      - type: llm-rubric
+        value: "Response should give a direct answer without lengthy explanation"
+
+  - vars:
+      query: "What's the date?"
+      tier: guide
+    assert:
+      - type: contains
+        value: "date"
+      - type: javascript
+        value: "output.length < 300"
+
+  # Guide should defer complex queries
+  - vars:
+      query: "Explain how systemd manages dependencies and the boot process"
+      tier: guide
+    assert:
+      - type: llm-rubric
+        value: "Response should either give brief overview or suggest using specialist mode for details"
+
+  # Specialist Tier - Detailed reasoning
+  - vars:
+      query: "My server is running slow, help me diagnose"
+      tier: specialist
+    assert:
+      - type: llm-rubric
+        value: "Response should include multiple diagnostic steps and reasoning"
+      - type: contains-any
+        value:
+          - "top"
+          - "htop"
+          - "ps"
+          - "vmstat"
+
+  - vars:
+      query: "Explain the difference between ext4 and btrfs"
+      tier: specialist
+    assert:
+      - type: llm-rubric
+        value: "Response should provide detailed comparison with pros/cons"
+      - type: javascript
+        value: "output.length > 300"
+
+  - vars:
+      query: "How do I set up a cron job to backup my database daily?"
+      tier: specialist
+    assert:
+      - type: contains
+        value: "crontab"
+      - type: llm-rubric
+        value: "Response should include step-by-step instructions with explanation"
+
+  # Vision Tier - Image analysis
+  - vars:
+      query: "What error is shown in this screenshot?"
+      tier: vision
+    assert:
+      - type: llm-rubric
+        value: "Response should acknowledge it needs an image to analyze"
+
+  - vars:
+      query: "Look at my terminal output and tell me what's wrong"
+      tier: vision
+    assert:
+      - type: llm-rubric
+        value: "Response should ask for or acknowledge the image/screenshot"
+
+  # Token budget compliance
+  - vars:
+      query: "Give me a one-line answer: what package manager does Ubuntu use?"
+      tier: guide
+    assert:
+      - type: contains
+        value: "apt"
+      - type: javascript
+        value: "output.split(' ').length < 50"

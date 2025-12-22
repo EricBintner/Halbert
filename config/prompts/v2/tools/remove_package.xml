@@ -1,0 +1,56 @@
+<!--
+  Tool: remove_package
+  Phase 41: Tool Schema System
+  Permission: confirm_required (system modification)
+-->
+
+<tool name="remove_package" permission="confirm_required">
+  <description>Remove a package using the system package manager</description>
+  
+  <when_to_use>
+    <trigger>User asks to uninstall or remove software</trigger>
+    <trigger>User wants to clean up unused packages</trigger>
+    <trigger>User asks to free disk space by removing packages</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="package" type="string" required="true">
+      Package name to remove
+    </param>
+    <param name="purge" type="boolean" required="false" default="false">
+      Also remove configuration files
+    </param>
+    <param name="autoremove" type="boolean" required="false" default="true">
+      Remove unused dependencies
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="CRITICAL">Never remove critical system packages (systemd, glibc, kernel)</rule>
+    <rule severity="IMPORTANT">Show what will be removed including dependencies</rule>
+    <rule severity="IMPORTANT">Warn if removing package has many dependents</rule>
+    <rule severity="PREFERRED">Suggest keeping config files unless explicitly asked to purge</rule>
+  </safety_rules>
+  
+  <examples>
+    <example 
+      input="Remove htop" 
+      call="remove_package(package='htop')" 
+    />
+    <example 
+      input="Completely remove nginx" 
+      call="remove_package(package='nginx', purge=true)" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "package": string,
+      "removed": boolean,
+      "purged": boolean,
+      "dependencies_removed": [string],
+      "space_freed_mb": integer,
+      "message": string
+    }
+  </output_format>
+</tool>

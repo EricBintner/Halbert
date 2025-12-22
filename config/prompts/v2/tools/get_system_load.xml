@@ -1,0 +1,49 @@
+<tool name="get_system_load" permission="auto_approve">
+  <description>
+    Get current system load average and memory usage for overall system health.
+  </description>
+  
+  <when_to_use>
+    <trigger>User asks about system performance</trigger>
+    <trigger>User asks about system load or CPU usage</trigger>
+    <trigger>User wants to check memory usage</trigger>
+    <trigger>User asks if the system is overloaded</trigger>
+    <trigger>General system health check</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <!-- No parameters required -->
+  </parameters>
+  
+  <safety_rules>
+    <rule>This is a read-only tool - always safe to execute</rule>
+    <rule>No user confirmation required</rule>
+  </safety_rules>
+  
+  <examples>
+    <example>
+      <input>What's the system load?</input>
+      <call>get_system_load()</call>
+    </example>
+    <example>
+      <input>How much memory is being used?</input>
+      <call>get_system_load()</call>
+    </example>
+    <example>
+      <input>Is the system under heavy load?</input>
+      <call>get_system_load()</call>
+    </example>
+  </examples>
+  
+  <output_format>
+    {
+      load_1min: float,   # 1-minute load average
+      load_5min: float,   # 5-minute load average
+      load_15min: float,  # 15-minute load average
+      cpu_count: int,     # Number of CPUs (compare load to this)
+      memory: { total, used, free, available }
+    }
+    
+    Interpretation: load > cpu_count means system is overloaded
+  </output_format>
+</tool>

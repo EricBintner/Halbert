@@ -1080,19 +1080,25 @@ async def _call_llm_analysis(context: str, use_specialist: bool = False) -> Dict
     Call the LLM for analysis.
     
     Uses configured guide model by default, or specialist if requested and configured.
+    Runs sync HTTP call in thread pool to avoid blocking async event loop.
     """
     import json
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
     from .chat import get_configured_model, get_specialist_model, get_ollama_endpoint
     
     # Get configured models from settings
     endpoint = get_ollama_endpoint()
     
     if use_specialist:
-        specialist_model, specialist_endpoint = get_specialist_model()
+        specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
         if specialist_model:
             model = specialist_model
             endpoint = specialist_endpoint
-            logger.info(f"Using specialist model for analysis: {model}")
+            # Note: Discovery analysis uses Ollama's /api/generate which may not work with OpenAI providers
+            if specialist_provider != "ollama":
+                logger.warning(f"Specialist provider {specialist_provider} may not support /api/generate")
+            logger.info(f"Using specialist model for analysis: {model} (provider: {specialist_provider})")
         else:
             model = get_configured_model()
             logger.info(f"Specialist not configured, using guide model: {model}")
@@ -1130,11 +1136,11 @@ Health scores:
 - 40-59: Significant issues
 - 0-39: Critical failures"""
 
-    try:
-        # Use /api/generate (works with older Ollama versions)
+    # Define sync function to run in thread pool
+    def _sync_llm_call():
         full_prompt = f"{system_prompt}\n\nUser request:\n{context}"
         logger.info(f"Calling Ollama /api/generate with model={model} at {endpoint}")
-        response = requests.post(
+        resp = requests.post(
             f"{endpoint}/api/generate",
             json={
                 "model": model,
@@ -1144,9 +1150,14 @@ Health scores:
             },
             timeout=120 if use_specialist else 60
         )
-        logger.info(f"Ollama response status: {response.status_code}")
-        response.raise_for_status()
-        data = response.json()
+        logger.info(f"Ollama response status: {resp.status_code}")
+        resp.raise_for_status()
+        return resp.json()
+    
+    try:
+        # Run sync HTTP call in thread pool to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, _sync_llm_call)
         
         content = data.get("response", "{}")
         logger.info(f"Ollama response content length: {len(content)}")
@@ -1177,6 +1188,9 @@ Health scores:
         raise Exception("LLM request timed out")
     except requests.exceptions.ConnectionError:
         raise Exception("Could not connect to Ollama - is it running?")
+    except Exception as e:
+        logger.error(f"Unexpected error in _call_llm_analysis: {type(e).__name__}: {e}")
+        raise
 
 
 def _generate_fallback_analysis(

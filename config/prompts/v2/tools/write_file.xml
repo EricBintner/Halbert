@@ -1,0 +1,62 @@
+<!--
+  Tool: write_file
+  Phase 41: Tool Schema System
+  Permission: confirm_required (user must approve changes)
+-->
+
+<tool name="write_file" permission="confirm_required">
+  <description>Write or update content in a file on the system</description>
+  
+  <when_to_use>
+    <trigger>User asks to create a new file</trigger>
+    <trigger>User asks to edit or modify a file</trigger>
+    <trigger>User asks to save configuration changes</trigger>
+    <trigger>User asks to add content to a file</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="path" type="string" required="true">
+      Absolute or relative path to the file to write
+    </param>
+    <param name="content" type="string" required="true">
+      Content to write to the file
+    </param>
+    <param name="mode" type="string" required="false" default="overwrite">
+      Write mode: "overwrite", "append", or "create_only"
+    </param>
+    <param name="backup" type="boolean" required="false" default="true">
+      Create .bak backup before modifying existing files
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="CRITICAL">Never write to system-critical files without explicit confirmation</rule>
+    <rule severity="CRITICAL">Never overwrite files in /boot, /usr, /lib without sudo confirmation</rule>
+    <rule severity="CRITICAL">Always create backup before modifying existing files</rule>
+    <rule severity="IMPORTANT">Validate content syntax before writing config files</rule>
+    <rule severity="IMPORTANT">Show diff of changes before applying</rule>
+    <rule severity="IMPORTANT">Refuse to write files larger than 10MB without confirmation</rule>
+    <rule severity="PREFERRED">Suggest version control for important file changes</rule>
+  </safety_rules>
+  
+  <examples>
+    <example 
+      input="Create a hello.sh script" 
+      call="write_file(path='hello.sh', content='#!/bin/bash\necho Hello', mode='create_only')" 
+    />
+    <example 
+      input="Add a line to /etc/hosts" 
+      call="write_file(path='/etc/hosts', content='192.168.1.10 myserver', mode='append')" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "success": boolean,
+      "path": string,        // Resolved absolute path
+      "bytes_written": integer,
+      "backup_path": string, // Path to backup if created
+      "diff": string         // Summary of changes (if modifying)
+    }
+  </output_format>
+</tool>

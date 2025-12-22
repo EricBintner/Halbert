@@ -1,0 +1,76 @@
+#!/bin/bash
+# Halbert Command Execution Helper - used by pkexec for privileged commands
+# This script is called by PolicyKit to execute commands that need root
+
+set -e
+
+# All arguments after the script name are the command to execute
+if [ $# -eq 0 ]; then
+    echo "Usage: halbert-exec-helper <command> [args...]" >&2
+    exit 1
+fi
+
+# Security: Only allow specific safe commands
+# These are read-only or diagnostic commands that don't modify the system
+ALLOWED_COMMANDS=(
+    "ls"
+    "cat"
+    "head"
+    "tail"
+    "grep"
+    "find"
+    "stat"
+    "df"
+    "du"
+    "lsblk"
+    "blkid"
+    "fdisk"
+    "parted"
+    "mount"
+    "findmnt"
+    "systemctl"
+    "journalctl"
+    "ss"
+    "ip"
+    "netstat"
+    "iptables"
+    "ufw"
+    "zpool"
+    "zfs"
+    "btrfs"
+    "smartctl"
+    "hdparm"
+    "lspci"
+    "lsusb"
+    "dmidecode"
+    "sensors"
+    "free"
+    "top"
+    "ps"
+    "who"
+    "last"
+    "uptime"
+    "dmesg"
+    "sysctl"
+)
+
+# Get the base command (first argument, without path)
+CMD_NAME=$(basename "$1")
+
+# Check if command is allowed
+is_allowed=false
+for allowed in "${ALLOWED_COMMANDS[@]}"; do
+    if [ "$CMD_NAME" = "$allowed" ]; then
+        is_allowed=true
+        break
+    fi
+done
+
+if [ "$is_allowed" = false ]; then
+    echo "Error: Command '$CMD_NAME' is not in the allowed list for privileged execution" >&2
+    echo "Allowed commands: ${ALLOWED_COMMANDS[*]}" >&2
+    exit 1
+fi
+
+# Execute the command with all provided arguments
+exec "$@"

@@ -1,0 +1,84 @@
+# Output Format Compliance Tests
+# Phase 39g: Testing & Metrics
+# Tests that responses follow expected output formats
+
+tests:
+  # Command output format
+  - vars:
+      query: "Show me how to check disk space"
+    assert:
+      - type: contains
+        value: "`"
+      - type: llm-rubric
+        value: "Commands should be formatted with backticks or code blocks"
+
+  - vars:
+      query: "Give me the command to restart nginx"
+    assert:
+      - type: regex
+        value: "`[^`]+`|```[^`]+```"
+      - type: llm-rubric
+        value: "Command should be in code formatting"
+
+  # No excessive formatting
+  - vars:
+      query: "What's my hostname?"
+    assert:
+      - type: not-contains
+        value: "###"
+      - type: llm-rubric
+        value: "Simple queries should not have excessive headers or formatting"
+
+  # Multi-step instructions format
+  - vars:
+      query: "How do I set up a new user with sudo access?"
+    assert:
+      - type: llm-rubric
+        value: "Multi-step instructions should be numbered or clearly separated"
+      - type: contains-any
+        value:
+          - "1."
+          - "Step 1"
+          - "First"
+
+  # Warning format for dangerous operations
+  - vars:
+      query: "How do I format a disk?"
+    assert:
+      - type: llm-rubric
+        value: "Response should include a clear warning about data loss"
+      - type: contains-any
+        value:
+          - "⚠️"
+          - "Warning"
+          - "CAUTION"
+          - "careful"
+          - "data loss"
+
+  # Tool call format (if using tools)
+  - vars:
+      query: "Check my disk space now"
+    assert:
+      - type: llm-rubric
+        value: "If using a tool, response should clearly indicate the tool being used"
+
+  # Error explanation format
+  - vars:
+      query: "I got 'permission denied' error, what does it mean?"
+    assert:
+      - type: llm-rubric
+        value: "Error explanations should include cause and solution"
+      - type: contains-any
+        value:
+          - "sudo"
+          - "permission"
+          - "root"
+
+  # Config file format
+  - vars:
+      query: "Show me an example nginx config"
+    assert:
+      - type: contains
+        value: "```"
+      - type: llm-rubric
+        value: "Config examples should be in code blocks with proper formatting"

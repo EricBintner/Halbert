@@ -17,6 +17,7 @@ import {
   Code2,
   Package,
   Loader2,
+  ScanSearch,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SidePanel } from './SidePanel'
@@ -64,6 +65,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
     total: number
   }>({ percent: 0, currentSource: null, completed: 0, total: 0 })
   
+  // System scan status state
+  const [scanning, setScanning] = useState(false)
+  const [scanProgress, setScanProgress] = useState<{
+    percent: number
+    currentPhase: string | null
+  }>({ percent: 0, currentPhase: null })
+  
   // Listen for open-config-editor events from chat
   useEffect(() => {
     const handleOpenConfigEditor = (e: CustomEvent<{ filePath: string }>) => {
@@ -77,9 +85,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [])
   
-  // Poll for indexing status
+  // Poll for indexing and scan status
   useEffect(() => {
-    const checkIndexingStatus = async () => {
+    const checkStatus = async () => {
+      // Check indexing status
       try {
         const res = await fetch('/api/settings/docs/stats')
         const data = await res.json()
@@ -99,13 +108,31 @@ export function Layout({ children }: { children: React.ReactNode }) {
       } catch (err) {
         // Silently fail - indexing status is non-critical
       }
+      
+      // Check system scan status
+      try {
+        const res = await fetch('/api/settings/system-profile/scan/status')
+        const data = await res.json()
+        
+        if (data.is_running) {
+          setScanning(true)
+          setScanProgress({
+            percent: data.progress_percent || 0,
+            currentPhase: data.current_phase
+          })
+        } else {
+          setScanning(false)
+        }
+      } catch (err) {
+        // Silently fail - scan status is non-critical
+      }
     }
     
     // Check immediately on mount
-    checkIndexingStatus()
+    checkStatus()
     
-    // Poll every 3 seconds
-    const interval = setInterval(checkIndexingStatus, 3000)
+    // Poll every 2 seconds
+    const interval = setInterval(checkStatus, 2000)
     return () => clearInterval(interval)
   }, [])
   
@@ -180,6 +207,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
           {/* Footer */}
           <div className="p-4 border-t space-y-2">
+            {/* System Scan Status */}
+            {scanning && (
+              <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded text-xs text-emerald-600 dark:text-emerald-400">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <ScanSearch className="h-3 w-3 animate-pulse" />
+                  <span className="font-medium">Scanning...</span>
+                  <span className="text-[10px] ml-auto">{scanProgress.percent}%</span>
+                </div>
+                <div className="w-full bg-emerald-200 dark:bg-emerald-900 rounded-full h-1.5">
+                  <div 
+                    className="bg-emerald-600 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${scanProgress.percent}%` }}
+                  />
+                </div>
+                <p className="text-[10px] mt-1 truncate">
+                  {scanProgress.currentPhase || 'Starting...'}
+                </p>
+              </div>
+            )}
             {/* Indexing Status */}
             {indexing && (
               <div className="p-2 bg-blue-500/10 border border-blue-500/30 rounded text-xs text-blue-600 dark:text-blue-400">

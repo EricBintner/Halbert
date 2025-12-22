@@ -1,0 +1,48 @@
+<tool name="get_service_status" permission="auto_approve">
+  <description>
+    Get the status of a systemd service including whether it's running, 
+    its PID, and when it started.
+  </description>
+  
+  <when_to_use>
+    <trigger>User asks if a service is running</trigger>
+    <trigger>User wants to check service health</trigger>
+    <trigger>User asks about a specific daemon status</trigger>
+    <trigger>Troubleshooting why a service isn't working</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="service_name" type="string" required="true">
+      Name of the systemd service (e.g., 'docker', 'nginx', 'ssh', 'postgresql').
+      Do not include the .service suffix.
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule>This is a read-only tool - always safe to execute</rule>
+    <rule>Only checks status, does not start/stop/restart services</rule>
+    <rule>No user confirmation required</rule>
+  </safety_rules>
+  
+  <examples>
+    <example>
+      <input>Is nginx running?</input>
+      <call>get_service_status(service_name="nginx")</call>
+    </example>
+    <example>
+      <input>Check if docker is active</input>
+      <call>get_service_status(service_name="docker")</call>
+    </example>
+    <example>
+      <input>What's the status of the SSH daemon?</input>
+      <call>get_service_status(service_name="sshd")</call>
+    </example>
+  </examples>
+  
+  <output_format>
+    { service, active, sub_state, load_state, pid, started }
+    
+    active: "active", "inactive", "failed", "activating"
+    sub_state: "running", "dead", "exited", "waiting"
+  </output_format>
+</tool>

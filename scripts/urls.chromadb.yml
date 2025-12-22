@@ -1,0 +1,24 @@
+urls:
+  # ChromaDB Official Documentation
+  - https://docs.trychroma.com/docs/overview/introduction
+  - https://docs.trychroma.com/docs/overview/getting-started
+  - https://docs.trychroma.com/docs/run-chroma/ephemeral-client
+  - https://docs.trychroma.com/docs/run-chroma/persistent-client
+  - https://docs.trychroma.com/docs/run-chroma/chroma-server
+  - https://docs.trychroma.com/docs/collections/manage-collections
+  - https://docs.trychroma.com/docs/collections/add-data
+  - https://docs.trychroma.com/docs/collections/query-data
+  - https://docs.trychroma.com/docs/collections/update-data
+  - https://docs.trychroma.com/docs/collections/delete-data
+  - https://docs.trychroma.com/docs/embeddings/embedding-functions
+  - https://docs.trychroma.com/docs/cli/db
+  
+  # ChromaDB Cookbook (practical guides)
+  - https://cookbook.chromadb.dev/core/collections/
+  - https://cookbook.chromadb.dev/strategies/memory-management/
+  - https://cookbook.chromadb.dev/core/querying/
+  - https://cookbook.chromadb.dev/core/embeddings/
+  
+  # Reference
+  - https://docs.trychroma.com/reference/python/client
+  - https://docs.trychroma.com/reference/python/collection

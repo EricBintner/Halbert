@@ -1,0 +1,50 @@
+<tool name="check_process" permission="auto_approve">
+  <description>
+    Check if a process is running and get its resource usage (CPU, memory).
+  </description>
+  
+  <when_to_use>
+    <trigger>User asks if a specific process is running</trigger>
+    <trigger>User wants to check resource usage of a process</trigger>
+    <trigger>User asks how many instances of a program are running</trigger>
+    <trigger>Troubleshooting high CPU or memory usage</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="process_name" type="string" required="true">
+      Name of the process to find (e.g., 'python', 'ollama', 'node', 'java').
+      Matches any process containing this string in its command line.
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule>This is a read-only tool - always safe to execute</rule>
+    <rule>Output limited to 10 process instances</rule>
+    <rule>Command output truncated to 80 characters</rule>
+    <rule>No user confirmation required</rule>
+  </safety_rules>
+  
+  <examples>
+    <example>
+      <input>Is Python running?</input>
+      <call>check_process(process_name="python")</call>
+    </example>
+    <example>
+      <input>How many node processes are there?</input>
+      <call>check_process(process_name="node")</call>
+    </example>
+    <example>
+      <input>Check if ollama is running</input>
+      <call>check_process(process_name="ollama")</call>
+    </example>
+  </examples>
+  
+  <output_format>
+    { 
+      process, 
+      running: boolean, 
+      count: number,
+      instances: [{ user, pid, cpu, mem, command }] 
+    }
+  </output_format>
+</tool>

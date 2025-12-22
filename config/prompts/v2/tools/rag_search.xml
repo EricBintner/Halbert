@@ -1,0 +1,74 @@
+<!--
+  Tool: rag_search
+  Phase 41: Tool Schema System
+  Permission: auto_approve (read-only knowledge retrieval)
+-->
+
+<tool name="rag_search" permission="auto_approve">
+  <description>Search documentation, man pages, and knowledge base using RAG</description>
+  
+  <when_to_use>
+    <trigger>User asks about how to do something</trigger>
+    <trigger>Need to cite documentation or best practices</trigger>
+    <trigger>User asks "how does X work"</trigger>
+    <trigger>Need reference information for commands or configs</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="query" type="string" required="true">
+      Natural language search query
+    </param>
+    <param name="sources" type="array" required="false" default="['man', 'arch', 'doc']">
+      Sources to search: "man", "arch", "doc", "web", "notes"
+    </param>
+    <param name="max_results" type="integer" required="false" default="5">
+      Maximum number of results to return
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="IMPORTANT">Always cite sources when using retrieved information</rule>
+    <rule severity="IMPORTANT">Indicate confidence based on relevance score</rule>
+    <rule severity="PREFERRED">Prioritize official documentation over community sources</rule>
+  </safety_rules>
+  
+  <source_types>
+    <source id="man" description="Linux man pages" />
+    <source id="arch" description="Arch Wiki articles" />
+    <source id="doc" description="Local documentation" />
+    <source id="web" description="Indexed web content" />
+    <source id="notes" description="User-created notes" />
+  </source_types>
+  
+  <examples>
+    <example 
+      input="How do I use rsync?" 
+      call="rag_search(query='rsync usage examples', sources=['man', 'arch'])" 
+    />
+    <example 
+      input="What are systemd unit file options?" 
+      call="rag_search(query='systemd unit file configuration', sources=['man', 'arch'])" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "results": [
+        {
+          "source": string,      // e.g., "man:rsync", "arch:systemd"
+          "source_type": string, // "man", "arch", "doc", etc.
+          "title": string,
+          "content": string,
+          "relevance": float,    // 0.0 to 1.0
+          "url": string          // Optional source URL
+        }
+      ],
+      "query": string
+    }
+  </output_format>
+  
+  <citation_format>
+    When using results, cite as: [source_type:index]
+    Example: "According to the man page [man:1], rsync uses..."
+  </citation_format>
+</tool>

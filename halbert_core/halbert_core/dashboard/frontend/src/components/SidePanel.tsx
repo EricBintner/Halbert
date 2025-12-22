@@ -26,10 +26,13 @@ import {
   Image as ImageIcon,
   X as XIcon,
   Camera,
+  RotateCcw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { ThinkingSteps } from '@/components/ui/thinking-steps'
+import { ModelReasoning } from '@/components/ui/model-reasoning'
+import { ScanIndicator } from '@/components/ui/activity-indicators'
 import { CodeBlock } from '@/components/domain'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
@@ -72,6 +75,10 @@ interface Message {
   // Phase 21: ReAct thinking steps
   thinkingSteps?: ThinkingStep[]
   thinkingDurationMs?: number
+  // Phase 32: Reasoning model thinking content
+  reasoning?: string
+  // Phase 42: Activity indicators (Cascade-style)
+  activity?: { type: 'scan' | 'read' | 'plan', data: Record<string, unknown> }
 }
 
 interface Mentionable {
@@ -113,10 +120,13 @@ interface Conversation {
 // CodeBlock imported from @/components/domain - provides run button and output display
 
 // Helper to render message content with code blocks and terminal buttons
-function MessageContent({ content, onRunCommand, onAutoAnalyze }: { 
+function MessageContent({ content, onRunCommand, onCommandComplete, onSkipCommand }: { 
   content: string, 
   onRunCommand: (cmd: string) => Promise<{output?: string, error?: string, exit_code?: number}>,
-  onAutoAnalyze?: (command: string, output: string, isError: boolean) => void
+  /** Called when a command completes (stores output, does NOT trigger AI) */
+  onCommandComplete?: (command: string, output: string, isError: boolean) => void
+  /** Called when a command is skipped */
+  onSkipCommand?: (command: string) => void
 }) {
   // Parse content for code blocks
   const parts: Array<{ type: 'text' | 'code', content: string, lang?: string }> = []
@@ -157,7 +167,8 @@ function MessageContent({ content, onRunCommand, onAutoAnalyze }: {
               code={part.content} 
               lang={part.lang || 'bash'} 
               onRun={onRunCommand}
-              onAutoAnalyze={onAutoAnalyze}
+              onAutoAnalyze={onCommandComplete}
+              onSkip={onSkipCommand}
               compact
             />
           )
@@ -198,6 +209,9 @@ export function SidePanel() {
   const [mentionFilter, setMentionFilter] = useState('')
   // Phase 30: Streaming response state
   const streamingRef = useRef<{ content: string; isStreaming: boolean }>({ content: '', isStreaming: false })
+  
+  // Phase 42: Queued messages - type while AI is working
+  const [messageQueue, setMessageQueue] = useState<string[]>([])
   
   // Terminal state - intro message will be updated after AI name loads
   const [terminalLines, setTerminalLines] = useState<TerminalLine[]>([])
@@ -829,7 +843,14 @@ export function SidePanel() {
   }
 
   const handleSendChat = async () => {
-    if ((!chatInput.trim() && attachedImages.length === 0) || isLoading || isModelLoading) return
+    // Phase 42: Queue messages if AI is busy (like Windsurf)
+    if (isLoading && chatInput.trim()) {
+      setMessageQueue(prev => [...prev, chatInput.trim()])
+      setChatInput('')
+      return
+    }
+    
+    if ((!chatInput.trim() && attachedImages.length === 0) || isModelLoading) return
 
     const requestStartTime = performance.now()
     const mentions = extractMentions(chatInput)
@@ -938,7 +959,9 @@ export function SidePanel() {
         const conv = await api.createConversation(contextualName) as Conversation
         convId = conv.id
         setCurrentConversationId(conv.id)
-        loadConversations()
+        // Refresh conversation list WITHOUT reloading current conversation
+        // (loadConversations has stale closure that would overwrite our streaming message)
+        api.listConversations().then(data => setConversations(data || [])).catch(() => {})
       } catch (err) {
         console.error('Failed to create conversation:', err)
       }
@@ -985,7 +1008,8 @@ export function SidePanel() {
         const history = historyMessages.map(m => ({ role: m.role, content: m.content }))
         
         // Create placeholder for streaming response
-        const streamingMessageId = (Date.now() + 1).toString()
+        // IMPORTANT: Use 'streaming-' prefix so ModelReasoning can detect active thinking
+        const streamingMessageId = `streaming-${Date.now()}`
         streamingRef.current = { content: '', isStreaming: true }
         
         // Add empty assistant message that will be updated
@@ -995,6 +1019,9 @@ export function SidePanel() {
           content: '',
           timestamp: new Date(),
         }])
+        
+        // Phase 32: Track reasoning content during streaming
+        let streamingReasoning = ''
         
         // Stream response tokens
         await api.sendChatStream(
@@ -1015,24 +1042,41 @@ export function SidePanel() {
                 : msg
             ))
           },
-          // onComplete: finalize the message
-          (fullResponse: string, thinkingSteps?: ThinkingStep[]) => {
+          // onComplete: finalize the message (Phase 32: includes reasoning)
+          (fullResponse: string, thinkingSteps?: ThinkingStep[], reasoning?: string) => {
             setMessages(prev => prev.map(msg =>
               msg.id === streamingMessageId
                 ? { 
                     ...msg, 
                     content: fullResponse || "I'm not sure how to help with that.",
                     thinkingSteps: thinkingSteps,
+                    reasoning: reasoning || streamingReasoning || undefined,
                   }
                 : msg
             ))
             streamingRef.current = { content: '', isStreaming: false }
+            setIsLoading(false)  // Clear loading when stream completes
             
-            // Save assistant message to conversation
+            // Save assistant message to conversation (including reasoning for persistence)
             if (convId) {
-              api.addMessageToConversation(convId, 'assistant', fullResponse || '')
+              const finalReasoning = reasoning || streamingReasoning || undefined
+              api.addMessageToConversation(convId, 'assistant', fullResponse || '', [], finalReasoning)
                 .catch(err => console.error('Failed to save assistant message:', err))
             }
+            
+            // Phase 42: Process queued messages
+            setMessageQueue(prevQueue => {
+              if (prevQueue.length > 0) {
+                const [nextMessage, ...remainingQueue] = prevQueue
+                // Schedule next message send (async to avoid state conflicts)
+                setTimeout(() => {
+                  setChatInput(nextMessage)
+                  // Auto-send will be handled by effect or user can press enter
+                }, 100)
+                return remainingQueue
+              }
+              return prevQueue
+            })
           },
           // onError: handle errors
           (error: string) => {
@@ -1043,6 +1087,26 @@ export function SidePanel() {
                 : msg
             ))
             streamingRef.current = { content: '', isStreaming: false }
+            setIsLoading(false)  // Clear loading on error too
+          },
+          // Phase 32: onThinking - accumulate reasoning content
+          (thinkingDelta: string) => {
+            streamingReasoning += thinkingDelta
+            // Update message with reasoning in real-time
+            setMessages(prev => prev.map(msg =>
+              msg.id === streamingMessageId
+                ? { ...msg, reasoning: streamingReasoning }
+                : msg
+            ))
+          },
+          // Phase 42: onActivity - handle activity indicators
+          (activity: { type: 'scan' | 'read' | 'plan', data: Record<string, unknown> }) => {
+            // Update message with activity for display
+            setMessages(prev => prev.map(msg =>
+              msg.id === streamingMessageId
+                ? { ...msg, activity: activity }
+                : msg
+            ))
           }
         )
         
@@ -1052,8 +1116,7 @@ export function SidePanel() {
         }
         
         // For streaming, we handle the response in callbacks above
-        // Skip the rest of the response handling
-        setIsLoading(false)
+        // setIsLoading(false) is called in onComplete/onError callbacks
         return
       }
       
@@ -1531,24 +1594,62 @@ export function SidePanel() {
             <>
               {/* Messages */}
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                {messages.filter(m => !m.isCommandOutput).map((message) => (
+                {messages.filter(m => !m.isCommandOutput).map((message, index, filteredMessages) => (
                   <div
                     key={message.id}
                     className={cn(
-                      "flex",
+                      "flex group",
                       message.role === 'user' ? "justify-end" : "justify-start"
                     )}
                   >
+                    <div className="relative">
+                      {/* Phase 42: Revert button for assistant messages (hover) */}
+                      {message.role === 'assistant' && index === filteredMessages.length - 1 && !isLoading && (
+                        <button
+                          onClick={() => {
+                            // Remove this assistant message and the preceding user message
+                            const msgIndex = messages.findIndex(m => m.id === message.id)
+                            if (msgIndex > 0) {
+                              setMessages(prev => prev.slice(0, msgIndex - 1))
+                            }
+                          }}
+                          className="absolute -left-6 top-1 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                          title="Revert to before this response"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     <div
                       className={cn(
-                        "max-w-[90%] rounded-lg px-3 py-2 text-sm min-w-0 overflow-hidden",
+                        "max-w-[95%] rounded-lg px-3 py-2 text-sm",
                         message.role === 'user'
-                          ? "bg-primary text-primary-foreground"
+                          ? "bg-zinc-900 text-zinc-100"
                           : message.role === 'system'
                           ? "bg-destructive/10 text-destructive"
                           : "bg-muted"
                       )}
                     >
+                      {/* Phase 42: Show activity indicator for streaming messages */}
+                      {message.role === 'assistant' && message.activity && isLoading && message.id.startsWith('streaming-') && !message.content && (
+                        <div className="mb-2">
+                          {message.activity.type === 'scan' && (
+                            <ScanIndicator 
+                              query={String(message.activity.data?.query || '')}
+                              isActive={true}
+                            />
+                          )}
+                        </div>
+                      )}
+                      {/* Phase 32: Show reasoning model thinking for assistant messages */}
+                      {/* Show when: has reasoning content OR actively streaming (before content arrives) */}
+                      {message.role === 'assistant' && (message.reasoning || (isLoading && message.id.startsWith('streaming-'))) && (
+                        <div className="mb-2">
+                          <ModelReasoning 
+                            thinking={message.reasoning || ''}
+                            isThinking={isLoading && message.id.startsWith('streaming-')}
+                          />
+                        </div>
+                      )}
                       {/* Phase 21: Show thinking steps for assistant messages */}
                       {message.role === 'assistant' && message.thinkingSteps && message.thinkingSteps.length > 0 && (
                         <div className="mb-2">
@@ -1563,71 +1664,98 @@ export function SidePanel() {
                           content={message.content} 
                           onRunCommand={async (cmd) => {
                             // Execute command and return result for inline display
+                            // onAutoAnalyze will handle adding the output to chat history
                             try {
                               const result = await api.executeCommand(cmd)
-                              
-                              // Add command output to conversation history so AI can see it
-                              const outputContent = result.exit_code === 0 
-                                ? `Command: \`${cmd}\`\nOutput:\n\`\`\`\n${result.output || '(no output)'}\n\`\`\``
-                                : `Command: \`${cmd}\`\nError (exit ${result.exit_code}):\n\`\`\`\n${result.error || result.output || 'Command failed'}\n\`\`\``
-                              
-                              const outputMessage: Message = {
-                                id: `cmd-${Date.now()}`,
-                                role: 'user',
-                                content: outputContent,
-                                timestamp: new Date(),
-                                isCommandOutput: true,  // Flag for special styling, included in history
-                              }
-                              setMessages(prev => [...prev, outputMessage])
-                              
                               return result
                             } catch (err) {
                               return { error: String(err), exit_code: 1 }
                             }
                           }}
-                          onAutoAnalyze={async (cmd, output, isError) => {
-                            // Auto-analyze: AI analyzes output under the hood
-                            // NO visible user message - just show AI's analysis
+                          onCommandComplete={async (cmd: string, output: string, isError: boolean) => {
+                            // Store command output as a message in the chat
+                            const outputMessage: Message = {
+                              id: `cmd-output-${Date.now()}`,
+                              role: 'system',
+                              content: isError 
+                                ? `**Command failed:**\n\`\`\`bash\n${cmd}\n\`\`\`\n**Error:**\n\`\`\`\n${output}\n\`\`\``
+                                : `**Command output:**\n\`\`\`bash\n${cmd}\n\`\`\`\n\`\`\`\n${output}\n\`\`\``,
+                              timestamp: new Date(),
+                              isCommandOutput: true,
+                            }
+                            setMessages(prev => [...prev, outputMessage])
                             
-                            // Build a focused analysis request that won't trigger generic responses
-                            const analysisPrompt = isError
-                              ? `Analyze this command error and explain the root cause:\n\nCommand: \`${cmd}\`\nOutput:\n\`\`\`\n${output}\n\`\`\`\n\nWhat does this error mean and how can it be fixed?`
-                              : `Analyze this command output in the context of our conversation:\n\nCommand: \`${cmd}\`\nOutput:\n\`\`\`\n${output}\n\`\`\`\n\nWhat does this tell us?`
+                            // Save to conversation if we have one
+                            if (currentConversationId) {
+                              api.addMessageToConversation(
+                                currentConversationId, 
+                                'system', 
+                                outputMessage.content
+                              ).catch(err => console.error('Failed to save command output:', err))
+                            }
                             
+                            // Auto-trigger AI response to analyze the output
                             setIsLoading(true)
+                            // Include the output directly in the prompt for better analysis
+                            const outputSnippet = output.length > 1500 ? output.slice(0, 1500) + '\n...[truncated]' : output
+                            const analysisPrompt = isError
+                              ? `The command \`${cmd}\` failed with this output:\n\`\`\`\n${outputSnippet}\n\`\`\`\n\nAnalyze the error. What went wrong and what's the fix?`
+                              : `Command \`${cmd}\` output:\n\`\`\`\n${outputSnippet}\n\`\`\`\n\nSummarize what this shows.`
+                            
+                            const historyWithOutput = [
+                              ...messages.slice(-4).map(m => ({ role: m.role, content: m.content })),
+                            ]
+                            
+                            const streamingMessageId = `ai-analysis-${Date.now()}`
+                            setMessages(prev => [...prev, {
+                              id: streamingMessageId,
+                              role: 'assistant',
+                              content: '',
+                              timestamp: new Date(),
+                            }])
                             
                             try {
-                              // Include recent conversation for context
-                              const historyWithContext = [
-                                ...messages.slice(-6).map(m => ({ role: m.role, content: m.content })),
-                                { role: 'user' as const, content: analysisPrompt }
-                              ]
-                              const pageContext = buildPageContext()
-                              
-                              // Use 'coder' persona for analysis to get focused technical response
-                              const response = await api.sendChat(
+                              await api.sendChatStream(
                                 analysisPrompt,
                                 [],
-                                'coder',  // Use coder persona for technical analysis
-                                isDebugMode,
-                                currentPage || '',
-                                pageContext || '',
-                                [],  // No images
-                                historyWithContext,
-                                currentConversationId || ''  // Memory storage
+                                'guide',
+                                currentPage,
+                                '',
+                                historyWithOutput,
+                                currentConversationId || '',
+                                (token: string) => {
+                                  setMessages(prev => prev.map(msg => 
+                                    msg.id === streamingMessageId 
+                                      ? { ...msg, content: msg.content + token }
+                                      : msg
+                                  ))
+                                },
+                                (fullResponse: string) => {
+                                  // Use actual response or fallback, and save the SAME thing we display
+                                  const displayContent = fullResponse || "I couldn't analyze that output. Please try asking a specific question about the error."
+                                  setMessages(prev => prev.map(msg =>
+                                    msg.id === streamingMessageId
+                                      ? { ...msg, content: displayContent }
+                                      : msg
+                                  ))
+                                  setIsLoading(false)
+                                  if (currentConversationId) {
+                                    api.addMessageToConversation(currentConversationId, 'assistant', displayContent)
+                                      .catch(err => console.error('Failed to save analysis:', err))
+                                  }
+                                },
+                                (error: string) => {
+                                  console.error('Analysis error:', error)
+                                  setMessages(prev => prev.map(msg =>
+                                    msg.id === streamingMessageId
+                                      ? { ...msg, content: `Error analyzing: ${error}` }
+                                      : msg
+                                  ))
+                                  setIsLoading(false)
+                                }
                               )
-                              
-                              // Only show AI's analysis (which will include the output context)
-                              const aiResponse: Message = {
-                                id: `ai-${Date.now()}`,
-                                role: 'assistant',
-                                content: response.response,
-                                timestamp: new Date(),
-                              }
-                              setMessages(prev => [...prev, aiResponse])
                             } catch (err) {
                               console.error('Auto-analyze failed:', err)
-                            } finally {
                               setIsLoading(false)
                             }
                           }}
@@ -1655,16 +1783,40 @@ export function SidePanel() {
                         </div>
                       )}
                     </div>
+                    </div>
                   </div>
                 ))}
-                {(isLoading || isModelLoading) && (
+                {/* Only show generic "Thinking..." if no streaming message exists (ModelReasoning shows there instead) */}
+                {(isLoading || isModelLoading) && !messages.some(m => m.id.startsWith('streaming-')) && (
                   <div className="flex justify-start">
                     <div className="bg-muted rounded-lg px-3 py-2 flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      {loadingStatus && (
-                        <span className="text-xs text-muted-foreground">{loadingStatus}</span>
+                      {isModelLoading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span className="text-xs text-muted-foreground">{loadingStatus || 'Loading model...'}</span>
+                        </>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Thinking...</span>
                       )}
                     </div>
+                  </div>
+                )}
+                {/* Phase 42: Continue button when last response appears truncated */}
+                {!isLoading && messages.length > 0 && messages[messages.length - 1].role === 'assistant' && 
+                 messages[messages.length - 1].content.endsWith('...') && (
+                  <div className="flex justify-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1.5"
+                      onClick={() => {
+                        setChatInput('continue')
+                        setTimeout(() => handleSendChat(), 100)
+                      }}
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Continue
+                    </Button>
                   </div>
                 )}
                 <div ref={messagesEndRef} />
@@ -1734,6 +1886,23 @@ export function SidePanel() {
                   </div>
                 )}
                 
+                {/* Phase 42: Queued messages display */}
+                {messageQueue.length > 0 && (
+                  <div className="mb-2 space-y-1">
+                    {messageQueue.map((msg, idx) => (
+                      <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded text-xs">
+                        <span className="text-muted-foreground truncate">Queued: {msg}</span>
+                        <button
+                          onClick={() => setMessageQueue(prev => prev.filter((_, i) => i !== idx))}
+                          className="text-muted-foreground hover:text-foreground shrink-0"
+                        >
+                          <XIcon className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
                 <div className="flex gap-1.5 items-stretch">
                   <div className="flex-1 relative flex items-center">
                     <textarea
@@ -1745,9 +1914,8 @@ export function SidePanel() {
                       }}
                       onKeyDown={handleChatKeyDown}
                       onPaste={handlePaste}
-                      placeholder={configContext ? "Ask to modify this file..." : "Ask... (@ to mention, paste/drop images)"}
+                      placeholder={isLoading ? "Type to queue next message..." : (configContext ? "Ask to modify this file..." : "Ask... (@ to mention, paste/drop images)")}
                       className="w-full px-2 py-1.5 pr-7 rounded-md border bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary resize-none overflow-hidden min-h-[30px]"
-                      disabled={isLoading}
                       rows={1}
                       style={{ maxHeight: '150px' }}
                     />

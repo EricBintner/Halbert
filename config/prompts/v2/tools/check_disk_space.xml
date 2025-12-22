@@ -1,0 +1,44 @@
+<tool name="check_disk_space" permission="auto_approve">
+  <description>
+    Check disk space usage for a specific path or all mounted filesystems.
+  </description>
+  
+  <when_to_use>
+    <trigger>User asks about disk space or storage usage</trigger>
+    <trigger>User asks if a filesystem is full or running low</trigger>
+    <trigger>User wants to see available space on a drive</trigger>
+    <trigger>Troubleshooting "no space left on device" errors</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="path" type="string" required="false">
+      Path to check (e.g., '/', '/home', '/var'). 
+      Leave empty to check all mounted filesystems.
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule>This is a read-only tool - always safe to execute</rule>
+    <rule>No user confirmation required</rule>
+  </safety_rules>
+  
+  <examples>
+    <example>
+      <input>How much disk space do I have?</input>
+      <call>check_disk_space()</call>
+    </example>
+    <example>
+      <input>Is /home running out of space?</input>
+      <call>check_disk_space(path="/home")</call>
+    </example>
+    <example>
+      <input>Check the root partition</input>
+      <call>check_disk_space(path="/")</call>
+    </example>
+  </examples>
+  
+  <output_format>
+    For specific path: { path, total_gb, used_gb, free_gb, percent_used }
+    For all filesystems: { filesystems: [{ mount, size, used, available, percent }] }
+  </output_format>
+</tool>

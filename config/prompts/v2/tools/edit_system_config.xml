@@ -1,0 +1,72 @@
+<!--
+  Tool: edit_system_config
+  Phase 41: Tool Schema System
+  Permission: explicit_confirm (critical system files)
+-->
+
+<tool name="edit_system_config" permission="explicit_confirm">
+  <description>Edit system configuration files in /etc with safety checks</description>
+  
+  <when_to_use>
+    <trigger>User asks to modify system configuration</trigger>
+    <trigger>Need to change settings in /etc files</trigger>
+    <trigger>User asks to configure a system service</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="path" type="string" required="true">
+      Path to configuration file (must be in /etc or similar)
+    </param>
+    <param name="changes" type="object" required="true">
+      Changes to apply: {"key": "new_value"} or {"line_number": "new_content"}
+    </param>
+    <param name="backup" type="boolean" required="false" default="true">
+      Create timestamped backup before editing
+    </param>
+    <param name="validate" type="boolean" required="false" default="true">
+      Validate syntax after editing (for known file types)
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="CRITICAL">ALWAYS create backup before modifying</rule>
+    <rule severity="CRITICAL">Validate syntax before saving (for known formats)</rule>
+    <rule severity="CRITICAL">Refuse to edit /etc/passwd, /etc/shadow, /etc/sudoers directly</rule>
+    <rule severity="IMPORTANT">Show diff of proposed changes before applying</rule>
+    <rule severity="IMPORTANT">Use proper tools for specific configs (visudo, vipw)</rule>
+    <rule severity="PREFERRED">Suggest testing config with --dry-run or check commands</rule>
+  </safety_rules>
+  
+  <protected_files>
+    <file>/etc/passwd</file>
+    <file>/etc/shadow</file>
+    <file>/etc/sudoers</file>
+    <file>/etc/group</file>
+    <file>/etc/gshadow</file>
+  </protected_files>
+  
+  <validation_commands>
+    <validate file="/etc/nginx/*" command="nginx -t" />
+    <validate file="/etc/apache2/*" command="apachectl configtest" />
+    <validate file="/etc/ssh/sshd_config" command="sshd -t" />
+    <validate file="/etc/fstab" command="mount --fake -a" />
+  </validation_commands>
+  
+  <examples>
+    <example 
+      input="Change nginx worker processes to 4" 
+      call="edit_system_config(path='/etc/nginx/nginx.conf', changes={'worker_processes': '4'})" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "path": string,
+      "backup_path": string,
+      "changes_applied": integer,
+      "validation_passed": boolean,
+      "validation_output": string,
+      "diff": string
+    }
+  </output_format>
+</tool>

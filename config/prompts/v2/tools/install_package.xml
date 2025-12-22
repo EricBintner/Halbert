@@ -1,0 +1,59 @@
+<!--
+  Tool: install_package
+  Phase 41: Tool Schema System
+  Permission: confirm_required (system modification)
+-->
+
+<tool name="install_package" permission="confirm_required">
+  <description>Install a package using the system package manager</description>
+  
+  <when_to_use>
+    <trigger>User asks to install software or a package</trigger>
+    <trigger>User needs a tool that isn't installed</trigger>
+    <trigger>Dependency is missing for a task</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="package" type="string" required="true">
+      Package name to install
+    </param>
+    <param name="update_first" type="boolean" required="false" default="true">
+      Run package index update before installing
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="IMPORTANT">Confirm package name matches user intent</rule>
+    <rule severity="IMPORTANT">Warn about large download sizes</rule>
+    <rule severity="IMPORTANT">List dependencies that will also be installed</rule>
+    <rule severity="PREFERRED">Suggest checking if package is already installed first</rule>
+  </safety_rules>
+  
+  <package_managers>
+    <manager distro="debian,ubuntu" command="apt install -y" />
+    <manager distro="fedora,rhel" command="dnf install -y" />
+    <manager distro="arch" command="pacman -S --noconfirm" />
+    <manager distro="macos" command="brew install" />
+  </package_managers>
+  
+  <examples>
+    <example 
+      input="Install htop" 
+      call="install_package(package='htop')" 
+    />
+    <example 
+      input="I need nginx" 
+      call="install_package(package='nginx')" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "package": string,
+      "success": boolean,
+      "version_installed": string,
+      "dependencies": [string],
+      "message": string
+    }
+  </output_format>
+</tool>

@@ -1,0 +1,51 @@
+<tool name="get_network_info" permission="auto_approve">
+  <description>
+    Get network interface information including IP addresses and connectivity status.
+  </description>
+  
+  <when_to_use>
+    <trigger>User asks about network configuration</trigger>
+    <trigger>User wants to see IP addresses</trigger>
+    <trigger>User asks about network interfaces</trigger>
+    <trigger>Troubleshooting network connectivity</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="interface" type="string" required="false">
+      Specific interface to check (e.g., 'eth0', 'wlan0', 'enp0s3').
+      Leave empty to show all interfaces.
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule>This is a read-only tool - always safe to execute</rule>
+    <rule>Output limited to 500 characters per interface</rule>
+    <rule>No user confirmation required</rule>
+  </safety_rules>
+  
+  <examples>
+    <example>
+      <input>What's my IP address?</input>
+      <call>get_network_info()</call>
+    </example>
+    <example>
+      <input>Show network interfaces</input>
+      <call>get_network_info()</call>
+    </example>
+    <example>
+      <input>Check the eth0 interface</input>
+      <call>get_network_info(interface="eth0")</call>
+    </example>
+    <example>
+      <input>Is WiFi connected?</input>
+      <call>get_network_info(interface="wlan0")</call>
+    </example>
+  </examples>
+  
+  <output_format>
+    For all interfaces: { interfaces: [{ name, state, addresses }] }
+    For specific interface: { interfaces: [{ name, details }] }
+    
+    state: "UP", "DOWN", "UNKNOWN"
+  </output_format>
+</tool>

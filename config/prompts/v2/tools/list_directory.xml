@@ -1,0 +1,73 @@
+<!--
+  Tool: list_directory
+  Phase 41: Tool Schema System
+  Permission: auto_approve (read-only, safe operation)
+-->
+
+<tool name="list_directory" permission="auto_approve">
+  <description>List files and directories in a specified path</description>
+  
+  <when_to_use>
+    <trigger>User asks "what's in this folder"</trigger>
+    <trigger>User asks to list files or directory contents</trigger>
+    <trigger>Need to explore filesystem structure</trigger>
+    <trigger>User asks about files in a specific location</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="path" type="string" required="true">
+      Directory path to list
+    </param>
+    <param name="show_hidden" type="boolean" required="false" default="false">
+      Include hidden files (starting with .)
+    </param>
+    <param name="long_format" type="boolean" required="false" default="true">
+      Show detailed info (permissions, size, date)
+    </param>
+    <param name="recursive" type="boolean" required="false" default="false">
+      List recursively (use with caution)
+    </param>
+    <param name="max_depth" type="integer" required="false" default="1">
+      Maximum recursion depth (if recursive=true)
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="IMPORTANT">Limit recursive listings to prevent overwhelming output</rule>
+    <rule severity="IMPORTANT">Warn if listing very large directories (>1000 items)</rule>
+    <rule severity="PREFERRED">Suggest tree command for visual hierarchy</rule>
+  </safety_rules>
+  
+  <examples>
+    <example 
+      input="List /etc" 
+      call="list_directory(path='/etc', show_hidden=false)" 
+    />
+    <example 
+      input="Show all files in home" 
+      call="list_directory(path='/home/user', show_hidden=true)" 
+    />
+    <example 
+      input="Show project structure" 
+      call="list_directory(path='.', recursive=true, max_depth=2)" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "path": string,         // Resolved absolute path
+      "entries": [
+        {
+          "name": string,
+          "type": "file" | "directory" | "symlink",
+          "size_bytes": integer,
+          "permissions": string,
+          "modified": string,  // ISO timestamp
+          "owner": string
+        }
+      ],
+      "total_count": integer,
+      "truncated": boolean
+    }
+  </output_format>
+</tool>

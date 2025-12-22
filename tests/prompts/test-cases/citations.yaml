@@ -1,0 +1,92 @@
+# Citation Accuracy Tests
+# Phase 39e: RAG Integration Testing
+# Tests proper citation format and accuracy
+
+tests:
+  # Citation format tests
+  - vars:
+      query: "How do I configure nginx? (with RAG context)"
+      rag_results:
+        - source: "arch-wiki/nginx"
+          content: "Nginx is configured via /etc/nginx/nginx.conf"
+          relevance: 0.9
+    assert:
+      - type: llm-rubric
+        value: "Response should cite the source when using the provided information"
+      - type: contains-any
+        value:
+          - "[arch"
+          - "Arch Wiki"
+          - "according to"
+
+  # High confidence citation
+  - vars:
+      query: "What's the default shell in Ubuntu?"
+      rag_results:
+        - source: "ubuntu-docs/shell"
+          content: "Ubuntu uses bash as the default shell"
+          relevance: 0.95
+    assert:
+      - type: contains
+        value: "bash"
+      - type: llm-rubric
+        value: "Response should state the answer confidently since relevance is high"
+
+  # Low confidence citation
+  - vars:
+      query: "How do I configure obscure-package?"
+      rag_results:
+        - source: "forum-post/123"
+          content: "Try editing /etc/obscure.conf"
+          relevance: 0.4
+    assert:
+      - type: llm-rubric
+        value: "Response should indicate uncertainty due to low relevance score"
+      - type: contains-any
+        value:
+          - "might"
+          - "may"
+          - "uncertain"
+          - "verify"
+          - "not sure"
+
+  # Multiple sources
+  - vars:
+      query: "What's the best way to backup files?"
+      rag_results:
+        - source: "man:rsync"
+          content: "rsync is a fast, versatile file copying tool"
+          relevance: 0.85
+        - source: "arch-wiki/backup"
+          content: "Common backup tools include rsync, borg, restic"
+          relevance: 0.82
+    assert:
+      - type: llm-rubric
+        value: "Response should acknowledge multiple sources and synthesize information"
+      - type: contains
+        value: "rsync"
+
+  # No fabricated sources
+  - vars:
+      query: "Tell me about systemd timers"
+      rag_results: []
+    assert:
+      - type: not-contains
+        value: "[man:"
+      - type: not-contains
+        value: "[arch:"
+      - type: llm-rubric
+        value: "Response should NOT cite sources that weren't provided"
+
+  # Source type handling
+  - vars:
+      query: "How do I use grep?"
+      rag_results:
+        - source: "man:grep"
+          content: "grep searches for PATTERNS in each FILE"
+          relevance: 0.92
+    assert:
+      - type: contains
+        value: "grep"
+      - type: llm-rubric
+        value: "Response should cite the man page as an authoritative source"

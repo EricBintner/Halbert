@@ -1,0 +1,72 @@
+<!--
+  Tool: delete_file
+  Phase 41: Tool Schema System
+  Permission: explicit_confirm (dangerous operation)
+-->
+
+<tool name="delete_file" permission="explicit_confirm">
+  <description>Delete a file or directory from the system</description>
+  
+  <when_to_use>
+    <trigger>User explicitly asks to delete a file</trigger>
+    <trigger>User asks to remove or clean up files</trigger>
+    <trigger>User asks to free disk space by removing files</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="path" type="string" required="true">
+      Path to file or directory to delete
+    </param>
+    <param name="recursive" type="boolean" required="false" default="false">
+      Delete directories recursively (DANGEROUS)
+    </param>
+    <param name="force" type="boolean" required="false" default="false">
+      Ignore nonexistent files and skip prompts
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule severity="CRITICAL">NEVER delete /, /etc, /usr, /boot, /lib, /var, /home without EXPLICIT user confirmation</rule>
+    <rule severity="CRITICAL">NEVER delete system directories or their contents</rule>
+    <rule severity="CRITICAL">Always show full path and confirm before deleting</rule>
+    <rule severity="IMPORTANT">Warn about recursive deletion of non-empty directories</rule>
+    <rule severity="IMPORTANT">Suggest moving to trash instead of permanent deletion</rule>
+    <rule severity="IMPORTANT">Show what will be deleted before proceeding</rule>
+  </safety_rules>
+  
+  <forbidden_paths>
+    <path>/</path>
+    <path>/etc</path>
+    <path>/usr</path>
+    <path>/boot</path>
+    <path>/lib</path>
+    <path>/lib64</path>
+    <path>/var</path>
+    <path>/home</path>
+    <path>/root</path>
+    <path>/bin</path>
+    <path>/sbin</path>
+  </forbidden_paths>
+  
+  <examples>
+    <example 
+      input="Delete old.log" 
+      call="delete_file(path='old.log')" 
+    />
+    <example 
+      input="Remove the temp folder" 
+      call="delete_file(path='/tmp/mytemp', recursive=true)" 
+    />
+  </examples>
+  
+  <output_format>
+    Returns: {
+      "path": string,
+      "deleted": boolean,
+      "was_directory": boolean,
+      "items_deleted": integer,
+      "bytes_freed": integer,
+      "message": string
+    }
+  </output_format>
+</tool>

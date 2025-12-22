@@ -1,0 +1,71 @@
+<!--
+  Tool Definition Schema for Halbert v2 Prompts
+  
+  Each tool XML file should follow this structure.
+  This file documents the schema but is not loaded into prompts.
+  
+  Phase 41: Tool Schema System
+-->
+
+<tool_schema version="1.0">
+  
+  <!-- Required elements -->
+  <required>
+    <element name="name">Unique tool identifier (snake_case)</element>
+    <element name="description">What the tool does (1-2 sentences)</element>
+    <element name="when_to_use">Conditions that trigger this tool</element>
+    <element name="parameters">Input parameters with types</element>
+  </required>
+  
+  <!-- Optional elements -->
+  <optional>
+    <element name="safety_rules">Constraints on tool usage</element>
+    <element name="examples">Usage examples</element>
+    <element name="output_format">Expected output structure</element>
+    <element name="permission_level">auto_approve | requires_confirm | always_deny</element>
+  </optional>
+  
+  <!-- Parameter types -->
+  <parameter_types>
+    <type name="string">Text value</type>
+    <type name="integer">Whole number</type>
+    <type name="boolean">true/false</type>
+    <type name="array">List of values</type>
+    <type name="object">Nested structure</type>
+  </parameter_types>
+  
+  <!-- Example tool definition -->
+  <example>
+    <tool name="example_tool" permission="requires_confirm">
+      <description>Brief description of what this tool does</description>
+      
+      <when_to_use>
+        <trigger>User asks about X</trigger>
+        <trigger>Need to check Y status</trigger>
+      </when_to_use>
+      
+      <parameters>
+        <param name="param1" type="string" required="true">
+          Description of first parameter
+        </param>
+        <param name="param2" type="integer" required="false" default="10">
+          Description of second parameter
+        </param>
+      </parameters>
+      
+      <safety_rules>
+        <rule>Never do X with this tool</rule>
+        <rule>Always validate Y before using</rule>
+      </safety_rules>
+      
+      <examples>
+        <example input="user asks about foo" call="example_tool(param1='bar')" />
+      </examples>
+      
+      <output_format>
+        Returns: { "result": string, "status": boolean }
+      </output_format>
+    </tool>
+  </example>
+  
+</tool_schema>

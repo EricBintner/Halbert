@@ -1,0 +1,52 @@
+<!--
+  Template: conversation.xml
+  Purpose: Format conversation history for context injection
+  Phase 39c: Dynamic Context Injection
+-->
+
+<conversation_format>
+  <description>
+    Format for injecting conversation history into prompts.
+    Preserves context while managing token budget.
+  </description>
+  
+  <structure>
+    <conversation_context>
+      <turn role="user">User message content</turn>
+      <turn role="assistant">Assistant response</turn>
+      <!-- Repeat for recent turns -->
+    </conversation_context>
+  </structure>
+  
+  <guidelines>
+    <guideline priority="high">
+      Include only the last 3-5 turns to stay within token budget
+    </guideline>
+    <guideline priority="high">
+      Truncate long messages to ~500 characters with "..." suffix
+    </guideline>
+    <guideline priority="medium">
+      Preserve tool call context when relevant to current query
+    </guideline>
+    <guideline priority="medium">
+      Include thinking steps summary if user asked follow-up
+    </guideline>
+    <guideline priority="low">
+      Omit system messages and metadata from history
+    </guideline>
+  </guidelines>
+  
+  <token_budget>
+    <guide_tier max_turns="3" max_chars_per_turn="300" />
+    <specialist_tier max_turns="5" max_chars_per_turn="500" />
+    <vision_tier max_turns="3" max_chars_per_turn="400" />
+  </token_budget>
+  
+  <example>
+    <conversation_context>
+      <turn role="user">How do I check disk space?</turn>
+      <turn role="assistant">Use `df -h` to see disk usage in human-readable format.</turn>
+      <turn role="user">What about just for /home?</turn>
+    </conversation_context>
+  </example>
+</conversation_format>

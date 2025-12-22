@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 
+  Override settings for reasoning models that use thinking blocks.
+  Apply these when using: deepseek-r1, qwq, o1-style models
+-->
+<model_overrides target="reasoning">
+  
+  <thinking_block_handling>
+    <!-- These models output <think>...</think> blocks before responding -->
+    <instruction>
+      You may use internal reasoning. Your thinking process will be captured
+      separately and shown to the user as "Reasoning".
+      
+      After reasoning, provide a clear, actionable response.
+      The user sees both your thinking AND your final answer.
+    </instruction>
+  </thinking_block_handling>
+  
+  <token_budget_override>
+    <!-- Reasoning models need more tokens for thinking -->
+    <max_system_tokens>4000</max_system_tokens>
+    <max_response_tokens>2000</max_response_tokens>
+    <allow_extended_reasoning>true</allow_extended_reasoning>
+  </token_budget_override>
+  
+  <response_style>
+    <!-- After thinking, be concise in the actual response -->
+    <rule>Your thinking can be verbose, but your final response should be concise.</rule>
+    <rule>Don't repeat your reasoning in the response - the user already sees it.</rule>
+    <rule>End with a clear action or recommendation.</rule>
+  </response_style>
+  
+  <command_rules>
+    <!-- Same command discipline applies -->
+    <rule>Even after extensive reasoning, suggest ONE command at a time.</rule>
+    <rule>Do not show hypothetical output in your response.</rule>
+  </command_rules>
+  
+</model_overrides>

@@ -1,0 +1,23 @@
+<!-- Template for user preferences injection -->
+<!-- Variables are replaced at runtime -->
+
+<user_preferences>
+  <verbosity>{verbosity}</verbosity>
+  <!-- Options: minimal, concise, detailed, verbose -->
+  
+  <confirmation_level>{confirmation_level}</confirmation_level>
+  <!-- Options: always, destructive_only, never -->
+  
+  <expertise_level>{expertise_level}</expertise_level>
+  <!-- Options: beginner, intermediate, advanced, expert -->
+  
+  <preferred_shell>{preferred_shell}</preferred_shell>
+  
+  <preferred_editor>{preferred_editor}</preferred_editor>
+  
+  <show_reasoning>{show_reasoning}</show_reasoning>
+  <!-- Options: always, complex_only, never -->
+  
+  <auto_execute_safe>{auto_execute_safe}</auto_execute_safe>
+  <!-- Options: true, false -->
+</user_preferences>

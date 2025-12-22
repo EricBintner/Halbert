@@ -1,0 +1,57 @@
+<tool name="read_log_tail" permission="auto_approve">
+  <description>
+    Read the last N lines from a log file or journalctl. 
+    Useful for checking recent errors or activity.
+  </description>
+  
+  <when_to_use>
+    <trigger>User asks about recent log entries</trigger>
+    <trigger>User wants to see errors in a log file</trigger>
+    <trigger>User asks to check system logs</trigger>
+    <trigger>Troubleshooting by examining log output</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="log_path" type="string" required="true">
+      Path to log file (e.g., '/var/log/syslog', '/var/log/nginx/error.log').
+      Use 'journalctl' for systemd journal.
+      SECURITY: Only /var/log paths are allowed.
+    </param>
+    <param name="lines" type="integer" required="false" default="20">
+      Number of lines to read (default: 20, max: 100)
+    </param>
+    <param name="filter" type="string" required="false">
+      Optional grep filter to match specific patterns (e.g., 'error', 'failed')
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule>Only /var/log paths are allowed for security</rule>
+    <rule>Maximum 100 lines to prevent overwhelming output</rule>
+    <rule>journalctl access allowed for systemd logs</rule>
+    <rule>No user confirmation required (read-only)</rule>
+  </safety_rules>
+  
+  <examples>
+    <example>
+      <input>Show me recent syslog entries</input>
+      <call>read_log_tail(log_path="/var/log/syslog", lines=20)</call>
+    </example>
+    <example>
+      <input>Check for errors in nginx log</input>
+      <call>read_log_tail(log_path="/var/log/nginx/error.log", filter="error")</call>
+    </example>
+    <example>
+      <input>Show systemd journal</input>
+      <call>read_log_tail(log_path="journalctl", lines=30)</call>
+    </example>
+    <example>
+      <input>Find SSH login attempts</input>
+      <call>read_log_tail(log_path="/var/log/auth.log", filter="sshd")</call>
+    </example>
+  </examples>
+  
+  <output_format>
+    { log: string, lines: [string] }
+  </output_format>
+</tool>

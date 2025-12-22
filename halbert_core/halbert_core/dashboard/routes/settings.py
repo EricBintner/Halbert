@@ -13,12 +13,27 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 import yaml
 import logging
+import threading
+from datetime import datetime, timezone
 
 from ...utils.platform import get_config_dir
 
 logger = logging.getLogger('halbert.dashboard')
 
 router = APIRouter()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Background System Scan State
+# ─────────────────────────────────────────────────────────────────────────────
+_scan_state = {
+    "is_running": False,
+    "started_at": None,
+    "current_phase": None,
+    "progress_percent": 0,
+    "error": None,
+    "result": None,
+}
+_scan_lock = threading.Lock()
 
 
 # Pydantic models
@@ -631,6 +646,74 @@ async def test_endpoint(endpoint_id: str) -> Dict[str, Any]:
     
     except httpx.TimeoutException:
         return {'success': False, 'message': 'Connection timed out'}
+    except Exception as e:
+        return {'success': False, 'message': str(e)}
+
+
+@router.post("/specialist/test")
+async def test_specialist() -> Dict[str, Any]:
+    """Test the specialist model with a quick ping."""
+    import httpx
+    
+    try:
+        config_path = get_config_dir() / 'models.yml'
+        
+        if not config_path.exists():
+            return {'success': False, 'message': 'No specialist configured'}
+        
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f) or {}
+        
+        specialist = config.get('specialist', {})
+        if not specialist.get('enabled'):
+            return {'success': False, 'message': 'Specialist not enabled'}
+        
+        model = specialist.get('model')
+        endpoint = specialist.get('endpoint')
+        provider = specialist.get('provider', 'ollama')
+        
+        if not model or not endpoint:
+            return {'success': False, 'message': 'Specialist model or endpoint not configured'}
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            if provider == 'openai':
+                # Test with a minimal completion request
+                url = f"{endpoint}/v1/chat/completions"
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": "Say OK"}],
+                    "max_tokens": 10,
+                    "temperature": 0
+                }
+                response = await client.post(url, json=payload)
+            else:
+                # Ollama test
+                url = f"{endpoint}/api/generate"
+                payload = {
+                    "model": model,
+                    "prompt": "Say OK",
+                    "stream": False,
+                    "options": {"num_predict": 10}
+                }
+                response = await client.post(url, json=payload)
+            
+            if response.status_code == 200:
+                return {
+                    'success': True,
+                    'message': f'{model} responded successfully',
+                    'model': model,
+                    'endpoint': endpoint
+                }
+            else:
+                error_text = response.text[:200] if response.text else f'HTTP {response.status_code}'
+                return {
+                    'success': False,
+                    'message': f'Error: {error_text}',
+                    'status_code': response.status_code
+                }
+    
+    except httpx.TimeoutException:
+        return {'success': False, 'message': 'Request timed out (30s) - model may be loading'}
     except Exception as e:
         return {'success': False, 'message': str(e)}
 
@@ -1434,15 +1517,10 @@ async def get_system_profile() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/system-profile/scan")
-async def scan_system_profile() -> Dict[str, Any]:
-    """Run a comprehensive system profile scan.
+def _run_background_scan():
+    """Background thread function for system scan."""
+    global _scan_state
     
-    This is the "Deep Scan" - it scans:
-    1. System profile (hardware, OS, etc.)
-    2. All discovery types (storage, services, network, backups, security)
-    3. Populates self-knowledge from the profile (Genesis vision)
-    """
     try:
         from ...discovery.scanners.system_profile import get_system_profiler
         from ...discovery.engine import get_engine
@@ -1450,39 +1528,118 @@ async def scan_system_profile() -> Dict[str, Any]:
         
         profiler = get_system_profiler()
         
+        # Phase 1: System Profile (10% of work)
+        with _scan_lock:
+            _scan_state["current_phase"] = "Scanning system profile..."
+            _scan_state["progress_percent"] = 5
         logger.info("Starting system profile scan...")
         profile = profiler.scan_all()
-        
-        # Save to disk for persistence
         save_path = profiler.save_profile()
+        with _scan_lock:
+            _scan_state["progress_percent"] = 10
         
-        # Also run all discovery scanners (storage, services, network, etc.)
+        # Phase 2: Discovery Scanners (80% of work - 10% to 90%)
+        # Use callback for granular progress
+        def discovery_progress(scanner_name: str, current: int, total: int):
+            with _scan_lock:
+                # Map scanner progress to 10-90% range
+                scanner_percent = (current / max(total, 1)) * 80
+                _scan_state["progress_percent"] = int(10 + scanner_percent)
+                _scan_state["current_phase"] = f"Scanning {scanner_name}..."
+        
         logger.info("Running discovery scanners...")
         engine = get_engine()
-        discoveries = engine.scan_all()
+        discoveries = engine.scan_all(progress_callback=discovery_progress)
         discovery_count = len(discoveries)
         logger.info(f"Discovery scan complete: {discovery_count} items found")
+        with _scan_lock:
+            _scan_state["progress_percent"] = 90
         
-        # Populate self-knowledge from the profile
-        # This implements Genesis: "The system's data is its biography"
+        # Phase 3: Self-Knowledge (10% of work - 90% to 100%)
+        with _scan_lock:
+            _scan_state["current_phase"] = "Populating self-knowledge..."
+            _scan_state["progress_percent"] = 92
         logger.info("Populating self-knowledge from profile...")
         knowledge_counts = bootstrap_from_profile(profile)
         total_knowledge = sum(knowledge_counts.values())
         logger.info(f"Self-knowledge populated: {total_knowledge} entries")
         
-        return {
-            "status": "complete",
-            "profile": profile,
-            "summary": profiler.get_summary(),
-            "saved_to": str(save_path),
-            "discoveries_scanned": discovery_count,
-            "self_knowledge_added": total_knowledge,
-            "knowledge_breakdown": knowledge_counts,
+        # Done
+        with _scan_lock:
+            _scan_state["is_running"] = False
+            _scan_state["current_phase"] = None
+            _scan_state["progress_percent"] = 100
+            _scan_state["result"] = {
+                "status": "complete",
+                "summary": profiler.get_summary(),
+                "saved_to": str(save_path),
+                "discoveries_scanned": discovery_count,
+                "self_knowledge_added": total_knowledge,
+            }
+        logger.info("Background system scan complete")
+        
+    except Exception as e:
+        logger.error(f"Background scan failed: {e}")
+        with _scan_lock:
+            _scan_state["is_running"] = False
+            _scan_state["error"] = str(e)
+            _scan_state["current_phase"] = None
+
+
+@router.post("/system-profile/scan")
+async def scan_system_profile() -> Dict[str, Any]:
+    """Run a comprehensive system profile scan in background.
+    
+    Returns immediately. Poll /system-profile/scan/status for progress.
+    
+    This is the "Deep Scan" - it scans:
+    1. System profile (hardware, OS, etc.)
+    2. All discovery types (storage, services, network, backups, security)
+    3. Populates self-knowledge from the profile (Genesis vision)
+    """
+    global _scan_state
+    
+    with _scan_lock:
+        if _scan_state["is_running"]:
+            return {
+                "status": "already_running",
+                "message": "Scan already in progress",
+                "started_at": _scan_state["started_at"],
+            }
+        
+        # Reset state and start
+        _scan_state = {
+            "is_running": True,
+            "started_at": datetime.now().isoformat(),
+            "current_phase": "Starting...",
+            "progress_percent": 0,
+            "error": None,
+            "result": None,
         }
     
-    except Exception as e:
-        logger.error(f"Error scanning system profile: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # Start background thread
+    scan_thread = threading.Thread(target=_run_background_scan, daemon=True)
+    scan_thread.start()
+    logger.info("Background system scan started")
+    
+    return {
+        "status": "started",
+        "message": "Scan started in background. Poll /api/settings/system-profile/scan/status for progress.",
+    }
+
+
+@router.get("/system-profile/scan/status")
+async def get_scan_status() -> Dict[str, Any]:
+    """Get status of background system scan."""
+    with _scan_lock:
+        return {
+            "is_running": _scan_state["is_running"],
+            "started_at": _scan_state["started_at"],
+            "current_phase": _scan_state["current_phase"],
+            "progress_percent": _scan_state.get("progress_percent", 0),
+            "error": _scan_state["error"],
+            "result": _scan_state["result"],
+        }
 
 
 @router.get("/system-profile/summary")
@@ -1814,7 +1971,8 @@ async def stop_ingestion():
 # Document Indexing API
 # =============================================================================
 
-# Background indexing state (survives page navigation)
+# Background indexing state (survives page navigation but resets on server restart)
+# Note: If server crashes during indexing, state will be clean on restart
 _indexing_state = {
     "is_running": False,
     "started_at": None,
@@ -1826,6 +1984,10 @@ _indexing_state = {
     "progress_percent": 0,
     "error": None
 }
+
+# Log that indexing state is fresh on module load
+import logging as _settings_logging
+_settings_logging.getLogger("halbert.dashboard").info("Indexing state initialized (fresh start)")
 
 # Persistent last indexed timestamp (saved to file for persistence across restarts)
 def _get_last_indexed_info() -> dict:
@@ -1853,6 +2015,21 @@ def _save_last_indexed_info(docs_count: int):
             }, f)
     except Exception as e:
         logger.warning(f"Failed to save index info: {e}")
+
+
+def _reset_indexing_state():
+    """Reset indexing state (for recovery from stuck state)."""
+    global _indexing_state
+    _indexing_state["is_running"] = False
+    _indexing_state["started_at"] = None
+    _indexing_state["completed_at"] = None
+    _indexing_state["total_indexed"] = 0
+    _indexing_state["current_source"] = None
+    _indexing_state["sources_completed"] = []
+    _indexing_state["sources_total"] = 0
+    _indexing_state["progress_percent"] = 0
+    _indexing_state["error"] = None
+    logger.info("Indexing state reset")
 
 def _run_background_index(max_docs: int, source: str = None):
     """Run indexing in background thread with progress tracking."""
@@ -2003,6 +2180,13 @@ async def get_docs_stats():
     except Exception as e:
         logger.error(f"Failed to get doc stats: {e}")
         return {"error": str(e), "linux_docs_count": 0}
+
+
+@router.post("/docs/reset")
+async def reset_indexing():
+    """Reset stuck indexing state. Use if indexing appears stuck."""
+    _reset_indexing_state()
+    return {"status": "reset", "message": "Indexing state has been reset. You can now re-index."}
 
 
 @router.post("/docs/index")

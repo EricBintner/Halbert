@@ -1,0 +1,45 @@
+<tool name="list_running_services" permission="auto_approve">
+  <description>
+    List all currently running systemd services, optionally filtered by name.
+  </description>
+  
+  <when_to_use>
+    <trigger>User asks what services are running</trigger>
+    <trigger>User wants to see all active daemons</trigger>
+    <trigger>User asks to find services matching a pattern</trigger>
+    <trigger>System overview or audit of running services</trigger>
+  </when_to_use>
+  
+  <parameters>
+    <param name="filter" type="string" required="false">
+      Optional filter to match service names.
+      Example: 'docker' finds docker-related services.
+      Leave empty to list all running services.
+    </param>
+  </parameters>
+  
+  <safety_rules>
+    <rule>This is a read-only tool - always safe to execute</rule>
+    <rule>Output limited to 30 services to avoid overwhelming response</rule>
+    <rule>No user confirmation required</rule>
+  </safety_rules>
+  
+  <examples>
+    <example>
+      <input>What services are running?</input>
+      <call>list_running_services()</call>
+    </example>
+    <example>
+      <input>Show me all docker-related services</input>
+      <call>list_running_services(filter="docker")</call>
+    </example>
+    <example>
+      <input>Are there any database services running?</input>
+      <call>list_running_services(filter="sql")</call>
+    </example>
+  </examples>
+  
+  <output_format>
+    { count, services: [{ name, load, active, sub }] }
+  </output_format>
+</tool>
