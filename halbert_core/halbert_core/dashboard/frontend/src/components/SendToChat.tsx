@@ -74,6 +74,37 @@ export function openChat(event: OpenChatEvent) {
   window.dispatchEvent(new CustomEvent('halbert:open-chat', { detail: event }))
 }
 
+// Event types for agent integration
+export interface OpenAgentEvent {
+  title?: string
+  context?: string
+  itemId?: string
+  prefillMessage?: string
+  data?: Record<string, unknown>
+}
+
+/**
+ * Dispatch event to open Agent with context
+ * Use this when you want the AI to analyze/act on something
+ */
+export function openAgent(event: OpenAgentEvent) {
+  // Set focused item for PageContext
+  if (event.itemId) {
+    window.dispatchEvent(new CustomEvent('halbert:set-focused-item', { 
+      detail: {
+        id: event.itemId,
+        name: event.title,
+        title: event.title,
+        type: 'agent',
+        description: event.context,
+        data: event.data,
+      }
+    }))
+  }
+  
+  window.dispatchEvent(new CustomEvent('halbert:open-agent', { detail: event }))
+}
+
 /**
  * Open chat for deep research with specialist model
  */

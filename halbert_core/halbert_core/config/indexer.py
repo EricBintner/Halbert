@@ -3,7 +3,7 @@ import json
 import os
 from typing import Any, Dict, List
 
-from ..index.chroma_index import Index
+from ..index.chroma_index import get_index
 from ..utils.paths import data_subdir
 
 CANON_DIR = data_subdir("config", "canon")
@@ -25,13 +25,13 @@ def _load(path: str) -> Dict[str, Any] | None:
         return None
 
 
-def index_all(index_persist: str | None = "data/index") -> int:
+def index_all(index_persist: str | None = None) -> int:
     """
     Index canonical config records into the vector DB.
     For ini/systemd: index each section/key/value as a document.
     For yaml/json: index top-level keys and values.
     """
-    idx = Index(index_persist)
+    idx = get_index(persist_path=index_persist)
     count = 0
     for jf in _iter_canon_files():
         rec = _load(jf)

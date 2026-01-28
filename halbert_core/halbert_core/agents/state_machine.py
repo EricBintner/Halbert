@@ -1,0 +1,796 @@
+"""
+Agent State Machine
+
+Core orchestration using a state machine pattern with CRAG evaluation.
+Based on research5.md Part 6.
+"""
+
+from __future__ import annotations
+import asyncio
+import logging
+import uuid
+from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHECKING
+
+from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep
+from .events import StreamEvent
+
+if TYPE_CHECKING:
+    from ..tools.safety import ToolSafetyFramework
+    from ..tools.executor import ToolExecutor
+
+logger = logging.getLogger('halbert.agents.state_machine')
+
+
+class AgentStateMachine:
+    """
+    Core agent orchestration using a state machine pattern.
+    
+    Based on ReAct (research4.md Part 5) with CRAG evaluation (Part 11).
+    
+    States:
+        IDLE -> PLANNING -> SEARCHING/READING/EXECUTING -> OBSERVING -> PLANNING/RESPONDING
+        
+    The loop continues until:
+        - CRAG confidence >= threshold (CORRECT)
+        - Max loops reached
+        - Error that can't be recovered
+    """
+    
+    # Valid state transitions
+    TRANSITIONS: Dict[AgentState, List[AgentState]] = {
+        AgentState.IDLE: [AgentState.PLANNING],
+        AgentState.PLANNING: [
+            AgentState.SEARCHING, AgentState.READING,
+            AgentState.EXECUTING, AgentState.RESPONDING, AgentState.ERROR
+        ],
+        AgentState.SEARCHING: [AgentState.OBSERVING, AgentState.ERROR],
+        AgentState.READING: [AgentState.OBSERVING, AgentState.ERROR],
+        AgentState.EXECUTING: [
+            AgentState.OBSERVING, AgentState.AWAITING_CONFIRMATION, AgentState.ERROR
+        ],
+        AgentState.OBSERVING: [
+            AgentState.PLANNING, AgentState.RESPONDING, AgentState.ERROR
+        ],
+        AgentState.RESPONDING: [AgentState.IDLE],
+        AgentState.AWAITING_CONFIRMATION: [AgentState.EXECUTING, AgentState.PLANNING],
+        AgentState.ERROR: [AgentState.PLANNING, AgentState.RESPONDING, AgentState.IDLE],
+    }
+    
+    def __init__(
+        self,
+        llm_client,
+        tool_executor: 'ToolExecutor' = None,
+        crag_evaluator = None,
+        context_assembler = None,
+        prompt_builder = None,
+        rag_service = None,
+        memory_service = None,
+        max_loops: int = 5,
+        crag_threshold: float = 0.7,
+    ):
+        """
+        Initialize the agent state machine.
+        
+        Args:
+            llm_client: Client for LLM calls (chat, stream)
+            tool_executor: Tool execution with safety checks
+            crag_evaluator: CRAG evaluation for confidence scoring
+            context_assembler: Context assembly from multiple sources
+            prompt_builder: Prompt construction
+            rag_service: RAG search service
+            memory_service: Memory recall/store service
+            max_loops: Maximum loop iterations
+            crag_threshold: Confidence threshold for CORRECT
+        """
+        self.llm = llm_client
+        self.tools = tool_executor
+        self.crag = crag_evaluator
+        self.context = context_assembler
+        self.prompts = prompt_builder
+        self.rag = rag_service
+        self.memory = memory_service
+        
+        self.max_loops = max_loops
+        self.crag_threshold = crag_threshold
+        
+        self.current_state = AgentState.IDLE
+        self.ctx: Optional[StateContext] = None
+        
+        # Active sessions for multi-session support
+        self.active_sessions: Dict[str, StateContext] = {}
+        
+        # Cancellation tracking for session interruption
+        self.cancelled: Dict[str, bool] = {}
+    
+    # Property aliases for handler compatibility
+    @property
+    def tool_executor(self):
+        """Alias for handlers that use tool_executor."""
+        return self.tools
+    
+    @property
+    def llm_client(self):
+        """Alias for handlers that use llm_client."""
+        return self.llm
+    
+    @property
+    def rag_service(self):
+        """Alias for handlers that use rag_service."""
+        return self.rag
+    
+    @property
+    def memory_service(self):
+        """Alias for handlers that use memory_service."""
+        return self.memory
+    
+    async def process(
+        self,
+        query: str,
+        session_id: str = None,
+        user_id: str = None,
+        conversation_history: List[Dict] = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """
+        Process a user query through the state machine.
+        
+        Yields StreamEvents for real-time frontend updates.
+        
+        Args:
+            query: User's question/request
+            session_id: Optional session ID (generated if not provided)
+            user_id: Optional user ID
+            conversation_history: Previous messages in conversation
+            
+        Yields:
+            StreamEvent objects for each state change, tool call, etc.
+        """
+        session_id = session_id or str(uuid.uuid4())
+        request_id = str(uuid.uuid4())
+        
+        # Initialize context
+        self.ctx = StateContext(
+            session_id=session_id,
+            request_id=request_id,
+            user_query=query,
+            user_id=user_id,
+            conversation_history=conversation_history or [],
+            max_loops=self.max_loops,
+        )
+        
+        # Track active session
+        self.active_sessions[session_id] = self.ctx
+        
+        logger.info(f"Starting agent processing: session={session_id}, query={query[:100]}")
+        
+        yield StreamEvent.session_started(session_id, request_id)
+        
+        # Start processing
+        yield await self._transition(AgentState.PLANNING)
+        
+        try:
+            # Main loop
+            while self.current_state != AgentState.IDLE:
+                # Safety checks
+                if self.ctx.loop_count >= self.ctx.max_loops:
+                    logger.warning(f"Max loops ({self.ctx.max_loops}) reached")
+                    yield StreamEvent.loop_warning(
+                        session_id, self.ctx.loop_count, self.ctx.max_loops
+                    )
+                    yield StreamEvent.error(
+                        session_id, 
+                        f"Max iterations ({self.ctx.max_loops}) reached, responding with available information"
+                    )
+                    self.current_state = AgentState.RESPONDING
+                    continue
+                
+                if self._detect_oscillation():
+                    logger.warning("State oscillation detected")
+                    yield StreamEvent.error(session_id, "State oscillation detected, forcing response")
+                    # Clear state history to break out of oscillation detection loop
+                    self.ctx.state_history.clear()
+                    self.ctx.state_history.append(AgentState.RESPONDING.value)
+                    self.current_state = AgentState.RESPONDING
+                    # Don't continue - let it execute the RESPONDING handler
+                
+                # Execute handler for current state
+                handler = self._get_handler()
+                if handler:
+                    try:
+                        async for event in handler():
+                            yield event
+                    except Exception as e:
+                        logger.error(f"Handler error in {self.current_state}: {e}")
+                        self.ctx.error = str(e)
+                        yield StreamEvent.error(session_id, str(e))
+                        self.current_state = AgentState.ERROR
+                else:
+                    logger.error(f"No handler for state: {self.current_state}")
+                    self.current_state = AgentState.ERROR
+            
+            # Session complete
+            yield StreamEvent.session_ended(
+                session_id,
+                self.ctx.elapsed_ms(),
+                self.ctx.loop_count
+            )
+            
+        finally:
+            # Cleanup
+            if session_id in self.active_sessions:
+                del self.active_sessions[session_id]
+    
+    async def confirm_action(
+        self,
+        session_id: str,
+        action_id: str,
+        confirmed: bool
+    ) -> AsyncIterator[StreamEvent]:
+        """
+        Handle user confirmation for high-risk actions.
+        
+        Args:
+            session_id: Session ID
+            action_id: Action execution ID
+            confirmed: Whether user confirmed the action
+            
+        Yields:
+            StreamEvent objects
+        """
+        if session_id not in self.active_sessions:
+            yield StreamEvent.error(session_id, "Session not found", recoverable=False)
+            return
+        
+        self.ctx = self.active_sessions[session_id]
+        
+        if not self.ctx.pending_confirmation:
+            yield StreamEvent.error(session_id, "No pending confirmation")
+            return
+        
+        if self.ctx.pending_confirmation.get("action_id") != action_id:
+            yield StreamEvent.error(session_id, "Action ID mismatch")
+            return
+        
+        if confirmed:
+            # Execute the confirmed action
+            self.ctx.pending_confirmation["confirmed"] = True
+            yield await self._transition(AgentState.EXECUTING)
+            
+            # Continue processing
+            async for event in self._handle_executing():
+                yield event
+        else:
+            # User rejected - go back to planning
+            self.ctx.pending_confirmation = None
+            self.ctx.add_observation("User rejected the action")
+            yield await self._transition(AgentState.PLANNING)
+    
+    def cancel_session(self, session_id: str) -> bool:
+        """Cancel an active session."""
+        if session_id in self.active_sessions:
+            del self.active_sessions[session_id]
+            self.current_state = AgentState.IDLE
+            return True
+        return False
+    
+    def _detect_oscillation(self) -> bool:
+        """Detect A→B→A→B pattern indicating infinite loop."""
+        h = self.ctx.state_history
+        if len(h) >= 4:
+            return h[-4] == h[-2] and h[-3] == h[-1]
+        return False
+    
+    async def _transition(self, new_state: AgentState) -> StreamEvent:
+        """
+        Transition to a new state with validation.
+        
+        Args:
+            new_state: Target state
+            
+        Returns:
+            StreamEvent for the state change
+            
+        Raises:
+            ValueError: If transition is not valid
+        """
+        valid_transitions = self.TRANSITIONS.get(self.current_state, [])
+        if new_state not in valid_transitions:
+            raise ValueError(
+                f"Invalid transition: {self.current_state} → {new_state}. "
+                f"Valid: {valid_transitions}"
+            )
+        
+        old_state = self.current_state
+        self.current_state = new_state
+        self.ctx.state_history.append(new_state.value)
+        
+        logger.debug(f"State transition: {old_state.value} → {new_state.value}")
+        
+        return StreamEvent.state_change(
+            self.ctx.session_id,
+            new_state.value,
+            old_state.value
+        )
+    
+    def _get_handler(self) -> Optional[Callable]:
+        """Get the handler function for the current state."""
+        handlers = {
+            AgentState.PLANNING: self._handle_planning,
+            AgentState.SEARCHING: self._handle_searching,
+            AgentState.READING: self._handle_reading,
+            AgentState.EXECUTING: self._handle_executing,
+            AgentState.OBSERVING: self._handle_observing,
+            AgentState.RESPONDING: self._handle_responding,
+            AgentState.ERROR: self._handle_error,
+            AgentState.AWAITING_CONFIRMATION: self._handle_awaiting_confirmation,
+        }
+        return handlers.get(self.current_state)
+    
+    # -------------------------------------------------------------------------
+    # State Handlers
+    # -------------------------------------------------------------------------
+    
+    async def _handle_planning(self) -> AsyncIterator[StreamEvent]:
+        """
+        PLANNING state: Analyze query, create plan, decide next action.
+        """
+        logger.info(f"PLANNING: {self.ctx.user_query[:50]}...")
+        
+        # Assemble context if we have context assembler
+        context_content = ""
+        if self.context:
+            assembled = await self.context.assemble(
+                query=self.ctx.user_query,
+                conversation=self.ctx.conversation_history,
+                observations=self.ctx.observations,
+                max_tokens=8000
+            )
+            context_content = assembled.content
+            yield StreamEvent.context_loaded(
+                self.ctx.session_id,
+                "assembled",
+                len(assembled.sources),
+                assembled.total_tokens
+            )
+        
+        # Build prompt
+        if self.prompts:
+            prompt = self.prompts.build_planning_prompt(
+                query=self.ctx.user_query,
+                context=context_content,
+                plan=[p.to_dict() for p in self.ctx.plan]
+            )
+        else:
+            prompt = self._build_simple_planning_prompt(context_content)
+        
+        # Call LLM
+        tool_schemas = self.tools.get_schemas() if self.tools else []
+        
+        response = await self.llm.chat(
+            messages=[{"role": "user", "content": prompt}],
+            tools=tool_schemas
+        )
+        
+        # Parse plan if present
+        if hasattr(response, 'plan') and response.plan:
+            self.ctx.plan = [
+                PlanStep(step=s.get("step", ""), tool=s.get("tool"))
+                for s in response.plan
+            ]
+            yield StreamEvent.plan(
+                self.ctx.session_id,
+                [p.to_dict() for p in self.ctx.plan]
+            )
+        
+        # CRAG evaluation if we have retrieved context
+        if self.crag and self.ctx.retrieved_context:
+            crag_result = await self.crag.evaluate(
+                self.ctx.user_query,
+                self.ctx.retrieved_context,
+                self.ctx.observations
+            )
+            self.ctx.confidence = crag_result.confidence
+            self.ctx.crag_action = CRAGAction(crag_result.action.value)
+            
+            yield StreamEvent.confidence_update(
+                self.ctx.session_id,
+                crag_result.confidence,
+                crag_result.action.value
+            )
+        
+        # Route based on tool calls or CRAG result
+        if hasattr(response, 'tool_calls') and response.tool_calls:
+            tool_call = response.tool_calls[0]
+            tc = ToolCall(
+                id=str(uuid.uuid4())[:8],
+                name=tool_call.function.name,
+                args=tool_call.function.arguments
+            )
+            self.ctx.add_tool_call(tc)
+            
+            # Route based on tool type
+            tool_name = tool_call.function.name
+            if tool_name in ["search", "search_discoveries", "recall_memory", "web_search"]:
+                yield await self._transition(AgentState.SEARCHING)
+            elif tool_name in ["read_file", "read_config", "cat"]:
+                yield await self._transition(AgentState.READING)
+            else:
+                yield await self._transition(AgentState.EXECUTING)
+        
+        elif self.ctx.crag_action == CRAGAction.CORRECT:
+            yield await self._transition(AgentState.RESPONDING)
+        
+        elif self.ctx.loop_count == 0:
+            # First iteration, try searching
+            yield await self._transition(AgentState.SEARCHING)
+        
+        else:
+            # Default: respond with what we have
+            yield await self._transition(AgentState.RESPONDING)
+    
+    async def _handle_searching(self) -> AsyncIterator[StreamEvent]:
+        """
+        SEARCHING state: Execute RAG and memory searches.
+        """
+        self.ctx.loop_count += 1
+        logger.info(f"SEARCHING: loop={self.ctx.loop_count}")
+        
+        # Get pending tool call or use query
+        tool_call = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
+        
+        if tool_call and tool_call.name in ["search", "web_search"]:
+            search_query = tool_call.args.get("query", self.ctx.user_query)
+        else:
+            search_query = self.ctx.user_query
+        
+        # Execute searches in parallel
+        tasks = []
+        
+        if self.rag:
+            tasks.append(("rag", self.rag.search(search_query, limit=5)))
+        
+        if self.memory:
+            tasks.append(("memory", self.memory.recall(search_query, limit=3)))
+        
+        # Execute all search tasks
+        for source, task in tasks:
+            try:
+                results = await task
+                for result in results:
+                    self.ctx.add_context(
+                        source=source,
+                        content=result.get("content", str(result)),
+                        metadata=result.get("metadata", {})
+                    )
+                
+                yield StreamEvent.context_loaded(
+                    self.ctx.session_id,
+                    source,
+                    len(results),
+                    0  # TODO: token count
+                )
+            except Exception as e:
+                logger.error(f"Search error ({source}): {e}")
+                self.ctx.add_observation(f"Search error ({source}): {e}")
+        
+        # Update tool call status
+        if tool_call:
+            tool_call.status = "success"
+            tool_call.result = {"count": len(self.ctx.retrieved_context)}
+        
+        self.ctx.add_observation(
+            f"Retrieved {len(self.ctx.retrieved_context)} context items"
+        )
+        
+        yield await self._transition(AgentState.OBSERVING)
+    
+    async def _handle_reading(self) -> AsyncIterator[StreamEvent]:
+        """
+        READING state: Read specific files or resources.
+        """
+        self.ctx.loop_count += 1
+        logger.info(f"READING: loop={self.ctx.loop_count}")
+        
+        tool_call = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
+        
+        if not tool_call:
+            self.ctx.add_observation("No file specified to read")
+            yield await self._transition(AgentState.OBSERVING)
+            return
+        
+        file_path = tool_call.args.get("path") or tool_call.args.get("file")
+        
+        exec_id = tool_call.id
+        yield StreamEvent.tool_start(
+            self.ctx.session_id,
+            "read_file",
+            {"path": file_path},
+            exec_id
+        )
+        
+        if self.tools:
+            result = await self.tools.execute("read_file", {"path": file_path})
+            
+            yield StreamEvent.tool_complete(
+                self.ctx.session_id,
+                exec_id,
+                result.success,
+                result.result[:500] if result.result else None,
+                result.error
+            )
+            
+            if result.success:
+                tool_call.status = "success"
+                tool_call.result = result.result
+                self.ctx.add_observation(f"Read {file_path}: {len(result.result)} chars")
+                self.ctx.add_context(
+                    source="file",
+                    content=result.result,
+                    metadata={"path": file_path}
+                )
+            else:
+                tool_call.status = "error"
+                tool_call.error = result.error
+                self.ctx.add_observation(f"Failed to read {file_path}: {result.error}")
+        else:
+            self.ctx.add_observation("Tool executor not available")
+        
+        yield await self._transition(AgentState.OBSERVING)
+    
+    async def _handle_executing(self) -> AsyncIterator[StreamEvent]:
+        """
+        EXECUTING state: Execute tool calls with safety checks.
+        """
+        self.ctx.loop_count += 1
+        logger.info(f"EXECUTING: loop={self.ctx.loop_count}")
+        
+        tool_call = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
+        
+        if not tool_call:
+            self.ctx.add_observation("No tool call to execute")
+            yield await self._transition(AgentState.OBSERVING)
+            return
+        
+        tool_name = tool_call.name
+        tool_args = tool_call.args
+        exec_id = tool_call.id
+        
+        yield StreamEvent.tool_start(
+            self.ctx.session_id,
+            tool_name,
+            tool_args,
+            exec_id
+        )
+        
+        tool_call.started_at = __import__('time').time()
+        
+        if self.tools:
+            # Check if already confirmed
+            confirmed = (
+                self.ctx.pending_confirmation and 
+                self.ctx.pending_confirmation.get("confirmed", False)
+            )
+            
+            result = await self.tools.execute(
+                tool_name,
+                tool_args,
+                session_id=self.ctx.session_id,
+                confirmed=confirmed
+            )
+            
+            tool_call.completed_at = __import__('time').time()
+            
+            if result.requires_confirmation:
+                # Need user confirmation
+                self.ctx.pending_confirmation = {
+                    "action_id": exec_id,
+                    "tool": tool_name,
+                    "description": result.confirmation_message,
+                    "risk_level": result.risk_level.value
+                }
+                
+                yield StreamEvent.tool_confirmation_required(
+                    self.ctx.session_id,
+                    exec_id,
+                    tool_name,
+                    result.confirmation_message,
+                    result.risk_level.value
+                )
+                
+                yield await self._transition(AgentState.AWAITING_CONFIRMATION)
+                return
+            
+            yield StreamEvent.tool_complete(
+                self.ctx.session_id,
+                exec_id,
+                result.success,
+                result.result,
+                result.error
+            )
+            
+            if result.success:
+                tool_call.status = "success"
+                tool_call.result = result.result
+                self.ctx.add_observation(f"Executed {tool_name}: success")
+            else:
+                tool_call.status = "error"
+                tool_call.error = result.error
+                self.ctx.add_observation(f"Executed {tool_name}: {result.error}")
+            
+            # Clear pending confirmation
+            self.ctx.pending_confirmation = None
+        else:
+            self.ctx.add_observation("Tool executor not available")
+        
+        yield await self._transition(AgentState.OBSERVING)
+    
+    async def _handle_observing(self) -> AsyncIterator[StreamEvent]:
+        """
+        OBSERVING state: Evaluate results, decide next action.
+        """
+        logger.info(f"OBSERVING: {len(self.ctx.observations)} observations")
+        
+        # CRAG evaluation
+        if self.crag and self.ctx.retrieved_context:
+            crag_result = await self.crag.evaluate(
+                self.ctx.user_query,
+                self.ctx.retrieved_context,
+                self.ctx.observations
+            )
+            
+            self.ctx.confidence = crag_result.confidence
+            self.ctx.crag_action = CRAGAction(crag_result.action.value)
+            
+            yield StreamEvent.confidence_update(
+                self.ctx.session_id,
+                crag_result.confidence,
+                crag_result.action.value
+            )
+        else:
+            # No CRAG, estimate based on context
+            if self.ctx.retrieved_context:
+                self.ctx.confidence = 0.6
+                self.ctx.crag_action = CRAGAction.AMBIGUOUS
+            else:
+                self.ctx.confidence = 0.3
+                self.ctx.crag_action = CRAGAction.INCORRECT
+        
+        # Decide next state
+        if self.ctx.crag_action == CRAGAction.CORRECT:
+            yield await self._transition(AgentState.RESPONDING)
+        elif self.ctx.loop_count >= self.ctx.max_loops - 1:
+            # Almost at limit, respond with what we have
+            yield await self._transition(AgentState.RESPONDING)
+        else:
+            # Need more info, go back to planning
+            yield await self._transition(AgentState.PLANNING)
+    
+    async def _handle_responding(self) -> AsyncIterator[StreamEvent]:
+        """
+        RESPONDING state: Generate final response.
+        """
+        logger.info(f"RESPONDING: confidence={self.ctx.confidence:.2f}")
+        
+        # Build response prompt
+        if self.prompts:
+            prompt = self.prompts.build_response_prompt(
+                query=self.ctx.user_query,
+                context=self.ctx.retrieved_context,
+                observations=self.ctx.observations
+            )
+            logger.info("Using AgentPromptBuilder for response prompt")
+        else:
+            prompt = self._build_simple_response_prompt()
+            logger.info("Using simple response prompt (no prompt builder)")
+        
+        # DEBUG: Log the prompt to verify markdown instructions are included
+        logger.debug(f"Response prompt (first 500 chars): {prompt[:500]}")
+        
+        # Stream response
+        if hasattr(self.llm, 'stream'):
+            logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
+            chunk_count = 0
+            async for chunk in self.llm.stream(
+                messages=[{"role": "user", "content": prompt}]
+            ):
+                chunk_count += 1
+                logger.debug(f"Chunk {chunk_count}: {repr(chunk[:50])}...")
+                self.ctx.response_chunks.append(chunk)
+                yield StreamEvent.response_chunk(self.ctx.session_id, chunk)
+            logger.info(f"LLM stream complete: {chunk_count} chunks")
+        else:
+            # Non-streaming fallback
+            response = await self.llm.chat(
+                messages=[{"role": "user", "content": prompt}]
+            )
+            content = response.content if hasattr(response, 'content') else str(response)
+            self.ctx.response_chunks.append(content)
+            yield StreamEvent.response_chunk(self.ctx.session_id, content)
+        
+        # Store interaction in memory
+        if self.memory:
+            full_response = "".join(self.ctx.response_chunks)
+            await self.memory.store_interaction(
+                query=self.ctx.user_query,
+                response=full_response,
+                session_id=self.ctx.session_id
+            )
+        
+        yield StreamEvent.response_complete(self.ctx.session_id)
+        yield await self._transition(AgentState.IDLE)
+    
+    async def _handle_error(self) -> AsyncIterator[StreamEvent]:
+        """
+        ERROR state: Handle and recover from errors.
+        """
+        self.ctx.error_recovery_attempts += 1
+        logger.warning(
+            f"ERROR: attempt={self.ctx.error_recovery_attempts}, "
+            f"error={self.ctx.error}"
+        )
+        
+        if self.ctx.error_recovery_attempts >= 3:
+            # Give up, respond with error context
+            yield await self._transition(AgentState.RESPONDING)
+        else:
+            # Try to recover by replanning
+            self.ctx.error = None
+            yield await self._transition(AgentState.PLANNING)
+    
+    async def _handle_awaiting_confirmation(self) -> AsyncIterator[StreamEvent]:
+        """
+        AWAITING_CONFIRMATION state: Wait for user to confirm/reject.
+        
+        This is a blocking state - processing pauses until
+        confirm_action() is called.
+        """
+        logger.info(f"AWAITING_CONFIRMATION: {self.ctx.pending_confirmation}")
+        # No events to yield - we wait for external input
+        return
+        yield  # Make it an async generator
+    
+    # -------------------------------------------------------------------------
+    # Helper Methods
+    # -------------------------------------------------------------------------
+    
+    def _build_simple_planning_prompt(self, context: str) -> str:
+        """Build a simple planning prompt when no prompt builder available."""
+        parts = [
+            f"User query: {self.ctx.user_query}",
+            "",
+            "Available context:",
+            context or "(none)",
+            "",
+            "Observations so far:",
+            "\n".join(self.ctx.observations) or "(none)",
+            "",
+            "Instructions:",
+            "1. Analyze what information is needed to answer the query",
+            "2. If you need more information, use available tools",
+            "3. If you have enough information, provide your answer",
+        ]
+        return "\n".join(parts)
+    
+    def _build_simple_response_prompt(self) -> str:
+        """Build a simple response prompt when no prompt builder available."""
+        context_text = "\n".join([
+            f"[{c.get('source', 'unknown')}]: {c.get('content', '')[:500]}"
+            for c in self.ctx.retrieved_context[:5]
+        ])
+        
+        obs_text = "\n".join([f"- {obs}" for obs in self.ctx.observations])
+        
+        return f"""Answer this question: {self.ctx.user_query}
+
+Available Information:
+{context_text}
+
+What I've done:
+{obs_text}
+
+Instructions:
+- Provide a helpful, accurate response
+- Use **markdown formatting**: headers (##), bullet points (-), **bold**, `code`, code blocks (```bash)
+- Cite sources when possible
+- Be concise but complete
+
+Your response (use markdown formatting):"""

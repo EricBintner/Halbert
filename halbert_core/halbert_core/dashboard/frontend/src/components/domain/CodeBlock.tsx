@@ -2,16 +2,19 @@
  * CodeBlock - Executable code block with copy and run buttons
  * 
  * Phase 20D: Extracted from Services.tsx for reuse across pages
+ * Phase 13d: Added command safety checks with warning dialogs
  * 
  * Features:
  * - Copy to clipboard
  * - Run in terminal (for shell commands)
  * - Syntax highlighting (basic)
  * - Distinguishes runnable commands from output display
+ * - Safety tier warnings before dangerous commands
  */
 
 import { useState } from 'react'
-import { Terminal, Copy, Check, Play, Loader2, SkipForward } from 'lucide-react'
+import { Terminal, Copy, Check, Play, Loader2, SkipForward, AlertTriangle, ShieldAlert } from 'lucide-react'
+import { api } from '@/lib/api'
 
 interface CodeBlockProps {
   code: string
@@ -28,6 +31,12 @@ interface CodeBlockProps {
   compact?: boolean
   /** Unique ID for this code block (for tracking) */
   blockId?: string
+}
+
+interface SafetyWarning {
+  tier: 'caution' | 'dangerous' | 'blocked'
+  warning: string
+  suggestion: string
 }
 
 export function CodeBlock({ 
@@ -47,6 +56,9 @@ export function CodeBlock({
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isSkipped, setIsSkipped] = useState(false)
   const [isHandled, setIsHandled] = useState(false)  // Track if run or skipped
+  // Phase 13d: Safety warning state
+  const [safetyWarning, setSafetyWarning] = useState<SafetyWarning | null>(null)
+  const [pendingCommand, setPendingCommand] = useState<string | null>(null)
   
   // Detect if this looks like command OUTPUT (not a runnable command)
   const looksLikeOutput = (
@@ -75,23 +87,14 @@ export function CodeBlock({
     setTimeout(() => setCopied(false), 2000)
   }
   
-  const handleRun = async () => {
-    if (isHandled) return  // Already handled
-    
-    if (!onRun) {
-      // Fallback: dispatch event to terminal
-      window.dispatchEvent(new CustomEvent('halbert:run-command', { 
-        detail: { command: code } 
-      }))
-      return
-    }
-    
+  // Phase 13d: Execute command (after safety check passed or confirmed)
+  const executeCommand = async (sanitizedCode: string) => {
     setIsRunning(true)
     setOutput(null)
+    setSafetyWarning(null)
+    setPendingCommand(null)
     try {
-      // Sanitize command - remove stray backticks that LLMs sometimes add
-      const sanitizedCode = code.replace(/^`+|`+$/g, '').trim()
-      const result = await onRun(sanitizedCode)
+      const result = await onRun!(sanitizedCode)
       const outputText = result.exit_code === 0 
         ? (result.output || '(no output)')
         : (result.error || result.output || `Exit code: ${result.exit_code}`)
@@ -111,11 +114,69 @@ export function CodeBlock({
       setIsError(true)
       setIsHandled(true)
       if (onAutoAnalyze) {
-        onAutoAnalyze(code, errorMsg, true)
+        onAutoAnalyze(sanitizedCode, errorMsg, true)
       }
     } finally {
       setIsRunning(false)
     }
+  }
+  
+  const handleRun = async () => {
+    if (isHandled) return  // Already handled
+    
+    if (!onRun) {
+      // Fallback: dispatch event to terminal
+      window.dispatchEvent(new CustomEvent('halbert:run-command', { 
+        detail: { command: code } 
+      }))
+      return
+    }
+    
+    // Sanitize command - remove stray backticks that LLMs sometimes add
+    const sanitizedCode = code.replace(/^`+|`+$/g, '').trim()
+    
+    // Phase 13d: Check command safety before execution
+    try {
+      const safety = await api.checkCommandSafety(sanitizedCode)
+      
+      if (safety.tier === 'blocked') {
+        setOutput(`⛔ Command blocked: ${safety.warning}`)
+        setIsError(true)
+        setIsHandled(true)
+        return
+      }
+      
+      if (safety.tier === 'dangerous' || safety.tier === 'caution') {
+        // Show warning and wait for confirmation
+        setSafetyWarning({
+          tier: safety.tier,
+          warning: safety.warning,
+          suggestion: safety.suggestion,
+        })
+        setPendingCommand(sanitizedCode)
+        return
+      }
+      
+      // Safe command - execute directly
+      await executeCommand(sanitizedCode)
+    } catch (err) {
+      // Safety check failed - execute anyway with warning
+      console.warn('Safety check failed, executing anyway:', err)
+      await executeCommand(sanitizedCode)
+    }
+  }
+  
+  // Phase 13d: Confirm execution of dangerous command
+  const handleConfirmRun = async () => {
+    if (pendingCommand) {
+      await executeCommand(pendingCommand)
+    }
+  }
+  
+  // Phase 13d: Cancel dangerous command
+  const handleCancelRun = () => {
+    setSafetyWarning(null)
+    setPendingCommand(null)
   }
   
   const handleSkip = () => {
@@ -188,6 +249,53 @@ export function CodeBlock({
         </pre>
       </div>
       
+      {/* Phase 13d: Safety warning dialog */}
+      {safetyWarning && (
+        <div className={`rounded-md border p-2 my-1 ${
+          safetyWarning.tier === 'dangerous' 
+            ? 'border-red-500/50 bg-red-950/30' 
+            : 'border-yellow-500/50 bg-yellow-950/30'
+        }`}>
+          <div className="flex items-start gap-2">
+            {safetyWarning.tier === 'dangerous' ? (
+              <ShieldAlert className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="h-4 w-4 text-yellow-400 flex-shrink-0 mt-0.5" />
+            )}
+            <div className="flex-1 min-w-0">
+              <p className={`text-[11px] font-medium ${
+                safetyWarning.tier === 'dangerous' ? 'text-red-300' : 'text-yellow-300'
+              }`}>
+                {safetyWarning.tier === 'dangerous' ? '⚠️ Dangerous Command' : '⚡ Caution'}
+              </p>
+              <p className="text-[10px] text-zinc-300 mt-0.5">{safetyWarning.warning}</p>
+              {safetyWarning.suggestion && (
+                <p className="text-[10px] text-zinc-400 mt-1">💡 {safetyWarning.suggestion}</p>
+              )}
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={handleConfirmRun}
+                  disabled={isRunning}
+                  className={`px-2 py-1 text-[10px] rounded ${
+                    safetyWarning.tier === 'dangerous'
+                      ? 'bg-red-600 hover:bg-red-700 text-white'
+                      : 'bg-yellow-600 hover:bg-yellow-700 text-white'
+                  }`}
+                >
+                  {isRunning ? 'Running...' : 'Run Anyway'}
+                </button>
+                <button
+                  onClick={handleCancelRun}
+                  className="px-2 py-1 text-[10px] rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-200"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Output display */}
       {output && (
         <div className={`rounded-md border ${isError ? 'border-red-500/30 bg-red-950/20' : 'border-border/50 bg-zinc-800/50'}`}>

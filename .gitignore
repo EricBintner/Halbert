@@ -110,6 +110,17 @@ docs/
 # Keep these public:
 !docs/README.md
 
-# Large data files
-data/linux/arch-wiki-full/arch_wiki.jsonl
-data/linux/man-pages/linux_man_pages.jsonl
+# Large data files & indices (hosted on HuggingFace, not in repo)
+# RAG/vector indices - generated locally from datasets
+data/.rag_indices/
+
+# Scraped datasets - download from HuggingFace instead
+data/linux/arch-wiki-full/
+data/linux/arch-wiki-ext/
+data/linux/serverfault/
+data/linux/unix-se/
+data/linux/man-pages/
+*.jsonl
+
+# Keep manifest for reference (describes available datasets)
+!data/manifest.json

@@ -1,0 +1,35 @@
+# Halbert Dataset Manifest
+# External data files hosted on Hugging Face
+# These are downloaded on-demand via the dashboard
+
+datasets:
+  arch_wiki:
+    name: "Arch Wiki (Full)"
+    description: "Complete Arch Linux wiki documentation for RAG"
+    size_bytes: 348127232  # ~332 MB
+    size_human: "332 MB"
+    destination: "data/linux/arch-wiki-full/arch_wiki.jsonl"
+    source:
+      type: huggingface
+      repo: "EricBintner/halbert-data"
+      filename: "arch_wiki.jsonl"
+    required: false
+    category: "linux_docs"
+    
+  man_pages:
+    name: "Linux Man Pages"
+    description: "Linux manual pages for command reference"
+    size_bytes: 104792064  # ~100 MB
+    size_human: "100 MB"
+    destination: "data/linux/man-pages/linux_man_pages.jsonl"
+    source:
+      type: huggingface
+      repo: "EricBintner/halbert-data"
+      filename: "linux_man_pages.jsonl"
+    required: false
+    category: "linux_docs"
+
+# Future datasets can be added here:
+#  ubuntu_docs:
+#    name: "Ubuntu Documentation"
+#    ...

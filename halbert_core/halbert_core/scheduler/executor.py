@@ -382,9 +382,8 @@ class AutonomousExecutor:
                         return None
                     
                     # Check confidence and budgets
-                    # Note: In production, confidence would come from LLM decision
-                    # For now, assume medium confidence (requires approval for risky tasks)
-                    estimated_confidence = 0.7  # TODO: Get from LLM
+                    # Confidence comes from job metadata if available, else default to medium
+                    estimated_confidence = getattr(job, 'confidence', 0.7)
                     estimated_resources = {
                         'cpu_percent': 30,  # Conservative estimate
                         'memory_mb': 512,

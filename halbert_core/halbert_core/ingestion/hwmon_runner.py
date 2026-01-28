@@ -8,7 +8,7 @@ import yaml  # type: ignore
 
 from .hwmon import collect_temp
 from .jsonl_writer import append_event
-from ..index.chroma_index import Index
+from ..index.chroma_index import get_index
 from ..utils.paths import data_subdir
 from ..obs.tracing import trace_call
 
@@ -48,8 +48,7 @@ def run_hwmon(ingestion_cfg_path: str, base_dir: str | None = None, index_persis
         return
     interval = int(hcfg.get("interval_s") or 10)
     base_dir = base_dir or data_subdir("raw")
-    index_persist = index_persist or data_subdir("index")
-    idx = Index(index_persist)
+    idx = get_index(persist_path=index_persist)
 
     sensors = discover_temp_sensors()
     if not sensors:

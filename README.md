@@ -34,7 +34,8 @@ Halbert runs on your machine using local LLMs by default—no cloud required. Op
 ```bash
 # 1. Install Ollama
 curl -fsSL https://ollama.ai/install.sh | sh
-ollama pull llama3.2:3b
+ollama pull mistral-small  # Recommended: vision + 128K context
+# Or for 24GB GPUs: ollama pull qwen2.5:14b
 
 # 2. Clone and install
 git clone https://github.com/EricBintner/Halbert.git
@@ -49,6 +50,18 @@ make dev-web
 # or for Tauri build
 make dev  
 ```
+
+### Recommended Models by GPU
+
+| GPU VRAM | Chat Model | Features | Notes |
+|----------|------------|----------|-------|
+| **48GB+** (RTX 5090) | `mistral-small:24b` | 👁️ Vision, 128K context | **Best choice** - one model does everything |
+| **24GB** (RTX 4090) | `qwen2.5:14b` | 128K context | Add `pixtral:12b` for vision |
+| **Apple 64GB+** | `mistral-small:24b` | 👁️ Vision, 128K context | Works via unified memory |
+
+**★★ Top Pick:** `mistral-small:24b` (v3.1+) includes built-in vision, 128K context, and function calling. No need for separate Specialist or Vision models!
+
+See [Quick Start Guide](docs/guides/QUICK-START-MISTRAL.md) for full setup.
 
 ---
 

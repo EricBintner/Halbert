@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useScan } from '@/contexts/ScanContext'
+import { useDebug } from '@/contexts/DebugContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -45,7 +46,8 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
-import { PageHeader, ChromaDBSettings } from '@/components/domain'
+import { PageHeader, ChromaDBSettings, DatasetManager, DataVersionCard } from '@/components/domain'
+import { ClaraSettings } from '@/components/ClaraSettings'
 
 const API_BASE = '/api'
 
@@ -98,10 +100,15 @@ interface ModelStatus {
   endpoint: string
   available_models: string[]
   recommended_model: string | null
+  // Phase 58: Hardware tier detection
+  hardware_tier?: number  // 1=24GB, 2=48GB+, 3=Apple Silicon
+  total_vram_gb?: number | null
+  clara_recommended?: boolean
+  clara_reason?: string | null
 }
 
 // Helper to detect model capabilities from name
-function getModelCapabilities(modelName: string): { thinking: boolean; vision: boolean; code: boolean } {
+function getModelCapabilities(modelName: string): { thinking: boolean; vision: boolean; code: boolean; largeContext: boolean } {
   const name = modelName.toLowerCase()
   return {
     // Thinking/reasoning models
@@ -111,25 +118,37 @@ function getModelCapabilities(modelName: string): { thinking: boolean; vision: b
               name.includes('qwen3') ||  // qwen3 has thinking by default
               name.includes('qwq') ||
               name.includes('reasoning'),
-    // Vision/multimodal models  
+    // Vision/multimodal models
+    // IMPORTANT: mistral-small 3.1+ (24B) has built-in vision!
     vision: name.includes('vision') || 
             name.includes('llava') || 
             name.includes('llama3.2-vision') ||
             name.includes('gemma3') ||  // gemma3 is multimodal
             name.includes('pixtral') ||
-            name.includes('bakllava'),
+            name.includes('bakllava') ||
+            (name.includes('mistral-small') && !name.includes('2.')) ||  // mistral-small 3.1+ has vision
+            name.includes('mistral-small-3'),  // explicit 3.x version
     // Code-focused models
     code: name.includes('coder') || 
           name.includes('codestral') ||
           name.includes('starcoder') ||
           name.includes('deepseek-coder') ||
-          name.includes('qwen2.5-coder')
+          name.includes('qwen2.5-coder'),
+    // Large context window (128K+)
+    largeContext: name.includes('mistral-small') ||  // mistral-small has 128K
+                  name.includes('gemma3') ||  // gemma3 has 128K
+                  name.includes('qwen') ||  // qwen models have 128K
+                  name.includes('llama3.1') ||  // llama3.1 has 128K
+                  name.includes('llama3.2') ||  // llama3.2 has 128K
+                  name.includes('llama3.3')  // llama3.3 has 128K
   }
 }
 
 export function Settings() {
   // Scan context for coordinated system-wide scanning
   const { triggerDeepScan, isDeepScanning } = useScan()
+  // Debug context for logging
+  const { addLog } = useDebug()
   
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [alertRules, setAlertRules] = useState<AlertRule[]>([])
@@ -193,6 +212,7 @@ export function Settings() {
   const [addingSource, setAddingSource] = useState(false)
   const [addSourceResult, setAddSourceResult] = useState<{success: boolean, message: string, title?: string, alreadyExists?: boolean} | null>(null)
   const [ragStats, setRagStats] = useState<{total_docs: number, user_docs: number, sources: Record<string, number>} | null>(null)
+  const [ragIndexes, setRagIndexes] = useState<Array<{name: string, doc_count: number, indexed_at: string, source_file: string, embedding_model: string, build_time_seconds: number}>>([])
   const [customDocs, setCustomDocs] = useState<Array<{name: string, source: string, url: string, trust_tier: number, is_custom: boolean}>>([])
   const [coreSources, setCoreSources] = useState<Array<{name: string, count: number}>>([])
   const [showDocList, setShowDocList] = useState(false)
@@ -227,6 +247,19 @@ export function Settings() {
   const [docSuggestions, setDocSuggestions] = useState<DocSuggestion[]>([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [addingSuggestion, setAddingSuggestion] = useState<string | null>(null)
+  
+  // GPU Tweaks state - stored in localStorage
+  const [gpuTweaks, setGpuTweaks] = useState(() => {
+    try {
+      const stored = localStorage.getItem('halbert_gpu_tweaks')
+      if (stored) return JSON.parse(stored)
+    } catch {}
+    return {
+      connectionTimeout: 300, // seconds (5 min default)
+      maxTokens: 8192,
+      temperature: 0.7,
+    }
+  })
   
   // Trending Topics state (Phase 34 - Cutting-Edge Discovery)
   interface TrendingSuggestion {
@@ -493,6 +526,15 @@ export function Settings() {
       setRagStats(data)
     } catch (err) {
       console.error('Failed to load RAG stats:', err)
+    }
+    
+    // Load RAG indexes
+    try {
+      const res = await fetch(`${API_BASE}/rag/indexes`)
+      const data = await res.json()
+      setRagIndexes(data.indexes || [])
+    } catch (err) {
+      console.error('Failed to load RAG indexes:', err)
     }
   }
   
@@ -766,12 +808,21 @@ export function Settings() {
   const handleTestSpecialist = async () => {
     setTestingSpecialist(true)
     setSpecialistTestResult(null)
+    const startTime = Date.now()
+    addLog({ type: 'request', category: 'api', message: 'Testing specialist model...' })
     try {
       const res = await fetch(`${API_BASE}/settings/specialist/test`, { method: 'POST' })
       const data = await res.json()
       setSpecialistTestResult(data)
+      const duration = Date.now() - startTime
+      if (data.success) {
+        addLog({ type: 'response', category: 'api', message: `Specialist test passed: ${data.message}`, duration })
+      } else {
+        addLog({ type: 'error', category: 'api', message: `Specialist test failed: ${data.message}`, duration })
+      }
     } catch (err) {
       setSpecialistTestResult({ success: false, message: 'Request failed' })
+      addLog({ type: 'error', category: 'api', message: `Specialist test error: ${err}`, duration: Date.now() - startTime })
     }
     setTestingSpecialist(false)
   }
@@ -1212,7 +1263,7 @@ export function Settings() {
                 {/* Model Availability */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm">Guide Model</span>
+                    <span className="text-sm">Chat Model</span>
                     {modelStatus?.model_name ? (
                       <code className="text-xs bg-muted px-1 rounded">
                         {modelStatus.model_name}
@@ -1238,6 +1289,35 @@ export function Settings() {
                   )}
                 </div>
                 
+                {/* Hardware Tier Info - Phase 58 */}
+                {modelStatus?.total_vram_gb && (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">GPU VRAM</span>
+                      <code className="text-xs bg-muted px-1 rounded">
+                        {modelStatus.total_vram_gb}GB
+                      </code>
+                    </div>
+                    <Badge variant="outline" className="text-xs">
+                      {modelStatus.hardware_tier === 2 ? 'Tier 2 (Enthusiast)' : 
+                       modelStatus.hardware_tier === 3 ? 'Tier 3 (Apple Silicon)' : 
+                       'Tier 1 (Power User)'}
+                    </Badge>
+                  </div>
+                )}
+                
+                {/* CLaRa Recommendation - Phase 58 */}
+                {modelStatus?.clara_reason && (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">Context Compression</span>
+                    </div>
+                    <Badge variant={modelStatus.clara_recommended ? 'default' : 'secondary'} className="text-xs">
+                      {modelStatus.clara_recommended ? '✓ CLaRa Available' : 'Remote Only'}
+                    </Badge>
+                  </div>
+                )}
+                
                 {/* All good message */}
                 {modelStatus?.ollama_connected && modelStatus?.model_installed && (
                   <div className="pt-2 border-t">
@@ -1245,6 +1325,39 @@ export function Settings() {
                       <Check className="h-4 w-4" />
                       Ready to chat! Your AI assistant is connected.
                     </p>
+                  </div>
+                )}
+                
+                {/* Apply Recommended Config - Phase 58 */}
+                {modelStatus?.ollama_connected && !modelStatus?.model_installed && (
+                  <div className="pt-2 border-t">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium">Quick Setup</p>
+                        <p className="text-xs text-muted-foreground">
+                          Auto-configure based on your {modelStatus?.total_vram_gb ? `${modelStatus.total_vram_gb}GB GPU` : 'hardware'}
+                        </p>
+                      </div>
+                      <Button 
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(`${API_BASE}/settings/model/apply-recommended`, { method: 'POST' })
+                            const data = await res.json()
+                            if (data.success) {
+                              loadSettings()
+                              // Show success toast or message
+                              console.log('Applied:', data.message)
+                            }
+                          } catch (err) {
+                            console.error('Failed to apply recommended config:', err)
+                          }
+                        }}
+                      >
+                        <Zap className="h-3 w-3 mr-1" />
+                        Apply Recommended
+                      </Button>
+                    </div>
                   </div>
                 )}
                 
@@ -1279,7 +1392,7 @@ export function Settings() {
 
           {/* Model Assignment Cards with Endpoint + Model Dropdowns */}
           <div className="grid grid-cols-3 gap-4">
-            {/* Guide Model Card - green only if configured AND verified connected */}
+            {/* Chat Model Card - green only if configured AND verified connected */}
             <Card className={
               modelConfig?.orchestrator?.model && modelStatus?.ollama_connected && modelStatus?.model_installed
                 ? 'border-green-500'  // Configured and verified working
@@ -1292,7 +1405,7 @@ export function Settings() {
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Brain className="h-4 w-4" />
-                  Guide Model
+                  Chat Model
                   {!modelConfig?.orchestrator?.model && (
                     <Badge variant="secondary" className="text-xs bg-yellow-100 text-yellow-800">Required</Badge>
                   )}
@@ -1312,8 +1425,9 @@ export function Settings() {
                         return (
                           <>
                             {caps.thinking && <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">Thinking</Badge>}
-                            {caps.vision && <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">Vision</Badge>}
+                            {caps.vision && <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">👁️ Vision</Badge>}
                             {caps.code && <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Code</Badge>}
+                            {caps.largeContext && <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">128K</Badge>}
                           </>
                         )
                       })()}
@@ -1400,9 +1514,15 @@ export function Settings() {
                         }}
                       >
                         <option value="">{loadingGuideModels ? 'Loading...' : 'Select model...'}</option>
-                        {guideModels.map((m: string) => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
+                        {guideModels.map((m: string) => {
+                          // Priority: mistral-small (has vision+128K), then other good models
+                          const caps = getModelCapabilities(m)
+                          const isTop = m.includes('mistral-small')  // Best: vision + 128K context
+                          const isRecommended = ['qwen2.5:14b', 'qwen2.5:7b', 'mistral:7b', 'pixtral'].some(r => m.includes(r))
+                          const prefix = isTop ? '★★ ' : isRecommended ? '★ ' : ''
+                          const suffix = caps.vision ? ' 👁️' : ''
+                          return <option key={m} value={m}>{prefix}{m}{suffix}</option>
+                        })}
                       </Select>
                     </>
                   )}
@@ -1524,9 +1644,10 @@ export function Settings() {
                         }}
                       >
                         <option value="">{loadingSpecialistModels ? 'Loading...' : 'Select model...'}</option>
-                        {specialistModels.map((m: string) => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
+                        {specialistModels.map((m: string) => {
+                          const isRecommended = ['llama3.3:70b', 'qwen2.5:32b', 'deepseek-coder:33b', 'codestral'].includes(m)
+                          return <option key={m} value={m}>{isRecommended ? `★ ${m}` : m}</option>
+                        })}
                       </Select>
                     </>
                   )}
@@ -1535,19 +1656,47 @@ export function Settings() {
               </CardContent>
             </Card>
 
-            {/* Vision Model Card */}
-            <Card>
+            {/* Vision Model Card - auto-disable if Chat model has vision */}
+            {(() => {
+              const chatHasVision = modelConfig?.orchestrator?.model 
+                ? getModelCapabilities(modelConfig.orchestrator.model).vision 
+                : false
+              return (
+            <Card className={chatHasVision ? 'opacity-60' : ''}>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Eye className="h-4 w-4" />
                   Vision Model
+                  {chatHasVision && (
+                    <Badge variant="secondary" className="text-xs bg-blue-100 text-blue-800">Provided by Chat</Badge>
+                  )}
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Image analysis & screenshots
+                  {chatHasVision 
+                    ? `Vision provided by ${modelConfig?.orchestrator?.model || 'Chat Model'}` 
+                    : 'Image analysis & screenshots'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                {modelConfig?.vision?.enabled && modelConfig?.vision?.model ? (
+                {/* Show message when Chat model has vision */}
+                {chatHasVision && !modelConfig?.vision?.enabled && (
+                  <div className="text-xs text-muted-foreground bg-blue-50 dark:bg-blue-950/30 rounded p-2">
+                    <p className="font-medium text-blue-700 dark:text-blue-300">✓ Vision already available</p>
+                    <p className="mt-1">Your Chat Model has built-in vision. No separate vision model needed.</p>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-6 px-2 text-xs mt-2"
+                      onClick={() => {
+                        // Allow user to enable anyway
+                        setVisionEndpointId(modelConfig?.saved_endpoints[0]?.id || '')
+                      }}
+                    >
+                      Enable anyway →
+                    </Button>
+                  </div>
+                )}
+                {(!chatHasVision || modelConfig?.vision?.enabled) && modelConfig?.vision?.enabled && modelConfig?.vision?.model ? (
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">{modelConfig.vision.name || 'Endpoint'}</p>
                     <div className="flex items-center gap-2 flex-wrap">
@@ -1618,9 +1767,10 @@ export function Settings() {
                         }}
                       >
                         <option value="">{loadingVisionModels ? 'Loading...' : 'Select model...'}</option>
-                        {visionModels.map((m: string) => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
+                        {visionModels.map((m: string) => {
+                          const isRecommended = ['llama3.2-vision', 'gemma3', 'llava:34b', 'pixtral'].some(r => m.includes(r))
+                          return <option key={m} value={m}>{isRecommended ? `★ ${m}` : m}</option>
+                        })}
                       </Select>
                     </>
                   )}
@@ -1628,14 +1778,19 @@ export function Settings() {
                 )}
               </CardContent>
             </Card>
+              )
+            })()}
           </div>
 
-          {/* Multimodal hint */}
-          <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3">
-            <strong>💡 Tip:</strong> If your Specialist is a multimodal model (e.g., <code className="bg-muted px-1 rounded">llama3.2-vision:90b</code>), 
-            you don't need a separate Vision model. Dedicated vision models like <code className="bg-muted px-1 rounded">llava:34b</code> are 
-            useful when your Specialist is text-only (e.g., <code className="bg-muted px-1 rounded">llama3.3:70b</code>).
+          {/* Multimodal hint - Updated for mistral-small 3.1 */}
+          <div className="text-xs text-muted-foreground bg-gradient-to-r from-blue-50 to-amber-50 dark:from-blue-950/30 dark:to-amber-950/30 rounded-lg p-3 border border-blue-200/50 dark:border-blue-800/50">
+            <strong>★★ Recommended:</strong> Use <code className="bg-muted px-1 rounded font-semibold">mistral-small:24b</code> (v3.1+) as your Chat Model. 
+            It includes <span className="text-blue-600 dark:text-blue-400 font-medium">built-in vision</span>, <span className="text-amber-600 dark:text-amber-400 font-medium">128K context</span>, and handles most tasks without needing Specialist or Vision models.
+            <br/><span className="text-muted-foreground/70 mt-1 inline-block">For 24GB GPUs, use <code className="bg-muted px-1 rounded">qwen2.5:14b</code> + separate vision model.</span>
           </div>
+
+          {/* CLaRa Context Compression - Phase 58: Moved to Models tab */}
+          <ClaraSettings />
 
           <Card>
             <CardHeader>
@@ -1857,12 +2012,103 @@ export function Settings() {
             </CardContent>
           </Card>
 
+          {/* GPU Tweaks Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Cpu className="h-5 w-5" />
+                Performance Tweaks
+              </CardTitle>
+              <CardDescription>
+                Adjust these settings based on your hardware. Slower hardware (CPU, older GPU, network LLM) needs longer timeouts.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">
+                    <Clock className="h-4 w-4" />
+                    Connection Timeout
+                  </Label>
+                  <Select 
+                    value={String(gpuTweaks.connectionTimeout)}
+                    onChange={(e) => {
+                      const newTweaks = {...gpuTweaks, connectionTimeout: parseInt(e.target.value)}
+                      setGpuTweaks(newTweaks)
+                      localStorage.setItem('halbert_gpu_tweaks', JSON.stringify(newTweaks))
+                    }}
+                  >
+                    <option value="60">1 minute (Fast GPU)</option>
+                    <option value="120">2 minutes</option>
+                    <option value="300">5 minutes (Default)</option>
+                    <option value="600">10 minutes (Slow/Network)</option>
+                    <option value="900">15 minutes (Very Slow)</option>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">How long to wait for LLM response before showing timeout error</p>
+                </div>
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">
+                    <FileCode className="h-4 w-4" />
+                    Max Tokens
+                  </Label>
+                  <Select 
+                    value={String(gpuTweaks.maxTokens)}
+                    onChange={(e) => {
+                      const newTweaks = {...gpuTweaks, maxTokens: parseInt(e.target.value)}
+                      setGpuTweaks(newTweaks)
+                      localStorage.setItem('halbert_gpu_tweaks', JSON.stringify(newTweaks))
+                    }}
+                  >
+                    <option value="2048">2K (Fast, shorter responses)</option>
+                    <option value="4096">4K</option>
+                    <option value="8192">8K (Default)</option>
+                    <option value="16384">16K (Detailed responses)</option>
+                    <option value="24576">24K (Very detailed)</option>
+                    <option value="32768">32K (Maximum)</option>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Maximum response length. Higher = slower but more complete</p>
+                </div>
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4" />
+                    Temperature
+                  </Label>
+                  <Select 
+                    value={String(gpuTweaks.temperature)}
+                    onChange={(e) => {
+                      const newTweaks = {...gpuTweaks, temperature: parseFloat(e.target.value)}
+                      setGpuTweaks(newTweaks)
+                      localStorage.setItem('halbert_gpu_tweaks', JSON.stringify(newTweaks))
+                    }}
+                  >
+                    <option value="0.3">0.3 (Precise, deterministic)</option>
+                    <option value="0.5">0.5 (Balanced)</option>
+                    <option value="0.7">0.7 (Default, creative)</option>
+                    <option value="0.9">0.9 (Very creative)</option>
+                    <option value="1.0">1.0 (Maximum creativity)</option>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Lower = more focused, higher = more creative/varied</p>
+                </div>
+              </div>
+              <div className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
+                💡 <strong>Tip:</strong> If responses are being cut off, increase Max Tokens. If you're getting timeouts, increase Connection Timeout.
+                M1/M2 Mac with large models may need 5-10 min timeout. RTX 4090 can use 1-2 min.
+              </div>
+            </CardContent>
+          </Card>
+
         </TabsContent>
 
         {/* Knowledge Tab - ChromaDB + Self-Knowledge + RAG */}
         <TabsContent value="knowledge" className="space-y-4">
+          {/* Data Version & Freshness - Phase 54 */}
+          <DataVersionCard />
+
           {/* ChromaDB Storage Overview - Phase 52 (centerpiece) */}
           <ChromaDBSettings />
+
+          {/* Dataset Downloads - RAG data from Hugging Face */}
+          <DatasetManager />
 
           {/* Self-Knowledge Section */}
           <Card>
@@ -2116,6 +2362,38 @@ export function Settings() {
                           </tbody>
                         </table>
                       )}
+                    </div>
+                  </div>
+                )}
+                
+                {/* RAG Indexes (Phase 27) */}
+                {ragIndexes.length > 0 && (
+                  <div className="border-t pt-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Database className="h-4 w-4 text-blue-500" />
+                      <span className="font-medium">Search Indexes</span>
+                      <Badge variant="secondary" className="text-xs">{ragIndexes.length} indexes</Badge>
+                    </div>
+                    <div className="grid gap-2">
+                      {ragIndexes.map((idx) => (
+                        <div 
+                          key={idx.name}
+                          className="flex items-center justify-between p-2 bg-blue-500/5 border border-blue-500/20 rounded-lg"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-sm">{idx.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                              <Badge variant="outline" className="text-xs">{idx.doc_count.toLocaleString()} docs</Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Indexed {idx.indexed_at} • {idx.embedding_model}
+                            </p>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {idx.build_time_seconds.toFixed(1)}s
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}

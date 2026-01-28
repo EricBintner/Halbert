@@ -164,7 +164,10 @@ class RAGPipeline:
         """
         Normalize document schema.
         
-        Handles old schema: {"text": "...", "metadata": {"man_page": "name(section)"}}
+        Handles multiple schemas:
+        - Old man pages: {"text": "...", "metadata": {"man_page": "name(section)"}}
+        - Arch Wiki/SE: {"id": "...", "title": "...", "content": "...", "source": "..."}
+        - User-added: {"name": "...", "content": "..."}
         Converts to: {"name": "...", "section": "...", "full_text": "..."}
         """
         normalized = []
@@ -179,6 +182,36 @@ class RAGPipeline:
             if 'name' in doc and 'content' in doc:
                 doc['full_text'] = doc['content']
                 normalized.append(doc)
+                continue
+            
+            # Handle Arch Wiki / Stack Exchange format (Phase 27)
+            if 'title' in doc and 'content' in doc:
+                source = doc.get('source', 'unknown')
+                category = doc.get('category', '')
+                tags = doc.get('tags', [])
+                
+                # Build description from tags/category
+                description = ''
+                if category:
+                    description = f"Category: {category}"
+                if tags and isinstance(tags, list):
+                    tag_str = ', '.join(tags[:5])
+                    description = f"{description}. Tags: {tag_str}" if description else f"Tags: {tag_str}"
+                
+                normalized.append({
+                    'name': doc['title'],
+                    'section': source,
+                    'description': description,
+                    'full_text': doc['content'],
+                    'metadata': {
+                        'url': doc.get('url', ''),
+                        'source': source,
+                        'category': category,
+                        'tags': tags,
+                        'scraped_at': doc.get('scraped_at', ''),
+                        **doc.get('metadata', {})
+                    }
+                })
                 continue
             
             # Convert old schema

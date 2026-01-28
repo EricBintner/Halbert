@@ -24,6 +24,7 @@ class ModelConfig:
     temperature: float = 0.7
     top_p: float = 0.9
     top_k: int = 40
+    n_threads: int = 4  # Number of threads for llama.cpp inference
     
     @classmethod
     def from_file(cls, path: Path) -> 'ModelConfig':
@@ -143,7 +144,7 @@ class LlamaCppBackend:
                 self._llama = Llama(
                     model_path=self.model_path,
                     n_ctx=self.config.max_context,
-                    n_threads=4,  # TODO: Make configurable
+                    n_threads=self.config.n_threads,
                     verbose=False
                 )
                 logger.info(f"llama.cpp model loaded from: {self.model_path}")

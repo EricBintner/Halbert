@@ -101,7 +101,7 @@ The public `documentation/` folder contains the original architecture vision fro
 
 | Feature | Documentation Claim | Actual Status |
 |---------|---------------------|---------------|
-| **LangGraph Orchestrator** | `runtime/engine.py` | DEPRECATED - Direct Ollama calls work fine |
+| **LangGraph Orchestrator** | `runtime/langgraph_engine.py` | ✅ Available - soft import, optional orchestration |
 | **Policy Engine** | `policy/loader.py`, `engine.py` | ✅ Wired into chat.py tool calls |
 | **Scheduler/APScheduler** | `scheduler/*.py` | ✅ Added to deps, starts with dashboard |
 | **Guardrails/Budgets** | `autonomy/*.py` | ✅ Wired into chat.py tool authorization |
@@ -121,7 +121,7 @@ The public `documentation/` folder contains the original architecture vision fro
 
 | Claim | Reality |
 |-------|---------|
-| "LangGraph orchestrator with Planner → Executor → Observer" | DEPRECATED - Direct Ollama calls, no complex orchestration needed |
+| "LangGraph orchestrator with Planner → Executor → Observer" | ✅ Available via `LGEngine` class - optional, soft import |
 | "ChromaDB for RAG" | ✅ ChromaDB now enabled by default, memory system integrated |
 | "APScheduler for background tasks" | ✅ APScheduler starts with dashboard |
 | "Approval workflows with dry-run" | ✅ Full workflow: chat → ApprovalEngine → Dashboard |
@@ -162,7 +162,7 @@ halbert_core/
 ├── ingestion/        # ✅ journald/hwmon auto-start with dashboard → ChromaDB
 ├── memory/           # ✅ ChromaDB for conversations, telemetry, docs, self-knowledge
 ├── policy/           # ✅ Policy decisions wired into chat.py tool calls
-├── runtime/          # DEPRECATED - direct Ollama calls used instead
+├── runtime/          # ✅ LangGraph available as optional orchestration layer
 ├── scheduler/        # ✅ APScheduler starts with dashboard, health check every 6h
 ```
 
@@ -378,7 +378,7 @@ isn't needed. The semantic search over current discoveries is the key feature.
 
 | Item | Status | Notes |
 |------|--------|-------|
-| **LangGraph Orchestrator** | ⛔ DEPRECATED | Direct Ollama calls work fine, no complex orchestration needed |
+| **LangGraph Orchestrator** | ✅ Available | Optional via `LGEngine` class in `runtime/langgraph_engine.py` |
 | **Anomaly Detector** | ✅ Done | API: `/api/settings/anomaly/status`, `/api/settings/anomaly/check` |
 | **Recovery Playbooks** | ✅ Done | API: rollback, restart-service, alert endpoints |
 | **WebSocket Real-time** | ✅ Done | `useChatStream()` hook, auto-reconnect, chat_token streaming |
@@ -400,7 +400,7 @@ isn't needed. The semantic search over current discoveries is the key feature.
 
 ### Current Cycle Checklist
 - [x] Audit: Updated all statuses in GAPS.md
-- [x] Decide: LangGraph deprecated, Anomaly/Recovery/WebSocket built
+- [x] Decide: LangGraph optional (available via soft import), Anomaly/Recovery/WebSocket built
 - [x] Document: Dashboard pages documented (guides/dashboard-pages.md)
 - [x] Build: Anomaly Detection API, Recovery Playbooks API, WebSocket streaming
 - [x] Build: Editable Policy config UI

@@ -263,8 +263,34 @@ async def get_model_status() -> Dict[str, Any]:
         'endpoint': endpoint,
         'available_models': [],
         'recommended_model': None,
-        'auto_configured': False
+        'auto_configured': False,
+        # Phase 58: Hardware tier detection for CLaRa recommendations
+        'hardware_tier': 1,  # 1=24GB, 2=48GB+, 3=Apple Silicon
+        'total_vram_gb': None,
+        'clara_recommended': False,
+        'clara_reason': None,
     }
+    
+    # Phase 58: Detect hardware tier based on VRAM
+    try:
+        import torch
+        if torch.cuda.is_available():
+            total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            result['total_vram_gb'] = round(total_vram, 1)
+            if total_vram >= 40:  # 48GB GPUs report ~45GB usable
+                result['hardware_tier'] = 2
+                result['clara_recommended'] = True
+                result['clara_reason'] = f"Local CLaRa available ({total_vram:.0f}GB VRAM detected)"
+            else:
+                result['hardware_tier'] = 1
+                result['clara_recommended'] = False
+                result['clara_reason'] = f"CLaRa requires 14GB - use remote server ({total_vram:.0f}GB detected)"
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            result['hardware_tier'] = 3
+            result['clara_recommended'] = True
+            result['clara_reason'] = "Apple Silicon detected - CLaRa can use unified memory"
+    except ImportError:
+        pass  # torch not available, keep defaults
     
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -298,7 +324,8 @@ async def get_model_status() -> Dict[str, Any]:
                     result['auto_configured'] = True
                     
                     # Set recommended model for UI to suggest
-                    preferred = ['llama3.1:8b', 'llama3.2:3b', 'llama3.1:8b-instruct', 'mistral:7b', 'qwen2.5:7b']
+                    # Phase 58: Tier-aware recommendations (qwen2.5:14b for 24GB, mistral-small for 48GB+)
+                    preferred = ['qwen2.5:14b', 'qwen2.5:7b', 'mistral:7b', 'llama3.1:8b', 'llama3.2:3b']
                     for pref in preferred:
                         if pref in models:
                             result['recommended_model'] = pref
@@ -311,7 +338,8 @@ async def get_model_status() -> Dict[str, Any]:
                 
                 # Recommend a model if none configured or configured not available
                 if models and (not model or model not in models):
-                    preferred = ['llama3.1:8b', 'llama3.2:3b', 'mistral:7b', 'qwen2.5:7b']
+                    # Phase 58: Tier-aware recommendations
+                    preferred = ['qwen2.5:14b', 'qwen2.5:7b', 'mistral:7b', 'llama3.1:8b', 'llama3.2:3b']
                     for pref in preferred:
                         if pref in models:
                             result['recommended_model'] = pref
@@ -323,6 +351,86 @@ async def get_model_status() -> Dict[str, Any]:
         logger.warning(f"Ollama connection check failed: {e}")
     
     return result
+
+
+@router.post("/model/apply-recommended")
+async def apply_recommended_config() -> Dict[str, Any]:
+    """
+    Apply recommended model configuration based on detected hardware tier.
+    
+    Phase 58: Auto-configures Chat model and CLaRa based on VRAM:
+    - Tier 1 (24GB): qwen2.5:14b chat, CLaRa disabled (suggest remote)
+    - Tier 2 (48GB+): mistral-small chat, CLaRa enabled locally
+    - Tier 3 (Apple Silicon): mistral-small chat, CLaRa enabled
+    """
+    config_path = get_config_dir() / 'models.yml'
+    
+    # Load existing config
+    if config_path.exists():
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f) or {}
+    else:
+        config = {}
+    
+    # Detect hardware tier
+    tier = 1
+    total_vram = None
+    try:
+        import torch
+        if torch.cuda.is_available():
+            total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            tier = 2 if total_vram >= 40 else 1
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            tier = 3
+    except ImportError:
+        pass
+    
+    # Determine recommended models based on tier
+    if tier == 1:
+        # Tier 1: 24GB - smaller chat model, no local CLaRa
+        recommended_chat = 'qwen2.5:14b'
+        clara_enabled = False
+        clara_reason = "CLaRa requires 14GB VRAM - use remote server for compression"
+    elif tier == 2:
+        # Tier 2: 48GB+ - larger chat model, local CLaRa
+        recommended_chat = 'mistral-small'
+        clara_enabled = True
+        clara_reason = "Local CLaRa enabled - 48GB+ VRAM detected"
+    else:
+        # Tier 3: Apple Silicon - can run both via unified memory
+        recommended_chat = 'mistral-small'
+        clara_enabled = True
+        clara_reason = "Apple Silicon detected - CLaRa can use unified memory"
+    
+    # Update orchestrator config
+    if 'orchestrator' not in config:
+        config['orchestrator'] = {}
+    config['orchestrator']['model'] = recommended_chat
+    
+    # Save config
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, 'w') as f:
+        yaml.dump(config, f, default_flow_style=False)
+    
+    # Update CLaRa config
+    try:
+        from ...model.clara_provider import get_clara_provider
+        provider = get_clara_provider()
+        provider.set_enabled(clara_enabled)
+    except Exception as e:
+        logger.warning(f"Failed to update CLaRa config: {e}")
+    
+    return {
+        'success': True,
+        'hardware_tier': tier,
+        'total_vram_gb': round(total_vram, 1) if total_vram else None,
+        'applied': {
+            'chat_model': recommended_chat,
+            'clara_enabled': clara_enabled,
+        },
+        'message': f"Applied Tier {tier} configuration: {recommended_chat} + {'CLaRa enabled' if clara_enabled else 'CLaRa disabled'}",
+        'clara_reason': clara_reason,
+    }
 
 
 @router.post("/model/install")

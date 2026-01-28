@@ -9,7 +9,7 @@ import yaml  # type: ignore
 from .journald import follow_journal
 from .redaction import redact_event
 from .jsonl_writer import append_event
-from ..index.chroma_index import Index
+from ..index.chroma_index import get_index
 from .validate import TelemetryValidator
 from ..utils.paths import data_subdir, state_subdir
 from ..obs.tracing import trace_call
@@ -53,8 +53,7 @@ def run_journald(
 
     rl = RateLimiter(rate_per_min)
     base_dir = base_dir or data_subdir("raw")
-    index_persist = index_persist or data_subdir("index")
-    idx = Index(index_persist)
+    idx = get_index(persist_path=index_persist)
     validator = TelemetryValidator(schema_path)
     cursor_path = state_subdir("journald", "cursor.txt")
     persist_every = int(jcfg.get("cursor_persist_every") or 100)

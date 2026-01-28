@@ -47,6 +47,15 @@ class RAGStatsResponse(BaseModel):
     sources: dict = {}  # source_name -> count
 
 
+class RAGIndexInfo(BaseModel):
+    name: str
+    doc_count: int
+    indexed_at: str
+    source_file: str
+    embedding_model: str
+    build_time_seconds: float
+
+
 class DocumentListResponse(BaseModel):
     documents: List[DocumentInfo]
     total: int
@@ -54,6 +63,45 @@ class DocumentListResponse(BaseModel):
 
 def _get_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent.parent
+
+
+@router.get("/indexes")
+async def get_rag_indexes():
+    """Get list of all RAG indexes with metadata."""
+    try:
+        repo_root = _get_repo_root()
+        indices_dir = repo_root / 'data' / '.rag_indices'
+        
+        indexes = []
+        if indices_dir.exists():
+            for index_dir in indices_dir.iterdir():
+                if index_dir.is_dir():
+                    metadata_file = index_dir / 'index_metadata.json'
+                    if metadata_file.exists():
+                        with open(metadata_file) as f:
+                            meta = json.load(f)
+                        
+                        # Count docs from source file
+                        source_file = meta.get('source', '')
+                        doc_count = 0
+                        source_path = repo_root / source_file
+                        if source_path.exists():
+                            with open(source_path) as f:
+                                doc_count = sum(1 for _ in f)
+                        
+                        indexes.append({
+                            "name": index_dir.name,
+                            "doc_count": doc_count,
+                            "indexed_at": meta.get('indexed_at', 'Unknown'),
+                            "source_file": source_file,
+                            "embedding_model": meta.get('embedding_model', 'Unknown'),
+                            "build_time_seconds": meta.get('build_time_seconds', 0)
+                        })
+        
+        return {"indexes": indexes, "total": len(indexes)}
+    except Exception as e:
+        logger.error(f"Failed to get RAG indexes: {e}")
+        return {"indexes": [], "total": 0, "error": str(e)}
 
 
 @router.get("/stats", response_model=RAGStatsResponse)
@@ -551,7 +599,20 @@ async def watch_trending_repo(repo_name: str):
     
     Watched repos will be tracked for documentation maturity.
     """
-    # TODO: Implement watch list persistence
+    repo_root = _get_repo_root()
+    watch_file = repo_root / 'data' / 'trending_watch.json'
+    
+    watched = []
+    if watch_file.exists():
+        with open(watch_file) as f:
+            watched = json.load(f)
+    
+    if repo_name not in watched:
+        watched.append(repo_name)
+        watch_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(watch_file, 'w') as f:
+            json.dump(watched, f, indent=2)
+    
     return {
         "success": True,
         "message": f"Added {repo_name} to watch list",
@@ -566,7 +627,20 @@ async def dismiss_trending_repo(repo_name: str):
     
     Dismissed repos won't appear in future suggestions.
     """
-    # TODO: Implement dismissed list persistence
+    repo_root = _get_repo_root()
+    dismiss_file = repo_root / 'data' / 'trending_dismissed.json'
+    
+    dismissed = []
+    if dismiss_file.exists():
+        with open(dismiss_file) as f:
+            dismissed = json.load(f)
+    
+    if repo_name not in dismissed:
+        dismissed.append(repo_name)
+        dismiss_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(dismiss_file, 'w') as f:
+            json.dump(dismissed, f, indent=2)
+    
     return {
         "success": True,
         "message": f"Dismissed {repo_name}",
@@ -607,6 +681,167 @@ async def get_enhanced_trending(limit: int = 5):
             "error": str(e),
             "llm_enhanced": False,
         }
+
+
+class DataVersionResponse(BaseModel):
+    version: str
+    release_date: str
+    sources: dict = {}
+    total_documents: int = 0
+    update_available: bool = False
+    latest_version: str = ""
+    update_release_notes: str = ""
+
+
+@router.get("/data/version")
+async def get_data_version():
+    """
+    Get current RAG data version and check for updates.
+    
+    Returns version info from the data manifest and checks
+    HuggingFace for newer versions.
+    """
+    try:
+        from ...rag.freshness import DataManifest, UpdateChecker
+        
+        repo_root = _get_repo_root()
+        manifest_path = repo_root / 'data' / 'manifest.json'
+        
+        # Load local manifest
+        manifest = DataManifest.load(manifest_path)
+        
+        if not manifest:
+            # No manifest - return unknown version
+            return {
+                "version": "unknown",
+                "release_date": "unknown",
+                "sources": {},
+                "total_documents": 0,
+                "update_available": False,
+                "latest_version": "",
+                "update_release_notes": "",
+                "message": "No data manifest found. RAG data may not be versioned."
+            }
+        
+        response = {
+            "version": manifest.version,
+            "release_date": manifest.release_date,
+            "sources": manifest.sources,
+            "total_documents": manifest.total_documents,
+            "total_chunks": manifest.total_chunks,
+            "update_available": False,
+            "latest_version": manifest.version,
+            "update_release_notes": "",
+        }
+        
+        # Check for updates (async)
+        try:
+            checker = UpdateChecker(manifest_path=manifest_path)
+            update_info = await checker.check_for_updates()
+            
+            if update_info and update_info.update_available:
+                response["update_available"] = True
+                response["latest_version"] = update_info.latest_version
+                response["update_release_notes"] = update_info.release_notes
+                response["update_download_url"] = update_info.download_url
+        except Exception as e:
+            logger.debug(f"Update check failed (non-critical): {e}")
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Failed to get data version: {e}")
+        return {
+            "version": "error",
+            "release_date": "",
+            "error": str(e)
+        }
+
+
+@router.get("/data/freshness")
+async def get_data_freshness_stats():
+    """
+    Get freshness statistics for the RAG corpus.
+    
+    Returns breakdown of document ages and staleness levels.
+    """
+    try:
+        from ...rag.freshness import get_freshness_checker, STALENESS_THRESHOLDS
+        
+        repo_root = _get_repo_root()
+        
+        # Scan data files for scraped_at timestamps
+        stats = {
+            "fresh": 0,      # < 30 days
+            "aging": 0,      # 30-90 days
+            "stale": 0,      # 90-180 days
+            "outdated": 0,   # > 365 days
+            "unknown": 0,    # No timestamp
+        }
+        
+        sources_stats = defaultdict(lambda: {"total": 0, "avg_age_days": 0, "ages": []})
+        
+        checker = get_freshness_checker()
+        
+        # Check JSONL files in data directories
+        data_dirs = [
+            repo_root / 'data' / 'linux',
+            repo_root / 'data' / 'macos',
+            repo_root / 'data' / 'common',
+        ]
+        
+        sample_count = 0
+        max_samples = 1000  # Sample for performance
+        
+        for data_dir in data_dirs:
+            if not data_dir.exists():
+                continue
+            
+            for jsonl_file in data_dir.rglob("*.jsonl"):
+                if sample_count >= max_samples:
+                    break
+                    
+                try:
+                    with open(jsonl_file) as f:
+                        for i, line in enumerate(f):
+                            if i >= 100:  # Sample 100 per file
+                                break
+                            if sample_count >= max_samples:
+                                break
+                                
+                            try:
+                                doc = json.loads(line)
+                                info = checker.check_document(doc)
+                                
+                                stats[info.freshness_level] += 1
+                                
+                                source = info.source or jsonl_file.stem
+                                sources_stats[source]["total"] += 1
+                                if info.age_days > 0:
+                                    sources_stats[source]["ages"].append(info.age_days)
+                                
+                                sample_count += 1
+                            except json.JSONDecodeError:
+                                continue
+                except Exception as e:
+                    logger.debug(f"Error reading {jsonl_file}: {e}")
+        
+        # Calculate averages
+        for source, data in sources_stats.items():
+            if data["ages"]:
+                data["avg_age_days"] = sum(data["ages"]) // len(data["ages"])
+            del data["ages"]  # Don't return raw ages
+        
+        return {
+            "sampled_documents": sample_count,
+            "freshness_breakdown": stats,
+            "thresholds_days": STALENESS_THRESHOLDS,
+            "sources": dict(sources_stats),
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get freshness stats: {e}")
+        return {"error": str(e)}
 
 
 @router.post("/trending/{repo_name}/analyze")

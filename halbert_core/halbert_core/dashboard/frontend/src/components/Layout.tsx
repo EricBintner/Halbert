@@ -18,6 +18,7 @@ import {
   Package,
   Loader2,
   ScanSearch,
+  Bot,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SidePanel } from './SidePanel'
@@ -27,6 +28,7 @@ import { useDebug } from '@/contexts/DebugContext'
 const navigation = [
   // Overview
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Agent', href: '/agent', icon: Bot },
   
   // Essential System Health
   { name: 'Services', href: '/services', icon: Server },
@@ -51,7 +53,7 @@ const navigation = [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
-  const { isDebugMode, setDebugMode, chatMetrics } = useDebug()
+  const { isDebugMode, setDebugMode, chatMetrics, logs, clearLogs } = useDebug()
   
   // Global config editor state (triggered from chat "Edit Config" button)
   const [editingConfigPath, setEditingConfigPath] = useState<string | null>(null)
@@ -280,18 +282,48 @@ export function Layout({ children }: { children: React.ReactNode }) {
             )}
           </main>
           
-          {/* Debug Bar - matches sidebar footer height */}
+          {/* Debug Panel - non-overlaying, stats on left, logs on right */}
           {isDebugMode && (
-            <div className="border-t bg-slate-800 px-4 py-3 flex items-center justify-between text-xs font-mono">
-              <div className="flex items-center gap-4">
-                <span className="text-emerald-400 font-bold">🐛 Debug Mode</span>
-                <span className="text-slate-400">DevTools Console (F12) for full logs</span>
+            <div className="border-t bg-slate-800 h-48 flex text-xs font-mono">
+              {/* Left: Stats */}
+              <div className="w-48 border-r border-slate-700 p-3 flex flex-col gap-2">
+                <div className="text-emerald-400 font-bold flex items-center gap-1">
+                  <Bug className="h-3 w-3" /> Debug Mode
+                </div>
+                <div className="space-y-1 text-slate-300">
+                  <div><span className="text-emerald-400">Requests:</span> {chatMetrics.totalRequests}</div>
+                  <div><span className="text-emerald-400">Tokens:</span> ~{chatMetrics.totalTokensEstimate}</div>
+                  <div><span className="text-emerald-400">Avg:</span> {chatMetrics.averageResponseTime > 0 ? `${chatMetrics.averageResponseTime.toFixed(0)}ms` : '-'}</div>
+                  <div><span className="text-emerald-400">Last:</span> {chatMetrics.lastResponseTime && chatMetrics.lastRequestTime ? `${(chatMetrics.lastResponseTime - chatMetrics.lastRequestTime).toFixed(0)}ms` : '-'}</div>
+                </div>
               </div>
-              <div className="flex items-center gap-6 text-slate-200">
-                <span><span className="text-emerald-400">Requests:</span> {chatMetrics.totalRequests}</span>
-                <span><span className="text-emerald-400">Tokens:</span> ~{chatMetrics.totalTokensEstimate}</span>
-                <span><span className="text-emerald-400">Avg:</span> {chatMetrics.averageResponseTime > 0 ? `${chatMetrics.averageResponseTime.toFixed(0)}ms` : '-'}</span>
-                <span><span className="text-emerald-400">Last:</span> {chatMetrics.lastResponseTime && chatMetrics.lastRequestTime ? `${(chatMetrics.lastResponseTime - chatMetrics.lastRequestTime).toFixed(0)}ms` : '-'}</span>
+              {/* Right: Logs */}
+              <div className="flex-1 flex flex-col min-w-0">
+                <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-700 bg-slate-750">
+                  <span className="text-slate-300">Logs ({logs.length})</span>
+                  <button onClick={clearLogs} className="text-slate-400 hover:text-slate-200 text-[10px]">Clear</button>
+                </div>
+                <div className="flex-1 overflow-auto p-2">
+                  {logs.length === 0 ? (
+                    <div className="text-slate-500 text-center py-4">No logs yet. Interact with the app to see logs.</div>
+                  ) : (
+                    logs.slice().reverse().map(log => (
+                      <div key={log.id} className={cn(
+                        "py-0.5",
+                        log.type === 'error' && "text-red-400",
+                        log.type === 'timing' && "text-amber-400",
+                        log.type === 'request' && "text-blue-400",
+                        log.type === 'response' && "text-green-400",
+                        log.type === 'info' && "text-slate-300"
+                      )}>
+                        <span className="text-slate-500">[{log.timestamp.toLocaleTimeString()}]</span>
+                        <span className="text-slate-400 ml-1">[{log.category}]</span>
+                        <span className="ml-1">{log.message}</span>
+                        {log.duration && <span className="text-slate-500 ml-1">({log.duration.toFixed(0)}ms)</span>}
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           )}

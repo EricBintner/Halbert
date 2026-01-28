@@ -353,8 +353,10 @@ class Index:
         else:
             logger.info("get_stats: no client available")
         
+        default_path = Path.home() / ".local" / "share" / "halbert" / "chromadb"
         result = {
             "chromadb_available": self.client is not None,
+            "persist_path": self._persist_path or str(default_path),
             "memory_events": len(self.mem.events),
             "collections": collections
         }

@@ -151,8 +151,9 @@ class ApprovalEngine:
             request.requested_at = self._get_timestamp()
         
         if timeout_seconds:
-            # Calculate expiration (simplified - would use proper datetime math)
-            request.expires_at = self._get_timestamp()  # TODO: Add timeout_seconds
+            from datetime import datetime, timedelta
+            expires = datetime.now() + timedelta(seconds=timeout_seconds)
+            request.expires_at = expires.isoformat()
         
         # Save request
         self._save_request(request)

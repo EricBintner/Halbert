@@ -38,15 +38,21 @@ export function ModelReasoning({
   const startTimeRef = useRef<number | null>(null)
   const prevThinkingLenRef = useRef<number>(0)
   
+  // Track if reasoning has been finalized (timer locked in)
+  const [isFinalized, setIsFinalized] = useState(false)
+  
   // Track thinking duration in real-time - start when content appears OR isThinking is true
   useEffect(() => {
+    // Once finalized, never restart the timer
+    if (isFinalized) return
+    
     // Start timer when thinking begins or when we first get thinking content
     if (isThinking && !startTimeRef.current) {
       startTimeRef.current = Date.now()
     }
     prevThinkingLenRef.current = thinking.length
     
-    // Update timer ONLY while isThinking is true
+    // Update timer ONLY while isThinking is true and not finalized
     if (isThinking) {
       const interval = setInterval(() => {
         if (startTimeRef.current) {
@@ -55,12 +61,12 @@ export function ModelReasoning({
       }, 100)
       return () => clearInterval(interval)
     } else if (startTimeRef.current) {
-      // Finalize duration when thinking stops - freeze the timer
+      // Finalize duration when thinking stops - freeze the timer permanently
       const finalDuration = durationMs || (Date.now() - startTimeRef.current)
       setDisplayDuration(finalDuration)
-      // Don't reset startTimeRef so we keep the final value
+      setIsFinalized(true)  // Lock in the timer - never restart
     }
-  }, [isThinking, durationMs])
+  }, [isThinking, durationMs, isFinalized])
   
   // Auto-expand when thinking starts
   useEffect(() => {

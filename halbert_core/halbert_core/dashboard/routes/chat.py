@@ -7,7 +7,7 @@ Uses the discovery engine for context and (optionally) local LLM.
 
 from __future__ import annotations
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Tuple
 
 try:
     from fastapi import APIRouter, HTTPException, Request
@@ -1273,22 +1273,31 @@ def get_rag_pipeline():
     return _rag_pipeline
 
 
-def get_rag_context(query: str, max_chars: int = 1500) -> str:
+def get_rag_context(query: str, max_chars: int = 1500, include_freshness: bool = True) -> Tuple[str, Optional[str]]:
     """
     Retrieve relevant documentation context for a query.
     
     Phase 12c: RAG integration for knowledge grounding.
+    Phase 54: Data freshness warnings.
+    
+    Returns:
+        Tuple of (context_string, freshness_warning or None)
     """
     try:
         pipeline = get_rag_pipeline()
         if pipeline is None:
-            return ""
+            return "", None
         
         # Retrieve relevant documents
         documents = pipeline.retrieve(query)
         
         if not documents:
-            return ""
+            return "", None
+        
+        # Check freshness and generate warning if needed
+        freshness_warning = None
+        if include_freshness:
+            freshness_warning = check_rag_freshness(query, documents)
         
         # Build concise context
         context_parts = ["\n=== DOCUMENTATION ==="]
@@ -1317,10 +1326,11 @@ def get_rag_context(query: str, max_chars: int = 1500) -> str:
             context_parts.append(entry)
             total_chars += len(entry)
         
-        return "\n".join(context_parts) if len(context_parts) > 1 else ""
+        context = "\n".join(context_parts) if len(context_parts) > 1 else ""
+        return context, freshness_warning
     except Exception as e:
         logger.warning(f"RAG retrieval failed: {e}")
-        return ""
+        return "", None
 
 
 # Topic detection for query-aware context injection (Phase 12b)
@@ -1344,7 +1354,7 @@ WEB_SEARCH_PATTERNS = [
 ]
 
 
-def should_use_web_search(query: str) -> bool:
+def should_use_web_search(query: str, rag_results: Optional[List[Dict]] = None) -> bool:
     """
     Determine if a query would benefit from web search.
     
@@ -1352,6 +1362,7 @@ def should_use_web_search(query: str) -> bool:
     - Contains patterns suggesting need for current info
     - Asks about versions, best practices, etc.
     - Contains words suggesting external research needed
+    - RAG results are stale for volatile sources
     """
     query_lower = query.lower()
     
@@ -1370,7 +1381,43 @@ def should_use_web_search(query: str) -> bool:
     if has_question and has_update:
         return True
     
+    # Check RAG result freshness if provided
+    if rag_results:
+        try:
+            from ...rag.freshness import get_freshness_checker
+            checker = get_freshness_checker()
+            should_live, reason = checker.should_prefer_live_search(query, rag_results)
+            if should_live:
+                logger.debug(f"Freshness check recommends web search: {reason}")
+                return True
+        except Exception as e:
+            logger.debug(f"Freshness check failed: {e}")
+    
     return False
+
+
+def check_rag_freshness(query: str, rag_results: List[Dict]) -> Optional[str]:
+    """
+    Check freshness of RAG results and return warning if stale.
+    
+    Args:
+        query: User query
+        rag_results: List of RAG result documents
+        
+    Returns:
+        Warning message string if results are stale, None otherwise
+    """
+    if not rag_results:
+        return None
+    
+    try:
+        from ...rag.freshness import get_freshness_checker
+        checker = get_freshness_checker()
+        _, warning = checker.check_results(rag_results, query)
+        return warning if warning else None
+    except Exception as e:
+        logger.debug(f"Freshness check failed: {e}")
+        return None
 
 
 async def get_web_search_context(query: str, max_results: int = 5) -> str:
@@ -2678,14 +2725,17 @@ if FASTAPI_AVAILABLE:
             )
             
             # Phase 12c: RAG documentation retrieval (skip for unclear queries)
+            # Phase 54: Data freshness warnings
             rag_context = None
+            freshness_warning = None
             if not unclear_query:
-                rag_context = get_rag_context(message)
+                rag_context, freshness_warning = get_rag_context(message)
                 if rag_context:
                     full_prompt += f"{rag_context}\n\n"
                 
                 # Web search for queries needing current information
-                if should_use_web_search(message):
+                # Also trigger if RAG results are stale (Phase 54)
+                if should_use_web_search(message) or (freshness_warning and "outdated" in freshness_warning.lower()):
                     logger.info(f"Query triggers web search: {message[:50]}...")
                     web_context = await get_web_search_context(message)
                     if web_context:
@@ -4062,6 +4112,7 @@ if FASTAPI_AVAILABLE:
             return {
                 "status": "ok",
                 "chromadb_available": stats.get("chromadb_available", False),
+                "persist_path": stats.get("persist_path"),
                 "memory_events": stats.get("memory_events", 0),
                 "collections": stats.get("collections", {}),
             }

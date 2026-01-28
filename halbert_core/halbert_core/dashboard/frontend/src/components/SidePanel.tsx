@@ -27,6 +27,8 @@ import {
   X as XIcon,
   Camera,
   RotateCcw,
+  Bot,
+  Settings,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -38,6 +40,7 @@ import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useDebug } from '@/contexts/DebugContext'
 import { usePageContext } from '@/contexts/PageContext'
+import { AgentPanel, type AgentMessage } from '@/components/agent'
 
 // Types
 interface EditBlock {
@@ -95,7 +98,7 @@ interface TerminalLine {
   timestamp: Date
 }
 
-type PanelMode = 'chat' | 'terminal'
+type PanelMode = 'agent' | 'chat' | 'terminal'
 
 // Conversation types
 interface ConversationSummary {
@@ -227,6 +230,32 @@ export function SidePanel() {
   const [renameValue, setRenameValue] = useState('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   
+  
+  // Agent conversation state (similar to chat conversations)
+  const [agentConversations, setAgentConversations] = useState<ConversationSummary[]>([])
+  const [currentAgentConversationId, setCurrentAgentConversationId] = useState<string | null>(null)
+  const [showAgentConversationList, setShowAgentConversationList] = useState(false)
+  const [isAgentRenaming, setIsAgentRenaming] = useState(false)
+  const [agentRenameValue, setAgentRenameValue] = useState('')
+  const [showAgentDeleteConfirm, setShowAgentDeleteConfirm] = useState(false)
+  // Agent messages storage - persists across tab switches (keyed by conversation ID)
+  const [agentMessagesMap, setAgentMessagesMap] = useState<Record<string, AgentMessage[]>>({})
+  
+  // Get current agent messages
+  const currentAgentMessages = currentAgentConversationId 
+    ? (agentMessagesMap[currentAgentConversationId] || [])
+    : []
+  
+  // Update agent messages for current conversation
+  const setCurrentAgentMessages = (msgs: AgentMessage[]) => {
+    if (currentAgentConversationId) {
+      setAgentMessagesMap(prev => ({
+        ...prev,
+        [currentAgentConversationId]: msgs
+      }))
+    }
+  }
+  
   // Config editing context (Phase 18) - tracks if we're editing a config file
   const [configContext, setConfigContext] = useState<{
     filePath: string
@@ -255,6 +284,13 @@ export function SidePanel() {
     const actualWidth = isOpen ? width : 48
     document.documentElement.style.setProperty('--sidepanel-width', `${actualWidth}px`)
   }, [width, isOpen])
+  
+  // Auto-create agent session when switching to agent mode without one
+  useEffect(() => {
+    if (mode === 'agent' && !currentAgentConversationId) {
+      createNewAgentConversation()
+    }
+  }, [mode, currentAgentConversationId])
 
   // Load AI name, mentionables and conversations on mount
   useEffect(() => {
@@ -530,6 +566,61 @@ export function SidePanel() {
     }
   }, [])
 
+  // Listen for open-agent events (from @ buttons that should open Agent instead of Chat)
+  useEffect(() => {
+    interface OpenAgentEventDetail {
+      title?: string
+      context?: string
+      itemId?: string
+      prefillMessage?: string
+      data?: Record<string, unknown>
+    }
+    
+    const handleOpenAgent = (e: CustomEvent<OpenAgentEventDetail>) => {
+      const detail = e.detail
+      setMode('agent')
+      setIsOpen(true)
+      
+      // Create new session with context if provided
+      if (detail.context || detail.title) {
+        const newId = `agent-${Date.now()}`
+        const title = detail.title || 'Agent Session'
+        const newConv: ConversationSummary = {
+          id: newId,
+          name: title,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          persona: 'agent',
+          message_count: 0,
+          preview: detail.context?.slice(0, 50) || 'New session',
+        }
+        setAgentConversations(prev => [newConv, ...prev])
+        setCurrentAgentConversationId(newId)
+        
+        // If context provided, add it as an initial assistant message
+        if (detail.context) {
+          const contextMsg: AgentMessage = {
+            id: 'context-' + Date.now(),
+            role: 'assistant',
+            content: `**${title}**\n\n${detail.context}`,
+            timestamp: Date.now(),
+          }
+          setAgentMessagesMap(prev => ({
+            ...prev,
+            [newId]: [contextMsg]
+          }))
+        }
+      }
+      
+      console.log('[Agent] Opened via event:', detail)
+    }
+
+    window.addEventListener('halbert:open-agent', handleOpenAgent as unknown as EventListener)
+    return () => {
+      window.removeEventListener('halbert:open-agent', handleOpenAgent as unknown as EventListener)
+    }
+  }, [])
+
   // Listen for config editing context (Phase 18)
   useEffect(() => {
     const handleSetConfigContext = (e: CustomEvent<{ filePath: string; getContent: () => string }>) => {
@@ -694,6 +785,46 @@ export function SidePanel() {
   const getCurrentConversationName = () => {
     const conv = conversations.find(c => c.id === currentConversationId)
     return conv?.name || 'New Chat'
+  }
+
+  // Agent conversation management functions
+  const createNewAgentConversation = () => {
+    const newId = `agent-${Date.now()}`
+    const newConv: ConversationSummary = {
+      id: newId,
+      name: `Session ${agentConversations.length + 1}`,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      persona: 'agent',
+      message_count: 0,
+      preview: 'New agent session',
+    }
+    setAgentConversations(prev => [newConv, ...prev])
+    setCurrentAgentConversationId(newId)
+    setShowAgentConversationList(false)
+  }
+
+  const loadAgentConversation = (conversationId: string) => {
+    setCurrentAgentConversationId(conversationId)
+    setShowAgentConversationList(false)
+    // TODO: Load agent conversation history from backend when available
+  }
+
+  const renameAgentConversation = () => {
+    if (!currentAgentConversationId || !agentRenameValue.trim()) return
+    setAgentConversations(prev => prev.map(c => 
+      c.id === currentAgentConversationId 
+        ? { ...c, name: agentRenameValue.trim() }
+        : c
+    ))
+    setIsAgentRenaming(false)
+  }
+
+  const deleteAgentConversation = () => {
+    if (!currentAgentConversationId) return
+    setAgentConversations(prev => prev.filter(c => c.id !== currentAgentConversationId))
+    setCurrentAgentConversationId(null)
+    setShowAgentDeleteConfirm(false)
   }
 
   const handleChatInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -1410,7 +1541,9 @@ export function SidePanel() {
           className="flex flex-col items-center py-4 h-full w-full hover:bg-accent/50 transition-colors"
           onClick={() => setIsOpen(true)}
         >
-          {mode === 'chat' ? (
+          {mode === 'agent' ? (
+            <Bot className="h-5 w-5 text-primary mb-2" />
+          ) : mode === 'chat' ? (
             <MessageCircle className="h-5 w-5 text-primary mb-2" />
           ) : (
             <Terminal className="h-5 w-5 text-primary mb-2" />
@@ -1419,7 +1552,7 @@ export function SidePanel() {
             className="text-xs font-medium text-muted-foreground"
             style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
           >
-            {mode === 'chat' ? 'Chat' : 'Terminal'}
+            {mode === 'agent' ? 'Agent' : mode === 'chat' ? 'Chat' : 'Terminal'}
           </span>
         </button>
       ) : (
@@ -1428,6 +1561,18 @@ export function SidePanel() {
           <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
             {/* Mode Toggle */}
             <div className="flex items-center bg-muted rounded-md p-0.5">
+              <button
+                onClick={() => setMode('agent')}
+                className={cn(
+                  "flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors",
+                  mode === 'agent' 
+                    ? "bg-background shadow-sm text-foreground" 
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Bot className="h-3 w-3" />
+                Agent
+              </button>
               <button
                 onClick={() => setMode('chat')}
                 className={cn(
@@ -1454,14 +1599,24 @@ export function SidePanel() {
               </button>
             </div>
             
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="h-7 w-7"
-              onClick={() => setIsOpen(false)}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-7 w-7"
+                title="Settings"
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-7 w-7"
+                onClick={() => setIsOpen(false)}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
 
           {/* Conversation Selector (Chat mode only) */}
@@ -1824,16 +1979,40 @@ export function SidePanel() {
 
               {/* Mention Autocomplete */}
               {showMentions && filteredMentionables.length > 0 && (
-                <div className="mx-3 mb-1 bg-popover border rounded-md shadow-lg max-h-32 overflow-y-auto">
+                <div className="mx-3 mb-1 bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto">
                   {filteredMentionables.map((m) => (
-                    <button
-                      key={m.id}
-                      className="w-full px-3 py-1.5 text-left hover:bg-accent flex items-center gap-2 text-xs"
-                      onClick={() => insertMention(m)}
-                    >
-                      <AtSign className="h-3 w-3 text-muted-foreground" />
-                      <span className="font-medium">{m.mention}</span>
-                    </button>
+                    <div key={m.id} className="group">
+                      <button
+                        className="w-full px-3 py-1.5 text-left hover:bg-accent flex items-center gap-2 text-xs"
+                        onClick={() => insertMention(m)}
+                      >
+                        {m.type === 'terminal' ? (
+                          <Terminal className="h-3 w-3 text-green-500" />
+                        ) : (
+                          <AtSign className="h-3 w-3 text-muted-foreground" />
+                        )}
+                        <span className="font-medium">{m.mention}</span>
+                        {m.type === 'terminal' && terminalLines.length > 0 && (
+                          <span className="text-muted-foreground ml-auto">
+                            {terminalLines.length} lines
+                          </span>
+                        )}
+                      </button>
+                      {/* Phase 13c: Terminal preview on hover */}
+                      {m.type === 'terminal' && terminalLines.length > 0 && (
+                        <div className="hidden group-hover:block px-3 py-2 bg-zinc-900 border-t border-zinc-700 text-[10px] font-mono text-zinc-300 max-h-24 overflow-y-auto">
+                          {terminalLines.slice(-5).map((line, i) => (
+                            <div key={i} className={cn(
+                              "truncate",
+                              line.type === 'input' && "text-green-400",
+                              line.type === 'error' && "text-red-400"
+                            )}>
+                              {line.content.slice(0, 80)}{line.content.length > 80 ? '...' : ''}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}
@@ -1945,6 +2124,105 @@ export function SidePanel() {
             </>
           )}
 
+          {/* Agent Conversation Selector (Agent mode only) */}
+          {mode === 'agent' && (
+            <div className="px-3 py-2 border-b bg-muted/20 relative">
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setShowAgentConversationList(!showAgentConversationList)}
+                  className="flex-1 flex items-center gap-1 px-2 py-1 text-xs font-medium hover:bg-accent rounded truncate text-left"
+                >
+                  <ChevronDown className={cn("h-3 w-3 transition-transform", showAgentConversationList && "rotate-180")} />
+                  <span className="truncate">{agentConversations.find(c => c.id === currentAgentConversationId)?.name || 'New Session'}</span>
+                </button>
+                <button 
+                  onClick={createNewAgentConversation} 
+                  className="p-1 hover:bg-accent rounded"
+                  title="New session"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+                <button 
+                  onClick={() => {
+                    const current = agentConversations.find(c => c.id === currentAgentConversationId);
+                    if (current) {
+                      setAgentRenameValue(current.name);
+                      setIsAgentRenaming(true);
+                    }
+                  }} 
+                  className="p-1 hover:bg-accent rounded"
+                  title="Rename"
+                  disabled={!currentAgentConversationId}
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+                <button 
+                  onClick={() => setShowAgentDeleteConfirm(true)} 
+                  className="p-1 hover:bg-accent rounded text-destructive"
+                  title="Delete"
+                  disabled={!currentAgentConversationId}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+              
+              {/* Agent rename input */}
+              {isAgentRenaming && (
+                <div className="flex items-center gap-1 mt-1">
+                  <input
+                    type="text"
+                    value={agentRenameValue}
+                    onChange={(e) => setAgentRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') renameAgentConversation();
+                      if (e.key === 'Escape') setIsAgentRenaming(false);
+                    }}
+                    className="flex-1 px-2 py-1 text-xs bg-background border rounded"
+                    autoFocus
+                  />
+                  <button onClick={renameAgentConversation} className="p-1 hover:bg-accent rounded">
+                    <Check className="h-3 w-3 text-green-500" />
+                  </button>
+                  <button onClick={() => setIsAgentRenaming(false)} className="p-1 hover:bg-accent rounded">
+                    <X className="h-3 w-3 text-muted-foreground" />
+                  </button>
+                </div>
+              )}
+              
+              {/* Agent conversation dropdown list */}
+              {showAgentConversationList && !isAgentRenaming && (
+                <div className="absolute left-0 right-0 top-full z-20 bg-card border-b shadow-lg max-h-48 overflow-y-auto">
+                  {agentConversations.map((conv) => (
+                    <button
+                      key={conv.id}
+                      onClick={() => loadAgentConversation(conv.id)}
+                      className={cn(
+                        "w-full px-3 py-2 text-left text-xs hover:bg-accent flex flex-col gap-0.5",
+                        conv.id === currentAgentConversationId && "bg-accent"
+                      )}
+                    >
+                      <span className="font-medium truncate">{conv.name}</span>
+                      <span className="text-muted-foreground truncate">{conv.preview || 'No messages'}</span>
+                    </button>
+                  ))}
+                  {agentConversations.length === 0 && (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">No agent sessions</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Agent Mode */}
+          {mode === 'agent' && (
+            <AgentPanel 
+              className="flex-1 overflow-hidden"
+              messages={currentAgentMessages}
+              onMessagesChange={setCurrentAgentMessages}
+              sessionId={currentAgentConversationId || undefined}
+            />
+          )}
+
           {/* Terminal Mode */}
           {mode === 'terminal' && (
             <>
@@ -1987,13 +2265,25 @@ export function SidePanel() {
         </div>
       )}
       
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Confirmation Dialog (Chat) */}
       <ConfirmDialog
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={deleteCurrentConversation}
         title="Delete Conversation"
         description="Are you sure you want to delete this conversation? This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="destructive"
+      />
+      
+      {/* Delete Confirmation Dialog (Agent) */}
+      <ConfirmDialog
+        open={showAgentDeleteConfirm}
+        onClose={() => setShowAgentDeleteConfirm(false)}
+        onConfirm={deleteAgentConversation}
+        title="Delete Agent Session"
+        description="Are you sure you want to delete this agent session? This action cannot be undone."
         confirmText="Delete"
         cancelText="Cancel"
         variant="destructive"

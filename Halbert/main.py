@@ -228,7 +228,7 @@ def cmd_index_query(args):
     if HalbertIndex is None:
         print('halbert_core not available.')
         return
-    idx = HalbertIndex(data_subdir('index') if data_subdir else None)
+    idx = HalbertIndex()
     res = idx.query(args.text, k=int(args.k))
     for r in res:
         print(r)

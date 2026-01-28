@@ -41,6 +41,7 @@ dashboard = [
   "requests>=2.31",
   "psutil>=5.9",
   "aiofiles>=23.2",
+  "huggingface-hub>=0.20",  # Dataset downloads from HF Hub
 ]
 
 # Phase 38: Cloud API providers (optional - install if using cloud models)

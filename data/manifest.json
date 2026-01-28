@@ -1,0 +1,152 @@
+{
+  "version": "1.0.0",
+  "release_date": "2026-01-11",
+  "description": "Initial versioned release of Halbert RAG corpus - Linux system administration knowledge base",
+  "sources": {
+    "arch_wiki": {
+      "document_count": 22794,
+      "license": "GNU FDL 1.3",
+      "scraped_at": "2025-12-01",
+      "description": "Arch Linux Wiki - comprehensive Linux documentation",
+      "paths": [
+        "linux/arch-wiki-full/",
+        "linux/arch-wiki-ext/",
+        "linux/more-arch/"
+      ],
+      "mac_build": false
+    },
+    "man_pages": {
+      "document_count": 17084,
+      "license": "Various (GPL, BSD, MIT)",
+      "scraped_at": "2025-12-15",
+      "description": "Linux man pages - command reference documentation",
+      "paths": [
+        "linux/man-pages/"
+      ],
+      "mac_build": true
+    },
+    "hf_tldr": {
+      "document_count": 481,
+      "license": "CC BY 4.0",
+      "scraped_at": "2025-11-01",
+      "description": "TLDR simplified man page summaries",
+      "paths": [
+        "linux/hf-datasets/tldr_man_pages.jsonl"
+      ],
+      "mac_build": true
+    },
+    "hf_unix_commands": {
+      "document_count": 100,
+      "license": "Apache 2.0",
+      "scraped_at": "2025-11-01",
+      "description": "Unix command examples and explanations",
+      "paths": [
+        "linux/hf-datasets/unix_commands.jsonl"
+      ],
+      "mac_build": true
+    },
+    "hf_arch_wiki": {
+      "document_count": 2140,
+      "license": "GNU FDL 1.3",
+      "scraped_at": "2025-11-01",
+      "description": "Arch Wiki subset from HuggingFace",
+      "paths": [
+        "linux/hf-datasets/arch_wiki.jsonl"
+      ],
+      "mac_build": false
+    },
+    "vendor_docs": {
+      "document_count": 54,
+      "license": "Various (permissive)",
+      "scraped_at": "2025-12-01",
+      "description": "Official vendor documentation (Docker, K8s, systemd, etc.)",
+      "paths": [
+        "linux/vendor-docs/",
+        "linux/docker-docs/",
+        "linux/kubernetes-docs/",
+        "linux/systemd-docs/",
+        "linux/nvidia-docs/",
+        "linux/podman-docs/"
+      ],
+      "mac_build": true
+    },
+    "stack_exchange": {
+      "document_count": 310,
+      "license": "CC BY-SA 4.0",
+      "scraped_at": "2025-12-01",
+      "description": "Unix & Linux Stack Exchange, Server Fault Q&A",
+      "paths": [
+        "linux/unix-se/",
+        "linux/serverfault/"
+      ],
+      "mac_build": true,
+      "attribution_required": true
+    },
+    "ubuntu_docs": {
+      "document_count": 19,
+      "license": "CC BY-SA 3.0",
+      "scraped_at": "2025-12-01",
+      "description": "Ubuntu official documentation",
+      "paths": [
+        "linux/ubuntu-docs/",
+        "linux/ubuntu-server/"
+      ],
+      "mac_build": true
+    },
+    "topic_guides": {
+      "document_count": 200,
+      "license": "Various (permissive)",
+      "scraped_at": "2025-12-15",
+      "description": "Topic-specific guides (networking, security, backup, etc.)",
+      "paths": [
+        "linux/network-docs/",
+        "linux/security-docs/",
+        "linux/backup-docs/",
+        "linux/filesystem-docs/",
+        "linux/monitoring-docs/",
+        "linux/logging-docs/",
+        "linux/automation-docs/"
+      ],
+      "mac_build": true
+    },
+    "macos_homebrew": {
+      "document_count": 0,
+      "license": "BSD-2-Clause",
+      "scraped_at": "2026-01-01",
+      "description": "Homebrew package manager documentation",
+      "paths": [
+        "macos/homebrew/"
+      ],
+      "mac_build": true,
+      "linux_build": false
+    },
+    "macos_support": {
+      "document_count": 0,
+      "license": "Apple Terms",
+      "scraped_at": "2026-01-01",
+      "description": "Apple support articles and macOS documentation",
+      "paths": [
+        "macos/support/"
+      ],
+      "mac_build": true,
+      "linux_build": false
+    }
+  },
+  "total_documents": 47236,
+  "total_chunks": 0,
+  "index_schema_version": "1.0",
+  "remote_url": "",
+  "check_updates_url": "",
+  "notes": {
+    "mac_build_exclusions": [
+      "All sources with mac_build: false are excluded from paid Mac App Store build",
+      "GNU FDL content (Arch Wiki) excluded due to copyleft licensing",
+      "See docs/Phase54_licensing-roundup/ for full licensing audit"
+    ],
+    "attribution_requirements": [
+      "Stack Exchange content requires CC BY-SA 4.0 attribution",
+      "TLDR content requires CC BY 4.0 attribution",
+      "See THIRD-PARTY-LICENSES.txt in distribution"
+    ]
+  }
+}

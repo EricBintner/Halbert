@@ -81,6 +81,11 @@ export function MarkdownRenderer({
 }: MarkdownRendererProps): React.ReactNode {
   if (!text) return null
   
+  // DEBUG: Log the raw text to see if newlines are present
+  console.log('[MarkdownRenderer] Input text (first 500 chars):', JSON.stringify(text.slice(0, 500)));
+  console.log('[MarkdownRenderer] Has double newlines:', text.includes('\n\n'));
+  console.log('[MarkdownRenderer] Newline count:', (text.match(/\n/g) || []).length);
+  
   // First, extract and replace code blocks with placeholders
   const codeBlocks: Array<{ lang: string; code: string }> = []
   const textWithPlaceholders = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
@@ -88,8 +93,16 @@ export function MarkdownRenderer({
     return `__CODE_BLOCK_${codeBlocks.length - 1}__`
   })
   
-  // Split into paragraphs (but keep single newlines within bullet lists)
-  const paragraphs = textWithPlaceholders.split(/\n\n+/)
+  // Normalize newlines: ensure headers and lists get their own paragraphs
+  // This handles cases where LLM only uses single newlines
+  const normalized = textWithPlaceholders
+    .replace(/\n(#{1,3}\s)/g, '\n\n$1')  // Add double newline before headers
+    .replace(/\n(\d+\.\s)/g, '\n\n$1')   // Add double newline before numbered lists
+    .replace(/\n([-*•]\s)/g, '\n\n$1')   // Add double newline before bullet lists
+    .replace(/\n(```)/g, '\n\n$1')       // Add double newline before code blocks
+  
+  // Split into paragraphs
+  const paragraphs = normalized.split(/\n\n+/)
   
   return paragraphs.map((paragraph, pIndex) => {
     const trimmed = paragraph.trim()
@@ -125,6 +138,20 @@ export function MarkdownRenderer({
         <h2 key={pIndex} className="font-bold text-base mt-3 mb-2 first:mt-0">
           {trimmed.slice(2)}
         </h2>
+      )
+    }
+    
+    // Handle numbered lists (lines starting with 1. 2. etc)
+    if (trimmed.match(/^\d+\.\s/m)) {
+      const items = trimmed.split(/\n/).filter(line => line.trim())
+      return (
+        <ol key={pIndex} className={`space-y-1.5 my-2 ml-1 list-decimal list-inside ${compact ? 'my-1' : ''}`}>
+          {items.map((item, iIndex) => (
+            <li key={iIndex} className="text-sm">
+              <span>{formatInlineMarkdown(item.replace(/^\d+\.\s*/, ''))}</span>
+            </li>
+          ))}
+        </ol>
       )
     }
     

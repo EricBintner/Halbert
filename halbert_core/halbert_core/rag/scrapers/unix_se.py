@@ -179,7 +179,7 @@ class UnixSEScraper(BaseScraper):
                 source=self.get_source_name(),
                 category=self._categorize_tags(tags),
                 tags=['unix', 'linux', 'stackexchange'] + tags[:5],
-                scraped_at=datetime.utcnow().isoformat(),
+                scraped_at=datetime.now().isoformat(),
                 metadata={
                     'question_id': q_id,
                     'score': score,
@@ -265,4 +265,4 @@ if __name__ == "__main__":
     
     if docs:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-        scraper.save_documents(docs, f"{args.output_dir}/unix_se.jsonl")
+        scraper.save_documents(docs, "unix_se.jsonl")

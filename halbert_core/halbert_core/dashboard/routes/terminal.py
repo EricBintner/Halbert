@@ -3,6 +3,8 @@ Terminal API routes.
 
 Provides endpoints for terminal command execution.
 Uses subprocess for now - can be upgraded to full PTY later.
+
+Phase 13d: Integrated with ToolSafetyFramework for tiered safety checks.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import logging
 import subprocess
 import shlex
 from typing import Optional
+from enum import Enum
 
 try:
     from fastapi import APIRouter, HTTPException
@@ -25,10 +28,19 @@ logger = logging.getLogger('halbert.dashboard.routes.terminal')
 router = APIRouter() if FASTAPI_AVAILABLE else None
 
 
+class SafetyTier(str, Enum):
+    """Phase 13d: Command safety tiers."""
+    SAFE = "safe"           # Auto-execute without warning
+    CAUTION = "caution"     # Show warning, execute on confirm
+    DANGEROUS = "dangerous" # Show strong warning, require explicit confirm
+    BLOCKED = "blocked"     # Never execute
+
+
 class CommandRequest(BaseModel):
     command: str
     cwd: Optional[str] = None
     timeout: int = 30
+    force: bool = False  # Skip safety confirmation (for pre-approved commands)
 
 
 class CommandResponse(BaseModel):
@@ -36,47 +48,98 @@ class CommandResponse(BaseModel):
     error: str
     exit_code: int
     command: str
+    safety_tier: str = "safe"
+    safety_warning: str = ""
 
 
-# Blocked commands for safety
+class SafetyCheckResponse(BaseModel):
+    """Phase 13d: Safety check result for frontend."""
+    command: str
+    tier: str
+    allowed: bool
+    warning: str
+    requires_confirmation: bool
+    suggestion: str = ""
+
+
+# Blocked commands - NEVER execute
 BLOCKED_COMMANDS = {
     'rm -rf /',
     'rm -rf /*',
-    'dd if=/dev/zero',
-    'mkfs',
+    'dd if=/dev/zero of=/dev/sd',
+    'mkfs.',
     ':(){:|:&};:',  # Fork bomb
     '> /dev/sda',
+    '> /dev/nvme',
 }
 
-# Commands that require approval (future integration)
+# Dangerous commands - require explicit confirmation
 DANGEROUS_PATTERNS = [
-    'rm -rf',
-    'dd ',
-    'mkfs',
-    'format',
-    'fdisk',
-    'parted',
-    'sudo rm',
-    'chmod 777',
-    'chown -R',
+    ('rm -rf', 'Recursive forced delete - files cannot be recovered'),
+    ('dd if=', 'Direct disk write - can destroy data'),
+    ('mkfs', 'Filesystem format - will erase all data'),
+    ('fdisk', 'Partition table modification'),
+    ('parted', 'Partition modification'),
+    ('sudo rm -rf', 'Elevated recursive delete'),
+    ('chmod -R 777', 'Recursive world-writable permissions'),
+    ('chown -R', 'Recursive ownership change'),
+    ('systemctl disable', 'Disabling system service'),
+    ('apt remove', 'Package removal'),
+    ('apt purge', 'Package purge with config'),
+]
+
+# Caution commands - show warning but allow
+CAUTION_PATTERNS = [
+    ('sudo ', 'Elevated privileges required'),
+    ('rm ', 'File deletion'),
+    ('mv ', 'File move/rename'),
+    ('chmod ', 'Permission change'),
+    ('chown ', 'Ownership change'),
+    ('systemctl restart', 'Service restart'),
+    ('systemctl stop', 'Service stop'),
+    ('pip install', 'Python package installation'),
+    ('npm install', 'Node.js package installation'),
+    ('apt install', 'Package installation'),
 ]
 
 
-def is_command_safe(command: str) -> tuple[bool, str]:
-    """Check if command is safe to execute."""
+def check_command_safety(command: str) -> tuple[SafetyTier, str, str]:
+    """
+    Phase 13d: Check command safety tier.
+    
+    Returns: (tier, warning, suggestion)
+    """
     cmd_lower = command.lower().strip()
     
-    # Check blocked commands
+    # Check blocked commands first
     for blocked in BLOCKED_COMMANDS:
         if blocked in cmd_lower:
-            return False, f"Blocked command pattern: {blocked}"
+            return SafetyTier.BLOCKED, f"This command is blocked: {blocked}", ""
     
-    # Check dangerous patterns (warn but allow)
-    for pattern in DANGEROUS_PATTERNS:
+    # Check dangerous patterns
+    for pattern, reason in DANGEROUS_PATTERNS:
         if pattern in cmd_lower:
-            return True, f"Warning: potentially dangerous command ({pattern})"
+            suggestion = ""
+            if 'rm -rf' in pattern:
+                suggestion = "Consider using 'rm -ri' for interactive deletion"
+            return SafetyTier.DANGEROUS, reason, suggestion
     
-    return True, ""
+    # Check caution patterns
+    for pattern, reason in CAUTION_PATTERNS:
+        if pattern in cmd_lower:
+            return SafetyTier.CAUTION, reason, ""
+    
+    return SafetyTier.SAFE, "", ""
+
+
+def is_command_safe(command: str) -> tuple[bool, str]:
+    """Legacy safety check for backward compatibility."""
+    tier, warning, _ = check_command_safety(command)
+    
+    if tier == SafetyTier.BLOCKED:
+        return False, warning
+    
+    return True, warning
 
 
 if FASTAPI_AVAILABLE:
@@ -191,14 +254,46 @@ if FASTAPI_AVAILABLE:
         }
     
     
+    @router.post("/check-safety", response_model=SafetyCheckResponse)
+    async def check_safety(request: CommandRequest):
+        """
+        Phase 13d: Check command safety tier before execution.
+        
+        Frontend should call this before executing dangerous commands
+        to show appropriate warnings and get user confirmation.
+        """
+        command = request.command.strip()
+        tier, warning, suggestion = check_command_safety(command)
+        
+        return SafetyCheckResponse(
+            command=command,
+            tier=tier.value,
+            allowed=tier != SafetyTier.BLOCKED,
+            warning=warning,
+            requires_confirmation=tier in (SafetyTier.CAUTION, SafetyTier.DANGEROUS),
+            suggestion=suggestion,
+        )
+    
+    
     @router.get("/history")
     async def get_history(limit: int = 50):
         """
-        Get command history.
-        
-        TODO: Implement persistent history storage.
+        Get command history from persistent storage.
         """
-        return {
-            "history": [],
-            "message": "History not implemented yet",
-        }
+        from pathlib import Path
+        import json
+        
+        history_file = Path.home() / '.config' / 'halbert' / 'terminal_history.json'
+        
+        if not history_file.exists():
+            return {"history": [], "total": 0}
+        
+        try:
+            with open(history_file) as f:
+                all_history = json.load(f)
+            return {
+                "history": all_history[-limit:],
+                "total": len(all_history),
+            }
+        except Exception:
+            return {"history": [], "total": 0}

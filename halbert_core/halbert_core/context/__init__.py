@@ -1,0 +1,44 @@
+"""
+Context module for assembling and managing context for LLM calls.
+
+Phase 36: Token budget management and multi-source context assembly.
+"""
+
+from .tokens import TokenCounter
+from .assembler import ContextAssembler, AssembledContext
+from .adapters import (
+    RAGServiceAdapter,
+    DiscoveryServiceAdapter,
+    MemoryServiceAdapter,
+    create_wired_context_assembler,
+)
+from .prioritizer import (
+    ContextPrioritizer,
+    ContextItem,
+    ContextSource,
+)
+from .cache import (
+    ContextCache,
+    SemanticCache,
+    CacheEntry,
+    get_context_cache,
+)
+
+__all__ = [
+    'TokenCounter',
+    'ContextAssembler',
+    'AssembledContext',
+    'RAGServiceAdapter',
+    'DiscoveryServiceAdapter',
+    'MemoryServiceAdapter',
+    'create_wired_context_assembler',
+    # Prioritizer
+    'ContextPrioritizer',
+    'ContextItem',
+    'ContextSource',
+    # Cache
+    'ContextCache',
+    'SemanticCache',
+    'CacheEntry',
+    'get_context_cache',
+]
