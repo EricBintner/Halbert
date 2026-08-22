@@ -2691,9 +2691,12 @@ if FASTAPI_AVAILABLE:
             try:
                 async for event in agent.process(
                     query=request.message,
-                    conversation_history=request.conversation_history if hasattr(request, "conversation_history") else None,
+                    conversation_history=[
+                        {"role": m.role, "content": m.content}
+                        for m in request.history
+                    ] if request.history else None,
                 ):
-                    event_type = event.event_type if hasattr(event, "event_type") else "unknown"
+                    event_type = event.type if hasattr(event, "type") else "unknown"
                     data = event.data if hasattr(event, "data") else {}
                     
                     if event_type == "response_chunk":
@@ -2704,7 +2707,7 @@ if FASTAPI_AVAILABLE:
                         thought = data.get("content", "")
                         yield f'data: {json.dumps({"thinking": thought, "done": false})}\n\n'
                     elif event_type == "state_change":
-                        yield f'data: {json.dumps({"state": data.get("new_state", ""), "done": false})}\n\n'
+                        yield f'data: {json.dumps({"state": data.get("state", ""), "done": false})}\n\n'
                     elif event_type == "context_loaded":
                         yield f'data: {json.dumps({"activity": {"type": "read", "data": data}, "done": false})}\n\n'
                     elif event_type == "confidence_update":

@@ -254,7 +254,7 @@ class LLMClientAdapter:
         
         specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
         if specialist_model:
-            complexity_score = _score_query_complexity(prompt)
+            complexity_score = score_query_complexity(prompt)
             if complexity_score >= 0.5:
                 model = specialist_model
                 endpoint = specialist_endpoint

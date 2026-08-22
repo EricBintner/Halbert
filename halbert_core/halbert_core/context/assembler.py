@@ -66,6 +66,7 @@ class ContextAssembler:
         token_counter: TokenCounter = None,
         priorities: Dict[str, float] = None,
         clara_provider=None,
+        extra_sources: Dict[str, Any] = None,
     ):
         """
         Initialize the context assembler.
@@ -77,6 +78,9 @@ class ContextAssembler:
             token_counter: Token counting utility
             priorities: Custom priority weights
             clara_provider: Optional CLaRa compression provider
+            extra_sources: Additional source adapters keyed by source name
+                (e.g. {"system_identity": adapter, "safety": adapter}).
+                Each adapter must have an async search(query, limit) method.
         """
         self.rag = rag_service
         self.memory = memory_service
@@ -85,6 +89,7 @@ class ContextAssembler:
         self.priorities = priorities or self.DEFAULT_PRIORITIES
         self._clara = clara_provider
         self._clara_threshold = 4000  # Compress if context > this many tokens
+        self._extra_sources = extra_sources or {}
     
     async def assemble(
         self,
@@ -148,6 +153,13 @@ class ContextAssembler:
         
         if "discovery" in active_sources and self.discovery:
             retrieval_tasks.append(("discovery", self._retrieve_discovery(query, budgets.get("discovery", 0))))
+        
+        # Extra sources (Phase C: system_identity, self_knowledge, telemetry, safety)
+        for source_name, adapter in self._extra_sources.items():
+            if source_name in active_sources and adapter is not None:
+                retrieval_tasks.append(
+                    (source_name, self._retrieve_extra(query, budgets.get(source_name, 0), adapter, source_name))
+                )
         
         # Execute retrieval in parallel
         if retrieval_tasks:
@@ -462,6 +474,45 @@ class ContextAssembler:
             logger.error(f"Discovery retrieval error: {e}")
             return {}
     
+    async def _retrieve_extra(self, query: str, max_tokens: int, adapter: Any, source_name: str) -> Dict:
+        """Retrieve and format results from an extra source adapter."""
+        if max_tokens <= 0:
+            return {}
+        
+        try:
+            results = await adapter.search(query, limit=5)
+            
+            if not results:
+                return {}
+            
+            lines = [f"## {source_name.replace('_', ' ').title()}"]
+            tokens = self.tokens.count(lines[0])
+            items = 0
+            
+            for item in results:
+                content = item.get("content", "")[:500]
+                line = f"- {content}"
+                line_tokens = self.tokens.count(line) + 1
+                
+                if tokens + line_tokens > max_tokens:
+                    break
+                
+                lines.append(line)
+                tokens += line_tokens
+                items += 1
+            
+            if items == 0:
+                return {}
+            
+            return {
+                "content": "\n".join(lines),
+                "tokens": tokens,
+                "items": items
+            }
+        except Exception as e:
+            logger.error(f"Extra source ({source_name}) retrieval error: {e}")
+            return {}
+
     def _combine_sources(self, sources: List[Dict]) -> str:
         """
         Combine sources with position-aware ordering.

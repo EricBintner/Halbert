@@ -120,23 +120,17 @@ def get_event_mapper():
             logger.warning(f"Could not register state trackers: {e}")
             _trackers = {}
 
-        # Try to get discovery engine and telemetry store
+        # Try to get discovery engine (telemetry is handled by TelemetryAdapter via psutil)
         discovery = None
-        telemetry = None
         try:
             from ..discovery.engine import get_engine
             discovery = get_engine()
         except Exception:
             pass
-        try:
-            from ..obs.collector import get_collector
-            telemetry = get_collector()
-        except Exception:
-            pass
 
         _event_mapper = SystemEventMapper(
             discovery_engine=discovery,
-            telemetry_store=telemetry,
+            telemetry_store=None,
             trackers=_trackers,
         )
 

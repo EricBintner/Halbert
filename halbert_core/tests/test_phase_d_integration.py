@@ -226,7 +226,7 @@ class TestStateMachineReflecting:
             events.append(event)
 
         # Should have a thinking event
-        thinking_events = [e for e in events if e.event_type == "thinking"]
+        thinking_events = [e for e in events if e.type == "thinking"]
         assert len(thinking_events) == 1
         assert "disk" in thinking_events[0].data.get("content", "")
 
@@ -406,3 +406,46 @@ class TestContextAdapters:
         result = adapter.validate_input("test message")
         assert "safe" in result
         assert result["safe"] is True  # No validator wired = safe
+
+
+class TestExtendedContextAssembler:
+    """Test that create_extended_context_assembler wires all adapters."""
+
+    def test_extended_assembler_has_extra_sources(self):
+        """ContextAssembler should have extra_sources dict with 4 adapters."""
+        from halbert_core.context.extra_adapters import create_extended_context_assembler
+        assembler = create_extended_context_assembler()
+        assert hasattr(assembler, "_extra_sources")
+        assert "system_identity" in assembler._extra_sources
+        assert "self_knowledge" in assembler._extra_sources
+        assert "telemetry" in assembler._extra_sources
+        assert "safety" in assembler._extra_sources
+
+    def test_extended_assembler_priorities_include_new_sources(self):
+        """Priorities dict should include the 4 new source names."""
+        from halbert_core.context.extra_adapters import create_extended_context_assembler
+        assembler = create_extended_context_assembler()
+        assert "system_identity" in assembler.priorities
+        assert "self_knowledge" in assembler.priorities
+        assert "telemetry" in assembler.priorities
+        assert "safety" in assembler.priorities
+
+
+class TestStreamEventAttributes:
+    """Test StreamEvent attribute names (regression for audit bug #4/#5)."""
+
+    def test_stream_event_uses_type_not_event_type(self):
+        """StreamEvent should have .type attribute, not .event_type."""
+        from halbert_core.agents.events import StreamEvent
+        event = StreamEvent.thinking("test-session", "test thought")
+        assert hasattr(event, "type")
+        assert event.type == "thinking"
+        assert not hasattr(event, "event_type")
+
+    def test_state_change_data_key_is_state(self):
+        """state_change event should use 'state' key in data, not 'new_state'."""
+        from halbert_core.agents.events import StreamEvent
+        event = StreamEvent.state_change("test-session", "reflecting", "observing")
+        assert "state" in event.data
+        assert event.data["state"] == "reflecting"
+        assert "new_state" not in event.data

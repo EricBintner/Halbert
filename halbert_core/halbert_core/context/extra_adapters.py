@@ -174,59 +174,105 @@ class TelemetryAdapter:
         if self._initialized:
             return
         if self._store is None:
+            # Try existing telemetry modules (if they exist in future)
             try:
                 from ..obs.collector import get_collector
 
                 self._store = get_collector()
-                logger.info("Telemetry adapter initialized")
+                logger.info("Telemetry adapter initialized from obs.collector")
             except Exception:
-                try:
-                    from ..obs import get_telemetry_store
-
-                    self._store = get_telemetry_store()
-                except Exception:
-                    pass
+                pass
         self._initialized = True
 
     async def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search telemetry for relevant events."""
+        """Search telemetry for relevant events.
+
+        Falls back to live psutil readings if no telemetry store is wired.
+        """
         self._ensure_initialized()
-        if self._store is None:
-            return []
 
-        try:
-            if hasattr(self._store, "search"):
-                results = self._store.search(query, limit=limit)
-            elif hasattr(self._store, "get_recent"):
-                results = self._store.get_recent(limit=limit)
-            else:
-                return []
-
-            items = []
-            for r in results:
-                if isinstance(r, dict):
-                    items.append(
-                        {
-                            "content": r.get("content", r.get("summary", str(r))),
-                            "category": r.get("category", "telemetry"),
-                            "metadata": {
-                                k: v
-                                for k, v in r.items()
-                                if k not in ("content", "summary", "category")
-                            },
-                        }
-                    )
+        # If we have a store, use it
+        if self._store is not None:
+            try:
+                if hasattr(self._store, "search"):
+                    results = self._store.search(query, limit=limit)
+                elif hasattr(self._store, "get_recent"):
+                    results = self._store.get_recent(limit=limit)
                 else:
-                    items.append(
-                        {
-                            "content": str(r),
-                            "category": "telemetry",
-                            "metadata": {},
-                        }
-                    )
-            return items
+                    results = []
+
+                items = []
+                for r in results:
+                    if isinstance(r, dict):
+                        items.append(
+                            {
+                                "content": r.get("content", r.get("summary", str(r))),
+                                "category": r.get("category", "telemetry"),
+                                "metadata": {
+                                    k: v
+                                    for k, v in r.items()
+                                    if k not in ("content", "summary", "category")
+                                },
+                            }
+                        )
+                    else:
+                        items.append(
+                            {
+                                "content": str(r),
+                                "category": "telemetry",
+                                "metadata": {},
+                            }
+                        )
+                return items
+            except Exception as e:
+                logger.error(f"Telemetry search error: {e}")
+
+        # Fallback: live psutil readings
+        return self._get_live_telemetry()
+
+    def _get_live_telemetry(self) -> List[Dict[str, Any]]:
+        """Get live system telemetry via psutil."""
+        try:
+            import psutil
+            import os
+
+            cpu_percent = psutil.cpu_percent(interval=0.5)
+            mem = psutil.virtual_memory()
+            load_avg = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
+
+            parts = [
+                f"## System Telemetry",
+                f"- CPU usage: {cpu_percent:.1f}%",
+                f"- Memory: {mem.percent:.1f}% ({mem.used // (1024**3):.1f}GB / {mem.total // (1024**3):.1f}GB)",
+                f"- Load average: {load_avg:.2f}",
+            ]
+
+            # Disk usage for root
+            try:
+                disk = psutil.disk_usage("/")
+                parts.append(f"- Root disk: {disk.percent:.1f}% ({disk.used // (1024**3):.1f}GB / {disk.total // (1024**3):.1f}GB)")
+            except Exception:
+                pass
+
+            # Network connections count
+            try:
+                net = psutil.net_connections()
+                parts.append(f"- Network connections: {len(net)}")
+            except Exception:
+                pass
+
+            return [
+                {
+                    "content": "\n".join(parts),
+                    "category": "telemetry",
+                    "metadata": {"source": "psutil", "live": True},
+                }
+            ]
+        except ImportError:
+            logger.debug("psutil not available for live telemetry")
+            return []
         except Exception as e:
-            logger.error(f"Telemetry search error: {e}")
+            logger.error(f"Live telemetry error: {e}")
             return []
 
 
@@ -359,4 +405,10 @@ def create_extended_context_assembler():
         discovery_service=discovery_adapter,
         token_counter=token_counter,
         priorities=extended_priorities,
+        extra_sources={
+            "system_identity": identity_adapter,
+            "self_knowledge": self_knowledge_adapter,
+            "telemetry": telemetry_adapter,
+            "safety": safety_adapter,
+        },
     )
