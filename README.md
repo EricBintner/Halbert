@@ -115,7 +115,7 @@ python Halbert/main.py snapshot-configs
 ├────────────────────────────────────────┤
 │ CLI / Dashboard                        │
 ├────────────────────────────────────────┤
-│ Runtime Engine (LangGraph)             │
+│ Runtime Engine                         │
 ├────────────┬──────────────┬────────────┤
 │   Memory   │      RAG     │   Tools    │
 │ (ChromaDB) │  (Docs + KB) │  (System)  │

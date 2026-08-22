@@ -1220,119 +1220,6 @@ def call_ollama_with_images(
         return f"Sorry, I couldn't process the image: {str(e)}"
 
 
-# Phase 12c: RAG Pipeline singleton for documentation retrieval
-_rag_pipeline = None
-_rag_loading = False
-
-
-def get_rag_pipeline():
-    """Get or create the RAG pipeline singleton (lazy loaded)."""
-    global _rag_pipeline, _rag_loading
-    
-    if _rag_pipeline is not None:
-        return _rag_pipeline
-    
-    if _rag_loading:
-        return None  # Still loading, skip RAG for this request
-    
-    try:
-        _rag_loading = True
-        from ...rag.pipeline import RAGPipeline
-        
-        # Find data directory
-        repo_root = Path(__file__).resolve().parent.parent.parent.parent.parent
-        data_dir = repo_root / 'data'
-        
-        if not data_dir.exists():
-            logger.warning(f"Data directory not found: {data_dir}")
-            return None
-        
-        logger.info("Initializing RAG pipeline for chat...")
-        pipeline = RAGPipeline(
-            data_dir=data_dir,
-            embedding_model="all-MiniLM-L6-v2",
-            use_reranking=False,  # Faster without reranking
-            top_k=3,  # Get top 3 documents
-            max_context_length=2048
-        )
-        
-        # Load and index documents
-        merged_file = data_dir / 'linux' / 'merged' / 'rag_corpus_merged.jsonl'
-        if merged_file.exists():
-            pipeline.load_and_index_documents(jsonl_path=merged_file)
-            _rag_pipeline = pipeline
-            logger.info("RAG pipeline ready for chat")
-        else:
-            logger.warning(f"RAG corpus not found: {merged_file}")
-            
-    except Exception as e:
-        logger.error(f"Failed to initialize RAG pipeline: {e}")
-    finally:
-        _rag_loading = False
-    
-    return _rag_pipeline
-
-
-def get_rag_context(query: str, max_chars: int = 1500, include_freshness: bool = True) -> Tuple[str, Optional[str]]:
-    """
-    Retrieve relevant documentation context for a query.
-    
-    Phase 12c: RAG integration for knowledge grounding.
-    Phase 54: Data freshness warnings.
-    
-    Returns:
-        Tuple of (context_string, freshness_warning or None)
-    """
-    try:
-        pipeline = get_rag_pipeline()
-        if pipeline is None:
-            return "", None
-        
-        # Retrieve relevant documents
-        documents = pipeline.retrieve(query)
-        
-        if not documents:
-            return "", None
-        
-        # Check freshness and generate warning if needed
-        freshness_warning = None
-        if include_freshness:
-            freshness_warning = check_rag_freshness(query, documents)
-        
-        # Build concise context
-        context_parts = ["\n=== DOCUMENTATION ==="]
-        total_chars = 0
-        
-        for doc in documents:
-            name = doc.get('name', 'Unknown')
-            section = doc.get('section', '')
-            description = doc.get('description', '')
-            content = doc.get('full_text', doc.get('content', ''))[:500]  # First 500 chars
-            
-            if section:
-                header = f"\n[{name}({section})]"
-            else:
-                header = f"\n[{name}]"
-            
-            entry = header
-            if description:
-                entry += f"\n{description}"
-            if content:
-                entry += f"\n{content}"
-            
-            if total_chars + len(entry) > max_chars:
-                break
-            
-            context_parts.append(entry)
-            total_chars += len(entry)
-        
-        context = "\n".join(context_parts) if len(context_parts) > 1 else ""
-        return context, freshness_warning
-    except Exception as e:
-        logger.warning(f"RAG retrieval failed: {e}")
-        return "", None
-
-
 # Topic detection for query-aware context injection (Phase 12b)
 TOPIC_KEYWORDS = {
     'storage': ['disk', 'filesystem', 'mount', 'zfs', 'btrfs', 'bcachefs', 'ext4', 'nvme', 'ssd', 'raid', 'partition', 'volume', 'drive', 'storage', 'hdd', 'space', 'full'],
@@ -1394,30 +1281,6 @@ def should_use_web_search(query: str, rag_results: Optional[List[Dict]] = None) 
             logger.debug(f"Freshness check failed: {e}")
     
     return False
-
-
-def check_rag_freshness(query: str, rag_results: List[Dict]) -> Optional[str]:
-    """
-    Check freshness of RAG results and return warning if stale.
-    
-    Args:
-        query: User query
-        rag_results: List of RAG result documents
-        
-    Returns:
-        Warning message string if results are stale, None otherwise
-    """
-    if not rag_results:
-        return None
-    
-    try:
-        from ...rag.freshness import get_freshness_checker
-        checker = get_freshness_checker()
-        _, warning = checker.check_results(rag_results, query)
-        return warning if warning else None
-    except Exception as e:
-        logger.debug(f"Freshness check failed: {e}")
-        return None
 
 
 async def get_web_search_context(query: str, max_results: int = 5) -> str:
@@ -2724,18 +2587,15 @@ if FASTAPI_AVAILABLE:
                 ])
             )
             
-            # Phase 12c: RAG documentation retrieval (skip for unclear queries)
-            # Phase 54: Data freshness warnings
-            rag_context = None
-            freshness_warning = None
+            # RAG documentation retrieval via the production ChromaDB path
+            # (skip for unclear queries)
             if not unclear_query:
-                rag_context, freshness_warning = get_rag_context(message)
-                if rag_context:
-                    full_prompt += f"{rag_context}\n\n"
+                docs_context = get_docs_context(message)
+                if docs_context:
+                    full_prompt += f"{docs_context}\n\n"
                 
                 # Web search for queries needing current information
-                # Also trigger if RAG results are stale (Phase 54)
-                if should_use_web_search(message) or (freshness_warning and "outdated" in freshness_warning.lower()):
+                if should_use_web_search(message):
                     logger.info(f"Query triggers web search: {message[:50]}...")
                     web_context = await get_web_search_context(message)
                     if web_context:

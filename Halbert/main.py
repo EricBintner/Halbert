@@ -22,7 +22,6 @@ try:
     from halbert_core.halbert_core.utils.paths import data_subdir, config_dir
     from halbert_core.halbert_core.eval.golden import run_all as run_golden
     from halbert_core.halbert_core.config.indexer import index_all as index_configs_all
-    from halbert_core.halbert_core.runtime.langgraph_engine import LGEngine
     from halbert_core.halbert_core.runtime.engine import Engine as FallbackEngine
     from halbert_core.halbert_core.policy.loader import load_policy
     from halbert_core.halbert_core.scheduler.engine import SchedulerEngine
@@ -54,7 +53,6 @@ except Exception:
     config_dir = None  # type: ignore
     run_golden = None  # type: ignore
     index_configs_all = None  # type: ignore
-    LGEngine = None  # type: ignore
     FallbackEngine = None  # type: ignore
     load_policy = None  # type: ignore
     SchedulerEngine = None  # type: ignore
@@ -243,17 +241,6 @@ def cmd_eval_golden(args):
 
 
 def cmd_runtime_tick(args):
-    # Prefer LangGraph engine when available
-    state = {}
-    if LGEngine is not None:
-        try:
-            lg = LGEngine()
-            if lg.available():
-                state = lg.run_once({})
-                print(state)
-                return
-        except Exception:
-            pass
     if FallbackEngine is None:
         print("runtime engine unavailable")
         return
