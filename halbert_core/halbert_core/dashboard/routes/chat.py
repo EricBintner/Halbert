@@ -2667,6 +2667,70 @@ if FASTAPI_AVAILABLE:
         )
     
     
+    async def _delegate_to_agent_stream(request: ChatRequest):
+        """Phase E: Delegate chat stream to agent state machine with cognitive core.
+        
+        Translates the agent's StreamEvent SSE format into the chat frontend's
+        expected event format (token/done events), so the frontend doesn't need
+        to change when switching to the agent path.
+        """
+        from .agent import get_agent
+        
+        try:
+            agent = get_agent()
+        except Exception as e:
+            logger.error(f"Agent init failed for chat delegation: {e}")
+            async def error_stream():
+                yield f'data: {json.dumps({"error": str(e), "done": true})}\n\n'
+            return StreamingResponse(error_stream(), media_type="text/event-stream")
+        
+        async def agent_event_stream():
+            """Translate agent StreamEvents to chat SSE format."""
+            full_response = ""
+            
+            try:
+                async for event in agent.process(
+                    query=request.message,
+                    conversation_history=request.conversation_history if hasattr(request, "conversation_history") else None,
+                ):
+                    event_type = event.event_type if hasattr(event, "event_type") else "unknown"
+                    data = event.data if hasattr(event, "data") else {}
+                    
+                    if event_type == "response_chunk":
+                        chunk = data.get("content", "")
+                        full_response += chunk
+                        yield f'data: {json.dumps({"token": chunk, "done": false})}\n\n'
+                    elif event_type == "thinking":
+                        thought = data.get("content", "")
+                        yield f'data: {json.dumps({"thinking": thought, "done": false})}\n\n'
+                    elif event_type == "state_change":
+                        yield f'data: {json.dumps({"state": data.get("new_state", ""), "done": false})}\n\n'
+                    elif event_type == "context_loaded":
+                        yield f'data: {json.dumps({"activity": {"type": "read", "data": data}, "done": false})}\n\n'
+                    elif event_type == "confidence_update":
+                        yield f'data: {json.dumps({"confidence": data, "done": false})}\n\n'
+                    elif event_type == "error":
+                        yield f'data: {json.dumps({"error": data.get("message", "Unknown error"), "done": false})}\n\n'
+                    elif event_type == "response_complete":
+                        yield f'data: {json.dumps({"token": "", "done": true, "full_response": full_response})}\n\n'
+                    elif event_type == "session_ended":
+                        if not full_response:
+                            yield f'data: {json.dumps({"token": "", "done": true, "full_response": ""})}\n\n'
+            except Exception as e:
+                logger.error(f"Agent stream delegation error: {e}")
+                yield f'data: {json.dumps({"error": str(e), "done": true})}\n\n'
+        
+        return StreamingResponse(
+            agent_event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
+    
     @router.post("/send/stream")
     async def send_message_stream(request: ChatRequest):
         """
@@ -2678,8 +2742,17 @@ if FASTAPI_AVAILABLE:
         Events:
         - data: {"token": "...", "done": false}  - Each token as it arrives
         - data: {"token": "", "done": true, "full_response": "..."}  - Final complete response
+        
+        Phase E: When HALBERT_USE_AGENT_PATH=1 env var is set, delegates to the
+        agent state machine path (with cognitive core / REFLECTING state) instead
+        of the legacy chat stream. This is the chat-path collapse mechanism.
         """
         import asyncio
+        import os
+        
+        # Phase E: Feature-flagged delegation to agent state machine
+        if os.environ.get("HALBERT_USE_AGENT_PATH", "").lower() in ("1", "true", "yes"):
+            return await _delegate_to_agent_stream(request)
         
         message = request.message.strip()
         

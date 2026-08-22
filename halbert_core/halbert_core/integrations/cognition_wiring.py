@@ -44,33 +44,72 @@ def get_cognition():
     return _cognition
 
 
+def _create_memory_adapter():
+    """Create a HaloysiusMemoryAdapter backed by PersonaMemoryStore.
+
+    This connects advance_turn's thought promotion to persistent memory.
+    """
+    try:
+        from haloysius.memory_v2.store import PersonaMemoryStore
+        from .haloysius_memory_adapter import HaloysiusMemoryAdapter
+
+        store = PersonaMemoryStore("halbert")
+        adapter = HaloysiusMemoryAdapter(store)
+        logger.info("Created HaloysiusMemoryAdapter for halbert")
+        return adapter
+    except Exception as e:
+        logger.warning(f"Could not create memory adapter: {e}")
+        return None
+
+
 def get_cognition_tick() -> Callable:
     """Return a callable wrapping advance_turn for the state machine.
 
     The returned callable has the signature:
         tick(cognition, user_message, assistant_response) -> TurnResult
 
-    This matches what AgentStateMachine._handle_reflecting expects.
+    Memory callbacks (memory_store_add, memory_store_search) are wired
+    from HaloysiusMemoryAdapter so thought promotion persists to the
+    PersonaMemoryStore.
     """
     from haloysius.persona.cognition_tick import advance_turn
 
     # Ensure cognition exists
     get_cognition()
 
+    # Wire memory adapter for thought promotion persistence
+    memory_adapter = _create_memory_adapter()
+    mem_add = memory_adapter.add_callback() if memory_adapter else None
+    mem_search = memory_adapter.search_callback() if memory_adapter else None
+
     def tick(cognition, user_message, assistant_response):
         return advance_turn(
             cognition=cognition,
             user_message=user_message,
             assistant_response=assistant_response,
+            memory_store_add=mem_add,
+            memory_store_search=mem_search,
         )
 
     return tick
 
 
 def get_event_mapper():
-    """Get or create the singleton SystemEventMapper instance."""
+    """Get or create the singleton SystemEventMapper instance.
+
+    Also wires the Halbert AppSeam (SourcePrep retrieval backend, model
+    backend, governance policy) with Haloysius on first call.
+    """
     global _event_mapper, _trackers
     if _event_mapper is None:
+        # Wire app seam (SourcePrep retrieval, model backend, governance)
+        try:
+            from .app_seam import wire_halbert_seam
+            wire_halbert_seam()
+            logger.info("Halbert AppSeam wired")
+        except Exception as e:
+            logger.warning(f"Could not wire app seam (non-fatal): {e}")
+
         from .system_event_mapper import SystemEventMapper
 
         # Try to register state trackers with Haloysius
