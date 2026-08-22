@@ -79,7 +79,7 @@ def get_agent():
         from ...tools import ToolSafetyFramework, ToolExecutor
         from ...eval.crag import CRAGEvaluator
         from ...context import create_wired_context_assembler, RAGServiceAdapter, MemoryServiceAdapter
-        from ...prompts import AgentPromptBuilder
+        from ...prompts import AgentPromptBuilder, PromptBuilder, ContextInjector
         
         # Initialize components
         safety = ToolSafetyFramework()
@@ -92,7 +92,14 @@ def get_agent():
         rag_service = RAGServiceAdapter()
         memory_service = MemoryServiceAdapter()
         
-        prompt_builder = AgentPromptBuilder()
+        # Wire PromptBuilder + ContextInjector into AgentPromptBuilder
+        # for rich system prompts with model-specific overrides
+        prompt_builder = PromptBuilder()
+        context_injector = ContextInjector()
+        prompt_builder = AgentPromptBuilder(
+            base_builder=prompt_builder,
+            context_injector=context_injector,
+        )
         
         # Create LLM client
         llm_client = _get_llm_client()
@@ -142,9 +149,9 @@ class LLMClientAdapter:
     
     async def chat(self, messages, tools=None):
         """Call LLM with messages, routing to specialist for complex queries."""
-        from .chat import (
+        from ...model.client import (
             get_specialist_model, get_configured_model, get_ollama_endpoint,
-            _score_query_complexity, call_llm_chat
+            score_query_complexity, call_llm_chat
         )
         
         # Get the prompt from messages
@@ -158,7 +165,7 @@ class LLMClientAdapter:
         
         specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
         if specialist_model:
-            complexity_score = _score_query_complexity(prompt)
+            complexity_score = score_query_complexity(prompt)
             if complexity_score >= 0.5:
                 model = specialist_model
                 endpoint = specialist_endpoint
@@ -176,7 +183,7 @@ class LLMClientAdapter:
                 llm_messages.append(msg)
         
         try:
-            # Call LLM using same infrastructure as Chat
+            # Call LLM using shared model client
             result = call_llm_chat(
                 endpoint=endpoint,
                 model=model,
@@ -214,9 +221,9 @@ class LLMClientAdapter:
         """
         import aiohttp
         import re
-        from .chat import (
+        from ...model.client import (
             get_specialist_model, get_configured_model, get_ollama_endpoint,
-            _score_query_complexity
+            score_query_complexity
         )
         
         # Use instance variables for performance tweaks

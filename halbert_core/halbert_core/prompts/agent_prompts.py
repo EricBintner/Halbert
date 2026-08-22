@@ -23,6 +23,10 @@ class AgentPromptBuilder:
     5. Task
     6. Examples (optional)
     7. Output format
+
+    Phase C: Now optionally delegates to PromptBuilder + ContextInjector
+    for rich system prompts with model-specific overrides, project context,
+    and user preferences. Falls back to hardcoded layers if not wired.
     """
     
     # Layer 1: Identity
@@ -48,14 +52,18 @@ You are knowledgeable, precise, and safety-conscious."""
 - Respect user privacy and system security
 - One action at a time - wait for results before proceeding"""
     
-    def __init__(self, base_builder=None):
+    def __init__(self, base_builder=None, context_injector=None):
         """
         Initialize the agent prompt builder.
         
         Args:
-            base_builder: Optional base PromptBuilder for loading components
+            base_builder: Optional PromptBuilder for rich system prompts
+                with model-specific overrides, project context, etc.
+            context_injector: Optional ContextInjector for system context,
+                user preferences, discovery summary.
         """
         self.base_builder = base_builder
+        self.context_injector = context_injector
     
     def build_system_prompt(
         self,
@@ -65,6 +73,10 @@ You are knowledgeable, precise, and safety-conscious."""
         """
         Build the system prompt (Layers 1-3).
         
+        When base_builder (PromptBuilder) is wired, delegates to it for
+        rich system prompts with model-specific overrides, project context,
+        and XML-structured context injection.
+        
         Args:
             user_preferences: Optional user preference dict
             include_tools: Whether to include tool descriptions
@@ -72,6 +84,28 @@ You are knowledgeable, precise, and safety-conscious."""
         Returns:
             System prompt string
         """
+        if self.base_builder is not None:
+            try:
+                # Build system context from ContextInjector if available
+                system_context = ""
+                if self.context_injector is not None:
+                    try:
+                        ctx = self.context_injector.get_system_context()
+                        system_context = self.context_injector.format_system_context(ctx)
+                    except Exception:
+                        pass
+
+                prompt = self.base_builder.build_prompt(
+                    tier="specialist",
+                    system_context=system_context or None,
+                    user_prefs=user_preferences or {},
+                )
+                if prompt:
+                    return prompt
+            except Exception as e:
+                logger.warning(f"PromptBuilder delegation failed, using fallback: {e}")
+        
+        # Fallback: hardcoded layers
         parts = [
             self.LAYER_1_IDENTITY,
             self.LAYER_2_CAPABILITIES,

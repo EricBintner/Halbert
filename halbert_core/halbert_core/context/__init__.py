@@ -23,6 +23,13 @@ from .cache import (
     CacheEntry,
     get_context_cache,
 )
+from .extra_adapters import (
+    SystemIdentityAdapter,
+    SelfKnowledgeAdapter,
+    TelemetryAdapter,
+    SafetyAdapter,
+    create_extended_context_assembler,
+)
 
 __all__ = [
     'TokenCounter',
@@ -41,4 +48,10 @@ __all__ = [
     'SemanticCache',
     'CacheEntry',
     'get_context_cache',
+    # Extended adapters (Phase C)
+    'SystemIdentityAdapter',
+    'SelfKnowledgeAdapter',
+    'TelemetryAdapter',
+    'SafetyAdapter',
+    'create_extended_context_assembler',
 ]

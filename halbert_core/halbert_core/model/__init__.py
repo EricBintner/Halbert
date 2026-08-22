@@ -22,6 +22,16 @@ from .performance_monitor import (
     PerformanceMonitor, ModelMetrics, PerformanceAlert,
     PerformanceLevel, AlertSeverity
 )
+from .client import (
+    get_ollama_endpoint,
+    get_configured_model,
+    get_specialist_model,
+    get_vision_model,
+    call_llm_chat,
+    score_query_complexity,
+    estimate_tokens,
+    truncate_messages_for_context,
+)
 
 __all__ = [
     'ModelManager',
@@ -53,4 +63,13 @@ __all__ = [
     'PerformanceAlert',
     'PerformanceLevel',
     'AlertSeverity',
+    # Model client (extracted from chat.py)
+    'get_ollama_endpoint',
+    'get_configured_model',
+    'get_specialist_model',
+    'get_vision_model',
+    'call_llm_chat',
+    'score_query_complexity',
+    'estimate_tokens',
+    'truncate_messages_for_context',
 ]

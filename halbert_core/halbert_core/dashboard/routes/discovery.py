@@ -1085,7 +1085,7 @@ async def _call_llm_analysis(context: str, use_specialist: bool = False) -> Dict
     import json
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
-    from .chat import get_configured_model, get_specialist_model, get_ollama_endpoint
+    from ...model.client import get_configured_model, get_specialist_model, get_ollama_endpoint
     
     # Get configured models from settings
     endpoint = get_ollama_endpoint()
