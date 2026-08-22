@@ -19,6 +19,7 @@ class AgentState(Enum):
     READING = "reading"
     EXECUTING = "executing"
     OBSERVING = "observing"
+    REFLECTING = "reflecting"  # Phase D: cognitive tick (advance_turn)
     RESPONDING = "responding"
     AWAITING_CONFIRMATION = "awaiting_confirmation"
     ERROR = "error"
@@ -125,6 +126,10 @@ class StateContext:
     # Output
     response_chunks: List[str] = field(default_factory=list)
     
+    # Phase D: Persona cognition (Haloysius cognitive state)
+    persona_cognition: Optional[Any] = None  # PersonaCognition instance
+    persona_id: str = "halbert"
+    
     def add_observation(self, observation: str):
         """Add an observation from tool execution."""
         self.observations.append(observation)
@@ -160,7 +165,7 @@ class StateContext:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to serializable dict."""
-        return {
+        result = {
             "session_id": self.session_id,
             "request_id": self.request_id,
             "user_query": self.user_query,
@@ -173,3 +178,9 @@ class StateContext:
             "elapsed_ms": self.elapsed_ms(),
             "error": self.error
         }
+        if self.persona_cognition is not None:
+            try:
+                result["persona_cognition"] = self.persona_cognition.get_full_context()
+            except Exception:
+                result["persona_cognition"] = {"persona_id": self.persona_id}
+        return result

@@ -107,6 +107,17 @@ def get_agent():
         # Create CRAG evaluator (optional, uses LLM for completeness check)
         crag_evaluator = CRAGEvaluator(llm_client=llm_client)
         
+        # Phase D: Wire cognitive tick (Haloysius advance_turn)
+        cognition_tick = None
+        event_mapper = None
+        try:
+            from ...integrations.cognition_wiring import get_cognition_tick, get_event_mapper
+            cognition_tick = get_cognition_tick()
+            event_mapper = get_event_mapper()
+            logger.info("Cognitive tick and event mapper wired")
+        except Exception as e:
+            logger.warning(f"Cognitive tick not available (non-fatal): {e}")
+        
         # Create agent
         _agent_instance = AgentStateMachine(
             llm_client=llm_client,
@@ -118,6 +129,8 @@ def get_agent():
             memory_service=memory_service,
             max_loops=5,
             crag_threshold=0.7,
+            cognition_tick=cognition_tick,
+            event_mapper=event_mapper,
         )
         
         logger.info("Agent state machine initialized with wired services")

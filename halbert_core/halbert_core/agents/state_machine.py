@@ -49,7 +49,10 @@ class AgentStateMachine:
             AgentState.OBSERVING, AgentState.AWAITING_CONFIRMATION, AgentState.ERROR
         ],
         AgentState.OBSERVING: [
-            AgentState.PLANNING, AgentState.RESPONDING, AgentState.ERROR
+            AgentState.REFLECTING, AgentState.PLANNING, AgentState.RESPONDING, AgentState.ERROR
+        ],
+        AgentState.REFLECTING: [
+            AgentState.RESPONDING, AgentState.PLANNING, AgentState.ERROR
         ],
         AgentState.RESPONDING: [AgentState.IDLE],
         AgentState.AWAITING_CONFIRMATION: [AgentState.EXECUTING, AgentState.PLANNING],
@@ -67,6 +70,8 @@ class AgentStateMachine:
         memory_service = None,
         max_loops: int = 5,
         crag_threshold: float = 0.7,
+        cognition_tick: Callable = None,
+        event_mapper = None,
     ):
         """
         Initialize the agent state machine.
@@ -92,6 +97,10 @@ class AgentStateMachine:
         
         self.max_loops = max_loops
         self.crag_threshold = crag_threshold
+        
+        # Phase D: Cognitive tick (Haloysius advance_turn)
+        self.cognition_tick = cognition_tick
+        self.event_mapper = event_mapper
         
         self.current_state = AgentState.IDLE
         self.ctx: Optional[StateContext] = None
@@ -156,6 +165,14 @@ class AgentStateMachine:
             conversation_history=conversation_history or [],
             max_loops=self.max_loops,
         )
+        
+        # Phase D: Inject persona cognition if tick is wired
+        if self.cognition_tick is not None:
+            try:
+                from ..integrations.cognition_wiring import get_cognition
+                self.ctx.persona_cognition = get_cognition()
+            except Exception as e:
+                logger.warning(f"Could not inject persona cognition: {e}")
         
         # Track active session
         self.active_sessions[session_id] = self.ctx
@@ -319,6 +336,7 @@ class AgentStateMachine:
             AgentState.READING: self._handle_reading,
             AgentState.EXECUTING: self._handle_executing,
             AgentState.OBSERVING: self._handle_observing,
+            AgentState.REFLECTING: self._handle_reflecting,
             AgentState.RESPONDING: self._handle_responding,
             AgentState.ERROR: self._handle_error,
             AgentState.AWAITING_CONFIRMATION: self._handle_awaiting_confirmation,
@@ -656,14 +674,73 @@ class AgentStateMachine:
         
         # Decide next state
         if self.ctx.crag_action == CRAGAction.CORRECT:
-            yield await self._transition(AgentState.RESPONDING)
+            yield await self._transition(AgentState.REFLECTING)
         elif self.ctx.loop_count >= self.ctx.max_loops - 1:
             # Almost at limit, respond with what we have
-            yield await self._transition(AgentState.RESPONDING)
+            yield await self._transition(AgentState.REFLECTING)
         else:
             # Need more info, go back to planning
             yield await self._transition(AgentState.PLANNING)
     
+    async def _handle_reflecting(self) -> AsyncIterator[StreamEvent]:
+        """
+        REFLECTING state: Run the cognitive tick (Haloysius advance_turn).
+
+        This is the composed-loop seam where the cognitive core processes
+        the turn: decay, trigger detection, thought generation, worry
+        intrusion, cross-layer conflict detection. The result may inject
+        a thought or worry that colors the response.
+
+        If no cognition_tick is wired, this is a pass-through to RESPONDING.
+        """
+        logger.info(f"REFLECTING: cognitive tick for session {self.ctx.session_id}")
+
+        if self.cognition_tick is not None and self.ctx.persona_cognition is not None:
+            try:
+                # Populate cognition with system events before the tick
+                if self.event_mapper is not None:
+                    self.event_mapper.populate_cognition(self.ctx.persona_cognition)
+
+                # Build the assistant response from observations + context
+                assistant_response = "\n".join(self.ctx.observations[-3:])
+                if not assistant_response:
+                    assistant_response = "\n".join(self.ctx.response_chunks[-3:])
+
+                # Run the cognitive tick
+                tick_result = self.cognition_tick(
+                    cognition=self.ctx.persona_cognition,
+                    user_message=self.ctx.user_query,
+                    assistant_response=assistant_response,
+                )
+
+                # Emit thought event if a thought was generated
+                if tick_result and hasattr(tick_result, 'thought') and tick_result.thought:
+                    thought_text = tick_result.thought.content if hasattr(tick_result.thought, 'content') else str(tick_result.thought)
+                    logger.info(f"Cognitive tick generated thought: {thought_text[:80]}")
+                    yield StreamEvent.thinking(
+                        self.ctx.session_id,
+                        thought_text
+                    )
+
+                # Check for worry intrusions that should color the response
+                if hasattr(self.ctx.persona_cognition, 'worries'):
+                    intrusions = self.ctx.persona_cognition.worries.check_intrusions(
+                        self.ctx.user_query
+                    )
+                    for intrusion in intrusions:
+                        logger.info(f"Worry intrusion: {intrusion[:80]}")
+                        self.ctx.add_observation(f"[worry] {intrusion}")
+
+                logger.info("Cognitive tick complete")
+            except Exception as e:
+                logger.error(f"Cognitive tick error: {e}")
+                # Non-fatal: continue to responding
+        else:
+            logger.debug("No cognition_tick wired, skipping reflection")
+
+        # Always proceed to responding after reflection
+        yield await self._transition(AgentState.RESPONDING)
+
     async def _handle_responding(self) -> AsyncIterator[StreamEvent]:
         """
         RESPONDING state: Generate final response.
