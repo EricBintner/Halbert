@@ -215,33 +215,48 @@ build:
   linux:
     bundle_id: "ai.halbert.linux"
     app_name: "Halbert"
+    multi_session: true
     include_data:
       - linux
       - common
   
   macos:
-    bundle_id: "ai.halbert.macos"
-    app_name: "Halbert"
-    include_data:
-      - macos
-      - bsd
-      - common
-    # App Store specific
+    # LemonSqueezy Pro (Direct Distribution / Unsandboxed)
+    pro:
+      bundle_id: "ai.halbert.macos.pro"
+      app_name: "Halbert Pro"
+      channel: "lemonsqueezy"
+      sandboxed: false
+      multi_session: true
+      full_disk_access: true
+      include_data:
+        - macos
+        - bsd
+        - common
+
+    # Mac App Store (Companion / Remote Client)
     app_store:
+      bundle_id: "ai.halbert.macos.free"
+      app_name: "Halbert"
+      channel: "mac_app_store"
+      sandboxed: true
+      multi_session: true
       category: "developer-tools"
-      price: "free"  # or "tier_1" for $0.99
+      price: "free"
       keywords:
         - system administration
-        - terminal
+        - remote terminal
         - AI assistant
-        - homebrew
+        - linux companion
+        - homelab
         - developer tools
       marketing:
-        tagline: "AI-Powered System Assistant"
+        tagline: "AI System Assistant & Remote Linux Companion"
         description: |
-          Halbert is an intelligent system assistant that helps you manage 
-          your Mac with natural language. Ask questions about system 
-          configuration, troubleshoot issues, and automate tasks.
+          Halbert is an intelligent system assistant and multi-session companion
+          that connects to your local Mac and remote Linux servers, home labs,
+          and dev machines with natural language.
           
-          🐧 For the full Linux experience with 40+ knowledge collections,
-          visit github.com/halbert-ai/halbert
+          🐧 For the full unsandboxed macOS and Linux experience,
+          visit halbert.ai
+

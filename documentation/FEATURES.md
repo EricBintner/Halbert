@@ -501,27 +501,44 @@ make serve
 
 ---
 
-## macOS Support (Beta)
+---
 
-Halbert is available for macOS via the App Store with limited functionality.
+## Multi-Session & Remote Host Management (Linux & macOS) 📋
 
-### Supported Features
-- **Homebrew Integration**: Detect installed formulas and casks
-- **App Store Apps**: List installed Mac App Store applications
-- **System Info**: Basic hardware and OS information
-- **Chat Interface**: AI assistant with macOS-specific knowledge
+Halbert supports multi-session management across both Linux and macOS desktop applications:
 
-### Limitations
-- No systemd (macOS uses launchd)
-- Limited telemetry collection
-- Reduced discovery scanner coverage
-- Some Linux-specific features unavailable
+### Features
+- **Concurrent Host Tabs**: Open multiple session tabs to manage different machines (e.g. Local Machine, Remote Devbox, Homelab NAS, Cloud Server).
+- **First-Person Persona Switching**: Each session tab embodies the target machine's unique identity (`"I AM <hostname>"`), telemetry, and storage topology.
+- **Secure Networking**: Connect over local LAN, Tailscale, WireGuard, or SSH tunnels with API key authentication.
+- **Remote Tool Execution & Streaming**: Stream live terminal outputs, logs, and agent thought steps from remote machines in real-time.
 
-### Installation
-Available via the Mac App Store. Search for "Halbert" or visit the App Store link.
+---
 
-### RAG Documentation
-macOS-specific documentation includes:
-- Homebrew package management
-- macOS troubleshooting guides
-- Apple support documentation
+## Configuration as Physiology & Hidden Rules Discovery 📋
+
+Deep configuration tracking, auditing, and maintenance engine across macOS and Linux:
+
+### Features
+- **Ambient Config Discovery**: Automatically maps dotfiles (`~/.zshrc`, `~/.config`, `~/.gitconfig`, `~/.ssh`), launch daemons (`LaunchAgents`, `systemd`), and package configurations.
+- **Environment & PATH Precedence Tracer**: Traces environment variable inheritance to identify why tools or paths are shadowed.
+- **Hygiene & Conflict Audits**: Flags duplicate aliases, conflicting shell functions, orphaned configs from uninstalled apps, and broken symlinks.
+- **Impact Analysis & Safe Diffs**: Evaluates blast-radius using SourcePrep graph primitives before applying settings, generating dry-run diffs with automatic backup snapshots.
+
+---
+
+## macOS Editions (Pro & Free)
+
+Halbert on macOS is offered in two editions designed for different use cases:
+
+### 1. Halbert Pro (macOS — LemonSqueezy Paid)
+- **Direct Distribution**: Unsandboxed Developer ID signed binary with Full Disk Access.
+- **Full Host Custodian**: Deep management of `~/.zshrc`, dotfiles, Homebrew services, and `launchd`.
+- **Local AI Inference**: Optimized for Apple Silicon MLX and local Ollama models.
+- **Multi-Session Client**: Connect to local and unlimited remote Linux/Mac Halbert hosts.
+
+### 2. Halbert Free / Companion (Mac App Store)
+- **Sandboxed Companion**: Strictly compliant with Apple App Store security sandbox.
+- **Multi-Session Remote Client**: Full GUI client to connect and manage remote Linux machines, servers, and homelabs.
+- **Basic Local Assistant**: System overview and curated macOS/BSD reference documentation (~1.4 MB RAG).
+

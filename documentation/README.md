@@ -19,7 +19,9 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 | Document | Description |
 |----------|-------------|
 | [FEATURES.md](FEATURES.md) | **Complete feature list (start here!)** |
+| [../TODO.md](../TODO.md) | **Master engineering roadmap and active workstreams** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | High-level system design |
+| [design/macos-strategy.md](design/macos-strategy.md) | macOS tiers, config physiology & multi-session design |
 | [INSTALLATION.md](INSTALLATION.md) | Getting started guide |
 | [CONFIGURATION.md](CONFIGURATION.md) | Configuration reference |
 | [CLI-REFERENCE.md](CLI-REFERENCE.md) | Command-line interface |

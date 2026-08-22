@@ -349,22 +349,70 @@ Halbert runs entirely locally. No external API calls required.
 
 ---
 
+---
+
+## Multi-Session & Remote Host Architecture 📋
+
+Halbert supports a decoupled client-server model enabling both macOS (Pro & Free) and Linux apps to manage multiple local and remote instances concurrently:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│              Multi-Session UI (macOS Pro / Free / Linux)                │
+│   ┌───────────────────┐ ┌───────────────────┐ ┌─────────────────────┐   │
+│   │ Tab 1: Local Host │ │ Tab 2: Devbox     │ │ Tab 3: Homelab      │   │
+│   └─────────┬─────────┘ └─────────┬─────────┘ └──────────┬──────────┘   │
+└─────────────┼─────────────────────┼──────────────────────┼──────────────┘
+              │ REST / SSE          │ REST / SSE (LAN)     │ REST / SSE (VPN)
+              ▼                     ▼                      ▼
+    ┌───────────────────┐ ┌───────────────────┐ ┌─────────────────────┐
+    │   Local Halbert   │ │   Remote Ubuntu   │ │   Remote Debian     │
+    │  "I AM local-mac" │ │  "I AM titan-box" │ │  "I AM home-nas"    │
+    └───────────────────┘ └───────────────────┘ └─────────────────────┘
+```
+
+* **Client Decoupling**: The React/Tauri desktop frontend uses `HostConnectionContext` to route API and SSE streams to any configured Halbert instance.
+* **First-Person Identity**: Switching session tabs switches the active host persona (`"I AM <hostname>"`).
+* **Remote Security**: Token-based authentication (`X-Halbert-Token`) over LAN, Tailscale, WireGuard, or SSH tunnels.
+
+---
+
+## Configuration as Physiology & Hidden Rule Discovery 📋
+
+To eliminate configuration rot across macOS and Linux, Halbert integrates with the SourcePrep epistemic graph model:
+
+* **Ambient Config Atlas (`prep`)**: Automatically maps all dotfiles (`~/.zshrc`, `~/.config`, `~/.gitconfig`, `~/.ssh`), launch daemons (`/Library/LaunchAgents`, `~/Library/LaunchAgents`, `systemd`), and package configs.
+* **Precedence & Environment Tracer**: Resolves `$PATH` and environment variable inheritance across `.zshenv`, `.zprofile`, `/etc/paths.d`, and shell rc files.
+* **Hygiene & Sanity Audits (`prep_audit`)**: Surfaces orphaned configs, duplicate aliases, broken symlinks, and unsafe permissions.
+* **Safe Diffs & Impact (`prep_impact`)**: Computes blast-radius before config changes, generating dry-run diffs with automatic backup snapshots.
+
+---
+
+## Platform Distribution Matrix
+
+| Platform | Tier / Channel | Mode | Primary Capabilities |
+|:---|:---|:---|:---|
+| **Linux** | Open Source / Direct | Unsandboxed | Full flagship host custodian (systemd, hwmon, 40+ RAG collections, multi-session host & client) |
+| **macOS Pro** | Paid (LemonSqueezy) | Unsandboxed | Full Mac host custodian (Full Disk Access, dotfiles, Homebrew, launchd, MLX, multi-session) |
+| **macOS Free** | Mac App Store | Sandboxed | Multi-session remote client to Linux/Mac hosts, basic AI query, conversion funnel |
+
+---
+
 ## Next Steps
 
-Priority items from gap analysis:
+Priority items from gap analysis and strategic realignment:
 
-1. **Ingestion Pipeline** — Continuous journald/hwmon collection
-2. **Scheduler** — Background autonomous tasks  
-3. **Guardrails** — Budget/rate limiting enforcement
-4. **Approval Workflow** — Full dry-run + approval flow
-
-See [GAPS.md](GAPS.md) for detailed gap analysis.
+1. **Multi-Session Client** — Host profile switcher and remote SSE streaming
+2. **Configuration Physiology Engine** — SourcePrep graph integration and dotfile/env discovery
+3. **Ingestion Pipeline** — Continuous journald/hwmon/Unified Logging collection
+4. **Approval Workflow** — Full dry-run + blast-radius approval flow
 
 ---
 
 ## Related Documentation
 
 - [FEATURES.md](FEATURES.md) — Complete feature list
+- [design/macos-strategy.md](design/macos-strategy.md) — macOS tiering and multi-session design
+- [design/philosophy.md](design/philosophy.md) — Founding principles and self-identity
 - [API-REFERENCE.md](API-REFERENCE.md) — REST API documentation  
 - [architecture/](architecture/) — Component deep-dives
 - [CONFIGURATION.md](CONFIGURATION.md) — Configuration reference

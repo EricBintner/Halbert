@@ -17,6 +17,7 @@ This documentation serves two audiences:
 | Document | Description |
 |----------|-------------|
 | [philosophy.md](philosophy.md) | Core design principles: self-identifying LLM, grounded intelligence, safe autonomy |
+| [macos-strategy.md](macos-strategy.md) | macOS tiering strategy (LemonSqueezy Pro vs. App Store Free), config physiology, and universal multi-session architecture |
 | [research-summary.md](research-summary.md) | Condensed research findings that informed the design |
 | [future.md](future.md) | Potential future directions (not promises) |
 
