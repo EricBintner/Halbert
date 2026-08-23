@@ -1,0 +1,55 @@
+@theme {
+  /* ===== Surface Ramp (Warm Archival Paper Canvas) ===== */
+  --color-canvas:            #F7F5F0;   /* Page canvas — warm archival paper */
+  --color-surface:           #FFFFFF;   /* Raised cards & window interiors */
+  --color-surface-subtle:    #EFECE4;   /* Recessed panels & terminal canvas */
+  --color-surface-muted:     #E5E0D5;   /* Inactive controls & pill tags */
+
+  /* ===== Primary Signature Accent (Olivetti Vermilion) ===== */
+  --color-accent:            #D34E24;   /* 60s futurist vermilion accent */
+  --color-accent-hover:      #B83E18;   /* Deep vermilion for hover states */
+  --color-accent-active:     #9C3212;   /* Active/pressed state */
+  --color-accent-tint:       #FDF2EE;   /* Soft vermilion wash */
+
+  /* ===== Ink Hierarchy (Warm Charcoal & Graphite) ===== */
+  --color-ink:               #1A1918;   /* Deep carbon black for text */
+  --color-ink-secondary:     #5E5B56;   /* Secondary metadata & labels */
+  --color-ink-tertiary:      #8C877D;   /* Captions & subtle annotations */
+  --color-ink-ghost:         #B8B2A6;   /* Disabled & placeholder text */
+
+  /* ===== Functional Telemetry Accents (Desaturated 60s Palette) ===== */
+  --color-status-success:    #2D7A56;   /* Eames forest green */
+  --color-status-warning:    #C4781C;   /* Braun amber ochre */
+  --color-status-error:      #C83E2D;   /* Terracotta brick red */
+  --color-status-info:       #386C8A;   /* Blueprint slate teal */
+
+  /* ===== Hairlines & Dividers ===== */
+  --color-hairline:          rgba(26, 25, 24, 0.08);
+  --color-hairline-strong:   rgba(26, 25, 24, 0.16);
+
+  /* ===== Shadows (Soft Ambient Diffusions) ===== */
+  --shadow-sm:               0 1px 2px rgba(26, 25, 24, 0.04);
+  --shadow-card:             0 4px 16px -2px rgba(26, 25, 24, 0.06), 0 1px 3px rgba(26, 25, 24, 0.04);
+  --shadow-device:           0 24px 48px -12px rgba(26, 25, 24, 0.12), 0 4px 12px rgba(26, 25, 24, 0.05);
+  --shadow-popover:          0 12px 32px -4px rgba(26, 25, 24, 0.12);
+
+  /* ===== Typography ===== */
+  --font-sans:               "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-display:            "Instrument Sans", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono:               "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  --tracking-display:        -0.035em;
+  --tracking-eyebrow:        0.08em;
+
+  /* ===== Motion Easing Tokens ===== */
+  --ease-hero:               cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-smooth:             cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-mechanical:         cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-micro:              cubic-bezier(0.2, 0, 0, 1);
+
+  /* ===== Layout Dimensions ===== */
+  --content-max-width:       1200px;
+  --readable-max-width:      820px;
+  --editorial-max-width:     640px;
+  --gutter-padding:          24px;
+}

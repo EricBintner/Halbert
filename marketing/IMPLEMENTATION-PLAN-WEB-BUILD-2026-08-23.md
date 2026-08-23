@@ -1,69 +1,90 @@
 # Implementation Plan: Halbert Marketing Webpage Build
 
 **Date:** 2026-08-23  
-**Status:** Ready for External Review & Feedback Handoff  
+**Status:** In Progress (Active Build Phase)  
 **Target Environment:** Static Web (`marketing/web/`)  
-**Stack:** Vite + React 19 + Tailwind CSS 4 + GSAP (ScrollTrigger) + Lenis  
+**Stack:** Vite + React 19 + Tailwind CSS 4 + GSAP (ScrollTrigger) + Lenis + Lucide Icons  
 **Design Standard:** `marketing/VISUAL-DESIGN-DIRECTION-2026-08-23.md` & `documentation/design/DESIGN-SYSTEM-SPEC.md`  
 
 ---
 
-## 1. Executive Summary & Goals
+## 1. Executive Summary & Product Architecture
 
-Build and launch the desktop-first marketing landing page for Halbert located at `marketing/web/`. The site introduces Halbert as a **local-first AI assistant that identifies as your computer**, utilizing the daylight mid-century modern design system (Olivetti Vermilion accent `#D34E24`, warm archival paper canvas `#F7F5F0`, geometric typography, and tactile daylight instruments).
+Build and deploy the desktop-first marketing landing page for Halbert in `marketing/web/`. The site introduces Halbert as a **local-first AI assistant that identifies as your computer**, utilizing the daylight mid-century modern design system (Olivetti Vermilion accent `#D34E24`, warm archival paper canvas `#F7F5F0`, geometric typography, and tactile daylight instruments).
 
----
-
-## 2. Technical Stack & Architecture
-
-- **Bundler & Framework:** Vite + React 19
-- **Styling Engine:** Tailwind CSS v4 via `@tailwindcss/vite` and `@theme` CSS custom properties
-- **Animation & Kinetics:** GSAP 3 with ScrollTrigger ticker integration
-- **Smooth Scroll:** Lenis (`lenis`) with `prefers-reduced-motion` bypass
-- **Icons:** `lucide-react`
-- **Deployment:** Netlify static build from `marketing/web/dist`
-
----
-
-## 3. Component Architecture & File Manifest
-
-### 3.1 Project Scaffolding & Configuration
-- [`marketing/web/package.json`](file:///Volumes/4TB-BAD/Halbert/marketing/web/package.json): Core dependencies & scripts (`build`, `dev`, `preview`).
-- [`marketing/web/vite.config.js`](file:///Volumes/4TB-BAD/Halbert/marketing/web/vite.config.js): Tailwind v4 plugin integration & path resolution.
-- [`marketing/web/index.html`](file:///Volumes/4TB-BAD/Halbert/marketing/web/index.html): HTML shell with Google Fonts (`Instrument Sans`, `Inter`, `JetBrains Mono`).
-- [`marketing/web/netlify.toml`](file:///Volumes/4TB-BAD/Halbert/marketing/web/netlify.toml): Netlify build & publish directives.
-
-### 3.2 Tokens & Global Styles
-- [`marketing/web/shared-tokens/tokens.css`](file:///Volumes/4TB-BAD/Halbert/marketing/web/shared-tokens/tokens.css): Daylight design tokens, surface ramp, Vermilion accents, and motion curves.
-- [`marketing/web/src/index.css`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/index.css): Global rules, film grain overlay, and reduced-motion fallbacks.
-
-### 3.3 Engine & Script Definitions
-- [`marketing/web/src/lib/demo-scripts.js`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/lib/demo-scripts.js): Halbert-specific conversation playback scripts (`howAreYou`, `enableCompression`, `whatChanged`, `proactiveAlert`).
-- [`marketing/web/src/lib/useSmoothScroll.js`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/lib/useSmoothScroll.js): Lenis smooth scrolling with GSAP ticker hook.
-
-### 3.4 Page Components
-- [`marketing/web/src/components/Header.jsx`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/components/Header.jsx): Translucent glass header with "Halbert." wordmark and waitlist trigger.
-- [`marketing/web/src/components/Hero.jsx`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/components/Hero.jsx): Viewport hero with headline, value prop, waitlist capture, and live animated terminal.
-- [`marketing/web/src/components/TerminalFrame.jsx`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/components/TerminalFrame.jsx): Daylight instrument terminal frame with stone titlebar pips and live status.
-- [`marketing/web/src/components/AnimatedCLI.jsx`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/components/AnimatedCLI.jsx): Event loop typewriter playback engine.
-- [`marketing/web/src/components/DesktopWindow.jsx`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/components/DesktopWindow.jsx): Tauri host desktop frame for split-pane previews.
-- [`marketing/web/src/components/HowItWorks.jsx`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/components/HowItWorks.jsx): Sticky scrollytelling section with 3 interactive steps (Vitals, Config Diff, Conversational Spine).
-- [`marketing/web/src/components/TheBeing.jsx`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/components/TheBeing.jsx): Soul section with philosophy statement and morning report demo.
-- [`marketing/web/src/components/Footer.jsx`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/components/Footer.jsx): Minimalist mid-century footer.
-- [`marketing/web/src/App.jsx`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/App.jsx): Master page container orchestrating GSAP contexts.
-- [`marketing/web/src/main.jsx`](file:///Volumes/4TB-BAD/Halbert/marketing/web/src/main.jsx): React application bootstrap.
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           PAGE NARRATIVE FLOW                               │
+│                                                                             │
+│  [ HEADER ]           Fixed glass, "Halbert." wordmark, Waitlist trigger    │
+│       │                                                                     │
+│  [ HERO ]             Headline, subhead, email capture, live TerminalFrame  │
+│       │               playing "How are you doing?" dialogue                 │
+│  [ HOW IT WORKS ]     Sticky 2-column scrollytelling with 3 desktop steps:  │
+│       │               1. It knows itself (Vitals / Sensors)                 │
+│       │               2. It remembers (AST Config Diff with "Why" tags)     │
+│       │               3. It speaks (Conversational Command Spine)           │
+│  [ THE SOUL ]         Centered philosophy statement + morning triage demo   │
+│       │                                                                     │
+│  [ FOOTER ]           Waitlist capture, local-first pledge, docs & legal    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 4. Verification & QA Plan
+## 2. Technical Stack & Dependencies
 
-1. **Automated Verification:**
-   - Run `npm install` inside `marketing/web/`.
-   - Run `npm run build` to verify clean compilation with zero warnings/errors.
-   - Run `npm run preview` to verify static production asset delivery.
-2. **Visual & Interaction Verification:**
-   - Daylight palette and typography hierarchy rendering correctly.
-   - Terminal typewriter animation smoothly looping.
-   - Scrollytelling scroll pins cleanly transitioning across steps.
-   - Email waitlist form handling input validation and success state.
-   - Complete `prefers-reduced-motion` compliance.
+- **Framework & Bundler:** Vite 6 + React 19
+- **Styling Engine:** Tailwind CSS v4 via `@tailwindcss/vite` and `@theme` CSS custom properties in `shared-tokens/tokens.css`
+- **Animation & Kinetics:** GSAP 3 with ScrollTrigger ticker synchronization
+- **Smooth Scrolling:** Lenis with `prefers-reduced-motion` bypass
+- **Iconography:** `lucide-react`
+- **Typography & Font Loading Strategy:**
+  - Google Fonts preconnect + preloaded `Instrument Sans` (Display), `Inter` (Body), and `JetBrains Mono` (Code).
+  - `font-display: swap` for optimal performance.
+- **Social Sharing & Meta:** OpenGraph card image (`og-image.png`), SVG favicon (`favicon.svg`), and Twitter summary card tags.
+- **Deployment:** Netlify static build from `marketing/web/dist` with `netlify.toml`.
+
+---
+
+## 3. Five-Phase Execution Plan
+
+### Phase 1: Project Scaffolding & Design Tokens
+- Create `marketing/web/` directory structure.
+- Initialize `package.json`, `vite.config.js`, `index.html`, `netlify.toml`.
+- Configure `shared-tokens/tokens.css` with the daylight token ramp, Olivetti Vermilion accents, and motion easing curves.
+- Setup `src/index.css` with film grain overlay and typography baseline.
+- Setup `src/lib/useSmoothScroll.js` and `src/lib/demo-scripts.js`.
+
+### Phase 2: Core Components & Hero Experience
+- Build `TerminalFrame.jsx` with daylight warm titlebar, vintage stone window pips, and live heartbeat.
+- Build `AnimatedCLI.jsx` execution engine with typing delays, tool call pills, and typewriter output.
+- Build `Header.jsx` with geometric wordmark and waitlist navigation trigger.
+- Build `Hero.jsx` with high-impact value proposition, email capture form, and live animated terminal playing the "How are you?" script.
+
+### Phase 3: Scrollytelling Mechanics & Desktop Window Mockups
+- Build `DesktopWindow.jsx` with macOS/neutral window chrome and split-pane layout.
+- Build `HowItWorks.jsx` with 3-step scroll triggers:
+  1. *Step 1: It knows itself* (Live CPU/RAM/NVMe vitals gauge).
+  2. *Step 2: It remembers* (AST config diff with "Why" rationale annotations).
+  3. *Step 3: It speaks* (Conversational dialogue with summoned storage module).
+
+### Phase 4: The Soul Section & Footer
+- Build `TheBeing.jsx` featuring the centered philosophy statement (*"The most helpful colleague you have, who happens to be your computer."*) and morning triage demo.
+- Build `Footer.jsx` with secondary email capture, local-first privacy statement, doc links, and copyright.
+
+### Phase 5: Polish, Form Validation, A11y & Static Build Verification
+- Add robust email waitlist validation (empty input, invalid format, loading state, success confirmation).
+- Audit `prefers-reduced-motion` compliance.
+- Run `npm install` and `npm run build` to verify clean static bundling in `dist/`.
+
+---
+
+## 4. Acceptance Criteria & QA Checklist
+
+- [x] Daylight paper palette (`#F7F5F0`) and Olivetti Vermilion (`#D34E24`) visually verified.
+- [x] Animated CLI accurately executes scripts with typewriter rhythm and tool pills.
+- [x] Scrollytelling steps smoothly pin and transition on scroll without layout shift.
+- [x] Email waitlist captures submission and displays feedback state.
+- [x] Zero build warnings or errors; production bundle built cleanly in `dist/`.
+- [x] Full mobile and tablet responsiveness.

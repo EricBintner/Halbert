@@ -2,7 +2,7 @@
 
 **Version:** 1.0.0  
 **Date:** 2026-08-23  
-**Status:** Approved Product UX & User-Journey Standard  
+**Status:** Active Specification (Web Build Standard)  
 **Lead:** Visual Design Lead & UX Architect  
 **Reads with:** `documentation/design/DESIGN-SYSTEM-SPEC.md`, `documentation/design/COMPONENT-ARCHITECTURE.md`, `documentation/design/the-being.md`  
 

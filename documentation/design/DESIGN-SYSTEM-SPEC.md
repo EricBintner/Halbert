@@ -2,7 +2,7 @@
 
 **Version:** 1.0.0  
 **Date:** 2026-08-23  
-**Status:** Approved Foundation & Design System Standard  
+**Status:** Active Foundation Specification (Web Build Standard)  
 **Lead:** Visual Design Lead & System UX Architect  
 **Scope:** Shared Design Language across Halbert Desktop (Tauri/React) & Halbert Marketing (`marketing/web`)  
 **Design Aesthetic:** Late-1960s Futurist · Mid-Century Modern · Braun/Rams Restraint · Olivetti Tactile Soul · NASA Standards (1975)  
@@ -69,21 +69,25 @@ Halbert rejects sterile `#FFFFFF` canvases and dark hacker terminals. The backgr
 
 Text contrast never uses pitch black (`#000000`), preserving a printed editorial quality:
 
-| Semantic Token | Value | Contrast Ratio (on Canvas) | Role |
+| Semantic Token | Value | Contrast Ratio (on Canvas `#F7F5F0`) | Role & Standard |
 |---|---|---|---|
-| `--color-ink` | `#1A1918` | `15.8:1` (WCAG AAA) | Primary headings, terminal user prompt, agent voice. |
-| `--color-ink-secondary` | `#5E5B56` | `5.6:1` (WCAG AA) | Secondary prose, timestamps, telemetry metadata, tool arguments. |
-| `--color-ink-tertiary` | `#8C877D` | `3.2:1` (Large Text/UI) | Captions, shortcut badges, inactive tabs, subtle borders. |
-| `--color-ink-ghost` | `#B8B2A6` | `1.9:1` (Decorative) | Placeholder text, guideline dividers, disabled icons. |
+| `--color-ink` | `#1A1918` | `16.11:1` | Primary headings, terminal user prompt, agent voice (WCAG AAA). |
+| `--color-ink-secondary` | `#5E5B56` | `6.20:1` | Secondary prose, timestamps, telemetry metadata, tool arguments (WCAG AA). |
+| `--color-ink-tertiary` | `#8C877D` | `3.28:1` | Captions, shortcut badges, inactive tabs, subtle borders (UI non-body). |
+| `--color-ink-ghost` | `#B8B2A6` | `1.92:1` | Decorative placeholder text, guideline dividers, disabled icons. |
 
 ### 3.3 The Signature Accent: Olivetti Vermilion
 
 A single, iconic 1960s primary accent color used strictly for focus, action, and active state:
 
 - **Primary Accent (`--color-accent`):** `#D34E24` (Olivetti Vermilion / NASA 1975 Red)
-- **Accent Hover (`--color-accent-hover`):** `#B83E18`
+- **Accent Hover (`--color-accent-hover`):** `#B83E18` (5.61:1 contrast on white, WCAG AA compliant)
 - **Accent Active / Pressed (`--color-accent-active`):** `#9C3212`
 - **Accent Tint / Glow (`--color-accent-tint`):** `#FDF2EE` (Subtle 8% background wash)
+
+> [!NOTE]
+> **Accent Contrast & Button Accessibility:**
+> White text on base Vermilion (`#D34E24`) renders at `4.30:1` contrast ratio. For primary CTA buttons, ensure semibold weight (`font-semibold` / `font-bold`) and minimum size `16px - 18px` (`text-base` or `text-lg`) to clear the large-text threshold, or leverage `--color-accent-hover` (`#B83E18` at `5.61:1`) for high-contrast accessibility requirements.
 
 ### 3.4 Telemetry & Diagnostic Semantics
 
@@ -102,6 +106,15 @@ Diagnostic signals are desaturated, mid-century pigments:
 - `--shadow-card`: `0 4px 16px -2px rgba(26, 25, 24, 0.06), 0 1px 3px rgba(26, 25, 24, 0.04)`
 - `--shadow-device`: `0 24px 48px -12px rgba(26, 25, 24, 0.12), 0 4px 12px rgba(26, 25, 24, 0.05)`
 - `--shadow-popover`: `0 12px 32px -4px rgba(26, 25, 24, 0.12)`
+
+### 3.6 Framework Implementation Coexistence
+
+| Surface | Framework / Stack | Token Implementation Strategy |
+|---|---|---|
+| **Marketing Web (`marketing/web`)** | Vite + React 19 + Tailwind CSS 4 | Native `@theme` CSS custom properties in `shared-tokens/tokens.css` |
+| **Desktop App (`halbert_core`)** | Tauri + React + Tailwind CSS 3 | Conceptual token alignment with HSL shadcn root variables |
+
+*Note:* Full desktop app migration to Tailwind 4 is an independent future workstream and does not gate the marketing site build.
 
 ---
 

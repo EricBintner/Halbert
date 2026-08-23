@@ -2,16 +2,19 @@
 
 **Version:** 1.0.0  
 **Date:** 2026-08-23  
-**Status:** Approved Component Architecture Specification  
+**Status:** Active Architecture Specification (Web Build Standard)  
 **Reads with:** `documentation/design/DESIGN-SYSTEM-SPEC.md`, `documentation/design/USER-JOURNEY-METHODOLOGY.md`  
 
 ---
 
 ## 1. Component System Overview & Audit
 
-Halbert's UI is divided into two target deliverables that share the same underlying visual tokens and component philosophies:
+Halbert's UI architecture spans two target deliverables that share visual tokens and component philosophies:
 1. **Core Desktop App (Tauri + React + Radix UI + Tailwind):** The conversational host interface, summonable domain modules, and approval gates.
 2. **Marketing Experience (`marketing/web/` - Vite + React 19 + Tailwind 4 + GSAP):** The single-page scrollytelling introduction featuring animated CLI/IDE demonstrators.
+
+> [!NOTE]
+> **Current Build Focus:** The immediate build milestone focuses exclusively on the marketing web components (`TerminalFrame`, `AnimatedCLI`, `DesktopWindow`, `WaitlistCapture`). Desktop application refactoring is a separate subsequent workstream.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -25,7 +28,7 @@ Halbert's UI is divided into two target deliverables that share the same underly
 │  • VitalsMatrix      • ApprovalGate     • EvidenceDrawer • TheBeingHero     │
 │                                                                             │
 │  [ MOLECULES ]                                                              │
-│  • PromptBar         • WhyChip          • TelemetryGauge • ToolCard         │
+│  • PromptBar         • WhyChip          • TelemetryGauge • ToolExecutionCard│
 │  • DiffLine          • RationaleCard    • WaitlistCapture • BreadcrumbTrail │
 │                                                                             │
 │  [ ATOMS ]                                                                  │
@@ -36,18 +39,19 @@ Halbert's UI is divided into two target deliverables that share the same underly
 
 ---
 
-## 2. Existing Component Audit & Migration Map
+## 2. Existing Desktop Component Audit & Future Migration Map
 
-A review of existing components in `halbert_core/dashboard/frontend/src/components/` identifies necessary upgrades to align with the Daylight Mid-Century Design System:
+A review of existing components in `halbert_core/dashboard/frontend/src/components/` identifies future modernization paths for the desktop application:
 
 | Existing Component | Current Location | Current State / Deficit | Modernization & Harmonization Action |
 |---|---|---|---|
-| `AgentChat.tsx` | `src/components/agent/` | Heavy dark backgrounds; chat bubbles disconnected from domain modules | Refactor into `AgentSpine.tsx` using daylight canvas (`#F7F5F0`), inline `WhyChip` anchors, and dynamic module summoning events. |
-| `DiffBlock.tsx` | `src/components/agent/` | Monolithic diff display lacking AST context & blast-radius estimates | Upgrade to `ConfigDiffInspector.tsx` with side-by-side AST view, drop-in precedence resolution, and direct approval triggers. |
-| `ThinkingPanel.tsx` | `src/components/agent/` | Generic pulsing loader with vague text | Convert to `ToolExecutionCard.tsx` with clear 1960s mechanical status pill, live elapsed timer, and SourcePrep retrieval tags. |
-| `ConfirmationDialog.tsx` | `src/components/agent/` | Generic modal alert without dry-run consequence preview | Replace with `ApprovalGate.tsx` featuring inline blast radius, diff preview, and rollback manifest summary. |
+| `AgentChat.tsx` | `src/components/agent/` | Heavy dark backgrounds (`zinc-950`); chat bubbles disconnected from domain modules | Refactor into `AgentSpine.tsx` using daylight canvas (`#F7F5F0`), inline `WhyChip` anchors, and dynamic module summoning events. |
+| `DiffBlock.tsx` | `src/components/agent/` | Simple diff visualization lacking AST context & blast-radius estimates | Upgrade to `ConfigDiffInspector.tsx` with side-by-side AST view, drop-in precedence resolution, and direct approval triggers. |
+| `ThinkingPanel.tsx` | `src/components/agent/` | Collapsible streaming text panel rendering raw reasoning tokens | Harmonize with daylight styling and integrate structured `ToolExecutionCard` timing badges. |
+| `ToolExecutionCard.tsx` | `src/components/agent/` | Exists (3.7KB); renders tool status with expand/collapse | Restyle for daylight mid-century palette with clear mechanical status pills and SourcePrep citation links. |
+| `ConfirmationDialog.tsx` | `src/components/agent/` | Simple modal alert without dry-run consequence preview | Replace with `ApprovalGate.tsx` featuring inline blast radius, diff preview, and rollback manifest summary. |
 | `SidePanel.tsx` | `src/components/` | 92KB mega-component acting as traditional multi-tab dashboard | Deconstruct into autonomous, summonable domain modules (`VitalsModule`, `StorageSensorsModule`, `EvidenceDrawer`). |
-| `WhyOverlay.tsx` | `src/components/ui/` | Modal overlay that obscures conversation context | Refactor into `WhyCard.tsx` popover anchored directly to the inline `WhyChip`. |
+| `why-overlay.tsx` | `src/components/ui/` | Modal overlay that obscures conversation context | Refactor into `WhyCard.tsx` popover anchored directly to the inline `WhyChip`. |
 
 ---
 

@@ -2,7 +2,7 @@
 
 **Version:** 1.0.0  
 **Date:** 2026-08-23  
-**Status:** Approved Technical Design Specification  
+**Status:** Active Technical Specification (Web Build Standard)  
 **Lead:** Visual Design Lead & Systems Architect  
 **Reads with:** `documentation/design/DESIGN-SYSTEM-SPEC.md`, `documentation/design/COMPONENT-ARCHITECTURE.md`, `documentation/design/USER-JOURNEY-METHODOLOGY.md`  
 
