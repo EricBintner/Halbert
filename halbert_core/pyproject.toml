@@ -47,8 +47,14 @@ dashboard = [
 # Phase 38: Cloud API providers (optional - install if using cloud models)
 cloud-apis = [
   "anthropic>=0.39",           # Claude models (Anthropic)
-  "openai>=1.50",              # GPT models (OpenAI)  
+  "openai>=1.50",              # GPT models (OpenAI)
   "google-generativeai>=0.8",  # Gemini models (Google)
+]
+
+# Context compression (replaces CLaRa — LLMLingua-2 neural token pruning)
+compression = [
+  "llmlingua>=0.2",
+  "huggingface-hub>=0.20",
 ]
 
 dev = [
