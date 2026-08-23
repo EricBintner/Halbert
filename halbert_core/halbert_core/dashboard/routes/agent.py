@@ -8,7 +8,7 @@ Based on research5.md Part 7.
 from __future__ import annotations
 import logging
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 try:
     from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
@@ -38,6 +38,8 @@ class SendMessageRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="Session ID (auto-generated if not provided)")
     conversation_id: Optional[str] = Field(None, description="Conversation ID for history")
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
+    # Phase 4: Vision/image support (ported from chat.py)
+    images: Optional[List[str]] = Field(None, description="Base64-encoded images for vision model")
     # Performance tweaks - sent from frontend Settings > AI > Performance Tweaks
     max_tokens: Optional[int] = Field(8192, description="Max tokens for LLM response")
     temperature: Optional[float] = Field(0.7, description="LLM temperature (0.0-1.0)")
@@ -230,22 +232,52 @@ class LLMClientAdapter:
         self.max_tokens = 8192
         self.temperature = 0.7
     
-    async def chat(self, messages, tools=None, intake_result=None):
+    async def chat(self, messages, tools=None, intake_result=None, images=None):
         """Call LLM with messages, routing to specialist for complex queries.
 
         Args:
             messages: LLM message list.
             tools: Optional tool definitions.
             intake_result: Optional Phase 3 MessageIntake for model routing.
+            images: Optional list of base64-encoded images for vision model.
         """
         from ...model.client import (
             get_specialist_model, get_configured_model, get_ollama_endpoint,
-            score_query_complexity, call_llm_chat
+            score_query_complexity, call_llm_chat, get_vision_model
         )
 
         # Get the prompt from messages
         prompt = messages[-1].get("content", "") if messages else ""
         system = messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
+
+        # Phase 4: Vision model routing when images are present
+        if images:
+            vision_model, vision_endpoint = get_vision_model()
+            if vision_model:
+                logger.info(f"Agent using vision model: {vision_model}")
+                # Add images to the last user message
+                llm_messages = []
+                if system:
+                    llm_messages.append({"role": "system", "content": system})
+                for msg in messages:
+                    if msg.get("role") != "system":
+                        m = dict(msg)
+                        if msg.get("role") == "user":
+                            m["images"] = images
+                        llm_messages.append(m)
+                try:
+                    result = call_llm_chat(
+                        endpoint=vision_endpoint,
+                        model=vision_model,
+                        messages=llm_messages,
+                        provider="ollama",
+                        stream=False,
+                        timeout=300,
+                        options={"num_predict": 2048, "temperature": 0.7},
+                    )
+                    return LLMResponse(content=result.get("content", ""))
+                except Exception as e:
+                    logger.error(f"Vision model call failed: {e}, falling back to text")
 
         # Route based on complexity
         model = get_configured_model()
@@ -308,7 +340,7 @@ class LLMClientAdapter:
                 return LLMResponse(content=result.get("content", ""))
             raise
     
-    async def stream(self, messages, intake_result=None):
+    async def stream(self, messages, intake_result=None, images=None):
         """Stream response from LLM with true incremental streaming.
         
         Uses aiohttp for async streaming. Filters out <think> blocks in real-time.
@@ -318,7 +350,7 @@ class LLMClientAdapter:
         import re
         from ...model.client import (
             get_specialist_model, get_configured_model, get_ollama_endpoint,
-            score_query_complexity
+            score_query_complexity, get_vision_model
         )
         
         # Use instance variables for performance tweaks
@@ -328,11 +360,26 @@ class LLMClientAdapter:
         
         # Get the prompt from messages
         prompt = messages[-1].get("content", "") if messages else ""
-        
-        # Route based on complexity
-        model = get_configured_model()
-        endpoint = get_ollama_endpoint()
-        provider = "ollama"
+
+        # Phase 4: Vision model routing when images are present
+        if images:
+            vision_model, vision_endpoint = get_vision_model()
+            if vision_model:
+                logger.info(f"Agent stream using vision model: {vision_model}")
+                model = vision_model
+                endpoint = vision_endpoint
+                provider = "ollama"
+                # Add images to the last user message
+                for msg in messages:
+                    if msg.get("role") == "user":
+                        msg["images"] = images
+                        break
+
+        # Route based on complexity (skipped if vision model already selected)
+        if not images or not vision_model:
+            model = get_configured_model()
+            endpoint = get_ollama_endpoint()
+            provider = "ollama"
         
         specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
         if specialist_model:
@@ -542,6 +589,7 @@ if FASTAPI_AVAILABLE:
                 async for event in agent.process(
                     query=request.message,
                     session_id=session_id,
+                    images=request.images,
                 ):
                     # Check if cancelled mid-stream
                     if session_id and agent.cancelled.get(session_id):

@@ -148,6 +148,7 @@ class AgentStateMachine:
         session_id: str = None,
         user_id: str = None,
         conversation_history: List[Dict] = None,
+        images: List[str] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Process a user query through the state machine.
@@ -174,6 +175,7 @@ class AgentStateMachine:
             user_id=user_id,
             conversation_history=conversation_history or [],
             max_loops=self.max_loops,
+            images=images,
         )
 
         # Phase 3: Run intake pipeline before cognitive tick
@@ -793,6 +795,7 @@ class AgentStateMachine:
             async for chunk in self.llm.stream(
                 messages=[{"role": "user", "content": prompt}],
                 intake_result=self.ctx.intake if self.ctx else None,
+                images=self.ctx.images if self.ctx else None,
             ):
                 chunk_count += 1
                 logger.debug(f"Chunk {chunk_count}: {repr(chunk[:50])}...")
@@ -804,6 +807,7 @@ class AgentStateMachine:
             response = await self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
                 intake_result=self.ctx.intake if self.ctx else None,
+                images=self.ctx.images if self.ctx else None,
             )
             content = response.content if hasattr(response, 'content') else str(response)
             self.ctx.response_chunks.append(content)
@@ -817,7 +821,32 @@ class AgentStateMachine:
                 response=full_response,
                 session_id=self.ctx.session_id
             )
-        
+
+        # Phase 4: Parse config-edit blocks from response (ported from chat.py)
+        full_response = "".join(self.ctx.response_chunks)
+        try:
+            from ..tools.config_editor import parse_edit_blocks
+            edit_blocks = parse_edit_blocks(full_response)
+            if edit_blocks:
+                import uuid as _uuid
+                diff_id = str(_uuid.uuid4())
+                self.ctx.pending_diffs[diff_id] = {
+                    "file_path": None,  # filled by frontend or tool context
+                    "edit_blocks": edit_blocks,
+                    "status": "pending",
+                }
+                yield StreamEvent(
+                    type="diff_proposed",
+                    data={
+                        "diff_id": diff_id,
+                        "block_count": len(edit_blocks),
+                        "session_id": self.ctx.session_id,
+                    },
+                )
+                logger.info(f"Parsed {len(edit_blocks)} edit blocks from response")
+        except Exception as e:
+            logger.debug(f"Edit block parsing skipped: {e}")
+
         yield StreamEvent.response_complete(self.ctx.session_id)
         yield await self._transition(AgentState.IDLE)
     

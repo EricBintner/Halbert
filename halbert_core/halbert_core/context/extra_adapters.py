@@ -164,7 +164,19 @@ class TelemetryAdapter:
 
     Wraps the telemetry retrieval from chat.py's get_telemetry_context()
     as an async adapter. Returns recent telemetry events relevant to the query.
+
+    Phase 4: Ported chat.py's journald/hwmon ChromaDB search logic.
+    Searches self_journald and self_hwmon collections when the query
+    contains error or thermal keywords, and falls back to live psutil
+    readings.
     """
+
+    _ERROR_KEYWORDS = frozenset(
+        ["error", "fail", "crash", "problem", "issue", "broke", "not working"]
+    )
+    _THERMAL_KEYWORDS = frozenset(
+        ["temp", "hot", "thermal", "heat", "fan", "cooling", "cpu", "gpu"]
+    )
 
     def __init__(self, telemetry_store=None):
         self._store = telemetry_store
@@ -187,12 +199,23 @@ class TelemetryAdapter:
     async def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """Search telemetry for relevant events.
 
-        Falls back to live psutil readings if no telemetry store is wired.
+        Searches ChromaDB journald/hwmon collections for error/thermal
+        queries, then falls back to live psutil readings.
         """
         self._ensure_initialized()
 
+        items = []
+
+        # Phase 4: Search ChromaDB collections (ported from chat.py)
+        query_lower = query.lower()
+        has_error = any(kw in query_lower for kw in self._ERROR_KEYWORDS)
+        has_thermal = any(kw in query_lower for kw in self._THERMAL_KEYWORDS)
+
+        if has_error or has_thermal:
+            items.extend(self._search_chromadb(query, limit, has_error, has_thermal))
+
         # If we have a store, use it
-        if self._store is not None:
+        if not items and self._store is not None:
             try:
                 if hasattr(self._store, "search"):
                     results = self._store.search(query, limit=limit)
@@ -201,7 +224,6 @@ class TelemetryAdapter:
                 else:
                     results = []
 
-                items = []
                 for r in results:
                     if isinstance(r, dict):
                         items.append(
@@ -223,12 +245,59 @@ class TelemetryAdapter:
                                 "metadata": {},
                             }
                         )
-                return items
             except Exception as e:
                 logger.error(f"Telemetry search error: {e}")
 
         # Fallback: live psutil readings
-        return self._get_live_telemetry()
+        if not items:
+            items = self._get_live_telemetry()
+
+        return items
+
+    def _search_chromadb(
+        self, query: str, limit: int, has_error: bool, has_thermal: bool
+    ) -> List[Dict[str, Any]]:
+        """Search ChromaDB journald and hwmon collections (ported from chat.py)."""
+        items = []
+        try:
+            from ..index.chroma_index import get_index
+
+            index = get_index()
+            if index is None or index.client is None:
+                return items
+
+            if has_error:
+                journald = index.query(
+                    text=query, k=min(limit, 3), collection="self_journald"
+                )
+                for r in journald:
+                    msg = r.get("message", r.get("content", ""))[:200]
+                    sev = r.get("severity", "info")
+                    if msg:
+                        items.append({
+                            "content": f"[{sev}] {msg}",
+                            "category": "journald",
+                            "metadata": {"source": "chromadb", "collection": "self_journald"},
+                        })
+
+            if has_thermal:
+                hwmon = index.query(
+                    text=query, k=3, collection="self_hwmon"
+                )
+                for r in hwmon:
+                    msg = r.get("message", r.get("content", ""))
+                    data = r.get("data") or {}
+                    label = data.get("label", "") if isinstance(data, dict) else ""
+                    if msg:
+                        items.append({
+                            "content": f"{label}: {msg}" if label else msg,
+                            "category": "hwmon",
+                            "metadata": {"source": "chromadb", "collection": "self_hwmon"},
+                        })
+        except Exception as e:
+            logger.debug(f"ChromaDB telemetry search failed: {e}")
+
+        return items
 
     def _get_live_telemetry(self) -> List[Dict[str, Any]]:
         """Get live system telemetry via psutil."""
@@ -360,6 +429,97 @@ class SafetyAdapter:
             return response
 
 
+class FailureCorrelationAdapter:
+    """Provides failure correlation context.
+
+    Phase 4: Ported from chat.py's failure correlation logic. When the
+    query contains failure keywords, searches the discovery engine for
+    ALL failed/error discoveries and formats them with correlation hints
+    (e.g. "failed disk + unmounted pool = hardware root cause").
+    """
+
+    _FAILURE_KEYWORDS = frozenset(
+        ["fail", "error", "broken", "down", "not working", "issue",
+         "problem", "wrong", "crash", "stopped", "unable", "cannot",
+         "can't", "why"]
+    )
+    _PROBLEM_INDICATORS = frozenset(
+        ["fail", "error", "down", "critical", "warning", "missing",
+         "unmounted", "smart", "degraded", "offline", "inactive"]
+    )
+
+    def __init__(self, discovery_engine=None):
+        self._engine = discovery_engine
+        self._initialized = False
+
+    def _ensure_initialized(self):
+        if self._initialized:
+            return
+        if self._engine is None:
+            try:
+                from ..discovery.engine import get_engine
+                self._engine = get_engine()
+            except Exception:
+                pass
+        self._initialized = True
+
+    async def search(self, query: str, limit: int = 15) -> List[Dict[str, Any]]:
+        """Search for correlated failures when query has failure keywords.
+
+        Returns a list with a single item containing the formatted
+        failure summary, or an empty list if no failures found or
+        query doesn't contain failure keywords.
+        """
+        self._ensure_initialized()
+
+        query_lower = query.lower()
+        if not any(kw in query_lower for kw in self._FAILURE_KEYWORDS):
+            return []
+
+        if self._engine is None:
+            return []
+
+        try:
+            all_discoveries = self._engine.get_all()
+            failed = [
+                d for d in all_discoveries
+                if d.status and any(s in d.status.lower() for s in self._PROBLEM_INDICATORS)
+            ]
+            if not failed:
+                return []
+
+            lines = ["RELATED ISSUES ON THIS SYSTEM (correlate these!):"]
+            for d in failed[:limit]:
+                detail = f"- [{d.type.value.upper()}] {d.title}: {d.status}"
+                if d.status_detail:
+                    detail += f" - {d.status_detail}"
+                if hasattr(d, "data") and d.data:
+                    if d.data.get("devices"):
+                        detail += f" (devices: {', '.join(d.data['devices'][:5])})"
+                    if d.data.get("pool") or d.data.get("pool_name"):
+                        detail += f" (pool: {d.data.get('pool') or d.data.get('pool_name')})"
+                    if d.data.get("mount_point"):
+                        detail += f" (mount: {d.data.get('mount_point')})"
+                lines.append(detail)
+
+            lines.append(
+                "\nIMPORTANT: If a disk has SMART failure and belongs to a "
+                "pool that won't mount, the disk failure is likely the root cause!"
+            )
+
+            return [{
+                "content": "\n".join(lines),
+                "category": "failure_correlation",
+                "metadata": {
+                    "source": "discovery_engine",
+                    "failure_count": len(failed),
+                },
+            }]
+        except Exception as e:
+            logger.error(f"Failure correlation error: {e}")
+            return []
+
+
 def create_extended_context_assembler():
     """Create a ContextAssembler with all sources wired (existing + extended).
 
@@ -386,6 +546,7 @@ def create_extended_context_assembler():
     self_knowledge_adapter = SelfKnowledgeAdapter()
     telemetry_adapter = TelemetryAdapter()
     safety_adapter = SafetyAdapter()
+    failure_adapter = FailureCorrelationAdapter()
 
     # Extended priorities — new sources added with moderate weights
     extended_priorities = {
@@ -397,6 +558,7 @@ def create_extended_context_assembler():
         "system_identity": 0.4,
         "self_knowledge": 0.45,
         "telemetry": 0.35,
+        "failure_correlation": 0.35,
         "safety": 0.3,
     }
 
@@ -410,6 +572,7 @@ def create_extended_context_assembler():
             "system_identity": identity_adapter,
             "self_knowledge": self_knowledge_adapter,
             "telemetry": telemetry_adapter,
+            "failure_correlation": failure_adapter,
             "safety": safety_adapter,
         },
     )

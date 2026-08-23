@@ -132,6 +132,9 @@ class StateContext:
 
     # Phase 3: Intake pipeline result (message analysis before cognitive tick)
     intake: Optional[Any] = None  # MessageIntake instance
+
+    # Phase 4: Vision/image attachments (base64-encoded)
+    images: Optional[List[str]] = None
     
     def add_observation(self, observation: str):
         """Add an observation from tool execution."""
