@@ -55,8 +55,8 @@ class SourcePrepClient:
             )
         return f"{self.base_url}{path.format(project_id=pid)}"
 
-    def _post(self, path: str, json_body: Dict[str, Any]) -> Dict[str, Any]:
-        url = self._url(path)
+    def _post(self, path: str, json_body: Dict[str, Any], project_id: Optional[str] = None) -> Dict[str, Any]:
+        url = self._url(path, project_id=project_id)
         try:
             resp = requests.post(url, json=json_body, timeout=self.timeout)
             resp.raise_for_status()
@@ -250,7 +250,7 @@ class SourcePrepClient:
         body: Dict[str, Any] = {"edges": edges}
         if replace_origin:
             body["replace_origin"] = replace_origin
-        return self._post("/projects/{project_id}/trace/external-edges", body)
+        return self._post("/projects/{project_id}/trace/external-edges", body, project_id=project_id)
 
     def get_impact(
         self,

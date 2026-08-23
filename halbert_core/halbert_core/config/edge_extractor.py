@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from .snapshot import CANON_DIR
-from ..utils.paths import data_subdir
 
 logger = logging.getLogger(__name__)
 
@@ -120,26 +119,6 @@ def _resolve_unit_path(unit_name: str, known_paths: Optional[set] = None) -> Opt
     return None
 
 
-def _load_canon_files() -> List[Dict[str, Any]]:
-    canon_files: List[Dict[str, Any]] = []
-    if not os.path.isdir(CANON_DIR):
-        return canon_files
-    for fname in os.listdir(CANON_DIR):
-        if not fname.endswith(".json"):
-            continue
-        fpath = os.path.join(CANON_DIR, fname)
-        try:
-            with open(fpath, "r", encoding="utf-8") as f:
-                canon_files.append(json.load(f))
-        except (json.JSONDecodeError, OSError):
-            continue
-    return canon_files
-
-
-def _known_config_paths(canon_files: List[Dict[str, Any]]) -> set:
-    return {c["path"] for c in canon_files if "path" in c}
-
-
 class ConfigEdgeExtractor:
     """Extract dependency edges from parsed config files.
 
@@ -179,10 +158,11 @@ class ConfigEdgeExtractor:
             if kind == "ini":
                 edges.extend(self._extract_systemd_edges(path, canon))
                 edges.extend(self._extract_ini_file_refs(path, canon))
+            else:
+                edges.extend(self._extract_reference_edges(path, canon))
             edges.extend(self._extract_include_edges(path, canon))
             if path == FSTAB_PATH or path.endswith("fstab"):
                 edges.extend(self._extract_fstab_edges(path, canon))
-            edges.extend(self._extract_reference_edges(path, canon))
             edges.extend(self._extract_dropin_edges(path, canon))
         return self._dedup_edges(edges)
 
@@ -192,8 +172,6 @@ class ConfigEdgeExtractor:
         edges: List[ConfigEdge] = []
         sections = canon.get("sections", {})
         src_id = _file_node_id(path)
-
-        is_systemd = path.endswith((".service", ".timer", ".socket", ".target", ".mount"))
 
         for section_name, items in sections.items():
             for key, value in items.items():
@@ -251,6 +229,8 @@ class ConfigEdgeExtractor:
 
         for section_name, items in sections.items():
             for key, value in items.items():
+                if key in SYSTEMD_FILE_DIRECTIVES:
+                    continue
                 value_str = str(value)
                 if not value_str.startswith("/"):
                     continue

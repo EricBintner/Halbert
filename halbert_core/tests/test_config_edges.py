@@ -63,8 +63,7 @@ def temp_canon_dir(tmp_path):
     nginx_default = {
         "path": "/etc/default/nginx",
         "hash": "hash2",
-        "kind": "ini",
-        "sections": {},
+        "kind": "text",
         "lines": [
             {"n": 1, "text": "NGINX_OPTS=\"-c /etc/nginx/nginx.conf\""},
         ],
@@ -171,6 +170,20 @@ class TestConfigEdgeExtractorSystemd:
             and e.target == _file_node_id("/etc/default/nginx")
             for e in configures_edges
         )
+
+    def test_no_duplicate_references_for_systemd_directives(self, temp_canon_dir):
+        """EnvironmentFile should produce 'configures' edge only, not also 'references'."""
+        canon_dir, _ = temp_canon_dir
+        extractor = ConfigEdgeExtractor(canon_dir=canon_dir)
+        edges = extractor.extract_all()
+
+        nginx_to_default = [
+            e for e in edges
+            if e.source == _file_node_id("/etc/systemd/system/nginx.service")
+            and e.target == _file_node_id("/etc/default/nginx")
+        ]
+        assert len(nginx_to_default) == 1
+        assert nginx_to_default[0].kind == "configures"
 
     def test_executes_edge_skips_non_config(self, temp_canon_dir):
         """ExecStart references binaries which are not config files — no edge created."""
