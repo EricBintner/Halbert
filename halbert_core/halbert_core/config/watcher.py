@@ -33,13 +33,25 @@ class _Handler(FileSystemEventHandler):  # type: ignore
 
 
 class ConfigWatcher:
-    def __init__(self, manifest_path: str, on_snapshot: Optional[Callback] = None, interval_s: int = 600) -> None:
+    def __init__(
+        self,
+        manifest_path: str,
+        on_snapshot: Optional[Callback] = None,
+        interval_s: int = 600,
+        on_change: Optional[Callback] = None,
+    ) -> None:
         self.manifest_path = manifest_path
         self.on_snapshot = on_snapshot or (lambda x: None)
         self.interval_s = interval_s
+        self.on_change = on_change
         self._observer: Optional[Observer] = None  # type: ignore
         self._thread: Optional[Thread] = None
         self._stop = False
+
+    def _handle_change(self, snapshot_result: List[Dict]) -> None:
+        self.on_snapshot(snapshot_result)
+        if self.on_change:
+            self.on_change(snapshot_result)
 
     def start(self) -> None:
         if Observer is None:
@@ -52,7 +64,7 @@ class ConfigWatcher:
         man = Manifest.from_file(self.manifest_path)
         # Watch unique directories in include globs
         dirs = sorted(set(os.path.dirname(p) or "." for p in man.include))
-        handler = _Handler(self.manifest_path, self.on_snapshot)
+        handler = _Handler(self.manifest_path, self._handle_change)
         self._observer = Observer()  # type: ignore
         for d in dirs:
             if os.path.isdir(d):
@@ -70,5 +82,5 @@ class ConfigWatcher:
     def _poll_loop(self) -> None:
         while not self._stop:
             out = snapshot(self.manifest_path)
-            self.on_snapshot(out)
+            self._handle_change(out)
             time.sleep(self.interval_s)

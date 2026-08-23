@@ -232,3 +232,51 @@ class SourcePrepClient:
             return resp.status_code == 200
         except requests.RequestException:
             return False
+
+    # -- Trace: External Edges & Impact (Phase 3) ---------------------------
+
+    def push_external_edges(
+        self,
+        edges: List[Dict[str, Any]],
+        replace_origin: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """POST /projects/{id}/trace/external-edges — push config dependency edges.
+
+        If replace_origin is set, existing edges with that origin are cleared
+        before appending the new edges. Use replace_origin='config' for a
+        clean refresh on config changes.
+        """
+        body: Dict[str, Any] = {"edges": edges}
+        if replace_origin:
+            body["replace_origin"] = replace_origin
+        return self._post("/projects/{project_id}/trace/external-edges", body)
+
+    def get_impact(
+        self,
+        file_path: str,
+        max_hops: int = 2,
+        max_nodes: int = 30,
+        project_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """GET /projects/{id}/trace/impact/{node_id} — blast-radius query.
+
+        Returns the reverse-dependency graph: everything that depends on
+        the given file. Answers "what breaks if I edit this config?"
+        """
+        node_id = file_path if file_path.startswith("file:") else f"file:{file_path}"
+        pid = project_id or self.project_id
+        if not pid:
+            raise ValueError("project_id is required")
+        url = f"{self.base_url}/projects/{pid}/trace/impact/{node_id}"
+        try:
+            resp = requests.get(
+                url,
+                params={"max_hops": max_hops, "max_nodes": max_nodes},
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            logger.error(f"SourcePrep GET impact {url} failed: {e}")
+            raise
