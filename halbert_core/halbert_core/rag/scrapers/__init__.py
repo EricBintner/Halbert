@@ -13,6 +13,12 @@ macOS (Phase 25):
 - macOS command reference (SS64)
 - macOS man pages (requires macOS)
 - macOS support guides
+- Ask Different (apple.stackexchange.com)
+- MacPorts Guide
+
+BSD:
+- FreeBSD Handbook
+- FreeBSD man pages
 """
 
 from .base import BaseScraper, ScraperConfig, ScrapedDocument
@@ -37,6 +43,11 @@ from .git_docs import GitDocsScraper
 from .scheduling_docs import SchedulingDocsScraper
 from .logging_docs import LoggingDocsScraper
 from .performance_docs import PerformanceDocsScraper
+# macOS / BSD (Phase 25 + macOS RAG expansion)
+from .ask_different import AskDifferentScraper
+from .macports_guide import MacPortsGuideScraper
+from .freebsd_handbook import FreeBSDHandbookScraper
+from .freebsd_man import FreeBSDManPagesScraper
 
 __all__ = [
     'BaseScraper',
@@ -66,4 +77,9 @@ __all__ = [
     # macOS
     'HomebrewScraper',
     'MacOSSupportScraper',
+    'AskDifferentScraper',
+    'MacPortsGuideScraper',
+    # BSD
+    'FreeBSDHandbookScraper',
+    'FreeBSDManPagesScraper',
 ]

@@ -13,7 +13,9 @@ Only included in macOS App Store builds.
 |------------|--------|------|--------|
 | `man-pages` | Local macOS system | 7,310 | ✅ |
 | `homebrew` | brew.sh, formulae.brew.sh | 8,777 | ✅ |
-| `support` | SS64, synthetic guides | 93 | ✅ |
+| `support` | SS64, synthetic guides | 104 | ✅ |
+| `ask-different` | apple.stackexchange.com | 269 | ✅ |
+| `macports-guide` | guide.macports.org | 10 | ✅ |
 
 ### System Administration
 

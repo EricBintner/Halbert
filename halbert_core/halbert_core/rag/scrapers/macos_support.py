@@ -220,6 +220,60 @@ class MacOSSupportScraper(BaseScraper):
                 "tags": ["power", "battery", "sleep", "pmset"],
                 "category": "power_management",
             },
+            {
+                "title": "APFS (Apple File System) Guide",
+                "content": self._apfs_guide(),
+                "tags": ["apfs", "filesystem", "storage", "snapshots"],
+                "category": "storage",
+            },
+            {
+                "title": "Apple Silicon and Rosetta 2",
+                "content": self._apple_silicon_guide(),
+                "tags": ["apple-silicon", "rosetta", "arm", "unified-memory"],
+                "category": "hardware",
+            },
+            {
+                "title": "macOS Notarization and Code Distribution",
+                "content": self._notarization_guide(),
+                "tags": ["notarization", "codesign", "xcrun", "distribution"],
+                "category": "security",
+            },
+            {
+                "title": "macOS Mobile Device Management (MDM)",
+                "content": self._mdm_guide(),
+                "tags": ["mdm", "configuration-profiles", "mobileconfig", "enterprise"],
+                "category": "enterprise",
+            },
+            {
+                "title": "macOS Recovery and Reinstall",
+                "content": self._recovery_guide(),
+                "tags": ["recovery", "reinstall", "internet-recovery", "startup"],
+                "category": "recovery",
+            },
+            {
+                "title": "macOS User and Group Management",
+                "content": self._user_management_guide(),
+                "tags": ["users", "groups", "dscl", "directory"],
+                "category": "system_admin",
+            },
+            {
+                "title": "macOS Software Update Management",
+                "content": self._software_update_guide(),
+                "tags": ["softwareupdate", "updates", "macos-update"],
+                "category": "system_admin",
+            },
+            {
+                "title": "macOS Spotlight Search and Metadata",
+                "content": self._spotlight_guide(),
+                "tags": ["spotlight", "mdfind", "mdls", "metadata", "search"],
+                "category": "system_admin",
+            },
+            {
+                "title": "macOS System Diagnostics",
+                "content": self._diagnostics_guide(),
+                "tags": ["sysdiagnose", "system_profiler", "diagnostics", "troubleshooting"],
+                "category": "diagnostics",
+            },
         ]
         
         for task in tasks:
@@ -1008,6 +1062,1376 @@ system_profiler SPPowerDataType | grep -A 5 "Health Information"
 
 ```bash
 sudo pmset -a restoredefaults
+```
+"""
+
+    def _apfs_guide(self) -> str:
+        return """# APFS (Apple File System) Guide
+
+APFS is the default file system for macOS since High Sierra (10.13).
+It is optimized for SSD storage and supports snapshots, cloning, and encryption.
+
+## Key Features
+
+- **Snapshots**: Point-in-time read-only copies of the filesystem
+- **Cloning**: Instant file copies (copy-on-write)
+- **Space Sharing**: Multiple volumes share the same container
+- **Encryption**: Per-volume encryption with FileVault
+- **Crash Protection**: Copy-on-write ensures filesystem consistency
+
+## Container and Volume Management
+
+### List APFS containers
+```bash
+diskutil apfs list
+```
+
+### List specific container
+```bash
+diskutil apfs listContainer disk1
+```
+
+### Create APFS container
+```bash
+diskutil apfs createContainer disk0s2
+```
+
+### Add APFS volume to container
+```bash
+diskutil apfs addVolume disk1 APFS "MyVolume"
+diskutil apfs addVolume disk1 APFS "Data" -mountpoint /Volumes/Data
+```
+
+### Delete APFS volume
+```bash
+diskutil apfs deleteVolume disk1s3
+```
+
+### Resize APFS container
+```bash
+diskutil apfs resizeContainer disk1 500g
+```
+
+### Sync APFS container
+```bash
+diskutil apfs syncContainer disk1
+```
+
+## APFS Snapshots
+
+### List snapshots
+```bash
+tmutil listlocalsnapshots /
+```
+
+### Create a local snapshot
+```bash
+tmutil localsnapshot
+```
+
+### Delete a local snapshot
+```bash
+tmutil deletelocalsnapshots <snapshot-date>
+```
+
+### Mount a snapshot (read-only)
+```bash
+# Snapshots are mounted automatically under /.DocumentRevisions-V100/
+# Or via Time Machine interface
+```
+
+## FileVault with APFS
+
+### Check FileVault status
+```bash
+fdesetup status
+```
+
+### Enable FileVault
+```bash
+sudo fdesetup enable
+```
+
+### Enable with institutional recovery key
+```bash
+sudo fdesetup enable -institutional -keychain /path/to/keychain
+```
+
+## APFS Encryption Status
+
+### Check encryption progress
+```bash
+diskutil apfs list
+# Look for "FileVault" and "Encryption" fields
+```
+
+### Decrypt APFS volume
+```bash
+sudo fdesetup disable
+```
+
+## APFS and Time Machine
+
+Time Machine uses APFS local snapshots for local backups:
+- Snapshots are created automatically every hour
+- Stored in the APFS container
+- Can consume significant disk space
+- Old snapshots are pruned automatically
+
+### Manage Time Machine snapshots
+```bash
+tmutil listlocalsnapshots /
+tmutil deletelocalsnapshots 2024-01-15-100000
+```
+
+## Troubleshooting APFS
+
+### Check APFS object map
+```bash
+diskutil apfs verifyObjectMap disk1s1
+```
+
+### Repair APFS volume
+```bash
+diskutil apfs repairVolume disk1s1
+```
+
+### Force unmount APFS volume
+```bash
+diskutil apfs forceUnmount disk1s1
+```
+
+### APFS container out of space
+If container is full but volumes show free space:
+```bash
+# Check for orphaned snapshots
+tmutil listlocalsnapshots /
+# Delete old snapshots
+tmutil deletelocalsnapshots <date>
+# Resize container if physical space allows
+diskutil apfs resizeContainer disk1 0
+```
+"""
+
+    def _apple_silicon_guide(self) -> str:
+        return """# Apple Silicon and Rosetta 2
+
+Apple Silicon (M1, M2, M3, M4) is Apple's ARM-based chip architecture
+replacing Intel x86 in Macs. It uses unified memory architecture (UMA).
+
+## Architecture Overview
+
+- **ARM64 (AArch64)**: Native instruction set
+- **Unified Memory**: CPU and GPU share the same memory pool
+- **Neural Engine (NPU)**: Dedicated AI/ML accelerator
+- **Secure Enclave**: Hardware security module
+- **Media Engine**: Hardware video encode/decode
+
+## Checking Apple Silicon
+
+### Check chip type
+```bash
+sysctl -n machdep.cpu.brand_string
+# Apple Silicon: "Apple M2 Pro" etc.
+# Intel: "Intel(R) Core(TM) i7..." etc.
+```
+
+### Check architecture
+```bash
+uname -m
+# arm64 = Apple Silicon
+# x86_64 = Intel
+```
+
+### Detailed hardware info
+```bash
+system_profiler SPHardwareDataType
+```
+
+## Rosetta 2
+
+Rosetta 2 is Apple's translation layer that runs Intel (x86_64) binaries
+on Apple Silicon. It translates code at install time for most apps.
+
+### Install Rosetta 2
+```bash
+softwareupdate --install-rosetta
+# Or agree to license:
+softwareupdate --install-rosetta --agree-to-license
+```
+
+### Check if Rosetta is installed
+```bash
+arch -arch x86_64 /usr/bin/true 2>/dev/null && echo "Rosetta available" || echo "Rosetta not installed"
+```
+
+### Run Intel binary explicitly
+```bash
+arch -x86_64 <command>
+```
+
+### Run ARM binary explicitly
+```bash
+arch -arm64 <command>
+```
+
+### Check binary architecture
+```bash
+file /path/to/binary
+# "Mach-O 64-bit executable arm64" = Apple Silicon native
+# "Mach-O 64-bit executable x86_64" = Intel
+# "Mach-O universal binary" = Both architectures
+```
+
+### List architectures in universal binary
+```bash
+lipo -info /path/to/binary
+lipo -archs /path/to/binary
+```
+
+### Extract specific architecture
+```bash
+lipo -extract arm64 /path/to/binary -output /path/to/arm64_binary
+```
+
+## Homebrew on Apple Silicon
+
+Homebrew installs to different paths on Apple Silicon:
+- **Apple Silicon**: `/opt/homebrew`
+- **Intel**: `/usr/local`
+
+### Check Homebrew prefix
+```bash
+brew --prefix
+```
+
+### Install ARM-native formula
+```bash
+arch -arm64 brew install <formula>
+```
+
+### Install Intel formula via Rosetta
+```bash
+arch -x86_64 brew install <formula>
+```
+
+## Unified Memory Architecture
+
+On Apple Silicon, CPU and GPU share the same memory:
+- No data copy needed between CPU and GPU
+- Total system memory is shared
+- More efficient for ML/GPU workloads
+
+### Check memory
+```bash
+sysctl -n hw.memsize
+# Convert to GB: divide by 1073741824
+```
+
+### Check GPU memory (shared)
+```bash
+system_profiler SPDisplaysDataType
+```
+
+## Performance Considerations
+
+- Native ARM64 binaries are significantly faster than Rosetta-translated ones
+- Rosetta 2 has some overhead (~20-30% for compute-heavy tasks)
+- Some Intel-only apps may not work under Rosetta (kernel extensions, virtualization)
+- Docker uses a lightweight VM on Apple Silicon
+- x86_64 Docker images run via emulation (slow); use ARM images when possible
+
+## Virtualization on Apple Silicon
+
+- Virtualization Framework supports ARM VMs natively
+- UTM, Parallels, VMware Fusion support ARM Linux/Windows
+- Intel OS virtualization requires emulation (very slow)
+- Docker runs in a lightweight ARM Linux VM
+"""
+
+    def _notarization_guide(self) -> str:
+        return """# macOS Notarization and Code Distribution
+
+Notarization is Apple's security process that verifies software is free from
+malware before distribution. Required for Gatekeeper to allow execution.
+
+## Prerequisites
+
+- Apple Developer account
+- App-specific password for notarytool
+- Developer ID Application certificate
+
+### Create app-specific password
+1. Go to https://appleid.apple.com
+2. Sign in > App-Specific Passwords > Generate
+3. Save the password for notarytool
+
+### Store credentials for notarytool
+```bash
+xcrun notarytool store-credentials "AC_PASSWORD" \
+  --apple-id "you@example.com" \
+  --team-id "TEAM123456" \
+  --password "app-specific-password"
+```
+
+## Code Signing
+
+### Sign an application
+```bash
+codesign --deep --force --verify --verbose=4 \
+  --sign "Developer ID Application: Your Name (TEAM123456)" \
+  /path/to/YourApp.app
+```
+
+### Sign with options
+```bash
+codesign --deep --force --options runtime \
+  --sign "Developer ID Application: Your Name (TEAM123456)" \
+  --entitlements entitlements.plist \
+  /path/to/YourApp.app
+```
+
+### Verify code signature
+```bash
+codesign --verify --verbose=4 /path/to/YourApp.app
+codesign -dv --verbose=4 /path/to/YourApp.app
+```
+
+### Check entitlements
+```bash
+codesign -d --entitlements - /path/to/YourApp.app
+```
+
+## Notarization Process
+
+### Submit for notarization
+```bash
+# Zip the app first
+ditto -c -k --keepParent /path/to/YourApp.app /path/to/YourApp.zip
+
+# Submit
+xcrun notarytool submit /path/to/YourApp.zip \
+  --keychain-profile "AC_PASSWORD" \
+  --wait
+```
+
+### Check notarization status
+```bash
+xcrun notarytool info <submission-id> --keychain-profile "AC_PASSWORD"
+```
+
+### Get notarization log
+```bash
+xcrun notarytool log <submission-id> --keychain-profile "AC_PASSWORD"
+```
+
+### Staple the notarization ticket
+```bash
+xcrun stapler staple /path/to/YourApp.app
+xcrun stapler validate /path/to/YourApp.app
+```
+
+## Full Distribution Workflow
+
+```bash
+# 1. Build your app
+xcodebuild -project YourApp.xcodeproj -scheme YourApp -configuration Release
+
+# 2. Code sign
+codesign --deep --force --options runtime \
+  --sign "Developer ID Application: Your Name (TEAM123456)" \
+  /path/to/YourApp.app
+
+# 3. Create zip
+ditto -c -k --keepParent /path/to/YourApp.app YourApp.zip
+
+# 4. Submit for notarization
+xcrun notarytool submit YourApp.zip --keychain-profile "AC_PASSWORD" --wait
+
+# 5. Staple ticket
+xcrun stapler staple /path/to/YourApp.app
+
+# 6. Verify
+xcrun stapler validate /path/to/YourApp.app
+spctl --assess --verbose=4 /path/to/YourApp.app
+```
+
+## Creating an Installer Package
+
+### Build a pkg
+```bash
+pkgbuild --component /path/to/YourApp.app \
+  --install-location /Applications \
+  --sign "Developer ID Installer: Your Name (TEAM123456)" \
+  YourApp.pkg
+```
+
+### Notarize a pkg
+```bash
+xcrun notarytool submit YourApp.pkg --keychain-profile "AC_PASSWORD" --wait
+xcrun stapler staple YourApp.pkg
+```
+
+## Troubleshooting Notarization
+
+### Common rejection reasons
+- Unsigned binaries or libraries
+- Missing hardened runtime (--options runtime)
+- Embedded libraries not signed
+- Using deprecated APIs
+- Including executable stack
+
+### Check bundle for unsigned binaries
+```bash
+find /path/to/YourApp.app -type f -exec sh -c 'file "$1" | grep -q "Mach-O" && codesign -dv "$1" 2>&1 | grep -q "not signed" && echo "UNSIGNED: $1"' _ {} \;
+```
+"""
+
+    def _mdm_guide(self) -> str:
+        return """# macOS Mobile Device Management (MDM)
+
+MDM allows centralized management of macOS devices in enterprise environments.
+Uses configuration profiles (.mobileconfig) to enforce settings.
+
+## Configuration Profiles
+
+### Profile structure
+Configuration profiles are XML plist files with `.mobileconfig` extension:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <!-- Payload dictionaries -->
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>WiFi Configuration</string>
+    <key>PayloadIdentifier</key>
+    <string>com.example.wifi</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>A1B2C3D4-E5F6-7890-ABCD-EF1234567890</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
+```
+
+### Install a profile (command line)
+```bash
+profiles install -path /path/to/profile.mobileconfig
+```
+
+### List installed profiles
+```bash
+profiles list
+profiles show -type configuration
+```
+
+### Remove a profile
+```bash
+profiles remove -identifier com.example.wifi
+```
+
+### Remove all profiles
+```bash
+profiles remove -all -forced
+```
+
+## Common MDM Payloads
+
+### WiFi Configuration
+- SSID, security type, password
+- 802.1X enterprise settings
+- Hidden networks
+
+### Restrictions
+- Disable camera, FaceTime
+- Prevent app installation/removal
+- Enforce passcode policy
+- Disable USB storage
+
+### Email Configuration
+- Exchange/IMAP/POP settings
+- S/MIME certificates
+
+### VPN Configuration
+- IKEv2, L2TP, Cisco IPSec
+- Always-on VPN
+- Per-app VPN
+
+### Security
+- FileVault enable/escrow
+- Firewall settings
+- Gatekeeper settings
+
+## Managed Preferences (ManagedSettings)
+
+MDM can enforce user preferences via managed preferences:
+- Settings appear in System Settings with "managed by organization" badge
+- Users cannot change managed settings
+- Applied at the domain level (e.g., com.apple.finder)
+
+### Example: Disable external volumes in Finder
+```xml
+<dict>
+    <key>PayloadType</key>
+    <string>com.apple.ManagedClient.preferences</string>
+    <key>PayloadContent</key>
+    <dict>
+        <key>com.apple.finder</key>
+        <dict>
+            <key>Forced</key>
+            <array>
+                <dict>
+                    <key>mcx_preference_settings</key>
+                    <dict>
+                        <key>ProhibitBurn</key>
+                        <true/>
+                        <key>ShowExternalHardDrivesOnDesktop</key>
+                        <false/>
+                    </dict>
+                </dict>
+            </array>
+        </dict>
+    </dict>
+</dict>
+```
+
+## MDM Enrollment
+
+### Automated Device Enrollment (DEP)
+- Devices enrolled automatically when activated
+- Requires Apple Business/School Manager
+- Supervision is enforced
+- Cannot be removed by user
+
+### Manual Enrollment
+- User installs enrollment profile
+- Device becomes supervised
+- Can be unenrolled by user (unless DEP)
+
+### Check supervision status
+```bash
+profiles status -type enrollment
+```
+
+## Useful MDM Commands
+
+### Check MDM enrollment
+```bash
+profiles status -type enrollment
+```
+
+### Renew MDM enrollment
+```bash
+profiles renew -type enrollment
+```
+
+### Show MDM profile details
+```bash
+profiles show -type enrollment
+```
+
+## Popular MDM Solutions
+
+- **Jamf Pro**: Enterprise-focused, most popular for Mac
+- **Microsoft Intune**: Integrated with Microsoft 365
+- **VMware Workspace ONE**: Cross-platform
+- **Kandji**: Modern Mac-focused MDM
+- **Mosyle**: Education and business
+- **SimpleMDM**: Lightweight, easy to use
+"""
+
+    def _recovery_guide(self) -> str:
+        return """# macOS Recovery and Reinstall
+
+macOS Recovery provides tools to repair, restore, and reinstall macOS.
+
+## Entering Recovery Mode
+
+### Apple Silicon
+1. Shut down the Mac
+2. Press and hold the power button
+3. Keep holding until "Loading startup options" appears
+4. Click "Options" > Continue
+
+### Intel Macs
+1. Restart the Mac
+2. Immediately press and hold Cmd + R
+3. Release when the Apple logo appears
+
+### Internet Recovery (Intel)
+- Cmd + Option + R: Latest compatible macOS
+- Shift + Cmd + Option + R: Original macOS that shipped with Mac
+
+## Recovery Tools
+
+### Disk Utility
+- Repair disks with First Aid
+- Erase and reformat disks
+- Restore from disk images
+
+### Reinstall macOS
+- Downloads and installs the current macOS version
+- Preserves user data (if disk is healthy)
+
+### Terminal (from Recovery)
+Available commands in Recovery Terminal:
+```bash
+# Mount the main volume
+diskutil apfs list
+diskutil mount /dev/disk1s1
+
+# Reset user password
+resetpassword
+
+# Check system integrity
+csrutil status
+
+# Disable SIP (for troubleshooting)
+csrutil disable
+
+# Re-enable SIP
+csrutil enable
+
+# Start from a specific volume
+bless --mount /Volumes/Macintosh\ HD --setBoot
+```
+
+## Reinstall macOS
+
+### From Recovery
+1. Boot into Recovery Mode
+2. Select "Reinstall macOS"
+3. Follow the installer prompts
+4. macOS will download and install
+
+### From Terminal (createinstallmedia)
+```bash
+# Download macOS installer from App Store first
+# Then create a bootable installer:
+sudo /Applications/Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia \
+  --volume /Volumes/MyVolume
+```
+
+### Boot from installer USB
+- Apple Silicon: Hold power button > select USB drive
+- Intel: Hold Option key at startup > select USB drive
+
+## Reset NVRAM/PRAM
+
+### Intel Macs
+1. Shut down
+2. Press power, immediately hold Cmd + Option + P + R
+3. Hold for 20 seconds (or until second startup chime)
+
+### Apple Silicon
+NVRAM resets automatically during a full shutdown:
+1. Apple menu > Shut Down
+2. Wait 10 seconds
+3. Press power button
+
+## Reset SMC (Intel only)
+
+### MacBook with T2 chip
+1. Shut down
+2. Hold Ctrl + Option + Shift + power button for 7 seconds
+3. Release, wait 5 seconds, press power button
+
+### MacBook without T2
+1. Shut down
+2. Hold Shift + Ctrl + Option + power button for 10 seconds
+3. Release, press power button
+
+## Safe Mode
+
+### Boot into Safe Mode (Apple Silicon)
+1. Shut down
+2. Hold power button until startup options
+3. Select startup disk, hold Shift
+4. Click "Continue in Safe Mode"
+
+### Boot into Safe Mode (Intel)
+1. Restart
+2. Hold Shift key immediately
+3. Release when login window appears
+
+### Safe Mode effects
+- Disables third-party kernel extensions
+- Clears font caches
+- Disables startup items
+- Forces directory check
+
+## DFU Mode (Device Firmware Update)
+
+Used for restoring Apple Silicon Macs with Apple Configurator:
+1. Connect two Macs via USB-C/Thunderbolt
+2. On target Mac: hold power, press left Ctrl, left Option, right Shift for 7 seconds
+3. Continue holding power for 10 more seconds
+4. Use Apple Configurator on the other Mac to Restore
+"""
+
+    def _user_management_guide(self) -> str:
+        return """# macOS User and Group Management
+
+macOS uses Directory Service (dscl) for user and group management.
+Users and groups are stored in the local directory node.
+
+## User Management
+
+### List all users
+```bash
+dscl . list /Users UniqueID
+```
+
+### List users with home directories
+```bash
+dscl . list /Users NFSHomeDirectory
+```
+
+### Get user details
+```bash
+dscl . read /Users/username
+```
+
+### Create a new user
+```bash
+# Create user
+sudo dscl . create /Users/newuser
+
+# Set shell
+sudo dscl . create /Users/newuser UserShell /bin/bash
+
+# Set full name
+sudo dscl . create /Users/newuser RealName "New User"
+
+# Set UniqueID (find next available)
+sudo dscl . create /Users/newuser UniqueID 501
+
+# Set primary group ID (20 = staff)
+sudo dscl . create /Users/newuser PrimaryGroupID 20
+
+# Set home directory
+sudo dscl . create /Users/newuser NFSHomeDirectory /Users/newuser
+
+# Create home directory
+sudo createhomedir -c -u newuser
+```
+
+### Set user password
+```bash
+# Interactive
+sudo dscl . passwd /Users/newuser
+
+# Non-interactive (less secure)
+sudo dscl . passwd /Users/newuser newpassword
+```
+
+### Delete a user
+```bash
+sudo dscl . delete /Users/username
+sudo rm -rf /Users/username
+```
+
+### Modify user properties
+```bash
+# Change shell
+sudo dscl . create /Users/username UserShell /bin/zsh
+
+# Change full name
+sudo dscl . create /Users/username RealName "New Name"
+
+# Disable login
+sudo dscl . create /Users/username UserShell /usr/bin/false
+```
+
+## Group Management
+
+### List all groups
+```bash
+dscl . list /Groups PrimaryGroupID
+```
+
+### Get group details
+```bash
+dscl . read /Groups/groupname
+```
+
+### Create a new group
+```bash
+sudo dscl . create /Groups/newgroup
+sudo dscl . create /Groups/newgroup RealName "New Group"
+sudo dscl . create /Groups/newgroup PrimaryGroupID 1000
+```
+
+### Add user to group
+```bash
+sudo dscl . append /Groups/groupname GroupMembership username
+```
+
+### Remove user from group
+```bash
+sudo dscl . delete /Groups/groupname GroupMembership username
+```
+
+### List group members
+```bash
+dscl . read /Groups/groupname GroupMembership
+```
+
+## Standard macOS Groups
+
+| Group | GID | Description |
+|-------|-----|-------------|
+| admin | 80 | Administrators |
+| staff | 20 | All users |
+| wheel | 0 | System operators |
+| daemon | 1 | System daemons |
+| _lp | 26 | Print operators |
+| _developer | 206 | Developer tools |
+
+## Check User/Group Membership
+
+### Check current user's groups
+```bash
+groups
+id
+```
+
+### Check if user is admin
+```bash
+groups username | grep -w admin
+```
+
+### Check user's UID
+```bash
+id -u username
+```
+
+## Guest User Management
+
+### Enable guest user
+```bash
+sudo defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool true
+```
+
+### Disable guest user
+```bash
+sudo defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool false
+```
+
+## Login Window Settings
+
+### Show full names in login window
+```bash
+sudo defaults write /Library/Preferences/com.apple.loginwindow SHOWFULLNAME -bool true
+```
+
+### Hide restart/shutdown buttons
+```bash
+sudo defaults write /Library/Preferences/com.apple.loginwindow HIDESHUTDOWNTIMER -bool true
+```
+"""
+
+    def _software_update_guide(self) -> str:
+        return """# macOS Software Update Management
+
+macOS software updates can be managed via the `softwareupdate` command line tool.
+
+## Check for Updates
+
+### List available updates
+```bash
+softwareupdate --list
+```
+
+### List with full details
+```bash
+softwareupdate --list --verbose
+```
+
+## Install Updates
+
+### Install all available updates
+```bash
+sudo softwareupdate --install --all
+```
+
+### Install specific update
+```bash
+sudo softwareupdate --install "macOS Sonoma 14.5-23F79"
+```
+
+### Install and restart if needed
+```bash
+sudo softwareupdate --install --all --restart
+```
+
+### Download only (don't install)
+```bash
+sudo softwareupdate --download --all
+```
+
+### Install downloaded updates
+```bash
+sudo softwareupdate --install --all --no-scan
+```
+
+## Update Settings
+
+### Check automatic update settings
+```bash
+sudo defaults read /Library/Preferences/com.apple.SoftwareUpdate
+```
+
+### Enable automatic check
+```bash
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool true
+```
+
+### Set update frequency (days)
+```bash
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate ScheduleFrequency -int 1
+```
+
+### Enable automatic download
+```bash
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -int 1
+```
+
+### Enable automatic macOS updates
+```bash
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool true
+```
+
+### Enable automatic app store updates
+```bash
+sudo defaults write /Library/Preferences/com.apple.commerce AutoUpdate -bool true
+```
+
+### Enable automatic security updates
+```bash
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool true
+```
+
+### Enable automatic config data updates (XProtect, MRT)
+```bash
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate ConfigDataInstall -bool true
+```
+
+## Clear Update Cache
+
+### Clear downloaded updates
+```bash
+sudo rm -rf /Library/Updates/*
+sudo softwareupdate --clear-catalog
+```
+
+## macOS Major Upgrades
+
+### Download macOS installer
+```bash
+# List available full installers
+softwareupdate --list-full-installers
+
+# Download specific version
+softwareupdate --fetch-full-installer --full-installer-version 14.5
+```
+
+### Check installer availability
+```bash
+# Installers are downloaded to /Applications
+ls /Applications/ | grep "Install macOS"
+```
+
+## XProtect and MRT Updates
+
+XProtect (anti-malware) and MRT (Malware Removal Tool) update silently:
+
+### Check XProtect version
+```bash
+system_profiler SPInstallHistoryDataType | grep -A 5 "XProtect"
+```
+
+### Force XProtect update
+```bash
+sudo softwareupdate --background
+```
+
+## Deferred Updates (MDM)
+
+When managed by MDM, updates can be deferred:
+```bash
+# Check deferred update policy
+sudo defaults read /Library/Preferences/com.apple.SoftwareUpdate DeferredUpdates
+```
+"""
+
+    def _spotlight_guide(self) -> str:
+        return """# macOS Spotlight Search and Metadata
+
+Spotlight is macOS's built-in search system, powered by a metadata index.
+The command-line tools mdfind, mdls, and mdutil provide direct access.
+
+## mdfind - Spotlight Search
+
+### Basic search
+```bash
+mdfind "search term"
+```
+
+### Search by name only
+```bash
+mdfind -name "filename"
+```
+
+### Search only in specific directory
+```bash
+mdfind -onlyin /Users/username "search term"
+```
+
+### Live search (streaming results)
+```bash
+mdfind -live "search term"
+```
+
+### Search with metadata attributes
+```bash
+# Find PDF files
+mdfind "kMDItemContentType == 'com.adobe.pdf'"
+
+# Find images modified today
+mdfind "kMDItemFSContentChangeDate >= \$time.today"
+
+# Find files larger than 100MB
+mdfind "kMDItemFSSize > 104857600"
+
+# Find apps
+mdfind "kMDItemContentType == 'com.apple.application-bundle'"
+
+# Find files by kind
+mdfind "kind:application"
+mdfind "kind:image"
+mdfind "kind:pdf"
+```
+
+### Boolean operators
+```bash
+mdfind "macos AND troubleshooting"
+mdfind "macos OR linux"
+mdfind "macos NOT windows"
+```
+
+## mdls - List Metadata Attributes
+
+### List all metadata for a file
+```bash
+mdls /path/to/file
+```
+
+### Get specific attribute
+```bash
+mdls -name kMDItemContentType /path/to/file
+mdls -name kMDItemFSSize /path/to/file
+mdls -name kMDItemFSContentChangeDate /path/to/file
+```
+
+### List only specific attributes
+```bash
+mdls -name kMDItemContentType -name kMDItemFSSize /path/to/file
+```
+
+### Raw output (no attribute names)
+```bash
+mdls -raw -name kMDItemFSSize /path/to/file
+```
+
+## Common Metadata Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| kMDItemFSName | Filename |
+| kMDItemFSSize | File size (bytes) |
+| kMDItemContentType | UTI type |
+| kMDItemFSContentChangeDate | Last modified |
+| kMDItemFSCreationDate | Creation date |
+| kMDItemTitle | Document title |
+| kMDItemAuthors | Document authors |
+| kMDItemKeywords | Document keywords |
+| kMDItemWhereFroms | Download source URL |
+| kMDItemPixelWidth | Image width |
+| kMDItemPixelHeight | Image height |
+| kMDItemDurationSeconds | Media duration |
+
+## mdutil - Spotlight Index Management
+
+### Check indexing status
+```bash
+mdutil -s /
+```
+
+### Enable indexing
+```bash
+sudo mdutil -i on /
+```
+
+### Disable indexing
+```bash
+sudo mdutil -i off /
+```
+
+### Rebuild index from scratch
+```bash
+sudo mdutil -E /
+```
+
+### Erase and rebuild index
+```bash
+sudo mdutil -Er /
+```
+
+### Disable indexing for specific volume
+```bash
+sudo mdutil -i off /Volumes/ExternalDrive
+```
+
+### Check Spotlight status for all volumes
+```bash
+mdutil -as
+```
+
+## Privacy Settings
+
+### Add folder to Spotlight privacy (exclude from indexing)
+```bash
+# Via System Settings > Siri & Spotlight > Privacy
+# Or via defaults:
+sudo defaults write /.Spotlight-V100/VolumeConfiguration.plist Exclusions -array-add "/path/to/exclude"
+```
+
+## Using Spotlight in Scripts
+
+### Find recently modified files
+```bash
+mdfind -onlyin /Users/username 'kMDItemFSContentChangeDate >= $time.today(-7)'
+```
+
+### Find large files
+```bash
+mdfind -onlyin / 'kMDItemFSSize > 1073741824' 2>/dev/null | head -20
+```
+
+### Find duplicate filenames
+```bash
+mdfind -name "file.txt" | sort
+```
+"""
+
+    def _diagnostics_guide(self) -> str:
+        return """# macOS System Diagnostics
+
+macOS provides several built-in tools for system diagnostics and troubleshooting.
+
+## sysdiagnose
+
+sysdiagnose collects comprehensive system diagnostic data.
+
+### Generate a sysdiagnose
+```bash
+sudo sysdiagnose -f ~/Desktop/
+# Output: sysdiagnose_<hostname>.<date>.<time>.tar.gz
+```
+
+### Quick sysdiagnose (no wait)
+```bash
+sudo sysdiagnose -b -f ~/Desktop/
+```
+
+### What sysdiagnose collects
+- System logs (unified logging)
+- Process list and memory usage
+- Network configuration and state
+- File system information
+- Kernel state and extensions
+- I/O Kit registry
+- System profiler data
+- Power management state
+- Launchd services
+- User preferences
+
+## system_profiler
+
+system_profiler provides detailed hardware and software information.
+
+### Full system report
+```bash
+system_profiler
+```
+
+### Specific data types
+```bash
+system_profiler SPHardwareDataType
+system_profiler SPSoftwareDataType
+system_profiler SPStorageDataType
+system_profiler SPNetworkDataType
+system_profiler SPUSBDataType
+system_profiler SPThunderboltDataType
+system_profiler SPPCIDataType
+system_profiler SPDisplaysDataType
+system_profiler SPMemoryDataType
+system_profiler SPPowerDataType
+system_profiler SPBluetoothDataType
+```
+
+### XML output
+```bash
+system_profiler -xml SPHardwareDataType
+```
+
+### List all data types
+```bash
+system_profiler -listDataTypes
+```
+
+### Save full report to file
+```bash
+system_profiler > ~/Desktop/system_report.txt
+```
+
+## Hardware Diagnostics
+
+### Apple Diagnostics (Apple Silicon)
+1. Shut down
+2. Hold power button until startup options
+3. Press Cmd + D
+
+### Apple Diagnostics (Intel)
+1. Restart
+2. Hold D key during startup
+3. (Or Option + D for internet diagnostics)
+
+### Check hardware via command line
+```bash
+# Memory
+sysctl -n hw.memsize
+sysctl hw.model
+
+# CPU
+sysctl -n machdep.cpu.brand_string
+sysctl -n hw.ncpu
+
+# Disk health
+diskutil info disk0
+smartctl -a /dev/disk0  # If smartmontools installed
+
+# Battery
+system_profiler SPPowerDataType
+pmset -g batt
+```
+
+## Network Diagnostics
+
+### Network interfaces
+```bash
+ifconfig -a
+networksetup -listallhardwareports
+```
+
+### DNS diagnostics
+```bash
+scutil --dns
+dig example.com
+nslookup example.com
+```
+
+### Route table
+```bash
+netstat -rn
+route -n get default
+```
+
+### Network quality
+```bash
+networkQuality
+networkQuality -v
+```
+
+### Port scanning
+```bash
+# Check if port is open
+nc -z -w 5 hostname 80
+
+# Scan range
+for port in {1..1024}; do (echo >/dev/tcp/hostname/$port) 2>/dev/null && echo "Port $port open"; done
+```
+
+## Performance Diagnostics
+
+### CPU usage
+```bash
+top -l 1 -n 10
+ps aux --sort=-%cpu | head -20
+```
+
+### Memory usage
+```bash
+vm_stat
+top -l 1 -s 0 | grep PhysMem
+```
+
+### Disk I/O
+```bash
+iostat
+iotop  # If available
+```
+
+### Process monitoring
+```bash
+# Real-time process monitoring
+top
+htop  # If installed via Homebrew
+
+# Process tree
+pstree  # If installed
+
+# Open files by process
+lsof -c processname
+```
+
+## Crash Reports
+
+### View crash reports
+```bash
+ls ~/Library/Logs/DiagnosticReports/
+ls /Library/Logs/DiagnosticReports/
+```
+
+### View recent crashes
+```bash
+log show --predicate 'eventMessage contains "crash"' --last 1h
+```
+
+### Check for kernel panics
+```bash
+ls /Library/Logs/DiagnosticReports/ | grep -i kernel
+log show --predicate 'messageType == "fault"' --last 24h
+```
+
+## Log Collection for Support
+
+### Collect specific logs
+```bash
+log collect --last 1h --output ~/Desktop/logs.logarchive
+```
+
+### Collect with predicate
+```bash
+log collect --predicate 'subsystem == "com.apple.networkextension"' --last 24h --output ~/Desktop/network_logs.logarchive
 ```
 """
 

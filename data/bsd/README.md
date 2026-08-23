@@ -12,6 +12,7 @@ Included in macOS builds (macOS is BSD-derived).
 | Collection | Source | Docs | Status |
 |------------|--------|------|--------|
 | `freebsd-handbook` | docs.freebsd.org | 41 | ✅ |
+| `freebsd-man-pages` | man.freebsd.org | 185 | ✅ |
 | `bsd-networking` | FreeBSD handbook networking | - | ✅ (in handbook) |
 | `bsd-permissions` | FreeBSD file permissions | - | ✅ (in handbook) |
 | `bsd-filesystem` | UFS/ZFS basics | - | ✅ (in handbook) |
