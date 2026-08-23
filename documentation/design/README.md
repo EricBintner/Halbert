@@ -19,6 +19,7 @@ This documentation serves two audiences:
 | [philosophy.md](philosophy.md) | Core design principles: self-identifying LLM, grounded intelligence, safe autonomy |
 | [macos-strategy.md](macos-strategy.md) | macOS tiering strategy (LemonSqueezy Pro vs. App Store Free), config physiology, and universal multi-session architecture |
 | [research-summary.md](research-summary.md) | Condensed research findings that informed the design |
+| [unified-model-picker.md](unified-model-picker.md) | Strategy for unifying Halbert and SourcePrep's model picker into a shared layer — extract-first, vendor-then-refine approach |
 | [future.md](future.md) | Potential future directions (not promises) |
 
 ---

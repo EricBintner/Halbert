@@ -246,7 +246,7 @@ Ideas from the brainstorm that are real but later:
 - **Purpose:** "What am I for?" (NAS / dev box / laptop / server) shapes what it watches and
   interrupts for.
 - **Birth:** onboarding reframed as the first conversation — wake up, discover the body, ask
-  purpose.
+  purpose, on in obvious cases ask if it is a server or workstation for inatance (found server ram and motherboard, etc)
 - **Confession:** a record of its own actions and their outcomes; admits what proved wrong.
 - **User model:** your hours, habits, skill level — explanations and timing calibrated to you.
 - **Death/migration:** identity survives hardware — self-knowledge + continuity export to a new

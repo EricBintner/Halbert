@@ -5,34 +5,33 @@
 This directory contains documentation for the macOS version of Halbert.
 Only included in macOS App Store builds.
 
-## Collections to Build
+## Collections
 
 ### Core macOS
 
-| Collection | Source | Priority | Status |
-|------------|--------|----------|--------|
-| `homebrew-docs` | brew.sh, formulae.brew.sh | High | ⬜ |
-| `launchd-reference` | Apple developer docs | High | ⬜ |
-| `diskutil-apfs` | man pages, Apple docs | High | ⬜ |
-| `macos-troubleshooting` | Apple support articles | High | ⬜ |
+| Collection | Source | Docs | Status |
+|------------|--------|------|--------|
+| `man-pages` | Local macOS system | 7,310 | ✅ |
+| `homebrew` | brew.sh, formulae.brew.sh | 8,777 | ✅ |
+| `support` | SS64, synthetic guides | 93 | ✅ |
 
 ### System Administration
 
 | Collection | Source | Priority | Status |
 |------------|--------|----------|--------|
 | `unified-logging` | Apple developer docs | Medium | ⬜ |
-| `networksetup` | man pages | Medium | ⬜ |
-| `pmset-power` | man pages, forums | Medium | ⬜ |
-| `defaults-system` | defaults command guide | Medium | ⬜ |
+| `networksetup` | man pages | Medium | ✅ (in man-pages) |
+| `pmset-power` | man pages, forums | Medium | ✅ (in man-pages) |
+| `defaults-system` | defaults command guide | Medium | ✅ (in man-pages) |
 
 ### Security
 
 | Collection | Source | Priority | Status |
 |------------|--------|----------|--------|
-| `gatekeeper-sip` | Apple security docs | High | ⬜ |
-| `filevault` | Apple FileVault guide | Medium | ⬜ |
+| `gatekeeper-sip` | man pages, synthetic guides | High | ✅ (in support) |
+| `filevault` | man pages | Medium | ✅ (in man-pages) |
 | `tcc-privacy` | TCC database, permissions | Low | ⬜ |
-| `keychain` | Keychain services docs | Low | ⬜ |
+| `keychain` | man pages | Low | ✅ (in man-pages) |
 
 ### Apple Silicon
 
@@ -47,7 +46,7 @@ Only included in macOS App Store builds.
 
 | Collection | Source | Priority | Status |
 |------------|--------|----------|--------|
-| `timemachine` | Apple Time Machine docs | High | ⬜ |
+| `timemachine` | man pages, synthetic guides | High | ✅ (in man-pages + support) |
 | `recovery-mode` | macOS Recovery guide | Medium | ⬜ |
 | `reinstall-macos` | Clean install guides | Low | ⬜ |
 

@@ -20,12 +20,15 @@ import os
 import re
 import socket
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import logging
 
 logger = logging.getLogger('halbert.discovery.system_profile')
+
+_IS_MACOS = sys.platform == 'darwin'
 
 
 class SystemProfiler:
@@ -44,6 +47,7 @@ class SystemProfiler:
         self.profile: Dict[str, Any] = {}
         self.scan_time: Optional[datetime] = None
         self.quick_scan_time: Optional[datetime] = None
+        self.is_macos: bool = _IS_MACOS
     
     def run_command(self, cmd: List[str], timeout: int = 10) -> tuple[int, str, str]:
         """Run a command and return (exit_code, stdout, stderr)."""
@@ -200,6 +204,8 @@ class SystemProfiler:
     
     def _scan_os(self) -> Dict[str, Any]:
         """Scan OS and distribution information."""
+        if self.is_macos:
+            return self._scan_os_macos()
         result = {
             "type": "linux",
             "distro": {},
@@ -257,13 +263,70 @@ class SystemProfiler:
             result["uptime"] = stdout.strip()
         
         return result
-    
+
+    def _scan_os_macos(self) -> Dict[str, Any]:
+        """Scan OS information on macOS using sw_vers / uname."""
+        result = {
+            "type": "macos",
+            "distro": {},
+            "kernel": "",
+            "arch": "",
+            "uptime": "",
+            "package_manager": "unknown",
+            "family": "macos",
+        }
+
+        # sw_vers → ProductName / ProductVersion / BuildVersion
+        code, stdout, _ = self.run_command(["sw_vers"])
+        if code == 0:
+            for line in stdout.splitlines():
+                if ":" not in line:
+                    continue
+                key, _, value = line.partition(":")
+                key = key.strip().lower().replace(" ", "_")
+                result["distro"][key] = value.strip()
+
+        # Normalize distro fields to match the shape get_summary() expects
+        result["distro"]["name"] = result["distro"].get("productname", "macOS")
+        result["distro"]["version_id"] = result["distro"].get("productversion", "")
+        result["distro"]["build_id"] = result["distro"].get("buildversion", "")
+
+        # Kernel / arch
+        code, stdout, _ = self.run_command(["uname", "-r"])
+        if code == 0:
+            result["kernel"] = stdout.strip()
+        code, stdout, _ = self.run_command(["uname", "-m"])
+        if code == 0:
+            result["arch"] = stdout.strip()
+
+        # Uptime (macOS `uptime` has no -p flag; emit the human string)
+        code, stdout, _ = self.run_command(["uptime"])
+        if code == 0:
+            text = stdout.strip()
+            # "HH:MM  up 41 days, 14:37, 86 users, load averages: ..."
+            m = re.search(r"up\s+(.+?),\s+\d+\s+user", text)
+            if m:
+                result["uptime"] = m.group(1).strip()
+            elif "up " in text:
+                result["uptime"] = text.split("up ", 1)[1].strip()
+            else:
+                result["uptime"] = text
+
+        # Package manager: Homebrew if present
+        code, _, _ = self.run_command(["brew", "--version"])
+        if code == 0:
+            result["package_manager"] = "homebrew"
+
+        return result
+
     # ─────────────────────────────────────────────────────────────────────────
     # Hardware
     # ─────────────────────────────────────────────────────────────────────────
-    
+
     def _scan_hardware(self) -> Dict[str, Any]:
         """Scan hardware information."""
+        if self.is_macos:
+            return self._scan_hardware_macos()
         result = {
             "cpu": {},
             "memory": {},
@@ -326,13 +389,106 @@ class SystemProfiler:
                         result["usb_devices"].append(match.group(1).strip())
         
         return result
-    
+
+    def _scan_hardware_macos(self) -> Dict[str, Any]:
+        """Scan hardware information on macOS using sysctl / vm_stat / system_profiler."""
+        result = {
+            "cpu": {},
+            "memory": {},
+            "gpu": [],
+            "motherboard": {},
+            "usb_devices": [],
+        }
+
+        # CPU
+        code, stdout, _ = self.run_command(
+            ["sysctl", "-n", "machdep.cpu.brand_string", "hw.ncpu",
+             "hw.physicalcpu", "hw.logicalcpu", "hw.cpufrequency_max"]
+        )
+        if code == 0:
+            lines = stdout.strip().splitlines()
+            keys = ["model_name", "cpu(s)", "core(s)_per_socket",
+                    "thread(s)_per_core", "cpu_max_mhz"]
+            for key, val in zip(keys, lines):
+                val = val.strip()
+                if key == "cpu_max_mhz" and val:
+                    try:
+                        result["cpu"][key] = str(round(int(val) / 1_000_000))  # Hz → MHz
+                    except ValueError:
+                        result["cpu"][key] = val
+                else:
+                    result["cpu"][key] = val
+
+        # Fallbacks if sysctl didn't populate (e.g. Apple Silicon missing some keys)
+        if not result["cpu"].get("model_name"):
+            code, stdout, _ = self.run_command(["sysctl", "-n", "machdep.cpu.brand_string"])
+            if code == 0:
+                result["cpu"]["model_name"] = stdout.strip()
+        if not result["cpu"].get("cpu(s)"):
+            code, stdout, _ = self.run_command(["sysctl", "-n", "hw.logicalcpu"])
+            if code == 0:
+                result["cpu"]["cpu(s)"] = stdout.strip()
+
+        # Memory: total from sysctl, available from vm_stat
+        code, stdout, _ = self.run_command(["sysctl", "-n", "hw.memsize"])
+        if code == 0:
+            try:
+                total_bytes = int(stdout.strip())
+                result["memory"]["total_gb"] = round(total_bytes / 1024**3, 1)
+            except ValueError:
+                pass
+
+        code, stdout, _ = self.run_command(["vm_stat"])
+        if code == 0:
+            try:
+                page_size = 16384  # default; overridden below if found
+                m = re.search(r"page size of (\d+)", stdout)
+                if m:
+                    page_size = int(m.group(1))
+
+                def _pages(label: str) -> int:
+                    mm = re.search(rf"{label}:\s+(\d+)", stdout)
+                    return int(mm.group(1)) if mm else 0
+
+                free = _pages("Pages free")
+                inactive = _pages("Pages inactive")
+                speculative = _pages("Pages speculative")
+                # "available" ≈ free + inactive + speculative (matches Activity Monitor)
+                avail_bytes = (free + inactive + speculative) * page_size
+                result["memory"]["available_gb"] = round(avail_bytes / 1024**3, 1)
+            except Exception as e:
+                logger.warning(f"vm_stat parse failed: {e}")
+
+        # GPU via system_profiler SPDisplaysDataType
+        code, stdout, _ = self.run_command(
+            ["system_profiler", "SPDisplaysDataType", "-detailLevel", "mini"]
+        )
+        if code == 0:
+            for line in stdout.splitlines():
+                stripped = line.strip()
+                # Lines like "Chipset Model: Apple M1 Ultra" or "Model Name: ..."
+                if stripped.startswith("Chipset") or stripped.startswith("Model Name") \
+                        or stripped.startswith("Chipset Model"):
+                    if ":" in stripped:
+                        gpu_name = stripped.split(":", 1)[1].strip()
+                        if gpu_name and gpu_name not in result["gpu"]:
+                            result["gpu"].append(gpu_name)
+
+        # Motherboard / model identifier
+        code, stdout, _ = self.run_command(["sysctl", "-n", "hw.model"])
+        if code == 0:
+            result["motherboard"]["model"] = stdout.strip()
+
+        return result
+
     # ─────────────────────────────────────────────────────────────────────────
     # Network
     # ─────────────────────────────────────────────────────────────────────────
-    
+
     def _scan_network(self) -> Dict[str, Any]:
         """Scan network configuration."""
+        if self.is_macos:
+            return self._scan_network_macos()
         result = {
             "interfaces": [],
             "dns": [],
@@ -393,13 +549,89 @@ class SystemProfiler:
                 result["default_gateway"] = match.group(1)
         
         return result
-    
+
+    def _scan_network_macos(self) -> Dict[str, Any]:
+        """Scan network configuration on macOS using ifconfig / route / scutil."""
+        result = {
+            "interfaces": [],
+            "dns": [],
+            "hostname": socket.gethostname(),
+            "fqdn": socket.getfqdn(),
+            "routes": [],
+        }
+
+        # Interfaces via ifconfig
+        code, stdout, _ = self.run_command(["ifconfig", "-a"])
+        if code == 0:
+            current = None
+            iface: Dict[str, Any] = {}
+            for line in stdout.splitlines():
+                if not line.startswith("\t") and not line.startswith(" "):
+                    # New interface header: "en0: flags=..."
+                    if current and iface:
+                        result["interfaces"].append(iface)
+                    header = line.split(":", 1)[0].strip()
+                    current = header
+                    iface = {
+                        "name": current,
+                        "state": "unknown",
+                        "mac": "",
+                        "ipv4": [],
+                        "ipv6": [],
+                    }
+                    if "UP" in line and "RUNNING" in line:
+                        iface["state"] = "up"
+                    elif "DOWN" in line:
+                        iface["state"] = "down"
+                elif current:
+                    s = line.strip()
+                    if s.startswith("ether "):
+                        iface["mac"] = s.split(" ", 1)[1].strip()
+                    elif s.startswith("inet "):
+                        # "inet 192.168.1.5 netmask 0xffffff00 broadcast 192.168.1.255"
+                        parts = s.split()
+                        if len(parts) >= 2:
+                            iface["ipv4"].append(parts[1])
+                    elif s.startswith("inet6 "):
+                        parts = s.split()
+                        if len(parts) >= 2:
+                            iface["ipv6"].append(parts[1].split("%", 1)[0])
+            if current and iface:
+                result["interfaces"].append(iface)
+
+        # Filter loopback
+        result["interfaces"] = [i for i in result["interfaces"] if i["name"] != "lo0"]
+
+        # DNS via scutil --dns
+        code, stdout, _ = self.run_command(["scutil", "--dns"])
+        if code == 0:
+            for line in stdout.splitlines():
+                s = line.strip()
+                if s.startswith("nameserver["):
+                    # "nameserver[0] : 192.168.1.1"
+                    parts = s.split(":", 1)
+                    if len(parts) == 2:
+                        ns = parts[1].strip()
+                        if ns and ns not in result["dns"]:
+                            result["dns"].append(ns)
+
+        # Default gateway via route
+        code, stdout, _ = self.run_command(["route", "-n", "get", "default"])
+        if code == 0:
+            m = re.search(r"gateway:\s*(\S+)", stdout)
+            if m:
+                result["default_gateway"] = m.group(1)
+
+        return result
+
     # ─────────────────────────────────────────────────────────────────────────
     # Storage (Summary - detailed scan is in storage.py)
     # ─────────────────────────────────────────────────────────────────────────
-    
+
     def _scan_storage_summary(self) -> Dict[str, Any]:
         """Get storage summary (detailed scan is separate)."""
+        if self.is_macos:
+            return self._scan_storage_summary_macos()
         result = {
             "filesystems": [],
             "total_capacity_tb": 0,
@@ -441,13 +673,72 @@ class SystemProfiler:
         )
         
         return result
-    
+
+    def _scan_storage_summary_macos(self) -> Dict[str, Any]:
+        """Get storage summary on macOS using df / diskutil."""
+        result = {
+            "filesystems": [],
+            "total_capacity_tb": 0,
+            "used_tb": 0,
+            "disk_count": 0,
+        }
+
+        # macOS df has no --output flag; columns:
+        # Filesystem  Size  Used  Avail  Capacity  iused  ifree  %iused  Mounted on
+        code, stdout, _ = self.run_command(["df", "-h"])
+        if code == 0:
+            lines = stdout.strip().splitlines()[1:]  # skip header
+            for line in lines:
+                parts = line.split()
+                if len(parts) < 9:
+                    continue
+                device = parts[0]
+                # Skip pseudo/virtual filesystems
+                if device in ("devfs", "map",) or device.startswith("map ") \
+                        or "devfs" in device:
+                    continue
+                mountpoint = " ".join(parts[8:])  # mountpoint may contain spaces
+                fstype = ""
+                # Detect APFS via device name (diskNsX) — df doesn't print fstype
+                if re.match(r"/dev/disk\d+s\d+", device):
+                    fstype = "apfs"
+                result["filesystems"].append({
+                    "device": device,
+                    "fstype": fstype,
+                    "size": parts[1],
+                    "used": parts[2],
+                    "avail": parts[3],
+                    "use_percent": parts[4],
+                    "mountpoint": mountpoint,
+                })
+
+        # Count physical disks via diskutil list
+        code, stdout, _ = self.run_command(["diskutil", "list"])
+        if code == 0:
+            # Lines like "/dev/disk3 (internal, physical):"
+            for line in stdout.splitlines():
+                if line.startswith("/dev/") and "physical" in line.lower():
+                    result["disk_count"] += 1
+
+        # Special filesystems
+        result["has_btrfs"] = False
+        result["has_zfs"] = any(fs.get("fstype") == "zfs" for fs in result["filesystems"])
+        result["has_bcachefs"] = False
+        result["has_raid"] = any("raid" in fs.get("device", "").lower()
+                                 for fs in result["filesystems"])
+        result["has_lvm"] = False
+        result["has_apfs"] = any(fs.get("fstype") == "apfs" for fs in result["filesystems"])
+
+        return result
+
     # ─────────────────────────────────────────────────────────────────────────
     # Services
     # ─────────────────────────────────────────────────────────────────────────
-    
+
     def _scan_services_summary(self) -> Dict[str, Any]:
         """Get services summary."""
+        if self.is_macos:
+            return self._scan_services_summary_macos()
         result = {
             "running_count": 0,
             "failed_count": 0,
@@ -500,13 +791,61 @@ class SystemProfiler:
             result["enabled_count"] = len([l for l in stdout.split('\n') if l.strip()])
         
         return result
-    
+
+    def _scan_services_summary_macos(self) -> Dict[str, Any]:
+        """Get services summary on macOS using launchctl list."""
+        result = {
+            "running_count": 0,
+            "failed_count": 0,
+            "enabled_count": 0,
+            "notable_services": [],
+        }
+
+        notable = [
+            'docker', 'com.docker', 'podman', 'containerd',
+            'ssh', 'sshd', 'com.openssh',
+            'nginx', 'apache', 'httpd', 'caddy',
+            'postgres', 'mysql', 'mariadb', 'mongo', 'redis',
+            'smbd', 'nfs',
+            'cups',
+            'fail2ban', 'pf',
+            'cron', 'com.cron',
+            'tailscale', 'com.tailscale',
+            'syncthing', 'restic', 'borg',
+            'homebrew', 'com.google', 'com.github', 'com.microsoft',
+        ]
+
+        code, stdout, _ = self.run_command(["launchctl", "list"])
+        if code == 0:
+            for line in stdout.strip().splitlines()[1:]:  # skip header
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                pid, status, name = parts[0], parts[1], parts[2]
+                if pid != "-":
+                    result["running_count"] += 1
+                if status not in ("0", "-"):
+                    result["failed_count"] += 1
+                result["enabled_count"] += 1  # listed = loaded/enabled
+
+                for notable_svc in notable:
+                    if notable_svc in name.lower():
+                        result["notable_services"].append({
+                            "name": name,
+                            "state": "running" if pid != "-" else "loaded",
+                        })
+                        break
+
+        return result
+
     # ─────────────────────────────────────────────────────────────────────────
     # Packages
     # ─────────────────────────────────────────────────────────────────────────
-    
+
     def _scan_packages(self) -> Dict[str, Any]:
         """Scan installed packages (summary + notable)."""
+        if self.is_macos:
+            return self._scan_packages_macos()
         result = {
             "total_count": 0,
             "package_manager": "",
@@ -576,13 +915,69 @@ class SystemProfiler:
                     result["total_count"] = len(stdout.strip().split('\n'))
         
         return result
-    
+
+    def _scan_packages_macos(self) -> Dict[str, Any]:
+        """Scan installed packages on macOS via Homebrew (formulae + casks)."""
+        result = {
+            "total_count": 0,
+            "package_manager": "",
+            "notable_packages": [],
+            "recently_updated": [],
+        }
+
+        notable = [
+            'python', 'node', 'npm', 'go', 'rust', 'gcc', 'make', 'cmake', 'git',
+            'docker', 'podman', 'containerd',
+            'postgresql', 'mysql', 'mariadb', 'mongodb', 'redis',
+            'nginx', 'caddy',
+            'qemu', 'libvirt',
+            'ffmpeg',
+            'restic', 'borg', 'rsync',
+            'htop', 'tmux', 'vim', 'neovim', 'zsh',
+        ]
+
+        # Homebrew formulae
+        code, stdout, _ = self.run_command(["brew", "list", "--formula", "-1"], timeout=30)
+        formulae = []
+        if code == 0:
+            result["package_manager"] = "homebrew"
+            formulae = [l.strip() for l in stdout.splitlines() if l.strip()]
+
+        # Homebrew casks (GUI apps)
+        code2, stdout2, _ = self.run_command(["brew", "list", "--cask", "-1"], timeout=30)
+        casks = []
+        if code2 == 0:
+            casks = [l.strip() for l in stdout2.splitlines() if l.strip()]
+            if not result["package_manager"]:
+                result["package_manager"] = "homebrew"
+
+        all_pkgs = formulae + casks
+        result["total_count"] = len(all_pkgs)
+
+        for pkg in all_pkgs:
+            for notable_pkg in notable:
+                if notable_pkg == pkg or pkg.startswith(notable_pkg + "-") \
+                        or pkg.startswith(notable_pkg + "@"):
+                    result["notable_packages"].append(pkg)
+                    break
+
+        # Recently installed/updated via brew
+        code3, stdout3, _ = self.run_command(["brew", "list", "--formula", "-1", "-t"], timeout=30)
+        if code3 == 0:
+            recent = [l.strip() for l in stdout3.splitlines() if l.strip()][:10]
+            for pkg in recent:
+                result["recently_updated"].append({"package": pkg})
+
+        return result
+
     # ─────────────────────────────────────────────────────────────────────────
     # Users
     # ─────────────────────────────────────────────────────────────────────────
-    
+
     def _scan_users(self) -> Dict[str, Any]:
         """Scan user accounts."""
+        if self.is_macos:
+            return self._scan_users_macos()
         result = {
             "current_user": os.environ.get('USER', 'unknown'),
             "sudo_users": [],
@@ -639,13 +1034,69 @@ class SystemProfiler:
         result["sudo_users"] = list(set(result["sudo_users"]))  # Dedupe
         
         return result
-    
+
+    def _scan_users_macos(self) -> Dict[str, Any]:
+        """Scan user accounts on macOS using dscl."""
+        result = {
+            "current_user": os.environ.get('USER', 'unknown'),
+            "sudo_users": [],
+            "human_users": [],
+            "logged_in": [],
+        }
+
+        # Human users: UID >= 500 (macOS reserves <500 for system accounts)
+        code, stdout, _ = self.run_command(["dscl", ".", "-list", "/Users", "UniqueID"])
+        if code == 0:
+            for line in stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 2:
+                    username = parts[0]
+                    try:
+                        uid = int(parts[-1])
+                    except ValueError:
+                        continue
+                    if uid >= 500 and not username.startswith("_"):
+                        # Fetch shell
+                        shell = ""
+                        code2, stdout2, _ = self.run_command(
+                            ["dscl", ".", "-read", f"/Users/{username}", "UserShell"])
+                        if code2 == 0:
+                            m = re.search(r"UserShell:\s*(\S+)", stdout2)
+                            if m:
+                                shell = m.group(1)
+                        result["human_users"].append({
+                            "username": username,
+                            "uid": uid,
+                            "home": f"/Users/{username}",
+                            "shell": shell,
+                        })
+
+        # Admin users via the admin group membership
+        code, stdout, _ = self.run_command(["dscl", ".", "-read", "/Groups/admin", "GroupMembership"])
+        if code == 0:
+            m = re.search(r"GroupMembership:\s*(.+)", stdout)
+            if m:
+                result["sudo_users"] = [u.strip() for u in m.group(1).split() if u.strip()]
+
+        # Logged-in users
+        code, stdout, _ = self.run_command(["who"])
+        if code == 0:
+            for line in stdout.splitlines():
+                parts = line.split()
+                if parts:
+                    result["logged_in"].append(parts[0])
+
+        result["sudo_users"] = list(set(result["sudo_users"]))
+        return result
+
     # ─────────────────────────────────────────────────────────────────────────
     # Security
     # ─────────────────────────────────────────────────────────────────────────
-    
+
     def _scan_security(self) -> Dict[str, Any]:
         """Scan security configuration."""
+        if self.is_macos:
+            return self._scan_security_macos()
         result = {
             "firewall": None,
             "selinux": None,
@@ -723,10 +1174,67 @@ class SystemProfiler:
             result["updates_available"] = len([l for l in stdout.split('\n') if 'upgradable' in l])
         
         return result
-    
-    # ─────────────────────────────────────────────────────────────────────────
-    # Containers
-    # ─────────────────────────────────────────────────────────────────────────
+
+    def _scan_security_macos(self) -> Dict[str, Any]:
+        """Scan security configuration on macOS (ALF, SIP, Gatekeeper, SSH)."""
+        result = {
+            "firewall": None,
+            "selinux": None,        # n/a on macOS — repurpose for SIP
+            "apparmor": None,       # n/a on macOS — repurpose for Gatekeeper
+            "fail2ban": False,
+            "ssh_config": {},
+            "updates_available": 0,
+        }
+
+        # Application Layer Firewall (socketfilterfw)
+        code, stdout, _ = self.run_command(["/usr/libexec/ApplicationFirewall/socketfilterfw",
+                                            "--getglobalstate"])
+        if code == 0:
+            active = "enabled" in stdout.lower()
+            result["firewall"] = {
+                "type": "ALF",
+                "status": "active" if active else "inactive",
+            }
+
+        # SIP (System Integrity Protection)
+        code, stdout, _ = self.run_command(["csrutil", "status"])
+        if code == 0:
+            result["selinux"] = "sip:" + stdout.strip().split(":", 1)[-1].strip()
+            result["sip"] = "enabled" if "enabled" in stdout.lower() else "disabled"
+
+        # Gatekeeper
+        code, stdout, _ = self.run_command(["spctl", "--status"])
+        if code == 0:
+            result["apparmor"] = "gatekeeper:" + stdout.strip()
+            result["gatekeeper"] = "enabled" if "enabled" in stdout.lower() else "disabled"
+
+        # SSH config (macOS sshd_config lives at /etc/ssh/sshd_config)
+        ssh_config = Path("/etc/ssh/sshd_config")
+        if ssh_config.exists():
+            try:
+                with open(ssh_config) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith('#') or not line:
+                            continue
+                        if line.startswith('PasswordAuthentication'):
+                            result["ssh_config"]["password_auth"] = 'yes' in line.lower()
+                        elif line.startswith('PermitRootLogin'):
+                            parts = line.split()
+                            result["ssh_config"]["root_login"] = parts[1] if len(parts) > 1 else ""
+                        elif line.startswith('Port'):
+                            parts = line.split()
+                            result["ssh_config"]["port"] = parts[1] if len(parts) > 1 else ""
+            except Exception:
+                pass
+
+        # Available updates via softwareupdate
+        code, stdout, _ = self.run_command(["softwareupdate", "-l"], timeout=30)
+        if code == 0:
+            result["updates_available"] = len(
+                [l for l in stdout.splitlines() if l.strip().startswith("*")])
+
+        return result
     
     def _scan_containers(self) -> Dict[str, Any]:
         """Scan container runtimes and containers."""
@@ -796,6 +1304,8 @@ class SystemProfiler:
     
     def _scan_virtualization(self) -> Dict[str, Any]:
         """Scan virtualization status and VMs."""
+        if self.is_macos:
+            return self._scan_virtualization_macos()
         result = {
             "is_vm": False,
             "vm_type": None,
@@ -837,19 +1347,54 @@ class SystemProfiler:
                     })
         
         return result
-    
+
+    def _scan_virtualization_macos(self) -> Dict[str, Any]:
+        """Scan virtualization status on macOS."""
+        result = {
+            "is_vm": False,
+            "vm_type": None,
+            "hypervisor": None,
+            "vms": [],
+        }
+
+        # Detect whether running inside a VM (Hypervisor.framework guest)
+        code, stdout, _ = self.run_command(["sysctl", "-n", "kern.hv_vmm_present"])
+        if code == 0 and stdout.strip() == "1":
+            result["is_vm"] = True
+            result["vm_type"] = "hypervisor-framework-guest"
+
+        # VirtualBox VMs (cross-platform)
+        code, stdout, _ = self.run_command(["VBoxManage", "list", "vms"])
+        if code == 0:
+            if not result["hypervisor"]:
+                result["hypervisor"] = "virtualbox"
+            for line in stdout.split('\n'):
+                match = re.search(r'"([^"]+)"', line)
+                if match:
+                    result["vms"].append({"name": match.group(1), "type": "virtualbox"})
+
+        # UTM / Parallels detection via app bundles
+        for app in ("/Applications/UTM.app", "/Applications/Parallels Desktop.app"):
+            if Path(app).exists():
+                if not result["hypervisor"]:
+                    result["hypervisor"] = Path(app).stem.lower()
+
+        return result
+
     # ─────────────────────────────────────────────────────────────────────────
     # Scheduled Tasks
     # ─────────────────────────────────────────────────────────────────────────
-    
+
     def _scan_scheduled_tasks(self) -> Dict[str, Any]:
         """Scan cron jobs and systemd timers."""
+        if self.is_macos:
+            return self._scan_scheduled_tasks_macos()
         result = {
             "cron_jobs": [],
             "systemd_timers": [],
             "anacron": False,
         }
-        
+
         # User crontab
         code, stdout, _ = self.run_command(["crontab", "-l"])
         if code == 0:
@@ -888,21 +1433,70 @@ class SystemProfiler:
         
         # Check anacron
         result["anacron"] = Path("/etc/anacrontab").exists()
-        
+
         return result
-    
+
+    def _scan_scheduled_tasks_macos(self) -> Dict[str, Any]:
+        """Scan scheduled tasks on macOS (launchd agents/daemons + cron)."""
+        result = {
+            "cron_jobs": [],
+            "systemd_timers": [],   # repurposed for launchd jobs
+            "anacron": False,
+            "launchd_jobs": [],
+        }
+
+        # User crontab (cron exists on macOS too)
+        code, stdout, _ = self.run_command(["crontab", "-l"])
+        if code == 0:
+            for line in stdout.split('\n'):
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    parts = line.split()
+                    result["cron_jobs"].append({
+                        "type": "user",
+                        "schedule": ' '.join(parts[:5]) if len(parts) > 5 else line,
+                        "command": ' '.join(parts[5:]) if len(parts) > 5 else "",
+                    })
+
+        # System cron dirs (present on macOS)
+        for cron_dir in ['/etc/cron.d', '/etc/cron.daily', '/etc/cron.hourly', '/etc/cron.weekly']:
+            cron_path = Path(cron_dir)
+            if cron_path.exists():
+                for f in cron_path.iterdir():
+                    if f.is_file() and not f.name.startswith('.'):
+                        result["cron_jobs"].append({
+                            "type": cron_dir.split('/')[-1],
+                            "name": f.name,
+                        })
+
+        # Launchd daemons/agents (count loaded, non-Apple)
+        code, stdout, _ = self.run_command(["launchctl", "list"])
+        if code == 0:
+            for line in stdout.strip().splitlines()[1:]:
+                parts = line.split()
+                if len(parts) >= 3:
+                    name = parts[2]
+                    if name.startswith("com.apple."):
+                        continue
+                    result["launchd_jobs"].append(name)
+            result["systemd_timers"] = [{"unit": n} for n in result["launchd_jobs"][:50]]
+
+        return result
+
     # ─────────────────────────────────────────────────────────────────────────
     # Kernel
     # ─────────────────────────────────────────────────────────────────────────
-    
+
     def _scan_kernel(self) -> Dict[str, Any]:
         """Scan kernel information."""
+        if self.is_macos:
+            return self._scan_kernel_macos()
         result = {
             "version": "",
             "modules_loaded": 0,
             "notable_modules": [],
         }
-        
+
         # Kernel version
         code, stdout, _ = self.run_command(["uname", "-r"])
         if code == 0:
@@ -929,20 +1523,58 @@ class SystemProfiler:
                         break
         
         return result
-    
+
+    def _scan_kernel_macos(self) -> Dict[str, Any]:
+        """Scan kernel information on macOS (XNU + loaded kexts)."""
+        result = {
+            "version": "",
+            "modules_loaded": 0,
+            "notable_modules": [],
+        }
+
+        # XNU kernel version
+        code, stdout, _ = self.run_command(["uname", "-r"])
+        if code == 0:
+            result["version"] = stdout.strip()
+
+        # Loaded kernel extensions via kextstat
+        code, stdout, _ = self.run_command(["kextstat"])
+        if code == 0:
+            lines = stdout.strip().splitlines()[1:]  # skip header
+            result["modules_loaded"] = len(lines)
+            notable = ['nv', 'amdradeon', 'geforce',          # GPU
+                       'com.apple.driver.Audio', 'IOAudio',   # Audio
+                       'IOUSB', 'com.apple.driver.usb',       # USB
+                       'VirtualBox', 'org.virtualbox',        # VirtualBox
+                       'com.apple.filesystems.apfs']          # APFS
+            for line in lines:
+                # kextstat columns: index refs size name <linked against>
+                parts = line.split()
+                if len(parts) < 4:
+                    continue
+                kext_name = parts[3]
+                for notable_mod in notable:
+                    if notable_mod.lower() in kext_name.lower():
+                        result["notable_modules"].append(kext_name)
+                        break
+
+        return result
+
     # ─────────────────────────────────────────────────────────────────────────
     # Boot
     # ─────────────────────────────────────────────────────────────────────────
-    
+
     def _scan_boot(self) -> Dict[str, Any]:
         """Scan boot configuration."""
+        if self.is_macos:
+            return self._scan_boot_macos()
         result = {
             "bootloader": None,
             "efi": False,
             "secure_boot": None,
             "boot_time": None,
         }
-        
+
         # Check if EFI
         result["efi"] = Path("/sys/firmware/efi").exists()
         
@@ -965,19 +1597,43 @@ class SystemProfiler:
                 result["boot_time"] = f"{match.group(1)}s"
         
         return result
-    
+
+    def _scan_boot_macos(self) -> Dict[str, Any]:
+        """Scan boot configuration on macOS (Apple EFI, Secure Boot via csrutil)."""
+        result = {
+            "bootloader": "apple-efi",
+            "efi": True,  # all modern Macs boot via EFI
+            "secure_boot": None,
+            "boot_time": None,
+        }
+
+        # Secure Boot / SIP status
+        code, stdout, _ = self.run_command(["csrutil", "status"])
+        if code == 0:
+            result["secure_boot"] = "enabled" if "enabled" in stdout.lower() else "disabled"
+
+        # Boot time via `uptime` (approximate since boot)
+        code, stdout, _ = self.run_command(["uptime"])
+        if code == 0:
+            m = re.search(r"up\s+(.+?),\s+\d+\s+user", stdout)
+            if m:
+                result["boot_time"] = m.group(1).strip()
+
+        return result
+
     # ─────────────────────────────────────────────────────────────────────────
     # Development Tools
     # ─────────────────────────────────────────────────────────────────────────
-    
+
     def _scan_development(self) -> Dict[str, Any]:
         """Scan development tools and environments."""
+        # Cross-platform: language/tool version checks work on macOS as-is.
         result = {
             "languages": {},
             "tools": {},
             "editors": [],
         }
-        
+
         # Check common languages
         lang_checks = [
             ("python3", ["python3", "--version"]),
@@ -1031,23 +1687,33 @@ class SystemProfiler:
     
     def _scan_desktop(self) -> Dict[str, Any]:
         """Scan desktop environment."""
+        if self.is_macos:
+            return self._scan_desktop_macos()
         result = {
             "display_server": None,
             "desktop_environment": None,
             "session_type": None,
         }
-        
+
         # Check XDG session
         result["session_type"] = os.environ.get('XDG_SESSION_TYPE', None)
         result["desktop_environment"] = os.environ.get('XDG_CURRENT_DESKTOP', None)
-        
+
         # Check display server
         if os.environ.get('WAYLAND_DISPLAY'):
             result["display_server"] = "wayland"
         elif os.environ.get('DISPLAY'):
             result["display_server"] = "x11"
-        
+
         return result
+
+    def _scan_desktop_macos(self) -> Dict[str, Any]:
+        """Scan desktop environment on macOS (Aqua / Quartz Compositor)."""
+        return {
+            "display_server": "quartz-compositor",
+            "desktop_environment": "Aqua (macOS)",
+            "session_type": "gui",
+        }
     
     # ─────────────────────────────────────────────────────────────────────────
     # Persistence
@@ -1122,10 +1788,12 @@ class SystemProfiler:
         # OS info
         os_info = self.profile.get("os", {})
         distro = os_info.get("distro", {})
-        
+        os_type = os_info.get("type", "linux")
+        default_os_name = "macOS" if os_type == "macos" else "Linux"
+
         # First person identity header
         lines.append(f"=== I AM {computer_name.upper()} ===")
-        lines.append(f"I run {distro.get('name', 'Linux')} {distro.get('version_id', '')} with kernel {os_info.get('kernel', 'unknown')}.")
+        lines.append(f"I run {distro.get('name', default_os_name)} {distro.get('version_id', '')} with kernel {os_info.get('kernel', 'unknown')}.")
         lines.append(f"My administrator is {admin_name}.")
         lines.append(f"I use {os_info.get('package_manager', 'unknown')} for package management.")
         lines.append(f"I have been running for {os_info.get('uptime', 'unknown')}.")
@@ -1161,6 +1829,7 @@ class SystemProfiler:
         if storage.get("has_bcachefs"): special_fs.append("bcachefs")
         if storage.get("has_raid"): special_fs.append("RAID")
         if storage.get("has_lvm"): special_fs.append("LVM")
+        if storage.get("has_apfs"): special_fs.append("APFS")
         if special_fs:
             lines.append(f"I use {', '.join(special_fs)} for advanced storage management.")
         

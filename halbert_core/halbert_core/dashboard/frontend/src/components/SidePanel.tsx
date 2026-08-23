@@ -9,6 +9,7 @@
  */
 
 import { useState, useRef, useEffect, KeyboardEvent, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { 
   MessageCircle, 
   Terminal,
@@ -186,6 +187,7 @@ function MessageContent({ content, onRunCommand, onCommandComplete, onSkipComman
 }
 
 export function SidePanel() {
+  const navigate = useNavigate()
   // Debug context - chatMetrics used for updating, displayed in Layout.tsx
   const { isDebugMode, addLog, updateChatMetrics, chatMetrics } = useDebug()
   
@@ -1600,11 +1602,12 @@ export function SidePanel() {
             </div>
             
             <div className="flex items-center gap-1">
-              <Button 
-                variant="ghost" 
-                size="icon" 
+              <Button
+                variant="ghost"
+                size="icon"
                 className="h-7 w-7"
                 title="Settings"
+                onClick={() => navigate('/settings')}
               >
                 <Settings className="h-4 w-4" />
               </Button>

@@ -37,14 +37,20 @@ export interface SystemInfo {
 
 export async function getSystemInfo(): Promise<SystemInfo> {
   const data = await request('/api/settings/system-profile')
-  const p = data.profile ?? data
+  // Handle both {status: "loaded", profile: {...}} and bare profile shapes
+  const p = data.profile ?? (data.os ? data : {})
+  const os = p.os ?? {}
+  const distro = os.distro ?? {}
+  const hw = p.hardware ?? {}
+  const cpu = hw.cpu ?? {}
+  const mem = hw.memory ?? {}
   return {
     hostname: p.hostname ?? '',
-    os_name: p.os_name ?? p.os ?? '',
-    os_version: p.os_version ?? '',
-    kernel_version: p.kernel_version ?? p.kernel ?? '',
-    cpu_count: p.cpu_count ?? 0,
-    total_memory_mb: p.total_memory_mb ?? 0,
+    os_name: p.os_name ?? distro.name ?? distro.productname ?? '',
+    os_version: p.os_version ?? distro.version_id ?? distro.productversion ?? '',
+    kernel_version: p.kernel_version ?? os.kernel ?? p.kernel ?? '',
+    cpu_count: p.cpu_count ?? parseInt(cpu['cpu(s)'] ?? '0', 10) ?? 0,
+    total_memory_mb: p.total_memory_mb ?? Math.round((mem.total_gb ?? 0) * 1024),
   }
 }
 

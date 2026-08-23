@@ -5,15 +5,16 @@
 This directory contains BSD-related documentation shared between macOS and potential BSD support.
 Included in macOS builds (macOS is BSD-derived).
 
-## Collections to Build
+## Collections
 
 ### BSD Fundamentals
 
-| Collection | Source | Priority | Status |
-|------------|--------|----------|--------|
-| `bsd-networking` | FreeBSD handbook networking | Medium | ⬜ |
-| `bsd-permissions` | FreeBSD file permissions | Medium | ⬜ |
-| `bsd-filesystem` | UFS/ZFS basics | Low | ⬜ |
+| Collection | Source | Docs | Status |
+|------------|--------|------|--------|
+| `freebsd-handbook` | docs.freebsd.org | 41 | ✅ |
+| `bsd-networking` | FreeBSD handbook networking | - | ✅ (in handbook) |
+| `bsd-permissions` | FreeBSD file permissions | - | ✅ (in handbook) |
+| `bsd-filesystem` | UFS/ZFS basics | - | ✅ (in handbook) |
 
 ### UNIX Concepts
 

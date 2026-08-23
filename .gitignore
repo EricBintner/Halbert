@@ -124,3 +124,4 @@ data/linux/man-pages/
 
 # Keep manifest for reference (describes available datasets)
 !data/manifest.json
+.playwright-mcp/

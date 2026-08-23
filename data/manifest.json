@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
-  "release_date": "2026-01-11",
-  "description": "Initial versioned release of Halbert RAG corpus - Linux system administration knowledge base",
+  "version": "1.1.0",
+  "release_date": "2026-08-23",
+  "description": "Halbert RAG corpus - Linux and macOS system administration knowledge base",
   "sources": {
     "arch_wiki": {
       "document_count": 22794,
@@ -110,29 +110,53 @@
       "mac_build": true
     },
     "macos_homebrew": {
-      "document_count": 0,
+      "document_count": 8777,
       "license": "BSD-2-Clause",
-      "scraped_at": "2026-01-01",
-      "description": "Homebrew package manager documentation",
+      "scraped_at": "2026-08-23",
+      "description": "Homebrew package manager documentation - all formulas, casks, and official docs",
       "paths": [
         "macos/homebrew/"
       ],
       "mac_build": true,
       "linux_build": false
     },
+    "macos_man_pages": {
+      "document_count": 7310,
+      "license": "Various (BSD, APSL 2.0)",
+      "scraped_at": "2026-08-23",
+      "description": "macOS man pages extracted from local system - command reference for all sections",
+      "paths": [
+        "macos/man-pages/"
+      ],
+      "mac_build": true,
+      "linux_build": false
+    },
     "macos_support": {
-      "document_count": 0,
-      "license": "Apple Terms",
+      "document_count": 93,
+      "license": "CC BY-NC 4.0 (SS64), Halbert (synthetic guides)",
       "scraped_at": "2026-01-01",
-      "description": "Apple support articles and macOS documentation",
+      "description": "SS64 macOS command reference and synthetic macOS troubleshooting guides",
       "paths": [
         "macos/support/"
       ],
       "mac_build": true,
-      "linux_build": false
+      "linux_build": false,
+      "note": "SS64 content is CC BY-NC 4.0 - exclude from paid App Store builds"
+    },
+    "freebsd_handbook": {
+      "document_count": 41,
+      "license": "FreeBSD Documentation License",
+      "scraped_at": "2026-08-23",
+      "description": "FreeBSD Handbook - comprehensive BSD documentation covering networking, storage, security, and system administration. BSD concepts underpin macOS.",
+      "paths": [
+        "bsd/freebsd-handbook/"
+      ],
+      "mac_build": true,
+      "linux_build": true,
+      "attribution_required": true
     }
   },
-  "total_documents": 47236,
+  "total_documents": 63457,
   "total_chunks": 0,
   "index_schema_version": "1.0",
   "remote_url": "",
@@ -146,6 +170,9 @@
     "attribution_requirements": [
       "Stack Exchange content requires CC BY-SA 4.0 attribution",
       "TLDR content requires CC BY 4.0 attribution",
+      "SS64 content requires CC BY-NC 4.0 attribution (non-commercial only)",
+      "FreeBSD Handbook requires FreeBSD Documentation License attribution",
+      "macOS man pages: BSD pages require BSD license attribution, Apple pages require APSL 2.0 attribution",
       "See THIRD-PARTY-LICENSES.txt in distribution"
     ]
   }

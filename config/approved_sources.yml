@@ -95,6 +95,36 @@ tier_1_official:
     name: "ChromaDB Cookbook"
     trust: official_docs
 
+  # macOS / BSD official sources
+  - pattern: "docs.freebsd.org"
+    name: "FreeBSD Documentation"
+    trust: official_docs
+
+  - pattern: "man.freebsd.org"
+    name: "FreeBSD Man Pages"
+    trust: official_manpages
+
+  - pattern: "docs.brew.sh"
+    name: "Homebrew Documentation"
+    trust: official_docs
+
+  - pattern: "formulae.brew.sh"
+    name: "Homebrew Formulae"
+    trust: official_docs
+
+  - pattern: "guide.macports.org"
+    name: "MacPorts Guide"
+    trust: official_docs
+
+  - pattern: "opensource.apple.com"
+    name: "Apple Open Source"
+    trust: official_docs
+
+  - pattern: "developer.apple.com"
+    name: "Apple Developer"
+    trust: official_docs
+    requires_manual_curation: true
+
 tier_2_community:
   # Community-curated wikis - high trust
   - pattern: "wiki.debian.org"
@@ -119,16 +149,26 @@ tier_3_expert:
     name: "Level1Techs"
     trust: expert_blog
     requires_manual_curation: true
-    
+
   - pattern: "stackoverflow.com"
     name: "Stack Overflow"
     trust: qa_site
     requires_vote_filter: 10
-    
+
   - pattern: "serverfault.com"
     name: "Server Fault"
     trust: qa_site
     requires_vote_filter: 10
+
+  - pattern: "apple.stackexchange.com"
+    name: "Ask Different (Apple)"
+    trust: qa_site
+    requires_vote_filter: 10
+
+  - pattern: "ss64.com"
+    name: "SS64 Command Reference"
+    trust: community_reference
+    requires_manual_curation: true
 
 blocked:
   # Never auto-add these
