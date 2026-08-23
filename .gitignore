@@ -124,4 +124,8 @@ data/linux/man-pages/
 
 # Keep manifest for reference (describes available datasets)
 !data/manifest.json
+
+# SourcePrep staging output (generated from JSONL, 87MB of markdown)
+data/staging/
+
 .playwright-mcp/

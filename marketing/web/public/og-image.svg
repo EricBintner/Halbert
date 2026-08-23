@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <!-- Background: warm archival paper canvas -->
+  <rect width="1200" height="630" fill="#F7F5F0"/>
+
+  <!-- Subtle dot texture -->
+  <g fill="rgba(26, 25, 24, 0.04)">
+    <circle cx="100" cy="100" r="1"/>
+    <circle cx="200" cy="100" r="1"/>
+    <circle cx="300" cy="100" r="1"/>
+    <circle cx="400" cy="100" r="1"/>
+    <circle cx="500" cy="100" r="1"/>
+    <circle cx="600" cy="100" r="1"/>
+    <circle cx="700" cy="100" r="1"/>
+    <circle cx="800" cy="100" r="1"/>
+    <circle cx="900" cy="100" r="1"/>
+    <circle cx="1000" cy="100" r="1"/>
+    <circle cx="1100" cy="100" r="1"/>
+    <circle cx="100" cy="200" r="1"/>
+    <circle cx="200" cy="200" r="1"/>
+    <circle cx="300" cy="200" r="1"/>
+    <circle cx="400" cy="200" r="1"/>
+    <circle cx="500" cy="200" r="1"/>
+    <circle cx="600" cy="200" r="1"/>
+    <circle cx="700" cy="200" r="1"/>
+    <circle cx="800" cy="200" r="1"/>
+    <circle cx="900" cy="200" r="1"/>
+    <circle cx="1000" cy="200" r="1"/>
+    <circle cx="1100" cy="200" r="1"/>
+    <circle cx="100" cy="300" r="1"/>
+    <circle cx="200" cy="300" r="1"/>
+    <circle cx="300" cy="300" r="1"/>
+    <circle cx="400" cy="300" r="1"/>
+    <circle cx="500" cy="300" r="1"/>
+    <circle cx="600" cy="300" r="1"/>
+    <circle cx="700" cy="300" r="1"/>
+    <circle cx="800" cy="300" r="1"/>
+    <circle cx="900" cy="300" r="1"/>
+    <circle cx="1000" cy="300" r="1"/>
+    <circle cx="1100" cy="300" r="1"/>
+    <circle cx="100" cy="400" r="1"/>
+    <circle cx="200" cy="400" r="1"/>
+    <circle cx="300" cy="400" r="1"/>
+    <circle cx="400" cy="400" r="1"/>
+    <circle cx="500" cy="400" r="1"/>
+    <circle cx="600" cy="400" r="1"/>
+    <circle cx="700" cy="400" r="1"/>
+    <circle cx="800" cy="400" r="1"/>
+    <circle cx="900" cy="400" r="1"/>
+    <circle cx="1000" cy="400" r="1"/>
+    <circle cx="1100" cy="400" r="1"/>
+    <circle cx="100" cy="500" r="1"/>
+    <circle cx="200" cy="500" r="1"/>
+    <circle cx="300" cy="500" r="1"/>
+    <circle cx="400" cy="500" r="1"/>
+    <circle cx="500" cy="500" r="1"/>
+    <circle cx="600" cy="500" r="1"/>
+    <circle cx="700" cy="500" r="1"/>
+    <circle cx="800" cy="500" r="1"/>
+    <circle cx="900" cy="500" r="1"/>
+    <circle cx="1000" cy="500" r="1"/>
+    <circle cx="1100" cy="500" r="1"/>
+  </g>
+
+  <!-- HalbertMark (simplified concentric U-tracks) -->
+  <g transform="translate(80, 180) scale(0.28)" fill="none" stroke="#D34E24" stroke-width="26.67" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 512.00 80.00 V 512.00 M 464.00 82.67 V 512.00 A 48.00 48.00 0 0 0 560.00 512.00 V 82.67 M 416.00 90.80 V 512.00 A 96.00 96.00 0 0 0 608.00 512.00 V 90.80 M 368.00 104.71 V 512.00 A 144.00 144.00 0 0 0 656.00 512.00 V 104.71 M 320.00 125.01 V 512.00 A 192.00 192.00 0 0 0 704.00 512.00 V 125.01 M 272.00 152.80 V 512.00 A 240.00 240.00 0 0 0 752.00 512.00 V 152.80 M 224.00 190.01 V 512.00 A 288.00 288.00 0 0 0 800.00 512.00 V 190.01 M 176.00 240.47 V 512.00 A 336.00 336.00 0 0 0 848.00 512.00 V 240.47 M 128.00 314.09 V 512.00 A 384.00 384.00 0 0 0 896.00 512.00 V 314.09 M 80.00 512.00 A 432.00 432.00 0 0 0 944.00 512.00"/>
+  </g>
+
+  <!-- Wordmark: "Halbert." -->
+  <text x="80" y="420" font-family="Helvetica Neue, Arial, sans-serif" font-size="72" font-weight="700" fill="#1A1918" letter-spacing="-2">
+    Halbert<tspan fill="#D34E24">.</tspan>
+  </text>
+
+  <!-- Tagline -->
+  <text x="80" y="490" font-family="Helvetica Neue, Arial, sans-serif" font-size="36" font-weight="400" fill="#5E5B56" letter-spacing="-0.5">
+    You can call me AI.
+  </text>
+
+  <!-- Subtitle -->
+  <text x="80" y="545" font-family="Helvetica Neue, Arial, sans-serif" font-size="20" font-weight="400" fill="#8C877D">
+    Local-first host intelligence for macOS &amp; Linux.
+  </text>
+
+  <!-- Right-side accent bar -->
+  <rect x="1140" y="80" width="4" height="470" rx="2" fill="#D34E24" opacity="0.15"/>
+
+  <!-- Bottom hairline -->
+  <rect x="80" y="580" width="1040" height="1" fill="rgba(26, 25, 24, 0.08)"/>
+
+  <!-- Bottom-right badge -->
+  <text x="1120" y="600" text-anchor="end" font-family="Menlo, Monaco, monospace" font-size="13" font-weight="500" fill="#8C877D">
+    halbert.ai
+  </text>
+</svg>

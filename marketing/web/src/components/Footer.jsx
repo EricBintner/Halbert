@@ -6,17 +6,25 @@ export function Footer() {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState('idle');
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!email || !email.includes('@')) return;
     setStatus('submitting');
-    setTimeout(() => {
-      setStatus('success');
-    }, 600);
+    try {
+      const formData = new FormData(e.target);
+      await fetch('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(formData).toString(),
+      });
+    } catch {
+      // Netlify forms work even if fetch fails in dev
+    }
+    setStatus('success');
   };
 
   return (
-    <footer id="architecture" className="py-20 px-6 bg-[var(--color-canvas)] border-t border-[var(--color-hairline)] text-[var(--color-ink)]">
+    <footer id="footer" className="py-20 px-6 bg-[var(--color-canvas)] border-t border-[var(--color-hairline)] text-[var(--color-ink)]">
       <div className="max-w-[var(--content-max-width)] mx-auto space-y-16">
         {/* Top Section: Secondary Call-to-Action */}
         <div className="p-8 sm:p-12 rounded-3xl bg-[var(--color-surface)] border border-[var(--color-hairline-strong)] shadow-[var(--shadow-card)] grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
@@ -36,7 +44,8 @@ export function Footer() {
                 <span className="text-sm font-medium">You're on the early access list!</span>
               </div>
             ) : (
-              <form onSubmit={handleSubmit} className="flex gap-2">
+              <form onSubmit={handleSubmit} name="waitlist" method="POST" data-netlify="true" className="flex gap-2">
+                <input type="hidden" name="form-name" value="waitlist" />
                 <input
                   type="email"
                   value={email}

@@ -25,8 +25,8 @@ export function Header({ onJoinWaitlistClick }) {
           <a href="#the-being" className="hover:text-[var(--color-ink)] transition-colors">
             The Being
           </a>
-          <a href="#architecture" className="hover:text-[var(--color-ink)] transition-colors">
-            Architecture
+          <a href="https://github.com/EricBintner/Halbert" target="_blank" rel="noreferrer" className="hover:text-[var(--color-ink)] transition-colors">
+            GitHub
           </a>
         </nav>
 
