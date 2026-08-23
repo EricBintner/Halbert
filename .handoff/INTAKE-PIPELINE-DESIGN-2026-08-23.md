@@ -185,7 +185,7 @@ Answer:
 **What:** Port the `ContextBudgetManager` pattern. Map Halbert's guide/specialist/vision models
 to tiers (tiny/small/medium/large/xlarge/massive). Scale the assembler's `max_tokens` per tier.
 Per-category budgets (identity, personality, background, scenario, memory, history,
-formatting) adapted for sysadmin context (system_identity, user_rules, rag, memory, discovery,
+formatting) adapted for sysadmin context (system_identity, user_rules, retrieval, memory, discovery,
 conversation, observations).
 
 **Why essential:** The current flat 8000-token budget is actively degrading the 8B guide model.
@@ -220,7 +220,7 @@ structures to port:
 **Adaptation for Halbert:** The category names need to change. The other codebase uses
 identity_core, personality, background, scenario, memory, history, formatting (roleplay
 persona categories). Halbert's categories (from the existing assembler) are: conversation,
-rag, memory, discovery, observations, plus extra sources (system_identity, self_knowledge,
+retrieval, memory, discovery, observations, plus extra sources (system_identity,
 telemetry, safety, user_rules). The budget table should map these.
 
 #### 3.2 LLM-based complexity routing with caching
@@ -558,34 +558,37 @@ specialist (adjustable threshold in config).
 
 The other codebase uses roleplay persona categories (identity_core, personality, background,
 scenario, memory, history, formatting). Halbert's categories should match the existing
-assembler's source types:
+assembler's source types. **Per the roadmap's adjustment #1, the `self_knowledge` category is
+retired** — its contents migrate to SourcePrep observations (rationale/why) and memory_v2
+(episodic facts) in Phase 2c. The `rag` category is renamed to `retrieval` (it's SourcePrep
+now, not ChromaDB RAG). The category set is:
 
 | Category | What it contains | Preserve strategy |
 |----------|-----------------|-------------------|
 | `system_identity` | Hostname, OS, hardware, role | Always include (small, fixed) |
 | `user_rules` | Custom AI rules from ai_rules.yml | Always include (small, fixed) |
-| `rag` | Retrieved documents | Preserve top results (start position) |
-| `memory` | Retrieved memories | Preserve most relevant |
+| `retrieval` | Retrieved documents (SourcePrep) | Preserve top results (start position) |
+| `memory` | Retrieved memories (memory_v2) | Preserve most relevant |
 | `discovery` | System discovery facts | Preserve most relevant |
 | `conversation` | Conversation history | Preserve recent (end position) |
-| `observations` | Tool execution outputs | Preserve recent |
-| `self_knowledge` | Self-RAG reflection | Preserve if retrieved |
+| `observations` | Tool execution outputs + SourcePrep observations | Preserve recent |
 
 **Budget table (v1, to be tuned empirically):**
 
-| Model tier | Total | system_identity | user_rules | rag | memory | discovery | conversation | observations | self_knowledge |
-|-----------|-------|-----------------|------------|-----|--------|-----------|-------------|-------------|----------------|
-| tiny (1-3B) | 400 | 50 | 50 | 50 | 0 | 50 | 100 | 50 | 50 |
-| small (4-8B) | 800 | 75 | 75 | 100 | 50 | 75 | 200 | 75 | 50 |
-| medium (9-20B) | 2000 | 100 | 100 | 300 | 150 | 200 | 500 | 200 | 150 |
-| large (21-40B) | 4000 | 150 | 150 | 600 | 300 | 400 | 1000 | 400 | 300 |
-| xlarge (40B+) | 8000 | 200 | 200 | 1200 | 600 | 800 | 2000 | 800 | 600 |
-| massive (MoE 262K+) | 16000 | 400 | 400 | 2400 | 1200 | 1600 | 4000 | 1600 | 1200 |
+| Model tier | Total | system_identity | user_rules | retrieval | memory | discovery | conversation | observations |
+|-----------|-------|-----------------|------------|-----------|--------|-----------|-------------|--------------|
+| tiny (1-3B) | 400 | 50 | 50 | 50 | 25 | 50 | 100 | 75 |
+| small (4-8B) | 800 | 75 | 75 | 100 | 75 | 75 | 200 | 100 |
+| medium (9-20B) | 2000 | 100 | 100 | 300 | 225 | 200 | 500 | 275 |
+| large (21-40B) | 4000 | 150 | 150 | 600 | 450 | 400 | 1000 | 550 |
+| xlarge (40B+) | 8000 | 200 | 200 | 1200 | 900 | 800 | 2000 | 1100 |
+| massive (MoE 262K+) | 16000 | 400 | 400 | 2400 | 1800 | 1600 | 4000 | 2200 |
 
 **Note:** These are starting values. The other codebase's "Pass 1.5 findings" were empirically
 derived for roleplay persona accuracy. Halbert needs its own empirical tuning for sysadmin
 task accuracy. The table should be marked as "v1, needs tuning" and adjusted based on
-observability data (Tier 2 item 3.5).
+observability data (Tier 2 item 3.5). The `self_knowledge` tokens from the original draft have
+been redistributed to `memory` and `observations` (roughly 40/60 split).
 
 ### 4.6 Integration points
 
@@ -872,8 +875,8 @@ Test the full pipeline:
 ## 10. Open Questions for the Reviewer
 
 1. **Is the budget table's category set correct?** The proposed categories
-   (system_identity, user_rules, rag, memory, discovery, conversation, observations,
-   self_knowledge) match the assembler's current source types. Should `safety` be a separate
+   (system_identity, user_rules, retrieval, memory, discovery, conversation, observations)
+   match the assembler's current source types. Should `safety` be a separate
    category or folded into `user_rules`? Should `telemetry` be separate from `observations`?
 
 2. **Should the complexity threshold be configurable?** The current design hardcodes 1-2 →
