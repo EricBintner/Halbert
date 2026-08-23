@@ -2,7 +2,9 @@
 
 **Status:** Breadth-first catalog (2026-08-23). Every idea we could see, with the concrete code
 seam it attaches to. **Curation is at §10** — nothing here is committed to until it lands there.
-**Reads with:** [the-being.md](the-being.md) (the vision this serves).
+**Reads with:** [the-being.md](the-being.md) (the vision this serves) and
+`.handoff/ROADMAP-2026-08-23.md` (the phased implementation plan — §A maps to Phases 0–4,
+§B–E map to Phases 5–8, §F maps to Phase 0+2, §G is already wired, §H maps to Phase 6).
 
 Convention: each exploration has an ID (`A1`, `B3`, …) for curation reference, the seam it
 attaches to in the current codebase, and design options where they exist.

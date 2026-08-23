@@ -221,10 +221,10 @@ through.
 
 ## 9. What we deliberately keep / demote / cut
 
-**Keep (load-bearing):** model layer + routing, ChromaDB RAG + corpus, governance stack
-(approval/autonomy/policy — made real), discovery scanners, ingestion, config
-snapshot/parser/watcher primitives, `write_config` tool, conversation summarization/compression
-cascade.
+**Keep (load-bearing):** model layer + routing, retrieval + corpus (moving from ChromaDB to
+SourcePrep — ChromaDB stays for eval only), governance stack (approval/autonomy/policy — made
+real), discovery scanners, ingestion, config snapshot/parser/watcher primitives, `write_config`
+tool, conversation summarization/compression cascade.
 
 **Demote:** the 17 dashboard pages → modules (dual-container) + browsing mode. Settings gains the
 being's own preferences (voice, proactivity, purpose).
@@ -273,5 +273,7 @@ Ideas from the brainstorm that are real but later:
 
 *Vision layer only. The design-to-implementation catalog (every idea, its code seam, and the
 curation of what lands in each slice) lives in [explorations.md](explorations.md).
-Implementation planning per-slice happens in `.handoff/` session artifacts against the phased
-plan in `FOUNDATIONAL-RESEARCH-2026-08-21.md`.*
+The phased implementation plan — infrastructure spine (Phases 0–4.5) then being layers
+(Phases 5–8) — lives in `.handoff/ROADMAP-2026-08-23.md`. The intake pipeline design is in
+`.handoff/INTAKE-PIPELINE-DESIGN-2026-08-23.md`. The foundational diagnosis this builds on
+is in `.handoff/FOUNDATIONAL-RESEARCH-2026-08-21.md`.*
