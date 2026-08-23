@@ -29,9 +29,39 @@ from huggingface_hub import hf_hub_download
 
 
 def slugify(text: str) -> str:
-    """Sanitize string for identifier."""
-    text = re.sub(r"[^\w\-_.]", "_", text.lower())
-    return re.sub(r"_+", "_", text).strip("_")
+    """Sanitize string for identifier, preserving symbols as words."""
+    if not text:
+        return "unnamed"
+    text = str(text).lower()
+    symbol_map = {
+        "++": "_plusplus",
+        "+": "_plus",
+        "[": "_sym_lbracket",
+        "]": "_sym_rbracket",
+        "(": "_sym_lparen",
+        ")": "_sym_rparen",
+        "{": "_sym_lbrace",
+        "}": "_sym_rbrace",
+        "$": "_sym_dollar",
+        "%": "_sym_percent",
+        ",": "_sym_comma",
+        "!": "_sym_exclamation",
+        "^": "_sym_caret",
+        "~": "_sym_tilde",
+        "&": "_sym_amp",
+        "=": "_sym_eq",
+        ":": "_sym_colon",
+        ";": "_sym_semicolon",
+        "?": "_sym_question",
+        "*": "_sym_star",
+    }
+
+    for sym, word in symbol_map.items():
+        text = text.replace(sym, word)
+    text = re.sub(r"[^\w\-_.]", "_", text)
+    slug = re.sub(r"_+", "_", text).strip("_")
+    return slug or "symbol_" + "_".join(str(ord(c)) for c in text)
+
 
 
 def download_arch_wiki(output_file: Path, verbose: bool = False) -> int:
@@ -158,8 +188,9 @@ def download_tldr_pages(data_dir: Path, verbose: bool = False) -> Dict[str, int]
                     desc_lines.append(line.lstrip("> ").strip())
             desc_summary = " ".join(desc_lines) if desc_lines else ""
 
-            doc_id = f"tldr_{platform}_{slugify(cmd_name)}"
+            doc_id = f"tldr_{folder}_{slugify(cmd_name)}"
             url = f"https://tldr.sh/{platform}/{cmd_name}"
+
 
             record = {
                 "id": doc_id,

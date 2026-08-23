@@ -1,19 +1,12 @@
 {
-  "total_documents_scanned": 32275,
-  "unique_documents_retained": 29237,
-  "exact_duplicates_removed": 3038,
+  "total_documents_scanned": 28874,
+  "unique_documents_retained": 28869,
+  "exact_duplicates_removed": 5,
   "files_scanned": 56,
-  "files_modified": 9,
+  "files_modified": 2,
   "duplicates_by_file": {
-    "bsd/freebsd-man-pages/freebsd_man_pages.jsonl": 4,
     "bsd/tldr/tldr.jsonl": 4,
-    "linux/arch-wiki/arch_wiki.jsonl": 1,
-    "linux/final-push/final_push.jsonl": 1,
-    "linux/man-pages/man_pages.jsonl": 967,
-    "linux/ubuntu-server/ubuntu_server.jsonl": 7,
-    "linux/vendor-docs/vendor_docs.jsonl": 4,
-    "linux/vendor-docs/vendor_docs_full.jsonl": 20,
-    "macos/man-pages/macos_man_pages.jsonl": 2030
+    "linux/arch-wiki/arch_wiki.jsonl": 1
   },
   "retained_by_file": {
     "bsd/freebsd-handbook/freebsd_handbook.jsonl": 41,
@@ -43,7 +36,7 @@
     "linux/linux-core-docs/linux-core_docs.jsonl": 17,
     "linux/linux-utils-docs/linux-utils_docs.jsonl": 29,
     "linux/logging-docs/logging_docs.jsonl": 6,
-    "linux/man-pages/man_pages.jsonl": 4736,
+    "linux/man-pages/man_pages.jsonl": 4368,
     "linux/message-queues-docs/message-queues_docs.jsonl": 5,
     "linux/monitoring-docs/monitoring_docs.jsonl": 8,
     "linux/more-arch/more_arch.jsonl": 23,
@@ -75,404 +68,44 @@
   },
   "sample_duplicates": [
     {
-      "duplicate_file": "bsd/freebsd-man-pages/freebsd_man_pages.jsonl",
-      "duplicate_id": "freebsd-man-reboot-8",
-      "duplicate_title": "FreeBSD: reboot(8)",
-      "original_file": "bsd/freebsd-man-pages/freebsd_man_pages.jsonl",
-      "original_id": "freebsd-man-halt-8",
-      "original_title": "FreeBSD: halt(8)"
-    },
-    {
-      "duplicate_file": "bsd/freebsd-man-pages/freebsd_man_pages.jsonl",
-      "duplicate_id": "freebsd-man-fastboot-8",
-      "duplicate_title": "FreeBSD: fastboot(8)",
-      "original_file": "bsd/freebsd-man-pages/freebsd_man_pages.jsonl",
-      "original_id": "freebsd-man-halt-8",
-      "original_title": "FreeBSD: halt(8)"
-    },
-    {
-      "duplicate_file": "bsd/freebsd-man-pages/freebsd_man_pages.jsonl",
-      "duplicate_id": "freebsd-man-fasthalt-8",
-      "duplicate_title": "FreeBSD: fasthalt(8)",
-      "original_file": "bsd/freebsd-man-pages/freebsd_man_pages.jsonl",
-      "original_id": "freebsd-man-halt-8",
-      "original_title": "FreeBSD: halt(8)"
-    },
-    {
-      "duplicate_file": "bsd/freebsd-man-pages/freebsd_man_pages.jsonl",
-      "duplicate_id": "freebsd-man-inetd.conf-5",
-      "duplicate_title": "FreeBSD: inetd.conf(5)",
-      "original_file": "bsd/freebsd-man-pages/freebsd_man_pages.jsonl",
-      "original_id": "freebsd-man-inetd-8",
-      "original_title": "FreeBSD: inetd(8)"
-    },
-    {
       "duplicate_file": "bsd/tldr/tldr.jsonl",
-      "duplicate_id": "tldr_bsd_chfn",
+      "duplicate_id": "tldr_netbsd_chfn",
       "duplicate_title": "TLDR: chfn",
       "original_file": "bsd/tldr/tldr.jsonl",
-      "original_id": "tldr_bsd_chfn",
+      "original_id": "tldr_freebsd_chfn",
       "original_title": "TLDR: chfn"
     },
     {
       "duplicate_file": "bsd/tldr/tldr.jsonl",
-      "duplicate_id": "tldr_bsd_chsh",
+      "duplicate_id": "tldr_netbsd_chsh",
       "duplicate_title": "TLDR: chsh",
       "original_file": "bsd/tldr/tldr.jsonl",
-      "original_id": "tldr_bsd_chsh",
+      "original_id": "tldr_freebsd_chsh",
       "original_title": "TLDR: chsh"
     },
     {
       "duplicate_file": "bsd/tldr/tldr.jsonl",
-      "duplicate_id": "tldr_bsd_chfn",
+      "duplicate_id": "tldr_openbsd_chfn",
       "duplicate_title": "TLDR: chfn",
       "original_file": "bsd/tldr/tldr.jsonl",
-      "original_id": "tldr_bsd_chfn",
+      "original_id": "tldr_freebsd_chfn",
       "original_title": "TLDR: chfn"
     },
     {
       "duplicate_file": "bsd/tldr/tldr.jsonl",
-      "duplicate_id": "tldr_bsd_chsh",
+      "duplicate_id": "tldr_openbsd_chsh",
       "duplicate_title": "TLDR: chsh",
       "original_file": "bsd/tldr/tldr.jsonl",
-      "original_id": "tldr_bsd_chsh",
+      "original_id": "tldr_freebsd_chsh",
       "original_title": "TLDR: chsh"
     },
     {
       "duplicate_file": "linux/arch-wiki/arch_wiki.jsonl",
-      "duplicate_id": "arch_wiki_category_pages_with_broken_templates",
+      "duplicate_id": "arch_wiki_category_sym_colonpages_with_broken_templates",
       "duplicate_title": "Category:Pages with broken templates",
       "original_file": "linux/arch-wiki/arch_wiki.jsonl",
-      "original_id": "arch_wiki_category_pages_with_broken_file_links",
+      "original_id": "arch_wiki_category_sym_colonpages_with_broken_file_links",
       "original_title": "Category:Pages with broken file links"
-    },
-    {
-      "duplicate_file": "linux/final-push/final_push.jsonl",
-      "duplicate_id": "vendor_docs_final_push_9",
-      "duplicate_title": "Final Push",
-      "original_file": "linux/final-push/final_push.jsonl",
-      "original_id": "vendor_docs_final_push_8",
-      "original_title": "Final Push"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_162",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_155",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_163",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_156",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_184",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_155",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_185",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_156",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_193",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_155",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_194",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_156",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_206",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_155",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_207",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_156",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_219",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_155",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_238",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_156",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_248",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_237",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_272",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_155",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_273",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_156",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_294",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_227",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_313",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_210",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_315",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_213",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_316",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_214",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_318",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_216",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_320",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_155",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_322",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_235",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_323",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_224",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_324",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_228",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_325",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_229",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_326",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_236",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_327",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_156",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_328",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_239",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_329",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_240",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_330",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_241",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_331",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_242",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_332",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_243",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_336",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_161",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_390",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_155",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_391",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_156",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_407",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_210",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_409",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_213",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_410",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_214",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_411",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_215",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_412",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_216",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_414",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_319",
-      "original_title": "brew(1)"
-    },
-    {
-      "duplicate_file": "linux/man-pages/man_pages.jsonl",
-      "duplicate_id": "man_brew_1_416",
-      "duplicate_title": "brew(1)",
-      "original_file": "linux/man-pages/man_pages.jsonl",
-      "original_id": "man_brew_1_321",
-      "original_title": "brew(1)"
     }
   ]
 }

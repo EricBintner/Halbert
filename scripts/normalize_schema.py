@@ -31,11 +31,39 @@ DEFAULT_TIMESTAMP = "2026-08-23T00:00:00Z"
 
 
 def slugify(text: str) -> str:
-    """Sanitize string for identifiers."""
+    """Sanitize string for identifiers, preserving symbols as words."""
     if not text:
         return "unnamed"
-    text = re.sub(r"[^\w\-_.]", "_", str(text).lower())
-    return re.sub(r"_+", "_", text).strip("_") or "unnamed"
+    text = str(text).lower()
+    symbol_map = {
+        "++": "_plusplus",
+        "+": "_plus",
+        "[": "_sym_lbracket",
+        "]": "_sym_rbracket",
+        "(": "_sym_lparen",
+        ")": "_sym_rparen",
+        "{": "_sym_lbrace",
+        "}": "_sym_rbrace",
+        "$": "_sym_dollar",
+        "%": "_sym_percent",
+        ",": "_sym_comma",
+        "!": "_sym_exclamation",
+        "^": "_sym_caret",
+        "~": "_sym_tilde",
+        "&": "_sym_amp",
+        "=": "_sym_eq",
+        ":": "_sym_colon",
+        ";": "_sym_semicolon",
+        "?": "_sym_question",
+        "*": "_sym_star",
+    }
+
+    for sym, word in symbol_map.items():
+        text = text.replace(sym, word)
+    text = re.sub(r"[^\w\-_.]", "_", text)
+    slug = re.sub(r"_+", "_", text).strip("_")
+    return slug or "unnamed"
+
 
 
 def normalize_record(doc: Dict[str, Any], file_path: Path, index: int) -> Dict[str, Any]:
@@ -65,9 +93,19 @@ def normalize_record(doc: Dict[str, Any], file_path: Path, index: int) -> Dict[s
         or doc.get("goal")
         or metadata.get("man_page")
         or metadata.get("title")
-        or file_path.stem.replace("_", " ").title()
     )
+    if not title and content:
+        # Check first line of content for header
+        first_line = content.splitlines()[0].strip()
+        first_line = re.sub(r"^#+\s*", "", first_line).strip()
+        if 3 < len(first_line) < 120 and not first_line.startswith("http"):
+            title = first_line
+
+    if not title:
+        title = file_path.stem.replace("_", " ").title()
+
     title = str(title).strip()
+
 
     # Extract source
     source = (

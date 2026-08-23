@@ -36,7 +36,10 @@ def strip_man_formatting(text: str) -> str:
         # Remove any remaining backspace pair: c\bd → d (last write wins)
         text = re.sub(r'.\x08', '', text)
 
+    # Strip any remaining orphan backspaces
+    text = re.sub(r'[\x08\b]+', '', text)
     return text
+
 
 
 def clean_jsonl(input_path: Path, output_path: Path = None):

@@ -16,10 +16,10 @@
       "mac_build": false
     },
     "linux_man_pages": {
-      "document_count": 4736,
+      "document_count": 4368,
       "license": "Various (GPL, BSD, MIT)",
       "scraped_at": "2026-08-23",
-      "description": "Linux man pages - command reference documentation (backspaces stripped, deduped)",
+      "description": "Linux man pages - command reference documentation (backspaces stripped, fragments removed, deduped)",
       "paths": [
         "linux/man-pages/"
       ],
@@ -187,7 +187,7 @@
       "attribution_required": true
     }
   },
-  "total_documents": 29237,
+  "total_documents": 28869,
   "total_chunks": 0,
   "index_schema_version": "2.0",
   "remote_url": "",
