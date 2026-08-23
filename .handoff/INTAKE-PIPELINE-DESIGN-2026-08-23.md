@@ -590,6 +590,12 @@ task accuracy. The table should be marked as "v1, needs tuning" and adjusted bas
 observability data (Tier 2 item 3.5). The `self_knowledge` tokens from the original draft have
 been redistributed to `memory` and `observations` (roughly 40/60 split).
 
+**Corpus quality dependency:** The retrieval budget allocations assume Phase 0 corpus cleanup
+is complete (empty docs removed, duplicates eliminated). With the current noisy corpus
+(1,902 empty docs, 7,307 duplicates), a 300-token retrieval budget may return noise. After
+cleanup (~21,540 unique non-empty docs), the same budget returns useful content. The budgets
+may need tuning after measuring actual retrieval quality post-cleanup (T0e.2 eval script).
+
 ### 4.6 Integration points
 
 **Current chat path (`chat.py`):**

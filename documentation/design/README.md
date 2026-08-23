@@ -21,6 +21,10 @@ This documentation serves two audiences:
 | [research-summary.md](research-summary.md) | Condensed research findings that informed the design |
 | [unified-model-picker.md](unified-model-picker.md) | Strategy for unifying Halbert and SourcePrep's model picker into a shared layer — extract-first, vendor-then-refine approach |
 | [future.md](future.md) | Potential future directions (not promises) |
+| [the-being.md](the-being.md) | The vision for Halbert's next form — the conversation as core layer, the being concept, the two proof slices |
+| [explorations.md](explorations.md) | Design-to-implementation catalog — every idea mapped to concrete code seams, with curation at section 10 |
+| [REVIEW-DIRECTION-2026-08-23.md](REVIEW-DIRECTION-2026-08-23.md) | External review stub — overall direction and planning critique |
+| [REVIEW-DESIGN-MECHANICS-2026-08-23.md](REVIEW-DESIGN-MECHANICS-2026-08-23.md) | External review stub — user flows and interaction mechanics design doc |
 
 ---
 

@@ -8,9 +8,260 @@
 - `documentation/design/the-being.md` (the vision)
 - `documentation/design/explorations.md` (the design-to-implementation catalog)
 
-**Scope:** This plan covers Phases 1–8 (Phase 0 — SourcePrep doc ingestion — is delegated to a separate AI session working on the RAG corpus). Each phase is broken into tasks with: file paths, interfaces, acceptance criteria, dependencies, and estimated effort.
+**Scope:** This plan covers Phases 0–8. Phase 0 (SourcePrep doc ingestion / RAG corpus cleanup) is detailed in `.handoff/RAG-OPTIMIZATION-PLAN-2026-08-23.md` and its tasks are included here for completeness. Phases 1–8 are the infrastructure spine and being layers. Each phase is broken into tasks with: file paths, interfaces, acceptance criteria, dependencies, and estimated effort.
 
-**Convention:** Each task has an ID (e.g. `T1a.1`), a one-line summary, the files to create or modify, the interface or behavior to implement, and an acceptance check. Tasks are ordered within each phase.
+**Convention:** Each task has an ID (e.g. `T0a.1`, `T1a.1`), a one-line summary, the files to create or modify, the interface or behavior to implement, and an acceptance check. Tasks are ordered within each phase.
+
+---
+
+## Phase 0: SourcePrep Doc Ingestion (the RAG corpus)
+
+**Goal:** Clean the RAG corpus, convert to markdown, build the SourcePrep index. Detailed in `.handoff/RAG-OPTIMIZATION-PLAN-2026-08-23.md`.
+
+**Verified corpus state (2026-08-23):**
+- 30,749 docs across 57 JSONL files (manifest claims 59,878 — inflated for Linux sources)
+- 1,902 empty docs (6.2%), concentrated in `man_pages.jsonl` (1,656) and `combined_all_output.jsonl` (246)
+- 7,307 exact duplicates (23.8% — much higher than initially estimated)
+- ~21,540 unique non-empty documents after cleanup
+- 5 distinct JSONL schemas (verified by scanning all 57 files)
+- `data/common/` directory exists with README but no JSONL files yet
+
+---
+
+### T0a.1 — Register "halbert-knowledge" as a SourcePrep project
+
+**Create:** SourcePrep project config for the RAG corpus
+
+**Implementation:**
+- Create a SourcePrep project "halbert-knowledge" pointing at `data/staging/sourceprep/` (the markdown output from T0d.1)
+- Configure `include_globs: ["**/*.md"]`
+- Define scopes for platform routing:
+  - `linux` → `linux-*/`
+  - `macos` → `macos-*/`
+  - `bsd` → `bsd-*/`
+  - `common` → `common-*/`
+- This is separate from "halbert-host" (T5a.1) which indexes the live config tree
+
+**Acceptance:**
+- SourcePrep project "halbert-knowledge" exists
+- Scopes are defined for platform routing
+- `prep build` succeeds on the project
+
+**Dependencies:** T0d.1 (markdown files must exist first)
+
+---
+
+### T0b.1 — Remove empty documents from all JSONL files
+
+**Create:** `scripts/remove_empty_docs.py`
+
+**Implementation:**
+- Scan all 57 JSONL files, remove docs with <50 chars of content
+- Removes 1,902 empty docs (concentrated in `man_pages.jsonl` and `combined_all_output.jsonl`)
+- Delete stale merged files entirely:
+  - `data/linux/merged/rag_corpus_merged.jsonl` (2,990 docs, stale)
+  - `data/linux/merged/combined_all_output_converted.jsonl` (246 docs, stale)
+  - `data/linux/commands/combined_all_output.jsonl` (246 docs, 100% empty)
+- Verify HF datasets for content quality (may not all be empty as initially thought)
+- Dry-run mode: print counts without modifying
+
+**Acceptance:**
+- Zero docs with <50 chars remain
+- Stale merged files deleted
+- Non-empty doc count preserved
+- Dry-run mode works
+
+---
+
+### T0b.2 — Clean Linux man page formatting
+
+**Use:** `scripts/clean_man_pages.py` (already exists)
+
+**Implementation:**
+- Run the existing `clean_man_pages.py` on `data/linux/man-pages/man_pages.jsonl`
+- Removes backspace (`\b`) formatting artifacts from 5,703 non-empty docs
+- Same fix that was already applied to macOS man pages
+
+**Acceptance:**
+- No `\b` characters remain in man page content
+- Man page text is human-readable
+
+---
+
+### T0b.3 — Normalize schema across all JSONL
+
+**Create:** `scripts/normalize_schema.py`
+
+**Implementation:**
+- Convert all 5 schemas to a unified schema: `{"id", "url", "title", "content", "source", "category", "tags", "scraped_at", "metadata"}`
+- Map from each schema:
+  - `{text, metadata}` → content=text, title=metadata.man_page, source=metadata.source_type
+  - `{name, section, description, full_text, metadata}` → content=full_text, title=name, source=metadata.source_type
+  - `{content, description, metadata, name}` → content=content, title=name, source=metadata.source_type
+  - `{commands, distro, explanation, goal, ...}` → content=explanation+commands, title=goal, source=metadata.source_type
+  - `{id, url, title, content, source, category, tags, scraped_at, metadata}` → already unified
+- Dry-run mode
+
+**Acceptance:**
+- All JSONL files use the unified schema
+- No data loss (all fields mapped)
+- Dry-run mode works
+
+**Dependencies:** T0b.1 (clean empties first)
+
+---
+
+### T0c.1 — Cross-source exact dedup
+
+**Create:** `scripts/dedup_corpus.py`
+
+**Implementation:**
+- Hash full content across ALL sources (not per-source)
+- Remove exact duplicates, keeping the first occurrence
+- Expected: ~7,307 duplicates removed (23.8% of corpus)
+- Report: which sources had the most duplicates, what was duplicated
+
+**Acceptance:**
+- Zero exact content duplicates remain
+- Report shows what was removed
+- Non-duplicate doc count preserved
+
+**Dependencies:** T0b.3 (normalized schema first)
+
+---
+
+### T0c.2 — Man page near-duplicate resolution
+
+**Create:** `scripts/manpage_near_dedup.py`
+
+**Implementation:**
+- For the 91 commands in both macOS and FreeBSD man pages:
+  - If content is >85% similar (Jaccard on word sets): keep the longer version
+  - If content differs significantly: keep both
+- Manual spot-check of a few examples
+
+**Acceptance:**
+- Near-duplicate man pages resolved
+- Both versions kept when they differ significantly
+- Spot-check documented
+
+**Dependencies:** T0c.1
+
+---
+
+### T0d.1 — Convert JSONL to grouped markdown files
+
+**Create:** `halbert_core/halbert_core/rag/jsonl_to_markdown.py`
+
+**Implementation:**
+- One `.md` file per JSONL source (or split large sources — see roadmap §3)
+- **Split large sources into multiple files** (500 docs or 500KB per file) to avoid SourcePrep's large-file truncation
+- Each doc as an H2 section with metadata as HTML comment header
+- Output to `data/staging/sourceprep/` with directory structure mirroring source
+- Handles the unified schema from T0b.3
+
+**Acceptance:**
+- All JSONL files converted to markdown
+- H2 headings match doc count
+- Large sources are split (no file >500KB)
+- Metadata preserved in HTML comments
+
+**Dependencies:** T0c.1 (deduped first)
+
+---
+
+### T0e.1 — Corpus quality gate
+
+**Create:** `scripts/corpus_quality_gate.py`
+
+**Implementation:**
+- A set of ~20 test queries with expected source matches
+- Run against the built SourcePrep index
+- Verify retrieval returns relevant results (not empty docs, not duplicates)
+- Measure: precision (right source in top-k?), coverage (any source from expected domain?)
+
+**Acceptance:**
+- All 20 test queries return relevant results
+- No empty docs in results
+- No exact duplicates in results
+
+**Dependencies:** T0a.1 (SourcePrep project built)
+
+---
+
+### T0e.2 — Create retrieval eval script
+
+**Create:** `scripts/retrieval_eval.py`
+
+**Implementation:**
+- 20-50 test queries spanning domains (storage, network, security, macOS, Linux, BSD)
+- For each query, the expected source(s) that should be retrieved
+- Run retrieval, measure precision and coverage
+- Run before cleanup, after cleanup, after SourcePrep wiring — to quantify improvement
+
+**Acceptance:**
+- Eval script runs end-to-end
+- Reports precision and coverage metrics
+- Can be run before and after changes
+
+**Dependencies:** T0a.1
+
+---
+
+### T0f.1 — Create data/common/ for cross-platform docs
+
+**Modify:** `data/common/` (directory exists, needs content)
+
+**Implementation:**
+- Move cross-platform content from `linux/` to `common/`:
+  - git, ssh, bash, grep, sed, awk, curl, wget, vim, emacs
+- These work identically on Linux and macOS
+- Update platform loader to load `common/` for all platforms
+- Avoids duplicating these docs in both platform-specific corpora
+
+**Acceptance:**
+- Cross-platform docs in `data/common/`
+- Platform loader includes `common/` for all platforms
+- No duplication of cross-platform docs
+
+**Dependencies:** T0b.3 (normalized schema first)
+
+---
+
+### T0g.1 — Replace empty HF datasets with clean ones
+
+**Implementation:**
+- Download `hannah-eee/arch-wiki-docs` from HuggingFace (~10K clean pages)
+- Download TLDR pages from `tldr-pages/tldr` GitHub repo (~6K summaries)
+- Convert to JSONL with unified schema
+- Verify content quality before replacing
+
+**Acceptance:**
+- New datasets have content (not empty)
+- Unified schema
+- Replaces stale HF datasets
+
+**Dependencies:** T0b.1 (empties removed first)
+
+---
+
+### T0g.2 — Update manifest and configs
+
+**Modify:** `data/manifest.json`, `config/approved_sources.yml`
+
+**Implementation:**
+- Update `manifest.json` with actual document counts (not inflated)
+- Remove deleted sources
+- Add new sources (arch-wiki-docs, tldr-pages)
+- Bump version to 2.0.0 (breaking change to corpus)
+- Add HuggingFace and tldr-pages GitHub as approved sources
+
+**Acceptance:**
+- Manifest counts match actual JSONL line counts
+- New sources listed
+- Version bumped
+
+**Dependencies:** All above tasks
 
 ---
 
@@ -1656,7 +1907,17 @@ interface ModuleRendererProps {
 ## Summary: Task Dependency Graph
 
 ```
-Phase 1 (Intake):
+Phase 0 (RAG Corpus):
+  T0b.1 → T0b.2 → T0b.3 (cleanup: empties, formatting, schema)
+  T0c.1 → T0c.2 (dedup: exact + near-duplicate)
+  T0d.1 (convert to markdown) — depends on T0c.1
+  T0a.1 (register SourcePrep project) — depends on T0d.1
+  T0e.1, T0e.2 (quality gate + eval) — depends on T0a.1
+  T0f.1 (cross-platform docs) — depends on T0b.3
+  T0g.1 (replace empty datasets) — depends on T0b.1
+  T0g.2 (update manifest) — depends on all above
+
+Phase 1 (Intake) — parallel with Phase 0:
   T1a.1 → T1a.2 (signals + tests)
   T1b.1 → T1b.2 (budget + tests)
   T1c.1 → T1c.2 (complexity + tests) — depends on T1a.1 (needs MessageSignals)
@@ -1712,6 +1973,7 @@ Phase 8 (Reactive Slice + Modules) — depends on Phase 5 + Phase 6 + Phase 7:
 
 | Phase | Tasks | New files | Modified files | Est. lines | Est. effort |
 |-------|-------|-----------|----------------|------------|-------------|
+| 0 (RAG Corpus) | 12 | 6 scripts + 1 converter | 2 configs + manifest | ~1,500 | Medium |
 | 1 (Intake) | 9 | 9 | 0 | ~1,200 | Small-medium |
 | 2 (RAG Consolidation) | 6 | 2 | 3 | ~400 | Small-medium |
 | 3 (Intake Wiring) | 4 | 0 | 3 | ~150 | Small |
@@ -1721,7 +1983,7 @@ Phase 8 (Reactive Slice + Modules) — depends on Phase 5 + Phase 6 + Phase 7:
 | 6 (Being Config + Voice) | 5 | 2 | 3 | ~600 | Small-medium |
 | 7 (Proactive Channel) | 8 | 5 | 3 | ~1,200 | Medium |
 | 8 (Reactive Slice + Modules) | 10 | 7 | 3 | ~1,500 | Medium |
-| **Total** | **62** | **36** | **21** | **~8,150** | |
+| **Total** | **74** | **43** | **23** | **~9,650** | |
 
 ---
 
@@ -1732,4 +1994,4 @@ Phase 8 (Reactive Slice + Modules) — depends on Phase 5 + Phase 6 + Phase 7:
 
 ---
 
-*This plan is the task-level decomposition of the roadmap. Each task is independently verifiable. The plan assumes Phase 0 (SourcePrep doc ingestion) is handled by a separate AI session working on the RAG corpus.*
+*This plan is the task-level decomposition of the roadmap. Each task is independently verifiable. Phase 0 tasks are detailed in `.handoff/RAG-OPTIMIZATION-PLAN-2026-08-23.md` and included here for completeness. Phases 1–8 can proceed once T0a.1 and T0e.1 are complete (SourcePrep built, quality verified).*
