@@ -21,10 +21,14 @@ This documentation serves two audiences:
 | [research-summary.md](research-summary.md) | Condensed research findings that informed the design |
 | [unified-model-picker.md](unified-model-picker.md) | Strategy for unifying Halbert and SourcePrep's model picker into a shared layer — extract-first, vendor-then-refine approach |
 | [future.md](future.md) | Potential future directions (not promises) |
+| [DESIGN-SYSTEM-SPEC.md](DESIGN-SYSTEM-SPEC.md) | Formalized Design System Specification: Daylight tokens, typography, surfaces, motion, and accessibility |
+| [COMPONENT-ARCHITECTURE.md](COMPONENT-ARCHITECTURE.md) | Component Catalog & Architecture: Atoms, Molecules, Organisms, and existing dashboard component migration |
+| [USER-JOURNEY-METHODOLOGY.md](USER-JOURNEY-METHODOLOGY.md) | User-Journey Methodology: Attention economics, Four Whys matrix, and 5 end-to-end user workflows |
+| [DOMAIN-MODULES-AND-WHY-MECHANICS.md](DOMAIN-MODULES-AND-WHY-MECHANICS.md) | Summonable Domain Modules & Four Whys Mechanics: Module lifecycle, Vitals, ConfigDiff, Storage, Evidence, and Approvals |
 | [the-being.md](the-being.md) | The vision for Halbert's next form — the conversation as core layer, the being concept, the two proof slices |
 | [explorations.md](explorations.md) | Design-to-implementation catalog — every idea mapped to concrete code seams, with curation at section 10 |
-| [REVIEW-DIRECTION-2026-08-23.md](REVIEW-DIRECTION-2026-08-23.md) | External review stub — overall direction and planning critique |
-| [REVIEW-DESIGN-MECHANICS-2026-08-23.md](REVIEW-DESIGN-MECHANICS-2026-08-23.md) | External review stub — user flows and interaction mechanics design doc |
+| [REVIEW-DIRECTION-2026-08-23.md](REVIEW-DIRECTION-2026-08-23.md) | External review — overall direction and planning critique |
+| [REVIEW-DESIGN-MECHANICS-2026-08-23.md](REVIEW-DESIGN-MECHANICS-2026-08-23.md) | External review — user flows and interaction mechanics design doc |
 
 ---
 
