@@ -1,7 +1,7 @@
 /**
  * CompressionSettings - Context Compression Settings Card
  *
- * Configures the 3-tier compression system (replaces CLaRa):
+ * Configures the 3-tier compression system:
  * - LinguaCompressor: LLMLingua-2 neural token pruning (178MB, CPU-only)
  * - SemanticCompressor: Rule-based regex compression (zero deps)
  * - MemoryLOD: 6-level structural LOD for memories
@@ -341,8 +341,8 @@ export function CompressionSettings() {
               Budget-aware batch packing with epistemic floor protection.
             </p>
             <p>
-              <strong>Replaces:</strong> Apple CLaRa-7B (14GB, generates answers, loses citations).
-              New system prunes tokens (preserves original text and provenance).
+              <strong>Method:</strong> Token pruning (preserves original text and provenance).
+              Unlike generation-based compressors, citations are retained.
             </p>
           </div>
         )}

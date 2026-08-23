@@ -37,7 +37,7 @@ vision:
   endpoint: http://100.74.58.17:11434  # Same as specialist endpoint
   purpose: Image analysis, screenshot interpretation, visual troubleshooting
 
-# Compression system (Phase 72 port from LinuxBrain — replaces CLaRa)
+# Compression system (Phase 72 port from LinuxBrain)
 # 3-tier: LinguaCompressor (178MB neural) → SemanticCompressor (rule-based) → Noop
 compression:
   enabled: true

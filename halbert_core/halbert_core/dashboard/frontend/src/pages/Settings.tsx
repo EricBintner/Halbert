@@ -1787,7 +1787,7 @@ export function Settings() {
             <br/><span className="text-muted-foreground/70 mt-1 inline-block">For 24GB GPUs, use <code className="bg-muted px-1 rounded">qwen2.5:14b</code> + separate vision model.</span>
           </div>
 
-          {/* Context Compression - Phase 72: Replaces CLaRa */}
+          {/* Context Compression - Phase 72 */}
           <CompressionSettings />
 
           <Card>

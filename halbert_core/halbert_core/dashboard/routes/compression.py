@@ -2,7 +2,7 @@
 Compression API routes.
 
 Provides endpoints for context compression configuration, status, and testing.
-Replaces the CLaRa routes with the new 3-tier compression system.
+Provides endpoints for the 3-tier context compression system.
 """
 
 from __future__ import annotations

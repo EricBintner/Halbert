@@ -3,7 +3,7 @@ Halbert Compression Package
 
 Unified context compression for Halbert's memory and conversation systems.
 
-Replaces CLARA (Apple CLaRa-7B) with a 3-tier system:
+3-tier context compression system:
   - LinguaCompressor: LLMLingua-2 token pruning (178MB, neural, lazy-loaded)
   - SemanticCompressor: Rule-based regex compression (zero deps, always works)
   - MemoryLOD: 6-level structural compression for memories (budget-aware)
