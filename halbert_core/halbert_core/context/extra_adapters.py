@@ -373,12 +373,13 @@ def create_extended_context_assembler():
     from .tokens import TokenCounter
     from .adapters import (
         RAGServiceAdapter,
+        SourcePrepAdapter,
         DiscoveryServiceAdapter,
         MemoryServiceAdapter,
     )
 
     token_counter = TokenCounter()
-    rag_adapter = RAGServiceAdapter()
+    retrieval_adapter = SourcePrepAdapter()
     discovery_adapter = DiscoveryServiceAdapter()
     memory_adapter = MemoryServiceAdapter()
     identity_adapter = SystemIdentityAdapter()
@@ -389,7 +390,7 @@ def create_extended_context_assembler():
     # Extended priorities — new sources added with moderate weights
     extended_priorities = {
         "conversation": 1.0,
-        "rag": 0.8,
+        "retrieval": 0.8,
         "memory": 0.7,
         "discovery": 0.6,
         "observations": 0.5,
@@ -400,7 +401,7 @@ def create_extended_context_assembler():
     }
 
     return ContextAssembler(
-        rag_service=rag_adapter,
+        retrieval_service=retrieval_adapter,
         memory_service=memory_adapter,
         discovery_service=discovery_adapter,
         token_counter=token_counter,

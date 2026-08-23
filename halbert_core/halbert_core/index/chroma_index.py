@@ -3,10 +3,33 @@ ChromaDB-backed index for Halbert memory and knowledge storage.
 
 Uses persistent ChromaDB with separate collections for:
 - self_hwmon: Hardware sensor events
-- self_journald: System log events  
+- self_journald: System log events
 - self_dbus: D-Bus events
-- self_conversations: Chat history for context retrieval
-- self_knowledge_all: Global knowledge index
+- self_conversations: Chat history for context retrieval (migrated to
+  HybridMemorySystem in Phase 2 — kept for backward compat)
+- self_knowledge_all: Global knowledge index (migrated to SourcePrep
+  observations in Phase 2 — kept for backward compat)
+
+Phase 2 RAG Consolidation:
+    The chat path now uses SourcePrep as the sole retrieval backend.
+    ChromaDB is retired from the chat path but kept for non-chat
+    producers and eval tooling. The following 4 collections stay on
+    ChromaDB until their producers are rewired to SourcePrep:
+
+    1. self_hwmon      — hardware sensor events (producer: obs loop)
+    2. self_journald   — system log events (producer: journald reader)
+    3. self_dbus       — D-Bus events (producer: dbus monitor)
+    4. discoveries     — system discovery results (producer: discovery engine)
+
+    The following 2 collections have been migrated and are kept only
+    for backward compatibility / eval:
+
+    5. self_conversations  — migrated to HybridMemorySystem (Phase 2)
+    6. self_knowledge_all  — migrated to SourcePrep observations (Phase 2)
+
+    Migration scripts:
+        python -m halbert_core.tools.migrate_self_knowledge --apply
+        python -m halbert_core.tools.migrate_conversations --apply
 
 Text for embedding: f"{message} {compact(data)}"; metadata filters per docs.
 """

@@ -52,26 +52,27 @@ class ContextAssembler:
     # Default priority weights (higher = more budget)
     DEFAULT_PRIORITIES = {
         "conversation": 1.0,   # Highest priority
-        "rag": 0.8,
+        "retrieval": 0.8,
         "memory": 0.7,
         "discovery": 0.6,
         "observations": 0.5,
     }
-    
+
     def __init__(
         self,
-        rag_service=None,
+        retrieval_service=None,
         memory_service=None,
         discovery_service=None,
         token_counter: TokenCounter = None,
         priorities: Dict[str, float] = None,
         extra_sources: Dict[str, Any] = None,
+        rag_service=None,  # deprecated alias for retrieval_service
     ):
         """
         Initialize the context assembler.
 
         Args:
-            rag_service: RAG search service
+            retrieval_service: Retrieval search service (SourcePrepAdapter)
             memory_service: Memory recall service
             discovery_service: Discovery search service
             token_counter: Token counting utility
@@ -79,8 +80,12 @@ class ContextAssembler:
             extra_sources: Additional source adapters keyed by source name
                 (e.g. {"system_identity": adapter, "safety": adapter}).
                 Each adapter must have an async search(query, limit) method.
+            rag_service: Deprecated alias for retrieval_service (Phase 2).
         """
-        self.rag = rag_service
+        # Backward compat: rag_service → retrieval_service
+        if retrieval_service is None and rag_service is not None:
+            retrieval_service = rag_service
+        self.retrieval = retrieval_service
         self.memory = memory_service
         self.discovery = discovery_service
         self.tokens = token_counter or TokenCounter()
@@ -139,11 +144,11 @@ class ContextAssembler:
         # 2. Parallel retrieval from external sources
         retrieval_tasks = []
         
-        logger.info(f"Context assembly: rag={self.rag is not None}, memory={self.memory is not None}, discovery={self.discovery is not None}")
+        logger.info(f"Context assembly: retrieval={self.retrieval is not None}, memory={self.memory is not None}, discovery={self.discovery is not None}")
         logger.info(f"Active sources: {active_sources}, budgets: {budgets}")
-        
-        if "rag" in active_sources and self.rag:
-            retrieval_tasks.append(("rag", self._retrieve_rag(query, budgets.get("rag", 0))))
+
+        if "retrieval" in active_sources and self.retrieval:
+            retrieval_tasks.append(("retrieval", self._retrieve_retrieval(query, budgets.get("retrieval", 0))))
         
         if "memory" in active_sources and self.memory:
             retrieval_tasks.append(("memory", self._retrieve_memory(query, budgets.get("memory", 0))))
@@ -249,7 +254,7 @@ class ContextAssembler:
             # Short conversation: more retrieval
             base_ratios = {
                 "conversation": 0.10,
-                "rag": 0.35,
+                "retrieval": 0.35,
                 "memory": 0.20,
                 "discovery": 0.25,
                 "observations": 0.10
@@ -258,7 +263,7 @@ class ContextAssembler:
             # Medium conversation: balanced
             base_ratios = {
                 "conversation": 0.25,
-                "rag": 0.30,
+                "retrieval": 0.30,
                 "memory": 0.15,
                 "discovery": 0.20,
                 "observations": 0.10
@@ -267,7 +272,7 @@ class ContextAssembler:
             # Long conversation: prioritize history
             base_ratios = {
                 "conversation": 0.40,
-                "rag": 0.25,
+                "retrieval": 0.25,
                 "memory": 0.10,
                 "discovery": 0.15,
                 "observations": 0.10
@@ -369,17 +374,17 @@ class ContextAssembler:
         
         return "\n".join(lines), tokens
     
-    async def _retrieve_rag(self, query: str, max_tokens: int) -> Dict:
-        """Retrieve and format RAG results."""
-        logger.info(f"_retrieve_rag called with query='{query[:50]}...', max_tokens={max_tokens}")
+    async def _retrieve_retrieval(self, query: str, max_tokens: int) -> Dict:
+        """Retrieve and format retrieval results (SourcePrep)."""
+        logger.info(f"_retrieve_retrieval called with query='{query[:50]}...', max_tokens={max_tokens}")
         if max_tokens <= 0:
-            logger.warning("_retrieve_rag: max_tokens <= 0, returning empty")
+            logger.warning("_retrieve_retrieval: max_tokens <= 0, returning empty")
             return {}
-        
+
         try:
-            logger.info("Calling RAG search...")
-            results = await self.rag.search(query, limit=5)
-            logger.info(f"RAG search returned {len(results)} results")
+            logger.info("Calling retrieval search...")
+            results = await self.retrieval.search(query, limit=5)
+            logger.info(f"Retrieval search returned {len(results)} results")
             
             lines = ["## Relevant Documents"]
             tokens = self.tokens.count(lines[0])
@@ -408,7 +413,7 @@ class ContextAssembler:
                 "items": items
             }
         except Exception as e:
-            logger.error(f"RAG retrieval error: {e}")
+            logger.error(f"Retrieval error: {e}")
             return {}
     
     async def _retrieve_memory(self, query: str, max_tokens: int) -> Dict:
@@ -549,8 +554,8 @@ class ContextAssembler:
             if not content:
                 continue
             
-            if source_type == "rag":
-                # Split RAG: top items at start, rest in middle
+            if source_type == "retrieval":
+                # Split retrieval: top items at start, rest in middle
                 lines = content.split("\n")
                 if len(lines) > 3:
                     # First few lines (header + top results) go to start
@@ -632,7 +637,7 @@ class ContextAssembler:
                 continue
 
             # Determine compression level per source type
-            if source_type == "rag":
+            if source_type == "retrieval":
                 # SourcePrep already compressed — light only
                 level = "light"
             elif source_type == "memory":

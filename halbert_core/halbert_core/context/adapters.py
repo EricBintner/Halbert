@@ -6,7 +6,9 @@ Based on research5.md Part 20.4.
 """
 
 from __future__ import annotations
+import asyncio
 import logging
+import warnings
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -17,7 +19,12 @@ logger = logging.getLogger('halbert.context.adapters')
 
 class RAGServiceAdapter:
     """
-    Adapter for the existing RAG service.
+    Adapter for the existing ChromaDB-backed RAG service.
+
+    .. deprecated::
+        RAGServiceAdapter is deprecated on the chat path — use
+        :class:`SourcePrepAdapter` instead. Kept for CLI eval tooling
+        and non-chat producers only.
     
     Provides async interface expected by ContextAssembler.
     """
@@ -29,6 +36,12 @@ class RAGServiceAdapter:
         Args:
             chroma_index: ChromaDB index instance
         """
+        warnings.warn(
+            "RAGServiceAdapter is deprecated on the chat path. "
+            "Use SourcePrepAdapter instead. Kept for CLI eval only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._index = chroma_index
         self._initialized = False
     
@@ -276,24 +289,104 @@ class MemoryServiceAdapter:
             logger.error(f"Memory store error: {e}")
 
 
+class SourcePrepAdapter:
+    """Async adapter wrapping SourcePrepRetrievalBackend for ContextAssembler.
+
+    SourcePrepRetrievalBackend.search() is synchronous (uses requests).
+    This adapter wraps it with asyncio.to_thread() so the assembler can
+    call it concurrently with other async sources.
+
+    The adapter maps the assembler's expected interface (async search)
+    to SourcePrep's sync interface, and normalizes result shape:
+    SourcePrep returns dicts with 'text'/'source_path'/'score', while
+    the assembler expects 'content'/'metadata'/'source'/'score'.
+    """
+
+    def __init__(
+        self,
+        backend=None,
+        project_id: Optional[str] = None,
+        base_url: Optional[str] = None,
+        default_k: int = 5,
+    ):
+        """Args:
+            backend: Optional pre-built SourcePrepRetrievalBackend instance.
+                If None, one is created with project_id/base_url.
+            project_id: SourcePrep project ID (for auto-creating backend).
+            base_url: SourcePrep daemon URL (for auto-creating backend).
+            default_k: Default number of results to retrieve.
+        """
+        if backend is not None:
+            self._backend = backend
+        else:
+            from ..integrations.sourceprep_retrieval_backend import (
+                SourcePrepRetrievalBackend,
+            )
+            self._backend = SourcePrepRetrievalBackend(
+                project_id=project_id,
+                base_url=base_url,
+                default_k=default_k,
+            )
+        self._default_k = default_k
+
+    async def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Search SourcePrep asynchronously.
+
+        Args:
+            query: Natural language search query.
+            limit: Maximum results (mapped to SourcePrep's k parameter).
+
+        Returns:
+            List of documents with 'content', 'metadata', 'source', 'score'.
+            Empty list on error or if daemon is unreachable.
+        """
+        if not query.strip():
+            return []
+
+        k = limit or self._default_k
+        try:
+            results = await asyncio.to_thread(
+                self._backend.search, query, k=k
+            )
+        except Exception as e:
+            logger.warning(f"SourcePrep adapter search failed: {e}")
+            return []
+
+        documents = []
+        for item in results:
+            text = item.get("text", "")
+            if not text:
+                continue
+            documents.append({
+                "content": text,
+                "metadata": item.get("metadata", {}),
+                "source": item.get("source_path", "sourceprep"),
+                "score": item.get("score", 0.0),
+            })
+        return documents
+
+
 def create_wired_context_assembler():
     """
     Create a ContextAssembler wired up with real services.
-    
+
+    Uses SourcePrepAdapter as the retrieval backend (Phase 2).
+    RAGServiceAdapter is deprecated on the chat path.
+
     Returns:
-        ContextAssembler with RAG, discovery, and memory adapters
+        ContextAssembler with SourcePrep retrieval, discovery, and memory
     """
     from .assembler import ContextAssembler
     from .tokens import TokenCounter
-    
+
     token_counter = TokenCounter()
-    rag_adapter = RAGServiceAdapter()
+    retrieval_adapter = SourcePrepAdapter()
     discovery_adapter = DiscoveryServiceAdapter()
     memory_adapter = MemoryServiceAdapter()
-    
+
     return ContextAssembler(
-        rag_service=rag_adapter,
+        retrieval_service=retrieval_adapter,
         memory_service=memory_adapter,
         discovery_service=discovery_adapter,
-        token_counter=token_counter
+        token_counter=token_counter,
     )
