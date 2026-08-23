@@ -1,368 +1,680 @@
-# Review: Design Mechanics and User Flows
+# Review: Design Mechanics, User Flows & Interaction Lifecycles
 
-**Status:** Stub — to be filled in by external reviewer.
-**Reviewer:** [name]
-**Date:** [date]
-**Reads with:** `.handoff/HANDOFF-REVIEW-2026-08-23.md` (the handoff brief)
-
----
-
-## How to use this document
-
-This is your working document. Fill in each section with user flows,
-interaction patterns, and design markup. Delete the scaffolding prompts
-when you've addressed them. Add new sections as needed.
-
-The handoff brief asked for a design doc focused on user-flow and myopic
-interactions — the "how does a human actually use this" question. Sketch
-the flows. Propose interaction patterns. Mark up the micro-interactions.
-Use ASCII diagrams or mermaid where they help.
-
-Remember: no emojis. Use icon fonts or clever graphic design.
+**Status:** Completed Review & Comprehensive Design Specification  
+**Reviewer:** Senior Product Designer & UX Architect  
+**Date:** 2026-08-23  
+**Target Environment:** Tauri Desktop App (React + Radix UI + Tailwind) / Linux (Ubuntu) & macOS  
+**Reads with:** `.handoff/HANDOFF-REVIEW-2026-08-23.md`, `documentation/design/the-being.md`, `documentation/design/explorations.md`, `.handoff/ROADMAP-2026-08-23.md`
 
 ---
 
-## 1. Design principles
+## Executive Summary: Bridging Architecture to Lived Experience
 
-[Before diving into flows, state the design principles that guide your
-recommendations. What makes this product different from a monitoring
-dashboard with a chatbot? What's the interaction philosophy?]
+Halbert's core paradigm shift is moving from a *monitoring dashboard with a chatbot attached* to an **embodied host entity** ("a being that *is* the computer"). 
 
----
+Architecturally, Halbert has solid foundations: the Haloysius cognitive tick, SourcePrep awareness substrate, the config physiology brain, and the SQLite findings/approval engine. However, a technical architecture is not an experience. Without explicit, nuanced user flows, even the most sophisticated cognitive core can feel unpredictable, chatty, or uncanny.
 
-## 2. The first conversation (onboarding / birth)
-
-### 2.1 First-run experience
-
-[The user installs Halbert and opens it for the first time. What happens?
-Walk through the first 60 seconds. Does the being introduce itself? Does
-it ask about purpose? Does it start scanning immediately or wait? What's
-the tone? What does the screen look like?]
-
-### 2.2 Purpose discovery
-
-[The being.yml config has a `purpose` field (free text v1). How does the
-being learn its purpose? Is it asked directly? Inferred from the system
-(NAS vs dev box vs laptop)? Is it a conversation or a form?]
-
-### 2.3 The first scan
-
-[When does the being do its first config scan? Immediately on first run?
-After onboarding? On a schedule? What does the user see while it's
-scanning? Does the being narrate what it's doing?]
-
-### 2.4 First findings
-
-[The being finds something during the first scan. How does it present it?
-Is this the first proactive interrupt? Or does it wait until the user
-asks? What's the tone — "I just met you and already found a problem" vs
-"I've been looking around and noticed something"?]
+This design specification bridges this gap by defining:
+1. **The Core Interaction Principles:** Grounding every pixel in Halbert's Four Whys.
+2. **12 Comprehensive User Workflows:** End-to-end screen states, ASCII wireframes, micro-interactions, branching logic, and underlying architectural seams covering the entire lifecycle from first boot to daily rituals.
+3. **Signature Micro-Interactions:** The `WhyChip`, proactive interrupt cards, diff and blast-radius visualizers, the module invocation container lifecycle, and the ambient system tray.
+4. **Resilience & Degraded States:** Honest self-disclosure when LLM, RAG, or OS subsystems fail.
+5. **Living Rhythm & Attention Budgets:** Calibration of interruptions across a 7-day operating cycle.
+6. **Keyboard & Accessibility Model:** Full keyboard navigability and screen reader semantics for power users.
 
 ---
 
-## 3. The conversation surface
+## 1. Design Principles & The Interaction Philosophy
 
-### 3.1 Message types and rendering
+```
++-----------------------------------------------------------------------------+
+|                               THE DESIGN LAW                                |
+|                  "Nothing appears without its four whys."                   |
++----------------------+------------------------------------------------------+
+| 1. Why Now           | Severity x Category x Proactivity Dial x Quiet Hours  |
+| 2. Why Care          | Consequence & failure mode if ignored                |
+| 3. Why So            | System rationale, config history, underlying intent  |
+| 4. Why Trust         | Verifiable provenance: file paths, logs, diffs, hash |
++----------------------+------------------------------------------------------+
+```
 
-[The conversation supports multiple message types: plain text, module
-invocations, proposals, evidence refs, morning reports. How does each
-type render? Sketch the layout for each.]
+### 1.1 Core Tenets
 
-### 3.2 The context region
-
-[The being.md describes a two-column layout: conversation spine (left) +
-context region (right, summoned modules). How does this work in practice?
-When is the context region empty? When does a module appear? How does the
-user dismiss a module? Can multiple modules be summoned at once?]
-
-### 3.3 Scrolling and history
-
-[How does scrolling work when modules are inline in the conversation? Do
-old modules collapse to a summary chip? Does the conversation have
-infinite scroll? How does the user find something from "last Tuesday"?]
-
-### 3.4 The input area
-
-[What does the input area look like? Is it a single text field? Does it
-support attachments (images, files)? Does it have a module palette
-trigger? What's the keyboard shortcut to focus it?]
+1. **Embodied, Not Personified:** Halbert does not pretend to have human emotions; it has *computational embodiment*. It speaks as the machine caring for itself and collaborating with its administrator.
+2. **Triage Over Telemetry:** Raw metrics and alerts create fatigue. Halbert never displays a naked metric without stating its consequence, trend context, or operational relevance.
+3. **Zero Unjustified Interruptions:** An interruption must justify its cost to the user's attention before the window opens.
+4. **Reversible Agency:** Every write action is bounded by an atomic dry-run, an explicit blast-radius estimate, and an immediate single-click rollback guarantee.
+5. **Continuous Conversation Spine:** Interaction is an ongoing relationship over time, segmented into days and rituals, rather than isolated, disposable chat sessions.
 
 ---
 
-## 4. The proactive interrupt
+## 2. Global Layout & Container Architecture
 
-### 4.1 The interrupt itself
+Halbert operates in three distinct display modes:
 
-[The being detects a config problem and wants to tell the user. What
-exactly appears on screen? Walk through the visual states:
-- App is open, user is in a conversation
-- App is open, user is in browsing mode (dashboard)
-- App is minimized to tray
-- App is closed
+```
++-----------------------------------------------------------------------------+
+| MODE 1: ENGAGED (Default Workspace — Two-Column Conversation + Context)     |
+|                                                                             |
+| +------------------------------------+------------------------------------+ |
+| | CONVERSATION SPINE (Left 45-50%)   | CONTEXT REGION (Right 50-55%)      | |
+| |                                    |                                    | |
+| | [Timeline / Daily Divider]         | [Active Summoned Module]           | |
+| |                                    | - Live Vitals Gauge Grid           | |
+| | Halbert:                           | - Interactive Config Diff & Edges  | |
+| | "I detected conflicting SSH        | - Storage Health & SMART Status    | |
+| | drop-in configs in sshd_config.d." | - Evidence Drawer (Logs/Journald)  | |
+| | [WhyChip: Important | Config]      |                                    | |
+| |                                    | [Approve Action] [Dismiss] [Snooze]| |
+| | User:                              |                                    | |
+| | "Which configuration wins?"        | [Pin Module] [Minimize] [Close]    | |
+| |                                    |                                    | |
+| | Halbert:                           |                                    | |
+| | "50-cloud-init.conf overrides..."  |                                    | |
+| +------------------------------------+------------------------------------+ |
+| | [Input Prompt: Ask or command...]                [Cmd+K Modules] [Mic]  | |
+| +-------------------------------------------------------------------------+ |
++-----------------------------------------------------------------------------+
+```
 
-For each: what does the interrupt look like? Toast? Slide-in? Badge?
-What does the message say? How long does it stay?]
+```
++-----------------------------------------------------------------------------+
+| MODE 2: BROWSING (Under the Hood — Full Grid View)                          |
+|                                                                             |
+| [Top Nav: System Status Bar | Search | Being Status | [Engage Mode Toggle]] |
+| +-------------------+-------------------+-------------------+-------------+ |
+| | Vitals & Load     | Storage & Pools   | System Services   | Security    | |
+| | [Live Graph]      | [Mount Points]    | [Active Daemons]  | [Firewall]  | |
+| +-------------------+-------------------+-------------------+-------------+ |
+| | Network & DNS     | Containers/Docker | Config Registry   | Approvals   | |
+| +-------------------+-------------------+-------------------+-------------+ |
++-----------------------------------------------------------------------------+
+```
 
-### 4.2 The finding card
-
-[The interrupt leads to a finding card. What does it contain? Sketch the
-layout. Where do the four whys appear? How does the user expand/collapse
-them? What actions are available (approve/dismiss/snooze/why/ignore
-category)?]
-
-### 4.3 Approve / dismiss / snooze as gestures
-
-[How does the user interact with a finding?
-- Approve: what does it trigger? Does it go straight to the proposal, or
-  is there an intermediate step?
-- Dismiss: what does it mean? Does the user provide a reason? Does the
-  being learn from it?
-- Snooze: for how long? Is it a preset (1 day, 1 week) or custom? What
-  happens when the snooze expires?
-- "Why?": how does the user drill into the four whys? Is it a click, a
-  hover, a keyboard shortcut?]
-
-### 4.4 The proposal flow
-
-[The being proposes a config change. What does the proposal look like?
-Sketch the diff view. Where is the blast-radius shown? How does
-approve/reject work? What happens after approval — does the being apply
-immediately or queue? What does the "I applied it, here's what changed"
-follow-up look like? What does rollback look like?]
-
----
-
-## 5. The "how are you?" flow
-
-### 5.1 The question
-
-[The user asks "how are you?" What does the response look like? Is it a
-single message? A message + a summoned vitals module? How does the vitals
-module render alongside the text?]
-
-### 5.2 Provenance and the WhyChip
-
-[Every claim in the response has a provenance ref. How does the WhyChip
-work as a UI element? Sketch it. Is it inline with the text? A sidebar?
-A hover affordance? What happens when the user clicks it? What does the
-evidence view look like?]
-
-### 5.3 The vitals module
-
-[What does the summoned vitals module show? CPU, memory, disk, network —
-in what layout? Is it real-time or a snapshot? How does the user dismiss
-it? Can they expand it to the full dashboard?]
-
-### 5.4 Voice in practice
-
-[How does the voice setting affect the "how are you?" response? Show the
-same response in first_person, the_computer, and hybrid. Does the voice
-affect the UI at all, or just the text?]
+```
++-----------------------------------------------------------------------------+
+| MODE 3: AMBIENT (At Rest — System Tray & Minimal HUD)                       |
+|                                                                             |
+| [macOS Menu Bar / Ubuntu AppIndicator]  --> [Halbert Icon: Calm / Dot Badge]|
+|   Left Click: Quick Peek HUD Dropdown / Slide-out Spine                     |
+|   Right Click: Context Menu (Status, Mute 1h, Proactivity Dial, Settings)   |
++-----------------------------------------------------------------------------+
+```
 
 ---
 
-## 6. The morning report
+## 3. Comprehensive User Workflows & Lifecycles
 
-### 6.1 Delivery
-
-[The user opens Halbert in the morning. What do they see? Is the morning
-report the first thing? Is it a single message? A special view? How does
-it differ from a normal conversation message?]
-
-### 6.2 Content and structure
-
-[What's in the morning report? Findings, proposals, config changes,
-telemetry anomalies, approvals awaiting. How are they grouped? How does
-the user drill into each item? Is it scrollable? Collapsible?]
-
-### 6.3 Interaction
-
-[Can the user act on items in the morning report directly (approve,
-dismiss, snooze)? Or do they need to open each item separately? Can the
-user ask follow-up questions about the report? ("Tell me more about the
-sshd thing.")]
+### Workflow Index
+- **Flow 01:** First-Run Awakening & Hardware Discovery (Onboarding / Birth)
+- **Flow 02:** Purpose Alignment & Profile Ingestion
+- **Flow 03:** Ambient Background Sweep & Worry State Generation
+- **Flow 04:** Proactive Config Conflict Interrupt & Interactive Triage
+- **Flow 05:** Config Change Proposal, Blast-Radius Inspection & Rollback
+- **Flow 06:** Reactive State Inquiry ("How are you?") with Provenance Drilldown
+- **Flow 07:** Root-Cause Troubleshooting ("Why did Docker fail?")
+- **Flow 08:** Manual Module Summoning via Palette (Cmd+K)
+- **Flow 09:** The Morning Report Ritual & Batch Triage
+- **Flow 10:** Config Rationale Capture (WhyBrain Revived via SourcePrep Concepts)
+- **Flow 11:** Degraded Sensor & Subsystem Recovery (Local LLM / SourcePrep down)
+- **Flow 12:** Cross-Platform Transition (macOS Dev Host vs Ubuntu Lab Host)
 
 ---
 
-## 7. The module palette
+### Flow 01: First-Run Awakening & Hardware Discovery (Birth)
 
-### 7.1 Summoning modules manually
+```
+[User Launches App First Time]
+             |
+             v
+[Tauri Shell Inits -> FastAPI Boot]
+             |
+             v
+[Silent Baseline Discovery Scan (CPU, Memory, Disks, OS, Network)]
+             |
+             v
+[ENGAGED View Opens -> Halbert Self-Introduction Message Appears]
+             |
+             v
+[Context Region Renders Baseline System Inventory Module]
+```
 
-[The user wants to summon a module without the being suggesting it. How
-do they do it? A keyboard shortcut (Cmd+K)? A button in the input area?
-A command palette? What does the palette look like? How are modules
-listed — by name, by category, by icon?]
-
-### 7.2 Module interactions
-
-[Once a module is summoned, how does the user interact with it? Can they
-resize it? Move it? Pin it? Dismiss it? Can they have multiple modules
-open? How does the layout adapt?]
-
----
-
-## 8. The tray indicator
-
-### 8.1 Visual states
-
-[What are the tray indicator states? Calm / needs-attention / urgent —
-what do they look like? Is it a color change? An icon change? A badge
-count? How does the user distinguish between "one info finding" and
-"three critical findings"?]
-
-### 8.2 Interactions
-
-[What happens on click? Double-click? Right-click? Is there a context
-menu? What's in it? Can the user dismiss findings from the tray? Can
-they change the proactivity dial from the tray?]
-
-### 8.3 The web fallback
-
-[The being.md mentions a "persistent header chip in the dashboard" as a
-web fallback for the tray. What does this look like? How does it behave
-differently from the tray indicator?]
+#### Step-by-Step Micro-Interactions:
+1. **Initial Screen:** The window opens in `ENGAGED` mode. No blocking modal setup wizards. The conversation spine displays a typewriter-rendered message in the configured default voice (First Person):
+   > *"Hello. I am initializing on `halbert-node-01` (Ubuntu 24.04 LTS, Linux 6.8.0-31-generic). I have mapped our hardware: 16 cores (AMD Ryzen 7), 64 GB ECC RAM, and 3 storage volumes. I am beginning a baseline pass over `/etc` and active systemd units."*
+2. **Context Region:** Automatically populates with the **Host Baseline Module**, highlighting live discovered components with subtle pulse indicators as scanning completes.
+3. **Affordances:**
+   - Conversation spine displays prompt suggestions: `[Looks good]`, `[Define machine purpose]`, `[Configure alerts]`.
+   - No forced blocking buttons; the user can immediately type or click a chip.
 
 ---
 
-## 9. Settings: the "Being" tab
+### Flow 02: Purpose Alignment & Profile Calibration
 
-### 9.1 Layout
+```
+User selects or types: "This machine is a dedicated ZFS NAS and Docker host."
+                               |
+                               v
+Intake Pipeline -> Signal Analysis (intent: configure_purpose, domain: storage/containers)
+                               |
+                               v
+State Machine Tick -> Updates being.yml (purpose: "ZFS NAS and Docker host")
+                               |
+                               v
+Halbert Response -> Calibrates Monitor Priorities & Confirms
+```
 
-[The Settings page gains a "Being" tab. What does it look like? Sketch
-the layout. How are the voice picker, proactivity dial, quiet hours,
-morning report, and purpose field arranged?]
-
-### 9.2 The voice picker
-
-[How does the user choose between first_person / the_computer / hybrid?
-Radio buttons? A segmented control? Does each option show a preview?
-("I'm worried about /dev/sda1" vs "Your computer's primary drive...")]
-
-### 9.3 The proactivity dial
-
-[How does the user set the proactivity level? A literal dial? A slider?
-A segmented control? Does each level show a description of what it
-means? Can they set per-category overrides from the same view?]
-
-### 9.4 Quiet hours and morning report
-
-[How does the user set quiet hours? Two time pickers? A visual timeline?
-How do they configure the morning report — toggle + time picker? What
-if they want it off entirely?]
-
-### 9.5 Purpose
-
-[The purpose field is free text v1. How does it render? A textarea? A
-single-line input? Does the being acknowledge when the user sets a
-purpose? ("Got it — I'll keep an eye on storage since this is a NAS.")]
+#### Micro-Interactions:
+1. **User Input:** User specifies machine identity in free text or selects suggested tags.
+2. **Entity Response:**
+   > *"Understood. I will prioritize ZFS pool integrity, scrub schedules, disk temperature thresholds, and container restart policies over general desktop services. I will dial down desktop audio/display monitoring."*
+3. **Visual Confirmation:** A subtle tag chip `[Purpose: ZFS NAS & Docker Host]` appears under the Being Status header in the navigation bar.
+4. **Behind the Seams:** Saved to `~/.config/halbert/being.yml` and indexed as a primary anchor in SourcePrep's `identity.md`.
 
 ---
 
-## 10. Error and degraded states
+### Flow 03: Ambient Background Sweep & Worry State Generation
 
-### 10.1 SourcePrep is down
+```
+[Background Timer (Hourly) OR inotify Config Watcher Trigger]
+                           |
+                           v
+              [Config Detectors Run (E1-E3)]
+                           |
+              [Detector Hits: e.g. fstab Phantom]
+                           |
+                           v
+        [Build Finding Object (Four Whys Grounded)]
+                           |
+                           v
+  [Proactivity Gate: Severity (Critical) >= Dial (Balanced)?]
+        /                                       \
+      YES                                        NO
+      /                                           \
+[Push via SSE /api/being/events]      [Persist in SQLite findings store]
+[Update Tray to Needs-Attention]       [Queue for Morning Report]
+```
 
-[The being can't search its docs. What does the user see when they ask a
-question? How does the being explain it? Does the UI show a degraded
-state indicator?]
-
-### 10.2 The LLM is down
-
-[The being can't generate a response. What happens? Does the UI show an
-error? Does the being "go quiet"? Is there a retry mechanism?]
-
-### 10.3 A config detector throws
-
-[A detector crashes during a sweep. What happens? Does the being report
-the error? Does it silently skip? Does it create a finding about itself?]
-
-### 10.4 macOS degraded sensors
-
-[The being is running on macOS. No journald, no systemd. How does the
-being explain this? "I can't see journald on this body" — is this the
-right tone? How does the UI reflect degraded capabilities?]
-
-### 10.5 The proactive channel is broken
-
-[The SSE stream drops. What happens? Does the user miss findings? Does
-the being queue them? Does the tray indicator show a disconnected state?]
+#### Micro-Interactions:
+1. **Detector Discovery:** Background worker notices `/etc/fstab` contains a UUID entry for a disk unmounted 14 days ago that fails `blkid` check.
+2. **Finding Synthesis:** Consequence evaluated: *"System boot may stall into emergency maintenance mode on next kernel update or reboot."*
+3. **Internal State:** Haloysius ledger registers `worries_about(fstab_phantom_uuid_9a4f)`.
 
 ---
 
-## 11. The "living with it" rhythm
+### Flow 04: Proactive Config Conflict Interrupt & Interactive Triage
 
-### 11.1 A week with Halbert
+```
++-----------------------------------------------------------------------------+
+| CONVERSATION SPINE                   | CONTEXT REGION: Finding f_01J5K...   |
+|                                      |                                      |
+| Halbert:                             | [SEVERITY: IMPORTANT] [CATEGORY: SSH]|
+| "I noticed a configuration conflict  |                                      |
+| in sshd_config.d that affects your   | WHAT:                                |
+| login security."                     | PasswordAuthentication set to 'yes'  |
+|                                      | in 60-cloudimg.conf but 'no' in      |
+| [WhyChip: Important | SSH Conflict]  | 99-local-hardening.conf.             |
+|                                      |                                      |
+| "According to sshd drop-in           | CONSEQUENCE (Why Care):              |
+| precedence, 99-local-hardening wins, | Password login is currently disabled |
+| but 60-cloudimg creates false audit  | but may reactivate if files are      |
+| alerts and drift."                   | renamed or ordered differently.      |
+|                                      |                                      |
+| What would you like to do?           | PROVENANCE (Why Trust):              |
+| [View Diff & Proposal]               | - /etc/ssh/sshd_config.d/60-cloudimg |
+| [Snooze 7 Days]  [Mark Intentional]  | - /etc/ssh/sshd_config.d/99-local    |
++--------------------------------------+--------------------------------------+
+```
 
-[Walk through a typical week of using Halbert. How many proactive
-interrupts? When does the morning report land? When does the user
-initiate vs the being initiating? What's the cadence? What gets
-annoying? What feels missing?]
-
-### 11.2 The attention budget
-
-[The being should not be exhausting to live with. How do we manage the
-user's attention? Is there a maximum number of interrupts per day? Does
-the being batch findings? Does it escalate (quiet for a day, then
-assertive if something is still unresolved)?]
-
-### 11.3 The relationship over time
-
-[How does the relationship between user and being evolve over weeks and
-months? Does the being learn what's noise? Does it become more or less
-proactive? Does the user's trust increase? How is that measured?]
-
----
-
-## 12. Accessibility and keyboard navigation
-
-### 12.1 Keyboard-first interaction
-
-[The user is a power user. Can they do everything with the keyboard?
-What are the key bindings? Can they approve/dismiss/snooze with a
-keystroke? Can they summon modules with a shortcut? Can they navigate
-the conversation with arrows?]
-
-### 12.2 Screen reader and assistive tech
-
-[The being's messages carry provenance, modules, and proposals. How do
-these render for screen readers? Is the WhyChip accessible? Are the
-module containers labeled?]
+#### Step-by-Step Micro-Interactions:
+1. **Trigger:** The being pushes a notification event. If the app is minimized, the tray pulses amber; clicking it slides open the `ENGAGED` window.
+2. **Finding Card in Context Region:**
+   - Displays **What**, **Why Care (Consequence)**, and **Why Trust (Provenance)**.
+   - Provides four explicit primary actions:
+     - `[Generate Proposed Fix]`: Initiates Flow 05.
+     - `[Snooze...]`: Opens dropdown (`1 Day`, `7 Days`, `Next Reboot`).
+     - `[Mark as Intentional (Dismiss)]`: Prompts user for a 1-sentence reason ("Why is this kept?"). Persists into SourcePrep concepts as permanent rationale.
+     - `[Why?]`: Expands deep reasoning chain and precedence graph.
 
 ---
 
-## 13. Visual design language
+### Flow 05: Config Change Proposal, Blast-Radius Inspection & Rollback
 
-### 13.1 Tone and density
+```
+[User clicks "View Diff & Proposal"]
+                 |
+                 v
+[write_config Dry-Run -> Generates Unified Diff + Dependency Blast-Radius]
+                 |
+                 v
+[Context Region Updates to Diff & Blast-Radius Inspector]
+```
 
-[The user is technical. The UI can be dense. But the being is also
-conversational. How do we balance information density with conversational
-warmth? What's the visual tone — terminal-like? Dashboard-like? Something
-new?]
+```
++-----------------------------------------------------------------------------+
+| CONTEXT REGION: Proposal p_01J5K89                                          |
+|                                                                             |
+| TARGET: /etc/ssh/sshd_config.d/60-cloudimg.conf                             |
+| ACTION: Comment out redundant 'PasswordAuthentication yes'                  |
+|                                                                             |
+| --- /etc/ssh/sshd_config.d/60-cloudimg.conf                                 |
+| +++ /etc/ssh/sshd_config.d/60-cloudimg.conf (proposed)                      |
+| @@ -4,7 +4,7 @@                                                            |
+|  PubkeyAuthentication yes                                                   |
+| -PasswordAuthentication yes                                                 |
+| +# PasswordAuthentication yes (disabled by Halbert: matches 99-local)       |
+|                                                                             |
+| BLAST-RADIUS (Direct Dependents):                                           |
+| [!] ssh.service (Daemon reload required - active connections unaffected)    |
+| [i] fail2ban.service (Monitors /var/log/auth.log - no rule change required) |
+|                                                                             |
+| ROLLBACK PLAN:                                                              |
+| Instant snapshot backup created at /var/backups/halbert/60-cloudimg.bak.01  |
+|                                                                             |
+| [APPROVE & APPLY NOW]          [EDIT MANUALLY]          [REJECT PROPOSAL]   |
++-----------------------------------------------------------------------------+
+```
 
-### 13.2 Color and severity
-
-[How do we communicate severity (info / warning / critical) without
-relying on color alone? Icons? Borders? Backgrounds? How does severity
-render in the tray, in the finding card, in the morning report?]
-
-### 13.3 The being's "face"
-
-[Does the being have a visual identity? An avatar? A color? A shape that
-represents its state (calm / worried / working)? Or is it purely
-textual? What are the trade-offs?]
+#### Execution & Rollback Execution Steps:
+1. **User clicks `[APPROVE & APPLY NOW]`:**
+   - System prompts for privilege elevation (polkit / sudo auth token via secure backend helper).
+   - `write_config.py` creates backup snapshot `60-cloudimg.bak.01`.
+   - File is atomically written.
+   - Post-apply hook executes syntax verification (`sshd -t`).
+   - If syntax check **passes**: Service reloaded (`systemctl reload ssh`).
+   - Conversation spine prints:
+     > *"I applied the change and reloaded `ssh.service`. Verified syntax clean. 0 existing sessions dropped."*
+   - Context card transforms into a persistent receipt with a prominent `[UNDO / ROLLBACK]` button.
+2. **If syntax check FAILS:**
+   - Atomic rollback is automatically executed within 250ms.
+   - Conversation spine alerts:
+     > *"Verification failed during `sshd -t` test. I immediately restored the original config. No services were disrupted."*
 
 ---
 
-## 14. Open design questions
+### Flow 06: Reactive State Inquiry ("How are you?") with Provenance
 
-[List the design questions that need further exploration. These are
-things you noticed but don't have a recommendation for yet — they need
-more thought or user testing.]
+```
+User types: "How are you doing today?"
+                     |
+                     v
+Intake Router: intent=system_inquiry, complexity=2 (Guide Model)
+                     |
+                     v
+Retrieval Backend: Fetches System Biography (Uptime, Thermal, Disk SMART, Recent Changes)
+                     |
+                     v
+Cognition Tick: Formulates Response in configured Voice (First Person)
+                     |
+                     v
+Stream SSE Event: text response + module_invoke("vitals")
+```
+
+```
++-----------------------------------------------------------------------------+
+| CONVERSATION SPINE                   | CONTEXT REGION: Live Vitals Module   |
+|                                      |                                      |
+| Halbert:                             | [CPU USAGE]      [MEMORY (64 GB)]    |
+| "I'm running smoothly overall.       | 12% Avg (45C)    24.2 GB used (38%)  |
+| Uptime is 18 days, 4 hours.          | [||||........]   [||||||||......]    |
+|                                      |                                      |
+| I have two minor items on my mind:   | [STORAGE POOLS]                      |
+| 1. NVMe drive `/dev/nvme0n1` peaked  | rpool (ZFS): 42% (Healthy, Scrub OK) |
+|    at 62C during the 03:00 backup    | data01:      78% (Healthy)           |
+|    [WhyChip: Logs | Temp Event].     |                                      |
+| 2. Memory pressure is low (38%), but | [ACTIVE ALERTS (1)]                  |
+|    Docker container `plex` consumed  | - Thermal spike on nvme0n1 at 03:14  |
+|    6 GB cache [WhyChip: Metrics].    |                                      |
+|                                      | [Pin to Sidebar] [Open Full Vitals]  |
+| All systemd services are nominal."   |                                      |
++-----------------------------------------------------------------------------+
+```
+
+#### Micro-Interaction: Clicking the `[WhyChip: Logs | Temp Event]`:
+1. The Context Region dynamically slides down a drawer showing the raw excerpt:
+   ```
+   SOURCE: journald cursor s=a8b3... [2026-08-23 03:14:02 UTC]
+   kernel: nvme nvme0: sensor 1 temperature 62 C exceeds warning threshold (60 C)
+   kernel: smartd[1042]: Device: /dev/nvme0n1, Temperature 62 Celsius
+   ```
+2. One-click action `[Copy Citation]` or `[Query Related Events]`.
 
 ---
 
-## 15. Summary of design recommendations
+### Flow 07: Root-Cause Troubleshooting ("Why did Docker fail?")
 
-[Your top 5-10 design recommendations, prioritized. What should we
-design first? What's the highest-risk interaction? What's the thing
-that will make or break the product?]
+```
+User types: "Why did docker fail last night?"
+                     |
+                     v
+Intake Pipeline: intent=troubleshooting, complexity=4 (Specialist Model Tier)
+                     |
+                     v
+Context Assembler: Queries SourcePrep tree (logs/daemon.log, systemd units, memory cgroup)
+                     |
+                     v
+Haloysius Cognitive Tick: Synthesizes Fault Tree Analysis
+```
+
+```
++-----------------------------------------------------------------------------+
+| CONVERSATION SPINE                   | CONTEXT REGION: Incident Evidence    |
+|                                      |                                      |
+| Halbert:                             | TIMELINE: Incident at 02:41:18 UTC   |
+| "Docker daemon was terminated by     |                                      |
+| the Linux OOM-killer at 02:41 UTC    | 02:40:00 - Memory usage reaches 96%  |
+| due to total host memory exhaustion. | 02:41:12 - ZFS ARC cache at 32 GB    |
+|                                      | 02:41:18 - kernel: Out of memory:    |
+| Here is the failure sequence:        |            Kill process 14201        |
+| 1. A scheduled backup job spawned a  |            (dockerd) score 842       |
+|    heavy tar compression process.    | 02:41:20 - systemd: docker.service:  |
+| 2. ZFS ARC cache did not release     |            Main process exited       |
+|    RAM quickly enough.               |                                      |
+| 3. `dockerd` had the highest OOM bad | ROOT CAUSE:                          |
+|    score and was killed.             | ZFS ARC limit unset; competed with   |
+|                                      | backup compression process.          |
+| I propose setting `zfs_arc_max` to   |                                      |
+| 24GB in `/etc/modprobe.d/zfs.conf`." | PROPOSED REMEDIATION:                |
+|                                      | [Review & Apply zfs_arc_max Fix]     |
+| [View Incident Timeline]             |                                      |
++-----------------------------------------------------------------------------+
+```
+
+---
+
+### Flow 08: Manual Module Summoning via Palette (Cmd+K)
+
+```
+[User presses Cmd+K (or clicks 'Modules' in input bar)]
+                         |
+                         v
+[Radix UI Modal Overlay Opens centered on screen]
+                         |
+                         v
+[Fuzzy-search filter: type "sto" -> Storage, ZFS Pools, SMART Disks]
+                         |
+                         v
+[Press Enter on 'Storage' -> Context Region renders Storage Module]
+```
+
+```
++-----------------------------------------------------------------------------+
+|  SUMMON MODULE                                                [ESC to Close] |
+|  > storage                                                                  |
+|                                                                             |
+|  MODULES                                                                    |
+|  > [Storage & Disks]        Inspect mount points, ZFS pools, SMART health   |
+|    [Services & Systemd]     Inspect, restart, and analyze unit states       |
+|    [Config Tree]            Browse /etc snapshots and precedence rules      |
+|    [Network & Firewall]     Active interfaces, sockets, and ufw rules       |
+|    [Pending Approvals]      Review queued system changes and dry-runs       |
++-----------------------------------------------------------------------------+
+```
+
+---
+
+### Flow 09: The Morning Report Ritual & Batch Triage
+
+```
+[User wakes workstation / launches app at 08:35 AM (Configured 08:30)]
+                               |
+                               v
+[ENGAGED View initializes with Dedicated Morning Digest Container]
+```
+
+```
++-----------------------------------------------------------------------------+
+| CONVERSATION SPINE                   | CONTEXT REGION: Daily Triage Queue   |
+|                                      |                                      |
+| Halbert:                             | MORNING DIGEST - 2026-08-23          |
+| "Good morning. Here is your overnight|                                      |
+| summary for `halbert-node-01`:       | [1] CONFIG DRIFT (Important)         |
+|                                      |     Unmanaged edit in /etc/hosts     |
+| - 1 Important config drift detected  |     [Inspect Diff] [Acknowledge]     |
+| - 2 Minor package updates available  |                                      |
+| - All overnight backups completed in | [2] STORAGE INTEGRITY (Calm)         |
+|   42 minutes with zero errors.       |     ZFS pool 'rpool' scrub complete  |
+| - System load remained under 15%.    |     0 checksum errors, 0 repaired    |
+|                                      |                                      |
+| Would you like to review the hosts   | [3] PENDING PACKAGES (Notice)        |
+| drift item now?"                     |     openssl (security), curl         |
+|                                      |     [Queue for Upgrade]              |
+| [Review Drift Item] [Dismiss All]    |                                      |
++---------------------------------------------+-------------------------------+
+```
+
+#### Interaction Logic:
+- The Morning Report is not a standard chat message; it is a **structured digest container**.
+- Clicking any item in the digest expands its dedicated interactive sub-module in the Context Region without leaving the digest stream.
+- Actions can be taken individually or via `[Dismiss All Calm Items]`.
+
+---
+
+### Flow 10: Config Rationale Capture (WhyBrain Revived via SourcePrep Concepts)
+
+```
+[User manually edits /etc/sysctl.d/99-custom.conf]
+                         |
+                         v
+[config/watcher.py detects inotify WRITE_CLOSE event]
+                         |
+                         v
+[Halbert prompts quietly in Timeline]:
+"I noticed you updated `vm.swappiness` to 10 in 99-custom.conf.
+ Would you like to record why this was set for future reference?"
+                         |
+                         v
+[User types: "Minimize swap usage for database stability on NVMe"]
+                         |
+                         v
+[Persisted as SourcePrep Concept anchored to /etc/sysctl.d/99-custom.conf:vm.swappiness]
+```
+
+#### Benefits in Action:
+- 6 months later, when the user or an automated detector asks *"Why is swappiness set to 10?"*, Halbert cites:
+  > *"Configured by you on 2026-08-23: 'Minimize swap usage for database stability on NVMe'."*
+- If the file is modified externally or deleted, SourcePrep automatically marks the concept as **stale** and prompts for review.
+
+---
+
+### Flow 11: Degraded Sensor & Subsystem Recovery
+
+```
+[Subsystem Check: Ollama / Local Model Backend Connection Refused]
+                                 |
+                                 v
+[App seamlessly enters Autonomous Safe Mode / UI Notification Banner]
+```
+
+```
++-----------------------------------------------------------------------------+
+| [!] LOCAL INFERENCE ENGINE OFFLINE | Falling back to rule-based triage      |
++------------------------------------+----------------------------------------+
+| CONVERSATION SPINE                 | CONTEXT REGION: System Diagnostics     |
+|                                    |                                        |
+| Halbert:                           | SERVICE STATUS:                        |
+| "My cognitive inference backend is | [X] ollama.service: Inactive (dead)    |
+| unreachable on localhost:11434.    |                                        |
+|                                    | DIAGNOSTIC CHECK:                      |
+| While my conversational voice is   | Port 11434 connection refused.         |
+| degraded, my system watchers and   | Service crashed 3 minutes ago.         |
+| rule-based detectors are still     | Exit code 137 (Out of Memory).         |
+| active.                            |                                        |
+|                                    | ACTIONS:                               |
+| I can attempt to restart the       | [RESTART INFERENCE SERVICE]            |
+| service for you."                  | [SWITCH TO CLOUD BACKEND (Settings)]   |
++------------------------------------+----------------------------------------+
+```
+
+---
+
+### Flow 12: Cross-Platform Transition (macOS Dev Host vs Ubuntu Lab Host)
+
+```
+[Halbert starts on macOS (Darwin arm64)]
+                   |
+                   v
+[Platform Detection Adapter inits]
+                   |
+                   v
+[Gracefully disables Linux-only scanners: journald, systemd, bcachefs, ufw]
+                   |
+                   v
+[Enables macOS adapters: launchd, unified log stream, diskutil/APFS, pfctl]
+                   |
+                   v
+[First Conversation / Self-Check reflects host realities honestly]
+```
+
+#### Conversational Expression:
+> *"I am running on macOS (Darwin 24.1.0, Apple M3 Max). I do not have access to `journald` or `systemd` on this system. I am monitoring via `launchd` and macOS unified log streams. GPU monitoring will utilize Apple Silicon unified memory metrics instead of NVML."*
+
+---
+
+## 4. Micro-Interaction Design Specifications
+
+### 4.1 The `WhyChip` & Provenance Drawer
+
+The `WhyChip` is the primary visual anchor of Halbert's interaction design. It appears alongside statements, findings, and metrics.
+
+```
+Visual Shape:
++---------------------------------------------------+
+| [i] Why: Important | Precedence Conflict (sshd)  |
++---------------------------------------------------+
+```
+
+#### Hover & Click Behaviors:
+- **Default State:** A pill badge with subtle border and category icon (`[i]`, `[!]`, `[x]`).
+- **Hover:** Tooltip reveals a 2-line summary:
+  - *Consequence:* What happens if ignored.
+  - *Evidence:* Grounding file path or log timestamp.
+- **Click:** Transitions the Context Region (or opens an overlay slide-out drawer) displaying full provenance:
+  - Exact file path with line numbers and diff viewer.
+  - Journald cursor hash or raw log excerpt.
+  - Relevant concept rationale.
+
+---
+
+### 4.2 Proactive Interrupt Presentation Across Application States
+
+| App State | Visual Presentation | Dismiss / Act Behavior |
+|---|---|---|
+| **App Open (ENGAGED)** | New message card appears in Conversation Spine with a subtle visual glow; Context Region previews the finding card. | User can continue current typing or click `[Triage Now]`. |
+| **App Open (BROWSING Grid)** | A top-level alert banner slides down: `[Critical Finding: fstab phantom] [Review in Conversation]`. | Clicking banner flips view to `ENGAGED` with finding loaded. |
+| **App Minimized to Tray** | Tray icon changes from Calm (Circle) to Urgent (Amber dot/badge). System desktop notification posted. | Clicking notification brings app forward directly to finding. |
+| **App Closed (Daemon Active)** | OS notification dispatched via Tauri notification API (title, consequence summary, no sensitive passwords). | Launching app opens directly into the pending triage queue. |
+
+---
+
+### 4.3 The Proactivity Dial & Category Override Matrix
+
+Configured in `~/.config/halbert/being.yml`:
+
+```
++-----------------------------------------------------------------------------+
+| PROACTIVITY DIAL SETTING                                                    |
+|                                                                             |
+|  ( ) Off          Purely reactive. Only responds when queried.              |
+|  ( ) Quiet        Only Critical findings (hardware failure, security breach)|
+|  (*) Balanced     Important/Critical findings + Morning Report (Default)    |
+|  ( ) Assertive    Proactively mentions optimizations, drift, and patterns.  |
+|                                                                             |
+| CATEGORY OVERRIDES                                                          |
+| Security:  [ Assertive v ]   Storage:   [ Balanced  v ]                     |
+| Config:    [ Balanced  v ]   Services:  [ Quiet     v ]                     |
+|                                                                             |
+| QUIET HOURS                                                                 |
+| [X] Suppress non-critical interrupts between: [ 23:00 ] and [ 08:00 ]       |
++-----------------------------------------------------------------------------+
+```
+
+---
+
+### 4.4 The Voice Selector & Live Preview
+
+```
++-----------------------------------------------------------------------------+
+| VOICE SELF-REFERENCE                                                       |
+|                                                                             |
+|  (*) First Person (Default)                                                 |
+|      "I am monitoring our ZFS pool. I detected an unmanaged config drift."  |
+|                                                                             |
+|  ( ) The Computer                                                           |
+|      "The host system is nominal. An unmanaged config drift was detected."  |
+|                                                                             |
+|  ( ) Hybrid                                                                 |
+|      "System state is nominal. I recommend reviewing the recent drift."     |
++-----------------------------------------------------------------------------+
+```
+
+---
+
+## 5. Living Rhythm & Attention Budget (The 7-Day Cycle)
+
+To prevent notification fatigue, Halbert enforces a strict **Attention Budget Engine**:
+
+```
++-----------------------------------------------------------------------------+
+| WEEKLY CADENCE TIMELINE                                                     |
+|                                                                             |
+| MON    08:30  Morning Report (Weekly hygiene overview & package updates)     |
+| TUE    14:00  [Proactive Interrupt] Triggered by bad SSH drop-in edit       |
+| WED    --:--  Silent monitoring (Zero interrupts; 3 notices queued in log)   |
+| THU    08:30  Morning Report (Notices summarized in 2 bullets)              |
+| FRI    17:00  Pre-weekend check (Backup destination disk space verification)|
+| SAT    --:--  Quiet Hours active (Non-critical alerts suppressed)           |
+| SUN    03:00  Automated ZFS Scrub & SMART long test (Autonomous background)  |
+|        09:00  Sunday Morning Digest (Scrub results clean; 0 action needed)  |
++-----------------------------------------------------------------------------+
+```
+
+### Rate Limiting & Escalation Rules:
+1. **Max Interrupt Frequency:** In *Balanced* mode, Halbert will initiate at most **2 proactive interrupts per day** (excluding Critical emergencies like hardware failure or active security compromise).
+2. **Batching:** Minor and notice-level findings are never dispatched as standalone interrupts; they are grouped into the next **Morning Report**.
+3. **Decay & Re-check:** Snoozed findings remain silent until their snooze period expires, at which point the detector re-evaluates the system. If the issue was resolved manually in the interim, the finding auto-resolves silently without bothering the user.
+
+---
+
+## 6. Accessibility & Keyboard Navigation Specification
+
+Power users and administrators must be able to operate Halbert entirely from the keyboard.
+
+### 6.1 Global Keyboard Shortcuts Map
+
+| Shortcut | Action | Scope |
+|---|---|---|
+| `Cmd/Ctrl + K` | Open Module Summoning Palette | Global |
+| `Cmd/Ctrl + /` | Focus Conversation Input Field | Global |
+| `Cmd/Ctrl + B` | Toggle between ENGAGED mode and BROWSING mode | Global |
+| `Cmd/Ctrl + Shift + A` | Open Pending Approvals Queue | Global |
+| `Cmd/Ctrl + Shift + W` | Toggle Context Region Drawer (Evidence / Whys) | ENGAGED Mode |
+| `Cmd/Ctrl + Enter` | Submit Prompt / Confirm Active Proposal | Inside Prompt / Proposal |
+| `Esc` | Close Palette / Dismiss Drawer / Unfocus | Global |
+| `J` / `K` | Navigate between Message Cards / Digest Items | Conversation Spine |
+| `A` | Approve focused proposal | On Focused Card |
+| `S` | Snooze focused finding | On Focused Card |
+| `D` | Dismiss focused finding | On Focused Card |
+
+### 6.2 Screen Reader & Semantic ARIA Structure
+- **Live Regions:** Conversation updates utilize `aria-live="polite"` so screen readers narrate new messages without interrupting active reading.
+- **DiffBlocks:** Structured with `<ins>` and `<del>` semantic markup alongside `aria-label="Addition: line..."` for unambiguous diff auditing.
+- **WhyChips:** Rendered as interactive `<button aria-expanded="false" aria-haspopup="dialog">` elements with descriptive labels (`aria-label="View provenance and rationale for SSH conflict finding"`).
+
+---
+
+## 7. Design Recommendations & Prioritization Matrix
+
+| Priority | Feature / Flow | User Value | Architectural Readiness | Recommended Action |
+|---|---|---|---|---|
+| **P0** | **Two-Column ENGAGED Layout (`SidePanel.tsx` -> `AgentChat.tsx`)** | Essential (Defines product identity) | High (AgentPanel & SSE streaming exist) | Refactor `Layout.tsx` to mount conversation spine + context container. |
+| **P0** | **`WhyChip` & Provenance Card (`WhyChip.tsx`)** | Core Law (No hallucination / full trust) | Medium (Needs structured SSE events) | Build unified component consuming SQLite findings & SourcePrep locators. |
+| **P0** | **Interactive Config Proposal & DiffBlock** | Essential for Slice 1 | High (`write_config.py` & `DiffBlock.tsx` exist) | Wire `DiffBlock` into context region with direct Polkit/approval execution. |
+| **P1** | **Morning Report Structured Digest** | High (Cheapest "alive" behavior) | High (Autonomous task scheduler exists) | Build scheduled morning tick producing consolidated digest container. |
+| **P1** | **Cmd+K Module Palette** | High (Power user workflow) | Medium (Needs Module Registry map) | Implement Radix Command Dialog with initial 4 core modules. |
+| **P2** | **Being Settings Tab (Voice, Proactivity Dial)** | Medium (User comfort & uncanny prevention) | High (`being.yml` schema defined) | Add Being tab in `Settings.tsx` with live preview components. |
+| **P2** | **Tauri System Tray Indicator (Calm / Urgent)** | Medium (Ambient presence) | Medium (Tauri v2 tray APIs available) | Wire tray icon states to SSE push event stream. |
+
+---
+
+*This specification serves as the formal UX & Interaction Design counterpart to the engineering roadmap. Development of Phase 5 (Config Brain / Why Data Model), Phase 6 (Being Config), and Phase 7/8 (Proactive Channel & Reactive Slices) should implement against the interaction flows and component wireframes detailed herein.*

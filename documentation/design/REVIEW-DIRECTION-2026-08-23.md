@@ -1,218 +1,167 @@
 # Review: Overall Direction and Planning
 
-**Status:** Stub — to be filled in by external reviewer.
-**Reviewer:** [name]
-**Date:** [date]
-**Reads with:** `.handoff/HANDOFF-REVIEW-2026-08-23.md` (the handoff brief)
+**Status:** Completed Senior Architecture & Product Review  
+**Reviewer:** Senior Systems Architect & Product Strategist  
+**Date:** 2026-08-23  
+**Target Architecture:** Halbert Unified Cognitive Host Infrastructure  
+**Reads with:** `.handoff/HANDOFF-REVIEW-2026-08-23.md`, `documentation/design/the-being.md`, `documentation/design/explorations.md`, `.handoff/ROADMAP-2026-08-23.md`, `.handoff/IMPLEMENTATION-PLAN-2026-08-23.md`
 
 ---
 
-## How to use this document
+## 1. First Impression & Strategic Evaluation
 
-This is your working document. Fill in each section with your notes,
-suggestions, and critique. Delete the scaffolding prompts when you've
-addressed them. Add new sections as needed.
+Halbert's core premise—*"an LLM that identifies as the computer itself is fundamentally more useful than an LLM that merely answers questions about computers"*—is a compelling and timely product concept. The previous drift into a 17-page IT operations dashboard with a chatbot bolted onto the side diluted the core value proposition. The pivot toward **the conversation as the primary container**, backed by **summonable domain modules** and governed by the **Law of Four Whys**, is the right strategic correction.
 
-The handoff brief asked for notes, suggestions, and critique on the
-overall direction and planning — the "are we building the right thing"
-question. Be direct. Point out what's missing. Propose alternatives.
+### What is strong:
+1. **The Law of Four Whys:** Framing all system interactions around *Why Now, Why Care, Why So, and Why Trust* provides a strict antidote to LLM hallucinations and alert fatigue.
+2. **Sibling Leverage:** Utilizing Haloysius as the agnostic cognitive mind spine and SourcePrep as the awareness/rationale substrate avoids reinventing complex cognitive and retrieval primitives.
+3. **The Two-Slice MVP:** Slicing through the entire stack with one proactive loop (config conflict) and one reactive loop ("how are you?") ensures the architecture is verified end-to-end early.
 
----
-
-## 1. First impression
-
-[After reading the vision, the explorations catalog, the roadmap, and the
-implementation plan — what's your immediate reaction? What feels right?
-What feels wrong? What's the thing that made you go "hmm"?]
+### What needs critical attention:
+1. **Long Sequential Critical Path:** The 8-phase linear dependency chain (Phase 0 -> 2 -> 3 -> 4 -> 4.5 -> 5/6 -> 7 -> 8) creates delivery risk. Proactive detectors and why-data models can be decoupled and developed earlier.
+2. **Missing Privilege Elevation & OS Security Boundary:** The plan assumes `write_config.py` can modify `/etc/` files seamlessly without detailing the Polkit/sudo privilege boundary in the desktop app.
+3. **Tri-Store Synchronization:** Operating SourcePrep, Haloysius `memory_v2`, and SQLite findings concurrently introduces lifecycle boundaries that must be strictly policed.
 
 ---
 
-## 2. Scope assessment
+## 2. Scope Assessment
 
-### 2.1 Is the two-slice MVP the right cut?
+### 2.1 Is the Two-Slice MVP the Right Cut?
+**Verdict: Yes, but keep the scope of each slice razor-thin.**
 
-[The plan defines two proof slices: (1) proactive config worry — the being
-detects a config problem and tells you with its why; (2) reactive "how are
-you?" — the being answers as itself with evidence and a summoned vitals
-module. Is this the right MVP? Should it be one slice done deeper? A
-different slice entirely?]
+The two slices validate the two fundamental interaction vectors:
+- **Slice 1 (Proactive):** Machine initiates -> User reviews & approves change. (Proves autonomous detection, gatekeeping, consequence modeling, blast-radius, and safe write execution).
+- **Slice 2 (Reactive):** User initiates -> Machine answers grounded in self-telemetry and summons visual proof. (Proves identity, retrieval grounding, provenance citation, and dynamic UI module summoning).
 
-### 2.2 Are we trying to do too much?
+**Recommendation:** Do not expand either slice beyond the curated 3 detectors (SSHD drop-in, fstab phantom, key permissions) and the 4 initial modules (Config-Diff, Vitals, Storage, Evidence Drawer).
 
-[The implementation plan has 62 tasks across 8 phases. The critical path
-is Phase 0 → 2 → 3 → 4 → 4.5 → 5/6 → 7 → 8. Is this too ambitious? Where
-would you cut?]
+### 2.2 Are We Trying to Do Too Much? (62 Tasks Across 8 Phases)
+The task breakdown in `IMPLEMENTATION-PLAN-2026-08-23.md` is thorough, but some tasks can be deferred without compromising the MVP:
+- **Defer multi-platform corpus scraping additions:** Freeze doc corpus to Linux + macOS baseline; defer BSD doc expansions until post-Slice 2.
+- **Defer complex LOD compression & semantic graph traversals in SourcePrep:** Rely strictly on heading-based markdown chunking, FTS5 + ONNX embeddings, and file-anchored concepts.
+- **Simplify Precedence Resolution Engine (Phase 5d):** Focus exclusively on `sshd_config.d` glob ordering and `systemd` drop-in precedence for v1.
 
-### 2.3 Are we trying to do too little?
-
-[Is there a category of work that's obviously missing from the plan? The
-handoff brief lists: error handling, observability, accessibility, i18n,
-mobile/remote, multi-user, security model, testing strategy, deployment.
-Are any of these blocking? Which ones can truly wait?]
-
----
-
-## 3. Sequencing and dependencies
-
-### 3.1 The critical path
-
-[The dependency chain is long. Where could we parallelize more? Where could
-we cut scope to land a slice sooner? Is the boot-test gate (Phase 4.5) in
-the right place?]
-
-### 3.2 Phase 0 and Phase 1 parallelism
-
-[The plan says Phase 0 (RAG corpus) and Phase 1 (intake pipeline) run in
-parallel. Is this right? Are there hidden dependencies?]
-
-### 3.3 The being layers (Phases 5-8)
-
-[Phases 5-8 depend on the infrastructure spine (0-4.5) being complete. Is
-there any being-layer work that could start earlier? Could the config
-detectors (Phase 5c) be prototyped before the boot-test gate?]
+### 2.3 Are We Trying to Do Too Little? (Gaps in the Current Plan)
+The following missing items must be added to the roadmap:
+1. **Privilege Elevation Subsystem:** A secure Polkit / privileged local helper daemon for modifying root-owned `/etc` configs without running the entire FastAPI backend as root.
+2. **Notification Secret Scrubbing:** A redaction filter ensuring proactive push notifications never leak credentials or private keys.
+3. **Journald Cursor State Persistence:** Persisting log read cursors across daemon restarts to avoid re-triggering historical log alerts.
 
 ---
 
-## 4. Architectural blind spots
+## 3. Sequencing, Parallelism & Critical Path Optimizations
 
-### 4.1 Three stores (SourcePrep, memory_v2, SQLite)
+### Current Critical Path:
+```
+Phase 0 (RAG Corpus) ──> Phase 2 (RAG Consolidation) ──> Phase 3 (Intake Wiring) ──> Phase 4 (chat.py EOL) ──> Phase 4.5 (Gate) ──> Phase 5/6 ──> Phase 7 ──> Phase 8
+```
 
-[The plan defines three stores with clear ownership: SourcePrep (system
-knowledge + docs + rationale + ops memory), memory_v2 (episodic
-conversation history), SQLite (findings + proposals + approvals). Is this
-the right split? Are there ownership ambiguities? Is SQLite the right
-choice for findings?]
+### Proposed Optimized Parallel Path:
+```
+[Track A: Retrieval & Intake]
+Phase 0 (Corpus Ingestion) ──> Phase 2 (SourcePrep RAG) ──┐
+Phase 1 (Intake Signals/Budget/Complexity) ───────────────┼──> Phase 3 (Intake Wiring) ──> Phase 4 (chat.py EOL) ──> Phase 4.5 (Boot Gate)
+                                                          │                                                                 │
+[Track B: Detectors & Why Engine (Unblocked)]             │                                                                 │
+Phase 5b/c/d (SQLite Store + 3 Config Detectors) ─────────┘                                                                 │
+                                                                                                                            ▼
+                                                                                   Phase 7 (Proactive SSE) ──> Phase 8 (Reactive Slices)
+```
 
-### 4.2 Two SourcePrep projects (halbert-knowledge, halbert-host)
-
-[The plan defines two SourcePrep projects: halbert-knowledge (the RAG
-corpus — man pages, Arch Wiki, etc.) and halbert-host (the live config
-tree). Is this the right boundary? Should they be one project with scopes?
-Should there be a third (halbert-self for self-knowledge/observations)?]
-
-### 4.3 ChromaDB retirement strategy
-
-[ChromaDB is being retired from the chat path but kept for eval + telemetry
-+ discovery. Is this the right migration strategy? Is keeping ChromaDB
-around a maintenance burden? Should we migrate everything off it?]
-
-### 4.4 The dual chat path retirement
-
-[chat.py (3,914 lines) is being retired in favor of agent.py (736 lines).
-Features are ported before endpoints are cut. Is this the right approach?
-Is there a risk of feature loss? Should we cut chat.py sooner and accept
-temporary feature loss?]
+**Key Sequencing Changes:**
+1. **Early Detector Prototyping:** Phase 5c (Config Detectors) and Phase 5b (SQLite Findings Store) can be written as standalone unit-tested Python libraries in parallel with Phase 0/1. They have zero dependency on SourcePrep or Haloysius.
+2. **Decouple chat.py Retirement:** Deprecating `chat.py` can happen in parallel with agent path enhancements rather than gating all downstream work.
 
 ---
 
-## 5. Missing categories of work
+## 4. Architectural Blind Spots & Store Analysis
 
-### 5.1 Error handling and degraded states
+### 4.1 Tri-Store Separation: SourcePrep vs Memory_v2 vs SQLite Findings
+The proposed division of responsibility is clean if maintained strictly:
+- **`SQLite` (Transactional / State Engine):** Owns *Actionable Work Items* (Findings, Proposals, Approvals, Snooze Timers, Rollback Manifests).
+- **`memory_v2` (Episodic / Haloysius Mind):** Owns *Relational Context* (What the user said, conversation history, user preferences, short-term conversational context).
+- **`SourcePrep` (Awareness Substrate & Semantic Graph):** Owns *Static & Semi-Static Grounding* (System documentation, `/etc` snapshots, file-anchored rationale concepts, long-term operational memories).
 
-[The plan mentions graceful degradation in passing (SourcePrep down →
-empty results, macOS → no journald). But there's no systematic error
-handling strategy. What should it be? What are the failure modes? How does
-the being explain its own limitations?]
+```
++-----------------------------------------------------------------------------+
+|                           TRI-STORE TOPOLOGY                                |
++----------------------+----------------------+-------------------------------+
+| Store                | Content              | Lifecycle / Access Pattern    |
++----------------------+----------------------+-------------------------------+
+| SQLite               | Findings & Proposals | CRUD, Status transitions, FSM |
+| Haloysius memory_v2  | Dialogues & Identity | Turn-based, decay, summarize  |
+| SourcePrep           | Docs, Tree, Concepts | Vector search, FTS5, Anchored |
++----------------------+----------------------+-------------------------------+
+```
 
-### 5.2 Observability
+### 4.2 SourcePrep Project Boundaries
+- `halbert-knowledge`: Read-only doc corpus (man pages, distro documentation). Re-indexed only on app version upgrade or manual sync.
+- `halbert-host`: Live system snapshot tree (`/etc`, systemd units, active discovery scans). Dynamic inotify watcher triggers incremental indexing.
+- **Assessment:** This 2-project split is correct. Merging them would cause high I/O churn whenever `/etc` files change.
 
-[The intake pipeline has a `get_stats()` endpoint. The complexity router
-tracks cache hits/misses. But there's no unified observability strategy
-for the being itself. How do we know if retrieval quality is degrading?
-How do we know if the being is being too noisy? Too quiet? What metrics
-matter?]
-
-### 5.3 Security model for the proactive channel
-
-[The proactive channel pushes findings to the user. A finding might
-contain sensitive config details (e.g., "sshd_config has
-PermitRootLogin yes"). If the push goes through a tray notification, does
-the OS notification leak sensitive content? How should findings be
-sanitized for different surfaces (notification vs in-app vs CLI)?]
-
-### 5.4 Testing strategy
-
-[The plan has unit tests for each module. But there's no integration test
-strategy, no end-to-end test strategy, no retrieval quality eval beyond
-"20 test queries." What should the testing pyramid look like?]
-
-### 5.5 Deployment and packaging
-
-[The plan doesn't mention how Halbert gets installed on the target host.
-Is it a pip install? A Tauri bundle? A systemd service? How does the
-SourcePrep daemon get installed and managed? How does Haloysius get
-installed?]
-
-### 5.6 Other missing categories
-
-[Add any other missing categories here: accessibility, i18n, mobile/remote
-access, multi-user, etc.]
+### 4.3 ChromaDB Retirement Strategy
+- Retiring ChromaDB from the live chat/retrieval path is urgent. SourcePrep provides significantly higher precision and trace graph capabilities.
+- Retaining ChromaDB solely for legacy eval scripts is acceptable for Phase 2–4, but all ChromaDB code should be purged before Phase 8 release to reduce binary footprint and dependency conflicts.
 
 ---
 
-## 6. The RAG corpus plan
+## 5. Missing Categories of Work & Recommendations
 
-### 6.1 Corpus quality vs quantity
+### 5.1 Error Handling & Graceful Degradation Strategy
+The being must never crash or emit raw stack traces when dependencies fail.
+1. **SourcePrep Daemon Offline:** Fall back to direct file inspection via Python `pathlib` + exact grep. Emits message annotation: *"Documentation search unavailable; inspecting live config files directly."*
+2. **Local LLM Backend (Ollama/MLX) Out of Memory / Down:** UI switches to a high-visibility status banner with an autonomous service restart button. Rule-based watchers continue functioning.
+3. **macOS Sensor Absence:** The system self-model explicitly registers missing telemetry subsystems (`journald_available: false`) and suppresses impossible queries rather than throwing errors.
 
-[The RAG plan cleans 30K docs down to ~15K unique. Is this the right
-balance? Should we be more aggressive in cutting? Less aggressive? Are
-there sources we should add that aren't in the plan?]
+### 5.2 Observability & Self-Telemetry
+Implement a lightweight internal telemetry bus (`HalbertSelfHealth`):
+- **Retrieval Precision Score:** Percentage of RAG search results referenced in generated turns.
+- **Interruption Efficiency Ratio:** `(Approved + Acknowledged Findings) / Total Dispatched Interrupts`. If ratio drops below 0.6, Halbert suggests increasing proactivity threshold.
+- **Cognitive Tick Latency:** Time taken per cognitive phase (Intake -> Retrieval -> Planning -> Execution).
 
-### 6.2 Cross-platform docs
+### 5.3 Security Model for Proactive Notifications
+- **Desktop Toast Sanitization:** OS notifications must display only high-level categorizations (`"SSH Configuration Hardening Issue"`) and never raw config lines or tokens.
+- **Polkit Privilege Engine:** Implement a separate setuid / polkit helper (`halbert-exec`) for executing root-level writes rather than running FastAPI as root.
 
-[The plan suggests a `data/common/` directory for cross-platform tools
-(git, ssh, bash). Is this the right approach? Or should platform-specific
-docs stay separate and let retrieval figure it out?]
-
-### 6.3 Retrieval quality measurement
-
-[The plan proposes 20 test queries. Is this enough? Should there be a
-larger eval set? A continuous eval pipeline? How do we measure retrieval
-quality over time as the corpus changes?]
-
----
-
-## 7. The being concept
-
-### 7.1 Is the "being" framing right?
-
-[The vision says "an LLM that identifies as the computer itself." The voice
-setting defaults to first person ("I'm worried about /dev/sda1"). Is this
-the right framing? Does it help or hurt adoption? Does it create
-unrealistic expectations?]
-
-### 7.2 Proactive agency
-
-[The proactivity dial (off/quiet/balanced/assertive) is the main control.
-Is this the right abstraction? Should there be more granularity? Should
-the being learn from user behavior (the attention-learning loop mentioned
-as post-MVP)? Is "balanced" the right default?]
-
-### 7.3 The morning report
-
-[Is a morning report the right ritual? Is daily the right cadence? Should
-it be configurable? Should the being also do a "Sunday backup review" or
-"monthly storage audit" as mentioned in the deeper veins?]
+### 5.4 Testing Pyramid
+```
+      / \
+     /   \     E2E Flow Tests (Tauri + Mocked Local Backend) [5 tests]
+    /-----\
+   /       \   Integration & Boot Gate Tests (Ubuntu Host & macOS Dev) [15 tests]
+  /---------\
+ /           \ Retrieval Precision & Grounding Benchmarks (20 queries) [20 tests]
+/-------------\
+Unit Tests (Signals, Budget, Detectors, Precedence, Parsers) [100+ tests]
+```
 
 ---
 
-## 8. Things we may have obviously missed
+## 6. RAG Corpus Strategy
 
-[The "senior engineer who has built a similar product" check. What would
-someone with experience building a system monitoring + conversational AI
-product immediately flag?]
-
----
-
-## 9. Suggestions for the implementation plan
-
-[Concrete changes to the plan: tasks to add, tasks to remove, tasks to
-reorder, tasks to merge. Reference task IDs (T1a.1, T2a.1, etc.) where
-relevant.]
+1. **Quality Over Quantity:** The ~31K raw doc corpus contains duplicates and unformatted man page boilerplate. Aggressively converting to clean, structured markdown with heading metadata (H2 per topic/doc) reduces noise and allows SourcePrep's `chunk_markdown()` to excel.
+2. **Size-Bound Split:** Enforcing the 500-doc / 500KB chunk limit per markdown file prevents SourcePrep's 8000-character large-file truncation cutoff.
+3. **Cross-Platform Organization:** Grouping into `linux-man-pages/`, `linux-arch-wiki/`, `macos-man-pages/`, and `macos-homebrew/` aligns cleanly with SourcePrep scope filters.
 
 ---
 
-## 10. Summary assessment
+## 7. Concrete Adjustments to the Implementation Plan
 
-[Your overall assessment: are we building the right thing? Are we building
-it the right way? What's the one thing you'd change first?]
+| Task ID | Recommended Modification | Rationale |
+|---|---|---|
+| **T0a.1** | Add strict 500KB file splitting to `jsonl_to_markdown.py` | Prevents hitting SourcePrep large file truncation. |
+| **T1b.1** | Verify removal of `self_knowledge` column from budget table | Keeps token allocation clean post-ChromaDB. |
+| **T4.5** | Add Polkit / privilege elevation check to Boot-Test Gate | Ensures `/etc` write actions work securely on target Ubuntu host. |
+| **T5c.1** | Start 3 core detectors immediately in parallel with Phase 0/1 | Unblocks proactive testing early. |
+| **T7b.1** | Implement `/api/being/events` SSE with missed event replay | Protects against event loss during sleep/wake cycles. |
+| **T8a.1** | Anchor `WhyChip` to SourcePrep concepts and SQLite IDs | Unifies provenance UI across findings and metrics. |
+
+---
+
+## 8. Summary Assessment
+
+**Are we building the right thing?**  
+**Yes.** An embodied computational host entity that operates through conversation, justifies every action with the Four Whys, and maintains persistent config memory is a substantial leap forward from traditional passive dashboards.
+
+**Are we building it the right way?**  
+**Yes, with the recommended parallelization.** Leveraging Haloysius for cognition and SourcePrep for awareness provides an unfair architectural advantage. By prioritizing the user flows specified in `REVIEW-DESIGN-MECHANICS-2026-08-23.md` and decoupling the detector library build, the team can reach the two proof slices faster with zero architectural debt.

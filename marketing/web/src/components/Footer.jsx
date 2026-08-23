@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowRight, CheckCircle2, ShieldCheck, BookOpen, Terminal } from 'lucide-react';
+import { HalbertMark } from './HalbertMark';
 
 export function Footer() {
   const [email, setEmail] = useState('');
@@ -61,8 +62,11 @@ export function Footer() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 pt-6 text-sm text-[var(--color-ink-secondary)]">
           {/* Brand Col */}
           <div className="col-span-2 md:col-span-1 space-y-3">
-            <div className="font-display font-semibold text-xl text-[var(--color-ink)]">
-              Halbert<span className="text-[var(--color-accent)] font-bold">.</span>
+            <div className="flex items-center space-x-2">
+              <HalbertMark size={22} color="var(--color-accent, #D34E24)" />
+              <span className="font-display font-semibold text-xl text-[var(--color-ink)]">
+                Halbert<span className="text-[var(--color-accent)] font-bold">.</span>
+              </span>
             </div>
             <p className="text-xs text-[var(--color-ink-tertiary)] leading-relaxed">
               Local-first host intelligence. Built with mid-century clarity and safety-first autonomy.
