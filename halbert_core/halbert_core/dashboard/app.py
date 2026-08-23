@@ -162,7 +162,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, chat, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage, downloads, agent, clara
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, chat, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage, downloads, agent, clara, compression
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -187,22 +187,26 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(storage.router, prefix="/api/storage", tags=["storage"])  # Phase 52: ChromaDB management
     app.include_router(downloads.router, prefix="/api/downloads", tags=["downloads"])  # Dataset downloads
     app.include_router(clara.router, tags=["clara"])  # Phase 55: CLaRa compression
+    app.include_router(compression.router, tags=["compression"])  # Phase 72: Compression cascade
     
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"
     if frontend_dist.exists():
         app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
-        
+
         @app.get("/Halbert.png")
         async def serve_logo():
             """Serve brand logo."""
             return FileResponse(frontend_dist / "Halbert.png")
-        
+
         @app.get("/")
         async def serve_frontend():
             """Serve React app."""
-            return FileResponse(frontend_dist / "index.html")
-        
+            return FileResponse(
+                frontend_dist / "index.html",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
+
         # SPA routes - explicit frontend paths only (not a catch-all)
         # This avoids conflicts with API routes
         @app.get("/dashboard")
@@ -221,7 +225,10 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         @app.get("/settings")
         async def serve_spa():
             """Serve React app for frontend routes."""
-            return FileResponse(frontend_dist / "index.html")
+            return FileResponse(
+                frontend_dist / "index.html",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
     
     # Startup event: auto-start services
     @app.on_event("startup")

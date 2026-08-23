@@ -38,6 +38,7 @@ vision:
   purpose: Image analysis, screenshot interpretation, visual troubleshooting
 
 # Phase 58: CLaRa Context Compression (optional, requires 14GB VRAM)
+# DEPRECATED: Replaced by compression cascade (Phase 72 port from LinuxBrain)
 clara:
   enabled: false  # Auto-enabled for Tier 2/3 systems (48GB+ VRAM)
   use_remote: true  # Use remote server for Tier 1 (24GB) systems
@@ -45,6 +46,15 @@ clara:
   remote_url: https://clara-remember-it-all.onrender.com  # Remote server
   compression_threshold: 4000  # Only compress contexts >4K tokens
   purpose: Compress RAG context 16x before sending to chat model
+
+# Compression system (Phase 72 port from LinuxBrain — replaces CLaRa)
+# 3-tier: LinguaCompressor (178MB neural) → SemanticCompressor (rule-based) → Noop
+compression:
+  enabled: true
+  backend: auto  # auto | lingua | semantic | noop
+  threshold: 4000  # Compress when context > this many tokens
+  level: standard  # light | standard | aggressive
+  lod_epistemic_floor: 0.8  # Never compress high-confidence memories below LOD 2
 
 routing:
   strategy: auto

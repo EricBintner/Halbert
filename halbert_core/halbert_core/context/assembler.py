@@ -206,10 +206,15 @@ class ContextAssembler:
             truncated = True
             combined_tokens = max_tokens
         
-        # Optional CLaRa compression for large contexts
+        # Optional compression for large contexts
+        # Phase 72: Try cascade first, fall back to CLaRa
         compressed = False
         if use_compression and combined_tokens > self._clara_threshold:
-            compress_result = await self._compress_with_clara(combined, query)
+            # Try new source-aware cascade first
+            compress_result = await self._compress_with_cascade(combined, query, sources)
+            if not compress_result:
+                # Fall back to CLaRa if cascade unavailable
+                compress_result = await self._compress_with_clara(combined, query)
             if compress_result:
                 combined = compress_result["content"]
                 combined_tokens = compress_result["tokens"]
@@ -218,7 +223,7 @@ class ContextAssembler:
                     "type": "compression",
                     "original_tokens": compress_result["original_tokens"],
                     "compressed_tokens": compress_result["tokens"],
-                    "ratio": compress_result.get("ratio", 16.0),
+                    "ratio": compress_result.get("ratio", 1.0),
                 })
         
         result = AssembledContext(
@@ -628,3 +633,88 @@ class ContextAssembler:
         except Exception as e:
             logger.warning(f"CLaRa compression failed: {e}")
             return None
+
+    async def _compress_with_cascade(
+        self,
+        content: str,
+        query: str,
+        sources: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Source-aware compression cascade (Phase 72 port from LinuxBrain).
+
+        Applies different strategies per source type:
+        - memories → LOD batch compression
+        - rag/SourcePrep → light or skip (already compressed by SourcePrep LOD)
+        - conversation → semantic compression (standard level)
+        - observations → semantic compression (standard level)
+        - other → semantic compression (standard level)
+
+        Args:
+            content: Combined context content to compress.
+            query: User query for context-aware compression.
+            sources: List of source dicts with 'type' and 'content' keys.
+
+        Returns:
+            Dict with compressed content and stats, or None if unavailable.
+            Shape: {'content': str, 'tokens': int, 'original_tokens': int, 'ratio': float}
+        """
+        try:
+            from ..compression.factory import create_compressor
+        except ImportError:
+            logger.debug("Compression package not available, skipping cascade")
+            return None
+
+        original_tokens = self.tokens.count(content)
+        if original_tokens == 0:
+            return None
+
+        compressor = create_compressor()
+        if not compressor.is_available():
+            return None
+
+        # Compress per-source for targeted strategy
+        parts: List[str] = []
+        for source in sources:
+            source_type = source.get("type", "unknown")
+            source_content = source.get("content", "")
+            if not source_content:
+                continue
+
+            # Skip compression metadata sources
+            if source_type == "compression":
+                continue
+
+            # Determine compression level per source type
+            if source_type == "rag":
+                # SourcePrep already compressed — light only
+                level = "light"
+            elif source_type == "memory":
+                # Memories get standard compression
+                # (LOD batch would need memory dicts with relevance/epistemic)
+                level = "standard"
+            elif source_type in ("conversation", "observations"):
+                level = "standard"
+            else:
+                level = "standard"
+
+            try:
+                result = compressor.compress(source_content, level=level)
+                parts.append(result.compressed)
+            except Exception as e:
+                logger.warning(f"Cascade compress failed for {source_type}: {e}")
+                parts.append(source_content)  # Keep original on error
+
+        combined = "\n\n".join(parts)
+        combined_tokens = self.tokens.count(combined)
+
+        if combined_tokens >= original_tokens:
+            # No compression achieved
+            return None
+
+        return {
+            "content": combined,
+            "tokens": combined_tokens,
+            "original_tokens": original_tokens,
+            "ratio": round(original_tokens / max(combined_tokens, 1), 2),
+        }
