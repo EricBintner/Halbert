@@ -264,14 +264,14 @@ async def get_model_status() -> Dict[str, Any]:
         'available_models': [],
         'recommended_model': None,
         'auto_configured': False,
-        # Phase 58: Hardware tier detection for CLaRa recommendations
+        # Phase 72: Hardware tier detection for compression recommendations
         'hardware_tier': 1,  # 1=24GB, 2=48GB+, 3=Apple Silicon
         'total_vram_gb': None,
-        'clara_recommended': False,
-        'clara_reason': None,
+        'compression_available': True,  # SemanticCompressor always works
+        'compression_backend': 'semantic',  # Updated below if Lingua available
     }
-    
-    # Phase 58: Detect hardware tier based on VRAM
+
+    # Phase 72: Detect hardware tier based on VRAM
     try:
         import torch
         if torch.cuda.is_available():
@@ -279,16 +279,13 @@ async def get_model_status() -> Dict[str, Any]:
             result['total_vram_gb'] = round(total_vram, 1)
             if total_vram >= 40:  # 48GB GPUs report ~45GB usable
                 result['hardware_tier'] = 2
-                result['clara_recommended'] = True
-                result['clara_reason'] = f"Local CLaRa available ({total_vram:.0f}GB VRAM detected)"
+                result['compression_backend'] = 'lingua'
             else:
                 result['hardware_tier'] = 1
-                result['clara_recommended'] = False
-                result['clara_reason'] = f"CLaRa requires 14GB - use remote server ({total_vram:.0f}GB detected)"
+                result['compression_backend'] = 'semantic'
         elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
             result['hardware_tier'] = 3
-            result['clara_recommended'] = True
-            result['clara_reason'] = "Apple Silicon detected - CLaRa can use unified memory"
+            result['compression_backend'] = 'lingua'
     except ImportError:
         pass  # torch not available, keep defaults
     
@@ -357,21 +354,21 @@ async def get_model_status() -> Dict[str, Any]:
 async def apply_recommended_config() -> Dict[str, Any]:
     """
     Apply recommended model configuration based on detected hardware tier.
-    
-    Phase 58: Auto-configures Chat model and CLaRa based on VRAM:
-    - Tier 1 (24GB): qwen2.5:14b chat, CLaRa disabled (suggest remote)
-    - Tier 2 (48GB+): mistral-small chat, CLaRa enabled locally
-    - Tier 3 (Apple Silicon): mistral-small chat, CLaRa enabled
+
+    Phase 72: Auto-configures Chat model and compression based on VRAM:
+    - Tier 1 (24GB): qwen2.5:14b chat, Semantic compression (always works)
+    - Tier 2 (48GB+): mistral-small chat, Lingua compression (178MB neural)
+    - Tier 3 (Apple Silicon): mistral-small chat, Lingua compression
     """
     config_path = get_config_dir() / 'models.yml'
-    
+
     # Load existing config
     if config_path.exists():
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f) or {}
     else:
         config = {}
-    
+
     # Detect hardware tier
     tier = 1
     total_vram = None
@@ -384,52 +381,46 @@ async def apply_recommended_config() -> Dict[str, Any]:
             tier = 3
     except ImportError:
         pass
-    
+
     # Determine recommended models based on tier
     if tier == 1:
-        # Tier 1: 24GB - smaller chat model, no local CLaRa
+        # Tier 1: 24GB - smaller chat model, semantic compression
         recommended_chat = 'qwen2.5:14b'
-        clara_enabled = False
-        clara_reason = "CLaRa requires 14GB VRAM - use remote server for compression"
+        compression_backend = 'semantic'
     elif tier == 2:
-        # Tier 2: 48GB+ - larger chat model, local CLaRa
+        # Tier 2: 48GB+ - larger chat model, neural compression
         recommended_chat = 'mistral-small'
-        clara_enabled = True
-        clara_reason = "Local CLaRa enabled - 48GB+ VRAM detected"
+        compression_backend = 'lingua'
     else:
-        # Tier 3: Apple Silicon - can run both via unified memory
+        # Tier 3: Apple Silicon - can run neural compression on CPU
         recommended_chat = 'mistral-small'
-        clara_enabled = True
-        clara_reason = "Apple Silicon detected - CLaRa can use unified memory"
-    
+        compression_backend = 'lingua'
+
     # Update orchestrator config
     if 'orchestrator' not in config:
         config['orchestrator'] = {}
     config['orchestrator']['model'] = recommended_chat
-    
+
+    # Update compression config
+    if 'compression' not in config:
+        config['compression'] = {}
+    config['compression']['backend'] = compression_backend
+    config['compression']['enabled'] = True
+
     # Save config
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False)
-    
-    # Update CLaRa config
-    try:
-        from ...model.clara_provider import get_clara_provider
-        provider = get_clara_provider()
-        provider.set_enabled(clara_enabled)
-    except Exception as e:
-        logger.warning(f"Failed to update CLaRa config: {e}")
-    
+
     return {
         'success': True,
         'hardware_tier': tier,
         'total_vram_gb': round(total_vram, 1) if total_vram else None,
         'applied': {
             'chat_model': recommended_chat,
-            'clara_enabled': clara_enabled,
+            'compression_backend': compression_backend,
         },
-        'message': f"Applied Tier {tier} configuration: {recommended_chat} + {'CLaRa enabled' if clara_enabled else 'CLaRa disabled'}",
-        'clara_reason': clara_reason,
+        'message': f"Applied Tier {tier} configuration: {recommended_chat} + {compression_backend} compression",
     }
 
 

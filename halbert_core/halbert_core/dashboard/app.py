@@ -162,7 +162,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, chat, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage, downloads, agent, clara, compression
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, chat, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -186,7 +186,6 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(websocket.router, tags=["websocket"])
     app.include_router(storage.router, prefix="/api/storage", tags=["storage"])  # Phase 52: ChromaDB management
     app.include_router(downloads.router, prefix="/api/downloads", tags=["downloads"])  # Dataset downloads
-    app.include_router(clara.router, tags=["clara"])  # Phase 55: CLaRa compression
     app.include_router(compression.router, tags=["compression"])  # Phase 72: Compression cascade
     
     # Serve static frontend (production)

@@ -4,7 +4,7 @@
 **Research question:** RQ-D from DEEP-RESEARCH-QUESTIONS-2026-08-22.md
 **Audited file:** `halbert_core/dashboard/routes/chat.py` (4,099 lines)
 **New architecture files compared:**
-- `halbert_core/context/assembler.py` — ContextAssembler (token budget, parallel retrieval, position-aware ordering, CLaRa compression)
+- `halbert_core/context/assembler.py` — ContextAssembler (token budget, parallel retrieval, position-aware ordering, compression cascade)
 - `halbert_core/context/adapters.py` — RAGServiceAdapter, DiscoveryServiceAdapter, MemoryServiceAdapter, `create_wired_context_assembler()`
 - `halbert_core/agents/handlers/planning.py` — PlanningHandler (calls `context_assembler.assemble()`, builds planning prompt, CRAG eval, routes)
 - `halbert_core/agents/handlers/searching.py` — SearchingHandler (parallel RAG + memory + web search, results to `ctx.retrieved_context`)
@@ -234,7 +234,7 @@ ContextAssembler
 │   ├── relationship_correlator (NEW — 6 cross-entity patterns)
 │   └── mention_resolver    (NEW — @mention → discovery data)
 ├── Position-aware ordering (existing — "Lost in the Middle")
-├── CLaRa compression (existing)
+├── Compression cascade (Phase 72, replaces CLaRa)
 └── Safety gates
     ├── input_validation    (NEW — SafetyValidator.validate_input)
     └── output_filtering    (NEW — OutputFilter.filter_output, post-response)

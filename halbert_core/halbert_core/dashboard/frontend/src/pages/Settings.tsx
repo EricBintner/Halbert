@@ -103,8 +103,8 @@ interface ModelStatus {
   // Phase 58: Hardware tier detection
   hardware_tier?: number  // 1=24GB, 2=48GB+, 3=Apple Silicon
   total_vram_gb?: number | null
-  clara_recommended?: boolean
-  clara_reason?: string | null
+  compression_available?: boolean
+  compression_backend?: string
 }
 
 // Helper to detect model capabilities from name

@@ -65,19 +65,17 @@ class ContextAssembler:
         discovery_service=None,
         token_counter: TokenCounter = None,
         priorities: Dict[str, float] = None,
-        clara_provider=None,
         extra_sources: Dict[str, Any] = None,
     ):
         """
         Initialize the context assembler.
-        
+
         Args:
             rag_service: RAG search service
             memory_service: Memory recall service
             discovery_service: Discovery search service
             token_counter: Token counting utility
             priorities: Custom priority weights
-            clara_provider: Optional CLaRa compression provider
             extra_sources: Additional source adapters keyed by source name
                 (e.g. {"system_identity": adapter, "safety": adapter}).
                 Each adapter must have an async search(query, limit) method.
@@ -87,8 +85,7 @@ class ContextAssembler:
         self.discovery = discovery_service
         self.tokens = token_counter or TokenCounter()
         self.priorities = priorities or self.DEFAULT_PRIORITIES
-        self._clara = clara_provider
-        self._clara_threshold = 4000  # Compress if context > this many tokens
+        self._compressor_threshold = 4000  # Compress if context > this many tokens
         self._extra_sources = extra_sources or {}
     
     async def assemble(
@@ -206,15 +203,10 @@ class ContextAssembler:
             truncated = True
             combined_tokens = max_tokens
         
-        # Optional compression for large contexts
-        # Phase 72: Try cascade first, fall back to CLaRa
+        # Optional compression for large contexts (Phase 72: compression cascade)
         compressed = False
-        if use_compression and combined_tokens > self._clara_threshold:
-            # Try new source-aware cascade first
+        if use_compression and combined_tokens > self._compressor_threshold:
             compress_result = await self._compress_with_cascade(combined, query, sources)
-            if not compress_result:
-                # Fall back to CLaRa if cascade unavailable
-                compress_result = await self._compress_with_clara(combined, query)
             if compress_result:
                 combined = compress_result["content"]
                 combined_tokens = compress_result["tokens"]
@@ -297,36 +289,52 @@ class ContextAssembler:
         conversation: List[Dict],
         max_tokens: int
     ) -> tuple[str, int]:
-        """Format conversation history within budget."""
+        """Format conversation history within budget.
+
+        Uses hierarchical summarization for long conversations (Phase 72):
+        - Last 6 messages kept as raw text
+        - Older messages summarized via extractive summary
+        """
         if max_tokens <= 0:
             return "", 0
-        
+
+        # Phase 72: Use conversation summarization for long chats
+        try:
+            from ..conversation.summarization import should_summarize, compress_conversation_history
+            if should_summarize(conversation):
+                compressed_msgs, summary = compress_conversation_history(conversation)
+                if summary:
+                    # Use compressed messages with summary prefix
+                    conversation = compressed_msgs
+        except ImportError:
+            pass  # Fall back to simple truncation if summarization unavailable
+
         lines = []
         tokens = 0
         header = "## Recent Conversation\n"
         header_tokens = self.tokens.count(header)
-        
+
         # Work backwards from most recent
         for msg in reversed(conversation):
             role = msg.get("role", "user")
             content = msg.get("content", "")
-            
+
             # Truncate very long messages
             if len(content) > 1000:
                 content = content[:1000] + "..."
-            
+
             line = f"**{role}**: {content}"
             line_tokens = self.tokens.count(line) + 1  # +1 for newline
-            
+
             if tokens + line_tokens + header_tokens > max_tokens:
                 break
-            
+
             lines.insert(0, line)
             tokens += line_tokens
-        
+
         if not lines:
             return "", 0
-        
+
         result = header + "\n".join(lines)
         return result, tokens + header_tokens
     
@@ -572,68 +580,6 @@ class ContextAssembler:
         all_parts = start_parts + middle_parts + end_parts
         return "\n\n".join(all_parts)
     
-    async def _compress_with_clara(
-        self,
-        content: str,
-        query: str
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Compress context using CLaRa if available.
-        
-        Args:
-            content: Context content to compress
-            query: User query for context-aware compression
-            
-        Returns:
-            Dict with compressed content and stats, or None if unavailable
-        """
-        # Try to get CLaRa provider
-        if self._clara is None:
-            try:
-                from ..model.clara_provider import get_clara_provider, clara_available
-                if clara_available():
-                    self._clara = get_clara_provider()
-                else:
-                    return None
-            except ImportError:
-                return None
-        
-        if not self._clara or not self._clara.config.enabled:
-            return None
-        
-        try:
-            # Split content into chunks for CLaRa (it expects a list of memories)
-            chunks = content.split("\n\n")
-            chunks = [c.strip() for c in chunks if c.strip()]
-            
-            if not chunks:
-                return None
-            
-            original_tokens = self.tokens.count(content)
-            
-            result = self._clara.compress_memories(
-                memories=chunks,
-                query=query,
-                max_new_tokens=256,
-            )
-            
-            if result.get("success") and result.get("answer"):
-                compressed_content = result["answer"]
-                compressed_tokens = self.tokens.count(compressed_content)
-                
-                return {
-                    "content": compressed_content,
-                    "tokens": compressed_tokens,
-                    "original_tokens": original_tokens,
-                    "ratio": original_tokens / max(compressed_tokens, 1),
-                }
-            
-            return None
-            
-        except Exception as e:
-            logger.warning(f"CLaRa compression failed: {e}")
-            return None
-
     async def _compress_with_cascade(
         self,
         content: str,

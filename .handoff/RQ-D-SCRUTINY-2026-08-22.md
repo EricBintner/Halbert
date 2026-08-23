@@ -290,4 +290,4 @@ Despite the errors above, the original audit correctly identified:
 - The memory CRUD endpoints should be separated into their own module
 - The ReAct loop, tool calling, and vision handling are execution concerns, not context injection
 - The rule-based fallback responses are not needed with the state machine
-- The position-aware ordering and CLaRa compression in the assembler are good foundations
+- The position-aware ordering and compression cascade (Phase 72, replaces CLaRa) in the assembler are good foundations
