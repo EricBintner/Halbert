@@ -47,7 +47,7 @@ import {
 } from 'lucide-react'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { PageHeader, ChromaDBSettings, DatasetManager, DataVersionCard } from '@/components/domain'
-import { ClaraSettings } from '@/components/ClaraSettings'
+import { CompressionSettings } from '@/components/CompressionSettings'
 
 const API_BASE = '/api'
 
@@ -1306,18 +1306,16 @@ export function Settings() {
                   </div>
                 )}
                 
-                {/* CLaRa Recommendation - Phase 58 */}
-                {modelStatus?.clara_reason && (
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">Context Compression</span>
-                    </div>
-                    <Badge variant={modelStatus.clara_recommended ? 'default' : 'secondary'} className="text-xs">
-                      {modelStatus.clara_recommended ? '✓ CLaRa Available' : 'Remote Only'}
-                    </Badge>
+                {/* Context Compression - Phase 72 */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">Context Compression</span>
                   </div>
-                )}
-                
+                  <Badge variant="default" className="text-xs">
+                    Active (3-tier cascade)
+                  </Badge>
+                </div>
+
                 {/* All good message */}
                 {modelStatus?.ollama_connected && modelStatus?.model_installed && (
                   <div className="pt-2 border-t">
@@ -1789,8 +1787,8 @@ export function Settings() {
             <br/><span className="text-muted-foreground/70 mt-1 inline-block">For 24GB GPUs, use <code className="bg-muted px-1 rounded">qwen2.5:14b</code> + separate vision model.</span>
           </div>
 
-          {/* CLaRa Context Compression - Phase 58: Moved to Models tab */}
-          <ClaraSettings />
+          {/* Context Compression - Phase 72: Replaces CLaRa */}
+          <CompressionSettings />
 
           <Card>
             <CardHeader>
