@@ -70,28 +70,28 @@ _agent_instance = None
 def get_agent():
     """Get or create the agent instance."""
     global _agent_instance
-    
+
     if _agent_instance is not None:
         return _agent_instance
-    
+
     try:
         from ...agents import AgentStateMachine
         from ...tools import ToolSafetyFramework, ToolExecutor
         from ...eval.crag import CRAGEvaluator
         from ...context import create_wired_context_assembler, RAGServiceAdapter, MemoryServiceAdapter
         from ...prompts import AgentPromptBuilder, PromptBuilder, ContextInjector
-        
+
         # Initialize components
         safety = ToolSafetyFramework()
         tool_executor = ToolExecutor(safety=safety)
-        
+
         # Create wired context assembler (connects to RAG, discovery, memory)
         context_assembler = create_wired_context_assembler()
-        
+
         # Create RAG and Memory services for searching handler
         rag_service = RAGServiceAdapter()
         memory_service = MemoryServiceAdapter()
-        
+
         # Wire PromptBuilder + ContextInjector into AgentPromptBuilder
         # for rich system prompts with model-specific overrides
         prompt_builder = PromptBuilder()
@@ -100,13 +100,13 @@ def get_agent():
             base_builder=prompt_builder,
             context_injector=context_injector,
         )
-        
+
         # Create LLM client
         llm_client = _get_llm_client()
-        
+
         # Create CRAG evaluator (optional, uses LLM for completeness check)
         crag_evaluator = CRAGEvaluator(llm_client=llm_client)
-        
+
         # Phase D: Wire cognitive tick (Haloysius advance_turn)
         cognition_tick = None
         event_mapper = None
@@ -117,7 +117,33 @@ def get_agent():
             logger.info("Cognitive tick and event mapper wired")
         except Exception as e:
             logger.warning(f"Cognitive tick not available (non-fatal): {e}")
-        
+
+        # Phase 3: Wire intake pipeline
+        intake_pipeline = None
+        try:
+            from ...intake import IntakePipeline, ComplexityRouter, get_context_budget
+            from ...model.client import get_configured_model, get_ollama_endpoint
+
+            model_config = _load_model_config()
+            guide_model = get_configured_model()
+            guide_endpoint = get_ollama_endpoint()
+
+            # Create complexity router with the guide model
+            complexity_router = ComplexityRouter(
+                llm_caller=_make_llm_caller(),
+                guide_model=guide_model,
+                endpoint=guide_endpoint,
+            )
+
+            intake_pipeline = IntakePipeline(
+                complexity_router=complexity_router,
+                budget_fn=get_context_budget,
+                model_config=model_config,
+            )
+            logger.info("Intake pipeline wired")
+        except Exception as e:
+            logger.warning(f"Intake pipeline not available (non-fatal): {e}")
+
         # Create agent
         _agent_instance = AgentStateMachine(
             llm_client=llm_client,
@@ -131,11 +157,12 @@ def get_agent():
             crag_threshold=0.7,
             cognition_tick=cognition_tick,
             event_mapper=event_mapper,
+            intake_pipeline=intake_pipeline,
         )
-        
+
         logger.info("Agent state machine initialized with wired services")
         return _agent_instance
-        
+
     except Exception as e:
         logger.error(f"Failed to initialize agent: {e}")
         raise
@@ -151,6 +178,49 @@ def _get_llm_client():
         return MockLLMClient()
 
 
+def _load_model_config():
+    """Load model config from models.yml for the intake pipeline.
+
+    Returns a dict with keys matching the IntakePipeline's expected
+    model_config shape: orchestrator.model, specialist.model/enabled,
+    routing.complexity_threshold.
+    """
+    try:
+        from ...utils.platform import get_config_dir
+        import yaml
+
+        config_path = get_config_dir() / "models.yml"
+        if config_path.exists():
+            with open(config_path, "r") as f:
+                return yaml.safe_load(f) or {}
+        return {}
+    except Exception as e:
+        logger.warning(f"Could not load model config: {e}")
+        return {}
+
+
+def _make_llm_caller():
+    """Create a callable for ComplexityRouter that wraps call_llm_chat.
+
+    The returned callable has signature:
+        caller(endpoint, model, messages, options) -> dict
+    """
+    from ...model.client import call_llm_chat
+
+    def caller(endpoint, model, messages, options):
+        return call_llm_chat(
+            endpoint=endpoint,
+            model=model,
+            messages=messages,
+            provider="ollama",
+            stream=False,
+            timeout=30,
+            options=options,
+        )
+
+    return caller
+
+
 class LLMClientAdapter:
     """Adapter that uses same routing logic as Chat (guide vs specialist)."""
     
@@ -160,32 +230,44 @@ class LLMClientAdapter:
         self.max_tokens = 8192
         self.temperature = 0.7
     
-    async def chat(self, messages, tools=None):
-        """Call LLM with messages, routing to specialist for complex queries."""
+    async def chat(self, messages, tools=None, intake_result=None):
+        """Call LLM with messages, routing to specialist for complex queries.
+
+        Args:
+            messages: LLM message list.
+            tools: Optional tool definitions.
+            intake_result: Optional Phase 3 MessageIntake for model routing.
+        """
         from ...model.client import (
             get_specialist_model, get_configured_model, get_ollama_endpoint,
             score_query_complexity, call_llm_chat
         )
-        
+
         # Get the prompt from messages
         prompt = messages[-1].get("content", "") if messages else ""
         system = messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
-        
-        # Route based on complexity (same logic as Chat)
+
+        # Route based on complexity
         model = get_configured_model()
         endpoint = get_ollama_endpoint()
         provider = "ollama"
-        
+
         specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
         if specialist_model:
-            complexity_score = score_query_complexity(prompt)
-            if complexity_score >= 0.5:
+            if intake_result is not None:
+                # Phase 3: Use intake's recommended_model
+                use_specialist = intake_result.recommended_model == "specialist"
+                logger.info(f"Agent using intake routing: {intake_result.recommended_model}")
+            else:
+                # Fallback: legacy complexity scoring
+                complexity_score = score_query_complexity(prompt)
+                use_specialist = complexity_score >= 0.5
+                logger.info(f"Agent using legacy routing (complexity: {complexity_score:.2f})")
+
+            if use_specialist:
                 model = specialist_model
                 endpoint = specialist_endpoint
                 provider = specialist_provider or "ollama"
-                logger.info(f"Agent using specialist: {model} (complexity: {complexity_score:.2f})")
-            else:
-                logger.info(f"Agent using guide: {model} (complexity: {complexity_score:.2f})")
         
         # Build messages for LLM
         llm_messages = []
@@ -226,7 +308,7 @@ class LLMClientAdapter:
                 return LLMResponse(content=result.get("content", ""))
             raise
     
-    async def stream(self, messages):
+    async def stream(self, messages, intake_result=None):
         """Stream response from LLM with true incremental streaming.
         
         Uses aiohttp for async streaming. Filters out <think> blocks in real-time.
@@ -254,14 +336,18 @@ class LLMClientAdapter:
         
         specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
         if specialist_model:
-            complexity_score = score_query_complexity(prompt)
-            if complexity_score >= 0.5:
+            if intake_result is not None:
+                use_specialist = intake_result.recommended_model == "specialist"
+                logger.info(f"Agent stream using intake routing: {intake_result.recommended_model}")
+            else:
+                complexity_score = score_query_complexity(prompt)
+                use_specialist = complexity_score >= 0.5
+                logger.info(f"Agent stream using legacy routing (complexity: {complexity_score:.2f})")
+
+            if use_specialist:
                 model = specialist_model
                 endpoint = specialist_endpoint
                 provider = specialist_provider or "ollama"
-                logger.info(f"Agent using specialist: {model}")
-            else:
-                logger.info(f"Agent using guide: {model}")
         
         # State for filtering <think> blocks
         in_think_block = False

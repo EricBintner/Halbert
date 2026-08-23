@@ -101,30 +101,49 @@ class ContextAssembler:
         max_tokens: int = 8000,
         include_sources: List[str] = None,
         use_compression: bool = True,
+        intake: Any = None,
     ) -> AssembledContext:
-        """
-        Assemble context within token budget.
-        
+        """Assemble context within token budget.
+
         Args:
             query: User query for retrieval
             conversation: Conversation history
             observations: Tool execution observations
             max_tokens: Maximum tokens for assembled context
             include_sources: Specific sources to include (default: all)
-            
+            use_compression: Whether to apply compression cascade
+            intake: Optional Phase 3 MessageIntake. When provided:
+                - max_tokens is overridden by intake.context_budget.total
+                - retrieval is gated by intake.needs_retrieval
+                - per-category budgets from intake.context_budget override
+                  the flat _allocate_budget ratios
+
         Returns:
             AssembledContext with combined content
         """
         sources = []
         total_tokens = 0
         truncated = False
-        
+
+        # Phase 3: Override max_tokens from intake budget if available
+        if intake is not None and hasattr(intake, "context_budget"):
+            max_tokens = intake.context_budget.total
+
         # Determine which sources to include
         active_sources = include_sources or list(self.priorities.keys())
-        
+
+        # Phase 3: Gate retrieval based on intake.needs_retrieval
+        if intake is not None and not intake.needs_retrieval:
+            active_sources = [s for s in active_sources if s != "retrieval"]
+
         # Allocate budget
-        budgets = self._allocate_budget(max_tokens, conversation, active_sources)
-        
+        if intake is not None and hasattr(intake, "context_budget"):
+            budgets = self._allocate_budget_from_intake(
+                intake.context_budget, conversation, active_sources
+            )
+        else:
+            budgets = self._allocate_budget(max_tokens, conversation, active_sources)
+
         logger.debug(f"Context budgets: {budgets}")
         
         # 1. Conversation history (highest priority, synchronous)
@@ -288,7 +307,42 @@ class ContextAssembler:
             normalized = {k: 1 / len(active) for k in active}
         
         return {k: int(total * v) for k, v in normalized.items()}
-    
+
+    def _allocate_budget_from_intake(
+        self,
+        context_budget: Any,
+        conversation: List[Dict] = None,
+        active_sources: List[str] = None,
+    ) -> Dict[str, int]:
+        """Allocate token budget using per-category budgets from intake.
+
+        Maps the ContextBudget fields to assembler source names and
+        filters to active sources only.
+
+        Args:
+            context_budget: ContextBudget dataclass from intake.budget
+            conversation: Conversation history (unused, for API compat)
+            active_sources: Which sources to include
+
+        Returns:
+            Dict mapping source name → token budget
+        """
+        active = active_sources or list(self.priorities.keys())
+
+        # Map ContextBudget fields to assembler source names
+        budget_map = {
+            "system_identity": context_budget.system_identity,
+            "user_rules": context_budget.user_rules,
+            "retrieval": context_budget.retrieval,
+            "memory": context_budget.memory,
+            "discovery": context_budget.discovery,
+            "conversation": context_budget.conversation,
+            "observations": context_budget.observations,
+        }
+
+        # Filter to active sources only
+        return {k: v for k, v in budget_map.items() if k in active}
+
     def _format_conversation(
         self,
         conversation: List[Dict],

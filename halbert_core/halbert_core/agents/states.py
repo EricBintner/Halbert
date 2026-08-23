@@ -129,6 +129,9 @@ class StateContext:
     # Phase D: Persona cognition (Haloysius cognitive state)
     persona_cognition: Optional[Any] = None  # PersonaCognition instance
     persona_id: str = "halbert"
+
+    # Phase 3: Intake pipeline result (message analysis before cognitive tick)
+    intake: Optional[Any] = None  # MessageIntake instance
     
     def add_observation(self, observation: str):
         """Add an observation from tool execution."""

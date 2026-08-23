@@ -48,7 +48,8 @@ class PlanningHandler:
                     query=ctx.user_query,
                     conversation=ctx.conversation_history,
                     observations=ctx.observations,
-                    max_tokens=8000
+                    max_tokens=8000,
+                    intake=ctx.intake,
                 )
                 
                 yield StreamEvent.context_loaded(

@@ -72,6 +72,7 @@ class AgentStateMachine:
         crag_threshold: float = 0.7,
         cognition_tick: Callable = None,
         event_mapper = None,
+        intake_pipeline = None,
     ):
         """
         Initialize the agent state machine.
@@ -86,6 +87,9 @@ class AgentStateMachine:
             memory_service: Memory recall/store service
             max_loops: Maximum loop iterations
             crag_threshold: Confidence threshold for CORRECT
+            cognition_tick: Haloysius advance_turn callable
+            event_mapper: System event → persona emotion mapper
+            intake_pipeline: Phase 3 IntakePipeline for pre-cognitive message analysis
         """
         self.llm = llm_client
         self.tools = tool_executor
@@ -94,6 +98,7 @@ class AgentStateMachine:
         self.prompts = prompt_builder
         self.rag = rag_service
         self.memory = memory_service
+        self.intake = intake_pipeline
         
         self.max_loops = max_loops
         self.crag_threshold = crag_threshold
@@ -131,6 +136,11 @@ class AgentStateMachine:
     def memory_service(self):
         """Alias for handlers that use memory_service."""
         return self.memory
+
+    @property
+    def intake_pipeline(self):
+        """Alias for the intake pipeline."""
+        return self.intake
     
     async def process(
         self,
@@ -165,7 +175,19 @@ class AgentStateMachine:
             conversation_history=conversation_history or [],
             max_loops=self.max_loops,
         )
-        
+
+        # Phase 3: Run intake pipeline before cognitive tick
+        if self.intake is not None:
+            try:
+                self.ctx.intake = self.intake.analyze(query)
+                logger.info(
+                    f"Intake: intent={self.ctx.intake.intent}, "
+                    f"complexity={self.ctx.intake.complexity_score}, "
+                    f"model={self.ctx.intake.recommended_model}"
+                )
+            except Exception as e:
+                logger.warning(f"Intake pipeline failed (non-fatal): {e}")
+
         # Phase D: Inject persona cognition if tick is wired
         if self.cognition_tick is not None:
             try:
@@ -360,7 +382,8 @@ class AgentStateMachine:
                 query=self.ctx.user_query,
                 conversation=self.ctx.conversation_history,
                 observations=self.ctx.observations,
-                max_tokens=8000
+                max_tokens=8000,
+                intake=self.ctx.intake,
             )
             context_content = assembled.content
             yield StreamEvent.context_loaded(
@@ -385,7 +408,8 @@ class AgentStateMachine:
         
         response = await self.llm.chat(
             messages=[{"role": "user", "content": prompt}],
-            tools=tool_schemas
+            tools=tool_schemas,
+            intake_result=self.ctx.intake if self.ctx else None,
         )
         
         # Parse plan if present
@@ -767,7 +791,8 @@ class AgentStateMachine:
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
             chunk_count = 0
             async for chunk in self.llm.stream(
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                intake_result=self.ctx.intake if self.ctx else None,
             ):
                 chunk_count += 1
                 logger.debug(f"Chunk {chunk_count}: {repr(chunk[:50])}...")
@@ -777,7 +802,8 @@ class AgentStateMachine:
         else:
             # Non-streaming fallback
             response = await self.llm.chat(
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                intake_result=self.ctx.intake if self.ctx else None,
             )
             content = response.content if hasattr(response, 'content') else str(response)
             self.ctx.response_chunks.append(content)
