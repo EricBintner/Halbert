@@ -123,7 +123,13 @@ tier_1_official:
   - pattern: "developer.apple.com"
     name: "Apple Developer"
     trust: official_docs
-    requires_manual_curation: true
+  - pattern: "github.com/tldr-pages/tldr"
+    name: "TLDR Pages"
+    trust: community_reference
+
+  - pattern: "huggingface.co/datasets/hannah-eee/arch-wiki-docs"
+    name: "Arch Wiki Dataset (HuggingFace)"
+    trust: community_wiki
 
 tier_2_community:
   # Community-curated wikis - high trust

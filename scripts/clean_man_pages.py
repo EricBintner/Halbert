@@ -48,29 +48,42 @@ def clean_jsonl(input_path: Path, output_path: Path = None):
     cleaned = 0
     docs = []
 
-    with open(input_path) as f:
+    with open(input_path, 'r', encoding='utf-8') as f:
         for line in f:
+            if not line.strip():
+                continue
             doc = json.loads(line)
             total += 1
+            doc_cleaned = False
 
-            content = doc.get('content', '')
-            if '\b' in content:
-                doc['content'] = strip_man_formatting(content)
+            for field in ['content', 'text', 'full_text', 'description']:
+                val = doc.get(field)
+                if isinstance(val, str) and '\b' in val:
+                    doc[field] = strip_man_formatting(val)
+                    doc_cleaned = True
+
+            if doc_cleaned:
                 cleaned += 1
 
             docs.append(doc)
 
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         for doc in docs:
-            f.write(json.dumps(doc) + '\n')
+            f.write(json.dumps(doc, ensure_ascii=False) + '\n')
 
-    print(f"Processed {total} documents, cleaned {cleaned}", file=sys.stderr)
+    print(f"Processed {total} documents, cleaned {cleaned} in {input_path}", file=sys.stderr)
     return total, cleaned
 
 
 if __name__ == '__main__':
-    input_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('data/macos/man-pages/macos_man_pages.jsonl')
-    output_path = Path(sys.argv[2]) if len(sys.argv) > 2 else input_path
+    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('data/linux/man-pages/man_pages.jsonl')
+    output = Path(sys.argv[2]) if len(sys.argv) > 2 else target
 
-    total, cleaned = clean_jsonl(input_path, output_path)
-    print(f"Done: {cleaned}/{total} documents cleaned")
+    if target.is_dir():
+        for p in sorted(target.rglob('*.jsonl')):
+            total, cleaned = clean_jsonl(p)
+            print(f"Done {p.name}: {cleaned}/{total} documents cleaned")
+    else:
+        total, cleaned = clean_jsonl(target, output)
+        print(f"Done: {cleaned}/{total} documents cleaned")
+

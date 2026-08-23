@@ -71,10 +71,17 @@ class PlatformDataLoader:
         Returns:
             List of Path objects for platform-appropriate data dirs
         """
-        platform_key = 'darwin' if is_macos() else 'linux'
+        platform_keys = ['darwin', 'macos'] if is_macos() else ['linux']
         
-        platform_config = self.config.get('platforms', {}).get(platform_key, {})
+        platforms_cfg = self.config.get('platforms', {})
+        platform_config = {}
+        for k in platform_keys:
+            if k in platforms_cfg:
+                platform_config = platforms_cfg[k]
+                break
+        
         data_dirs = platform_config.get('data_dirs', [])
+
         
         # Convert to absolute paths
         result = []

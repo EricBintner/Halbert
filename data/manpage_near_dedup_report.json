@@ -1,0 +1,831 @@
+{
+  "macos_total_man_pages": 5280,
+  "freebsd_total_man_pages": 181,
+  "overlapping_command_count": 91,
+  "threshold": 0.85,
+  "high_similarity_count": 30,
+  "distinct_version_count": 61,
+  "high_similarity_details": [
+    {
+      "command": "cat(1)",
+      "jaccard_similarity": 0.9298,
+      "macos_doc_id": "macos_cat_1",
+      "macos_char_count": 3691,
+      "freebsd_doc_id": "freebsd-man-cat-1",
+      "freebsd_char_count": 3393,
+      "longer_version": "macos"
+    },
+    {
+      "command": "date(1)",
+      "jaccard_similarity": 0.8565,
+      "macos_doc_id": "macos_date_1",
+      "macos_char_count": 14453,
+      "freebsd_doc_id": "freebsd-man-date-1",
+      "freebsd_char_count": 14279,
+      "longer_version": "macos"
+    },
+    {
+      "command": "dd(1)",
+      "jaccard_similarity": 0.8822,
+      "macos_doc_id": "macos_dd_1",
+      "macos_char_count": 13983,
+      "freebsd_doc_id": "freebsd-man-dd-1",
+      "freebsd_char_count": 12524,
+      "longer_version": "macos"
+    },
+    {
+      "command": "diff(1)",
+      "jaccard_similarity": 0.9297,
+      "macos_doc_id": "macos_diff_1",
+      "macos_char_count": 20248,
+      "freebsd_doc_id": "freebsd-man-diff-1",
+      "freebsd_char_count": 17840,
+      "longer_version": "macos"
+    },
+    {
+      "command": "du(1)",
+      "jaccard_similarity": 0.8656,
+      "macos_doc_id": "macos_du_1",
+      "macos_char_count": 6054,
+      "freebsd_doc_id": "freebsd-man-du-1",
+      "freebsd_char_count": 5524,
+      "longer_version": "macos"
+    },
+    {
+      "command": "gzip(1)",
+      "jaccard_similarity": 0.8966,
+      "macos_doc_id": "macos_gzip_1",
+      "macos_char_count": 5405,
+      "freebsd_doc_id": "freebsd-man-gzip-1",
+      "freebsd_char_count": 4852,
+      "longer_version": "macos"
+    },
+    {
+      "command": "hostname(7)",
+      "jaccard_similarity": 0.9226,
+      "macos_doc_id": "macos_hostname_7",
+      "macos_char_count": 2390,
+      "freebsd_doc_id": "freebsd-man-hostname-7",
+      "freebsd_char_count": 2346,
+      "longer_version": "macos"
+    },
+    {
+      "command": "kill(1)",
+      "jaccard_similarity": 0.9059,
+      "macos_doc_id": "macos_kill_1",
+      "macos_char_count": 2421,
+      "freebsd_doc_id": "freebsd-man-kill-1",
+      "freebsd_char_count": 2441,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "ln(1)",
+      "jaccard_similarity": 0.9088,
+      "macos_doc_id": "macos_ln_1",
+      "macos_char_count": 5961,
+      "freebsd_doc_id": "freebsd-man-ln-1",
+      "freebsd_char_count": 5670,
+      "longer_version": "macos"
+    },
+    {
+      "command": "mkdir(1)",
+      "jaccard_similarity": 0.9091,
+      "macos_doc_id": "macos_mkdir_1",
+      "macos_char_count": 2318,
+      "freebsd_doc_id": "freebsd-man-mkdir-1",
+      "freebsd_char_count": 1979,
+      "longer_version": "macos"
+    },
+    {
+      "command": "nice(1)",
+      "jaccard_similarity": 0.8561,
+      "macos_doc_id": "macos_nice_1",
+      "macos_char_count": 1800,
+      "freebsd_doc_id": "freebsd-man-nice-1",
+      "freebsd_char_count": 1705,
+      "longer_version": "macos"
+    },
+    {
+      "command": "nohup(1)",
+      "jaccard_similarity": 0.8657,
+      "macos_doc_id": "macos_nohup_1",
+      "macos_char_count": 1634,
+      "freebsd_doc_id": "freebsd-man-nohup-1",
+      "freebsd_char_count": 1534,
+      "longer_version": "macos"
+    },
+    {
+      "command": "printf(1)",
+      "jaccard_similarity": 0.8789,
+      "macos_doc_id": "macos_printf_1",
+      "macos_char_count": 10624,
+      "freebsd_doc_id": "freebsd-man-printf-1",
+      "freebsd_char_count": 9421,
+      "longer_version": "macos"
+    },
+    {
+      "command": "pwd(1)",
+      "jaccard_similarity": 0.8649,
+      "macos_doc_id": "macos_pwd_1",
+      "macos_char_count": 1870,
+      "freebsd_doc_id": "freebsd-man-pwd-1",
+      "freebsd_char_count": 1674,
+      "longer_version": "macos"
+    },
+    {
+      "command": "rm(1)",
+      "jaccard_similarity": 0.8862,
+      "macos_doc_id": "macos_rm_1",
+      "macos_char_count": 4975,
+      "freebsd_doc_id": "freebsd-man-rm-1",
+      "freebsd_char_count": 4431,
+      "longer_version": "macos"
+    },
+    {
+      "command": "sa(8)",
+      "jaccard_similarity": 0.9299,
+      "macos_doc_id": "macos_sa_8",
+      "macos_char_count": 6863,
+      "freebsd_doc_id": "freebsd-man-sa-8",
+      "freebsd_char_count": 6415,
+      "longer_version": "macos"
+    },
+    {
+      "command": "sed(1)",
+      "jaccard_similarity": 0.8537,
+      "macos_doc_id": "macos_sed_1",
+      "macos_char_count": 18628,
+      "freebsd_doc_id": "freebsd-man-sed-1",
+      "freebsd_char_count": 17016,
+      "longer_version": "macos"
+    },
+    {
+      "command": "sleep(1)",
+      "jaccard_similarity": 0.9497,
+      "macos_doc_id": "macos_sleep_1",
+      "macos_char_count": 2638,
+      "freebsd_doc_id": "freebsd-man-sleep-1",
+      "freebsd_char_count": 2348,
+      "longer_version": "macos"
+    },
+    {
+      "command": "sort(1)",
+      "jaccard_similarity": 0.8637,
+      "macos_doc_id": "macos_sort_1",
+      "macos_char_count": 17634,
+      "freebsd_doc_id": "freebsd-man-sort-1",
+      "freebsd_char_count": 15653,
+      "longer_version": "macos"
+    },
+    {
+      "command": "sshd(8)",
+      "jaccard_similarity": 0.8699,
+      "macos_doc_id": "macos_sshd_8",
+      "macos_char_count": 34591,
+      "freebsd_doc_id": "freebsd-man-sshd-8",
+      "freebsd_char_count": 32142,
+      "longer_version": "macos"
+    },
+    {
+      "command": "tail(1)",
+      "jaccard_similarity": 0.8947,
+      "macos_doc_id": "macos_tail_1",
+      "macos_char_count": 4320,
+      "freebsd_doc_id": "freebsd-man-tail-1",
+      "freebsd_char_count": 4122,
+      "longer_version": "macos"
+    },
+    {
+      "command": "tar(1)",
+      "jaccard_similarity": 0.8776,
+      "macos_doc_id": "macos_tar_1",
+      "macos_char_count": 45576,
+      "freebsd_doc_id": "freebsd-man-tar-1",
+      "freebsd_char_count": 40607,
+      "longer_version": "macos"
+    },
+    {
+      "command": "test(1)",
+      "jaccard_similarity": 0.9338,
+      "macos_doc_id": "macos_test_1",
+      "macos_char_count": 6529,
+      "freebsd_doc_id": "freebsd-man-test-1",
+      "freebsd_char_count": 5668,
+      "longer_version": "macos"
+    },
+    {
+      "command": "touch(1)",
+      "jaccard_similarity": 0.9053,
+      "macos_doc_id": "macos_touch_1",
+      "macos_char_count": 5860,
+      "freebsd_doc_id": "freebsd-man-touch-1",
+      "freebsd_char_count": 4969,
+      "longer_version": "macos"
+    },
+    {
+      "command": "tr(1)",
+      "jaccard_similarity": 0.9047,
+      "macos_doc_id": "macos_tr_1",
+      "macos_char_count": 9486,
+      "freebsd_doc_id": "freebsd-man-tr-1",
+      "freebsd_char_count": 8488,
+      "longer_version": "macos"
+    },
+    {
+      "command": "uniq(1)",
+      "jaccard_similarity": 0.9312,
+      "macos_doc_id": "macos_uniq_1",
+      "macos_char_count": 4183,
+      "freebsd_doc_id": "freebsd-man-uniq-1",
+      "freebsd_char_count": 3713,
+      "longer_version": "macos"
+    },
+    {
+      "command": "wc(1)",
+      "jaccard_similarity": 0.8837,
+      "macos_doc_id": "macos_wc_1",
+      "macos_char_count": 4219,
+      "freebsd_doc_id": "freebsd-man-wc-1",
+      "freebsd_char_count": 3968,
+      "longer_version": "macos"
+    },
+    {
+      "command": "who(1)",
+      "jaccard_similarity": 0.9114,
+      "macos_doc_id": "macos_who_1",
+      "macos_char_count": 4071,
+      "freebsd_doc_id": "freebsd-man-who-1",
+      "freebsd_char_count": 3552,
+      "longer_version": "macos"
+    },
+    {
+      "command": "whoami(1)",
+      "jaccard_similarity": 0.8571,
+      "macos_doc_id": "macos_whoami_1",
+      "macos_char_count": 584,
+      "freebsd_doc_id": "freebsd-man-whoami-1",
+      "freebsd_char_count": 493,
+      "longer_version": "macos"
+    },
+    {
+      "command": "xargs(1)",
+      "jaccard_similarity": 0.8598,
+      "macos_doc_id": "macos_xargs_1",
+      "macos_char_count": 8869,
+      "freebsd_doc_id": "freebsd-man-xargs-1",
+      "freebsd_char_count": 7882,
+      "longer_version": "macos"
+    }
+  ],
+  "distinct_version_details": [
+    {
+      "command": "arp(8)",
+      "jaccard_similarity": 0.75,
+      "macos_doc_id": "macos_arp_8",
+      "macos_char_count": 4366,
+      "freebsd_doc_id": "freebsd-man-arp-8",
+      "freebsd_char_count": 3223,
+      "longer_version": "macos"
+    },
+    {
+      "command": "chmod(1)",
+      "jaccard_similarity": 0.6235,
+      "macos_doc_id": "macos_chmod_1",
+      "macos_char_count": 17787,
+      "freebsd_doc_id": "freebsd-man-chmod-1",
+      "freebsd_char_count": 7653,
+      "longer_version": "macos"
+    },
+    {
+      "command": "chown(8)",
+      "jaccard_similarity": 0.8277,
+      "macos_doc_id": "macos_chown_8",
+      "macos_char_count": 4004,
+      "freebsd_doc_id": "freebsd-man-chown-8",
+      "freebsd_char_count": 3301,
+      "longer_version": "macos"
+    },
+    {
+      "command": "clear(1)",
+      "jaccard_similarity": 0.1624,
+      "macos_doc_id": "macos_clear_1",
+      "macos_char_count": 693,
+      "freebsd_doc_id": "freebsd-man-clear-1",
+      "freebsd_char_count": 3477,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "cp(1)",
+      "jaccard_similarity": 0.69,
+      "macos_doc_id": "macos_cp_1",
+      "macos_char_count": 8660,
+      "freebsd_doc_id": "freebsd-man-cp-1",
+      "freebsd_char_count": 7298,
+      "longer_version": "macos"
+    },
+    {
+      "command": "cron(8)",
+      "jaccard_similarity": 0.6602,
+      "macos_doc_id": "macos_cron_8",
+      "macos_char_count": 4666,
+      "freebsd_doc_id": "freebsd-man-cron-8",
+      "freebsd_char_count": 5797,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "crontab(1)",
+      "jaccard_similarity": 0.775,
+      "macos_doc_id": "macos_crontab_1",
+      "macos_char_count": 3079,
+      "freebsd_doc_id": "freebsd-man-crontab-1",
+      "freebsd_char_count": 3091,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "crontab(5)",
+      "jaccard_similarity": 0.7239,
+      "macos_doc_id": "macos_crontab_5",
+      "macos_char_count": 8813,
+      "freebsd_doc_id": "freebsd-man-crontab-5",
+      "freebsd_char_count": 11001,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "cut(1)",
+      "jaccard_similarity": 0.8333,
+      "macos_doc_id": "macos_cut_1",
+      "macos_char_count": 3386,
+      "freebsd_doc_id": "freebsd-man-cut-1",
+      "freebsd_char_count": 3144,
+      "longer_version": "macos"
+    },
+    {
+      "command": "df(1)",
+      "jaccard_similarity": 0.6221,
+      "macos_doc_id": "macos_df_1",
+      "macos_char_count": 9667,
+      "freebsd_doc_id": "freebsd-man-df-1",
+      "freebsd_char_count": 7181,
+      "longer_version": "macos"
+    },
+    {
+      "command": "dmesg(8)",
+      "jaccard_similarity": 0.2013,
+      "macos_doc_id": "macos_dmesg_8",
+      "macos_char_count": 456,
+      "freebsd_doc_id": "freebsd-man-dmesg-8",
+      "freebsd_char_count": 1880,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "echo(1)",
+      "jaccard_similarity": 0.5241,
+      "macos_doc_id": "macos_echo_1",
+      "macos_char_count": 1446,
+      "freebsd_doc_id": "freebsd-man-echo-1",
+      "freebsd_char_count": 2162,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "fdisk(8)",
+      "jaccard_similarity": 0.3329,
+      "macos_doc_id": "macos_fdisk_8",
+      "macos_char_count": 10345,
+      "freebsd_doc_id": "freebsd-man-fdisk-8",
+      "freebsd_char_count": 12088,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "find(1)",
+      "jaccard_similarity": 0.7728,
+      "macos_doc_id": "macos_find_1",
+      "macos_char_count": 28997,
+      "freebsd_doc_id": "freebsd-man-find-1",
+      "freebsd_char_count": 32520,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "fsck(8)",
+      "jaccard_similarity": 0.3439,
+      "macos_doc_id": "macos_fsck_8",
+      "macos_char_count": 4468,
+      "freebsd_doc_id": "freebsd-man-fsck-8",
+      "freebsd_char_count": 6316,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "fstab(5)",
+      "jaccard_similarity": 0.3818,
+      "macos_doc_id": "macos_fstab_5",
+      "macos_char_count": 5501,
+      "freebsd_doc_id": "freebsd-man-fstab-5",
+      "freebsd_char_count": 11506,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "grep(1)",
+      "jaccard_similarity": 0.7969,
+      "macos_doc_id": "macos_grep_1",
+      "macos_char_count": 15201,
+      "freebsd_doc_id": "freebsd-man-grep-1",
+      "freebsd_char_count": 12760,
+      "longer_version": "macos"
+    },
+    {
+      "command": "group(5)",
+      "jaccard_similarity": 0.5216,
+      "macos_doc_id": "macos_group_5",
+      "macos_char_count": 1994,
+      "freebsd_doc_id": "freebsd-man-group-5",
+      "freebsd_char_count": 2631,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "halt(8)",
+      "jaccard_similarity": 0.3951,
+      "macos_doc_id": "macos_halt_8",
+      "macos_char_count": 2254,
+      "freebsd_doc_id": "freebsd-man-halt-8",
+      "freebsd_char_count": 4815,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "head(1)",
+      "jaccard_similarity": 0.68,
+      "macos_doc_id": "macos_head_1",
+      "macos_char_count": 1280,
+      "freebsd_doc_id": "freebsd-man-head-1",
+      "freebsd_char_count": 1508,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "hier(7)",
+      "jaccard_similarity": 0.2002,
+      "macos_doc_id": "macos_hier_7",
+      "macos_char_count": 5026,
+      "freebsd_doc_id": "freebsd-man-hier-7",
+      "freebsd_char_count": 15632,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "hostname(1)",
+      "jaccard_similarity": 0.7363,
+      "macos_doc_id": "macos_hostname_1",
+      "macos_char_count": 1178,
+      "freebsd_doc_id": "freebsd-man-hostname-1",
+      "freebsd_char_count": 1096,
+      "longer_version": "macos"
+    },
+    {
+      "command": "hosts(5)",
+      "jaccard_similarity": 0.5089,
+      "macos_doc_id": "macos_hosts_5",
+      "macos_char_count": 1495,
+      "freebsd_doc_id": "freebsd-man-hosts-5",
+      "freebsd_char_count": 1594,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "ifconfig(8)",
+      "jaccard_similarity": 0.3103,
+      "macos_doc_id": "macos_ifconfig_8",
+      "macos_char_count": 32186,
+      "freebsd_doc_id": "freebsd-man-ifconfig-8",
+      "freebsd_char_count": 107459,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "less(1)",
+      "jaccard_similarity": 0.8085,
+      "macos_doc_id": "macos_less_1",
+      "macos_char_count": 116473,
+      "freebsd_doc_id": "freebsd-man-less-1",
+      "freebsd_char_count": 114032,
+      "longer_version": "macos"
+    },
+    {
+      "command": "ls(1)",
+      "jaccard_similarity": 0.7977,
+      "macos_doc_id": "macos_ls_1",
+      "macos_char_count": 25626,
+      "freebsd_doc_id": "freebsd-man-ls-1",
+      "freebsd_char_count": 20896,
+      "longer_version": "macos"
+    },
+    {
+      "command": "mount(8)",
+      "jaccard_similarity": 0.3595,
+      "macos_doc_id": "macos_mount_8",
+      "macos_char_count": 9081,
+      "freebsd_doc_id": "freebsd-man-mount-8",
+      "freebsd_char_count": 16274,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "mountd(8)",
+      "jaccard_similarity": 0.2953,
+      "macos_doc_id": "macos_mountd_8",
+      "macos_char_count": 2186,
+      "freebsd_doc_id": "freebsd-man-mountd-8",
+      "freebsd_char_count": 5968,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "mv(1)",
+      "jaccard_similarity": 0.7933,
+      "macos_doc_id": "macos_mv_1",
+      "macos_char_count": 3371,
+      "freebsd_doc_id": "freebsd-man-mv-1",
+      "freebsd_char_count": 2658,
+      "longer_version": "macos"
+    },
+    {
+      "command": "netstat(1)",
+      "jaccard_similarity": 0.4667,
+      "macos_doc_id": "macos_netstat_1",
+      "macos_char_count": 14566,
+      "freebsd_doc_id": "freebsd-man-netstat-1",
+      "freebsd_char_count": 18643,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "newsyslog(8)",
+      "jaccard_similarity": 0.787,
+      "macos_doc_id": "macos_newsyslog_8",
+      "macos_char_count": 6967,
+      "freebsd_doc_id": "freebsd-man-newsyslog-8",
+      "freebsd_char_count": 7985,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "nfsd(8)",
+      "jaccard_similarity": 0.2761,
+      "macos_doc_id": "macos_nfsd_8",
+      "macos_char_count": 8710,
+      "freebsd_doc_id": "freebsd-man-nfsd-8",
+      "freebsd_char_count": 11606,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "nologin(8)",
+      "jaccard_similarity": 0.6804,
+      "macos_doc_id": "macos_nologin_8",
+      "macos_char_count": 694,
+      "freebsd_doc_id": "freebsd-man-nologin-8",
+      "freebsd_char_count": 828,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "passwd(5)",
+      "jaccard_similarity": 0.3859,
+      "macos_doc_id": "macos_passwd_5",
+      "macos_char_count": 4053,
+      "freebsd_doc_id": "freebsd-man-passwd-5",
+      "freebsd_char_count": 8786,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "ping(8)",
+      "jaccard_similarity": 0.6567,
+      "macos_doc_id": "macos_ping_8",
+      "macos_char_count": 15502,
+      "freebsd_doc_id": "freebsd-man-ping-8",
+      "freebsd_char_count": 20824,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "protocols(5)",
+      "jaccard_similarity": 0.5211,
+      "macos_doc_id": "macos_protocols_5",
+      "macos_char_count": 1360,
+      "freebsd_doc_id": "freebsd-man-protocols-5",
+      "freebsd_char_count": 1262,
+      "longer_version": "macos"
+    },
+    {
+      "command": "ps(1)",
+      "jaccard_similarity": 0.4539,
+      "macos_doc_id": "macos_ps_1",
+      "macos_char_count": 19211,
+      "freebsd_doc_id": "freebsd-man-ps-1",
+      "freebsd_char_count": 26694,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "pwd_mkdb(8)",
+      "jaccard_similarity": 0.788,
+      "macos_doc_id": "macos_pwd_mkdb_8",
+      "macos_char_count": 5198,
+      "freebsd_doc_id": "freebsd-man-pwd_mkdb-8",
+      "freebsd_char_count": 4082,
+      "longer_version": "macos"
+    },
+    {
+      "command": "quotacheck(8)",
+      "jaccard_similarity": 0.4488,
+      "macos_doc_id": "macos_quotacheck_8",
+      "macos_char_count": 2888,
+      "freebsd_doc_id": "freebsd-man-quotacheck-8",
+      "freebsd_char_count": 4086,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "quotaon(8)",
+      "jaccard_similarity": 0.5686,
+      "macos_doc_id": "macos_quotaon_8",
+      "macos_char_count": 2854,
+      "freebsd_doc_id": "freebsd-man-quotaon-8",
+      "freebsd_char_count": 1823,
+      "longer_version": "macos"
+    },
+    {
+      "command": "rarpd(8)",
+      "jaccard_similarity": 0.5466,
+      "macos_doc_id": "macos_rarpd_8",
+      "macos_char_count": 1592,
+      "freebsd_doc_id": "freebsd-man-rarpd-8",
+      "freebsd_char_count": 2848,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "repquota(8)",
+      "jaccard_similarity": 0.617,
+      "macos_doc_id": "macos_repquota_8",
+      "macos_char_count": 1795,
+      "freebsd_doc_id": "freebsd-man-repquota-8",
+      "freebsd_char_count": 1539,
+      "longer_version": "macos"
+    },
+    {
+      "command": "rmdir(1)",
+      "jaccard_similarity": 0.8485,
+      "macos_doc_id": "macos_rmdir_1",
+      "macos_char_count": 1653,
+      "freebsd_doc_id": "freebsd-man-rmdir-1",
+      "freebsd_char_count": 1529,
+      "longer_version": "macos"
+    },
+    {
+      "command": "route(8)",
+      "jaccard_similarity": 0.6131,
+      "macos_doc_id": "macos_route_8",
+      "macos_char_count": 10535,
+      "freebsd_doc_id": "freebsd-man-route-8",
+      "freebsd_char_count": 12818,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "rpcbind(8)",
+      "jaccard_similarity": 0.3596,
+      "macos_doc_id": "macos_rpcbind_8",
+      "macos_char_count": 3089,
+      "freebsd_doc_id": "freebsd-man-rpcbind-8",
+      "freebsd_char_count": 4273,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "rtadvd(8)",
+      "jaccard_similarity": 0.7305,
+      "macos_doc_id": "macos_rtadvd_8",
+      "macos_char_count": 5417,
+      "freebsd_doc_id": "freebsd-man-rtadvd-8",
+      "freebsd_char_count": 6074,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "services(5)",
+      "jaccard_similarity": 0.5333,
+      "macos_doc_id": "macos_services_5",
+      "macos_char_count": 1582,
+      "freebsd_doc_id": "freebsd-man-services-5",
+      "freebsd_char_count": 1692,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "sh(1)",
+      "jaccard_similarity": 0.0328,
+      "macos_doc_id": "macos_sh_1",
+      "macos_char_count": 725,
+      "freebsd_doc_id": "freebsd-man-sh-1",
+      "freebsd_char_count": 77823,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "shells(5)",
+      "jaccard_similarity": 0.8493,
+      "macos_doc_id": "macos_shells_5",
+      "macos_char_count": 749,
+      "freebsd_doc_id": "freebsd-man-shells-5",
+      "freebsd_char_count": 657,
+      "longer_version": "macos"
+    },
+    {
+      "command": "shutdown(8)",
+      "jaccard_similarity": 0.6472,
+      "macos_doc_id": "macos_shutdown_8",
+      "macos_char_count": 5394,
+      "freebsd_doc_id": "freebsd-man-shutdown-8",
+      "freebsd_char_count": 6422,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "sysctl(8)",
+      "jaccard_similarity": 0.6242,
+      "macos_doc_id": "macos_sysctl_8",
+      "macos_char_count": 16876,
+      "freebsd_doc_id": "freebsd-man-sysctl-8",
+      "freebsd_char_count": 8832,
+      "longer_version": "macos"
+    },
+    {
+      "command": "syslog.conf(5)",
+      "jaccard_similarity": 0.3624,
+      "macos_doc_id": "macos_syslog.conf_5",
+      "macos_char_count": 5622,
+      "freebsd_doc_id": "freebsd-man-syslog.conf-5",
+      "freebsd_char_count": 14037,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "syslogd(8)",
+      "jaccard_similarity": 0.2107,
+      "macos_doc_id": "macos_syslogd_8",
+      "macos_char_count": 9446,
+      "freebsd_doc_id": "freebsd-man-syslogd-8",
+      "freebsd_char_count": 10633,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "tcpdump(1)",
+      "jaccard_similarity": 0.8424,
+      "macos_doc_id": "macos_tcpdump_1",
+      "macos_char_count": 77954,
+      "freebsd_doc_id": "freebsd-man-tcpdump-1",
+      "freebsd_char_count": 65210,
+      "longer_version": "macos"
+    },
+    {
+      "command": "tee(1)",
+      "jaccard_similarity": 0.7545,
+      "macos_doc_id": "macos_tee_1",
+      "macos_char_count": 1058,
+      "freebsd_doc_id": "freebsd-man-tee-1",
+      "freebsd_char_count": 1056,
+      "longer_version": "macos"
+    },
+    {
+      "command": "traceroute(8)",
+      "jaccard_similarity": 0.8005,
+      "macos_doc_id": "macos_traceroute_8",
+      "macos_char_count": 14862,
+      "freebsd_doc_id": "freebsd-man-traceroute-8",
+      "freebsd_char_count": 15383,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "traceroute6(8)",
+      "jaccard_similarity": 0.7078,
+      "macos_doc_id": "macos_traceroute6_8",
+      "macos_char_count": 4559,
+      "freebsd_doc_id": "freebsd-man-traceroute6-8",
+      "freebsd_char_count": 4321,
+      "longer_version": "macos"
+    },
+    {
+      "command": "ttys(5)",
+      "jaccard_similarity": 0.6832,
+      "macos_doc_id": "macos_ttys_5",
+      "macos_char_count": 5220,
+      "freebsd_doc_id": "freebsd-man-ttys-5",
+      "freebsd_char_count": 5006,
+      "longer_version": "macos"
+    },
+    {
+      "command": "umount(8)",
+      "jaccard_similarity": 0.4636,
+      "macos_doc_id": "macos_umount_8",
+      "macos_char_count": 2423,
+      "freebsd_doc_id": "freebsd-man-umount-8",
+      "freebsd_char_count": 3692,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "uname(1)",
+      "jaccard_similarity": 0.7005,
+      "macos_doc_id": "macos_uname_1",
+      "macos_char_count": 2856,
+      "freebsd_doc_id": "freebsd-man-uname-1",
+      "freebsd_char_count": 2949,
+      "longer_version": "freebsd"
+    },
+    {
+      "command": "vipw(8)",
+      "jaccard_similarity": 0.8413,
+      "macos_doc_id": "macos_vipw_8",
+      "macos_char_count": 2268,
+      "freebsd_doc_id": "freebsd-man-vipw-8",
+      "freebsd_char_count": 2368,
+      "longer_version": "freebsd"
+    }
+  ]
+}

@@ -1,111 +1,107 @@
 {
-  "version": "1.1.0",
+  "version": "2.0.0",
   "release_date": "2026-08-23",
-  "description": "Halbert RAG corpus - Linux and macOS system administration knowledge base",
+  "description": "Halbert RAG corpus - Cleaned, schema-normalized, and deduplicated Linux, macOS, BSD, and Common system administration knowledge base",
   "sources": {
     "arch_wiki": {
-      "document_count": 22794,
+      "document_count": 2397,
       "license": "GNU FDL 1.3",
-      "scraped_at": "2025-12-01",
-      "description": "Arch Linux Wiki - comprehensive Linux documentation",
+      "scraped_at": "2026-08-23",
+      "description": "Arch Linux Wiki - comprehensive Linux documentation (hannah-eee dataset and curated extensions)",
       "paths": [
-        "linux/arch-wiki-full/",
+        "linux/arch-wiki/",
         "linux/arch-wiki-ext/",
         "linux/more-arch/"
       ],
       "mac_build": false
     },
-    "man_pages": {
-      "document_count": 17084,
+    "linux_man_pages": {
+      "document_count": 4736,
       "license": "Various (GPL, BSD, MIT)",
-      "scraped_at": "2025-12-15",
-      "description": "Linux man pages - command reference documentation",
+      "scraped_at": "2026-08-23",
+      "description": "Linux man pages - command reference documentation (backspaces stripped, deduped)",
       "paths": [
         "linux/man-pages/"
       ],
       "mac_build": true
     },
-    "hf_tldr": {
-      "document_count": 481,
+    "tldr_pages": {
+      "document_count": 7049,
       "license": "CC BY 4.0",
-      "scraped_at": "2025-11-01",
-      "description": "TLDR simplified man page summaries",
+      "scraped_at": "2026-08-23",
+      "description": "TLDR simplified command summaries across Common, Linux, macOS, and BSD platforms",
       "paths": [
-        "linux/hf-datasets/tldr_man_pages.jsonl"
+        "common/tldr/",
+        "linux/tldr/",
+        "macos/tldr/",
+        "bsd/tldr/"
       ],
       "mac_build": true
     },
-    "hf_unix_commands": {
-      "document_count": 100,
-      "license": "Apache 2.0",
-      "scraped_at": "2025-11-01",
-      "description": "Unix command examples and explanations",
-      "paths": [
-        "linux/hf-datasets/unix_commands.jsonl"
-      ],
-      "mac_build": true
-    },
-    "hf_arch_wiki": {
-      "document_count": 2140,
-      "license": "GNU FDL 1.3",
-      "scraped_at": "2025-11-01",
-      "description": "Arch Wiki subset from HuggingFace",
-      "paths": [
-        "linux/hf-datasets/arch_wiki.jsonl"
-      ],
-      "mac_build": false
-    },
-    "vendor_docs": {
-      "document_count": 54,
+    "common_tools": {
+      "document_count": 68,
       "license": "Various (permissive)",
-      "scraped_at": "2025-12-01",
-      "description": "Official vendor documentation (Docker, K8s, systemd, etc.)",
+      "scraped_at": "2026-08-23",
+      "description": "Cross-platform core tools (git, devtools, shell, python, docker, containers, aws-cli)",
       "paths": [
-        "linux/vendor-docs/",
-        "linux/docker-docs/",
-        "linux/kubernetes-docs/",
+        "common/git-docs/",
+        "common/devtools-docs/",
+        "common/shell-docs/",
+        "common/python-tools-docs/",
+        "common/docker-docs/",
+        "common/containers-docs/",
+        "common/aws-cli/"
+      ],
+      "mac_build": true
+    },
+    "linux_system_docs": {
+      "document_count": 257,
+      "license": "Various (permissive, CC BY-SA)",
+      "scraped_at": "2026-08-23",
+      "description": "Linux system guides (systemd, networking, security, storage, backup, monitoring, kernel)",
+      "paths": [
+        "linux/linux-core-docs/",
+        "linux/linux-utils-docs/",
         "linux/systemd-docs/",
-        "linux/nvidia-docs/",
-        "linux/podman-docs/"
-      ],
-      "mac_build": true
-    },
-    "stack_exchange": {
-      "document_count": 310,
-      "license": "CC BY-SA 4.0",
-      "scraped_at": "2025-12-01",
-      "description": "Unix & Linux Stack Exchange, Server Fault Q&A",
-      "paths": [
-        "linux/unix-se/",
-        "linux/serverfault/"
-      ],
-      "mac_build": true,
-      "attribution_required": true
-    },
-    "ubuntu_docs": {
-      "document_count": 19,
-      "license": "CC BY-SA 3.0",
-      "scraped_at": "2025-12-01",
-      "description": "Ubuntu official documentation",
-      "paths": [
-        "linux/ubuntu-docs/",
-        "linux/ubuntu-server/"
-      ],
-      "mac_build": true
-    },
-    "topic_guides": {
-      "document_count": 200,
-      "license": "Various (permissive)",
-      "scraped_at": "2025-12-15",
-      "description": "Topic-specific guides (networking, security, backup, etc.)",
-      "paths": [
+        "linux/systemd-ext/",
         "linux/network-docs/",
+        "linux/networking-docs/",
         "linux/security-docs/",
+        "linux/database-docs/",
         "linux/backup-docs/",
-        "linux/filesystem-docs/",
         "linux/monitoring-docs/",
         "linux/logging-docs/",
-        "linux/automation-docs/"
+        "linux/filesystem-docs/",
+        "linux/caching-docs/",
+        "linux/message-queues-docs/",
+        "linux/performance-docs/",
+        "linux/podman-docs/",
+        "linux/scheduling-docs/",
+        "linux/snap-docs/",
+        "linux/appimage-docs/",
+        "linux/flatpak-docs/",
+        "linux/ssl-certs-docs/",
+        "linux/webserver-docs/",
+        "linux/automation-docs/",
+        "linux/final-push/",
+        "linux/3k-push/",
+        "linux/user-sources/"
+      ],
+      "mac_build": true
+    },
+    "vendor_and_distro_docs": {
+      "document_count": 67,
+      "license": "Various (permissive)",
+      "scraped_at": "2026-08-23",
+      "description": "Vendor and distro documentation (Docker, K8s, Helm, NVIDIA, ROCm, Ubuntu)",
+      "paths": [
+        "linux/vendor-docs/",
+        "linux/kubernetes-docs/",
+        "linux/helm-k8s/",
+        "linux/nvidia-docs/",
+        "linux/rocm-docs/",
+        "linux/ubuntu-docs/",
+        "linux/ubuntu-server/"
       ],
       "mac_build": true
     },
@@ -113,7 +109,7 @@
       "document_count": 8777,
       "license": "BSD-2-Clause",
       "scraped_at": "2026-08-23",
-      "description": "Homebrew package manager documentation - all formulas, casks, and official docs",
+      "description": "Homebrew package manager documentation - formulas, casks, and official docs",
       "paths": [
         "macos/homebrew/"
       ],
@@ -121,10 +117,10 @@
       "linux_build": false
     },
     "macos_man_pages": {
-      "document_count": 7310,
+      "document_count": 5280,
       "license": "Various (BSD, APSL 2.0)",
       "scraped_at": "2026-08-23",
-      "description": "macOS man pages extracted from local system - command reference for all sections",
+      "description": "macOS man pages extracted from local system - command reference (deduped, clean)",
       "paths": [
         "macos/man-pages/"
       ],
@@ -153,8 +149,7 @@
       ],
       "mac_build": true,
       "linux_build": false,
-      "attribution_required": true,
-      "note": "Rate-limited without API key. Get key at stackapps.com for more results."
+      "attribution_required": true
     },
     "macos_macports_guide": {
       "document_count": 10,
@@ -171,7 +166,7 @@
       "document_count": 41,
       "license": "FreeBSD Documentation License",
       "scraped_at": "2026-08-23",
-      "description": "FreeBSD Handbook - comprehensive BSD documentation covering networking, storage, security, and system administration. BSD concepts underpin macOS.",
+      "description": "FreeBSD Handbook - comprehensive BSD documentation covering networking, storage, security, and system administration.",
       "paths": [
         "bsd/freebsd-handbook/"
       ],
@@ -180,7 +175,7 @@
       "attribution_required": true
     },
     "freebsd_man_pages": {
-      "document_count": 185,
+      "document_count": 181,
       "license": "FreeBSD Documentation License",
       "scraped_at": "2026-08-23",
       "description": "FreeBSD man pages for BSD commands shared with macOS - user commands, system admin, file formats",
@@ -192,9 +187,9 @@
       "attribution_required": true
     }
   },
-  "total_documents": 63932,
+  "total_documents": 29237,
   "total_chunks": 0,
-  "index_schema_version": "1.0",
+  "index_schema_version": "2.0",
   "remote_url": "",
   "check_updates_url": "",
   "notes": {
