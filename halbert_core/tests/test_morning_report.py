@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from halbert_core.config.being_config import BeingConfig
+from halbert_core.config.being_config import BeingConfig, resolve_timezone
 from halbert_core.config.watcher import ConfigWatcher
 from halbert_core.findings.proposals import Proposal, ProposalStore
 from halbert_core.findings.store import Finding, FindingStore
@@ -288,3 +288,32 @@ class TestConfigWatcherRecentChanges:
         watcher._handle_change(self._snapshot())
 
         assert calls == ["a", "b"]
+
+
+# ── Timezone resolution ──────────────────────────────────────────
+
+class TestTimezoneResolution:
+    def test_explicit_iana_name(self):
+        assert resolve_timezone("America/Chicago") == "America/Chicago"
+
+    def test_utc(self):
+        assert resolve_timezone("UTC") == "UTC"
+
+    def test_local_returns_valid_tz(self):
+        """'local' should resolve to a valid IANA timezone (not empty)."""
+        tz = resolve_timezone("local")
+        assert isinstance(tz, str)
+        assert len(tz) > 0
+
+    def test_being_config_has_timezone_field(self):
+        cfg = BeingConfig()
+        assert hasattr(cfg, "timezone")
+        assert cfg.timezone == "local"
+
+    def test_being_config_from_dict_with_timezone(self):
+        cfg = BeingConfig.from_dict({"timezone": "Europe/Berlin"})
+        assert cfg.timezone == "Europe/Berlin"
+
+    def test_being_config_from_dict_without_timezone(self):
+        cfg = BeingConfig.from_dict({})
+        assert cfg.timezone == "local"

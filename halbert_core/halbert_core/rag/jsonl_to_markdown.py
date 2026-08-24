@@ -62,6 +62,66 @@ def format_doc_to_markdown(doc: Dict[str, Any]) -> str:
     return f"## {title}\n{meta_line}\n\n{content}\n\n"
 
 
+def chunk_large_doc(doc: Dict[str, Any], max_bytes: int) -> List[str]:
+    """Split an oversized document into multiple markdown sections.
+
+    If the document's markdown fits within *max_bytes*, a single-element list
+    is returned (identical to ``format_doc_to_markdown``).
+
+    Otherwise the content is split at paragraph boundaries (double newlines).
+    Each resulting section carries the same metadata header and an H2 heading
+    suffixed with ``(continued, part N)`` so SourcePrep's 8000-char truncation
+    does not clip the tail.  Paragraphs that individually exceed *max_bytes*
+    are further split at line boundaries.
+    """
+    doc_md = format_doc_to_markdown(doc)
+    if len(doc_md.encode("utf-8")) <= max_bytes:
+        return [doc_md]
+
+    title = sanitize_heading(doc.get("title", "Untitled"))
+    meta_line = format_meta_comment(doc)
+    content = str(doc.get("content", "")).strip()
+
+    header = f"## {title}\n{meta_line}\n\n"
+    header_bytes = len(header.encode("utf-8"))
+
+    # Split into paragraphs, then further split oversized paragraphs at line breaks
+    paragraphs: List[str] = []
+    for para in re.split(r"\n\s*\n", content):
+        if len(para.encode("utf-8")) + header_bytes <= max_bytes:
+            paragraphs.append(para)
+        else:
+            # Paragraph itself too large — split at line boundaries
+            for line in para.split("\n"):
+                paragraphs.append(line)
+
+    sections: List[str] = []
+    current: List[str] = []
+    current_bytes = header_bytes
+
+    for para in paragraphs:
+        chunk = para + "\n\n"
+        chunk_bytes = len(chunk.encode("utf-8"))
+        if current and current_bytes + chunk_bytes > max_bytes:
+            sections.append(header + "".join(current))
+            current = []
+            current_bytes = header_bytes
+        current.append(chunk)
+        current_bytes += chunk_bytes
+
+    if current:
+        sections.append(header + "".join(current))
+
+    # Rename headings: first keeps original, rest get "(continued, part N)"
+    if len(sections) > 1:
+        for i in range(1, len(sections)):
+            old_heading = f"## {title}\n"
+            new_heading = f"## {title} (continued, part {i + 1})\n"
+            sections[i] = sections[i].replace(old_heading, new_heading, 1)
+
+    return sections
+
+
 def convert_jsonl_file(
     jsonl_path: Path,
     output_dir: Path,
@@ -124,18 +184,21 @@ def convert_jsonl_file(
         current_buffer = []
 
     for doc in docs:
-        doc_md = format_doc_to_markdown(doc)
-        doc_size = len(doc_md.encode("utf-8"))
+        # Split oversized docs into multiple sections that each fit within max_bytes
+        doc_sections = chunk_large_doc(doc, max_bytes_per_file)
 
-        # Check if adding this doc would exceed limits
-        if current_docs > 0 and (
-            (current_docs + 1 > max_docs_per_file) or (current_bytes + doc_size > max_bytes_per_file)
-        ):
-            flush_part()
+        for doc_md in doc_sections:
+            doc_size = len(doc_md.encode("utf-8"))
 
-        current_buffer.append(doc_md)
-        current_docs += 1
-        current_bytes += doc_size
+            # Check if adding this section would exceed limits
+            if current_docs > 0 and (
+                (current_docs + 1 > max_docs_per_file) or (current_bytes + doc_size > max_bytes_per_file)
+            ):
+                flush_part()
+
+            current_buffer.append(doc_md)
+            current_docs += 1
+            current_bytes += doc_size
 
     # Flush remaining
     flush_part()

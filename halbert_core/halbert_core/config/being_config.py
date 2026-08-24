@@ -36,6 +36,7 @@ class BeingConfig:
     quiet_hours: Optional[Dict[str, str]] = None  # {"start": "22:00", "end": "07:00"}
     morning_report: Optional[Dict[str, Any]] = None  # {"enabled": True, "time": "08:00"}
     category_overrides: Dict[str, str] = field(default_factory=dict)
+    timezone: str = "local"  # IANA tz name, or "local" for system timezone
 
     def validate(self) -> None:
         """Validate the config. Raises ValueError on invalid values."""
@@ -72,6 +73,50 @@ class BeingConfig:
 def _default_path() -> Path:
     """Get the default being.yml path."""
     return get_config_dir() / "being.yml"
+
+
+def resolve_timezone(tz_name: str) -> str:
+    """Resolve a timezone name to a value APScheduler accepts.
+
+    "local" → the system's local timezone (e.g. "America/New_York").
+    Any other string is returned as-is (must be a valid IANA name).
+    Falls back to "UTC" if the system timezone cannot be determined.
+    """
+    if tz_name != "local":
+        return tz_name
+    # Method 1: /etc/localtime symlink (macOS) — realpath contains the IANA name
+    try:
+        import os
+        import zoneinfo
+        realpath = os.path.realpath("/etc/localtime")
+        if "zoneinfo/" in realpath:
+            iana = realpath.split("zoneinfo/")[-1]
+            if iana in zoneinfo.available_timezones():
+                return iana
+    except Exception:
+        pass
+    # Method 2: /etc/timezone (Linux)
+    try:
+        import zoneinfo
+        tzpath = Path("/etc/timezone")
+        if tzpath.exists():
+            tz = tzpath.read_text().strip()
+            if tz in zoneinfo.available_timezones():
+                return tz
+    except Exception:
+        pass
+    # Method 3: datetime tzinfo key (works when zoneinfo loads the local tz)
+    try:
+        import datetime
+        import zoneinfo
+        local_tz = datetime.datetime.now().astimezone().tzinfo
+        if local_tz is not None:
+            tz_key = getattr(local_tz, "key", None) or str(local_tz)
+            if tz_key in zoneinfo.available_timezones():
+                return tz_key
+    except Exception:
+        pass
+    return "UTC"
 
 
 def load_being_config(path: Optional[str] = None) -> BeingConfig:

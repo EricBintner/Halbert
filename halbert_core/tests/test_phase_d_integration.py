@@ -246,6 +246,7 @@ class TestSystemEventMapper:
 
     def test_disk_failure_creates_worry(self):
         """Disk failure event should create a worry in cognition."""
+        pytest.importorskip("haloysius")
         from halbert_core.integrations.system_event_mapper import SystemEventMapper
 
         mapper = SystemEventMapper()
@@ -274,6 +275,7 @@ class TestSystemEventMapper:
 
     def test_service_recovered_resolves_worry(self):
         """Service recovered event should resolve matching worries."""
+        pytest.importorskip("haloysius")
         from halbert_core.integrations.system_event_mapper import SystemEventMapper
 
         mapper = SystemEventMapper()

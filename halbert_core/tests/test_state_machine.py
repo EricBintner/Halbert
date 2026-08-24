@@ -85,7 +85,7 @@ class TestStateTransitions:
         agent.current_state = AgentState.IDLE
         
         # This should not raise
-        event = asyncio.get_event_loop().run_until_complete(
+        event = asyncio.run(
             agent._transition(AgentState.PLANNING)
         )
         
@@ -104,7 +104,7 @@ class TestStateTransitions:
         agent.current_state = AgentState.IDLE
         
         with pytest.raises(ValueError, match="Invalid transition"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 agent._transition(AgentState.RESPONDING)
             )
     
@@ -117,7 +117,7 @@ class TestStateTransitions:
         )
         agent.current_state = AgentState.PLANNING
         
-        event = asyncio.get_event_loop().run_until_complete(
+        event = asyncio.run(
             agent._transition(AgentState.SEARCHING)
         )
         
@@ -132,7 +132,7 @@ class TestStateTransitions:
         )
         agent.current_state = AgentState.EXECUTING
         
-        event = asyncio.get_event_loop().run_until_complete(
+        event = asyncio.run(
             agent._transition(AgentState.AWAITING_CONFIRMATION)
         )
         
@@ -147,7 +147,7 @@ class TestStateTransitions:
         )
         agent.current_state = AgentState.IDLE
         
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             agent._transition(AgentState.PLANNING)
         )
         

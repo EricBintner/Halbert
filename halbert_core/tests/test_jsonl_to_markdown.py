@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from halbert_core.rag.jsonl_to_markdown import (
+    chunk_large_doc,
     convert_corpus,
     convert_jsonl_file,
     format_doc_to_markdown,
@@ -108,3 +109,75 @@ def test_convert_corpus(tmp_path: Path):
 
     assert (staging_dir / "linux" / "src1" / "doc_01.md").exists()
     assert (staging_dir / "macos" / "src2" / "doc_01.md").exists()
+
+
+def test_chunk_large_doc_under_limit():
+    """Docs under the byte limit should return a single section."""
+    doc = {"id": "1", "title": "Small", "content": "Hello world.", "source": "s", "category": "c", "tags": []}
+    sections = chunk_large_doc(doc, max_bytes=500_000)
+    assert len(sections) == 1
+    assert "Hello world." in sections[0]
+
+
+def test_chunk_large_doc_over_limit():
+    """Docs over the byte limit should be split into multiple sections."""
+    # Create content that exceeds 1000 bytes
+    big_content = "\n\n".join(f"Paragraph {i}. " + "x" * 200 for i in range(20))
+    doc = {
+        "id": "big1",
+        "title": "Big Doc",
+        "content": big_content,
+        "source": "test",
+        "category": "c",
+        "tags": [],
+    }
+    sections = chunk_large_doc(doc, max_bytes=1000)
+    assert len(sections) > 1
+    # Each section should be under the limit
+    for s in sections:
+        assert len(s.encode("utf-8")) <= 1000
+    # First section keeps original heading
+    assert sections[0].startswith("## Big Doc\n")
+    # Subsequent sections get continuation suffix
+    assert "(continued, part 2)" in sections[1]
+
+
+def test_chunk_large_doc_preserves_metadata():
+    """Each chunk should carry the metadata comment."""
+    big_content = "\n\n".join(f"Paragraph {i}. " + "x" * 200 for i in range(20))
+    doc = {
+        "id": "big2",
+        "title": "Big Doc",
+        "content": big_content,
+        "source": "test-src",
+        "category": "cat",
+        "tags": ["a", "b"],
+    }
+    sections = chunk_large_doc(doc, max_bytes=1000)
+    for s in sections:
+        assert "<!-- id: big2" in s
+        assert "source: test-src" in s
+
+
+def test_convert_jsonl_file_with_oversized_doc(tmp_path: Path):
+    """A single oversized doc should produce multiple parts, each under the byte limit."""
+    jsonl_file = tmp_path / "big.jsonl"
+    out_dir = tmp_path / "output"
+
+    big_content = "\n\n".join(f"Paragraph {i}. " + "x" * 200 for i in range(20))
+    doc = {
+        "id": "big3",
+        "title": "Oversized",
+        "content": big_content,
+        "source": "test-source",
+        "category": "test",
+        "tags": ["test"],
+    }
+    with open(jsonl_file, "w", encoding="utf-8") as f:
+        f.write(json.dumps(doc) + "\n")
+
+    created = convert_jsonl_file(jsonl_file, out_dir, max_docs_per_file=500, max_bytes_per_file=1000)
+    assert len(created) > 1
+    for cf in created:
+        size = cf.stat().st_size
+        assert size <= 1000 + 200  # small tolerance for header overhead

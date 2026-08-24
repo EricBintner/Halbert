@@ -20,6 +20,11 @@ MODEL_CONFIG = {
     "routing": {"complexity_threshold": 3},
 }
 
+MODEL_CONFIG_WITH_VISION = {
+    **MODEL_CONFIG,
+    "vision": {"model": "llama3.2-vision"},
+}
+
 
 def make_router(score: int = 3, cached: bool = False) -> ComplexityRouter:
     """Create a ComplexityRouter with a mock LLM that returns the given score."""
@@ -188,6 +193,7 @@ class TestMessageIntakeFields:
         assert isinstance(result.has_error_indicators, bool)
         assert isinstance(result.has_code_blocks, bool)
         assert isinstance(result.has_file_paths, bool)
+        assert isinstance(result.has_images, bool)
         assert isinstance(result.complexity_score, int)
         assert result.complexity_level is not None
         assert isinstance(result.complexity_cached, bool)
@@ -198,3 +204,34 @@ class TestMessageIntakeFields:
         assert isinstance(result.needs_retrieval, bool)
         assert isinstance(result.needs_tools, bool)
         assert isinstance(result.needs_web_search, bool)
+
+
+# ── Vision routing ───────────────────────────────────────────────
+
+class TestVisionRouting:
+    def test_image_message_routes_to_vision(self):
+        """A message with image references should route to vision model."""
+        pipeline = IntakePipeline(make_router(score=5), get_context_budget, MODEL_CONFIG_WITH_VISION)
+        result = pipeline.analyze("What's wrong with this screenshot? ![error](screenshot.png)")
+        assert result.has_images is True
+        assert result.recommended_model == "vision"
+
+    def test_vision_overrides_specialist(self):
+        """Vision should take priority even for high-complexity messages."""
+        pipeline = IntakePipeline(make_router(score=5), get_context_budget, MODEL_CONFIG_WITH_VISION)
+        result = pipeline.analyze("Debug this kernel panic, here's the crash dump: crash.jpeg")
+        assert result.recommended_model == "vision"
+
+    def test_no_vision_model_falls_back(self):
+        """If no vision model configured, falls back to guide/specialist."""
+        pipeline = IntakePipeline(make_router(score=2), get_context_budget, MODEL_CONFIG)
+        result = pipeline.analyze("Check this screenshot.png for errors")
+        assert result.has_images is True
+        assert result.recommended_model != "vision"
+
+    def test_plain_text_does_not_route_to_vision(self):
+        """Messages without images should not route to vision."""
+        pipeline = IntakePipeline(make_router(score=2), get_context_budget, MODEL_CONFIG_WITH_VISION)
+        result = pipeline.analyze("why is nginx failing?")
+        assert result.has_images is False
+        assert result.recommended_model != "vision"

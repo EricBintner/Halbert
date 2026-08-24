@@ -45,6 +45,7 @@ class MessageIntake:
     has_error_indicators: bool
     has_code_blocks: bool
     has_file_paths: bool
+    has_images: bool
 
     # From complexity
     complexity_score: int
@@ -102,8 +103,13 @@ class IntakePipeline:
         # ── Stage 3: Model selection + budget ─────────────────────
         threshold = self._model_config.get("routing", {}).get("complexity_threshold", 3)
         specialist_enabled = self._model_config.get("specialist", {}).get("enabled", False)
+        vision_model_name = self._model_config.get("vision", {}).get("model", "")
 
-        if complexity.score >= threshold and specialist_enabled:
+        if signals.has_images and vision_model_name:
+            # Vision takes priority — image content requires a multimodal model
+            recommended_model_name = "vision"
+            model_name = vision_model_name
+        elif complexity.score >= threshold and specialist_enabled:
             recommended_model_name = "specialist"
             model_name = self._model_config.get("specialist", {}).get("model", "")
         else:
@@ -129,6 +135,7 @@ class IntakePipeline:
             has_error_indicators=signals.has_error_indicators,
             has_code_blocks=signals.has_code_blocks,
             has_file_paths=signals.has_file_paths,
+            has_images=signals.has_images,
             # Complexity
             complexity_score=complexity.score,
             complexity_level=complexity.level.name,

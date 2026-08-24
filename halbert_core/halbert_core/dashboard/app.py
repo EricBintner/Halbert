@@ -326,13 +326,22 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 from ..scheduler.executor import AutonomousExecutor, APSCHEDULER_AVAILABLE
                 if APSCHEDULER_AVAILABLE:
                     global _scheduler_executor
+                    # Resolve timezone from being config (default: local system tz)
+                    scheduler_tz = 'UTC'
+                    try:
+                        from ..config.being_config import load_being_config, resolve_timezone
+                        being_cfg = load_being_config()
+                        scheduler_tz = resolve_timezone(being_cfg.timezone)
+                    except Exception:
+                        pass  # Fall back to UTC
                     _scheduler_executor = AutonomousExecutor(
                         max_workers=3,
                         enable_llm=False,  # Disable LLM for scheduler jobs
-                        enable_guardrails=True
+                        enable_guardrails=True,
+                        timezone=scheduler_tz,
                     )
                     _scheduler_executor.start()
-                    logger.info("Scheduler started successfully")
+                    logger.info(f"Scheduler started successfully (timezone: {scheduler_tz})")
                 else:
                     logger.info("APScheduler not available, scheduler disabled")
             except Exception as e:
@@ -387,7 +396,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                         description='Daily morning report',
                     )
                     logger.info(
-                        f"Morning report scheduled daily at {hour:02d}:{minute:02d} UTC"
+                        f"Morning report scheduled daily at {hour:02d}:{minute:02d} {executor.timezone}"
                     )
                 except Exception as e:
                     logger.warning(f"Failed to schedule morning report: {e}")

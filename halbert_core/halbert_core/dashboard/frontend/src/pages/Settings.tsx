@@ -357,23 +357,37 @@ function BeingSettings() {
         </CardHeader>
         <CardContent className="space-y-3">
           {config.morning_report?.enabled ? (
-            <div className="flex items-center gap-2">
-              <Input
-                type="time"
-                defaultValue={config.morning_report.time || '08:00'}
-                onChange={(e) => {
-                  saveConfig({ morning_report: { ...config.morning_report, time: e.target.value } })
-                }}
-                className="w-32"
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => saveConfig({ morning_report: { enabled: false } })}
-                disabled={saving}
-              >
-                Disable
-              </Button>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Input
+                  type="time"
+                  defaultValue={config.morning_report.time || '08:00'}
+                  onChange={(e) => {
+                    saveConfig({ morning_report: { ...config.morning_report, time: e.target.value } })
+                  }}
+                  className="w-32"
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => saveConfig({ morning_report: { enabled: false } })}
+                  disabled={saving}
+                >
+                  Disable
+                </Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-muted-foreground">Timezone:</label>
+                <Input
+                  type="text"
+                  defaultValue={config.timezone || 'local'}
+                  placeholder="local"
+                  onChange={(e) => {
+                    saveConfig({ timezone: e.target.value })
+                  }}
+                  className="w-48"
+                />
+              </div>
             </div>
           ) : (
             <Button

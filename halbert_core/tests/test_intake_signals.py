@@ -180,6 +180,38 @@ class TestEdgeCases:
         assert s.is_greeting is False
 
 
+# ── Image detection ──────────────────────────────────────────────
+
+class TestImageDetection:
+    def test_markdown_image_syntax(self):
+        s = analyze_message("Here's a screenshot: ![error](screenshot.png)")
+        assert s.has_images is True
+
+    def test_data_uri_image(self):
+        s = analyze_message("Check this: data:image/png;base64,iVBORw0KGgo=")
+        assert s.has_images is True
+
+    def test_html_img_tag(self):
+        s = analyze_message("Look at <img src='chart.jpg' /> for details")
+        assert s.has_images is True
+
+    def test_image_file_extension(self):
+        s = analyze_message("Please review the diagram.png I attached")
+        assert s.has_images is True
+
+    def test_jpeg_extension(self):
+        s = analyze_message("See photo.jpeg for the error")
+        assert s.has_images is True
+
+    def test_no_image_in_plain_text(self):
+        s = analyze_message("why is nginx failing after the update?")
+        assert s.has_images is False
+
+    def test_no_false_positive_on_word_png(self):
+        s = analyze_message("I pinged the server but got no response")
+        assert s.has_images is False
+
+
 # ── Performance ──────────────────────────────────────────────────
 
 class TestPerformance:

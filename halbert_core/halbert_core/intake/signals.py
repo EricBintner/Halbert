@@ -77,6 +77,14 @@ _FILE_PATH_RE = re.compile(
 _CODE_BLOCK_FENCE_RE = re.compile(r"```")
 _CODE_BLOCK_INDENT_RE = re.compile(r"(?m)^    \S")
 
+# Image detection — markdown image syntax, data URIs, HTML img tags, image file extensions
+_IMAGE_MARKDOWN_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)", re.IGNORECASE)
+_IMAGE_DATA_URI_RE = re.compile(r"data:image/[a-zA-Z+]+;base64,", re.IGNORECASE)
+_IMAGE_HTML_RE = re.compile(r"<img\b", re.IGNORECASE)
+_IMAGE_EXT_RE = re.compile(
+    r"\b\w+\.(png|jpe?g|gif|webp|svg|bmp|tiff?|heic|avif)\b", re.IGNORECASE
+)
+
 _COMMAND_VERBS = frozenset(
     {"show", "list", "check", "run", "install", "configure", "enable",
      "disable", "restart", "stop", "start", "update", "remove", "create",
@@ -106,6 +114,7 @@ class MessageSignals:
     has_error_indicators: bool = False
     has_code_blocks: bool = False
     has_file_paths: bool = False
+    has_images: bool = False
 
 
 # ── Analysis ─────────────────────────────────────────────────────
@@ -153,6 +162,14 @@ def analyze_message(message: str) -> MessageSignals:
     signals.has_code_blocks = (
         bool(_CODE_BLOCK_FENCE_RE.search(text))
         or bool(_CODE_BLOCK_INDENT_RE.search(text))
+    )
+
+    # ── Image references ────────────────────────────────────────
+    signals.has_images = (
+        bool(_IMAGE_MARKDOWN_RE.search(text))
+        or bool(_IMAGE_DATA_URI_RE.search(text))
+        or bool(_IMAGE_HTML_RE.search(text))
+        or bool(_IMAGE_EXT_RE.search(text))
     )
 
     # ── Question detection ───────────────────────────────────────

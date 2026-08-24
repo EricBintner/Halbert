@@ -271,8 +271,9 @@ class LLMClientAdapter:
         prompt = messages[-1].get("content", "") if messages else ""
         system = messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
 
-        # Phase 4: Vision model routing when images are present
-        if images:
+        # Phase 4: Vision model routing when images are present or intake recommends it
+        use_vision = bool(images) or (intake_result is not None and intake_result.recommended_model == "vision")
+        if use_vision:
             vision_model, vision_endpoint = get_vision_model()
             if vision_model:
                 logger.info(f"Agent using vision model: {vision_model}")
@@ -283,7 +284,7 @@ class LLMClientAdapter:
                 for msg in messages:
                     if msg.get("role") != "system":
                         m = dict(msg)
-                        if msg.get("role") == "user":
+                        if msg.get("role") == "user" and images:
                             m["images"] = images
                         llm_messages.append(m)
                 try:
@@ -382,8 +383,9 @@ class LLMClientAdapter:
         # Get the prompt from messages
         prompt = messages[-1].get("content", "") if messages else ""
 
-        # Phase 4: Vision model routing when images are present
-        if images:
+        # Phase 4: Vision model routing when images are present or intake recommends it
+        use_vision = bool(images) or (intake_result is not None and intake_result.recommended_model == "vision")
+        if use_vision:
             vision_model, vision_endpoint = get_vision_model()
             if vision_model:
                 logger.info(f"Agent stream using vision model: {vision_model}")
@@ -391,13 +393,14 @@ class LLMClientAdapter:
                 endpoint = vision_endpoint
                 provider = "ollama"
                 # Add images to the last user message
-                for msg in messages:
-                    if msg.get("role") == "user":
-                        msg["images"] = images
-                        break
+                if images:
+                    for msg in messages:
+                        if msg.get("role") == "user":
+                            msg["images"] = images
+                            break
 
         # Route based on complexity (skipped if vision model already selected)
-        if not images or not vision_model:
+        if not use_vision or not vision_model:
             model = get_configured_model()
             endpoint = get_ollama_endpoint()
             provider = "ollama"

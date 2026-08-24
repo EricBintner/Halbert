@@ -85,16 +85,18 @@ class AutonomousExecutor:
         max_workers: int = 5,
         db_path: Optional[str] = None,
         enable_llm: bool = True,
-        enable_guardrails: bool = True
+        enable_guardrails: bool = True,
+        timezone: str = 'UTC'
     ):
         """
         Initialize autonomous executor.
-        
+
         Args:
             max_workers: Maximum parallel jobs (default: 5)
             db_path: SQLite database path for job persistence
             enable_llm: Enable LLM-driven decisions (default: True)
             enable_guardrails: Enable guardrail enforcement (default: True, Phase 3 M6)
+            timezone: Timezone for cron triggers (default: UTC; use IANA name or "local")
         """
         if not APSCHEDULER_AVAILABLE:
             raise ImportError(
@@ -104,6 +106,7 @@ class AutonomousExecutor:
         self.max_workers = max_workers
         self.enable_llm = enable_llm
         self.enable_guardrails = enable_guardrails
+        self.timezone = timezone
         self.scheduler_engine = SchedulerEngine()
         
         # Initialize guardrails (Phase 3 M6)
@@ -157,7 +160,7 @@ class AutonomousExecutor:
             jobstores=jobstores,
             executors=executors,
             job_defaults=job_defaults,
-            timezone='UTC'
+            timezone=self.timezone
         )
         
         self._running = False
@@ -254,7 +257,7 @@ class AutonomousExecutor:
         # Schedule with APScheduler
         self.scheduler.add_job(
             func=wrapped_func,
-            trigger=CronTrigger(**cron_expr, timezone='UTC'),
+            trigger=CronTrigger(**cron_expr, timezone=self.timezone),
             id=job_id,
             name=description or job_id,
             replace_existing=True
