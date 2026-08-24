@@ -1,43 +1,41 @@
 import React from 'react';
-import { ArrowRight, Terminal } from 'lucide-react';
 import { HalbertMark } from './HalbertMark';
 
-export function Header({ onJoinWaitlistClick }) {
+export function Header({ copy, onJoinWaitlistClick }) {
+  const masthead = copy?.masthead || {
+    vol: 'VOL. 1',
+    issue: 'NO. 1 — AUGUST 2026',
+    edition: 'FIRST EDITION',
+    tagline: 'You can call me AI.',
+    cta: 'Get Early Access',
+  };
+
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 h-16 bg-[var(--color-canvas)]/85 backdrop-blur-md border-b border-[var(--color-hairline)] transition-all duration-300">
-      <div className="max-w-[var(--content-max-width)] mx-auto h-full px-6 flex items-center justify-between">
-        {/* Wordmark & Brand Mark */}
-        <a href="#" className="flex items-center space-x-2.5 group">
-          <HalbertMark size={26} color="var(--color-accent, #D34E24)" className="transition-transform group-hover:scale-105" />
-          <span className="font-display font-semibold text-2xl tracking-tight text-[var(--color-ink)]">
-            Halbert<span className="text-[var(--color-accent)] font-bold">.</span>
-          </span>
-          <span className="hidden sm:inline-block text-[12px] font-mono text-[var(--color-ink-tertiary)] border border-[var(--color-hairline-strong)] px-2 py-0.5 rounded-full">
-            v2026.8
-          </span>
-        </a>
+    <header className="w-full bg-[var(--color-canvas)] border-b-3 border-[var(--color-ink)] pt-6 pb-4 px-6 select-none">
+      <div className="max-w-[var(--content-max-width)] mx-auto flex flex-col md:flex-row items-baseline justify-between gap-4">
+        {/* Left: Brand Mark & Masthead Title */}
+        <div className="flex items-center space-x-3.5">
+          <HalbertMark size={32} color="var(--color-ink)" />
+          <a href="#" className="flex items-baseline space-x-3 group">
+            <span className="font-display font-extrabold text-3xl md:text-4xl tracking-tighter text-[var(--color-ink)]">
+              Halbert<span className="text-[var(--color-accent)] font-black">.</span>
+            </span>
+            <span className="hidden sm:inline-block font-mono text-[12px] font-bold uppercase tracking-widest text-[var(--color-ink-tertiary)] border-l-2 border-[var(--color-ink)] pl-3">
+              {masthead.edition}
+            </span>
+          </a>
+        </div>
 
-        {/* Center Navigation Links */}
-        <nav className="hidden md:flex items-center space-x-8 text-[14.5px] font-medium text-[var(--color-ink-secondary)]">
-          <a href="#how-it-works" className="hover:text-[var(--color-ink)] transition-colors">
-            How It Works
-          </a>
-          <a href="#the-being" className="hover:text-[var(--color-ink)] transition-colors">
-            The Being
-          </a>
-          <a href="https://github.com/EricBintner/Halbert" target="_blank" rel="noreferrer" className="hover:text-[var(--color-ink)] transition-colors">
-            GitHub
-          </a>
-        </nav>
-
-        {/* Right CTA */}
-        <div className="flex items-center space-x-4">
+        {/* Center/Right: Edition Metadata & Direct Action */}
+        <div className="flex items-center space-x-6 text-[12px] font-mono font-bold tracking-wider uppercase text-[var(--color-ink)]">
+          <span className="hidden md:inline text-[var(--color-ink-secondary)]">
+            {masthead.vol} · {masthead.issue}
+          </span>
           <button
             onClick={onJoinWaitlistClick}
-            className="inline-flex items-center px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] transition-all shadow-sm hover:shadow-[0_4px_12px_rgba(211,78,36,0.25)] active:translate-y-px"
+            className="px-3.5 py-1.5 bg-[var(--color-ink)] text-white hover:bg-[var(--color-accent)] transition-colors border border-[var(--color-ink)] shadow-[2px_2px_0px_0px_rgba(211,78,36,1)]"
           >
-            <span>Early Access</span>
-            <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+            {masthead.cta} →
           </button>
         </div>
       </div>

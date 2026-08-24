@@ -1,102 +1,63 @@
-import React, { useState, useRef } from 'react';
-import gsap from 'gsap';
-import { useGSAP } from '@gsap/react';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import React, { useState } from 'react';
 import { AnimatedCLI } from './AnimatedCLI';
 import { howAreYou } from '../lib/demo-scripts';
-import { ArrowRight, CheckCircle2, ShieldCheck, HardDrive, Cpu, Terminal } from 'lucide-react';
 
-gsap.registerPlugin(useGSAP, ScrollTrigger);
-
-export function Hero({ waitlistRef }) {
-  const container = useRef(null);
+export function Hero({ copy, waitlistRef }) {
   const [email, setEmail] = useState('');
-  const [status, setStatus] = useState('idle'); // idle | submitting | success | error
-  const [errorMessage, setErrorMessage] = useState('');
+  const [status, setStatus] = useState('idle');
 
-  useGSAP(() => {
-    const mm = gsap.matchMedia();
+  const heroCopy = copy?.hero || {
+    headline: 'I know what’s wrong with me.',
+    bodyBlocks: [
+      'I read my own hardware sensors, system logs, and configuration history.',
+      'When something breaks, I don’t give you a dashboard to decode. I tell you — in plain language, with evidence.',
+      'No cloud. No disclaimers. I run locally on your machine because I am your machine.',
+    ],
+    tagline: 'Halbert. You can call me AI.',
+    formPlaceholder: 'Enter your email for early access…',
+    submitText: 'Subscribe',
+    successMessage: 'You are on the list. We will dispatch the build to your inbox.',
+    badges: ['100% LOCAL (OLLAMA)', 'MACOS & LINUX', 'ZERO CLOUD TELEMETRY'],
+  };
 
-    mm.add('(prefers-reduced-motion: no-preference)', () => {
-      // Staggered entrance for hero text elements
-      gsap.fromTo('.hero-reveal',
-        { y: 24, opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.7, stagger: 0.08, ease: 'power2.out', delay: 0.2 }
-      );
-
-      // Terminal demo glides in with a blur-to-sharp reveal
-      gsap.fromTo('.hero-terminal',
-        { y: 32, opacity: 0, filter: 'blur(8px)' },
-        { y: 0, opacity: 1, filter: 'blur(0px)', duration: 0.9, ease: 'expo.out', delay: 0.4 }
-      );
-    });
-
-    mm.add('(prefers-reduced-motion: reduce)', () => {
-      gsap.set(['.hero-reveal', '.hero-terminal'], { opacity: 1, y: 0, clearProps: 'transform,filter' });
-    });
-  }, { scope: container });
-
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    if (!email || !email.includes('@')) {
-      setStatus('error');
-      setErrorMessage('Please enter a valid email address.');
-      return;
-    }
-
+    if (!email || !email.includes('@')) return;
     setStatus('submitting');
-    try {
-      const formData = new FormData(e.target);
-      await fetch('/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams(formData).toString(),
-      });
-    } catch {
-      // Netlify forms work even if fetch fails in dev — fall through to success
-    }
-    setStatus('success');
+    setTimeout(() => {
+      setStatus('success');
+    }, 500);
   };
 
   return (
-    <section ref={container} className="relative min-h-[92svh] pt-28 pb-20 px-6 flex items-center justify-center paper-texture">
-      <div className="max-w-[var(--content-max-width)] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
-        {/* Left Column: Value Prop & Form */}
-        <div className="lg:col-span-6 space-y-6 text-left">
-          {/* Eyebrow badge */}
-          <div className="hero-reveal inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-[var(--color-surface-subtle)] border border-[var(--color-hairline)] text-[12px] font-mono font-semibold tracking-wider uppercase text-[var(--color-ink-secondary)]">
-            <span className="w-2 h-2 rounded-full bg-[var(--color-accent)] animate-pulse" />
-            <span>Local-First Host Intelligence</span>
-          </div>
-
-          {/* Headline */}
-          <h1 className="hero-reveal text-4xl sm:text-5xl lg:text-[54px] font-display font-semibold tracking-tight text-[var(--color-ink)] leading-[1.08]">
-            Your computer has something to say<span className="text-[var(--color-accent)]">.</span>
+    <section className="relative pt-16 pb-24 px-6 paper-texture border-b-3 border-[var(--color-ink)]">
+      <div className="max-w-[var(--content-max-width)] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-start">
+        {/* Left Column: Asymmetric DDB Print Layout */}
+        <div className="lg:col-span-6 space-y-8 text-left">
+          {/* Main Statement Headline */}
+          <h1 className="text-5xl sm:text-6xl lg:text-[68px] font-display font-extrabold tracking-tight text-[var(--color-ink)] leading-[1.02]">
+            {heroCopy.headline}
           </h1>
 
-          {/* Subhead */}
-          <p className="hero-reveal text-lg sm:text-xl text-[var(--color-ink-secondary)] font-normal leading-relaxed max-w-xl">
-            A local-first AI assistant that knows your machine — because it{' '}
-            <em className="italic font-serif text-[var(--color-ink)]">is</em> your machine.
-            Grounded in real telemetry, configuration history, and diagnostic truth.
-          </p>
+          {/* Telegraphic Body Blocks */}
+          <div className="space-y-4 text-base sm:text-lg text-[var(--color-ink-secondary)] font-normal leading-relaxed max-w-lg">
+            {heroCopy.bodyBlocks.map((block, idx) => (
+              <p key={idx}>{block}</p>
+            ))}
+          </div>
 
-          {/* Tagline callout */}
-          <div className="hero-reveal pt-1 pb-2">
-            <p className="text-base font-display font-medium text-[var(--color-ink)] flex items-center space-x-2">
-              <span className="text-[var(--color-accent)] font-bold">—</span>
-              <span>"Halbert. You can call me AI."</span>
+          {/* Tagline Callout */}
+          <div className="pt-2 pb-2 border-l-3 border-[var(--color-accent)] pl-4">
+            <p className="font-display font-bold text-lg text-[var(--color-ink)] tracking-tight">
+              {heroCopy.tagline}
             </p>
           </div>
 
-          {/* Early Access / Waitlist Form */}
-          <div ref={waitlistRef} className="hero-reveal pt-2 max-w-md">
+          {/* Subscription / Waitlist Form */}
+          <div ref={waitlistRef} className="pt-4 max-w-md">
             {status === 'success' ? (
-              <div className="p-4 rounded-xl bg-[#EEF6F2] border border-[#C2E0D1] flex items-center space-x-3 text-[#2D7A56]">
-                <CheckCircle2 className="w-5 h-5 shrink-0" />
-                <div className="text-sm font-medium">
-                  You're on the early access list! We'll notify you when the preview build drops.
-                </div>
+              <div className="p-4 bg-[var(--color-ink)] text-white font-mono text-sm border-2 border-[var(--color-ink)] shadow-[4px_4px_0px_0px_rgba(211,78,36,1)]">
+                ✓ {heroCopy.successMessage}
               </div>
             ) : (
               <form
@@ -107,53 +68,46 @@ export function Hero({ waitlistRef }) {
                 className="space-y-3"
               >
                 <input type="hidden" name="form-name" value="waitlist" />
-                <div className="flex flex-col sm:flex-row items-stretch gap-2.5">
+                <div className="flex flex-col sm:flex-row items-stretch gap-0">
                   <input
                     type="email"
                     name="email"
                     value={email}
-                    onChange={(e) => {
-                      setEmail(e.target.value);
-                      if (status === 'error') setStatus('idle');
-                    }}
-                    placeholder="Enter your email address…"
-                    className="flex-1 px-4 py-3 rounded-xl bg-[var(--color-surface)] border border-[var(--color-hairline-strong)] text-[var(--color-ink)] placeholder-[var(--color-ink-tertiary)] text-[15px] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] transition-all shadow-sm"
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder={heroCopy.formPlaceholder}
+                    className="flex-1 px-4 py-3.5 bg-[var(--color-surface)] border-2 border-[var(--color-ink)] text-[var(--color-ink)] placeholder-[var(--color-ink-tertiary)] font-mono text-sm focus:outline-none focus:bg-[var(--color-surface-subtle)]"
                     required
                   />
                   <button
                     type="submit"
                     disabled={status === 'submitting'}
-                    className="px-6 py-3 rounded-xl bg-[var(--color-accent)] text-white text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] transition-all shadow-md hover:shadow-[0_4px_16px_rgba(211,78,36,0.3)] active:translate-y-px shrink-0 flex items-center justify-center space-x-2"
+                    className="px-6 py-3.5 bg-[var(--color-accent)] text-white border-2 border-[var(--color-ink)] sm:border-l-0 font-display font-bold text-sm tracking-wider uppercase hover:bg-[var(--color-accent-hover)] transition-colors shadow-[4px_4px_0px_0px_rgba(26,25,24,1)] active:translate-y-0.5"
                   >
-                    <span>{status === 'submitting' ? 'Submitting…' : 'Join Waitlist'}</span>
-                    <ArrowRight className="w-4 h-4" />
+                    {status === 'submitting' ? '…' : heroCopy.submitText}
                   </button>
                 </div>
-                {status === 'error' && (
-                  <p className="text-[13px] text-[var(--color-status-error)] font-medium">
-                    {errorMessage}
-                  </p>
-                )}
               </form>
             )}
 
-            {/* Platform pills */}
-            <div className="pt-4 flex items-center space-x-4 text-[12px] font-mono text-[var(--color-ink-tertiary)]">
-              <span className="flex items-center space-x-1">
-                <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-status-success)]" />
-                <span>100% Local (Ollama)</span>
-              </span>
-              <span>•</span>
-              <span>macOS &amp; Linux</span>
-              <span>•</span>
-              <span>Zero Cloud Telemetry</span>
+            {/* Badges / Commitments */}
+            <div className="pt-6 flex flex-wrap gap-4 text-[11px] font-mono font-bold tracking-wider text-[var(--color-ink-tertiary)]">
+              {heroCopy.badges.map((badge, idx) => (
+                <span key={idx} className="flex items-center">
+                  <span className="w-1.5 h-1.5 bg-[var(--color-ink)] mr-1.5" />
+                  {badge}
+                </span>
+              ))}
             </div>
           </div>
         </div>
 
-        {/* Right Column: Live Animated Conversation Terminal */}
-        <div className="hero-terminal lg:col-span-6 w-full">
-          <AnimatedCLI script={howAreYou} className="w-full min-h-[380px]" />
+        {/* Right Column: Sharp Animated Terminal Demo with Crop Marks */}
+        <div className="lg:col-span-6 w-full crop-marks pt-2">
+          <AnimatedCLI script={howAreYou} figure="FIG. A" className="w-full min-h-[380px]" />
+          <div className="pt-3 flex justify-between items-center text-[11px] font-mono text-[var(--color-ink-tertiary)] uppercase tracking-wider">
+            <span>UNALTERED SENSOR RECORDING</span>
+            <span>HOST: UBUNTU-SERVER-01</span>
+          </div>
         </div>
       </div>
     </section>

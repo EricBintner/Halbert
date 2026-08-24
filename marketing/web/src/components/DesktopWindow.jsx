@@ -1,65 +1,65 @@
 import React from 'react';
-import { Cpu, HardDrive, FileCode, Shield, Activity, RefreshCw } from 'lucide-react';
 
 export function DesktopWindow({
   title = 'Halbert — Host Intelligence',
+  figure = 'FIG. 2',
   activeTab = 'vitals',
   children,
   className = '',
 }) {
   return (
     <div
-      className={`rounded-2xl border border-[var(--color-hairline-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-device)] overflow-hidden flex flex-col transition-all duration-500 ${className}`}
+      className={`border-2 border-[var(--color-ink)] bg-[var(--color-surface)] shadow-[8px_8px_0px_0px_rgba(26,25,24,1)] overflow-hidden flex flex-col transition-all ${className}`}
     >
-      {/* Titlebar with Traffic Lights & Navigation Tabs */}
-      <div className="h-12 px-4 bg-[var(--color-surface-subtle)] border-b border-[var(--color-hairline)] flex items-center justify-between select-none">
-        {/* Native traffic lights */}
-        <div className="flex items-center space-x-2">
-          <span className="w-3 h-3 rounded-full bg-[#FF5F56] border border-[#E0443E]/50" />
-          <span className="w-3 h-3 rounded-full bg-[#FFBD2E] border border-[#DEA123]/50" />
-          <span className="w-3 h-3 rounded-full bg-[#27C93F] border border-[#1AAB29]/50" />
+      {/* Titlebar with Industrial Print Controls */}
+      <div className="h-11 px-4 bg-[var(--color-surface-subtle)] border-b-2 border-[var(--color-ink)] flex items-center justify-between select-none">
+        {/* Hardware controls */}
+        <div className="flex items-center space-x-1.5">
+          <span className="w-3.5 h-3.5 bg-[var(--color-ink)]" />
+          <span className="w-3.5 h-3.5 bg-[var(--color-surface-muted)] border border-[var(--color-ink)]" />
+          <span className="w-3.5 h-3.5 bg-[var(--color-accent)]" />
         </div>
 
-        {/* Segmented Control / Module Tabs */}
-        <div className="flex items-center space-x-1 p-1 bg-[var(--color-surface-muted)] rounded-lg text-[12px] font-medium text-[var(--color-ink-secondary)]">
+        {/* Tab Controls (Sharp 60s Editorial) */}
+        <div className="flex items-center space-x-1 font-mono text-[12px] font-bold">
+          <span className="text-[var(--color-accent)] mr-2">{figure}</span>
           <div
-            className={`px-3 py-1 rounded-md transition-all ${
+            className={`px-3 py-1 border border-[var(--color-ink)] uppercase tracking-wider ${
               activeTab === 'vitals'
-                ? 'bg-[var(--color-surface)] text-[var(--color-ink)] shadow-sm font-semibold'
-                : 'hover:text-[var(--color-ink)]'
+                ? 'bg-[var(--color-ink)] text-white'
+                : 'bg-[var(--color-surface)] text-[var(--color-ink)]'
             }`}
           >
             Vitals
           </div>
           <div
-            className={`px-3 py-1 rounded-md transition-all ${
+            className={`px-3 py-1 border border-[var(--color-ink)] uppercase tracking-wider ${
               activeTab === 'config'
-                ? 'bg-[var(--color-surface)] text-[var(--color-ink)] shadow-sm font-semibold'
-                : 'hover:text-[var(--color-ink)]'
+                ? 'bg-[var(--color-ink)] text-white'
+                : 'bg-[var(--color-surface)] text-[var(--color-ink)]'
             }`}
           >
-            Config Diff
+            Diff
           </div>
           <div
-            className={`px-3 py-1 rounded-md transition-all ${
+            className={`px-3 py-1 border border-[var(--color-ink)] uppercase tracking-wider ${
               activeTab === 'storage'
-                ? 'bg-[var(--color-surface)] text-[var(--color-ink)] shadow-sm font-semibold'
-                : 'hover:text-[var(--color-ink)]'
+                ? 'bg-[var(--color-ink)] text-white'
+                : 'bg-[var(--color-surface)] text-[var(--color-ink)]'
             }`}
           >
             Storage
           </div>
         </div>
 
-        {/* Right Host Identifier */}
-        <div className="flex items-center space-x-2 text-[12px] font-mono text-[var(--color-ink-tertiary)]">
-          <span className="w-2 h-2 rounded-full bg-[var(--color-status-success)]" />
-          <span>ubuntu-server-01</span>
+        {/* Host Label */}
+        <div className="flex items-center space-x-2 text-[11px] font-mono font-bold uppercase text-[var(--color-ink)]">
+          <span>HOST: UBUNTU-01</span>
         </div>
       </div>
 
       {/* Main Window Stage */}
-      <div className="p-6 bg-[var(--color-surface)] flex-1 min-h-[380px] flex flex-col justify-center">
+      <div className="p-6 bg-[var(--color-surface)] flex-1 min-h-[360px] flex flex-col justify-center font-mono">
         {children}
       </div>
     </div>

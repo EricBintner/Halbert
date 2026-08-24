@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { TerminalFrame } from './TerminalFrame';
-import { Cog, CheckCircle2, AlertTriangle, CornerDownLeft, Sparkles } from 'lucide-react';
 
 export function AnimatedCLI({
   script,
   title,
+  figure = 'FIG. 1',
   autoPlay = true,
   className = '',
 }) {
@@ -101,24 +101,24 @@ export function AnimatedCLI({
   }, [script, autoPlay]);
 
   return (
-    <TerminalFrame title={title || script?.title} className={className}>
+    <TerminalFrame title={title || script?.title} figure={figure} className={className}>
       <div className="space-y-4">
         {/* User Prompt Line */}
         <div className="flex items-start space-x-2 text-[var(--color-ink)]">
           <span className="text-[var(--color-accent)] font-bold select-none">&gt;</span>
-          <div className="flex-1 font-semibold">
+          <div className="flex-1 font-bold">
             {displayedUserInput}
             {!displayedAgentOutput && displayedUserInput.length < (script?.events[0]?.text?.length || 0) && (
-              <span className="inline-block w-2 h-4 bg-[var(--color-accent)] ml-1 animate-pulse align-middle" />
+              <span className="inline-block w-2.5 h-4.5 bg-[var(--color-ink)] ml-1 animate-pulse align-middle" />
             )}
           </div>
         </div>
 
         {/* Agent Thinking Indicator */}
         {isThinking && (
-          <div className="flex items-center space-x-2 text-[var(--color-ink-secondary)] text-[12.5px] py-1">
-            <Cog className="w-3.5 h-3.5 animate-spin text-[var(--color-accent)]" />
-            <span>Thinking…</span>
+          <div className="flex items-center space-x-2 text-[var(--color-ink-secondary)] text-[12px] font-mono py-1 border-l-2 border-[var(--color-accent)] pl-2">
+            <span className="w-2 h-2 bg-[var(--color-accent)] animate-ping" />
+            <span className="uppercase tracking-wider">HALBERT INSPECTING HOST…</span>
           </div>
         )}
 
@@ -126,31 +126,31 @@ export function AnimatedCLI({
         {completedToolResults.map((res, idx) => (
           <div
             key={idx}
-            className="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-[var(--color-surface-subtle)] border border-[var(--color-hairline)] text-[12.5px]"
+            className="flex items-center space-x-2 px-3 py-1.5 bg-[var(--color-surface-subtle)] border border-[var(--color-ink)] text-[12.5px]"
           >
-            {res.status === 'warning' ? (
-              <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-status-warning)] shrink-0" />
-            ) : (
-              <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-status-success)] shrink-0" />
-            )}
-            <span className="text-[var(--color-ink-secondary)] font-medium">{res.text}</span>
+            <span
+              className={`w-2 h-2 ${
+                res.status === 'warning' ? 'bg-[var(--color-status-warning)]' : 'bg-[var(--color-status-success)]'
+              }`}
+            />
+            <span className="text-[var(--color-ink)] font-mono font-medium">{res.text}</span>
           </div>
         ))}
 
         {/* Active Tool Call in Progress */}
         {activeToolCall && (
-          <div className="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-[var(--color-accent-tint)] border border-[var(--color-accent)]/20 text-[12.5px] text-[var(--color-accent)]">
-            <Cog className="w-3.5 h-3.5 animate-spin shrink-0" />
-            <span className="font-medium">{activeToolCall.statusText || `Calling ${activeToolCall.tool}…`}</span>
+          <div className="flex items-center space-x-2 px-3 py-1.5 bg-[var(--color-accent-tint)] border border-[var(--color-accent)] text-[12.5px] text-[var(--color-accent)] font-mono font-bold">
+            <span className="w-2 h-2 bg-[var(--color-accent)] animate-pulse" />
+            <span>{activeToolCall.statusText || `Calling ${activeToolCall.tool}…`}</span>
           </div>
         )}
 
         {/* Agent Typewriter Output */}
         {displayedAgentOutput && (
-          <div className="pt-2 text-[var(--color-ink)] leading-relaxed whitespace-pre-line border-t border-[var(--color-hairline)]">
+          <div className="pt-3 text-[var(--color-ink)] font-mono text-[13.5px] leading-relaxed whitespace-pre-line border-t-2 border-[var(--color-ink)]/15">
             {displayedAgentOutput}
             {!isDone && (
-              <span className="inline-block w-2 h-4 bg-[var(--color-accent)] ml-1 animate-pulse align-middle" />
+              <span className="inline-block w-2.5 h-4.5 bg-[var(--color-accent)] ml-1 animate-pulse align-middle" />
             )}
           </div>
         )}

@@ -4,28 +4,25 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Halbert — You can call me AI.</title>
-    <meta name="description" content="A local-first AI assistant that knows your machine — because it is your machine. Grounded in real telemetry, configuration history, and diagnostic truth." />
+    <title>Halbert — I know what’s wrong with me.</title>
+    <meta name="description" content="I am your computer. I read my own sensors, logs, and configuration history. When something breaks, I tell you with evidence." />
     
     <!-- OpenGraph / Social -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Halbert — You can call me AI." />
-    <meta property="og:description" content="A local-first AI assistant that knows your machine — because it is your machine." />
-    <meta property="og:image" content="/og-image.svg" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:url" content="https://halbert.ai" />
+    <meta property="og:title" content="Halbert — I know what’s wrong with me." />
+    <meta property="og:description" content="A local-first computer that talks back. Grounded in real telemetry, configuration history, and diagnostic truth." />
+    <meta property="og:image" content="/brand/halbert-mark-vermilion-on-canvas.svg" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Halbert — You can call me AI." />
-    <meta name="twitter:description" content="The computer that talks back. Local-first host intelligence." />
+    <meta name="twitter:title" content="Halbert — I know what’s wrong with me." />
+    <meta name="twitter:description" content="A local-first computer that talks back. Local-first host intelligence." />
+
+    <!-- Google Fonts Preconnect & Stylesheets (Jost + Work Sans + JetBrains Mono) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Jost:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,600&family=Work+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
   </head>
   <body class="antialiased selection:bg-[#D34E24] selection:text-white min-h-screen bg-[#F7F5F0] text-[#1A1918] font-sans">
     <div id="root"></div>
-    <!-- Netlify Forms detection: static form placeholder (hidden, rendered by JS at runtime) -->
-    <form name="waitlist" netlify netlify-honeypot="bot-field" hidden>
-      <input type="email" name="email" />
-      <input type="hidden" name="form-name" value="waitlist" />
-    </form>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

@@ -11,11 +11,11 @@
   --color-accent-active:     #9C3212;   /* Active/pressed state */
   --color-accent-tint:       #FDF2EE;   /* Soft vermilion wash */
 
-  /* ===== Ink Hierarchy (Warm Charcoal & Graphite) ===== */
+  /* ===== Ink Hierarchy (Warm Charcoal & Deep Carbon) ===== */
   --color-ink:               #1A1918;   /* Deep carbon black for text */
-  --color-ink-secondary:     #5E5B56;   /* Secondary metadata & labels */
-  --color-ink-tertiary:      #8C877D;   /* Captions & subtle annotations */
-  --color-ink-ghost:         #B8B2A6;   /* Disabled & placeholder text */
+  --color-ink-secondary:     #4A4742;   /* Secondary prose & body */
+  --color-ink-tertiary:      #7A756D;   /* Captions & editorial annotations */
+  --color-ink-ghost:         #B8B2A6;   /* Guidelines & watermark text */
 
   /* ===== Functional Telemetry Accents (Desaturated 60s Palette) ===== */
   --color-status-success:    #2D7A56;   /* Eames forest green */
@@ -23,23 +23,22 @@
   --color-status-error:      #C83E2D;   /* Terracotta brick red */
   --color-status-info:       #386C8A;   /* Blueprint slate teal */
 
-  /* ===== Hairlines & Dividers ===== */
-  --color-hairline:          rgba(26, 25, 24, 0.08);
-  --color-hairline-strong:   rgba(26, 25, 24, 0.16);
+  /* ===== Print Rules & Hairlines ===== */
+  --color-hairline:          rgba(26, 25, 24, 0.12);
+  --color-hairline-strong:   #1A1918;   /* Bold 60s print rule */
 
-  /* ===== Shadows (Soft Ambient Diffusions) ===== */
+  /* ===== Shadows (Minimal / Tactile) ===== */
   --shadow-sm:               0 1px 2px rgba(26, 25, 24, 0.04);
   --shadow-card:             0 4px 16px -2px rgba(26, 25, 24, 0.06), 0 1px 3px rgba(26, 25, 24, 0.04);
   --shadow-device:           0 24px 48px -12px rgba(26, 25, 24, 0.12), 0 4px 12px rgba(26, 25, 24, 0.05);
-  --shadow-popover:          0 12px 32px -4px rgba(26, 25, 24, 0.12);
 
-  /* ===== Typography ===== */
-  --font-sans:               "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-  --font-display:            "Instrument Sans", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  /* ===== 60s Typography System ===== */
+  --font-sans:               "Work Sans", "Helvetica Neue", -apple-system, system-ui, sans-serif;
+  --font-display:            "Jost", "Futura", "Helvetica Neue", system-ui, sans-serif;
   --font-mono:               "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
 
   --tracking-display:        -0.035em;
-  --tracking-eyebrow:        0.08em;
+  --tracking-eyebrow:        0.12em;
 
   /* ===== Motion Easing Tokens ===== */
   --ease-hero:               cubic-bezier(0.16, 1, 0.3, 1);

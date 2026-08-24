@@ -1,41 +1,43 @@
 import React from 'react';
-import { Terminal, Activity } from 'lucide-react';
+import { Terminal } from 'lucide-react';
 
 export function TerminalFrame({
   title = 'halbert — ubuntu-server-01',
+  figure = 'FIG. A',
   isLive = true,
   children,
   className = '',
 }) {
   return (
     <div
-      className={`rounded-2xl border border-[var(--color-hairline-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-device)] overflow-hidden flex flex-col transition-all duration-300 ${className}`}
+      className={`border-2 border-[var(--color-ink)] bg-[var(--color-surface)] shadow-[6px_6px_0px_0px_rgba(26,25,24,1)] overflow-hidden flex flex-col transition-all ${className}`}
     >
-      {/* Titlebar / Chrome */}
-      <div className="h-10.5 px-4 bg-[var(--color-surface-subtle)] border-b border-[var(--color-hairline)] flex items-center justify-between select-none">
-        {/* Window controls (Mid-century stone/muted pips) */}
-        <div className="flex items-center space-x-2">
-          <span className="w-3 h-3 rounded-full bg-[#E57A64] border border-[#D0604A]/40" />
-          <span className="w-3 h-3 rounded-full bg-[#E8B568] border border-[#CF9B4E]/40" />
-          <span className="w-3 h-3 rounded-full bg-[#7CAE8E] border border-[#649676]/40" />
+      {/* 60s Hardware Titlebar / Chrome */}
+      <div className="h-10 px-3 bg-[var(--color-surface-subtle)] border-b-2 border-[var(--color-ink)] flex items-center justify-between select-none">
+        {/* Window controls (Sharp vintage tactile pips) */}
+        <div className="flex items-center space-x-1.5">
+          <span className="w-3 h-3 bg-[#D34E24] border border-[var(--color-ink)]" />
+          <span className="w-3 h-3 bg-[#E5E0D5] border border-[var(--color-ink)]" />
+          <span className="w-3 h-3 bg-[var(--color-ink)] border border-[var(--color-ink)]" />
         </div>
 
-        {/* Title */}
-        <div className="flex items-center space-x-2 text-[13px] font-mono font-medium text-[var(--color-ink-secondary)]">
-          <Terminal className="w-3.5 h-3.5 text-[var(--color-ink-tertiary)]" />
+        {/* Title / Figure */}
+        <div className="flex items-center space-x-2 text-[12px] font-mono font-bold tracking-wider uppercase text-[var(--color-ink)]">
+          <span className="text-[var(--color-accent)]">{figure}</span>
+          <span className="text-[var(--color-ink-ghost)]">|</span>
           <span>{title}</span>
         </div>
 
         {/* Live Status Badge */}
-        <div className="flex items-center space-x-1.5">
+        <div className="flex items-center space-x-1.5 font-mono text-[11px] font-bold">
           {isLive ? (
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-[#EEF6F2] text-[#2D7A56] border border-[#C2E0D1]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#2D7A56] mr-1.5 animate-pulse" />
+            <span className="inline-flex items-center px-2 py-0.5 bg-[#EEF6F2] text-[#2D7A56] border border-[#2D7A56]">
+              <span className="w-1.5 h-1.5 bg-[#2D7A56] mr-1.5 animate-pulse" />
               LIVE
             </span>
           ) : (
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-mono text-[var(--color-ink-tertiary)] bg-[var(--color-surface-muted)]">
-              IDLE
+            <span className="px-2 py-0.5 bg-[var(--color-surface-muted)] text-[var(--color-ink-tertiary)] border border-[var(--color-ink-tertiary)]">
+              STANDBY
             </span>
           )}
         </div>

@@ -6,18 +6,20 @@
     background-color: var(--color-canvas);
     color: var(--color-ink);
     font-family: var(--font-sans);
-    scroll-behavior: auto; /* Managed by Lenis */
+    scroll-behavior: auto;
   }
 
   body {
     background-color: var(--color-canvas);
     color: var(--color-ink);
     overflow-x: hidden;
+    line-height: 1.6;
   }
 
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
     letter-spacing: var(--tracking-display);
+    font-weight: 700;
   }
 
   code, pre, kbd {
@@ -25,13 +27,58 @@
   }
 }
 
-/* Subtle archival film grain texture overlay */
+/* 1960s Archival Print Paper Texture */
 .paper-texture {
-  background-image: radial-gradient(rgba(26, 25, 24, 0.04) 1px, transparent 0);
-  background-size: 24px 24px;
+  background-image:
+    repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(26, 25, 24, 0.015) 3px, rgba(26, 25, 24, 0.015) 6px),
+    repeating-linear-gradient(90deg, transparent, transparent 3px, rgba(26, 25, 24, 0.015) 3px, rgba(26, 25, 24, 0.015) 6px);
 }
 
-/* Custom scrollbar matching daylight theme */
+/* Overprint / Misregistration Effect */
+.overprint {
+  text-shadow: 2px 0 0 var(--color-accent), -1px 0 0 var(--color-status-info);
+}
+
+/* 60s Print Heavy Rule */
+.rule-heavy {
+  border-top: 3px solid var(--color-ink);
+}
+
+/* Double Line Editorial Divider */
+.rule-double {
+  border-top: 3px double var(--color-ink);
+}
+
+/* Print Crop Marks */
+.crop-marks {
+  position: relative;
+}
+
+.crop-marks::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  width: 16px;
+  height: 16px;
+  border-top: 2px solid var(--color-ink);
+  border-left: 2px solid var(--color-ink);
+  pointer-events: none;
+}
+
+.crop-marks::after {
+  content: "";
+  position: absolute;
+  bottom: -8px;
+  right: -8px;
+  width: 16px;
+  height: 16px;
+  border-bottom: 2px solid var(--color-ink);
+  border-right: 2px solid var(--color-ink);
+  pointer-events: none;
+}
+
+/* Custom crisp scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -42,15 +89,10 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-surface-muted);
-  border-radius: 4px;
+  background: var(--color-ink);
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-ink-tertiary);
-}
-
-/* Reduced Motion Safety Net */
+/* Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -1,238 +1,210 @@
-import React, { useState, useRef } from 'react';
-import gsap from 'gsap';
-import { useGSAP } from '@gsap/react';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import React from 'react';
 import { DesktopWindow } from './DesktopWindow';
-import { Cpu, HardDrive, FileText, CheckCircle, AlertTriangle, ArrowRight, ShieldCheck, Activity } from 'lucide-react';
 
-gsap.registerPlugin(useGSAP, ScrollTrigger);
-
-export function HowItWorks() {
-  const container = useRef(null);
-  const [activeStep, setActiveStep] = useState(0);
-
-  const steps = [
+export function HowItWorks({ copy }) {
+  const spreads = copy?.spreads || [
     {
-      id: 'knows-itself',
-      tab: 'vitals',
-      number: '01',
-      title: 'It knows itself.',
-      subtitle: 'System state as living physiology.',
-      description:
-        'Generic LLMs hallucinate system facts. Halbert reads live sensors, mount points, and journald logs directly through its local sensor loop. When it speaks about memory pressure or thermal stress, it quotes grounded reality.',
+      figure: 'FIG. 1',
+      kicker: 'PHYSIOLOGICAL SELF-AWARENESS',
+      headline: 'I can feel my own temperature.',
+      body: [
+        'Generic AI assistants hallucinate system facts because they live in a data center thousands of miles away.',
+        'I live here. I monitor my own CPU thermal zones, load averages, and drive wear in real time.',
+        'When I tell you /dev/sda1 is logging read errors, it is not a hypothetical. It is my body.',
+      ],
+      caption: 'Continuous hwmon & kernel sensor telemetry loop.',
     },
     {
-      id: 'remembers',
-      tab: 'config',
-      number: '02',
-      title: 'It remembers.',
-      subtitle: 'Configuration history and past rationale.',
-      description:
-        'Why is SSH on port 2222? Who enabled compression on the backup volume? Halbert tracks configuration modifications alongside user rationale. When you ask about system state, it answers with institutional memory.',
+      figure: 'FIG. 2',
+      kicker: 'INSTITUTIONAL MEMORY',
+      headline: 'I remember why you changed that.',
+      body: [
+        'Why did you move SSH to port 2222 three months ago? Why is compression turned off on the data volume?',
+        'I store the rationale alongside the configuration diff.',
+        'You never have to guess who edited /etc/fstab or why. I remember every command you ever gave me.',
+      ],
+      caption: 'AST-aware configuration diff with historical user rationale.',
     },
     {
-      id: 'speaks',
-      tab: 'storage',
-      number: '03',
-      title: 'It speaks.',
-      subtitle: 'Conversation as the primary container.',
-      description:
-        'No 17-page complex dashboards to navigate. The conversation is the control center. Ask questions naturally, approve safe dry-runs, and summon diagnostic proof modules dynamically into the workspace.',
+      figure: 'FIG. 3',
+      kicker: 'CONVERSATIONAL SPRAY & PRAY IS OVER',
+      headline: 'Don’t guess. Ask me.',
+      body: [
+        'You do not need to memorize 400 flags for journalctl or write fragile grep pipelines.',
+        'Speak to me like a senior systems colleague. I check my own state, formulate safe dry-runs, and ask your permission before touching anything.',
+      ],
+      caption: 'Single conversation container with dynamic diagnostic proof.',
     },
   ];
 
-  useGSAP(() => {
-    const mm = gsap.matchMedia();
-
-    mm.add('(min-width: 1024px) and (prefers-reduced-motion: no-preference)', () => {
-      // Scroll-driven step activation: each step card triggers activeStep change
-      const stepEls = gsap.utils.toArray('.step-card');
-      stepEls.forEach((el, i) => {
-        ScrollTrigger.create({
-          trigger: el,
-          start: 'top 50%',
-          end: 'bottom 50%',
-          onToggle: (self) => {
-            if (self.isActive) setActiveStep(i);
-          },
-          onLeaveBack: () => {
-            if (i === 0) setActiveStep(0);
-          },
-        });
-      });
-
-      // Fade in section header on scroll
-      gsap.from('.howitworks-header', {
-        scrollTrigger: { trigger: '.howitworks-header', start: 'top 80%' },
-        y: 24,
-        opacity: 0,
-        duration: 0.7,
-        ease: 'power2.out',
-      });
-    });
-
-    mm.add('(prefers-reduced-motion: reduce)', () => {
-      gsap.set(['.howitworks-header', '.step-card'], { opacity: 1, y: 0, clearProps: 'transform' });
-    });
-  }, { scope: container });
-
   return (
-    <section ref={container} id="how-it-works" className="py-24 px-6 border-t border-[var(--color-hairline)] bg-[var(--color-canvas)]">
-      <div className="max-w-[var(--content-max-width)] mx-auto space-y-16">
-        {/* Section Header */}
-        <div className="howitworks-header text-center max-w-2xl mx-auto space-y-3">
-          <div className="text-[12px] font-mono font-semibold uppercase tracking-widest text-[var(--color-accent)]">
-            How It Works
+    <section id="how-it-works" className="py-24 px-6 bg-[var(--color-canvas)]">
+      <div className="max-w-[var(--content-max-width)] mx-auto space-y-32">
+        {/* SPREAD 1: Sensor Physiology (FIG. 1) */}
+        <div className="pt-8 border-t-3 border-[var(--color-ink)] grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
+          {/* Left: Copy Block */}
+          <div className="lg:col-span-6 space-y-6">
+            <div className="flex items-center space-x-3 text-xs font-mono font-bold tracking-widest text-[var(--color-accent)] uppercase">
+              <span>{spreads[0].figure}</span>
+              <span>—</span>
+              <span>{spreads[0].kicker}</span>
+            </div>
+            <h2 className="text-4xl sm:text-5xl font-display font-extrabold text-[var(--color-ink)] tracking-tight leading-[1.08]">
+              {spreads[0].headline}
+            </h2>
+            <div className="space-y-4 text-base sm:text-lg text-[var(--color-ink-secondary)] leading-relaxed">
+              {spreads[0].body.map((p, i) => (
+                <p key={i}>{p}</p>
+              ))}
+            </div>
+            <div className="text-xs font-mono font-medium text-[var(--color-ink-tertiary)] border-t border-[var(--color-ink)]/20 pt-3">
+              NOTE: {spreads[0].caption}
+            </div>
           </div>
-          <h2 className="text-3xl sm:text-4xl font-display font-semibold text-[var(--color-ink)]">
-            The computer as your most helpful colleague<span className="text-[var(--color-accent)]">.</span>
-          </h2>
-          <p className="text-[16px] text-[var(--color-ink-secondary)] leading-relaxed">
-            Built on the Law of Four Whys: every recommendation is grounded in real telemetry, past rationale, and verifiable proof.
-          </p>
+
+          {/* Right: Tactile 60s Sensor Gauge Unit */}
+          <div className="lg:col-span-6 crop-marks">
+            <div className="border-2 border-[var(--color-ink)] bg-[var(--color-surface)] p-6 shadow-[6px_6px_0px_0px_rgba(26,25,24,1)] space-y-6">
+              <div className="flex justify-between items-center border-b-2 border-[var(--color-ink)] pb-3 font-mono text-xs font-bold uppercase">
+                <span>READOUT: THERMAL &amp; COMPUTE MATRIX</span>
+                <span className="text-[var(--color-status-success)]">● NOMINAL</span>
+              </div>
+
+              {/* Gauge Meters */}
+              <div className="space-y-4 font-mono text-xs">
+                <div>
+                  <div className="flex justify-between text-xs font-bold mb-1">
+                    <span>CPU TEMPERATURE (Tctl / Tdie)</span>
+                    <span>45°C</span>
+                  </div>
+                  <div className="h-4 border border-[var(--color-ink)] bg-[var(--color-surface-subtle)] p-0.5">
+                    <div className="h-full bg-[var(--color-status-success)] w-[45%]" />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between text-xs font-bold mb-1">
+                    <span>LOAD AVERAGE (1m, 5m, 15m)</span>
+                    <span>0.15 · 0.22 · 0.18</span>
+                  </div>
+                  <div className="h-4 border border-[var(--color-ink)] bg-[var(--color-surface-subtle)] p-0.5">
+                    <div className="h-full bg-[var(--color-ink)] w-[15%]" />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between text-xs font-bold mb-1">
+                    <span>PRIMARY NVMe HEALTH (/dev/nvme0n1)</span>
+                    <span>100% HEALTHY</span>
+                  </div>
+                  <div className="h-4 border border-[var(--color-ink)] bg-[var(--color-surface-subtle)] p-0.5">
+                    <div className="h-full bg-[var(--color-accent)] w-[42%]" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3 bg-[var(--color-surface-subtle)] border border-[var(--color-ink)] font-mono text-xs leading-relaxed text-[var(--color-ink)]">
+                <strong>Halbert:</strong> "I feel cool and quiet. All 16 thermal diodes are operating 40°C below throttle limits."
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* 2-Column Scrollytelling Stage */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
-          {/* Left Column: Scroll-Driven Step Cards */}
-          <div className="lg:col-span-5 space-y-4">
-            {steps.map((step, idx) => {
-              const isSelected = activeStep === idx;
-              return (
-                <div
-                  key={step.id}
-                  className={`step-card p-6 rounded-2xl border transition-all duration-500 cursor-pointer ${
-                    isSelected
-                      ? 'bg-[var(--color-surface)] border-[var(--color-accent)] shadow-[var(--shadow-card)] ring-1 ring-[var(--color-accent)]/20'
-                      : 'bg-[var(--color-surface)]/50 border-[var(--color-hairline)] hover:bg-[var(--color-surface)] hover:border-[var(--color-hairline-strong)]'
-                  }`}
-                  onClick={() => setActiveStep(idx)}
-                >
-                  <div className="flex items-center space-x-3 text-xs font-mono font-bold mb-2">
-                    <span
-                      className={`px-2 py-0.5 rounded ${
-                        isSelected
-                          ? 'bg-[var(--color-accent)] text-white'
-                          : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-secondary)]'
-                      }`}
-                    >
-                      {step.number}
-                    </span>
-                    <span className="text-[var(--color-ink-tertiary)] uppercase tracking-wider">
-                      {step.subtitle}
-                    </span>
-                  </div>
-                  <h3 className="text-xl font-display font-semibold text-[var(--color-ink)] mb-2">
-                    {step.title}
-                  </h3>
-                  <p className="text-[14.5px] text-[var(--color-ink-secondary)] leading-relaxed">
-                    {step.description}
-                  </p>
+        {/* SPREAD 2: Institutional Memory (FIG. 2) */}
+        <div className="pt-8 border-t-3 border-[var(--color-ink)] grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
+          {/* Left: Config Diff Document */}
+          <div className="lg:col-span-6 order-2 lg:order-1 crop-marks">
+            <div className="border-2 border-[var(--color-ink)] bg-[var(--color-surface)] p-6 shadow-[6px_6px_0px_0px_rgba(26,25,24,1)] space-y-4 font-mono">
+              <div className="flex justify-between items-center border-b-2 border-[var(--color-ink)] pb-3 text-xs font-bold uppercase">
+                <span>DIFF: /etc/ssh/sshd_config.d/50-custom.conf</span>
+                <span className="text-[var(--color-ink-tertiary)]">2026-07-14</span>
+              </div>
+
+              <div className="p-4 bg-[var(--color-surface-subtle)] border border-[var(--color-ink)] text-[13px] space-y-2 leading-relaxed">
+                <div className="text-[var(--color-ink-tertiary)]"># Port Isolation Rule</div>
+                <div className="text-[#C83E2D] bg-[#FDF2F0] px-2 py-0.5 border border-[#C83E2D]/30">- Port 22</div>
+                <div className="text-[#2D7A56] bg-[#EEF6F2] px-2 py-0.5 border border-[#2D7A56]/30">+ Port 2222</div>
+                <div className="pt-3 border-t border-[var(--color-ink)]/20 text-xs text-[var(--color-ink)]">
+                  <span className="text-[var(--color-accent)] font-bold">RATIONALE:</span> "Moved port after auth log recorded 4,200 automated scan attempts in 6 hours."
                 </div>
-              );
-            })}
+              </div>
+
+              <div className="flex justify-between text-xs font-bold pt-1 text-[var(--color-ink-secondary)]">
+                <span>BLAST RADIUS: REVERSIBLE</span>
+                <span>STATUS: VERIFIED IN CHROMADB</span>
+              </div>
+            </div>
           </div>
 
-          {/* Right Column: Sticky Dynamic Desktop Window Mockup */}
-          <div className="lg:col-span-7 lg:sticky lg:top-24">
-            <DesktopWindow activeTab={steps[activeStep].tab} title={`Halbert — ${steps[activeStep].title}`}>
-              {/* Step 1 Mockup: Vitals Matrix */}
-              {activeStep === 0 && (
-                <div className="space-y-6">
-                  <div className="flex items-center justify-between pb-4 border-b border-[var(--color-hairline)]">
-                    <div className="flex items-center space-x-2.5">
-                      <Cpu className="w-5 h-5 text-[var(--color-accent)]" />
-                      <span className="font-mono text-sm font-semibold text-[var(--color-ink)]">
-                        System Vitals &amp; Sensor Telemetry
-                      </span>
-                    </div>
-                    <span className="text-[12px] font-mono text-[var(--color-status-success)] bg-[#EEF6F2] px-2 py-0.5 rounded border border-[#C2E0D1]">
-                      ● Sensors Nominal
+          {/* Right: Copy Block */}
+          <div className="lg:col-span-6 order-1 lg:order-2 space-y-6">
+            <div className="flex items-center space-x-3 text-xs font-mono font-bold tracking-widest text-[var(--color-accent)] uppercase">
+              <span>{spreads[1].figure}</span>
+              <span>—</span>
+              <span>{spreads[1].kicker}</span>
+            </div>
+            <h2 className="text-4xl sm:text-5xl font-display font-extrabold text-[var(--color-ink)] tracking-tight leading-[1.08]">
+              {spreads[1].headline}
+            </h2>
+            <div className="space-y-4 text-base sm:text-lg text-[var(--color-ink-secondary)] leading-relaxed">
+              {spreads[1].body.map((p, i) => (
+                <p key={i}>{p}</p>
+              ))}
+            </div>
+            <div className="text-xs font-mono font-medium text-[var(--color-ink-tertiary)] border-t border-[var(--color-ink)]/20 pt-3">
+              NOTE: {spreads[1].caption}
+            </div>
+          </div>
+        </div>
+
+        {/* SPREAD 3: Conversation Container (FIG. 3) */}
+        <div className="pt-8 border-t-3 border-[var(--color-ink)] grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
+          {/* Left: Copy Block */}
+          <div className="lg:col-span-6 space-y-6">
+            <div className="flex items-center space-x-3 text-xs font-mono font-bold tracking-widest text-[var(--color-accent)] uppercase">
+              <span>{spreads[2].figure}</span>
+              <span>—</span>
+              <span>{spreads[2].kicker}</span>
+            </div>
+            <h2 className="text-4xl sm:text-5xl font-display font-extrabold text-[var(--color-ink)] tracking-tight leading-[1.08]">
+              {spreads[2].headline}
+            </h2>
+            <div className="space-y-4 text-base sm:text-lg text-[var(--color-ink-secondary)] leading-relaxed">
+              {spreads[2].body.map((p, i) => (
+                <p key={i}>{p}</p>
+              ))}
+            </div>
+            <div className="text-xs font-mono font-medium text-[var(--color-ink-tertiary)] border-t border-[var(--color-ink)]/20 pt-3">
+              NOTE: {spreads[2].caption}
+            </div>
+          </div>
+
+          {/* Right: Conversational UI Container */}
+          <div className="lg:col-span-6 crop-marks">
+            <DesktopWindow title="Halbert — Desktop Host" figure="FIG. 3" activeTab="storage">
+              <div className="space-y-4 text-[13.5px]">
+                <div className="flex items-start space-x-2 text-[var(--color-ink)] font-bold">
+                  <span className="text-[var(--color-accent)]">&gt;</span>
+                  <span>Can we enable compression on the data volume?</span>
+                </div>
+
+                <div className="p-4 bg-[var(--color-surface-subtle)] border border-[var(--color-ink)] text-[var(--color-ink)] leading-relaxed space-y-3">
+                  <p>
+                    I checked my <code className="font-bold text-[var(--color-accent)]">/etc/fstab</code>. I am currently mounted with compression off on <code className="font-bold">/dev/nvme0n1</code>.
+                  </p>
+                  <p>
+                    Enabling <code className="font-bold">lz4</code> is safe for our workload and I can apply it live without unmounting. Shall I run a benchmark probe first?
+                  </p>
+                  <div className="pt-2 flex items-center space-x-2 text-xs">
+                    <span className="px-2 py-1 bg-[var(--color-ink)] text-white font-bold">
+                      [ APPROVE LIVE REMOUNT ]
+                    </span>
+                    <span className="px-2 py-1 bg-[var(--color-surface)] border border-[var(--color-ink)] font-bold">
+                      [ RUN BENCHMARK FIRST ]
                     </span>
                   </div>
-
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="p-4 rounded-xl bg-[var(--color-surface-subtle)] border border-[var(--color-hairline)]">
-                      <div className="text-[12px] font-mono text-[var(--color-ink-secondary)]">CPU Temperature</div>
-                      <div className="text-2xl font-mono font-bold text-[var(--color-ink)] mt-1">45°C</div>
-                      <div className="text-[11px] font-mono text-[var(--color-status-success)] mt-1">Cool &amp; Quiet</div>
-                    </div>
-                    <div className="p-4 rounded-xl bg-[var(--color-surface-subtle)] border border-[var(--color-hairline)]">
-                      <div className="text-[12px] font-mono text-[var(--color-ink-secondary)]">Load Average</div>
-                      <div className="text-2xl font-mono font-bold text-[var(--color-ink)] mt-1">0.15</div>
-                      <div className="text-[11px] font-mono text-[var(--color-status-success)] mt-1">12% capacity</div>
-                    </div>
-                    <div className="p-4 rounded-xl bg-[var(--color-surface-subtle)] border border-[var(--color-hairline)]">
-                      <div className="text-[12px] font-mono text-[var(--color-ink-secondary)]">NVMe Health</div>
-                      <div className="text-2xl font-mono font-bold text-[var(--color-ink)] mt-1">100%</div>
-                      <div className="text-[11px] font-mono text-[var(--color-status-success)] mt-1">0 bad blocks</div>
-                    </div>
-                  </div>
-
-                  <div className="p-3.5 rounded-xl bg-[#F0F6F9] border border-[#BFD8E6] text-[13px] font-mono text-[#386C8A] flex items-center space-x-2">
-                    <Activity className="w-4 h-4 shrink-0" />
-                    <span>Halbert: "I feel great. All thermal zones are well below throttling thresholds."</span>
-                  </div>
                 </div>
-              )}
-
-              {/* Step 2 Mockup: Config Diff Inspector */}
-              {activeStep === 1 && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between pb-3 border-b border-[var(--color-hairline)]">
-                    <div className="flex items-center space-x-2">
-                      <FileText className="w-4 h-4 text-[var(--color-accent)]" />
-                      <span className="font-mono text-sm font-semibold text-[var(--color-ink)]">
-                        /etc/ssh/sshd_config.d/50-custom.conf
-                      </span>
-                    </div>
-                    <span className="text-xs font-mono text-[var(--color-ink-tertiary)]">July 14, 2026</span>
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-[var(--color-surface-subtle)] border border-[var(--color-hairline)] font-mono text-[13px] space-y-1.5">
-                    <div className="text-[var(--color-ink-tertiary)]"># SSH Port Hardening</div>
-                    <div className="text-[#C83E2D] bg-[#FDF2F0] px-2 py-0.5 rounded">- Port 22</div>
-                    <div className="text-[#2D7A56] bg-[#EEF6F2] px-2 py-0.5 rounded">+ Port 2222</div>
-                    <div className="text-[var(--color-ink-secondary)] pt-2 text-xs border-t border-[var(--color-hairline)]">
-                      <span className="font-semibold text-[var(--color-accent)]">Why So:</span> "User instructed port change to eliminate automated bruteforce noise."
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs font-mono text-[var(--color-ink-secondary)] pt-2">
-                    <span>Blast Radius: Low (Incoming SSH only)</span>
-                    <span className="text-[var(--color-status-success)] font-medium">Verified in Memory</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Step 3 Mockup: Conversational Spine */}
-              {activeStep === 2 && (
-                <div className="space-y-4 font-mono text-[13.5px]">
-                  {/* User bubble */}
-                  <div className="flex items-start space-x-2">
-                    <span className="text-[var(--color-accent)] font-bold">&gt;</span>
-                    <div className="font-semibold text-[var(--color-ink)]">
-                      What's the status of our data volume?
-                    </div>
-                  </div>
-
-                  {/* Agent Response */}
-                  <div className="p-4 rounded-xl bg-[var(--color-surface-subtle)] border border-[var(--color-hairline)] text-[var(--color-ink)] leading-relaxed space-y-3">
-                    <p>
-                      I checked <code className="text-[var(--color-accent)]">/dev/nvme0n1</code>. You've used 840 GB of 2.0 TB (42%). Compression is currently saving 35% disk space. All SMART attributes are nominal.
-                    </p>
-                    <div className="pt-2 flex items-center space-x-2 text-xs">
-                      <span className="px-2.5 py-1 rounded bg-[var(--color-surface)] border border-[var(--color-hairline)] font-medium">
-                        bcachefs · lz4 compression
-                      </span>
-                      <span className="text-[var(--color-status-success)] flex items-center">
-                        <CheckCircle className="w-3.5 h-3.5 mr-1" />
-                        Healthy
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
+              </div>
             </DesktopWindow>
           </div>
         </div>
