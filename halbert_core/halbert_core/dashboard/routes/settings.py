@@ -3920,3 +3920,62 @@ async def create_test_approval(
     except Exception as e:
         logger.error(f"Failed to create test approval: {e}")
         return {"status": "error", "error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Being Configuration (Phase 6 / T6a.2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BeingConfigUpdate(BaseModel):
+    voice: Optional[str] = None
+    proactivity: Optional[str] = None
+    purpose: Optional[str] = None
+    quiet_hours: Optional[Dict[str, str]] = None
+    morning_report: Optional[Dict[str, Any]] = None
+    category_overrides: Optional[Dict[str, str]] = None
+
+
+@router.get("/being")
+async def get_being_config() -> Dict[str, Any]:
+    """Get current being configuration."""
+    try:
+        from ...config.being_config import load_being_config
+        cfg = load_being_config()
+        return {"status": "ok", "config": cfg.to_dict()}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to load being config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/being")
+async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
+    """Update being configuration. Validates and persists to being.yml."""
+    try:
+        from ...config.being_config import load_being_config, save_being_config
+        cfg = load_being_config()
+
+        # Apply partial updates (only non-None fields)
+        if update.voice is not None:
+            cfg.voice = update.voice
+        if update.proactivity is not None:
+            cfg.proactivity = update.proactivity
+        if update.purpose is not None:
+            cfg.purpose = update.purpose
+        if update.quiet_hours is not None:
+            cfg.quiet_hours = update.quiet_hours
+        if update.morning_report is not None:
+            cfg.morning_report = update.morning_report
+        if update.category_overrides is not None:
+            cfg.category_overrides = update.category_overrides
+
+        # Validate + save
+        save_being_config(cfg)
+
+        return {"status": "ok", "config": cfg.to_dict()}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to save being config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
