@@ -96,7 +96,18 @@ def get_agent():
 
         # Wire PromptBuilder + ContextInjector into AgentPromptBuilder
         # for rich system prompts with model-specific overrides
-        prompt_builder = PromptBuilder()
+        from ...prompts.loader import PromptLoader
+        from pathlib import Path as _Path
+        try:
+            from ...utils.platform import get_config_dir
+            prompts_dir = get_config_dir().parent / "config" / "prompts"
+            if not prompts_dir.exists():
+                prompts_dir = _Path(__file__).parent.parent.parent.parent.parent / "config" / "prompts"
+            prompt_loader = PromptLoader(prompts_dir)
+            prompt_builder = PromptBuilder(prompt_loader)
+        except Exception as e:
+            logger.warning(f"Failed to init PromptBuilder: {e}, using None")
+            prompt_builder = None
         context_injector = ContextInjector()
         prompt_builder = AgentPromptBuilder(
             base_builder=prompt_builder,
