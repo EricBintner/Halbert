@@ -234,10 +234,32 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
             f"[{c.get('source', 'unknown')}]: {c.get('content', '')[:500]}"
             for c in (context or [])[:5]
         ])
-        
+
         # Format observations
         obs_text = "\n".join([f"- {obs}" for obs in (observations or [])])
-        
+
+        # Phase 8: Reactive slice instructions for system-state queries
+        reactive_instructions = ""
+        # Normalize apostrophes (curly → straight) and lowercase
+        query_lower = (query or "").lower().replace("\u2019", "'").strip()
+        state_triggers = ["how are you", "how's it going", "how is the system",
+                          "system status", "how do you feel", "what's your status",
+                          "are you ok", "health check", "how's the machine",
+                          "how's the system", "how's it looking"]
+        is_state_query = any(trigger in query_lower for trigger in state_triggers)
+
+        if is_state_query:
+            reactive_instructions = """
+## Reactive Slice Instructions
+The user is asking about your state. Follow these rules:
+- Answer as yourself, in your configured voice
+- Ground EVERY claim in real data from the available information
+- Reference specific file paths, log entries, or metrics with their sources
+- Do not make generic statements — be specific about THIS system
+- At the end of your response, invoke the vitals module by emitting:
+  {"action": "invoke_module", "module": "vitals", "props": {"timeframe": "1h"}}
+- If there are open findings or config issues, mention them with specifics"""
+
         prompt = f"""## Task
 Answer this question: {query}
 
@@ -254,9 +276,10 @@ Answer this question: {query}
 - Be concise but complete
 - If you're uncertain, clearly state your confidence level
 - Suggest follow-up actions if appropriate
+{reactive_instructions}
 
 Your response (use markdown formatting):"""
-        
+
         return prompt
     
     def build_tool_selection_prompt(
