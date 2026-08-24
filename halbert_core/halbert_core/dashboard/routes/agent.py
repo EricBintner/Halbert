@@ -109,9 +109,19 @@ def get_agent():
             logger.warning(f"Failed to init PromptBuilder: {e}, using None")
             prompt_builder = None
         context_injector = ContextInjector()
+
+        # Load voice setting from BeingConfig (Phase 6)
+        try:
+            from ...config.being_config import load_being_config
+            being_cfg = load_being_config()
+            voice = being_cfg.voice
+        except Exception:
+            voice = "first_person"
+
         prompt_builder = AgentPromptBuilder(
             base_builder=prompt_builder,
             context_injector=context_injector,
+            voice=voice,
         )
 
         # Create LLM client

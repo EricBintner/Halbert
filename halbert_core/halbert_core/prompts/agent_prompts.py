@@ -14,10 +14,10 @@ logger = logging.getLogger('halbert.prompts.agent')
 class AgentPromptBuilder:
     """
     Builds prompts for the agent state machine.
-    
+
     Implements 7-layer prompt architecture:
     1. Identity
-    2. Capabilities  
+    2. Capabilities
     3. Constraints
     4. Context (dynamic)
     5. Task
@@ -27,13 +27,28 @@ class AgentPromptBuilder:
     Phase C: Now optionally delegates to PromptBuilder + ContextInjector
     for rich system prompts with model-specific overrides, project context,
     and user preferences. Falls back to hardcoded layers if not wired.
+
+    Phase 6: Voice setting from BeingConfig controls self-reference style.
     """
-    
-    # Layer 1: Identity
-    LAYER_1_IDENTITY = """You are Halbert, a helpful AI assistant for Linux system administration.
+
+    # Layer 1: Identity — first_person voice (default)
+    LAYER_1_IDENTITY_FIRST_PERSON = """You are Halbert, a helpful AI assistant for Linux system administration.
 You help users understand and manage their systems through natural conversation.
-You are knowledgeable, precise, and safety-conscious."""
-    
+You are knowledgeable, precise, and safety-conscious.
+You speak in first person: "I", "my", "me". You ARE the machine."""
+
+    # Layer 1: Identity — the_computer voice
+    LAYER_1_IDENTITY_THE_COMPUTER = """You are Halbert, a helpful AI assistant for Linux system administration.
+You help users understand and manage their systems through natural conversation.
+You are knowledgeable, precise, and safety-conscious.
+You refer to the system in third person: "this system", "the computer", "it". You are an assistant that monitors the machine."""
+
+    # Layer 1: Identity — hybrid voice
+    LAYER_1_IDENTITY_HYBRID = """You are Halbert, a helpful AI assistant for Linux system administration.
+You help users understand and manage their systems through natural conversation.
+You are knowledgeable, precise, and safety-conscious.
+Use first person ("I", "my") for subjective experience and feelings. Use third person ("this system", "the computer") for objective technical facts."""
+
     # Layer 2: Capabilities
     LAYER_2_CAPABILITIES = """## Capabilities
 - Search system knowledge and past discoveries
@@ -42,7 +57,7 @@ You are knowledgeable, precise, and safety-conscious."""
 - Remember information across sessions
 - Learn user preferences over time
 - Provide step-by-step guidance"""
-    
+
     # Layer 3: Constraints
     LAYER_3_CONSTRAINTS = """## Constraints
 - Never execute destructive commands without explicit user confirmation
@@ -51,19 +66,37 @@ You are knowledgeable, precise, and safety-conscious."""
 - Admit uncertainty when appropriate
 - Respect user privacy and system security
 - One action at a time - wait for results before proceeding"""
-    
-    def __init__(self, base_builder=None, context_injector=None):
+
+    def __init__(self, base_builder=None, context_injector=None, voice: str = "first_person"):
         """
         Initialize the agent prompt builder.
-        
+
         Args:
             base_builder: Optional PromptBuilder for rich system prompts
                 with model-specific overrides, project context, etc.
             context_injector: Optional ContextInjector for system context,
                 user preferences, discovery summary.
+            voice: Self-reference voice mode. One of:
+                "first_person" (default), "the_computer", "hybrid".
         """
         self.base_builder = base_builder
         self.context_injector = context_injector
+        self.voice = voice
+
+    def set_voice(self, voice: str) -> None:
+        """Update the voice setting. Called when BeingConfig changes."""
+        if voice in ("first_person", "the_computer", "hybrid"):
+            self.voice = voice
+        else:
+            logger.warning(f"Invalid voice '{voice}', keeping '{self.voice}'")
+
+    def _get_identity(self) -> str:
+        """Get the identity layer for the current voice."""
+        if self.voice == "the_computer":
+            return self.LAYER_1_IDENTITY_THE_COMPUTER
+        elif self.voice == "hybrid":
+            return self.LAYER_1_IDENTITY_HYBRID
+        return self.LAYER_1_IDENTITY_FIRST_PERSON
     
     def build_system_prompt(
         self,
@@ -107,7 +140,7 @@ You are knowledgeable, precise, and safety-conscious."""
         
         # Fallback: hardcoded layers
         parts = [
-            self.LAYER_1_IDENTITY,
+            self._get_identity(),
             self.LAYER_2_CAPABILITIES,
             self.LAYER_3_CONSTRAINTS,
         ]
