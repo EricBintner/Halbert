@@ -14,4 +14,8 @@ export default defineConfig({
       '@tokens': path.resolve(__dirname, './shared-tokens'),
     },
   },
+  server: {
+    port: 5174,
+    host: true,
+  },
 });

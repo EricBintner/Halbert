@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import "../shared-tokens/tokens.css";
+
+@layer base {
+  html {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    overflow-x: hidden;
+    line-height: 1.6;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  code, pre, kbd {
+    font-family: var(--font-mono);
+  }
+}
+
+/* 1980s Glossy Magazine Halftone Texture over Medium Blue */
+.blue-texture {
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(35, 82, 143, 0.4) 0%, transparent 70%),
+    repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255, 255, 255, 0.015) 3px, rgba(255, 255, 255, 0.015) 6px);
+}
+
+/* Gold Foil Editorial Rule */
+.rule-gold {
+  border-top: 2px solid var(--color-accent);
+}
+
+/* Double Line Blue Plate Divider */
+.rule-editorial {
+  border-top: 3px double rgba(255, 255, 255, 0.3);
+}
+
+/* 1980s Editorial Drop Cap */
+.drop-cap::first-letter {
+  float: left;
+  font-family: var(--font-display);
+  font-size: 4.2rem;
+  line-height: 0.85;
+  padding-top: 4px;
+  padding-right: 12px;
+  padding-bottom: 2px;
+  color: var(--color-accent);
+  font-weight: 900;
+}
+
+/* Framed Photographic / Data Plate */
+.editorial-plate {
+  background-color: var(--color-surface);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 20px 40px -10px rgba(10, 25, 47, 0.5), 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Custom Scrollbar for Medium Blue */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-canvas);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-muted);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent);
+}

@@ -1,0 +1,37 @@
+@theme {
+  /* ===== Surface Ramp (Medium Blue Editorial Canvas) ===== */
+  --color-canvas:            #1B447A;   /* Rich Aegean / Medium Mediterranean Blue */
+  --color-surface:           #23528F;   /* Elevated blue plate */
+  --color-surface-subtle:    #153663;   /* Recessed deep blue chamber */
+  --color-surface-muted:     #2D60A1;   /* Muted blue divider / pill */
+
+  /* ===== Signature Accents (Champagne Gold & Sunset Vermilion) ===== */
+  --color-accent:            #FCD34D;   /* Warm Champagne Gold */
+  --color-accent-hover:      #F59E0B;   /* Amber Ochre */
+  --color-accent-active:     #D97706;   /* Deep Gold */
+  --color-accent-tint:       rgba(252, 211, 77, 0.15); /* Soft gold halo */
+
+  --color-accent-secondary:  #FF6B4A;   /* 80s Sunset Vermilion */
+
+  /* ===== Ink Hierarchy (Crisp White & Silver Periwinkle) ===== */
+  --color-ink:               #FFFFFF;   /* Crisp White Display & Headlines */
+  --color-ink-secondary:     #E0E7FF;   /* Soft Silver Periwinkle Prose */
+  --color-ink-tertiary:      #93C5FD;   /* Sky Blue Captions & Metadata */
+  --color-ink-ghost:         #60A5FA;   /* Watermark rules */
+
+  /* ===== Status Telemetry ===== */
+  --color-status-success:    #34D399;   /* Emerald Glow */
+  --color-status-warning:    #FBBF24;   /* Amber */
+  --color-status-error:      #F87171;   /* Coral Red */
+  --color-status-info:       #60A5FA;   /* Ice Blue */
+
+  /* ===== Typography ===== */
+  --font-display:            "Fraunces", "DM Serif Display", "Instrument Serif", Georgia, serif;
+  --font-serif-italic:       "Instrument Serif", "Fraunces", Georgia, serif;
+  --font-sans:               "Plus Jakarta Sans", -apple-system, system-ui, sans-serif;
+  --font-mono:               "DM Mono", "JetBrains Mono", monospace;
+
+  /* ===== Layout Dimensions ===== */
+  --content-max-width:       1200px;
+  --readable-max-width:      840px;
+}
