@@ -443,18 +443,61 @@ def create_autonomous_task(
     """
     tasks = {
         'health_check': SystemHealthCheckTask,
-        'log_cleanup': LogCleanupTask
+        'log_cleanup': LogCleanupTask,
+        'morning_report': MorningReportTask,
     }
-    
+
     task_class = tasks.get(task_type)
     if not task_class:
         raise ValueError(f"Unknown task type: {task_type}")
-    
+
     return task_class(
         model_manager=model_manager,
         prompt_manager=prompt_manager,
         memory_retrieval=memory_retrieval,
         memory_writer=memory_writer,
         confidence_threshold=confidence_threshold,
-        approval_engine=approval_engine
     )
+
+
+class MorningReportTask(AutonomousTask):
+    """
+    Morning report task — generates a daily summary of system health.
+
+    Consolidates findings, proposals, and config changes from the last
+    24 hours into a natural-language report. Published as a
+    ProactiveEvent on the event bus.
+
+    Phase 7 / T7d.2.
+    """
+
+    def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate and publish the morning report."""
+        import asyncio
+
+        logger.info("Starting morning report generation")
+
+        try:
+            from ..findings.store import FindingStore
+            from ..findings.proposals import ProposalStore
+            from ..proactive.morning_report import MorningReportGenerator
+
+            finding_store = FindingStore()
+            proposal_store = ProposalStore()
+            generator = MorningReportGenerator(
+                finding_store=finding_store,
+                proposal_store=proposal_store,
+            )
+
+            # Run the async generator
+            event = asyncio.run(generator.generate())
+
+            return {
+                "status": "ok",
+                "event_id": event.id,
+                "title": event.title,
+                "severity": event.severity,
+            }
+        except Exception as e:
+            logger.error(f"Morning report failed: {e}")
+            return {"status": "error", "error": str(e)}
