@@ -1,0 +1,25 @@
+@theme {
+  /* ===== Surface Ramp (Authentic 1968 Blue Print Stock) ===== */
+  --color-canvas:            #1E40AF;   /* Rich Medium Cobalt Print Stock */
+  --color-surface:           #1D4ED8;   /* Inked illustration frame */
+  --color-surface-subtle:    #1E3A8A;   /* Recessed plate tray */
+  --color-surface-muted:     #3B82F6;   /* Hairline keyline */
+
+  /* ===== Print Ink Hierarchy ===== */
+  --color-ink:               #FFFFFF;   /* Pure Solid White Display Headline */
+  --color-ink-secondary:     #F8FAFC;   /* Paper White Book Text */
+  --color-ink-tertiary:      #BFDBFE;   /* Sky Blue Folio & Captions */
+  --color-ink-ghost:         #60A5FA;   /* Rule / Guideline */
+
+  /* ===== Print Accents ===== */
+  --color-accent:            #FFFFFF;   /* Pure White */
+  --color-accent-ochre:      #FCD34D;   /* 1960s Sunlit Ochre */
+
+  /* ===== Typography (Authentic Period Types) ===== */
+  --font-display:            "Fraunces", "DM Serif Display", Georgia, serif;
+  --font-body:               "Newsreader", "EB Garamond", "Times New Roman", serif;
+  --font-mono:               "JetBrains Mono", monospace;
+
+  /* ===== Page Dimensions (Standard Magazine Spread) ===== */
+  --magazine-max-width:      1040px;
+}
