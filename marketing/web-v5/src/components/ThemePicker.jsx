@@ -35,30 +35,30 @@ export function ThemePicker({ defaultTheme = 'cobalt-1968' }) {
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="px-3.5 py-2 bg-white text-[#1E40AF] text-xs font-bold uppercase tracking-wider border border-white shadow-xl hover:bg-gray-100 transition-all flex items-center space-x-2 cursor-pointer"
+          className="px-3.5 py-2 bg-white text-[#1D4ED8] text-xs font-bold uppercase tracking-wider border border-white shadow-xl hover:bg-gray-100 transition-all flex items-center space-x-2 cursor-pointer"
         >
           <span className="w-2.5 h-2.5 rounded-full border border-black/20" style={{ backgroundColor: currentTheme.preview.canvas }} />
-          <span>PRINT STOCK: {currentTheme.name}</span>
+          <span>PALETTE: {currentTheme.name}</span>
           <span className="text-[10px] opacity-75">▾</span>
         </button>
       )}
 
       {/* Expanded Drawer */}
       {isOpen && (
-        <div className="w-80 bg-white text-[#1E40AF] border-2 border-[#1E40AF] shadow-2xl p-5 space-y-4 text-xs font-mono">
+        <div className="w-80 bg-white text-[#1D4ED8] border-2 border-[#1D4ED8] shadow-2xl p-5 space-y-4 text-xs font-mono">
           {/* Header */}
-          <div className="flex justify-between items-baseline border-b border-[#1E40AF]/30 pb-2.5">
+          <div className="flex justify-between items-baseline border-b border-[#1D4ED8]/30 pb-2.5">
             <div className="space-y-0.5">
-              <div className="font-bold text-sm tracking-tight text-[#1E40AF]">
-                1968 PRINT STOCK MATRIX
+              <div className="font-bold text-sm tracking-tight text-[#1D4ED8]">
+                COLOR MATRIX
               </div>
               <div className="text-[10px] text-gray-600 uppercase">
-                HOT-SWAP PAPER &amp; INK TOKENS
+                HOT-SWAP DESIGN TOKENS
               </div>
             </div>
             <button
               onClick={() => setIsOpen(false)}
-              className="text-sm font-bold px-1.5 py-0.5 hover:bg-gray-100 border border-[#1E40AF]"
+              className="text-sm font-bold px-1.5 py-0.5 hover:bg-gray-100 border border-[#1D4ED8]"
             >
               ✕
             </button>
@@ -74,12 +74,12 @@ export function ThemePicker({ defaultTheme = 'cobalt-1968' }) {
                   onClick={() => handleSelectTheme(theme.id)}
                   className={`p-3 border transition-all cursor-pointer ${
                     isSelected
-                      ? 'border-2 border-[#1E40AF] bg-blue-50 font-bold'
-                      : 'border-gray-200 hover:border-[#1E40AF] bg-white'
+                      ? 'border-2 border-[#1D4ED8] bg-blue-50 font-bold'
+                      : 'border-gray-200 hover:border-[#1D4ED8] bg-white'
                   }`}
                 >
                   <div className="flex justify-between items-center mb-1">
-                    <div className="font-bold text-xs text-[#1E40AF]">
+                    <div className="font-bold text-xs text-[#1D4ED8]">
                       {theme.name}
                     </div>
                     {/* Swatch */}
@@ -97,10 +97,10 @@ export function ThemePicker({ defaultTheme = 'cobalt-1968' }) {
           </div>
 
           {/* Action Footer */}
-          <div className="pt-2 border-t border-[#1E40AF]/30 flex justify-between items-center text-[10px]">
+          <div className="pt-2 border-t border-[#1D4ED8]/30 flex justify-between items-center text-[10px]">
             <button
               onClick={handleCopyCSS}
-              className="px-2.5 py-1 bg-[#1E40AF] text-white font-bold uppercase hover:bg-blue-900 transition-colors"
+              className="px-2.5 py-1 bg-[#1D4ED8] text-white font-bold uppercase hover:bg-blue-900 transition-colors"
             >
               {copied ? '✓ COPIED' : 'COPY CSS TOKENS'}
             </button>

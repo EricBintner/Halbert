@@ -5,7 +5,7 @@
   html {
     background-color: var(--color-canvas);
     color: var(--color-ink);
-    font-family: var(--font-body);
+    font-family: var(--font-sans);
     scroll-behavior: smooth;
   }
 
@@ -13,13 +13,13 @@
     background-color: var(--color-canvas);
     color: var(--color-ink);
     overflow-x: hidden;
-    line-height: 1.5;
+    line-height: 1.6;
   }
 
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
-    letter-spacing: -0.04em;
-    font-feature-settings: "liga" 1, "dlig" 1;
+    letter-spacing: -0.035em;
+    font-weight: 800;
   }
 
   code, pre {
@@ -27,84 +27,48 @@
   }
 }
 
-/* 3-Column Magazine Text Grid */
-.magazine-columns {
-  column-count: 1;
-  column-gap: 2.5rem;
-  column-rule: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-@media (min-width: 768px) {
-  .magazine-columns {
-    column-count: 3;
-    text-align: justify;
-    text-justify: inter-word;
-    hyphens: auto;
-  }
-}
-
-/* Authentic 1960s Print Drop Cap */
-.drop-cap::first-letter {
-  float: left;
+/* 1960s Graphic Poster Typography */
+.retro-headline {
   font-family: var(--font-display);
-  font-size: 4.5rem;
-  line-height: 0.8;
-  padding-top: 4px;
-  padding-right: 12px;
-  padding-bottom: 2px;
-  color: #FFFFFF;
-  font-weight: 900;
+  letter-spacing: -0.04em;
+  line-height: 1.02;
 }
 
-/* Paragraph Indent for Magazine Layout */
-.magazine-p + .magazine-p {
-  text-indent: 1.5em;
-  margin-top: 0;
+.retro-italic {
+  font-family: var(--font-serif-italic);
+  font-style: italic;
+  font-weight: 400;
 }
 
-/* Dashed Mail-In Coupon */
-.dashed-coupon {
-  border: 2px dashed rgba(255, 255, 255, 0.85);
-  background-color: rgba(255, 255, 255, 0.05);
+/* Crisp Graphic Plate Borders (Solid, High-Contrast 60s Style) */
+.graphic-box {
+  background-color: var(--color-surface-subtle);
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
 }
 
-/* Corner Crop & Registration Crosses */
-.crop-mark-tl {
-  position: absolute;
-  top: -12px;
-  left: -12px;
-  width: 24px;
-  height: 24px;
-  border-top: 1.5px solid rgba(255, 255, 255, 0.6);
-  border-left: 1.5px solid rgba(255, 255, 255, 0.6);
+.graphic-rule {
+  border-top: 1.5px solid rgba(255, 255, 255, 0.35);
 }
 
-.crop-mark-tr {
-  position: absolute;
-  top: -12px;
-  right: -12px;
-  width: 24px;
-  height: 24px;
-  border-top: 1.5px solid rgba(255, 255, 255, 0.6);
-  border-right: 1.5px solid rgba(255, 255, 255, 0.6);
+.graphic-rule-thick {
+  border-top: 3px solid #FFFFFF;
 }
 
-.crop-mark-bl {
-  position: absolute;
-  bottom: -12px;
-  left: -12px;
-  width: 24px;
-  height: 24px;
-  border-bottom: 1.5px solid rgba(255, 255, 255, 0.6);
-  border-left: 1.5px solid rgba(255, 255, 255, 0.6);
+/* Custom Scrollbar for Medium Blue */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
 
-.crop-mark-br {
-  position: absolute;
-  bottom: -12px;
-  right: -12px;
-  width: 24px;
-  height: 24px;
-  border-bottom: 1.5px solid rgba(255, 255, 255, 0.6);
-  border-right: 1.5px solid rgba(255, 255, 255, 0.6);
+::-webkit-scrollbar-track {
+  background: var(--color-canvas);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #FFFFFF;
 }

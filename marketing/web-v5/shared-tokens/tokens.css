@@ -1,25 +1,28 @@
 @theme {
-  /* ===== Surface Ramp (Authentic 1968 Blue Print Stock) ===== */
-  --color-canvas:            #1E40AF;   /* Rich Medium Cobalt Print Stock */
-  --color-surface:           #1D4ED8;   /* Inked illustration frame */
-  --color-surface-subtle:    #1E3A8A;   /* Recessed plate tray */
-  --color-surface-muted:     #3B82F6;   /* Hairline keyline */
+  /* ===== Surface Ramp (Medium Blue Graphic Field) ===== */
+  --color-canvas:            #1D4ED8;   /* Rich Medium Blue Canvas */
+  --color-surface:           #2563EB;   /* Vibrant blue plate */
+  --color-surface-subtle:    #1E40AF;   /* Deep blue well */
+  --color-surface-muted:     rgba(255, 255, 255, 0.25); /* Crisp border rule */
 
-  /* ===== Print Ink Hierarchy ===== */
-  --color-ink:               #FFFFFF;   /* Pure Solid White Display Headline */
-  --color-ink-secondary:     #F8FAFC;   /* Paper White Book Text */
-  --color-ink-tertiary:      #BFDBFE;   /* Sky Blue Folio & Captions */
-  --color-ink-ghost:         #60A5FA;   /* Rule / Guideline */
+  /* ===== Typographic Ink (Crisp White & Ice Tint) ===== */
+  --color-ink:               #FFFFFF;   /* Pure White Display Headlines */
+  --color-ink-secondary:     #EFF6FF;   /* Soft Ice White Prose */
+  --color-ink-tertiary:      #BFDBFE;   /* Sky Blue Metadata */
+  --color-ink-ghost:         #93C5FD;   /* Subdued lines */
 
-  /* ===== Print Accents ===== */
-  --color-accent:            #FFFFFF;   /* Pure White */
-  --color-accent-ochre:      #FCD34D;   /* 1960s Sunlit Ochre */
+  /* ===== 1960s Graphic Accents ===== */
+  --color-accent:            #FFFFFF;   /* Crisp White Accent */
+  --color-accent-amber:      #FDE047;   /* 60s Pop Lemon / Amber */
+  --color-accent-coral:      #FB7185;   /* Coral Highlight */
 
-  /* ===== Typography (Authentic Period Types) ===== */
-  --font-display:            "Fraunces", "DM Serif Display", Georgia, serif;
-  --font-body:               "Newsreader", "EB Garamond", "Times New Roman", serif;
-  --font-mono:               "JetBrains Mono", monospace;
+  /* ===== Typography ===== */
+  --font-display:            "Fraunces", "DM Serif Display", "Instrument Serif", Georgia, serif;
+  --font-serif-italic:       "Instrument Serif", "Fraunces", Georgia, serif;
+  --font-sans:               "Plus Jakarta Sans", -apple-system, sans-serif;
+  --font-mono:               "DM Mono", monospace;
 
-  /* ===== Page Dimensions (Standard Magazine Spread) ===== */
-  --magazine-max-width:      1040px;
+  /* ===== Layout Dimensions ===== */
+  --content-max-width:       1180px;
+  --readable-max-width:      880px;
 }
