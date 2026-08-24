@@ -5,6 +5,7 @@ import { AutobiographyTape } from './components/AutobiographyTape';
 import { ConfigBlueprint } from './components/ConfigBlueprint';
 import { ProofConsole } from './components/ProofConsole';
 import { ManifestFooter } from './components/ManifestFooter';
+import { ThemePicker } from './components/ThemePicker';
 
 export function App() {
   const waitlistRef = useRef(null);
@@ -27,6 +28,7 @@ export function App() {
         <ProofConsole />
       </main>
       <ManifestFooter />
+      <ThemePicker defaultTheme="bauhaus-amber" />
     </div>
   );
 }

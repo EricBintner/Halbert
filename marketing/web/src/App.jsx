@@ -6,6 +6,7 @@ import { Hero } from './components/Hero';
 import { HowItWorks } from './components/HowItWorks';
 import { TheBeing } from './components/TheBeing';
 import { Footer } from './components/Footer';
+import { ThemePicker } from './components/ThemePicker';
 
 export function App() {
   useSmoothScroll();
@@ -61,6 +62,7 @@ export function App() {
         <TheBeing copy={copy} />
       </main>
       <Footer copy={copy} />
+      <ThemePicker defaultTheme="olivetti-1968" />
     </div>
   );
 }
