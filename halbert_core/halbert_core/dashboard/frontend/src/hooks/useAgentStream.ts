@@ -113,6 +113,8 @@ export interface UseAgentStreamReturn {
   isStreaming: boolean;
   response: string;
   thinking: string;
+  provenance: ProvenanceRef[];
+  moduleInvocations: ModuleInvocation[];
   sendMessage: (message: string, sessionId?: string) => void;
   confirmAction: (actionId: string, confirmed: boolean) => void;
   applyDiff: (diffId: string) => void;
@@ -121,11 +123,26 @@ export interface UseAgentStreamReturn {
   reset: () => void;
 }
 
+// Phase 8: Provenance and module invocation types
+export interface ProvenanceRef {
+  type: 'log_cursor' | 'snapshot_id' | 'metric_window' | 'path_lines' | 'memory_id' | 'observation_id';
+  ref: string;
+  label: string;
+  url: string;
+}
+
+export interface ModuleInvocation {
+  module: string;
+  props: Record<string, any>;
+}
+
 export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStreamReturn {
   const [session, setSession] = useState<AgentSession | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [response, setResponse] = useState('');
   const [thinking, setThinking] = useState('');
+  const [provenance, setProvenance] = useState<ProvenanceRef[]>([]);
+  const [moduleInvocations, setModuleInvocations] = useState<ModuleInvocation[]>([]);
   
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -250,6 +267,17 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           options.onComplete?.();
           return prev;
 
+        case 'response_provenance':
+          setProvenance(event.provenance as ProvenanceRef[] || []);
+          return prev;
+
+        case 'module_invoke':
+          setModuleInvocations(prev => [...prev, {
+            module: event.module as string,
+            props: event.props as Record<string, any> || {},
+          }]);
+          return prev;
+
         case 'error':
           const errorMsg = event.message as string;
           options.onError?.(errorMsg);
@@ -346,6 +374,8 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     setIsStreaming(true);
     setResponse('');
     setThinking('');
+    setProvenance([]);
+    setModuleInvocations([]);
     
     // Generate or use provided session ID
     const sid = sessionId || crypto.randomUUID();
@@ -546,6 +576,8 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     setSession(null);
     setResponse('');
     setThinking('');
+    setProvenance([]);
+    setModuleInvocations([]);
     sessionIdRef.current = null;
   }, [cancel]);
 
@@ -586,6 +618,8 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     isStreaming,
     response,
     thinking,
+    provenance,
+    moduleInvocations,
     sendMessage,
     confirmAction,
     applyDiff,

@@ -136,6 +136,7 @@ class ProposalGenerator:
                         "path": path,
                         "action": "remove_conflicting_directive",
                         "description": f"Remove or comment out the conflicting directive in {path}",
+                        "requires_manual_review": True,
                     })
 
         elif finding.detector == "fstab_phantom":
@@ -146,6 +147,7 @@ class ProposalGenerator:
                         "path": path,
                         "action": "comment_out_entry",
                         "description": "Comment out the fstab entry referencing the non-existent device",
+                        "requires_manual_review": True,
                     })
 
         elif finding.detector == "permissions_hygiene":
@@ -187,28 +189,56 @@ class ProposalGenerator:
             return None
 
         first = changes[0]
+        action = first.get("action", "")
         path = first.get("path", "")
         if not path:
             return None
 
         try:
-            req = ToolRequest(
-                tool="write_config",
-                dry_run=True,
-                confirm=False,
-                request_id=str(uuid.uuid4()),
-                inputs={
-                    "path": path,
-                    "changes": first,
-                    "backup": True,
-                },
-            )
-            resp = self.write_config.execute(req)
-            return {
-                "ok": resp.ok,
-                "outputs": resp.outputs,
-                "error": resp.error,
-            }
+            if first.get("requires_manual_review"):
+                # Actions that require manual review can't be auto-executed
+                return {
+                    "ok": True,
+                    "outputs": {
+                        "preview": first.get("description", action),
+                        "requires_manual_review": True,
+                    },
+                }
+            elif action == "chmod":
+                # chmod actions don't use WriteConfig — just report what would happen
+                import os, stat
+                if os.path.exists(path):
+                    current_mode = os.stat(path).st_mode & 0o777
+                    return {
+                        "ok": True,
+                        "outputs": {
+                            "current_mode": oct(current_mode),
+                            "target_mode": first.get("mode", "600"),
+                            "preview": f"chmod {first['mode']} {path} (currently {oct(current_mode)})",
+                        },
+                    }
+                else:
+                    return {"ok": False, "error": f"File not found: {path}"}
+            else:
+                # Config file changes use WriteConfig
+                config_changes = first.get("config_changes", {})
+                req = ToolRequest(
+                    tool="write_config",
+                    dry_run=True,
+                    confirm=False,
+                    request_id=str(uuid.uuid4()),
+                    inputs={
+                        "path": path,
+                        "changes": config_changes,
+                        "backup": True,
+                    },
+                )
+                resp = self.write_config.execute(req)
+                return {
+                    "ok": resp.ok,
+                    "outputs": resp.outputs,
+                    "error": resp.error,
+                }
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -218,43 +248,64 @@ class ProposalGenerator:
             return
 
         first = changes[0]
+        action = first.get("action", "")
         path = first.get("path", "")
         if not path:
             return
 
         try:
-            req = ToolRequest(
-                tool="write_config",
-                dry_run=False,
-                confirm=True,
-                request_id=str(uuid.uuid4()),
-                inputs={
-                    "path": path,
-                    "changes": first,
-                    "backup": True,
-                },
-            )
-            resp = self.write_config.execute(req)
-
-            if resp.ok:
-                self.proposals.mark_applied(proposal_id)
-                logger.info(f"Proposal {proposal_id} applied successfully")
+            if first.get("requires_manual_review"):
+                # Can't auto-execute — mark as pending manual review
+                logger.info(f"Proposal {proposal_id} requires manual review — not auto-executing")
+                # Leave as approved but not applied
+                return
+            elif action == "chmod":
+                # Execute chmod directly
+                import os
+                mode_str = first.get("mode", "600")
+                mode_int = int(mode_str, 8)
+                if os.path.exists(path):
+                    os.chmod(path, mode_int)
+                    self.proposals.mark_applied(proposal_id)
+                    logger.info(f"Proposal {proposal_id} applied: chmod {mode_str} {path}")
+                else:
+                    self.proposals.mark_rolled_back(proposal_id)
+                    logger.warning(f"File not found for chmod: {path}")
             else:
-                # Attempt rollback
-                logger.warning(f"Apply failed for {proposal_id}: {resp.error}")
-                rollback_req = ToolRequest(
+                # Config file changes use WriteConfig
+                config_changes = first.get("config_changes", {})
+                req = ToolRequest(
                     tool="write_config",
                     dry_run=False,
                     confirm=True,
                     request_id=str(uuid.uuid4()),
                     inputs={
                         "path": path,
-                        "rollback": True,
+                        "changes": config_changes,
+                        "backup": True,
                     },
                 )
-                self.write_config.execute(rollback_req)
-                self.proposals.mark_rolled_back(proposal_id)
-                logger.info(f"Proposal {proposal_id} rolled back")
+                resp = self.write_config.execute(req)
+
+                if resp.ok:
+                    self.proposals.mark_applied(proposal_id)
+                    logger.info(f"Proposal {proposal_id} applied successfully")
+                else:
+                    # Attempt rollback
+                    logger.warning(f"Apply failed for {proposal_id}: {resp.error}")
+                    rollback_req = ToolRequest(
+                        tool="write_config",
+                        dry_run=False,
+                        confirm=True,
+                        request_id=str(uuid.uuid4()),
+                        inputs={
+                            "path": path,
+                            "rollback": True,
+                        },
+                    )
+                    self.write_config.execute(rollback_req)
+                    self.proposals.mark_rolled_back(proposal_id)
+                    logger.info(f"Proposal {proposal_id} rolled back")
         except Exception as e:
             logger.error(f"Execution error for {proposal_id}: {e}")
             self.proposals.mark_rolled_back(proposal_id)

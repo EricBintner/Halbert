@@ -19,6 +19,7 @@ import { ContextBar } from './ContextBar';
 import { DiffBlock } from './DiffBlock';
 import { ConfidenceIndicator } from './ConfidenceIndicator';
 import { MarkdownRenderer } from '../domain/MarkdownRenderer';
+import { ProactiveEventsBadge } from './ProactiveEventsBadge';
 
 export interface AgentMessage {
   id: string;
@@ -220,6 +221,7 @@ export function AgentPanel({
             )}
           </div>
           <div className="flex items-center gap-1">
+            <ProactiveEventsBadge />
             {isStreaming && (
               <button
                 onClick={cancel}

@@ -15,8 +15,6 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..config.parser import parse as parse_config
-
 logger = logging.getLogger(__name__)
 
 

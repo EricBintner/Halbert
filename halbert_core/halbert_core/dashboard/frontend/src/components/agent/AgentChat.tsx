@@ -33,6 +33,8 @@ import { PlanChecklist } from './PlanChecklist';
 import { ToolExecutionCard } from './ToolExecutionCard';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { ThinkingPanel } from './ThinkingPanel';
+import { WhyChip } from '../WhyChip';
+import { ModuleRenderer } from '../ModuleRenderer';
 import { ConfidenceIndicator } from './ConfidenceIndicator';
 import { ScanBlock } from './ScanBlock';
 import { ContextBar } from './ContextBar';
@@ -159,6 +161,8 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
     isStreaming,
     response,
     thinking,
+    provenance,
+    moduleInvocations,
     sendMessage,
     confirmAction,
     applyDiff,
@@ -631,6 +635,21 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
                     <div className="text-sm text-zinc-300">
                       <MessageContent content={response} onRunCommand={onRunCommand} />
                       {isStreaming && <span className="inline-block w-2 h-4 bg-zinc-400 animate-pulse ml-0.5" />}
+                      {/* Phase 8: Provenance chips */}
+                      {!isStreaming && provenance.length > 0 && (
+                        <div className="mt-2">
+                          <WhyChip provenance={provenance} />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Phase 8: Module invocations rendered inline */}
+                  {!isStreaming && moduleInvocations.length > 0 && (
+                    <div className="mt-3 space-y-3">
+                      {moduleInvocations.map((inv, i) => (
+                        <ModuleRenderer key={i} module={inv.module} props={inv.props} />
+                      ))}
                     </div>
                   )}
                 </div>

@@ -114,9 +114,22 @@ class DetectorRunner:
         return loop.run_until_complete(self.run_all())
 
     def _find_existing(self, finding: Finding) -> bool:
-        """Check if a similar finding already exists (same detector + title, open)."""
-        open_findings = self.findings.list_open()
-        for existing in open_findings:
+        """Check if a similar finding already exists (same detector + title).
+
+        Checks both open AND snoozed findings — snoozed findings should
+        not be re-created while the snooze is active. Dismissed findings
+        are also checked — if the user dismissed it, don't re-add unless
+        the condition has changed.
+        """
+        # Check open findings
+        for existing in self.findings.list_open():
             if existing.detector == finding.detector and existing.title == finding.title:
                 return True
+
+        # Check snoozed and dismissed findings via list_all
+        for existing in self.findings.list_all(limit=500):
+            if existing.status in ("snoozed", "dismissed"):
+                if existing.detector == finding.detector and existing.title == finding.title:
+                    return True
+
         return False
