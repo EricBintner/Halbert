@@ -847,6 +847,17 @@ class AgentStateMachine:
         except Exception as e:
             logger.debug(f"Edit block parsing skipped: {e}")
 
+        # Phase 8: Extract and emit provenance refs for the response
+        try:
+            provenance_refs = self._extract_provenance(full_response)
+            if provenance_refs:
+                yield StreamEvent.response_provenance(
+                    self.ctx.session_id, provenance_refs
+                )
+                logger.info(f"Emitted {len(provenance_refs)} provenance refs")
+        except Exception as e:
+            logger.debug(f"Provenance extraction skipped: {e}")
+
         yield StreamEvent.response_complete(self.ctx.session_id)
         yield await self._transition(AgentState.IDLE)
     
@@ -902,6 +913,65 @@ class AgentStateMachine:
         ]
         return "\n".join(parts)
     
+    def _extract_provenance(self, response: str) -> list:
+        """Extract provenance refs from the response and retrieved context.
+
+        Phase 8: Validates that refs point to real data before attaching.
+        Uses the retrieved context and observations as evidence sources.
+        """
+        from ..proactive.provenance import (
+            ProvenanceRef, parse_path_lines_ref, attach_provenance
+        )
+        import re
+
+        refs = []
+
+        # 1. Extract path:line references from the response text
+        # Match patterns like /etc/ssh/sshd_config:42 or /path/file:10-20
+        path_pattern = r'(/(?:etc|var|usr|home|tmp|opt|srv|root|Library|System)[\w/.-]+):(\d+)(?:-(\d+))?'
+        for match in re.finditer(path_pattern, response):
+            path = match.group(1)
+            start = int(match.group(2))
+            end = int(match.group(3)) if match.group(3) else None
+            refs.append(parse_path_lines_ref(path, start, end))
+
+        # 2. Create provenance from retrieved context sources
+        for ctx in self.ctx.retrieved_context[:5]:
+            source = ctx.get('source', '')
+            content = ctx.get('content', '')
+            if source == 'file' and 'path' in ctx:
+                # File-based context
+                refs.append(ProvenanceRef(
+                    type='path_lines',
+                    ref=ctx['path'],
+                    label=f"Retrieved from {ctx['path']}",
+                ))
+            elif source == 'memory':
+                refs.append(ProvenanceRef(
+                    type='memory_id',
+                    ref=ctx.get('id', 'unknown'),
+                    label=f"Memory: {content[:60]}...",
+                ))
+            elif source == 'rag':
+                refs.append(ProvenanceRef(
+                    type='observation_id',
+                    ref=ctx.get('id', 'unknown'),
+                    label=f"Knowledge: {content[:60]}...",
+                ))
+
+        # 3. Create provenance from observations
+        for obs in self.ctx.observations[:3]:
+            if isinstance(obs, str):
+                refs.append(ProvenanceRef(
+                    type='log_cursor',
+                    ref=f'observation:{obs[:50]}',
+                    label=f"Observation: {obs[:60]}...",
+                ))
+
+        # Validate and attach — invalid refs are dropped
+        packaged = attach_provenance("", refs)
+        return packaged['provenance']
+
     def _build_simple_response_prompt(self) -> str:
         """Build a simple response prompt when no prompt builder available."""
         context_text = "\n".join([

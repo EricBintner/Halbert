@@ -238,6 +238,17 @@ class StreamEvent:
             session_id=session_id,
             data={}
         )
+
+    @classmethod
+    def response_provenance(
+        cls, session_id: str, provenance: list
+    ) -> 'StreamEvent':
+        """Emit provenance refs for the response (Phase 8)."""
+        return cls(
+            type="response_provenance",
+            session_id=session_id,
+            data={"provenance": provenance}
+        )
     
     @classmethod
     def thinking(cls, session_id: str, content: str) -> 'StreamEvent':
