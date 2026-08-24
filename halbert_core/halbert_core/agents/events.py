@@ -249,6 +249,21 @@ class StreamEvent:
             session_id=session_id,
             data={"provenance": provenance}
         )
+
+    @classmethod
+    def module_invoke(
+        cls, session_id: str, module: str, props: dict
+    ) -> 'StreamEvent':
+        """Emit a module invocation event (Phase 8).
+
+        The frontend receives this and renders the module in the
+        context region alongside the conversation.
+        """
+        return cls(
+            type="module_invoke",
+            session_id=session_id,
+            data={"module": module, "props": props}
+        )
     
     @classmethod
     def thinking(cls, session_id: str, content: str) -> 'StreamEvent':

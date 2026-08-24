@@ -858,6 +858,17 @@ class AgentStateMachine:
         except Exception as e:
             logger.debug(f"Provenance extraction skipped: {e}")
 
+        # Phase 8: Parse module invocation requests from the response
+        try:
+            module_invocations = self._parse_module_invocations(full_response)
+            for inv in module_invocations:
+                yield StreamEvent.module_invoke(
+                    self.ctx.session_id, inv["module"], inv.get("props", {})
+                )
+                logger.info(f"Module invoked: {inv['module']}")
+        except Exception as e:
+            logger.debug(f"Module invocation parsing skipped: {e}")
+
         yield StreamEvent.response_complete(self.ctx.session_id)
         yield await self._transition(AgentState.IDLE)
     
@@ -913,6 +924,70 @@ class AgentStateMachine:
         ]
         return "\n".join(parts)
     
+    def _parse_module_invocations(self, response: str) -> list:
+        """Parse module invocation requests from the LLM response.
+
+        The LLM can emit structured JSON blocks to invoke modules:
+        {"action": "invoke_module", "module": "vitals", "props": {"timeframe": "1h"}}
+
+        The backend validates that the module exists in the registry
+        before emitting the invocation event.
+        """
+        import json
+        import re
+
+        from ..dashboard.modules.registry import get_module_registry
+        registry = get_module_registry()
+
+        invocations = []
+
+        # Find all JSON-like blocks in the response and try to parse them
+        # Look for {"action": "invoke_module", ...} patterns
+        # We use a balanced-brace approach: find the start, then match braces
+        idx = 0
+        while idx < len(response):
+            # Find the start of a potential JSON block
+            start = response.find('{"action"', idx)
+            if start == -1:
+                break
+
+            # Find the matching closing brace
+            depth = 0
+            end = start
+            for i in range(start, len(response)):
+                if response[i] == '{':
+                    depth += 1
+                elif response[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            else:
+                break  # No matching brace found
+
+            json_str = response[start:end]
+            try:
+                data = json.loads(json_str)
+                if data.get("action") == "invoke_module":
+                    module_name = data.get("module", "")
+                    # Validate module exists
+                    module = registry.get(module_name)
+                    if module:
+                        invocations.append({
+                            "module": module_name,
+                            "props": data.get("props", {}),
+                        })
+                    else:
+                        logger.warning(
+                            f"LLM tried to invoke unknown module: {module_name}"
+                        )
+            except json.JSONDecodeError:
+                pass  # Not valid JSON, skip
+
+            idx = end
+
+        return invocations
+
     def _extract_provenance(self, response: str) -> list:
         """Extract provenance refs from the response and retrieved context.
 
