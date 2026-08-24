@@ -1,0 +1,35 @@
+@theme {
+  /* ===== Surface Ramp (Minimalist Clean Studio) ===== */
+  --color-canvas:            #FAFAFA;   /* Studio light canvas */
+  --color-surface:           #FFFFFF;   /* Pure white card */
+  --color-surface-subtle:    #F1F5F9;   /* Recessed slate chamber */
+  --color-surface-muted:     #E2E8F0;   /* Muted hairline */
+
+  /* ===== Signature Accents ===== */
+  --color-accent:            #0F172A;   /* Slate 900 Primary Obsidian */
+  --color-accent-hover:      #1E293B;   /* Slate 800 */
+  --color-accent-active:     #020617;   /* Slate 950 */
+  --color-brand-blue:        #2563EB;   /* Electric Cobalt */
+  --color-brand-emerald:     #10B981;   /* Live indicator emerald */
+
+  /* ===== Ink Hierarchy ===== */
+  --color-ink:               #0F172A;   /* Primary Slate 900 */
+  --color-ink-secondary:     #475569;   /* Secondary Slate 600 */
+  --color-ink-tertiary:      #94A3B8;   /* Captions Slate 400 */
+  --color-ink-ghost:         #CBD5E1;   /* Muted borders Slate 300 */
+
+  /* ===== Status Telemetry ===== */
+  --color-status-success:    #10B981;   /* Nominal */
+  --color-status-warning:    #F59E0B;   /* Alert */
+  --color-status-error:      #EF4444;   /* Fault */
+  --color-status-info:       #3B82F6;   /* Info */
+
+  /* ===== Typography ===== */
+  --font-display:            "Plus Jakarta Sans", -apple-system, system-ui, sans-serif;
+  --font-sans:               "Inter", -apple-system, system-ui, sans-serif;
+  --font-mono:               "JetBrains Mono", "SF Mono", monospace;
+
+  /* ===== Layout Dimensions ===== */
+  --content-max-width:       1180px;
+  --readable-max-width:      800px;
+}
