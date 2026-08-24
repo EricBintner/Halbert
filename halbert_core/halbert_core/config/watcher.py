@@ -1,7 +1,8 @@
 from __future__ import annotations
+import logging
 import os
+import threading
 import time
-from threading import Thread
 from typing import Callable, Dict, List, Optional
 
 try:
@@ -13,6 +14,8 @@ except Exception:  # pragma: no cover
 
 from .manifest import Manifest
 from .snapshot import snapshot
+
+logger = logging.getLogger(__name__)
 
 Callback = Callable[[List[Dict]], None]
 
@@ -84,3 +87,50 @@ class ConfigWatcher:
             out = snapshot(self.manifest_path)
             self._handle_change(out)
             time.sleep(self.interval_s)
+
+
+# ---------------------------------------------------------------------------
+# SourcePrep re-index callback (Phase 5 / T5a.2)
+# ---------------------------------------------------------------------------
+
+def create_sourceprep_reindex_callback(
+    project_name: str = "halbert-host",
+    debounce_s: float = 5.0,
+) -> Callback:
+    """Create a debounced callback that re-stages config files and triggers
+    a SourcePrep rebuild for the halbert-host project.
+
+    Usage:
+        watcher = ConfigWatcher(
+            manifest_path="config/config-registry.yml",
+            on_change=create_sourceprep_reindex_callback(),
+        )
+
+    The callback is debounced — rapid successive file changes only trigger
+    one re-stage + rebuild after debounce_s seconds of quiet.
+    """
+    timer: Optional[threading.Timer] = None
+    lock = threading.Lock()
+
+    def _do_reindex() -> None:
+        try:
+            from ..tools.register_host_project import HostProjectRegistrar
+            registrar = HostProjectRegistrar()
+            result = registrar.register(name=project_name, build=True)
+            logger.info(
+                f"SourcePrep re-index: staged={result.get('files_staged', 0)}, "
+                f"created={result.get('created')}"
+            )
+        except Exception as e:
+            logger.warning(f"SourcePrep re-index failed (non-fatal): {e}")
+
+    def callback(_snapshot_result: List[Dict]) -> None:
+        nonlocal timer
+        with lock:
+            if timer is not None:
+                timer.cancel()
+            timer = threading.Timer(debounce_s, _do_reindex)
+            timer.daemon = True
+            timer.start()
+
+    return callback
