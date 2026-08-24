@@ -1,0 +1,372 @@
+"""
+Register the host's configuration tree as a SourcePrep project.
+
+This creates (or updates) a SourcePrep project named "halbert-host" that
+points at a staging directory containing snapshots of the host's live
+configuration files. The project is then indexed so that the config brain
+can semantically search over the host's configuration files, drop-ins,
+and systemd units.
+
+SourcePrep indexes files relative to the project root, so we stage copies
+of the host config files into a local directory structure that mirrors
+their original paths. This avoids permission issues with indexing /etc
+directly and gives us a stable, snapshotable project root.
+
+Phase 5 / T5a.1.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import platform
+import shutil
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import requests
+
+from ..utils.paths import data_subdir
+
+logger = logging.getLogger(__name__)
+
+PROJECT_NAME = "halbert-host"
+
+# Staging directory: ~/.local/share/halbert/host-config-staging/
+STAGING_DIR = data_subdir("host-config-staging")
+
+# OS-specific config file collections to stage
+_LINUX_CONFIG_PATHS = [
+    "/etc/fstab",
+    "/etc/ssh/sshd_config",
+    "/etc/ssh/sshd_config.d",
+    "/etc/systemd/system",
+    "/etc/default",
+    "/etc/sysctl.conf",
+    "/etc/sysctl.d",
+    "/etc/hosts",
+    "/etc/hostname",
+]
+
+_MACOS_CONFIG_PATHS = [
+    "/etc/fstab",
+    "/etc/ssh/sshd_config",
+    "/etc/ssh/sshd_config.d",
+    "/etc/hosts",
+    "/etc/synthetic.conf",
+    "/Library/LaunchDaemons",
+    "/Library/LaunchAgents",
+]
+
+# Include globs for the staged files (relative to staging root)
+_STAGED_INCLUDE_GLOBS = [
+    "**/*.conf",
+    "**/*.cfg",
+    "**/*.yml",
+    "**/*.yaml",
+    "**/*.service",
+    "**/*.mount",
+    "**/*.plist",
+    "**/fstab",
+    "**/sshd_config*",
+    "**/hosts",
+    "**/hostname",
+    "**/synthetic.conf",
+    "**/sysctl.conf",
+]
+
+_COMMON_EXCLUDE_GLOBS = [
+    "**/.git/**",
+    "**/ssl/**",
+    "**/letsencrypt/**",
+    "**/shadow",
+    "**/gshadow",
+]
+
+
+def _os_config_paths() -> List[str]:
+    """Return OS-appropriate config paths to stage."""
+    if platform.system() == "Darwin":
+        return _MACOS_CONFIG_PATHS
+    return _LINUX_CONFIG_PATHS
+
+
+def _stage_config_files(paths: List[str], staging_root: Path) -> int:
+    """Copy config files/dirs into the staging directory.
+
+    Preserves the original path structure under the staging root.
+    Skips files that don't exist or aren't readable.
+
+    Returns the number of files staged.
+    """
+    staging_root.mkdir(parents=True, exist_ok=True)
+    count = 0
+
+    for src in paths:
+        src_path = Path(src).expanduser()
+        if not src_path.exists():
+            logger.debug(f"Skipping (not found): {src_path}")
+            continue
+
+        # Determine destination preserving path structure
+        if src_path.is_absolute():
+            # Strip leading slash so it becomes relative under staging root
+            dest = staging_root / str(src_path).lstrip("/")
+        else:
+            dest = staging_root / src_path
+
+        try:
+            if src_path.is_file():
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_path, dest)
+                count += 1
+            elif src_path.is_dir():
+                for root, dirs, files in os.walk(src_path):
+                    rel = Path(root).relative_to(src_path)
+                    dest_dir = dest / rel
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    for f in files:
+                        src_file = Path(root) / f
+                        try:
+                            shutil.copy2(src_file, dest_dir / f)
+                            count += 1
+                        except (PermissionError, OSError) as e:
+                            logger.debug(f"Skip {src_file}: {e}")
+        except (PermissionError, OSError) as e:
+            logger.warning(f"Cannot stage {src_path}: {e}")
+
+    return count
+
+
+class HostProjectRegistrar:
+    """Register and configure the halbert-host SourcePrep project."""
+
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        timeout: float = 30.0,
+    ):
+        self.base_url = (
+            base_url
+            or "http://localhost:8400"
+        ).rstrip("/")
+        self.timeout = timeout
+
+    def _list_projects(self) -> List[Dict[str, Any]]:
+        """GET /projects — list all registered projects."""
+        try:
+            resp = requests.get(
+                f"{self.base_url}/projects",
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, dict) and "data" in data:
+                return data["data"].get("projects", [])
+            return data.get("projects", [])
+        except requests.RequestException as e:
+            logger.error(f"Failed to list SourcePrep projects: {e}")
+            return []
+
+    def _find_project(self, name: str) -> Optional[Dict[str, Any]]:
+        """Find a project by name. Returns the project dict or None."""
+        for p in self._list_projects():
+            if p.get("name") == name:
+                return p
+        return None
+
+    def _create_project(self, path: str, name: str, mode: str = "standalone") -> Dict[str, Any]:
+        """POST /projects — create a new project. Returns the project dict."""
+        resp = requests.post(
+            f"{self.base_url}/projects",
+            json={"path": path, "name": name, "mode": mode},
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        # Response shape: {"success": true, "data": {"project": {...}}}
+        if isinstance(data, dict) and "data" in data:
+            inner = data["data"]
+            if isinstance(inner, dict) and "project" in inner:
+                return inner["project"]
+            return inner or {}
+        return data
+
+    def _update_project_config(self, project_id: str, config: Dict[str, Any]) -> Dict[str, Any]:
+        """PUT /projects/{id} — update project config (include_globs, etc.)."""
+        resp = requests.put(
+            f"{self.base_url}/projects/{project_id}",
+            json={"config": config, "touch": True},
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def _build_project(self, project_id: str) -> Dict[str, Any]:
+        """POST /projects/{id}/trace/build — trigger an index build."""
+        try:
+            resp = requests.post(
+                f"{self.base_url}/projects/{project_id}/trace/build",
+                json={},
+                timeout=self.timeout * 4,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            logger.warning(f"Trace build endpoint failed: {e}")
+            return {}
+
+    def register(
+        self,
+        name: str = PROJECT_NAME,
+        config_paths: Optional[List[str]] = None,
+        include_globs: Optional[List[str]] = None,
+        exclude_globs: Optional[List[str]] = None,
+        mode: str = "standalone",
+        build: bool = True,
+        staging_dir: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Register or update the halbert-host SourcePrep project.
+
+        Stages host config files into a local directory, then registers
+        that directory as a SourcePrep project.
+
+        Args:
+            name: Project name (default: "halbert-host")
+            config_paths: Host paths to stage. If None, uses OS-appropriate defaults.
+            include_globs: Include globs for the staged files. If None, uses defaults.
+            exclude_globs: Exclude globs. If None, uses common defaults.
+            mode: Index location mode ("standalone", "embedded", "custom")
+            build: If True, trigger an index build after registration.
+            staging_dir: Custom staging directory. If None, uses default.
+
+        Returns:
+            Dict with project_id, created (bool), files_staged, and build_result.
+        """
+        paths = config_paths or _os_config_paths()
+        globs = include_globs or _STAGED_INCLUDE_GLOBS
+        excludes = exclude_globs or _COMMON_EXCLUDE_GLOBS
+        staging_root = Path(staging_dir) if staging_dir else Path(STAGING_DIR)
+
+        # Stage config files
+        files_staged = _stage_config_files(paths, staging_root)
+        logger.info(f"Staged {files_staged} config files into {staging_root}")
+
+        if files_staged == 0:
+            logger.warning("No config files staged — project will be empty")
+
+        # Check if project already exists
+        existing = self._find_project(name)
+        created = False
+
+        if existing:
+            project_id = existing["id"]
+            logger.info(f"Project '{name}' already exists (id={project_id}), updating config")
+        else:
+            # Create new project pointing at staging dir
+            try:
+                project = self._create_project(path=str(staging_root), name=name, mode=mode)
+                project_id = project.get("id")
+                created = True
+                logger.info(f"Created project '{name}' (id={project_id}) at {staging_root}")
+            except requests.RequestException as e:
+                logger.error(f"Failed to create project '{name}': {e}")
+                return {"error": str(e), "created": False, "files_staged": files_staged}
+
+        if not project_id:
+            logger.error("No project_id returned from SourcePrep")
+            return {"error": "no project_id", "created": created, "files_staged": files_staged}
+
+        # Update config with include/exclude globs
+        config = {
+            "include_globs": globs,
+            "exclude_globs": excludes,
+            "max_file_bytes": 100000,
+            "use_gitignore": False,
+            "trace": {"enabled": True},
+        }
+        try:
+            self._update_project_config(project_id, config)
+            logger.info(f"Updated config for '{name}': {len(globs)} include globs")
+        except requests.RequestException as e:
+            logger.warning(f"Failed to update project config: {e}")
+
+        # Build the index
+        build_result = {}
+        if build:
+            try:
+                build_result = self._build_project(project_id)
+                logger.info(f"Build triggered for '{name}'")
+            except requests.RequestException as e:
+                logger.warning(f"Build failed (non-fatal): {e}")
+                build_result = {"error": str(e)}
+
+        return {
+            "project_id": project_id,
+            "name": name,
+            "created": created,
+            "staging_dir": str(staging_root),
+            "files_staged": files_staged,
+            "include_globs": globs,
+            "build_result": build_result,
+        }
+
+    def verify(self, query: str = "sshd config", name: str = PROJECT_NAME) -> Dict[str, Any]:
+        """Verify the project is indexed by running a semantic search.
+
+        Args:
+            query: Search query to test.
+            name: Project name to search within.
+
+        Returns:
+            Search results dict.
+        """
+        project = self._find_project(name)
+        if not project:
+            return {"error": f"Project '{name}' not found"}
+
+        project_id = project["id"]
+        try:
+            resp = requests.post(
+                f"{self.base_url}/projects/{project_id}/search",
+                json={"query": query, "k": 5, "min_score": 0.05},
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            return {"error": str(e)}
+
+
+def register_host_project(
+    base_url: Optional[str] = None,
+    build: bool = True,
+) -> Dict[str, Any]:
+    """Convenience function: register the host config project.
+
+    Args:
+        base_url: SourcePrep daemon URL. Defaults to http://localhost:8400.
+        build: If True, trigger an index build.
+
+    Returns:
+        Registration result dict.
+    """
+    registrar = HostProjectRegistrar(base_url=base_url)
+    return registrar.register(build=build)
+
+
+if __name__ == "__main__":
+    import json
+    import sys
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    result = register_host_project(build=True)
+    print(json.dumps(result, indent=2))
+
+    if "error" not in result:
+        print("\n--- Verification search ---")
+        verify = HostProjectRegistrar().verify("sshd port")
+        print(json.dumps(verify, indent=2)[:2000])
+
+    sys.exit(0 if "error" not in result else 1)
