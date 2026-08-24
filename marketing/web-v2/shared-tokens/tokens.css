@@ -1,0 +1,43 @@
+@theme {
+  /* ===== Surface Ramp (Architectural Drafting Bone & Stone) ===== */
+  --color-canvas:            #F4F1EA;   /* Matte drafting board bone */
+  --color-surface:           #FFFFFF;   /* Clean white technical module */
+  --color-surface-subtle:    #EBE6DC;   /* Recessed laboratory tray */
+  --color-surface-muted:     #DFD9CD;   /* Inactive drafting control */
+
+  /* ===== Signature Accent (Bauhaus Signal Amber) ===== */
+  --color-accent:            #E65C00;   /* Signal Amber / Laboratory Orange */
+  --color-accent-hover:      #C74F00;   /* Deep amber */
+  --color-accent-active:     #A84200;   /* Dark active amber */
+  --color-accent-tint:       #FFF3EB;   /* Soft amber technical tint */
+
+  /* ===== Technical Blueprint & Secondary Accents ===== */
+  --color-blueprint:         #1B4965;   /* Technical Blueprint Slate */
+  --color-blueprint-light:   #E8F1F5;   /* Blueprint schematic wash */
+  --color-blueprint-cyan:    #2B6CB0;   /* Precision cyan accent */
+
+  /* ===== Ink Hierarchy (Technical Charcoal & Precision Slate) ===== */
+  --color-ink:               #121417;   /* Technical carbon black */
+  --color-ink-secondary:     #424851;   /* Slate technical body */
+  --color-ink-tertiary:      #767E8B;   /* Drafting annotations & coordinates */
+  --color-ink-ghost:         #B4BAC3;   /* Grid watermark & inactive lines */
+
+  /* ===== Laboratory Status Semantics ===== */
+  --color-status-success:    #1E7B48;   /* Sensor Nominal Green */
+  --color-status-warning:    #D97706;   /* Alert Ochre */
+  --color-status-error:      #DC2626;   /* Fault Crimson */
+  --color-status-info:       #1B4965;   /* Telemetry Slate */
+
+  /* ===== Drafting Grid & Technical Rules ===== */
+  --color-grid-line:         rgba(18, 20, 23, 0.08);
+  --color-grid-line-strong:  rgba(18, 20, 23, 0.85);
+
+  /* ===== Typography ===== */
+  --font-sans:               "Plus Jakarta Sans", -apple-system, system-ui, sans-serif;
+  --font-display:            "Space Grotesk", -apple-system, system-ui, sans-serif;
+  --font-mono:               "DM Mono", "JetBrains Mono", monospace;
+
+  /* ===== Layout Dimensions ===== */
+  --content-max-width:       1280px;
+  --readable-max-width:      880px;
+}

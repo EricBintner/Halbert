@@ -1,0 +1,94 @@
+@import "tailwindcss";
+@import "../shared-tokens/tokens.css";
+
+@layer base {
+  html {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    overflow-x: hidden;
+    line-height: 1.55;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+  }
+
+  code, pre, kbd {
+    font-family: var(--font-mono);
+  }
+}
+
+/* Swiss Drafting Grid Background */
+.drafting-grid {
+  background-size: 32px 32px;
+  background-image:
+    linear-gradient(to right, rgba(18, 20, 23, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(18, 20, 23, 0.05) 1px, transparent 1px);
+}
+
+/* Large Technical Grid */
+.drafting-grid-lg {
+  background-size: 64px 64px;
+  background-image:
+    linear-gradient(to right, rgba(18, 20, 23, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(18, 20, 23, 0.07) 1px, transparent 1px);
+}
+
+/* Precision Crosshairs / Target Markers */
+.drafting-cross {
+  position: relative;
+}
+
+.drafting-cross::before {
+  content: "+";
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--color-accent);
+  pointer-events: none;
+  font-weight: 700;
+}
+
+.drafting-cross::after {
+  content: "+";
+  position: absolute;
+  bottom: -8px;
+  right: -8px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--color-accent);
+  pointer-events: none;
+  font-weight: 700;
+}
+
+/* Technical Blueprint Inset */
+.blueprint-card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-ink);
+  box-shadow: 4px 4px 0px 0px rgba(18, 20, 23, 0.9);
+}
+
+/* Custom technical scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-canvas);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink);
+}
