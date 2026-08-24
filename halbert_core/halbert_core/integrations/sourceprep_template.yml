@@ -1,0 +1,68 @@
+# SourcePrep unified project template — Halbert (T-H1.2)
+#
+# One SourcePrep project with two scope families:
+#   host/        staged live host configuration (register_host_project staging)
+#   knowledge/   doc corpus markdown (jsonl_to_markdown output), per platform
+#
+# Applied by integrations/sourceprep_setup.py. Pure API application:
+# project find-or-create → PUT config → scope reconcile → ordered build.
+# Requires a SourcePrep daemon running the pipeline-profiles work
+# (pipeline_profile on scopes, disabled_stages, atlas_deep_dirs, and the
+# build-time external-edge loader). Against an older daemon the new fields
+# are stored-but-inert or silently dropped — apply() warns in that case.
+template_version: 1
+
+project:
+  name: halbert
+  root: ~/.local/share/halbert/sourceprep   # expanded by apply()
+  mode: standalone                          # index under XDG, not the staging root
+
+  config:
+    # Only the two scope families; nothing else under the root is traced.
+    include_globs: ["host/**", "knowledge/**/*.md"]
+    exclude_globs: ["**/ssl/**", "**/letsencrypt/**", "**/shadow", "**/gshadow", "**/*.key", "**/*.pem"]
+    max_file_bytes: 500000
+    use_gitignore: false
+    trace: {enabled: true}
+    # apply() writes fastSync=false BEFORE building (daemon-restart race:
+    # startup auto-fires fast_sync for fastSync=true projects) and flips it
+    # to true only after the build verifies. `true` is the desired steady
+    # state — it is what you see here, not what is written first.
+    auto_config: {fastSync: true, deepEnrichment: manual, finalize: manual}
+    # T-S2.4: knowledge/ segments split per platform (knowledge/linux,
+    # knowledge/macos, ...) instead of one monolithic knowledge/ segment.
+    atlas_deep_dirs: ["knowledge"]
+    # T-S1.5: these stages read as code-architecture machinery and produce
+    # nothing useful over system config + prose docs. deepening is off in
+    # both profiles (per-file gate) AND listed here so the stage never
+    # dispatches at all.
+    disabled_stages: ["deepening", "rules", "concepts", "audit", "antibodies"]
+
+scopes:
+  # Template `id` maps to the daemon scope's display_name; daemon assigns
+  # the real id. Reconciliation is keyed on display_name.
+  - id: host
+    paths: ["host/"]
+    pipeline_profile: system_config
+  - id: knowledge-linux
+    paths: ["knowledge/linux/"]
+    pipeline_profile: prose_docs
+  - id: knowledge-macos
+    paths: ["knowledge/macos/"]
+    pipeline_profile: prose_docs
+  - id: knowledge-bsd
+    paths: ["knowledge/bsd/"]
+    pipeline_profile: prose_docs
+  - id: knowledge-common
+    paths: ["knowledge/common/"]
+    pipeline_profile: prose_docs
+
+post_build:
+  # Halbert's deterministic config edges, pushed with replace_origin=config
+  # AFTER fast_sync completes (endpoint requires the trace graph) and BEFORE
+  # deep_enrichment so clustering/group_reasoning see them (C2 fix).
+  # Node ids are remapped file:/etc/... → file:host/etc/... by apply().
+  - push_external_edges: {origin: config}
+  # Informational only — the 20-query verification gate is run separately
+  # (T-V.2); apply() prints it as a next-step hint.
+  - verify: scripts/corpus_quality_gate.py
