@@ -144,6 +144,283 @@ function getModelCapabilities(modelName: string): { thinking: boolean; vision: b
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Being Settings Component (Phase 6 / T6c.1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function BeingSettings() {
+  const [config, setConfig] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    loadConfig()
+  }, [])
+
+  const loadConfig = async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/settings/being`)
+      if (resp.ok) {
+        const data = await resp.json()
+        setConfig(data.config)
+      }
+    } catch (e) {
+      console.error('Failed to load being config:', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const saveConfig = async (updates: Record<string, any>) => {
+    setSaving(true)
+    try {
+      const resp = await fetch(`${API_BASE}/settings/being`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        setConfig(data.config)
+        setToast('Saved')
+        setTimeout(() => setToast(null), 2000)
+      } else {
+        const err = await resp.json()
+        setToast(`Error: ${err.detail || 'Failed to save'}`)
+        setTimeout(() => setToast(null), 3000)
+      }
+    } catch (e) {
+      setToast('Error: Network failure')
+      setTimeout(() => setToast(null), 3000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return <Card><CardContent className="py-8 text-center text-muted-foreground">Loading being config...</CardContent></Card>
+  }
+
+  if (!config) {
+    return <Card><CardContent className="py-8 text-center text-muted-foreground">Failed to load config</CardContent></Card>
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Voice Setting */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5" />
+            Voice
+          </CardTitle>
+          <CardDescription>
+            How the being refers to itself in conversation
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label>Self-reference style</Label>
+            <div className="grid grid-cols-3 gap-2">
+              <Button
+                variant={config.voice === 'first_person' ? 'default' : 'outline'}
+                onClick={() => saveConfig({ voice: 'first_person' })}
+                disabled={saving}
+                className="flex flex-col items-center gap-1 h-auto py-3"
+              >
+                <span className="font-medium">First Person</span>
+                <span className="text-xs opacity-70">"I", "my", "me"</span>
+              </Button>
+              <Button
+                variant={config.voice === 'the_computer' ? 'default' : 'outline'}
+                onClick={() => saveConfig({ voice: 'the_computer' })}
+                disabled={saving}
+                className="flex flex-col items-center gap-1 h-auto py-3"
+              >
+                <span className="font-medium">The Computer</span>
+                <span className="text-xs opacity-70">"this system", "it"</span>
+              </Button>
+              <Button
+                variant={config.voice === 'hybrid' ? 'default' : 'outline'}
+                onClick={() => saveConfig({ voice: 'hybrid' })}
+                disabled={saving}
+                className="flex flex-col items-center gap-1 h-auto py-3"
+              >
+                <span className="font-medium">Hybrid</span>
+                <span className="text-xs opacity-70">Mixed context</span>
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Proactivity Setting */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Zap className="h-5 w-5" />
+            Proactivity
+          </CardTitle>
+          <CardDescription>
+            How assertively the being opens conversations on its own
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label>Proactivity dial</Label>
+            <div className="grid grid-cols-4 gap-2">
+              {(['off', 'quiet', 'balanced', 'assertive'] as const).map((level) => (
+                <Button
+                  key={level}
+                  variant={config.proactivity === level ? 'default' : 'outline'}
+                  onClick={() => saveConfig({ proactivity: level })}
+                  disabled={saving}
+                  className="capitalize"
+                >
+                  {level}
+                </Button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              {config.proactivity === 'off' && 'The being never initiates conversation.'}
+              {config.proactivity === 'quiet' && 'Only critical alerts trigger proactive messages.'}
+              {config.proactivity === 'balanced' && 'Warnings and critical alerts trigger proactive messages.'}
+              {config.proactivity === 'assertive' && 'All findings, including info-level, trigger proactive messages.'}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Quiet Hours */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Clock className="h-5 w-5" />
+            Quiet Hours
+          </CardTitle>
+          <CardDescription>
+            Suppress non-critical notifications during these hours
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {config.quiet_hours ? (
+            <div className="flex items-center gap-2">
+              <Input
+                type="time"
+                defaultValue={config.quiet_hours.start}
+                onChange={(e) => {
+                  saveConfig({ quiet_hours: { ...config.quiet_hours, start: e.target.value } })
+                }}
+                className="w-32"
+              />
+              <span className="text-muted-foreground">to</span>
+              <Input
+                type="time"
+                defaultValue={config.quiet_hours.end}
+                onChange={(e) => {
+                  saveConfig({ quiet_hours: { ...config.quiet_hours, end: e.target.value } })
+                }}
+                className="w-32"
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => saveConfig({ quiet_hours: null })}
+                disabled={saving}
+              >
+                Disable
+              </Button>
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={() => saveConfig({ quiet_hours: { start: '22:00', end: '07:00' } })}
+              disabled={saving}
+            >
+              Enable quiet hours
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Morning Report */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Bell className="h-5 w-5" />
+            Morning Report
+          </CardTitle>
+          <CardDescription>
+            A daily summary of system health and findings
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {config.morning_report?.enabled ? (
+            <div className="flex items-center gap-2">
+              <Input
+                type="time"
+                defaultValue={config.morning_report.time || '08:00'}
+                onChange={(e) => {
+                  saveConfig({ morning_report: { ...config.morning_report, time: e.target.value } })
+                }}
+                className="w-32"
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => saveConfig({ morning_report: { enabled: false } })}
+                disabled={saving}
+              >
+                Disable
+              </Button>
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={() => saveConfig({ morning_report: { enabled: true, time: '08:00' } })}
+              disabled={saving}
+            >
+              Enable morning report
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Purpose */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Edit3 className="h-5 w-5" />
+            Purpose
+          </CardTitle>
+          <CardDescription>
+            Free text — what this machine is for, in your words
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <textarea
+            className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            defaultValue={config.purpose || ''}
+            placeholder="e.g. Keep this machine fast and secure for daily development work."
+            onBlur={(e) => {
+              if (e.target.value !== config.purpose) {
+                saveConfig({ purpose: e.target.value })
+              }
+            }}
+          />
+        </CardContent>
+      </Card>
+
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-lg border bg-background px-4 py-2 text-sm shadow-lg">
+          {toast}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Settings() {
   // Scan context for coordinated system-wide scanning
   const { triggerDeepScan, isDeepScanning } = useScan()
@@ -1068,7 +1345,7 @@ export function Settings() {
       />
 
       <Tabs defaultValue="system" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="system" className="flex items-center gap-2">
             <Cpu className="h-4 w-4" />
             System
@@ -1088,6 +1365,10 @@ export function Settings() {
           <TabsTrigger value="alerts" className="flex items-center gap-2">
             <Bell className="h-4 w-4" />
             Alerts
+          </TabsTrigger>
+          <TabsTrigger value="being" className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4" />
+            Being
           </TabsTrigger>
           <TabsTrigger value="about" className="flex items-center gap-2">
             <Info className="h-4 w-4" />
@@ -3201,6 +3482,11 @@ export function Settings() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Being Tab */}
+        <TabsContent value="being" className="space-y-4">
+          <BeingSettings />
         </TabsContent>
 
         {/* About Tab */}
