@@ -26,6 +26,8 @@
 - 5 distinct JSONL schemas (verified by scanning all 57 files)
 - `data/common/` directory exists with README but no JSONL files yet
 
+**Measured-as-built correction (2026-08-24):** post-cleanup the corpus is 28,869 docs across 56 JSONL files. Cross-source dedup found only 5 exact duplicates (the 7,307 estimate above was pre-normalization and overcounted). `data/manifest.json` v2.0.0 totals match actual JSONL line counts.
+
 ---
 
 ### T0a.1 — Register "halbert-knowledge" as a SourcePrep project
@@ -48,6 +50,8 @@
 - `prep build` succeeds on the project
 
 **Dependencies:** T0d.1 (markdown files must exist first)
+
+> **As-built note (2026-08-24 audit):** The installed SourcePrep's project pointer file (`data/staging/sourceprep/.sourceprep/project.json`) is intentionally minimal — `{id, mode, daemon}` only (`core/project_registry.py`: "intentionally minimal — just enough for routing"). `include_globs` is a walker call parameter, not project config, and `scopes` are not read from project.json. Platform routing is therefore realized by the directory layout (`linux/`, `macos/`, `bsd/`, `common/`) and caller-side scope arguments, not by project-level scope declarations. The "scopes defined for platform routing" criterion is satisfied in that form; if a future SourcePrep version adds declarative project scopes, revisit.
 
 ---
 
@@ -165,6 +169,7 @@
 - H2 headings match doc count
 - Large sources are split (no file >500KB)
 - Metadata preserved in HTML comments
+- Carve-out (as built): the 500KB per-file ceiling holds except where a single source document alone exceeds it — 8 files (e.g. `nvidia_cuda_docs_01.md`, `macos_man_pages_52.md`). SourcePrep large-file truncation applies to those documents until content chunking lands (future work).
 
 **Dependencies:** T0c.1 (deduped first)
 
@@ -329,7 +334,7 @@ class MessageSignals:
 
 ### T1a.2 — Create `intake/signals.py`: tests
 
-**Create:** `halbert_core/halbert_core/tests/test_intake_signals.py`
+**Create:** `halbert_core/tests/test_intake_signals.py`
 
 **Tests:** One test per signal type, covering the acceptance cases above plus edge cases:
 - Empty string → intent="informational", all flags False
@@ -390,6 +395,8 @@ class ContextBudget:
 | xlarge | 8000 | 200 | 200 | 1200 | 900 | 800 | 2000 | 1100 |
 | massive | 16000 | 400 | 400 | 2400 | 1800 | 1600 | 4000 | 2200 |
 
+**Implementation note (as built):** the `conversation` bucket in the shipped table was scaled so that the per-category budgets sum to each tier's `total` (the literal columns above did not sum — e.g. small summed to 700, medium to 1700). See `CONTEXT_BUDGETS` in `halbert_core/halbert_core/intake/budget.py` for the canonical values.
+
 **Acceptance:**
 - `detect_model_tier("qwen2.5:14b-instruct-q4_0")` → MEDIUM
 - `detect_model_tier("qwen2.5:32b")` → LARGE
@@ -403,7 +410,7 @@ class ContextBudget:
 
 ### T1b.2 — Create `intake/budget.py`: tests
 
-**Create:** `halbert_core/halbert_core/tests/test_intake_budget.py`
+**Create:** `halbert_core/tests/test_intake_budget.py`
 
 **Tests:**
 - Tier detection for all model patterns: `:8b`, `:14b`, `:32b`, `:70b`, `:405b`, `-8b`, `-70b`
@@ -474,7 +481,7 @@ class ComplexityRouter:
 
 ### T1c.2 — Create `intake/complexity.py`: tests
 
-**Create:** `halbert_core/halbert_core/tests/test_intake_complexity.py`
+**Create:** `halbert_core/tests/test_intake_complexity.py`
 
 **Tests (all with mocked LLM caller):**
 - Mock returns "3" → score=3, level=MODERATE
@@ -550,7 +557,7 @@ class IntakePipeline:
 
 ### T1d.2 — Create `intake/pipeline.py`: tests
 
-**Create:** `halbert_core/halbert_core/tests/test_intake_pipeline.py`
+**Create:** `halbert_core/tests/test_intake_pipeline.py`
 
 **Tests:** Integration tests using a real `IntakePipeline` with mocked complexity router.
 - All acceptance cases from T1d.1
@@ -894,11 +901,15 @@ from .pipeline import MessageIntake, IntakePipeline
 - No frontend code calls retired endpoints
 - Agent path handles all conversation traffic
 
+**Status note (as built, 2026-08-24):** deprecation headers landed on the three conversation endpoints, but endpoint retirement/deletion is deliberately deferred behind a frontend verification period. `chat.py` remains registered in `app.py` and Phase 4 is not fully closed.
+
 ---
 
 ## Phase 4.5: Boot-Test Gate (depends on Phase 4)
 
 **Goal:** Verify the full stack boots end-to-end. Hard gate — Phases 5+ don't start until this passes.
+
+**Status note (2026-08-24):** there is no recorded evidence this gate ran before Phases 5–8 proceeded. `scripts/boot_smoke.py` (added 2026-08-24) is the repeatable read-only check. The gate is formally OPEN until executed against a live stack on the Ubuntu host.
 
 ---
 
@@ -1114,7 +1125,7 @@ class ProposalStore:
 
 ### T5b.3 — Tests for findings + proposals stores
 
-**Create:** `halbert_core/halbert_core/tests/test_findings.py`, `halbert_core/halbert_core/tests/test_proposals.py`
+**Create:** `halbert_core/tests/test_findings.py`, `halbert_core/tests/test_proposals.py`
 
 **Tests:**
 - Finding CRUD operations

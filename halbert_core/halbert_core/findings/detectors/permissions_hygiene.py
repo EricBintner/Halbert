@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import stat
-from typing import List
+from typing import Dict, List
 
 from ..store import Finding
 
@@ -86,17 +86,20 @@ class PermissionsHygieneDetector:
                 affected_services=["ssh"],
             ))
 
-        # Check specific files
-        sensitive_files = {
-            "id_rsa": 0o600,
-            "id_ed25519": 0o600,
-            "id_ecdsa": 0o600,
-            "id_dsa": 0o600,
-            "authorized_keys": 0o600,
-            "config": 0o644,
+        # Check specific files. config accepts 600 or 644 (it contains no
+        # key material, so world-readable is acceptable — anything more
+        # permissive on the write bits or with unexpected group/other
+        # access is flagged).
+        sensitive_files: Dict[str, tuple] = {
+            "id_rsa": (0o600,),
+            "id_ed25519": (0o600,),
+            "id_ecdsa": (0o600,),
+            "id_dsa": (0o600,),
+            "authorized_keys": (0o600,),
+            "config": (0o600, 0o644),
         }
 
-        for fname, expected_mode in sensitive_files.items():
+        for fname, accepted_modes in sensitive_files.items():
             fpath = os.path.join(ssh_dir, fname)
             if not os.path.isfile(fpath):
                 continue
@@ -104,8 +107,11 @@ class PermissionsHygieneDetector:
             if mode == -1:
                 continue
 
+            if mode in accepted_modes:
+                continue
+
             # Private keys must be 600
-            if fname.startswith("id_") and mode != 0o600:
+            if fname.startswith("id_"):
                 severity = "critical" if _is_world_readable(mode) else "warning"
                 findings.append(Finding(
                     id="",
@@ -132,7 +138,7 @@ class PermissionsHygieneDetector:
                 ))
 
             # authorized_keys should be 600
-            if fname == "authorized_keys" and mode != 0o600:
+            elif fname == "authorized_keys":
                 severity = "warning" if not _is_world_readable(mode) else "critical"
                 findings.append(Finding(
                     id="",
@@ -151,6 +157,32 @@ class PermissionsHygieneDetector:
                     why_so=(
                         f"File {fpath} has mode {oct(mode)}, but authorized_keys "
                         f"should be 600."
+                    ),
+                    why_trust=[fpath],
+                    affected_paths=[fpath],
+                    affected_services=["ssh"],
+                ))
+
+            # config accepts 600 or 644; anything else is flagged
+            elif fname == "config":
+                findings.append(Finding(
+                    id="",
+                    detector="permissions_hygiene",
+                    severity="warning",
+                    title=f"~/.ssh/config has unexpected permissions ({oct(mode)})",
+                    description=(
+                        f"SSH client config {fpath} has mode {oct(mode)}. "
+                        f"It should be 600 or 644."
+                    ),
+                    why_now="Permission scan detected unexpected mode on ~/.ssh/config.",
+                    why_care=(
+                        "Overly permissive or inconsistent modes on the SSH "
+                        "client config can allow tampering with host aliases "
+                        "and connection settings, or cause SSH to complain."
+                    ),
+                    why_so=(
+                        f"File {fpath} has mode {oct(mode)}, but ~/.ssh/config "
+                        f"should be 600 or 644."
                     ),
                     why_trust=[fpath],
                     affected_paths=[fpath],

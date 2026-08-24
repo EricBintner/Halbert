@@ -242,8 +242,17 @@ class AgentStateMachine:
                     except Exception as e:
                         logger.error(f"Handler error in {self.current_state}: {e}")
                         self.ctx.error = str(e)
-                        yield StreamEvent.error(session_id, str(e))
-                        self.current_state = AgentState.ERROR
+                        if self.current_state == AgentState.RESPONDING:
+                            # Terminal guard: a failure while producing the final
+                            # response cannot be recovered by retrying — the
+                            # ERROR handler's give-up path transitions back to
+                            # RESPONDING, which would fail identically forever.
+                            # End the session instead (non-recoverable error).
+                            yield StreamEvent.error(session_id, str(e), recoverable=False)
+                            self.current_state = AgentState.IDLE
+                        else:
+                            yield StreamEvent.error(session_id, str(e))
+                            self.current_state = AgentState.ERROR
                 else:
                     logger.error(f"No handler for state: {self.current_state}")
                     self.current_state = AgentState.ERROR
@@ -377,14 +386,16 @@ class AgentStateMachine:
         """
         logger.info(f"PLANNING: {self.ctx.user_query[:50]}...")
         
-        # Assemble context if we have context assembler
+        # Assemble context if we have context assembler.
+        # NOTE: this is the single context-assembly call site for planning —
+        # intake.context_budget controls the token budget, so max_tokens is
+        # intentionally not passed (the intake assembler overrides it anyway).
         context_content = ""
         if self.context:
             assembled = await self.context.assemble(
                 query=self.ctx.user_query,
                 conversation=self.ctx.conversation_history,
                 observations=self.ctx.observations,
-                max_tokens=8000,
                 intake=self.ctx.intake,
             )
             context_content = assembled.content
@@ -813,17 +824,35 @@ class AgentStateMachine:
             self.ctx.response_chunks.append(content)
             yield StreamEvent.response_chunk(self.ctx.session_id, content)
         
-        # Store interaction in memory
+        # Full (raw) streamed response text
+        full_response = "".join(self.ctx.response_chunks)
+
+        # Phase 8: Parse module invocation requests from the raw response and
+        # strip them. The LLM-emitted {"action": "invoke_module", ...} JSON
+        # blocks must never stay visible in the chat bubble: streaming already
+        # sent them as raw chunks, so the FINAL committed state — memory store
+        # and the `content` field on response_complete below — carries the
+        # stripped text. module_invoke SSE events are still emitted so the
+        # frontend can render the modules alongside the clean message.
+        try:
+            module_invocations, clean_response = self._parse_module_invocations(full_response)
+        except Exception as e:
+            logger.debug(f"Module invocation parsing skipped: {e}")
+            module_invocations, clean_response = [], full_response
+
+        # Store interaction in memory (clean text, no invocation JSON)
         if self.memory:
-            full_response = "".join(self.ctx.response_chunks)
             await self.memory.store_interaction(
                 query=self.ctx.user_query,
-                response=full_response,
+                response=clean_response,
                 session_id=self.ctx.session_id
             )
 
+        # Commit the stripped text as the session's final response text
+        self.ctx.response_chunks.clear()
+        self.ctx.response_chunks.append(clean_response)
+
         # Phase 4: Parse config-edit blocks from response (ported from chat.py)
-        full_response = "".join(self.ctx.response_chunks)
         try:
             from ..tools.config_editor import parse_edit_blocks
             edit_blocks = parse_edit_blocks(full_response)
@@ -858,18 +887,19 @@ class AgentStateMachine:
         except Exception as e:
             logger.debug(f"Provenance extraction skipped: {e}")
 
-        # Phase 8: Parse module invocation requests from the response
-        try:
-            module_invocations = self._parse_module_invocations(full_response)
-            for inv in module_invocations:
-                yield StreamEvent.module_invoke(
-                    self.ctx.session_id, inv["module"], inv.get("props", {})
-                )
-                logger.info(f"Module invoked: {inv['module']}")
-        except Exception as e:
-            logger.debug(f"Module invocation parsing skipped: {e}")
+        # Phase 8: Emit module invocation events (parsed + stripped above)
+        for inv in module_invocations:
+            yield StreamEvent.module_invoke(
+                self.ctx.session_id, inv["module"], inv.get("props", {})
+            )
+            logger.info(f"Module invoked: {inv['module']}")
 
-        yield StreamEvent.response_complete(self.ctx.session_id)
+        # Final committed text is the stripped response — see the stripping
+        # note above. Streaming may have already shown the raw tail, so
+        # response_complete carries the clean text for the final commit.
+        complete_event = StreamEvent.response_complete(self.ctx.session_id)
+        complete_event.data["content"] = clean_response
+        yield complete_event
         yield await self._transition(AgentState.IDLE)
     
     async def _handle_error(self) -> AsyncIterator[StreamEvent]:
@@ -924,7 +954,7 @@ class AgentStateMachine:
         ]
         return "\n".join(parts)
     
-    def _parse_module_invocations(self, response: str) -> list:
+    def _parse_module_invocations(self, response: str) -> tuple:
         """Parse module invocation requests from the LLM response.
 
         The LLM can emit structured JSON blocks to invoke modules:
@@ -932,14 +962,20 @@ class AgentStateMachine:
 
         The backend validates that the module exists in the registry
         before emitting the invocation event.
+
+        Returns:
+            (invocations, stripped_response) — valid invocation dicts plus
+            the response text with every well-formed invoke_module JSON block
+            removed, so the invocation markup never remains user-visible
+            (it is rendered as a module SSE event instead).
         """
         import json
-        import re
 
-        from ..dashboard.modules.registry import get_module_registry
+        from ..modules import get_module_registry
         registry = get_module_registry()
 
         invocations = []
+        spans = []  # (start, end) character spans of invocation blocks
 
         # Find all JSON-like blocks in the response and try to parse them
         # Look for {"action": "invoke_module", ...} patterns
@@ -969,6 +1005,10 @@ class AgentStateMachine:
             try:
                 data = json.loads(json_str)
                 if data.get("action") == "invoke_module":
+                    # Strip every well-formed invocation block — even ones
+                    # naming unknown modules — so raw JSON never leaks into
+                    # the chat bubble.
+                    spans.append((start, end))
                     module_name = data.get("module", "")
                     # Validate module exists
                     module = registry.get(module_name)
@@ -986,7 +1026,23 @@ class AgentStateMachine:
 
             idx = end
 
-        return invocations
+        # Build the stripped response (drop invocation blocks plus the
+        # surrounding whitespace they leave behind)
+        if spans:
+            parts = []
+            prev = 0
+            for start, end in spans:
+                parts.append(response[prev:start])
+                prev = end
+            parts.append(response[prev:])
+            stripped = "".join(parts)
+            # Collapse 3+ consecutive blank lines left by removed blocks
+            import re
+            stripped = re.sub(r'\n{3,}', '\n\n', stripped).strip()
+        else:
+            stripped = response
+
+        return invocations, stripped
 
     def _extract_provenance(self, response: str) -> list:
         """Extract provenance refs from the response and retrieved context.
@@ -1010,38 +1066,45 @@ class AgentStateMachine:
             end = int(match.group(3)) if match.group(3) else None
             refs.append(parse_path_lines_ref(path, start, end))
 
-        # 2. Create provenance from retrieved context sources
+        # 2. Create provenance from retrieved context sources.
+        # ctx.retrieved_context items carry {source, content, metadata}.
+        # Only emit refs that can actually validate — never fabricated ids.
         for ctx in self.ctx.retrieved_context[:5]:
             source = ctx.get('source', '')
-            content = ctx.get('content', '')
-            if source == 'file' and 'path' in ctx:
-                # File-based context
-                refs.append(ProvenanceRef(
-                    type='path_lines',
-                    ref=ctx['path'],
-                    label=f"Retrieved from {ctx['path']}",
-                ))
-            elif source == 'memory':
+            content = ctx.get('content', '') or ''
+            meta = ctx.get('metadata') or {}
+            item_id = ctx.get('id') or meta.get('id')
+
+            if source == 'file':
+                # path_lines needs a real existing file AND an explicit line
+                # spec (e.g. "path:42"); without line info no valid ref is
+                # possible, so drop deliberately rather than emit a ref that
+                # validation would discard anyway.
+                path = meta.get('path')
+                line = meta.get('line') or meta.get('line_start')
+                if path and line:
+                    refs.append(ProvenanceRef(
+                        type='path_lines',
+                        ref=f'{path}:{line}',
+                        label=f"Retrieved from {path} (line {line})",
+                    ))
+            elif source == 'memory' and item_id:
                 refs.append(ProvenanceRef(
                     type='memory_id',
-                    ref=ctx.get('id', 'unknown'),
-                    label=f"Memory: {content[:60]}...",
+                    ref=str(item_id),
+                    label=f"Memory: {content[:60]}",
                 ))
-            elif source == 'rag':
+            elif source in ('rag', 'retrieval') and item_id:
                 refs.append(ProvenanceRef(
                     type='observation_id',
-                    ref=ctx.get('id', 'unknown'),
-                    label=f"Knowledge: {content[:60]}...",
+                    ref=str(item_id),
+                    label=f"Observation: {content[:60]}",
                 ))
 
-        # 3. Create provenance from observations
-        for obs in self.ctx.observations[:3]:
-            if isinstance(obs, str):
-                refs.append(ProvenanceRef(
-                    type='log_cursor',
-                    ref=f'observation:{obs[:50]}',
-                    label=f"Observation: {obs[:60]}...",
-                ))
+        # NOTE: self.ctx.observations holds plain strings with no stable id,
+        # so no valid ref type can point at them — that branch was removed
+        # rather than building 'observation:' log_cursors that always fail
+        # validation.
 
         # Validate and attach — invalid refs are dropped
         packaged = attach_provenance("", refs)

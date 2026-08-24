@@ -39,6 +39,11 @@ class ContextBudget:
 # ── Budget table (v1) ────────────────────────────────────────────
 # Reconciled: no self_knowledge, rag renamed to retrieval.
 # Fields sum to total for every tier.
+# Audited deviation from the plan (§T1b.1): the plan table's per-category
+# columns do not sum to their tier totals for small/medium/large/xlarge/
+# massive (e.g. medium sums to 1700 vs total 2000). This implementation
+# scales the conversation bucket so the sum-to-total invariant holds for
+# every tier; tier totals and non-conversation values are unchanged.
 
 CONTEXT_BUDGETS: Dict[ModelTier, ContextBudget] = {
     ModelTier.TINY: ContextBudget(

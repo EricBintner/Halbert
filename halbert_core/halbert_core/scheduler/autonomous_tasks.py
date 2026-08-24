@@ -445,6 +445,7 @@ def create_autonomous_task(
         'health_check': SystemHealthCheckTask,
         'log_cleanup': LogCleanupTask,
         'morning_report': MorningReportTask,
+        'detector_sweep': DetectorSweepTask,
     }
 
     task_class = tasks.get(task_type)
@@ -487,6 +488,7 @@ class MorningReportTask(AutonomousTask):
             generator = MorningReportGenerator(
                 finding_store=finding_store,
                 proposal_store=proposal_store,
+                config_changes_provider=self._get_config_changes_provider(),
             )
 
             # Run the async generator
@@ -500,4 +502,58 @@ class MorningReportTask(AutonomousTask):
             }
         except Exception as e:
             logger.error(f"Morning report failed: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def _get_config_changes_provider(self):
+        """Resolve the dashboard's recent-changes accessor.
+
+        Avoids an import cycle: dashboard.app imports this module lazily at
+        startup, so this module resolves the accessor by attribute lookup
+        at run time. Returns None when the dashboard (and its ConfigWatcher)
+        is not running — the report then omits the config-changes section.
+        """
+        try:
+            from ..dashboard import app as dashboard_app
+
+            provider = getattr(dashboard_app, "get_recent_config_changes", None)
+            return provider if callable(provider) else None
+        except Exception as e:
+            logger.warning(f"Config changes provider unavailable: {e}")
+            return None
+
+
+class DetectorSweepTask(AutonomousTask):
+    """
+    Scheduled detector sweep task.
+
+    Runs all proactive detectors (drop-in conflicts, fstab phantoms,
+    permissions hygiene), dedups findings, and publishes gated
+    ProactiveEvents. Constructed defensively — when the proactive stack
+    is half-wired the task degrades to a log line, not a scheduler crash.
+
+    Phase 7 / T7e.1.
+    """
+
+    def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Run the detector sweep and report counts."""
+        logger.info("Starting scheduled detector sweep")
+
+        try:
+            from ..proactive.detector_runner import DetectorRunner
+
+            runner = DetectorRunner()
+            events = runner.run_all_sync()
+
+            result = {
+                "status": "ok",
+                "detectors_run": len(runner.detectors),
+                "events_published": len(events),
+            }
+            logger.info(
+                f"Detector sweep complete: {result['detectors_run']} detectors, "
+                f"{result['events_published']} events published"
+            )
+            return result
+        except Exception as e:
+            logger.warning(f"Detector sweep failed (non-fatal): {e}")
             return {"status": "error", "error": str(e)}

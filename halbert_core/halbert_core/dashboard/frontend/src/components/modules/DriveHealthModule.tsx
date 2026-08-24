@@ -6,6 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import { HardDrive, Loader2 } from 'lucide-react'
+import { ModuleLoadError } from './ModuleLoadError'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`
@@ -15,17 +16,24 @@ function formatBytes(bytes: number): string {
 export default function DriveHealthModule() {
   const [drives, setDrives] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/modules/drive-health/data')
-      .then(r => r.json())
-      .then(data => {
-        if (data.status === 'ok') {
-          setDrives(data.drives || [])
-          setLoading(false)
-        }
+      .then(async r => {
+        const data = await r.json().catch(() => null)
+        if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`)
+        if (data?.status !== 'ok') throw new Error(data?.error || 'Failed to load drive health')
+        return data
       })
-      .catch(() => setLoading(false))
+      .then(data => {
+        setDrives(data.drives || [])
+        setLoading(false)
+      })
+      .catch(e => {
+        setError(e?.message || 'Failed to load drive health')
+        setLoading(false)
+      })
   }, [])
 
   if (loading) {
@@ -35,6 +43,10 @@ export default function DriveHealthModule() {
         Loading drive health...
       </div>
     )
+  }
+
+  if (error) {
+    return <ModuleLoadError module="drive health" message={error} />
   }
 
   // Filter to physical drives (skip virtual/special filesystems)

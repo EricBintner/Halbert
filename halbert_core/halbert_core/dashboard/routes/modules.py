@@ -1,25 +1,75 @@
 """
 Module API routes — list available modules and fetch module data.
 
+Security notes:
+- Module props are LLM-controlled (they arrive from the frontend, which
+  relays LLM-emitted module invocations), so every file-access fetcher
+  restricts paths to an allowlist of roots (/etc/, ~/.config/, and the
+  host-config staging dir). Paths that resolve (via pathlib .resolve(),
+  which also resolves symlinks) outside those roots are rejected with 403;
+  missing files return 404.
+- All handlers are synchronous `def` endpoints so FastAPI runs them in a
+  threadpool. None of the blocking calls here (psutil polling, subprocess
+  journald reads, file I/O) ever hit the event loop directly.
+- drive-health reports partition usage via psutil, NOT real SMART/temperature
+  telemetry; the payload carries telemetry_source="psutil-partitions" so
+  consumers do not mistake it for drive-health data. SMART/temperature is
+  platform-dependent and not available cross-platform.
+
 Phase 8 / T8b.1.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+import os
+from pathlib import Path
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Query
 
-from ..modules.registry import get_module_registry
+from ...modules.registry import get_module_registry
+from ...tools.register_host_project import STAGING_DIR as HOST_CONFIG_STAGING_DIR
 
 logger = logging.getLogger("halbert.dashboard.modules")
 
 router = APIRouter()
 
 
+def _allowed_roots() -> List[Path]:
+    """Resolved allowlist roots for file-backed module reads."""
+    home = Path.home()
+    roots = [
+        Path("/etc"),
+        home / ".config",
+        Path(HOST_CONFIG_STAGING_DIR),
+    ]
+    return [r.expanduser().resolve() for r in roots]
+
+
+def _resolve_allowed_path(raw_path: str) -> Path:
+    """Resolve a client-supplied path and enforce the allowlist.
+
+    Returns the resolved absolute path, or raises:
+        403 — the resolved path escapes every allowlisted root (including
+              via symlink), or
+        404 — the resolved path does not exist / is not a regular file.
+    """
+    resolved = Path(raw_path).expanduser().resolve()
+    roots = _allowed_roots()
+    if not any(resolved == root or root in resolved.parents for root in roots):
+        logger.warning(f"Rejected module file access outside allowlist: {resolved}")
+        raise HTTPException(
+            status_code=403,
+            detail="Path is outside the allowed roots (/etc, ~/.config, host-config staging)",
+        )
+    if not resolved.exists() or not resolved.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {raw_path}")
+    return resolved
+
+
 @router.get("/modules")
-async def list_modules() -> Dict[str, Any]:
+def list_modules() -> Dict[str, Any]:
     """List all available modules."""
     registry = get_module_registry()
     modules = [m.to_dict() for m in registry.list_all()]
@@ -27,7 +77,7 @@ async def list_modules() -> Dict[str, Any]:
 
 
 @router.get("/modules/{module_name}/data")
-async def get_module_data(
+def get_module_data(
     module_name: str,
     path: str = Query(None),
     timeframe: str = Query("1h"),
@@ -51,13 +101,13 @@ async def get_module_data(
 
     try:
         if module_name == "config-diff":
-            return await _fetch_config_diff(path, finding_id)
+            return _fetch_config_diff(path, finding_id)
         elif module_name == "vitals":
-            return await _fetch_vitals(timeframe)
+            return _fetch_vitals(timeframe)
         elif module_name == "drive-health":
-            return await _fetch_drive_health()
+            return _fetch_drive_health()
         elif module_name == "evidence":
-            return await _fetch_evidence(source, cursor, query)
+            return _fetch_evidence(source, cursor, query)
         else:
             raise HTTPException(status_code=400, detail=f"No data fetcher for '{module_name}'")
     except HTTPException:
@@ -67,20 +117,17 @@ async def get_module_data(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _fetch_config_diff(path: str, finding_id: str) -> Dict[str, Any]:
-    """Fetch config diff data."""
+def _fetch_config_diff(path: str, finding_id: str) -> Dict[str, Any]:
+    """Fetch config diff data (allowlisted roots only)."""
     if not path:
         raise HTTPException(status_code=400, detail="path parameter required")
-    import os
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    resolved = _resolve_allowed_path(path)
 
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
+        content = resolved.read_text(encoding="utf-8", errors="replace")
         return {
             "status": "ok",
-            "path": path,
+            "path": str(resolved),
             "content": content,
             "finding_id": finding_id,
         }
@@ -88,11 +135,13 @@ async def _fetch_config_diff(path: str, finding_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _fetch_vitals(timeframe: str) -> Dict[str, Any]:
+def _fetch_vitals(timeframe: str) -> Dict[str, Any]:
     """Fetch system vitals data."""
     import psutil
     import time as _time
 
+    # Blocking psutil poll — safe here because this handler is a sync
+    # endpoint, so FastAPI runs it in a threadpool off the event loop.
     cpu_percent = psutil.cpu_percent(interval=0.5)
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
@@ -127,8 +176,13 @@ async def _fetch_vitals(timeframe: str) -> Dict[str, Any]:
     }
 
 
-async def _fetch_drive_health() -> Dict[str, Any]:
-    """Fetch drive health data."""
+def _fetch_drive_health() -> Dict[str, Any]:
+    """Fetch drive partition capacity/usage data.
+
+    This is psutil partition usage only — no SMART attributes or
+    temperature sensors (not available cross-platform). The
+    telemetry_source field makes the data's provenance explicit.
+    """
     import psutil
 
     partitions = []
@@ -155,24 +209,26 @@ async def _fetch_drive_health() -> Dict[str, Any]:
 
     return {
         "status": "ok",
+        # Not SMART/temperature — partition usage only (platform limit).
+        "telemetry_source": "psutil-partitions",
         "drives": partitions,
     }
 
 
-async def _fetch_evidence(source: str, cursor: str, query: str) -> Dict[str, Any]:
-    """Fetch log evidence data."""
+def _fetch_evidence(source: str, cursor: str, query: str) -> Dict[str, Any]:
+    """Fetch log evidence data.
+
+    file: sources are restricted to the allowlisted roots; journald:
+    sources shell out to journalctl (threadpool-safe here).
+    """
     if not source:
         raise HTTPException(status_code=400, detail="source parameter required")
 
     # For v1, support reading from log files
-    import os
     if source.startswith("file:"):
-        path = source[5:]
-        if not os.path.exists(path):
-            raise HTTPException(status_code=404, detail=f"Log file not found: {path}")
+        resolved = _resolve_allowed_path(source[5:])
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
+            lines = resolved.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
             # Apply cursor (line range) if specified
             if cursor and "-" in cursor:
                 start, _, end = cursor.partition("-")

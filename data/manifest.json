@@ -55,7 +55,7 @@
       "mac_build": true
     },
     "linux_system_docs": {
-      "document_count": 257,
+      "document_count": 243,
       "license": "Various (permissive, CC BY-SA)",
       "scraped_at": "2026-08-23",
       "description": "Linux system guides (systemd, networking, security, storage, backup, monitoring, kernel)",
@@ -90,7 +90,7 @@
       "mac_build": true
     },
     "vendor_and_distro_docs": {
-      "document_count": 67,
+      "document_count": 82,
       "license": "Various (permissive)",
       "scraped_at": "2026-08-23",
       "description": "Vendor and distro documentation (Docker, K8s, Helm, NVIDIA, ROCm, Ubuntu)",

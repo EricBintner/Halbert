@@ -15,8 +15,19 @@ export interface ProvenanceRef {
   type: 'log_cursor' | 'snapshot_id' | 'metric_window' | 'path_lines' | 'memory_id' | 'observation_id'
   ref: string
   label: string
-  url: string
+  url?: string
 }
+
+/**
+ * Ref types that resolve to an inline module expansion. Everything else
+ * (memory_id, observation_id) keeps the popover itself as the detail view.
+ */
+const EXPANDABLE_REF_TYPES = new Set<ProvenanceRef['type']>([
+  'log_cursor',
+  'metric_window',
+  'path_lines',
+  'snapshot_id',
+])
 
 interface WhyChipProps {
   provenance: ProvenanceRef[]
@@ -70,12 +81,15 @@ export function WhyChip({ provenance, onExpand }: WhyChipProps) {
                   <button
                     key={i}
                     onClick={() => {
-                      if (onExpand) {
+                      if (onExpand && EXPANDABLE_REF_TYPES.has(ref.type)) {
                         onExpand(ref)
+                        setExpanded(false)
                       } else if (ref.url) {
                         window.open(ref.url, '_blank')
+                        setExpanded(false)
                       }
-                      setExpanded(false)
+                      // memory_id / observation_id without a url keep the
+                      // popover open — the popover is itself the detail view.
                     }}
                     className="flex w-full items-start gap-2 rounded-md p-1.5 text-left text-xs hover:bg-muted transition-colors"
                   >

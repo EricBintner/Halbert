@@ -10,6 +10,11 @@ conversation context region. Each module has:
 - A standalone route (for full-page view)
 - An icon name
 
+This lives in the agent-neutral ``halbert_core.modules`` package (not under
+``dashboard``) because the agent state machine validates LLM-emitted module
+invocations against this registry — the agent layer must not depend on the
+dashboard layer.
+
 Phase 8 / T8b.1.
 """
 
@@ -80,7 +85,12 @@ class ModuleRegistry:
             prop_contract={},
             standalone_route="/modules/drive-health",
             icon="HardDrive",
-            description="Drive SMART status, temperature, and capacity",
+            description=(
+                "Drive partition capacity and usage (psutil-based). "
+                "SMART status and temperature are NOT available "
+                "cross-platform — payload reports telemetry_source "
+                "'psutil-partitions'."
+            ),
         ))
         self.register(ModuleDef(
             name="evidence",

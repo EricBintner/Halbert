@@ -5,6 +5,11 @@
  * Follows the pattern from useAgentStream.ts.
  *
  * Phase 7 / T7b.2.
+ *
+ * Snooze/dismiss send finding_id when present (the server resolves either
+ * the ProactiveEvent id or the finding id) and only remove the event from
+ * local state after a 2xx response — on failure the event stays visible and
+ * an actionError is surfaced for the UI to render.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -22,12 +27,18 @@ export interface BeingEvent {
   finding_id?: string;
   proposal_id?: string;
   created_at: string;
+  category?: string;
 }
 
 interface UseBeingEventsResult {
   events: BeingEvent[];
-  snooze: (eventId: string, days?: number) => Promise<void>;
-  dismiss: (eventId: string, reason?: string) => Promise<void>;
+  snooze: (event: BeingEvent, days?: number) => Promise<boolean>;
+  dismiss: (event: BeingEvent, reason?: string) => Promise<boolean>;
+  /** Ids of events with an in-flight snooze/dismiss request. */
+  pendingActions: Set<string>;
+  /** Error from the most recent failed snooze/dismiss, if any. */
+  actionError: string | null;
+  clearActionError: () => void;
   clear: () => void;
 }
 
@@ -35,6 +46,8 @@ interface UseBeingEventsResult {
 
 export function useBeingEvents(): UseBeingEventsResult {
   const [events, setEvents] = useState<BeingEvent[]>([]);
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
+  const [actionError, setActionError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -76,37 +89,64 @@ export function useBeingEvents(): UseBeingEventsResult {
     };
   }, [connect]);
 
-  const snooze = useCallback(async (eventId: string, days: number = 7) => {
-    try {
-      await fetch(`/api/being/events/${eventId}/snooze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days }),
-      });
-      // Remove from local list
-      setEvents((prev) => prev.filter((e) => e.id !== eventId));
-    } catch (err) {
-      console.error('Failed to snooze event:', err);
-    }
-  }, []);
+  const actOnEvent = useCallback(
+    async (event: BeingEvent, action: 'snooze' | 'dismiss', body: Record<string, unknown>, query?: string): Promise<boolean> => {
+      // Server resolves either the event id or the finding id; prefer the
+      // finding id whenever the event carries one.
+      const targetId = event.finding_id ?? event.id;
+      setActionError(null);
+      setPendingActions((prev) => new Set(prev).add(event.id));
+      try {
+        const url = `/api/being/events/${encodeURIComponent(targetId)}/${action}${query ? `?${query}` : ''}`;
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!resp.ok) {
+          const detail = await resp.text().catch(() => '');
+          throw new Error(
+            `Failed to ${action} event (HTTP ${resp.status})${detail ? `: ${detail.slice(0, 120)}` : ''}`
+          );
+        }
+        // Only remove from local state once the server confirmed the action.
+        setEvents((prev) =>
+          prev.filter((e) => e.id !== event.id && e.id !== targetId && e.finding_id !== targetId)
+        );
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Failed to ${action} event:`, err);
+        setActionError(message);
+        return false;
+      } finally {
+        setPendingActions((prev) => {
+          const next = new Set(prev);
+          next.delete(event.id);
+          return next;
+        });
+      }
+    },
+    []
+  );
 
-  const dismiss = useCallback(async (eventId: string, reason: string = '') => {
-    try {
-      await fetch(`/api/being/events/${eventId}/dismiss`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason }),
-      });
-      // Remove from local list
-      setEvents((prev) => prev.filter((e) => e.id !== eventId));
-    } catch (err) {
-      console.error('Failed to dismiss event:', err);
-    }
-  }, []);
+  const snooze = useCallback(
+    (event: BeingEvent, days: number = 7) =>
+      actOnEvent(event, 'snooze', { days, finding_id: event.finding_id }, `days=${days}`),
+    [actOnEvent]
+  );
+
+  const dismiss = useCallback(
+    (event: BeingEvent, reason: string = '') =>
+      actOnEvent(event, 'dismiss', { reason, finding_id: event.finding_id }),
+    [actOnEvent]
+  );
+
+  const clearActionError = useCallback(() => setActionError(null), []);
 
   const clear = useCallback(() => {
     setEvents([]);
   }, []);
 
-  return { events, snooze, dismiss, clear };
+  return { events, snooze, dismiss, pendingActions, actionError, clearActionError, clear };
 }

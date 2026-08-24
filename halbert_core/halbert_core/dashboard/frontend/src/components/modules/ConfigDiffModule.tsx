@@ -2,41 +2,69 @@
  * ConfigDiffModule — shows a config file diff inline in the conversation.
  *
  * Phase 8 / T8c.1.
+ *
+ * Fetch failures and error payloads render a compact error state; HTTP 403
+ * (path outside the allowed roots) is surfaced distinctly as a "not allowed"
+ * state rather than a generic error.
  */
 
 import { useState, useEffect } from 'react'
 import { FileText, Loader2 } from 'lucide-react'
+import { ModuleLoadError } from './ModuleLoadError'
 
 interface ConfigDiffModuleProps {
   path?: string
   findingId?: string
 }
 
+interface FetchError {
+  status?: number
+  message: string
+}
+
 export default function ConfigDiffModule({ path, findingId }: ConfigDiffModuleProps) {
   const [content, setContent] = useState<string>('')
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<FetchError | null>(null)
 
   useEffect(() => {
     if (!path) {
-      setError('No path provided')
+      setError({ message: 'No path provided' })
       setLoading(false)
       return
     }
 
+    let cancelled = false
+
     fetch(`/api/modules/config-diff/data?path=${encodeURIComponent(path)}${findingId ? `&finding_id=${findingId}` : ''}`)
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
+      .then(async r => {
+        const data = await r.json().catch(() => null)
+        if (!r.ok) {
+          throw {
+            status: r.status,
+            message: data?.error || `HTTP ${r.status}`,
+          } as FetchError
+        }
+        if (data?.status === 'error') {
+          throw { message: data?.error || 'Failed to load config' } as FetchError
+        }
+        return data
       })
       .then(data => {
-        setContent(data.content || '')
+        if (cancelled) return
+        setContent(data?.content || '')
+        setError(null)
         setLoading(false)
       })
       .catch(e => {
-        setError(e.message)
+        if (cancelled) return
+        setError({ status: e?.status, message: e?.message || 'Failed to load config' })
         setLoading(false)
       })
+
+    return () => {
+      cancelled = true
+    }
   }, [path, findingId])
 
   if (loading) {
@@ -50,9 +78,15 @@ export default function ConfigDiffModule({ path, findingId }: ConfigDiffModulePr
 
   if (error) {
     return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-        Error: {error}
-      </div>
+      <ModuleLoadError
+        module="config diff"
+        status={error.status}
+        message={
+          error.status === 403
+            ? `Path not allowed: ${path}`
+            : error.message
+        }
+      />
     )
   }
 

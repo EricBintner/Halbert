@@ -29,8 +29,6 @@ def mock_llm():
     """Mock LLM client that returns canned responses."""
     llm = MagicMock()
     llm.chat = AsyncMock(return_value=MagicMock(content="Mock response"))
-    llm.stream = AsyncMock()
-    llm.stream.return_value = aiter_chunked(["Mock", " ", "response"])
 
     async def aiter_chunked(chunks):
         for c in chunks:

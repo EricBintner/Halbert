@@ -12,12 +12,37 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from typing import List
 
 from ..store import Finding
 
 logger = logging.getLogger(__name__)
+
+# fstab options that make an entry non-blocking at boot
+_NONBLOCKING_OPTIONS = {"noauto", "nofail", "x-systemd.automount"}
+
+
+def _mount_unit_name(mount_point: str) -> str:
+    """Escape a mount point into its systemd mount unit name.
+
+    '/' becomes '-', the leading '-' (from the leading '/') is dropped,
+    existing '-' chars are escaped as \\x2d, and other special characters
+    are replaced with '-'. Root '/' maps to '-.mount'. Local
+    implementation — no subprocess.
+
+    Examples: /mnt/data -> mnt-data.mount, /boot/efi -> boot-efi.mount,
+    / -> -.mount
+    """
+    if mount_point == "/":
+        return "-.mount"
+    escaped = mount_point.replace("-", "\\x2d").replace("/", "-")
+    # Collapse the leading '-' produced by the leading '/'
+    escaped = escaped.lstrip("-")
+    # Minimally escape anything left that isn't unit-name safe
+    escaped = "".join(
+        c if (c.isalnum() or c in ":_.\\-") else "-" for c in escaped
+    )
+    return f"{escaped}.mount"
 
 
 def _check_device_exists(device: str) -> bool:
@@ -95,12 +120,34 @@ class FstabPhantomDetector:
             if _check_device_exists(device):
                 continue
 
-            # Determine severity
+            # Determine severity: entries with noauto/nofail/automount
+            # options are NOT boot-blocking — the mount is skipped.
             mount_point = entry["mount_point"]
+            options = set(entry["options"].split(","))
+            nonblocking = bool(options & _NONBLOCKING_OPTIONS)
+
             if mount_point == "/" or mount_point == "/boot":
                 severity = "critical"
+                why_care = (
+                    f"Boot may hang or fail waiting for this device. "
+                    f"This is a critical mount point — if the device is "
+                    f"missing at boot, the system may not boot at all."
+                )
+            elif nonblocking:
+                severity = "info"
+                why_care = (
+                    f"This entry is non-blocking ({', '.join(sorted(options & _NONBLOCKING_OPTIONS))}). "
+                    f"The mount will be skipped at boot with an error — "
+                    f"boot is not blocked. The phantom device should "
+                    f"still be fixed or removed to avoid failed mount units."
+                )
             else:
                 severity = "warning"
+                why_care = (
+                    f"Boot may hang or fail waiting for this device. "
+                    f"Without nofail/noauto, systemd will block boot until "
+                    f"the device times out."
+                )
 
             findings.append(Finding(
                 id="",
@@ -116,12 +163,7 @@ class FstabPhantomDetector:
                     f"fstab entry references device '{device}' that was not "
                     f"found during configuration scan."
                 ),
-                why_care=(
-                    f"Boot may hang or fail waiting for this device. "
-                    f"If the mount is non-critical, it will be skipped with "
-                    f"an error. If it's the root filesystem, the system "
-                    f"may not boot at all."
-                ),
+                why_care=why_care,
                 why_so=(
                     f"fstab line {entry['line_no']} in {self.fstab_path} "
                     f"references '{device}', but no block device with that "
@@ -132,7 +174,7 @@ class FstabPhantomDetector:
                     f"{self.fstab_path}:{entry['line_no']}",
                 ],
                 affected_paths=[self.fstab_path],
-                affected_services=[f"mount-{mount_point}"],
+                affected_services=[_mount_unit_name(mount_point)],
             ))
 
         return findings

@@ -12,9 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import List
+from datetime import datetime, timezone
+from typing import List, Optional
 
-from ..findings.store import FindingStore, Finding
+from ..findings.store import (
+    FindingStore,
+    Finding,
+    FindingStatus,
+    parse_timestamp,
+)
 from ..findings.proposals import ProposalStore
 from ..findings.detectors.dropin_conflicts import DropinConflictDetector
 from ..findings.detectors.fstab_phantom import FstabPhantomDetector
@@ -25,6 +31,15 @@ from .events import ProactiveEvent, get_event_bus
 from .gate import ProactiveGate
 
 logger = logging.getLogger(__name__)
+
+
+# Detector name → ProactiveEvent category (drives ProactiveGate's
+# per-category overrides). Anything unlisted falls back to "general".
+_EVENT_CATEGORY = {
+    "dropin_conflicts": "config",
+    "fstab_phantom": "storage",
+    "permissions_hygiene": "security",
+}
 
 
 class DetectorRunner:
@@ -69,13 +84,26 @@ class DetectorRunner:
             try:
                 findings = detector.detect()
                 for finding in findings:
-                    # Check if this finding already exists (dedup by title+detector)
+                    # Dedup by detector+title (single targeted query)
                     existing = self._find_existing(finding)
-                    if existing:
-                        continue  # Already known, don't re-add
-
-                    # Store the finding
-                    finding_id = self.findings.add(finding)
+                    if existing is not None:
+                        if self._is_suppressed(existing):
+                            continue  # Still known/active — don't re-add
+                        # Snooze expired (or resolved and re-detected):
+                        # re-surface the existing row instead of duplicating.
+                        self.findings.update_status(
+                            existing.id,
+                            FindingStatus.OPEN.value,
+                            snoozed_until="",
+                        )
+                        finding_id = existing.id
+                        logger.info(
+                            f"Finding {finding_id} re-surfaced "
+                            f"(was {existing.status})"
+                        )
+                    else:
+                        # Store the finding
+                        finding_id = self.findings.add(finding)
 
                     # Create a proactive event
                     event = ProactiveEvent.create(
@@ -84,6 +112,7 @@ class DetectorRunner:
                         title=finding.title,
                         body=finding.description,
                         finding_id=finding_id,
+                        category=_EVENT_CATEGORY.get(finding.detector, "general"),
                     )
 
                     # Check the gate
@@ -105,31 +134,51 @@ class DetectorRunner:
         return published_events
 
     def run_all_sync(self) -> List[ProactiveEvent]:
-        """Synchronous wrapper for run_all()."""
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        return loop.run_until_complete(self.run_all())
+        """Synchronous wrapper for run_all().
 
-    def _find_existing(self, finding: Finding) -> bool:
-        """Check if a similar finding already exists (same detector + title).
-
-        Checks both open AND snoozed findings — snoozed findings should
-        not be re-created while the snooze is active. Dismissed findings
-        are also checked — if the user dismissed it, don't re-add unless
-        the condition has changed.
+        Uses asyncio.run() when no loop is running in the current thread
+        (the normal config-watcher worker-thread case). If a loop IS
+        already running here, falls back to a dedicated loop that is
+        always closed afterwards — no deprecated get_event_loop() and no
+        leaked loops.
         """
-        # Check open findings
-        for existing in self.findings.list_open():
-            if existing.detector == finding.detector and existing.title == finding.title:
-                return True
+        try:
+            asyncio.get_running_loop()
+            loop_running = True
+        except RuntimeError:
+            loop_running = False
 
-        # Check snoozed and dismissed findings via list_all
-        for existing in self.findings.list_all(limit=500):
-            if existing.status in ("snoozed", "dismissed"):
-                if existing.detector == finding.detector and existing.title == finding.title:
-                    return True
+        if not loop_running:
+            return asyncio.run(self.run_all())
 
-        return False
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(self.run_all())
+        finally:
+            loop.close()
+
+    def _find_existing(self, finding: Finding) -> Optional[Finding]:
+        """Return the newest existing finding with the same detector+title.
+
+        Matches regardless of status — whether it still suppresses the new
+        one is decided by _is_suppressed(). Returns None when unknown.
+        """
+        return self.findings.find_by_detector_title(finding.detector, finding.title)
+
+    def _is_suppressed(self, existing: Finding) -> bool:
+        """Decide whether an existing match suppresses a new finding.
+
+        Suppressed: open (already known), dismissed (user said not a
+        problem), and snoozed findings whose snooze is still in the future.
+        Not suppressed: snoozed findings whose snoozed_until has passed —
+        those re-surface instead of staying a permanent mute.
+        """
+        if existing.status == FindingStatus.SNOOZED.value:
+            snoozed_until = parse_timestamp(existing.snoozed_until)
+            if snoozed_until and datetime.now(timezone.utc) < snoozed_until:
+                return True  # snooze still active
+            return False  # expired — re-surface
+        if existing.status == FindingStatus.RESOLVED.value:
+            return False  # re-detected after resolution — re-surface
+        # open / dismissed / anything else counts as already known
+        return True

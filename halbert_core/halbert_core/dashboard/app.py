@@ -24,6 +24,49 @@ logger = logging.getLogger('halbert.dashboard')
 # Phase 23: Global scheduler executor reference
 _scheduler_executor = None
 
+# Phase 5+7: Global ConfigWatcher reference (T5a.2 + T7e.1)
+_config_watcher = None
+
+
+def _parse_hhmm(value) -> tuple:
+    """Parse an 'HH:MM' string into (hour, minute). Raises ValueError if malformed."""
+    if not isinstance(value, str):
+        raise ValueError(f"morning_report.time must be a string, got {type(value).__name__}")
+    hh, sep, mm = value.partition(":")
+    if not sep:
+        raise ValueError(f"morning_report.time must be 'HH:MM', got {value!r}")
+    hour, minute = int(hh), int(mm)
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"morning_report.time out of range: {value!r}")
+    return hour, minute
+
+
+def _find_config_registry():
+    """Locate config/config-registry.yml. Returns a Path or None."""
+    candidates = [Path.cwd() / "config" / "config-registry.yml"]
+    for parent in Path(__file__).resolve().parents:
+        candidates.append(parent / "config" / "config-registry.yml")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def get_recent_config_changes(within_hours: int = 24) -> list:
+    """Recent config changes recorded by the running ConfigWatcher.
+
+    Consumed by MorningReportTask (T7d.1) via attribute lookup — returns
+    an empty list when no watcher is running.
+    """
+    watcher = _config_watcher
+    if watcher is None:
+        return []
+    try:
+        return watcher.get_recent_changes(within_hours=within_hours)
+    except Exception as e:
+        logger.warning(f"Failed to read recent config changes: {e}")
+        return []
+
 
 class ConnectionManager:
     """
@@ -298,13 +341,112 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         scheduler_starter = threading.Thread(target=start_scheduler_delayed, daemon=True)
         scheduler_starter.start()
         logger.info("Scheduler starting in background...")
+
+        # Phase 7 / T7d.2 + T7e.1: schedule morning report and detector sweep
+        def schedule_proactive_jobs_delayed():
+            """Register proactive jobs once the scheduler has had time to start."""
+            import time
+            time.sleep(4)  # after the delayed scheduler start above
+            try:
+                executor = _scheduler_executor
+                if executor is None:
+                    logger.info("Scheduler not running; proactive jobs not scheduled")
+                    return
+
+                from ..scheduler.autonomous_tasks import create_autonomous_task
+
+                # T7e.1: scheduled detector sweep every 6 hours
+                try:
+                    sweep_task = create_autonomous_task('detector_sweep')
+                    executor.schedule_cron_job(
+                        job_id='detector_sweep',
+                        task_func=lambda: sweep_task.execute({}),
+                        cron_expr={'hour': '*/6', 'minute': 12},
+                        description='Detector sweep (drop-ins, fstab, permissions)',
+                    )
+                    logger.info("Detector sweep scheduled every 6 hours")
+                except Exception as e:
+                    logger.warning(f"Failed to schedule detector sweep: {e}")
+
+                # T7d.2: daily morning report per being.yml
+                # Missing / disabled / malformed being.yml → log and skip,
+                # never crash startup.
+                try:
+                    from ..config.being_config import load_being_config
+                    being_config = load_being_config()
+                    report_cfg = being_config.morning_report or {}
+                    if not isinstance(report_cfg, dict) or not report_cfg.get('enabled'):
+                        logger.info("Morning report disabled or unconfigured; not scheduled")
+                        return
+                    hour, minute = _parse_hhmm(report_cfg.get('time', '08:00'))
+                    report_task = create_autonomous_task('morning_report')
+                    executor.schedule_cron_job(
+                        job_id='morning_report',
+                        task_func=lambda: report_task.execute({}),
+                        cron_expr={'hour': hour, 'minute': minute},
+                        description='Daily morning report',
+                    )
+                    logger.info(
+                        f"Morning report scheduled daily at {hour:02d}:{minute:02d} UTC"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to schedule morning report: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to schedule proactive jobs: {e}")
+
+        proactive_starter = threading.Thread(target=schedule_proactive_jobs_delayed, daemon=True)
+        proactive_starter.start()
+
+        # Phase 5+7 / T5a.2 + T7e.1: watch host config files (Linux hosts only).
+        # The whole thing no-ops gracefully if the platform is unsupported,
+        # the manifest is missing/unwatched, or SourcePrep is down.
+        def start_config_watcher():
+            global _config_watcher
+            try:
+                from ..utils.platform import is_linux
+                if not is_linux():
+                    logger.info("Config watcher not started (Linux hosts only)")
+                    return
+                manifest = _find_config_registry()
+                if manifest is None:
+                    logger.info("No config-registry.yml found; config watcher not started")
+                    return
+                from ..config.watcher import (
+                    ConfigWatcher,
+                    create_sourceprep_reindex_callback,
+                    create_detector_trigger_callback,
+                )
+                watcher = ConfigWatcher(
+                    manifest_path=str(manifest),
+                    change_callbacks=[
+                        create_sourceprep_reindex_callback(),
+                        create_detector_trigger_callback(),
+                    ],
+                )
+                watcher.start()
+                _config_watcher = watcher
+                logger.info(f"Config watcher started on {manifest}")
+            except Exception as e:
+                logger.warning(f"Config watcher failed to start (non-fatal): {e}")
+
+        start_config_watcher()
     
     # Shutdown event: stop background services
     @app.on_event("shutdown")
     async def shutdown_event():
         """Stop background services on app shutdown."""
         global _scheduler_executor
-        
+        global _config_watcher
+
+        # Stop config watcher (T5a.2 + T7e.1)
+        if _config_watcher is not None:
+            try:
+                _config_watcher.stop()
+                _config_watcher = None
+                logger.info("Config watcher stopped")
+            except Exception as e:
+                logger.warning(f"Failed to stop config watcher: {e}")
+
         # Stop scheduler
         if _scheduler_executor is not None:
             try:
@@ -312,7 +454,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 logger.info("Scheduler stopped")
             except Exception as e:
                 logger.warning(f"Failed to stop scheduler: {e}")
-        
+
         # Stop ingestion
         try:
             from ..ingestion.service import get_ingestion_service

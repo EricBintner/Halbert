@@ -2,10 +2,14 @@
  * EvidenceModule — log excerpt viewer with highlighting.
  *
  * Phase 8 / T8c.4.
+ *
+ * Fetch failures and error payloads render a compact error state (HTTP 403 =
+ * "log source not allowed") instead of an empty log box or endless spinner.
  */
 
 import { useState, useEffect } from 'react'
 import { BookOpen, Loader2, Search } from 'lucide-react'
+import { ModuleLoadError } from './ModuleLoadError'
 
 interface EvidenceModuleProps {
   source?: string
@@ -13,39 +17,62 @@ interface EvidenceModuleProps {
   query?: string
 }
 
+interface FetchError {
+  status?: number
+  message: string
+}
+
 export default function EvidenceModule({ source, cursor, query }: EvidenceModuleProps) {
   const [lines, setLines] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [fetchError, setFetchError] = useState<FetchError | null>(null)
+  const [note, setNote] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState(query || '')
 
   useEffect(() => {
     if (!source) {
-      setError('No source provided')
+      setFetchError({ message: 'No evidence source provided' })
       setLoading(false)
       return
     }
+
+    let cancelled = false
 
     const params = new URLSearchParams({ source })
     if (cursor) params.set('cursor', cursor)
     if (searchQuery) params.set('query', searchQuery)
 
     fetch(`/api/modules/evidence/data?${params}`)
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
+      .then(async r => {
+        const data = await r.json().catch(() => null)
+        if (!r.ok) {
+          const err: FetchError = {
+            status: r.status,
+            message: data?.error || data?.note || `HTTP ${r.status}`,
+          }
+          throw err
+        }
+        if (data?.status && data.status !== 'ok') {
+          throw { message: data?.error || `Unexpected status: ${data.status}` } as FetchError
+        }
+        return data
       })
       .then(data => {
-        if (data.status === 'ok') {
-          setLines(data.lines || [])
-          setError(data.note || null)
-        }
+        if (cancelled) return
+        setLines(data?.lines || [])
+        setNote(data?.note || null)
+        setFetchError(null)
         setLoading(false)
       })
       .catch(e => {
-        setError(e.message)
+        if (cancelled) return
+        setFetchError({ status: e?.status, message: e?.message || 'Failed to load evidence' })
         setLoading(false)
       })
+
+    return () => {
+      cancelled = true
+    }
   }, [source, cursor, searchQuery])
 
   if (loading) {
@@ -54,6 +81,20 @@ export default function EvidenceModule({ source, cursor, query }: EvidenceModule
         <Loader2 className="h-4 w-4 animate-spin" />
         Loading evidence...
       </div>
+    )
+  }
+
+  if (fetchError) {
+    return (
+      <ModuleLoadError
+        module="evidence"
+        status={fetchError.status}
+        message={
+          fetchError.status === 403
+            ? `Log source not allowed: ${source}`
+            : fetchError.message
+        }
+      />
     )
   }
 
@@ -81,7 +122,7 @@ export default function EvidenceModule({ source, cursor, query }: EvidenceModule
       <div className="max-h-[300px] overflow-auto">
         {lines.length === 0 ? (
           <div className="p-4 text-sm text-muted-foreground">
-            {error || 'No log lines found'}
+            {note || 'No log lines found'}
           </div>
         ) : (
           <pre className="text-xs p-2 font-mono leading-relaxed">

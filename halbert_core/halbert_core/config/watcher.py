@@ -3,7 +3,9 @@ import logging
 import os
 import threading
 import time
-from typing import Callable, Dict, List, Optional
+from collections import deque
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Deque, Dict, List, Optional
 
 try:
     from watchdog.observers import Observer  # type: ignore
@@ -42,25 +44,99 @@ class ConfigWatcher:
         on_snapshot: Optional[Callback] = None,
         interval_s: int = 600,
         on_change: Optional[Callback] = None,
+        change_callbacks: Optional[List[Callback]] = None,
+        max_recent_changes: int = 200,
     ) -> None:
         self.manifest_path = manifest_path
         self.on_snapshot = on_snapshot or (lambda x: None)
         self.interval_s = interval_s
         self.on_change = on_change
+        # Composed change callbacks (T5a.2 + T7e.1). The legacy single
+        # `on_change` is folded into the same list so both call styles work.
+        self._change_callbacks: List[Callback] = []
+        if on_change is not None:
+            self._change_callbacks.append(on_change)
+        if change_callbacks:
+            self._change_callbacks.extend(change_callbacks)
+        # Rolling recent-changes log (T7d.1): entries {"ts", "path", "kind"}
+        self._changes: Deque[Dict[str, Any]] = deque(maxlen=max_recent_changes)
+        # Per-path last known state (content hash or "error:<msg>") used to
+        # detect real changes between snapshots. The first snapshot is a
+        # baseline and records nothing.
+        self._last_state: Dict[str, str] = {}
+        self._baseline_taken = False
+        self._change_lock = threading.Lock()
         self._observer: Optional[Observer] = None  # type: ignore
-        self._thread: Optional[Thread] = None
+        self._thread: Optional[threading.Thread] = None
         self._stop = False
 
     def _handle_change(self, snapshot_result: List[Dict]) -> None:
         self.on_snapshot(snapshot_result)
-        if self.on_change:
-            self.on_change(snapshot_result)
+        self._record_changes(snapshot_result)
+        for callback in self._change_callbacks:
+            try:
+                callback(snapshot_result)
+            except Exception as e:
+                logger.warning(f"Config change callback failed (non-fatal): {e}")
+
+    def _record_changes(self, snapshot_result: List[Dict]) -> None:
+        """Diff this snapshot against the last one and log real changes.
+
+        Entries are timestamped dicts: {"ts", "path", "kind"}. Files that
+        disappear from the manifest are recorded with kind="deleted".
+        """
+        ts = datetime.now(timezone.utc).isoformat()
+        with self._change_lock:
+            seen: Dict[str, str] = {}
+            for row in snapshot_result:
+                path = row.get("path")
+                if not path:
+                    continue
+                state = row.get("hash") or (
+                    f"error:{row.get('error')}" if row.get("error") else ""
+                )
+                seen[path] = state
+                if not self._baseline_taken:
+                    continue
+                prev = self._last_state.get(path)
+                if prev is None or prev != state:
+                    kind = row.get(
+                        "kind", "error" if row.get("error") else "unknown"
+                    )
+                    self._changes.append({"ts": ts, "path": path, "kind": kind})
+            if self._baseline_taken:
+                for removed in set(self._last_state) - set(seen):
+                    self._changes.append(
+                        {"ts": ts, "path": removed, "kind": "deleted"}
+                    )
+            self._last_state = seen
+            self._baseline_taken = True
+
+    def get_recent_changes(self, within_hours: float = 24) -> List[Dict[str, Any]]:
+        """Return change log entries recorded within the last N hours.
+
+        Oldest first. Entries with unparseable timestamps are skipped.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=within_hours)
+        with self._change_lock:
+            entries = list(self._changes)
+        recent: List[Dict[str, Any]] = []
+        for entry in entries:
+            try:
+                ts = datetime.fromisoformat(str(entry.get("ts", "")))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                continue
+            if ts >= cutoff:
+                recent.append(dict(entry))
+        return recent
 
     def start(self) -> None:
         if Observer is None:
             # Fallback polling mode
             self._stop = False
-            self._thread = Thread(target=self._poll_loop, daemon=True)
+            self._thread = threading.Thread(target=self._poll_loop, daemon=True)
             self._thread.start()
             return
 

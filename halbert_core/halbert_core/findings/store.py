@@ -104,6 +104,32 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def parse_timestamp(value: str) -> Optional[datetime]:
+    """Parse an ISO-8601 timestamp tolerantly.
+
+    Handles a trailing 'Z', an explicit offset ('+00:00'), and the
+    redundant '+00:00Z' combination produced by some code paths in this
+    repo. Naive timestamps are assumed UTC. Returns None when the value
+    is empty or unparseable.
+    """
+    if not value:
+        return None
+    v = value.strip()
+    if v.endswith("Z"):
+        if "+" in v[10:] or (len(v) > 10 and "-" in v[10:]):
+            # Offset already present (e.g. '+00:00Z') — drop the 'Z'.
+            v = v[:-1]
+        else:
+            v = v[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(v)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _row_to_finding(row: sqlite3.Row) -> Finding:
     return Finding(
         id=row["id"],
@@ -210,6 +236,20 @@ class FindingStore:
             ).fetchall()
         return [_row_to_finding(r) for r in rows]
 
+    def find_by_detector_title(self, detector: str, title: str) -> Optional[Finding]:
+        """Find the newest finding matching detector + title, any status.
+
+        Single targeted query used by DetectorRunner's dedup instead of
+        scanning list_all() per finding.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM findings WHERE detector = ? AND title = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (detector, title),
+            ).fetchone()
+        return _row_to_finding(row) if row else None
+
     def list_by_detector(self, detector: str) -> List[Finding]:
         """List findings by detector name (all statuses)."""
         with self._connect() as conn:
@@ -249,14 +289,42 @@ class FindingStore:
         return updated
 
     def snooze(self, finding_id: str, days: int) -> bool:
-        """Snooze a finding for N days."""
+        """Snooze a finding for N days.
+
+        The snooze is also saved as a SourcePrep observation (mirroring
+        dismiss()). SourcePrep failures are logged but never fail the
+        store operation — SourcePrep is optional infrastructure.
+        """
         from datetime import timedelta
 
         now = datetime.now(timezone.utc)
         until = (now + timedelta(days=days)).isoformat()
-        return self.update_status(
+        updated = self.update_status(
             finding_id, FindingStatus.SNOOZED.value, snoozed_until=until
         )
+
+        if updated:
+            # Try to record the snooze in SourcePrep
+            try:
+                from ..integrations.sourceprep_client import SourcePrepClient
+
+                client = SourcePrepClient()
+                finding = self.get(finding_id)
+                if finding:
+                    client.save_observation(
+                        content=f"Snoozed finding '{finding.title}' for {days} days",
+                        file_path=(
+                            finding.affected_paths[0]
+                            if finding.affected_paths
+                            else None
+                        ),
+                        category="decision",
+                    )
+                    logger.info(f"Snooze saved to SourcePrep observation: {finding_id}")
+            except Exception as e:
+                logger.debug(f"Could not save snooze to SourcePrep: {e}")
+
+        return updated
 
     def dismiss(self, finding_id: str, reason: str) -> bool:
         """Dismiss a finding, recording the reason.

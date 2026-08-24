@@ -55,6 +55,9 @@ class Proposal:
     # Link to approval request
     approval_request_id: Optional[str] = None
 
+    # Execution outcome recorded after a decision is handled
+    execution_result: Dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
@@ -78,6 +81,7 @@ CREATE TABLE IF NOT EXISTS proposals (
     rolled_back_at TEXT NOT NULL DEFAULT '',
     rejection_reason TEXT NOT NULL DEFAULT '',
     approval_request_id TEXT,
+    execution_result TEXT NOT NULL DEFAULT '{}',  -- JSON object
     FOREIGN KEY (finding_id) REFERENCES findings(id)
 );
 
@@ -105,6 +109,7 @@ def _row_to_proposal(row: sqlite3.Row) -> Proposal:
         rolled_back_at=row["rolled_back_at"],
         rejection_reason=row["rejection_reason"],
         approval_request_id=row["approval_request_id"],
+        execution_result=json.loads(row["execution_result"] or "{}"),
     )
 
 
@@ -113,6 +118,7 @@ def _proposal_to_row(p: Proposal) -> Dict[str, Any]:
     d["changes"] = json.dumps(p.changes)
     d["dry_run_result"] = json.dumps(p.dry_run_result)
     d["blast_radius"] = json.dumps(p.blast_radius)
+    d["execution_result"] = json.dumps(p.execution_result)
     return d
 
 
@@ -132,6 +138,14 @@ class ProposalStore:
     def _init_db(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.executescript(_SCHEMA)
+            # Migration: add execution_result to databases created
+            # before the column existed.
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(proposals)")}
+            if "execution_result" not in cols:
+                conn.execute(
+                    "ALTER TABLE proposals ADD COLUMN execution_result "
+                    "TEXT NOT NULL DEFAULT '{}'"
+                )
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -185,6 +199,16 @@ class ProposalStore:
             ).fetchall()
         return [_row_to_proposal(r) for r in rows]
 
+    def find_by_approval_request(self, request_id: str) -> Optional[Proposal]:
+        """Find the proposal linked to an approval request, if any."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM proposals WHERE approval_request_id = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (request_id,),
+            ).fetchone()
+        return _row_to_proposal(row) if row else None
+
     def list_all(self, limit: int = 100) -> List[Proposal]:
         """List all proposals, most recent first."""
         with self._connect() as conn:
@@ -203,8 +227,13 @@ class ProposalStore:
             "rolled_back_at",
             "rejection_reason",
             "approval_request_id",
+            "execution_result",
         }
         extras = {k: v for k, v in kwargs.items() if k in allowed}
+        if "execution_result" in extras and not isinstance(
+            extras["execution_result"], str
+        ):
+            extras["execution_result"] = json.dumps(extras["execution_result"])
 
         if status == ProposalStatus.APPROVED.value and "approved_at" not in extras:
             extras["approved_at"] = _now()
@@ -239,6 +268,14 @@ class ProposalStore:
             kwargs["approval_request_id"] = approval_request_id
         return self.update_status(
             proposal_id, ProposalStatus.APPROVED.value, **kwargs
+        )
+
+    def link_approval(self, proposal_id: str, approval_request_id: str) -> bool:
+        """Link an approval request while keeping the proposal pending."""
+        return self.update_status(
+            proposal_id,
+            ProposalStatus.PENDING.value,
+            approval_request_id=approval_request_id,
         )
 
     def reject(self, proposal_id: str, reason: str) -> bool:

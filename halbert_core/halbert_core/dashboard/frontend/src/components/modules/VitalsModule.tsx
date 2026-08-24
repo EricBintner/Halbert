@@ -4,8 +4,9 @@
  * Phase 8 / T8c.2.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Activity, Cpu, MemoryStick, HardDrive, Wifi, Loader2 } from 'lucide-react'
+import { ModuleLoadError } from './ModuleLoadError'
 
 interface VitalsModuleProps {
   timeframe?: string
@@ -21,18 +22,32 @@ function formatBytes(bytes: number): string {
 export default function VitalsModule({ timeframe = '1h' }: VitalsModuleProps) {
   const [vitals, setVitals] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const hasLoadedRef = useRef(false)
 
   useEffect(() => {
     const fetchVitals = () => {
       fetch(`/api/modules/vitals/data?timeframe=${encodeURIComponent(timeframe)}`)
-        .then(r => r.json())
-        .then(data => {
-          if (data.status === 'ok') {
-            setVitals(data.vitals)
-            setLoading(false)
-          }
+        .then(async r => {
+          const data = await r.json().catch(() => null)
+          if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`)
+          if (data?.status !== 'ok') throw new Error(data?.error || 'Failed to load vitals')
+          return data
         })
-        .catch(() => setLoading(false))
+        .then(data => {
+          hasLoadedRef.current = true
+          setVitals(data.vitals)
+          setError(null)
+          setLoading(false)
+        })
+        .catch(e => {
+          // Keep last good data across transient poll failures; only surface
+          // an error when we have never loaded successfully.
+          if (!hasLoadedRef.current) {
+            setError(e?.message || 'Failed to load vitals')
+          }
+          setLoading(false)
+        })
     }
     fetchVitals()
     const interval = setInterval(fetchVitals, 5000)
@@ -46,6 +61,10 @@ export default function VitalsModule({ timeframe = '1h' }: VitalsModuleProps) {
         Loading vitals...
       </div>
     )
+  }
+
+  if (error) {
+    return <ModuleLoadError module="vitals" message={error} />
   }
 
   if (!vitals) {

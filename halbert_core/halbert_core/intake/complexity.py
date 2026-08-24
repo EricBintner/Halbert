@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Callable, Dict, Optional
@@ -71,9 +71,10 @@ class ComplexityRouter:
         self._endpoint = endpoint
         self._cache_size = cache_size
 
-        # Manual LRU cache (so we can track hits/misses and invalidate)
-        self._cache: Dict[str, ComplexityResult] = {}
-        self._cache_order: list[str] = []
+        # LRU cache over message hashes (OrderedDict; O(1) hit/evict).
+        # Kept manual (not functools.lru_cache) so we can track hits/misses
+        # and report cache size in stats.
+        self._cache: OrderedDict[str, ComplexityResult] = OrderedDict()
 
         # Stats
         self._cache_hits = 0
@@ -109,6 +110,7 @@ class ComplexityRouter:
         cache_key = self._hash_message(message)
         if cache_key in self._cache:
             self._cache_hits += 1
+            self._cache.move_to_end(cache_key)
             cached = self._cache[cache_key]
             return ComplexityResult(
                 score=cached.score,
@@ -139,10 +141,9 @@ class ComplexityRouter:
 
         # ── Update cache ─────────────────────────────────────────
         self._cache[cache_key] = result
-        self._cache_order.append(cache_key)
-        if len(self._cache_order) > self._cache_size:
-            oldest = self._cache_order.pop(0)
-            self._cache.pop(oldest, None)
+        self._cache.move_to_end(cache_key)
+        while len(self._cache) > self._cache_size:
+            self._cache.popitem(last=False)
 
         # ── Update stats ─────────────────────────────────────────
         self._latencies.append(latency_ms)

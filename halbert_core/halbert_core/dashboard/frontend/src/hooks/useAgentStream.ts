@@ -128,7 +128,7 @@ export interface ProvenanceRef {
   type: 'log_cursor' | 'snapshot_id' | 'metric_window' | 'path_lines' | 'memory_id' | 'observation_id';
   ref: string;
   label: string;
-  url: string;
+  url?: string;
 }
 
 export interface ModuleInvocation {
@@ -263,6 +263,17 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           return prev;
 
         case 'response_complete':
+          // Tolerate provenance riding on the completion event as well as
+          // the dedicated response_provenance event.
+          if (Array.isArray(event.provenance)) {
+            setProvenance(event.provenance as ProvenanceRef[]);
+          }
+          // The backend strips structured-action blocks (e.g. invoke_module
+          // JSON) from the final committed text; adopt it so the rendered
+          // bubble never shows the raw JSON tail that streamed in chunks.
+          if (typeof event.content === 'string' && event.content.length > 0) {
+            setResponse(event.content);
+          }
           setIsStreaming(false);
           options.onComplete?.();
           return prev;

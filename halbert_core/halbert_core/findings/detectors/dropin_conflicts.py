@@ -14,7 +14,7 @@ import logging
 from typing import List
 
 from ..store import Finding, FindingStore
-from ..precedence import PrecedenceEngine
+from ..precedence import PrecedenceEngine, SYSTEMD_ADDITIVE_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +112,10 @@ class DropinConflictDetector:
             result = self.engine.resolve_systemd_unit(unit_name)
             for conflict in result.get("conflicts", []):
                 key = conflict["key"]
+                # Additive directives accumulate — differing values are by
+                # design and must never be flagged as conflicts.
+                if key in SYSTEMD_ADDITIVE_KEYS:
+                    continue
                 values = conflict["values"]
                 effective = conflict["effective"]
                 eff_source = conflict["effective_source"]

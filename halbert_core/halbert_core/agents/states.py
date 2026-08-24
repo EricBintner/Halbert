@@ -5,10 +5,14 @@ Defines the state machine states and context for the agentic workflow.
 Based on research5.md Part 2.
 """
 
+from __future__ import annotations
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 import time
+
+if TYPE_CHECKING:
+    from ..intake import MessageIntake
 
 
 class AgentState(Enum):
@@ -131,7 +135,7 @@ class StateContext:
     persona_id: str = "halbert"
 
     # Phase 3: Intake pipeline result (message analysis before cognitive tick)
-    intake: Optional[Any] = None  # MessageIntake instance
+    intake: Optional[MessageIntake] = None
 
     # Phase 4: Vision/image attachments (base64-encoded)
     images: Optional[List[str]] = None

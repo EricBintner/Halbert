@@ -33,7 +33,7 @@ import { PlanChecklist } from './PlanChecklist';
 import { ToolExecutionCard } from './ToolExecutionCard';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { ThinkingPanel } from './ThinkingPanel';
-import { WhyChip } from '../WhyChip';
+import { WhyChip, type ProvenanceRef } from '../WhyChip';
 import { ModuleRenderer } from '../ModuleRenderer';
 import { ConfidenceIndicator } from './ConfidenceIndicator';
 import { ScanBlock } from './ScanBlock';
@@ -74,6 +74,54 @@ interface AgentConversation {
 interface AgentChatProps {
   className?: string;
   onRunCommand?: (cmd: string) => Promise<{output?: string, error?: string, exit_code?: number}>;
+}
+
+// -----------------------------------------------------------------------------
+// Provenance ref → module parsing (Phase 8 / T8a.3)
+//
+// Ref strings arrive from the backend in free-form shapes. Parse defensively:
+// accept a JSON object, "source@cursor" / "source:cursor" for log refs, and
+// "path:start-end" / "path:line" suffixes for path refs. Fall back to treating
+// the whole ref as the source/path.
+// -----------------------------------------------------------------------------
+
+interface ExpandedProvenanceModule {
+  key: string;
+  label: string;
+  module: string;
+  props: Record<string, any>;
+}
+
+function parseLogRef(ref: string): { source?: string; cursor?: string } {
+  try {
+    const parsed = JSON.parse(ref);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        source: parsed.source ?? parsed.log ?? parsed.unit ?? parsed.service,
+        cursor: parsed.cursor ?? parsed.pos ?? parsed.offset,
+      };
+    }
+  } catch { /* not JSON */ }
+  const atIdx = ref.indexOf('@');
+  if (atIdx > 0) return { source: ref.slice(0, atIdx), cursor: ref.slice(atIdx + 1) };
+  const colonIdx = ref.indexOf(':');
+  if (colonIdx > 0) return { source: ref.slice(0, colonIdx), cursor: ref.slice(colonIdx + 1) };
+  return { source: ref };
+}
+
+function parsePathRef(ref: string): { path?: string } {
+  try {
+    const parsed = JSON.parse(ref);
+    if (parsed && typeof parsed === 'object') {
+      const path = parsed.path ?? parsed.file ?? parsed.filename;
+      if (typeof path === 'string') return { path };
+    }
+  } catch { /* not JSON */ }
+  // Strip a trailing ":N" or ":N-M" line-range suffix, but only when what
+  // precedes it looks like a path (avoids mangling "C:\..."-style strings).
+  const m = ref.match(/^(.+?\/.*?):(\d+)(?:-(\d+))?$/);
+  if (m) return { path: m[1] };
+  return { path: ref };
 }
 
 // Helper to render message content with code blocks
@@ -155,6 +203,9 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
   
   // Phase 59: Message queue (type while busy)
   const [messageQueue, setMessageQueue] = useState<string[]>([]);
+
+  // Phase 8 / T8a.3: modules expanded from provenance WhyChip clicks
+  const [expandedProvenanceModules, setExpandedProvenanceModules] = useState<ExpandedProvenanceModule[]>([]);
   
   const {
     session,
@@ -398,6 +449,41 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
     inputRef.current?.focus();
   };
 
+  // Phase 8 / T8a.3: clicking a provenance ref expands the source inline.
+  // log_cursor / metric_window → evidence module; path_lines / snapshot_id →
+  // config-diff module. memory_id / observation_id keep the chip popover.
+  const handleProvenanceExpand = (provRef: ProvenanceRef) => {
+    let expansion: Omit<ExpandedProvenanceModule, 'key'> | null = null;
+
+    if (provRef.type === 'log_cursor' || provRef.type === 'metric_window') {
+      const { source, cursor } = parseLogRef(provRef.ref);
+      expansion = {
+        label: provRef.label || provRef.ref,
+        module: 'evidence',
+        props: { source, cursor },
+      };
+    } else if (provRef.type === 'path_lines' || provRef.type === 'snapshot_id') {
+      const { path } = parsePathRef(provRef.ref);
+      expansion = {
+        label: provRef.label || provRef.ref,
+        module: 'config-diff',
+        props: { path },
+      };
+    }
+
+    if (!expansion) return;
+
+    setExpandedProvenanceModules(prev => {
+      const key = `${expansion.module}:${provRef.ref}`;
+      if (prev.some(p => p.key === key)) return prev; // already expanded
+      return [...prev, { key, ...expansion }];
+    });
+  };
+
+  const dismissExpandedModule = (key: string) => {
+    setExpandedProvenanceModules(prev => prev.filter(m => m.key !== key));
+  };
+
   const handleSend = async () => {
     // Queue messages if streaming
     if (isStreaming && input.trim()) {
@@ -405,26 +491,27 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
       setInput('');
       return;
     }
-    
+
     if ((!input.trim() && attachedImages.length === 0)) return;
-    
+
     // Extract base64 data from attached images
     const imageData = attachedImages.map(img => {
       const base64Match = img.dataUrl.match(/^data:image\/\w+;base64,(.+)$/);
       return base64Match ? base64Match[1] : img.dataUrl;
     });
-    
+
     const userMsg: UserMessage = {
       id: 'user-' + Date.now(),
       content: input.trim() || (imageData.length > 0 ? '[Image]' : ''),
       timestamp: Date.now(),
       images: imageData.length > 0 ? imageData : undefined,
     };
-    
+
     setUserMessages(prev => [...prev, userMsg]);
     setAgentError(null);
     setAttachedImages([]);
-    
+    setExpandedProvenanceModules([]);
+
     // TODO: Pass images to agent backend when vision support is added
     sendMessage(input.trim());
     setInput('');
@@ -457,6 +544,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
   const handleReset = () => {
     reset();
     setAgentError(null);
+    setExpandedProvenanceModules([]);
   };
 
   return (
@@ -638,7 +726,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
                       {/* Phase 8: Provenance chips */}
                       {!isStreaming && provenance.length > 0 && (
                         <div className="mt-2">
-                          <WhyChip provenance={provenance} />
+                          <WhyChip provenance={provenance} onExpand={handleProvenanceExpand} />
                         </div>
                       )}
                     </div>
@@ -649,6 +737,24 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
                     <div className="mt-3 space-y-3">
                       {moduleInvocations.map((inv, i) => (
                         <ModuleRenderer key={i} module={inv.module} props={inv.props} />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Phase 8: Provenance-expanded sources (WhyChip onExpand) */}
+                  {expandedProvenanceModules.length > 0 && (
+                    <div className="mt-3 space-y-3">
+                      {expandedProvenanceModules.map((m) => (
+                        <div key={m.key} className="relative">
+                          <button
+                            onClick={() => dismissExpandedModule(m.key)}
+                            className="absolute right-2 top-2 z-10 p-1 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors"
+                            title="Close"
+                          >
+                            <XIcon className="h-3 w-3" />
+                          </button>
+                          <ModuleRenderer module={m.module} props={m.props} />
+                        </div>
                       ))}
                     </div>
                   )}

@@ -400,5 +400,18 @@ class ApprovalEngine:
             json.dump(asdict(decision), f, indent=2)
     
     def _get_timestamp(self) -> str:
-        """Get ISO timestamp."""
-        return datetime.now(timezone.utc).isoformat() + 'Z'
+        """Get ISO 8601 UTC timestamp.
+
+        Emits proper 'Z'-suffixed UTC stamps. Older records may contain
+        malformed stamps of the form '...+00:00Z' (offset AND 'Z') —
+        readers should tolerate both.
+        """
+        return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+    @staticmethod
+    def parse_timestamp(value: str) -> datetime:
+        """Parse a timestamp, tolerating legacy malformed '+00:00Z' stamps."""
+        cleaned = value.replace('+00:00Z', '+00:00')
+        if cleaned.endswith('Z'):
+            cleaned = cleaned[:-1] + '+00:00'
+        return datetime.fromisoformat(cleaned)
