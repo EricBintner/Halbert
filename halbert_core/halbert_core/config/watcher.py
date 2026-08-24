@@ -134,3 +134,50 @@ def create_sourceprep_reindex_callback(
             timer.start()
 
     return callback
+
+
+# ---------------------------------------------------------------------------
+# Detector trigger callback (Phase 7 / T7e.1)
+# ---------------------------------------------------------------------------
+
+def create_detector_trigger_callback(
+    debounce_s: float = 10.0,
+) -> Callback:
+    """Create a debounced callback that runs all detectors after config changes.
+
+    This runs the detector sweep (drop-in conflicts, fstab phantoms,
+    permissions hygiene) and publishes proactive events for any new
+    findings, filtered by the ProactiveGate.
+
+    Usage:
+        watcher = ConfigWatcher(
+            manifest_path="config/config-registry.yml",
+            on_change=create_detector_trigger_callback(),
+        )
+
+    Debounced separately from the SourcePrep reindex — detectors run
+    after a longer quiet period (default 10s) to avoid running on
+    every intermediate file write.
+    """
+    timer: Optional[threading.Timer] = None
+    lock = threading.Lock()
+
+    def _do_detect() -> None:
+        try:
+            from ..proactive.detector_runner import DetectorRunner
+            runner = DetectorRunner()
+            events = runner.run_all_sync()
+            logger.info(f"Detector sweep: {len(events)} events published")
+        except Exception as e:
+            logger.warning(f"Detector sweep failed (non-fatal): {e}")
+
+    def callback(_snapshot_result: List[Dict]) -> None:
+        nonlocal timer
+        with lock:
+            if timer is not None:
+                timer.cancel()
+            timer = threading.Timer(debounce_s, _do_detect)
+            timer.daemon = True
+            timer.start()
+
+    return callback
