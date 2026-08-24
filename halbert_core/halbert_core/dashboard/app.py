@@ -162,7 +162,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, chat, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, chat, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -188,6 +188,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(downloads.router, prefix="/api/downloads", tags=["downloads"])  # Dataset downloads
     app.include_router(compression.router, tags=["compression"])  # Phase 72: Compression cascade
     app.include_router(being.router, prefix="/api", tags=["being"])  # Phase 7: Proactive channel
+    app.include_router(modules.router, prefix="/api", tags=["modules"])  # Phase 8: Module registry
     
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"
