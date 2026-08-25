@@ -24,6 +24,24 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 221.2 83.2% 53.3%;
     --radius: 0.5rem;
+
+    /* SourcePrep semantic tokens (light) */
+    --surface: 210 40% 98%;
+    --surface-raised: 0 0% 100%;
+    --text: 222.2 84% 4.9%;
+    --text-muted: 215.4 16.3% 46.9%;
+    --text-subtle: 215.4 16.3% 55%;
+    --text-base: 222.2 84% 4.9%;
+    --border-subtle: 214.3 31.8% 88%;
+    --success: 142.1 76.2% 36.3%;
+    --success-muted: 142.1 70% 90%;
+    --error: 0 84.2% 60.2%;
+    --error-muted: 0 70% 90%;
+    --warning: 38 92% 50%;
+    --warning-muted: 38 80% 90%;
+    --info: 199.4 89.1% 48.4%;
+    --info-muted: 199.4 80% 90%;
+    --primary-muted: 221.2 83.2% 53.3%;
   }
 
   .dark {
@@ -46,6 +64,24 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 224.3 76.3% 48%;
+
+    /* SourcePrep semantic tokens (dark) */
+    --surface: 217.2 32.6% 14%;
+    --surface-raised: 217.2 32.6% 17.5%;
+    --text: 210 40% 98%;
+    --text-muted: 215 20.2% 65.1%;
+    --text-subtle: 215 20.2% 55%;
+    --text-base: 210 40% 98%;
+    --border-subtle: 217.2 32.6% 25%;
+    --success: 142.1 70% 45%;
+    --success-muted: 142.1 50% 20%;
+    --error: 0 72% 50%;
+    --error-muted: 0 50% 20%;
+    --warning: 38 92% 55%;
+    --warning-muted: 38 50% 20%;
+    --info: 199.4 89.1% 48.4%;
+    --info-muted: 199.4 50% 20%;
+    --primary-muted: 217.2 91.2% 59.8%;
   }
 }
 

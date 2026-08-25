@@ -18,9 +18,12 @@ module.exports = {
     extend: {
       fontFamily: {
         sans: ['Karla', 'system-ui', 'sans-serif'],
+        heading: ['Karla', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Menlo', 'monospace'],
       },
       colors: {
         border: "hsl(var(--border))",
+        "border-subtle": "hsl(var(--border-subtle))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
@@ -28,6 +31,7 @@ module.exports = {
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          muted: "hsl(var(--primary-muted))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
@@ -52,6 +56,33 @@ module.exports = {
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
+        },
+        // SourcePrep semantic tokens
+        surface: {
+          DEFAULT: "hsl(var(--surface))",
+          raised: "hsl(var(--surface-raised))",
+        },
+        text: {
+          DEFAULT: "hsl(var(--text))",
+          muted: "hsl(var(--text-muted))",
+          subtle: "hsl(var(--text-subtle))",
+          base: "hsl(var(--text-base))",
+        },
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          muted: "hsl(var(--success-muted))",
+        },
+        error: {
+          DEFAULT: "hsl(var(--error))",
+          muted: "hsl(var(--error-muted))",
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          muted: "hsl(var(--warning-muted))",
+        },
+        info: {
+          DEFAULT: "hsl(var(--info))",
+          muted: "hsl(var(--info-muted))",
         },
       },
       borderRadius: {
