@@ -39,6 +39,30 @@ class CRAGAction(Enum):
     PENDING = "PENDING"
 
 
+class ConversationStatus(Enum):
+    """User-facing conversation status (A2a).
+
+    Separate from the internal ``AgentState`` machine. This is the status the
+    UI shows the user. Terminal states are SUCCESS, ERROR, CANCELLED; all
+    others are non-terminal and the conversation can resume from them.
+    """
+    IN_PROGRESS = "in_progress"
+    SUCCESS = "success"
+    ERROR = "error"
+    TRANSIENT_ERROR = "transient_error"   # API failure, will retry
+    CANCELLED = "cancelled"
+    BLOCKED = "blocked"                    # Waiting for user approval
+    WAITING_FOR_EVENTS = "waiting_for_events"  # Waiting for subagent
+
+    @classmethod
+    def terminal(cls) -> tuple:
+        """Return the terminal statuses (no further transitions)."""
+        return (cls.SUCCESS, cls.ERROR, cls.CANCELLED)
+
+    def is_terminal(self) -> bool:
+        return self in self.terminal()
+
+
 @dataclass
 class PlanStep:
     """A single step in the agent's plan."""
