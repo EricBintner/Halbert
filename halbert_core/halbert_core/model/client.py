@@ -30,11 +30,119 @@ Config schema:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+import os
+import time
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import requests
 
 logger = logging.getLogger("halbert.model.client")
+
+
+# ── Advisory lock for GPU contention ────────────────────────────
+#
+# Prevents Halbert chat and SourcePrep pipeline from simultaneously
+# slamming the same local GPU. Uses a file lock with a short timeout
+# — if the lock can't be acquired, the call proceeds anyway (fail-open)
+# but logs a warning. This is NOT full AIMD concurrency arbitration;
+# it's cheap insurance against the worst UX failure.
+#
+# The lock file lives in the config directory and is shared with
+# SourcePrep (both apps agree on the path via get_config_dir()).
+
+_LOCK_TIMEOUT_S = 30.0  # Max wait before failing open
+
+
+def _lock_path() -> "Any":
+    """Path to the advisory lock file."""
+    from ..utils.platform import get_config_dir
+    return get_config_dir() / "llm.lock"
+
+
+@contextmanager
+def llm_advisory_lock(timeout_s: float = _LOCK_TIMEOUT_S) -> Iterator[bool]:
+    """Acquire an advisory file lock before an LLM call.
+
+    Uses fcntl.flock (POSIX) or a simple file-existence check (Windows).
+    Returns True if the lock was acquired, False if it timed out (fail-open).
+
+    Usage:
+        with llm_advisory_lock() as acquired:
+            if not acquired:
+                logger.warning("LLM lock timed out — proceeding anyway")
+            # ... make the LLM call ...
+    """
+    import platform as _platform
+
+    if _platform.system() == "Windows":
+        # Windows doesn't have fcntl — use a simple file-existence lock
+        lock_file = _lock_path()
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        acquired = False
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, str(os.getpid()).encode())
+                os.close(fd)
+                acquired = True
+                break
+            except FileExistsError:
+                # Check if the lock is stale (older than 5 minutes)
+                try:
+                    age = time.time() - lock_file.stat().st_mtime
+                    if age > 300:
+                        lock_file.unlink(missing_ok=True)
+                        continue
+                except Exception:
+                    pass
+                time.sleep(0.5)
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                try:
+                    lock_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        return
+
+    # POSIX — use fcntl.flock (shared lock, so multiple readers are OK)
+    import fcntl
+
+    lock_file = _lock_path()
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+
+    acquired = False
+    try:
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY)
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except (BlockingIOError, OSError):
+                time.sleep(0.5)
+
+        if not acquired:
+            logger.warning(
+                "LLM advisory lock timed out after %.1fs — proceeding (fail-open)",
+                timeout_s,
+            )
+
+        yield acquired
+    finally:
+        if acquired:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+        try:
+            os.close(fd)
+        except Exception:
+            pass
 
 
 # ── Unified LLMConfig loader ────────────────────────────────────
@@ -221,6 +329,30 @@ def call_llm_chat(
         f"Sending {len(messages)} messages, ~{total_chars} chars to {provider}"
     )
 
+    # Acquire advisory lock to prevent GPU contention with SourcePrep pipeline.
+    # Cloud endpoints (openai, anthropic, google) don't need the lock — only
+    # local GPU-bound providers (ollama, llamacpp, mlx) do.
+    needs_lock = provider in ("ollama", "llamacpp", "mlx")
+
+    if needs_lock:
+        with llm_advisory_lock() as acquired:
+            if not acquired:
+                logger.warning("GPU may be busy — LLM call proceeding without lock")
+            return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
+    else:
+        return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
+
+
+def _do_llm_call(
+    endpoint: str,
+    model: str,
+    messages: list,
+    provider: str,
+    stream: bool,
+    timeout: int,
+    options: dict,
+) -> dict:
+    """Make the actual LLM API call (separated for lock wrapping)."""
     if provider == "openai":
         url = f"{endpoint}/v1/chat/completions"
         payload = {
