@@ -355,7 +355,7 @@ of validation saves days of misdirected work.
    - Compression settings card (already a separate component: `CompressionSettings.tsx`)
    - Model test results display
 8. **Daemon detection — picker deferral.** Add a daemon-detection check (port probe to
-   `http://localhost:8400/api/system/health`, polled every ~10s while the Settings page is
+   `http://localhost:8400/health`, polled every ~10s while the Settings page is
    open):
    - **Daemon detected:** Render `AIModelsSettings` in **read-only mode** (all inputs
      disabled, greyed out). Show a banner: "Model config managed by SourcePrep" with a

@@ -163,7 +163,7 @@ class SourcePrepSetup:
 
     def _health_ok(self) -> bool:
         try:
-            status, _payload = self.transport("GET", "/api/system/health", None, None)
+            status, _payload = self.transport("GET", "/health", None, None)
             return 200 <= status < 300
         except Exception as e:
             logger.info("SourcePrep daemon unreachable at %s: %s", self.base_url, e)
@@ -288,6 +288,14 @@ class SourcePrepSetup:
         cfg["auto_config"] = auto
         self._call("PUT", f"/projects/{pid}", {"config": cfg, "touch": True})
 
+    def _list_scopes(self, pid: str) -> List[Dict[str, Any]]:
+        """GET /scopes returns ``{"scopes": [...]}`` inside the envelope's
+        data field. Tolerate a bare list too (test mocks)."""
+        data = self._call("GET", f"/projects/{pid}/scopes") or []
+        if isinstance(data, dict):
+            return data.get("scopes", [])
+        return data
+
     def _reconcile_scopes(
         self, pid: str, wanted: List[Dict[str, Any]]
     ) -> Dict[str, str]:
@@ -295,7 +303,7 @@ class SourcePrepSetup:
         path mutation via add/remove (PUT does not accept paths)."""
         existing = {
             s.get("display_name"): s
-            for s in (self._call("GET", f"/projects/{pid}/scopes") or [])
+            for s in self._list_scopes(pid)
             if s.get("display_name")
         }
         outcomes: Dict[str, str] = {}
@@ -348,7 +356,7 @@ class SourcePrepSetup:
         if wanted_profiles:
             final = {
                 s.get("display_name"): s
-                for s in (self._call("GET", f"/projects/{pid}/scopes") or [])
+                for s in self._list_scopes(pid)
                 if s.get("display_name")
             }
             missing = [

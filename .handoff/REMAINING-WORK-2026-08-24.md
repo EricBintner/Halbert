@@ -42,7 +42,16 @@
 
 ### 1.6 T0a.1 — SourcePrep declarative project scopes (blocked upstream)
 - The installed SourcePrep's project pointer file is intentionally minimal (`{id, mode, daemon}` only); `include_globs` and `scopes` are walker call parameters, not project config. Platform routing is realized via directory layout + caller-side scope args. The plan carries an as-built note.
-- **To close:** only if SourcePrep adds declarative project scopes.
+- **CLOSED 2026-08-24 (Phase S1 + H1).** Scopes were never actually blocked
+  upstream — they work via `settings_store` + `scope_resolver` today, the
+  original "blocked" note was stale. The SourcePrep→Halbert template plan
+  (IMPLEMENTATION-PLAN-SOURCEPREP-TEMPLATE-2026-08-24.md) landed per-scope
+  `pipeline_profile` (code/prose_docs/system_config) on ScopeRecord +
+  ProfileGate in SourcePrep (Phase S1), and the unified "halbert" project
+  template (Phase H1) creates the five scopes — `host` (system_config) and
+  `knowledge-{linux,macos,bsd,common}` (prose_docs) — via the scopes API.
+  See the as-built notes in RAG-OPTIMIZATION-PLAN-2026-08-23.md §S1 and
+  IMPLEMENTATION-PLAN-2026-08-23.md T0a.1/T5a.1 (also updated this date).
 
 ---
 

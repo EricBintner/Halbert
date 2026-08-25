@@ -364,3 +364,52 @@ def _score_query_complexity(prompt: str) -> float:
 score_query_complexity = _score_query_complexity
 estimate_tokens = _estimate_tokens
 truncate_messages_for_context = _truncate_messages_for_context
+
+
+def get_loaded_models(endpoint: str = None, provider: str = "ollama") -> List[dict]:
+    """List models currently loaded/available on the LLM server.
+
+    For Ollama: GET /api/ps (models resident in VRAM).
+    For OpenAI-compatible: GET /v1/models (available models).
+
+    Moved here from dashboard/routes/chat.py (retired in T4b.1) — this is
+    the canonical home for model-management helpers.
+    """
+    if endpoint is None:
+        endpoint = get_ollama_endpoint()
+
+    try:
+        if provider == "openai":
+            # OpenAI-compatible API (LM Studio, vLLM, etc.)
+            response = requests.get(f"{endpoint}/v1/models", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                return [
+                    {"name": m.get("id", ""), "id": m.get("id", "")}
+                    for m in data.get("data", [])
+                ]
+            return []
+
+        # Ollama API
+        response = requests.get(f"{endpoint}/api/ps", timeout=5)
+        if response.status_code == 200:
+            return response.json().get("models", [])
+        return []
+    except Exception as e:
+        logger.debug(f"Could not get loaded models: {e}")
+        return []
+
+
+def is_model_loaded(
+    model_name: str, endpoint: str = None, provider: str = "ollama"
+) -> bool:
+    """Check if a specific model is currently loaded/available."""
+    for m in get_loaded_models(endpoint, provider):
+        loaded_name = m.get("name", m.get("id", ""))
+        if loaded_name == model_name or loaded_name.startswith(model_name + ":"):
+            return True
+        # Provided name may be a prefix (user says "llama3.1", loaded is
+        # "llama3.1:8b")
+        if model_name.startswith(loaded_name.split(":")[0]):
+            return True
+    return False

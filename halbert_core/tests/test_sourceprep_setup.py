@@ -91,7 +91,7 @@ class FakeTransport:
                 if self.drop_profiles:
                     s.pop("pipeline_profile", None)
                 scopes.append(s)
-            return 200, ok(scopes)
+            return 200, ok({"scopes": scopes})
 
         def create_scope(body, params):
             sid = f"scope-{len(self._scopes)+1}"
@@ -158,7 +158,7 @@ class FakeTransport:
             ("POST", "/projects/{pid}/build"): build,
             ("GET", "/projects/{pid}/status"): project_status,
             ("POST", "/projects/{pid}/trace/external-edges"): push_edges,
-            ("GET", "/api/system/health"): health,
+            ("GET", "/health"): health,
         }
 
     def calls_to(self, method: str, suffix: str) -> List[Any]:

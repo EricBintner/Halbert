@@ -231,7 +231,7 @@ class SourcePrepClient:
         """Check if the SourcePrep daemon is reachable."""
         try:
             resp = requests.get(
-                f"{self.base_url}/api/system/health",
+                f"{self.base_url}/health",
                 timeout=5.0,
             )
             return resp.status_code == 200

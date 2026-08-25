@@ -205,7 +205,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, chat, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -215,7 +215,6 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
     app.include_router(discovery.router, prefix="/api/discoveries", tags=["discoveries"])  # Phase 11
     app.include_router(terminal.router, prefix="/api/terminal", tags=["terminal"])  # Phase 11
-    app.include_router(chat.router, prefix="/api/chat", tags=["chat"])  # Phase 11
     app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])  # Phase 11
     app.include_router(rag.router, prefix="/api", tags=["rag"])  # Phase 10
     app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])  # Phase 12

@@ -239,7 +239,7 @@ JSON:"""
         
         try:
             import requests
-            from ..dashboard.routes.chat import get_ollama_endpoint
+            from ..model.client import get_ollama_endpoint
             
             endpoint = get_ollama_endpoint()
             response = requests.post(

@@ -210,6 +210,53 @@ async def update_model_settings(update: ModelConfigUpdate) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/model/loaded")
+async def get_loaded_model_status() -> Dict[str, Any]:
+    """Which configured models are actually loaded in VRAM right now.
+
+    Moved here from routes/chat.py (`/api/chat/models/loaded`) as part of
+    the chat endpoint retirement (T4b.1). The legacy SidePanel pre-send
+    status check reads this to show "Loading <model>..." vs
+    "<model> thinking...".
+    """
+    try:
+        from ...model.client import (
+            get_configured_model,
+            get_loaded_models,
+            get_ollama_endpoint,
+            get_specialist_model,
+            is_model_loaded,
+        )
+
+        endpoint = get_ollama_endpoint()
+        models = get_loaded_models(endpoint)
+
+        configured_model = get_configured_model()
+        configured_loaded = is_model_loaded(configured_model, endpoint)
+
+        specialist_model, specialist_endpoint, specialist_provider =             get_specialist_model()
+        specialist_loaded = (
+            is_model_loaded(
+                specialist_model, specialist_endpoint,
+                specialist_provider or "ollama",
+            )
+            if specialist_model else None
+        )
+
+        return {
+            "loaded_models": models,
+            "configured_model": configured_model,
+            "configured_loaded": configured_loaded,
+            "endpoint": endpoint,
+            "specialist_model": specialist_model,
+            "specialist_endpoint": specialist_endpoint,
+            "specialist_loaded": specialist_loaded,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get loaded models: {e}")
+        return {"loaded_models": [], "error": str(e)}
+
+
 @router.get("/model/status")
 async def get_model_status() -> Dict[str, Any]:
     """

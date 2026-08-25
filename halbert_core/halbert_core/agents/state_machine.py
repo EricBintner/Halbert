@@ -869,6 +869,10 @@ class AgentStateMachine:
                     data={
                         "diff_id": diff_id,
                         "block_count": len(edit_blocks),
+                        # The blocks ride the event so config-editor flows can
+                        # build a preview diff client-side (the agent path
+                        # does not know the editor's current buffer content).
+                        "edit_blocks": edit_blocks,
                         "session_id": self.ctx.session_id,
                     },
                 )

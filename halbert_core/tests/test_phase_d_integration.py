@@ -370,21 +370,31 @@ class TestModelClientExtraction:
         )
         assert complex_q > simple
 
-    def test_chat_reexports_model_client(self):
-        """chat.py should re-export model client functions for backward compat."""
-        from halbert_core.dashboard.routes.chat import (
+    def test_model_client_surface(self):
+        """model.client is the canonical home for routing + model helpers.
+
+        chat.py's backward-compat re-export shim retired with the chat
+        routes (T4b.1); consumers import from model.client directly. This
+        test guards the surface other modules rely on.
+        """
+        from halbert_core.model.client import (
             get_ollama_endpoint,
             get_configured_model,
             get_specialist_model,
             call_llm_chat,
+            get_loaded_models,
+            is_model_loaded,
+            score_query_complexity,
         )
-        # These should be the same objects as in model.client
-        from halbert_core.model.client import (
-            get_ollama_endpoint as client_endpoint,
-            get_configured_model as client_model,
-        )
-        assert get_ollama_endpoint is client_endpoint
-        assert get_configured_model is client_model
+        assert all(callable(f) for f in (
+            get_ollama_endpoint,
+            get_configured_model,
+            get_specialist_model,
+            call_llm_chat,
+            get_loaded_models,
+            is_model_loaded,
+            score_query_complexity,
+        ))
 
 
 class TestContextAdapters:

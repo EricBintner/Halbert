@@ -406,6 +406,20 @@ the larger scope:
 
 #### S1: Define two SourcePrep projects explicitly
 
+> **As-built 2026-08-24 (SourcePrep→Halbert template plan).** Superseded by a
+> single unified project. The two-project split (halbert-host /
+> halbert-knowledge) is replaced by one "halbert" SourcePrep project with two
+> scope *families*: `host/` (system_config profile) and
+> `knowledge/{linux,macos,bsd,common}/` (prose_docs profile). Per-scope
+> `pipeline_profile` on ScopeRecord + ProfileGate (SourcePrep Phase S1) gates
+> the LLM stages per content type so the doc corpus doesn't run code-tuned
+> stages. The unified template + idempotent apply script (Phase H1) creates
+> the project and the five scopes via the scopes API. See
+> IMPLEMENTATION-PLAN-SOURCEPREP-TEMPLATE-2026-08-24.md. The legacy
+> halbert-host / halbert-knowledge registrations remain functional during
+> migration; `sourceprep_setup apply --retire-legacy-projects` removes them
+> after the unified build verifies.
+
 The implementation plan's T5a.1 creates a "halbert-host" SourcePrep project
 for the host config tree. But there's no mention of the RAG knowledge base
 as a SourcePrep project. We should define:

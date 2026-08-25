@@ -191,8 +191,10 @@ export function SidePanel() {
   // Debug context - chatMetrics used for updating, displayed in Layout.tsx
   const { isDebugMode, addLog, updateChatMetrics, chatMetrics } = useDebug()
   
-  // Page context - tracks current page, focused item, and visible items
-  const { currentPage, focusedItem, setFocusedItem, buildPageContext } = usePageContext()
+  // Page context - focused-item display; currentPage/buildPageContext were
+  // only passed to the retired legacy chat endpoint (T4b.1). The agent path
+  // assembles page awareness itself.
+  const { focusedItem, setFocusedItem } = usePageContext()
   
   // Panel state
   const [isOpen, setIsOpen] = useState(true)
@@ -998,7 +1000,7 @@ export function SidePanel() {
     // Check if model is loaded - show appropriate status message
     // Smart routing: complex queries use specialist, simple queries use guide
     try {
-      const modelStatus = await api.getLoadedModels()
+      const modelStatus = await api.getLoadedModelStatus()  // was /api/chat/models/loaded — moved to settings router (T4b.1)
       
       // Score query complexity (mirrors backend logic)
       const queryLower = chatInput.toLowerCase()
@@ -1130,15 +1132,65 @@ export function SidePanel() {
           })
         }
         const fileContent = configContext.getContent()
-        // IMPORTANT: Add current userMessage since setMessages is async and messages doesn't include it yet
-        const historyMessages = [...messages.slice(-9), userMessage]
-        const history = historyMessages.map(m => ({ role: m.role, content: m.content }))
-        response = await api.sendConfigChat(messageContent, configContext.filePath, fileContent, history, imageData)
+        // Config edits go through the agent path (T4b.1 migration). The
+        // composed message carries the file plus explicit edit-block format
+        // instructions; the state machine parses the blocks server-side and
+        // emits a diff_proposed SSE event that sendAgentStream captures.
+        const configMessage = [
+          `I'm editing the config file: ${configContext.filePath}`,
+          '',
+          'Current content:',
+          '```',
+          fileContent,
+          '```',
+          '',
+          `My request: ${messageContent}`,
+          '',
+          'If changes are needed, express them as edit blocks in exactly this format:',
+          '<<<<<<< SEARCH',
+          '<exact text from the current content to replace>',
+          '=======',
+          '<replacement text>',
+          '>>>>>>> REPLACE',
+        ].join('\n')
+        const configResult = await api.sendAgentStream(configMessage, {
+          sessionId: `chat-${convId || 'scratch'}`,
+          images: imageData.length > 0 ? imageData : undefined,
+        })
+        if (configResult.error) {
+          throw new Error(configResult.error)
+        }
+        // Build the editor's preview client-side: the agent never sees the
+        // editor buffer, so proposed content = blocks applied to the
+        // current content here. Only offer a diff when every block matched.
+        const editBlocks = configResult.diff?.editBlocks
+        let proposedContent: string | undefined
+        if (editBlocks?.length) {
+          let next = fileContent
+          let allMatched = true
+          for (const b of editBlocks) {
+            if (!next.includes(b.search)) {
+              allMatched = false
+              break
+            }
+            next = next.split(b.search).join(b.replace)
+          }
+          if (allMatched) proposedContent = next
+        }
+        response = {
+          response: configResult.response,
+          edit_blocks: editBlocks,
+          proposed_content: proposedContent,
+          summary: editBlocks?.length
+            ? `${editBlocks.length} change${editBlocks.length === 1 ? '' : 's'} to ${configContext.filePath}`
+            : undefined,
+        }
       } else {
-        // Regular chat endpoint - use streaming for real-time response (Phase 30)
-        const pageContext = buildPageContext()
-        const historyMessages = [...messages.slice(-9), userMessage]
-        const history = historyMessages.map(m => ({ role: m.role, content: m.content }))
+        // Conversation messages stream via the agent path (T4b.1
+        // migration — legacy /api/chat/send/stream removed). History,
+        // persona and page-context args are intentionally dropped: the
+        // agent state machine assembles context itself; continuity is
+        // keyed by session_id (one per conversation).
         
         // Create placeholder for streaming response
         // IMPORTANT: Use 'streaming-' prefix so ModelReasoning can detect active thinking
@@ -1156,17 +1208,15 @@ export function SidePanel() {
         // Phase 32: Track reasoning content during streaming
         let streamingReasoning = ''
         
-        // Stream response tokens
-        await api.sendChatStream(
-          messageContent,
-          userMessage.mentions || [],
-          'guide',
-          currentPage,
-          pageContext,
-          history,
-          convId || '',
+        // Stream events from the agent run
+        const streamResult = await api.sendAgentStream(messageContent, {
+          sessionId: `chat-${convId || 'scratch'}`,
+          images: imageData.length > 0 ? imageData : undefined,
+          onError: (error: string) => {
+            console.error('Streaming error:', error)
+          },
           // onToken: update streaming content
-          (token: string) => {
+          onToken: (token: string) => {
             streamingRef.current.content += token
             // Update the message in place
             setMessages(prev => prev.map(msg => 
@@ -1175,73 +1225,70 @@ export function SidePanel() {
                 : msg
             ))
           },
-          // onComplete: finalize the message (Phase 32: includes reasoning)
-          (fullResponse: string, thinkingSteps?: ThinkingStep[], reasoning?: string) => {
-            setMessages(prev => prev.map(msg =>
-              msg.id === streamingMessageId
-                ? { 
-                    ...msg, 
-                    content: fullResponse || "I'm not sure how to help with that.",
-                    thinkingSteps: thinkingSteps,
-                    reasoning: reasoning || streamingReasoning || undefined,
-                  }
-                : msg
-            ))
-            streamingRef.current = { content: '', isStreaming: false }
-            setIsLoading(false)  // Clear loading when stream completes
-            
-            // Save assistant message to conversation (including reasoning for persistence)
-            if (convId) {
-              const finalReasoning = reasoning || streamingReasoning || undefined
-              api.addMessageToConversation(convId, 'assistant', fullResponse || '', [], finalReasoning)
-                .catch(err => console.error('Failed to save assistant message:', err))
-            }
-            
-            // Phase 42: Process queued messages
-            setMessageQueue(prevQueue => {
-              if (prevQueue.length > 0) {
-                const [nextMessage, ...remainingQueue] = prevQueue
-                // Schedule next message send (async to avoid state conflicts)
-                setTimeout(() => {
-                  setChatInput(nextMessage)
-                  // Auto-send will be handled by effect or user can press enter
-                }, 100)
-                return remainingQueue
-              }
-              return prevQueue
-            })
-          },
-          // onError: handle errors
-          (error: string) => {
-            console.error('Streaming error:', error)
-            setMessages(prev => prev.map(msg =>
-              msg.id === streamingMessageId
-                ? { ...msg, content: `Error: ${error}` }
-                : msg
-            ))
-            streamingRef.current = { content: '', isStreaming: false }
-            setIsLoading(false)  // Clear loading on error too
-          },
-          // Phase 32: onThinking - accumulate reasoning content
-          (thinkingDelta: string) => {
+          // onThinking: accumulate reasoning content in real-time
+          onThinking: (thinkingDelta: string) => {
             streamingReasoning += thinkingDelta
-            // Update message with reasoning in real-time
             setMessages(prev => prev.map(msg =>
               msg.id === streamingMessageId
                 ? { ...msg, reasoning: streamingReasoning }
                 : msg
             ))
           },
-          // Phase 42: onActivity - handle activity indicators
-          (activity: { type: 'scan' | 'read' | 'plan', data: Record<string, unknown> }) => {
-            // Update message with activity for display
+          // onActivity: scan/read/plan indicators for the streaming bubble
+          onActivity: (activity: { type: 'scan' | 'read' | 'plan', data: Record<string, unknown> }) => {
             setMessages(prev => prev.map(msg =>
               msg.id === streamingMessageId
                 ? { ...msg, activity: activity }
                 : msg
             ))
+          },
+        })
+
+        if (streamResult.error) {
+          setMessages(prev => prev.map(msg =>
+            msg.id === streamingMessageId
+              ? { ...msg, content: `Error: ${streamResult.error}` }
+              : msg
+          ))
+          streamingRef.current = { content: '', isStreaming: false }
+          setIsLoading(false)
+        } else {
+          // Finalize: prefer the backend's committed text (structured
+          // action JSON stripped) over the raw token accumulation.
+          const fullResponse = streamResult.response || streamingRef.current.content ||
+            "I'm not sure how to help with that."
+          const finalReasoning = streamingReasoning || undefined
+          setMessages(prev => prev.map(msg =>
+            msg.id === streamingMessageId
+              ? {
+                  ...msg,
+                  content: fullResponse,
+                  reasoning: finalReasoning,
+                }
+              : msg
+          ))
+          streamingRef.current = { content: '', isStreaming: false }
+          setIsLoading(false)  // Clear loading when stream completes
+
+          // Save assistant message to conversation (including reasoning for persistence)
+          if (convId) {
+            api.addMessageToConversation(convId, 'assistant', fullResponse, [], finalReasoning)
+              .catch(err => console.error('Failed to save assistant message:', err))
           }
-        )
+
+          // Process queued messages (Phase 42)
+          setMessageQueue(prevQueue => {
+            if (prevQueue.length > 0) {
+              const [nextMessage, ...remainingQueue] = prevQueue
+              setTimeout(() => {
+                setChatInput(nextMessage)
+                // Auto-send will be handled by effect or user can press enter
+              }, 100)
+              return remainingQueue
+            }
+            return prevQueue
+          })
+        }
         
         // Clear focused item after sending
         if (focusedItem) {
@@ -1860,10 +1907,6 @@ export function SidePanel() {
                               ? `The command \`${cmd}\` failed with this output:\n\`\`\`\n${outputSnippet}\n\`\`\`\n\nAnalyze the error. What went wrong and what's the fix?`
                               : `Command \`${cmd}\` output:\n\`\`\`\n${outputSnippet}\n\`\`\`\n\nSummarize what this shows.`
                             
-                            const historyWithOutput = [
-                              ...messages.slice(-4).map(m => ({ role: m.role, content: m.content })),
-                            ]
-                            
                             const streamingMessageId = `ai-analysis-${Date.now()}`
                             setMessages(prev => [...prev, {
                               id: streamingMessageId,
@@ -1871,47 +1914,42 @@ export function SidePanel() {
                               content: '',
                               timestamp: new Date(),
                             }])
-                            
+
                             try {
-                              await api.sendChatStream(
-                                analysisPrompt,
-                                [],
-                                'guide',
-                                currentPage,
-                                '',
-                                historyWithOutput,
-                                currentConversationId || '',
-                                (token: string) => {
-                                  setMessages(prev => prev.map(msg => 
-                                    msg.id === streamingMessageId 
+                              // Analysis runs through the agent path
+                              // (T4b.1 migration — legacy endpoint removed).
+                              let analysisAccumulated = ''
+                              const analysisResult = await api.sendAgentStream(analysisPrompt, {
+                                sessionId: `chat-${currentConversationId || 'terminal-analysis'}`,
+                                onError: (error: string) => {
+                                  console.error('Analysis error:', error)
+                                },
+                                onToken: (token: string) => {
+                                  analysisAccumulated += token
+                                  setMessages(prev => prev.map(msg =>
+                                    msg.id === streamingMessageId
                                       ? { ...msg, content: msg.content + token }
                                       : msg
                                   ))
                                 },
-                                (fullResponse: string) => {
-                                  // Use actual response or fallback, and save the SAME thing we display
-                                  const displayContent = fullResponse || "I couldn't analyze that output. Please try asking a specific question about the error."
-                                  setMessages(prev => prev.map(msg =>
-                                    msg.id === streamingMessageId
-                                      ? { ...msg, content: displayContent }
-                                      : msg
-                                  ))
-                                  setIsLoading(false)
-                                  if (currentConversationId) {
-                                    api.addMessageToConversation(currentConversationId, 'assistant', displayContent)
-                                      .catch(err => console.error('Failed to save analysis:', err))
-                                  }
-                                },
-                                (error: string) => {
-                                  console.error('Analysis error:', error)
-                                  setMessages(prev => prev.map(msg =>
-                                    msg.id === streamingMessageId
-                                      ? { ...msg, content: `Error analyzing: ${error}` }
-                                      : msg
-                                  ))
-                                  setIsLoading(false)
-                                }
-                              )
+                              })
+                              const displayContent = analysisResult.response || analysisAccumulated ||
+                                "I couldn't analyze that output. Please try asking a specific question about the error."
+                              setMessages(prev => prev.map(msg =>
+                                msg.id === streamingMessageId
+                                  ? {
+                                      ...msg,
+                                      content: analysisResult.error
+                                        ? `Error analyzing: ${analysisResult.error}`
+                                        : displayContent,
+                                    }
+                                  : msg
+                              ))
+                              setIsLoading(false)
+                              if (!analysisResult.error && currentConversationId) {
+                                api.addMessageToConversation(currentConversationId, 'assistant', displayContent)
+                                  .catch(err => console.error('Failed to save analysis:', err))
+                              }
                             } catch (err) {
                               console.error('Auto-analyze failed:', err)
                               setIsLoading(false)

@@ -32,22 +32,20 @@
 
 ### T0a.1 — Register "halbert-knowledge" as a SourcePrep project
 
+> **As-built 2026-08-24 (SourcePrep→Halbert template plan).** Superseded:
+> halbert-knowledge is no longer a separate project. The unified "halbert"
+> project (one SourcePrep project, two scope families) covers the knowledge
+> corpus via the `knowledge-{linux,macos,bsd,common}` scopes (prose_docs
+> profile). The idempotent apply script
+> (`python -m halbert_core.integrations.sourceprep_setup apply`) creates the
+> project + scopes and runs the build; `jsonl_to_markdown.py` now outputs to
+> the unified `~/.local/share/halbert/sourceprep/knowledge/{platform}/` root.
+> Per-scope `pipeline_profile` (SourcePrep Phase S1) gates LLM stages so the
+> doc corpus runs catalogue/cluster/atlas (prose-tuned prompts) but skips
+> enrichment/group_reasoning/deepening/rules/concepts/audit/antibodies. See
+> IMPLEMENTATION-PLAN-SOURCEPREP-TEMPLATE-2026-08-24.md.
+
 **Create:** SourcePrep project config for the RAG corpus
-
-**Implementation:**
-- Create a SourcePrep project "halbert-knowledge" pointing at `data/staging/sourceprep/` (the markdown output from T0d.1)
-- Configure `include_globs: ["**/*.md"]`
-- Define scopes for platform routing:
-  - `linux` → `linux-*/`
-  - `macos` → `macos-*/`
-  - `bsd` → `bsd-*/`
-  - `common` → `common-*/`
-- This is separate from "halbert-host" (T5a.1) which indexes the live config tree
-
-**Acceptance:**
-- SourcePrep project "halbert-knowledge" exists
-- Scopes are defined for platform routing
-- `prep build` succeeds on the project
 
 **Dependencies:** T0d.1 (markdown files must exist first)
 
@@ -901,7 +899,7 @@ from .pipeline import MessageIntake, IntakePipeline
 - No frontend code calls retired endpoints
 - Agent path handles all conversation traffic
 
-**Status note (as built, 2026-08-24):** deprecation headers landed on the three conversation endpoints, but endpoint retirement/deletion is deliberately deferred behind a frontend verification period. `chat.py` remains registered in `app.py` and Phase 4 is not fully closed.
+**Status note (as built, 2026-08-25): CLOSED.** `chat.py` is deleted; the router registration is removed from `app.py`. Verification was a live browser walkthrough with a network trace: **zero** `/api/chat/*` requests; the legacy SidePanel chat mode sent a message through `/api/agent/message` (200, response rendered), and the pre-send model check hit `/api/settings/model/loaded`. Migration map: SidePanel chat streaming + terminal-output analysis + config-editor flow → `api.sendAgentStream()` (agent SSE events); memory collection browser endpoints → `routes/memory.py` under `/api/memory/*`; `/models/loaded` → `/api/settings/model/loaded`; dead code removed with it (`ChatPanel.tsx`, `useWebSocket.ts`, `api.sendChat`/`sendChatStream`/`sendConfigChat`/`getModels`/`selectModel`, legacy self-knowledge tests). Backend suite: 411 passed / 2 skipped (haloysius importorskip) / 0 failed. Frontend `tsc` clean.
 
 ---
 
@@ -975,6 +973,16 @@ from .pipeline import MessageIntake, IntakePipeline
 ---
 
 ### T5a.1 — Register host config tree as a SourcePrep project
+
+> **As-built 2026-08-24 (SourcePrep→Halbert template plan).** The separate
+> "halbert-host" project is superseded by the unified "halbert" project's
+> `host/` scope (system_config profile). `register_host_project.py` now
+> stages to `~/.local/share/halbert/sourceprep/host/`, and
+> `sourceprep_setup.apply(build_fast_sync_only=True)` (the ConfigWatcher
+> path, T-H1.4) re-stages host/, runs incremental fast_sync, and re-pushes
+> the config external edges. The legacy halbert-host registration stays
+> functional during migration. See
+> IMPLEMENTATION-PLAN-SOURCEPREP-TEMPLATE-2026-08-24.md.
 
 **Create:** `halbert_core/halbert_core/tools/register_host_project.py`
 
