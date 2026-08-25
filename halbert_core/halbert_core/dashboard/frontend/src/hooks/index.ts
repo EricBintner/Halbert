@@ -20,6 +20,8 @@ export {
   type DiffProposal,
   type UseAgentStreamOptions,
   type UseAgentStreamReturn,
+  type SomaticBlockEvent,
+  type SubagentEvent,
 } from './useAgentStream'
 export {
   useTerminalSessions,

@@ -72,6 +72,25 @@ export interface DiffProposal {
   status: 'pending' | 'applied' | 'rejected';
 }
 
+export interface SomaticBlockEvent {
+  block_type: string;
+  block_id: string;
+  status: string;
+  finding_id?: string;
+  proposal_id?: string;
+  approval_request_id?: string;
+  action_id?: string;
+  reflection_id?: string;
+}
+
+export interface SubagentEvent {
+  type: string; // spawned | at_capacity | completed | failed | cancelled | ...
+  handle_id: string;
+  agent_type?: string;
+  status?: string;
+  result_block_id?: string;
+}
+
 export interface AgentSession {
   sessionId: string;
   state: AgentState;
@@ -86,6 +105,10 @@ export interface AgentSession {
   activeScan: ScanInfo | null;
   contextItems: ContextLoadedItem[];
   diffProposals: DiffProposal[];
+  // A2c/C1d/D1c: lifecycle + status event streams (E1f)
+  conversationStatus?: string | null;
+  somaticBlocks?: SomaticBlockEvent[];
+  subagentEvents?: SubagentEvent[];
 }
 
 export interface StreamEvent {
@@ -369,6 +392,39 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
             diffProposals: prev.diffProposals.map(d =>
               d.id === event.diff_id ? { ...d, status: 'rejected' as const } : d
             ),
+          };
+
+        // A2c: user-facing conversation status (in_progress/blocked/waiting/...)
+        case 'conversation_status':
+          return { ...prev, conversationStatus: (event.status as string) ?? null };
+
+        // C1d: somatic block phase/status change
+        case 'somatic_block':
+          return {
+            ...prev,
+            somaticBlocks: [...(prev.somaticBlocks ?? []), {
+              block_type: event.block_type as string,
+              block_id: event.block_id as string,
+              status: event.status as string,
+              finding_id: event.finding_id as string | undefined,
+              proposal_id: event.proposal_id as string | undefined,
+              approval_request_id: event.approval_request_id as string | undefined,
+              action_id: event.action_id as string | undefined,
+              reflection_id: event.reflection_id as string | undefined,
+            }],
+          };
+
+        // D1c: subagent lifecycle event
+        case 'subagent_event':
+          return {
+            ...prev,
+            subagentEvents: [...(prev.subagentEvents ?? []), {
+              type: event.subagent_event as string,
+              handle_id: event.handle_id as string,
+              agent_type: event.agent_type as string | undefined,
+              status: event.status as string | undefined,
+              result_block_id: event.result_block_id as string | undefined,
+            }],
           };
 
         default:

@@ -16,6 +16,7 @@ import { ToolExecutionCard } from './ToolExecutionCard';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { ScanBlock } from './ScanBlock';
 import { ContextBar } from './ContextBar';
+import { TerminalAccordionDock } from './TerminalAccordionDock';
 import { DiffBlock } from './DiffBlock';
 import { ConfidenceIndicator } from './ConfidenceIndicator';
 import { MarkdownRenderer } from '../domain/MarkdownRenderer';
@@ -347,6 +348,9 @@ export function AgentPanel({
                         {session.error}
                       </div>
                     )}
+
+                    {/* Terminal sessions dock (E1f) */}
+                    <TerminalAccordionDock />
                   </div>
                 )}
               </div>
