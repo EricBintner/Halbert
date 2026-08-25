@@ -10,6 +10,7 @@ See OPUS-HANDOFF §C1.
 
 from .block import BlockType, BlockStatus, SomaticBlock
 from .store import SomaticStore, get_somatic_store
+from .lifecycle import SomaticLifecycle
 
 __all__ = [
     "BlockType",
@@ -17,4 +18,5 @@ __all__ = [
     "SomaticBlock",
     "SomaticStore",
     "get_somatic_store",
+    "SomaticLifecycle",
 ]

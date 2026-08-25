@@ -150,6 +150,38 @@ class SomaticStore:
             logger.debug(f"SomaticStore get failed (non-fatal): {e}")
             return None
 
+    def save(self, block: SomaticBlock) -> bool:
+        """Upsert a full block (INSERT OR REPLACE), including metadata.
+
+        Use this when the in-memory block's metadata has changed; use
+        ``update_status`` for a lighter status/link-id-only update.
+        """
+        if self._conn is None:
+            return False
+        try:
+            with self._lock:
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO somatic_blocks
+                        (id, block_type, status, session_id, finding_id,
+                         proposal_id, approval_request_id, action_id,
+                         reflection_id, created_at, updated_at, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        block.id, block.block_type.value, block.status.value,
+                        block.session_id, block.finding_id, block.proposal_id,
+                        block.approval_request_id, block.action_id,
+                        block.reflection_id, block.created_at, block.updated_at,
+                        json.dumps(block.metadata or {}),
+                    ),
+                )
+                self._conn.commit()
+            return True
+        except Exception as e:
+            logger.debug(f"SomaticStore save failed (non-fatal): {e}")
+            return False
+
     def update_status(
         self, block_id: str, status: BlockStatus, **link_ids: Optional[str]
     ) -> bool:
