@@ -8,6 +8,7 @@ Based on research5.md Part 6.
 from __future__ import annotations
 import asyncio
 import logging
+import time
 import uuid
 from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHECKING
 
@@ -19,6 +20,14 @@ if TYPE_CHECKING:
     from ..tools.executor import ToolExecutor
 
 logger = logging.getLogger('halbert.agents.state_machine')
+
+
+# Subagent lifecycle statuses that end waiting (D1d)
+_SUBAGENT_TERMINAL = {"completed", "failed", "cancelled"}
+
+
+def _subagent_terminal(status: str) -> bool:
+    return status in _SUBAGENT_TERMINAL
 
 
 class AgentStateMachine:
@@ -75,6 +84,7 @@ class AgentStateMachine:
         intake_pipeline = None,
         somatic_lifecycle = None,
         somatic_store = None,
+        subagent_manager = None,
     ):
         """
         Initialize the agent state machine.
@@ -106,6 +116,7 @@ class AgentStateMachine:
         self.intake = intake_pipeline
         self.somatic_lifecycle = somatic_lifecycle
         self.somatic_store = somatic_store
+        self.subagents = subagent_manager
         
         self.max_loops = max_loops
         self.crag_threshold = crag_threshold
@@ -428,6 +439,69 @@ class AgentStateMachine:
         except Exception as e:
             logger.debug(f"Proactive somatic publish failed (non-fatal): {e}")
         return event
+
+    # ------------------------------------------------------------------
+    # Subagents (D1d)
+    # ------------------------------------------------------------------
+
+    async def spawn_subagent(
+        self,
+        agent_type: str,
+        task_goal: str,
+        scoped_sources: Optional[List[str]] = None,
+        agent_config: Optional[Dict] = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Spawn a subagent and move the conversation to WAITING_FOR_EVENTS.
+
+        Yields a conversation_status (WAITING_FOR_EVENTS) event and a
+        subagent_event (spawned). No-op (yields nothing) if no subagent manager
+        is wired. Stores the handle id on ctx for await_subagent.
+        """
+        if self.subagents is None:
+            return
+        handle = self.subagents.spawn(
+            agent_type, task_goal, scoped_sources or [],
+            agent_config=agent_config,
+        )
+        self.ctx.current_subagent_handle_id = handle.id
+        yield self._set_conversation_status(
+            ConversationStatus.WAITING_FOR_EVENTS, waiting_for=handle.id
+        )
+        yield StreamEvent.subagent_event(
+            self.ctx.session_id, "spawned", handle.id,
+            agent_type=agent_type, status=handle.status,
+        )
+
+    async def await_subagent_completion(
+        self, timeout: float = 300.0
+    ) -> AsyncIterator[StreamEvent]:
+        """Wait for the current subagent to finish, then resume (IN_PROGRESS).
+
+        Polls the handle status until terminal or ``timeout``. Yields a
+        subagent_event (completed/failed) and a conversation_status (IN_PROGRESS)
+        event. Clears the pending handle id from ctx.
+        """
+        handle_id = self.ctx.current_subagent_handle_id
+        if not handle_id or self.subagents is None:
+            return
+        deadline = time.time() + timeout
+        # Hold the handle object; its .status is mutated externally by the
+        # manager's complete()/cancel() (which also remove it from the active
+        # set), so we poll the object rather than re-fetching via get().
+        handle = self.subagents.get(handle_id)
+        while handle is not None and not _subagent_terminal(handle.status):
+            if time.time() >= deadline:
+                break
+            await asyncio.sleep(0.1)
+
+        self.ctx.current_subagent_handle_id = None
+        if handle is not None:
+            yield StreamEvent.subagent_event(
+                self.ctx.session_id, handle.status, handle.id,
+                agent_type=handle.agent_type, status=handle.status,
+                result_block_id=handle.result_block_id,
+            )
+        yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
     
     def _get_handler(self) -> Optional[Callable]:
         """Get the handler function for the current state."""

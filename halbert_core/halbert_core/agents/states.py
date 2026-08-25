@@ -135,6 +135,9 @@ class StateContext:
     # Somatic block currently active for this turn (C1d); None when no somatic
     # cycle is in progress.
     current_somatic_block_id: Optional[str] = None
+
+    # Subagent currently being awaited (D1d); None when no subagent is pending.
+    current_subagent_handle_id: Optional[str] = None
     
     # Planning
     plan: List[PlanStep] = field(default_factory=list)
