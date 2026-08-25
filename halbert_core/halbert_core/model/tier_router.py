@@ -25,6 +25,8 @@ from .capabilities import (
 )
 from .providers import ModelProvider, ModelResponse, OllamaProvider
 from .providers.base import GenerationError, ModelNotFoundError
+from .rate_limiter import RateLimiter
+from ..agents.error_recovery import get_recovery_manager
 
 logger = logging.getLogger('halbert.model.tier_router')
 
@@ -231,7 +233,10 @@ class TierRouter:
         # Track model health/availability
         self._model_health: Dict[str, bool] = {}
         self._last_health_check: Dict[str, float] = {}
-        
+
+        # HTTP rate-limit handler (A2b): 429/529 with Retry-After
+        self.rate_limiter = RateLimiter()
+
         logger.info(f"TierRouter initialized with {len(self.config.models)} models")
     
     def _find_config(self, config_path: Optional[Path]) -> Path:
@@ -553,46 +558,80 @@ class TierRouter:
         
         # Get provider
         provider = self._get_provider(selection.model)
-        
-        # Generate
-        try:
-            # Handle vision requests
-            if images and hasattr(provider, 'chat'):
-                response = provider.chat(
-                    messages=[{"role": "user", "content": prompt}],
-                    model_id=selection.model.model_id,
-                    images=images,
-                    **kwargs
-                )
-            else:
-                response = provider.generate(
-                    prompt=prompt,
-                    model_id=selection.model.model_id,
-                    **kwargs
-                )
-            
-            return response, selection
-            
-        except GenerationError as e:
-            logger.error(f"Generation failed with {selection.model.model_id}: {e}")
-            
-            # Try fallback
-            if not selection.fallback_used:
-                logger.info("Attempting fallback...")
-                # Mark current model as unhealthy
-                cache_key = f"{selection.model.provider}:{selection.model.model_id}"
-                self._model_health[cache_key] = False
-                
-                # Re-route
-                return self.generate(
-                    prompt=prompt,
-                    images=images,
-                    prefer_specialist=False,  # Downgrade
-                    task_type=task_type,
-                    **kwargs
-                )
-            
-            raise
+
+        # Rate-limit retry loop (A2b): HTTP 429/529 with Retry-After.
+        # General retry/backoff for non-HTTP errors is handled by
+        # ErrorRecoveryManager.execute_with_retry() in the agent loop; HTTP-
+        # specific Retry-After parsing lives in RateLimiter. Each rate-limit
+        # failure is recorded to the recovery manager's circuit breaker so a
+        # persistently rate-limited model is eventually taken out of rotation.
+        rate_attempt = 0
+        while True:
+            try:
+                # Handle vision requests
+                if images and hasattr(provider, 'chat'):
+                    response = provider.chat(
+                        messages=[{"role": "user", "content": prompt}],
+                        model_id=selection.model.model_id,
+                        images=images,
+                        **kwargs
+                    )
+                else:
+                    response = provider.generate(
+                        prompt=prompt,
+                        model_id=selection.model.model_id,
+                        **kwargs
+                    )
+
+                # Success: clear any rate-limit state for this model
+                self.rate_limiter.reset(selection.model.model_id)
+                return response, selection
+
+            except GenerationError as e:
+                model_id = selection.model.model_id
+
+                # Rate-limited (429/529) and retries remain -> wait + retry
+                if (
+                    e.is_rate_limited
+                    and self.rate_limiter.should_retry(
+                        e.status_code, e.headers, rate_attempt, model_id
+                    )
+                ):
+                    wait = self.rate_limiter.get_wait_time(
+                        e.status_code, e.headers, rate_attempt, model_id
+                    )
+                    logger.warning(
+                        f"Rate limited ({e.status_code}) on {model_id}, "
+                        f"retry {rate_attempt + 1}/{self.rate_limiter._max_retries} "
+                        f"in {wait:.1f}s"
+                    )
+                    self.rate_limiter.record_retry(model_id, e.status_code, e.headers)
+                    # Share state with the circuit breaker
+                    get_recovery_manager().record_failure(model_id)
+                    time.sleep(wait)
+                    rate_attempt += 1
+                    continue
+
+                # Non-rate-limit error, or rate-limit retries exhausted: fallback
+                logger.error(f"Generation failed with {model_id}: {e}")
+
+                # Try fallback
+                if not selection.fallback_used:
+                    logger.info("Attempting fallback...")
+                    # Mark current model as unhealthy
+                    cache_key = f"{selection.model.provider}:{model_id}"
+                    self._model_health[cache_key] = False
+
+                    # Re-route
+                    return self.generate(
+                        prompt=prompt,
+                        images=images,
+                        prefer_specialist=False,  # Downgrade
+                        task_type=task_type,
+                        **kwargs
+                    )
+
+                raise
     
     def get_status(self) -> Dict[str, Any]:
         """Get router status for debugging/UI."""

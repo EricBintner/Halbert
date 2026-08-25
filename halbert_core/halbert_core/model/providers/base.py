@@ -202,5 +202,22 @@ class ModelNotFoundError(Exception):
 
 
 class GenerationError(Exception):
-    """Raised when text generation fails."""
-    pass
+    """Raised when text generation fails.
+
+    Carries optional HTTP ``status_code`` and ``headers`` so callers can react
+    to rate-limit (429/529) responses — e.g. the ``Retry-After`` header. These
+    fields are populated by providers that wrap an SDK status error (Anthropic)
+    and are ``None`` for providers/errors without an HTTP origin (Ollama, MLX),
+    so existing ``raise GenerationError("msg")`` call sites are unaffected.
+    """
+
+    def __init__(self, *args, status_code: Optional[int] = None,
+                 headers: Optional[Dict[str, Any]] = None):
+        super().__init__(*args)
+        self.status_code = status_code
+        self.headers = headers
+
+    @property
+    def is_rate_limited(self) -> bool:
+        """True if this error is an HTTP 429 or 529 rate-limit response."""
+        return self.status_code in (429, 529)

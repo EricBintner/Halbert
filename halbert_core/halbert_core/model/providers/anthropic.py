@@ -28,6 +28,29 @@ except ImportError:
     logger.debug("anthropic package not installed - Anthropic provider unavailable")
 
 
+def _extract_http_context(exc: Exception) -> tuple:
+    """Duck-type an Anthropic SDK exception for HTTP status + headers.
+
+    ``APIStatusError`` subclasses (RateLimitError 429, overloaded 529, 5xx)
+    carry ``.status_code`` and ``.response.headers``. We duck-type rather than
+    reference ``anthropic.APIStatusError`` by name so this is robust across
+    SDK versions and importable even when the SDK isn't installed. Returns
+    ``(status_code, headers)`` where either may be ``None``.
+
+    Used to populate ``GenerationError(status_code=..., headers=...)`` (A2b)
+    so the ``RateLimiter`` can parse ``Retry-After``.
+    """
+    status_code = getattr(exc, "status_code", None)
+    resp = getattr(exc, "response", None)
+    headers = None
+    if resp is not None and hasattr(resp, "headers"):
+        try:
+            headers = dict(resp.headers)
+        except (TypeError, ValueError):
+            headers = None
+    return status_code, headers
+
+
 # Claude model configurations
 CLAUDE_MODELS = {
     'claude-3-5-sonnet-20241022': {
@@ -253,8 +276,13 @@ class AnthropicProvider(ModelProvider):
             )
         
         except anthropic.APIError as e:
-            logger.error(f"Anthropic API error: {e}")
-            raise GenerationError(f"Claude API error: {e}")
+            status_code, headers = _extract_http_context(e)
+            logger.error(f"Anthropic API error {status_code}: {e}")
+            raise GenerationError(
+                f"Claude API error {status_code}: {e}",
+                status_code=status_code,
+                headers=headers,
+            )
         except Exception as e:
             logger.error(f"Anthropic generation failed: {e}")
             raise GenerationError(f"Generation failed: {e}")
@@ -302,8 +330,13 @@ class AnthropicProvider(ModelProvider):
                     yield text
         
         except anthropic.APIError as e:
-            logger.error(f"Anthropic streaming error: {e}")
-            raise GenerationError(f"Claude streaming error: {e}")
+            status_code, headers = _extract_http_context(e)
+            logger.error(f"Anthropic streaming error {status_code}: {e}")
+            raise GenerationError(
+                f"Claude streaming error {status_code}: {e}",
+                status_code=status_code,
+                headers=headers,
+            )
     
     def is_loaded(self, model_id: str) -> bool:
         """API models are always 'loaded'."""
