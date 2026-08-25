@@ -209,8 +209,9 @@ class PTYSession:
         # late during loop teardown). Safe to call from sync context.
         if self._master_fd is not None:
             try:
-                asyncio.get_event_loop().remove_reader(self._master_fd)
-            except Exception:
+                asyncio.get_running_loop().remove_reader(self._master_fd)
+            except (RuntimeError, ValueError):
+                # No running loop (e.g. cleanup after loop close) — nothing to remove
                 pass
         if was_alive and self._pid is not None:
             try:
