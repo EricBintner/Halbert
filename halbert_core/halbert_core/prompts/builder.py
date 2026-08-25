@@ -9,6 +9,7 @@ from pathlib import Path
 import logging
 
 from .loader import PromptLoader
+from ..agents.blocks import content_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -227,8 +228,9 @@ class PromptBuilder:
         
         for turn in recent:
             role = turn.get("role", "user")
-            content = turn.get("content", "")
-            
+            # content may be a string (legacy) or a list of content blocks (A1)
+            content = content_to_text(turn.get("content", ""))
+
             # Truncate if needed
             if len(content) > max_chars_per_turn:
                 content = content[:max_chars_per_turn] + "..."

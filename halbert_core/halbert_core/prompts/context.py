@@ -12,6 +12,8 @@ import platform
 import os
 import logging
 
+from ..agents.blocks import content_to_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -396,8 +398,9 @@ class ContextInjector:
         
         for turn in recent:
             role = turn.get("role", "user")
-            content = turn.get("content", "")
-            
+            # content may be a string (legacy) or a list of content blocks (A1)
+            content = content_to_text(turn.get("content", ""))
+
             # Skip system messages
             if role == "system":
                 continue

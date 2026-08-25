@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
 from .tokens import TokenCounter
+from ..agents.blocks import content_to_text
 
 if TYPE_CHECKING:
     pass
@@ -376,7 +377,8 @@ class ContextAssembler:
         # Work backwards from most recent
         for msg in reversed(conversation):
             role = msg.get("role", "user")
-            content = msg.get("content", "")
+            # content may be a string (legacy) or a list of content blocks (A1)
+            content = content_to_text(msg.get("content", ""))
 
             # Truncate very long messages
             if len(content) > 1000:

@@ -11,6 +11,8 @@ from datetime import datetime
 import json
 import logging
 
+from ..agents.blocks import content_to_text
+
 logger = logging.getLogger('halbert.model')
 
 
@@ -124,7 +126,8 @@ class TrainingDataBuilder:
         
         for msg in messages:
             role = msg.get("role", "")
-            content = msg.get("content", "")
+            # content may be a string (legacy) or a list of content blocks (A1)
+            content = content_to_text(msg.get("content", ""))
             
             if role == "user":
                 user_message = content

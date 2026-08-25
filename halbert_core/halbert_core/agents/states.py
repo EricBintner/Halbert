@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 import time
 
+from .blocks import TextBlock, ToolUseBlock, ToolResultBlock
+
 if TYPE_CHECKING:
     from ..intake import MessageIntake
 
@@ -155,6 +157,62 @@ class StateContext:
             "content": content,
             "metadata": metadata or {},
             "timestamp": time.time()
+        })
+
+    # -------------------------------------------------------------------------
+    # Block-typed conversation history (A1)
+    # -------------------------------------------------------------------------
+
+    def add_text_block(self, role: str, text: str) -> None:
+        """Append a message whose content is a single text block.
+
+        ``role`` is ``"user"`` or ``"assistant"``.
+        """
+        self.conversation_history.append(
+            {"role": role, "content": [TextBlock(text=text)]}
+        )
+
+    def add_tool_use_block(
+        self, tool_id: str, name: str, args: Dict[str, Any]
+    ) -> None:
+        """Record a model-emitted tool call as a block on the assistant turn.
+
+        If the last message is an assistant turn already carrying block-typed
+        content, the tool-use block is appended to it; otherwise a new
+        assistant message is started. This mirrors the Anthropic API, where a
+        single assistant turn may contain text + one or more tool_use blocks.
+        """
+        if (
+            self.conversation_history
+            and self.conversation_history[-1].get("role") == "assistant"
+            and isinstance(self.conversation_history[-1].get("content"), list)
+        ):
+            self.conversation_history[-1]["content"].append(
+                ToolUseBlock(id=tool_id, name=name, input=args or {})
+            )
+        else:
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": [ToolUseBlock(id=tool_id, name=name, input=args or {})],
+            })
+
+    def add_tool_result_block(
+        self, tool_use_id: str, result: Any, is_error: bool = False
+    ) -> None:
+        """Append a user message carrying a tool_result block.
+
+        Tool results are role ``"user"`` per the Anthropic API convention.
+        ``result`` is coerced to a string.
+        """
+        self.conversation_history.append({
+            "role": "user",
+            "content": [
+                ToolResultBlock(
+                    tool_use_id=tool_use_id,
+                    content=result if isinstance(result, str) else str(result),
+                    is_error=is_error,
+                )
+            ],
         })
     
     def get_current_plan_step(self) -> Optional[PlanStep]:

@@ -21,6 +21,8 @@ from typing import List, Dict, Optional, Tuple, Any
 from pathlib import Path
 from datetime import datetime
 
+from ..agents.blocks import content_to_text
+
 logger = logging.getLogger('halbert.conversation.summarization')
 
 # Thresholds for when to summarize
@@ -67,7 +69,8 @@ def create_simple_summary(messages: List[Dict]) -> str:
 
     for i, msg in enumerate(messages):
         role = msg.get('role', 'user')
-        content = msg.get('content', '')[:200]  # Truncate long messages
+        # content may be a string (legacy) or a list of content blocks (A1)
+        content = content_to_text(msg.get('content', ''))[:200]  # Truncate long messages
 
         if role == 'user':
             # Extract key user inputs (first sentence or short version)
@@ -153,7 +156,7 @@ def estimate_token_count(messages: List[Dict]) -> int:
 
     Rule of thumb: ~4 characters per token for English text.
     """
-    total_chars = sum(len(m.get('content', '')) for m in messages)
+    total_chars = sum(len(content_to_text(m.get('content', ''))) for m in messages)
     return total_chars // 4
 
 

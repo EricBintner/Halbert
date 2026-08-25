@@ -17,6 +17,8 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
+from .blocks import content_to_text
+
 logger = logging.getLogger('halbert.agents.react')
 
 
@@ -374,7 +376,8 @@ After gathering enough information, synthesize a helpful response.
         if history:
             for msg in history[-6:]:  # Last 6 messages
                 role = msg.get("role", "user")
-                content = msg.get("content", "")
+                # content may be a string (legacy) or a list of content blocks (A1)
+                content = content_to_text(msg.get("content", ""))
                 if role in ("user", "assistant"):
                     messages.append({"role": role, "content": content[:2000]})
         
