@@ -50,45 +50,34 @@ Each site lives in its own directory with its own dependencies, Vite dev server,
 
 ---
 
-## 3. Deep Dive into Site 7 (`marketing/web-v7/`)
+## 3. Deep Dive into Site 7 (`marketing/web-v7/`) — v2 system rework (2026-08-25, later session)
 
-### 3.1 Mathematical Path & Camera Equations (`src/lib/cameraMotion.js`)
-- **SVG Coordinate Space:** $1024 \times 1024$.
-- **Camera State:** $(\text{cx}, \text{cy}, \text{scale}, \text{rotation})$ computed continuously for scroll parameter $s \in [0, 1]$.
-- **Trajectory Stages:**
-  - **Phase 1 ($s \in [0.00, 0.20]$) — Straight Downward Descent:**  
-    $cx = 272.0$, $cy = 160.0 \to 512.0$, $\text{scale} = 22.0$. The vertical stroke pins to the screen center, splitting the viewport 50/50.
-  - **Phase 2 ($s \in [0.20, 0.44]$) — Sweeping Arc to Apex:**  
-    $\theta = t \cdot \frac{\pi}{2}$, $cx = 512.0 - 240.0 \cos(\theta)$, $cy = 512.0 + 240.0 \sin(\theta)$.  
-    At apex ($s = 0.44$), $cx = 512.0, cy = 752.0$ (horizontal tangent, Top/Bottom split).
-  - **Phase 3 ($s \in [0.44, 0.62]$) — Perpendicular Lane Hop:**  
-    Lateral translation from $(512, 752)$ across to $(368, 656)$, $\text{scale} = 20.0 \to 14.0$.
-  - **Phase 4 ($s \in [0.62, 0.80]$) — Centered Rounded Shape Cap:**  
-    Camera moves to $(464, 82.67)$, $\text{scale} = 18.0$, centering the rounded terminal cap in the viewport.
-  - **Phase 5 ($s \in [0.80, 1.00]$) — Grand Zoom-Out Reveal:**  
-    Camera smoothly pulls back to $(512, 512)$ with $\text{scale} = 1.0$, revealing the complete centered Halbert mark.
-- **Magnetic Plateau Easing:** Piecewise trigonometric damping ($s_{\text{eased}}$) gently slows down scroll velocity at key waypoints without locking the user out of fluid scrolling.
+The first build of Site 7 hand-tuned five camera phases. Eric's review: the trajectory was wrong — the parallax must *follow the vectors*, start with the screen split left/right, ease to rest only where the layout reads as a split through the **centre of the screen**, be zoomed in far enough that **only one line** divides the screen at any moment, and be a reusable vessel for layout, not a choreography. It was rebuilt as a data-driven system:
 
-### 3.2 Viewport Aspect-Ratio Calibration (`src/components/VectorCanvas.jsx`)
-To prevent slicing, stretching, or focal reticle drift on widescreen monitors (e.g. 16:9 or ultrawide):
-```javascript
-const aspect = dimensions.width / Math.max(1, dimensions.height);
-const h = 1024 / Math.max(0.1, camera.scale);
-const w = h * aspect;
-const minX = camera.cx - w / 2;
-const minY = camera.cy - h / 2;
-```
-This guarantees that $(\text{cx}, \text{cy})$ is **mathematically locked to $(50\text{vw}, 50\text{vh})$ in the dead center of the screen on every device**.
+| File | Role |
+|---|---|
+| `src/lib/markGeometry.js` | Parametric model of the mark (spine + 9 lanes, stroke 32, gap 16). Generates `MARK_PATH_D`, edge paths (colour boundaries at R ± 16), tangent/normal, clearance to the next boundary, and `requiredScale()` — the zoom that guarantees a single line for a given split orientation and viewport aspect. |
+| `src/lib/storyboard.js` | `STOPS[]` — pure data. Each stop = *where on the mark* (`edge+leg/y`, `edge+angle`, `cap`, or `full`) + *how to get there* (`via: 'follow' | 'fly'`, `dip`, `dwell`, `travel`). |
+| `src/lib/cameraEngine.js` | Timeline (dwell/move segments), `stopPose()` (focal, zoom, layout derived from geometry), `getCameraState(s, aspect)`. `follow` rides the edge with zoom recomputed per frame; `fly` is a straight line with log-zoom and optional mid-flight dip. Smootherstep easing. |
+| `src/components/LayoutStage.jsx` | Maps semantic slots (`stroke` / `canvas`, `above` / `below`) onto the fields the geometry produced: vertical, horizontal, diagonal (corner quadrants), cap, full. Content slides with the camera's direction of travel. |
+| `src/content/stops.jsx` | Placeholder content per stop id. |
+| `src/components/Reticle.jsx` | Press **D** for a centre crosshair + live focal/zoom/layout readout. |
 
-### 3.3 Synchronized Kinetic Content Motion (`src/components/WaypointOverlay.jsx`)
-Content nodes translate continuously based on scroll offsets:
-- Hero: `transform: translateY(-offset0 * 1400px)` (scrolls up as camera descends).
-- Apex: `transform: translateY(-offset1 * 1200px)` (curves up into view).
-- Lane Hop: `transform: translateX(-offset2 * 1000px)` (glides laterally).
-- Shape Cap: `transform: translateY(-offset3 * 900px)`.
-- Grand Reveal: `transform: scale(scale4)`.
+Removed: `cameraMotion.js` (hard-coded phases + "magnetic plateau" easing) and `WaypointOverlay.jsx`. Added token `--color-ink-on-stroke` (tokens.css + every theme).
 
----
+Current storyboard (7 stops, ≈1035vh): **open** (vertical, stroke left) → follow → **apex** (horizontal) → follow → **diagonal** (45°) → follow → **rise** (vertical, colours swapped) → fly/hop outward across three lanes → **hop** (vertical) → fly → **cap** (spine dome crest at centre) → fly → **reveal** (whole mark, 55% of short side). Verified with Playwright screenshots at every stop and mid-move at 1600×900 and 390×844: splits pass through the exact centre; one line during follows; stripes sweep during the hop.
+
+**Round 2 (same day) — Eric's feedback and what changed:**
+- *"Zoomed in too close; curve follows look like a straight line rotating."* The single-line zoom is fixed by the 16-unit gap, so zooming out always admits a second line. The fix is the **lane**: the ride moved from lane 5 (r = 224) to lane 2 inner edge (r = 80) — apex sag went from ~5% to ~14% of screen height, arc follows read as real curves, legs stay straight, zoom unchanged. `RIDE` in `storyboard.js`; per-stop `zoom` multiplier added for taste.
+- *"Landscape vs portrait; only the left/right stops need a major update."* Stops now take a `portrait: {…}` override (timeline built per orientation via `timelineFor(aspect)`). Phones **open sideways** on lane 1's outer-edge apex (stroke top / canvas bottom); the first scroll flies 16 units down into the apex stop so the gap slides up and the colours flip. The remaining vertical splits (`rise`, `hop`) keep the geometry but render a **straddled** single column — each slot drawn twice, clipped to the two halves, so the type changes ink at the line (`Straddle` in `LayoutStage.jsx`).
+- Horizontal layouts pad the top field by the curve's `layout.sag` so headlines clear the rising boundary.
+
+**Round 3 (same day) — real copy + app-modelled plates.** Eric: keep the headlines, rewrite everything else; the grey plate "needs more purpose or less"; no CLI (users never use a CLI); model placeholders on the newest app UI. Research (two Explore agents over `documentation/`, `marketing/web*/src/copy`, and `halbert_core/.../dashboard/frontend`) produced:
+- *Voice rules used:* first person as the host machine; embodied not personified; every adjective backed by a measured number; never "assistant" for itself; foil is "a chatbot somewhere else", never a named rival; the HAL allusion stays in text only ("you can call me AI").
+- *Plates* (`src/content/ui.jsx`): paper-coloured **app windows** (the shipped app is light shadcn; the design spec is explicitly light-first, warm paper `#F7F5F0`, vermilion `#D34E24`). Four surfaces, each using the app's real IA/microcopy: **Proactive Events** (Snooze 7d / Dismiss, real detector titles like `sshd config conflict: PermitRootLogin`), **System Vitals** stat tiles, **Why does this exist?** rationale + **Evidence & Sources** refs, **Knowledge Base Storage** stat strip + `Searched Documents · 3 found`. Stops without something real to show have no plate (apex is a strip, diagonal/cap/reveal none).
+- *Honesty flags surfaced by research (not changed, headline is Eric's call):* "16,000 manuals" traces to a "16K+ docs" line in `MARKETING-WEBPAGE-PLAN-2026-08-23.md`; real corpus is 24,643 docs (5,603 of them man pages). Copy now says "Linux today · macOS in beta" (no macOS packaging exists) and "no telemetry — cloud models and web search are switches, off by default" (SearXNG web search + cloud LLMs are real opt-in egress paths). Also found a data bug: `data/manifest.json` claims 4,368 Linux man pages but `data/linux/man-pages/man_pages.jsonl` holds 142 records with macOS IDs.
+
+Full specification: `marketing/VECTOR-PARALLAX-VISION-AND-SPECIFICATION.md` (v2.1.0).
 
 ## 4. Key Reference Files & Specification Docs
 
@@ -114,8 +103,11 @@ Content nodes translate continuously based on scroll offsets:
 
 ## 6. Suggested Next Steps for the Next AI / Session
 
-1. **Fine-tune Site 7 Kinetic Polish (if requested):**
-   - Add subtle SVG line-draw stroke dasharray animations along the active vector path during scroll traversal.
-   - Add mouse parallax / cursor tilt response to the macro canvas.
+1. **Site 7 polish (structure is done; these are deliberately deferred):**
+   - Real copy per stop (all current copy is placeholder).
+   - Mobile variants per layout kind (the geometric split holds on phones, but columns get tight).
+   - Chrome legibility: folio bar / HUD / palette pill currently rely on `mix-blend-mode: difference`.
+   - Optional: pin `scale` on the apex stop if a dead-straight horizontal line is preferred over the gentle R=224 curve.
+   - Storyboard tuning is data-only — add/reorder stops in `src/lib/storyboard.js`; no engine changes needed.
 2. **Consolidation / Final Selection:**
    - Once Eric selects a winning direction or combination (e.g. combining the kinetic vector camera of Site 7 with the copywriting of Site 1/5 and the live oscilloscope of Site 2), assemble the production marketing build for final deployment.

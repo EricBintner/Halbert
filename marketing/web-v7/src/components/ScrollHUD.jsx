@@ -1,44 +1,33 @@
 import React from 'react';
-import { WAYPOINTS } from '../lib/cameraMotion';
+import { STOPS } from '../lib/storyboard';
 
-export function ScrollHUD({ currentWaypoint, onSelectWaypoint, scrollProgress }) {
+export function ScrollHUD({ currentStop, onSelectStop, scrollProgress }) {
   return (
-    <nav aria-label="Waypoint Navigation" className="fixed right-6 top-1/2 -translate-y-1/2 z-30 font-mono select-none hidden sm:flex flex-col items-end space-y-3">
-      {WAYPOINTS.map((wp) => {
-        const isActive = currentWaypoint === wp.id;
+    <nav aria-label="Stop navigation" className="fixed right-6 top-1/2 -translate-y-1/2 z-30 font-mono select-none hidden sm:flex flex-col items-end space-y-3 mix-blend-difference text-white">
+      {STOPS.map((stop, i) => {
+        const isActive = currentStop === i;
         return (
           <button
-            key={wp.id}
-            onClick={() => onSelectWaypoint(wp.id)}
+            key={stop.id}
+            onClick={() => onSelectStop(i)}
             className="group flex items-center space-x-3 cursor-pointer text-left"
           >
-            {/* Tooltip Label */}
             <span
-              className={`text-[11px] font-bold transition-all px-2 py-0.5 rounded-sm ${
-                isActive
-                  ? 'text-[#042F2E] bg-[var(--color-vector-lime)] opacity-100 shadow-xs'
-                  : 'text-white/60 opacity-0 group-hover:opacity-100 bg-black/40'
+              className={`text-[11px] font-bold transition-opacity px-2 py-0.5 ${
+                isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
               }`}
             >
-              {wp.name}
+              {stop.name}
             </span>
-
-            {/* Indicator Pip */}
             <span
-              className={`w-3 h-3 rounded-full border transition-all ${
-                isActive
-                  ? 'bg-[var(--color-vector-lime)] border-[var(--color-vector-lime)] scale-125 shadow-[0_0_8px_rgba(212,225,87,0.8)]'
-                  : 'border-white/40 bg-black/20 group-hover:border-white'
+              className={`w-2.5 h-2.5 rounded-full border border-white transition-transform ${
+                isActive ? 'bg-white scale-125' : 'bg-transparent group-hover:scale-110'
               }`}
             />
           </button>
         );
       })}
-
-      {/* Progress Metric */}
-      <div className="pt-2 text-[10px] text-[var(--color-vector-lime)] font-mono">
-        {Math.round(scrollProgress * 100)}% TRAVEL
-      </div>
+      <div className="pt-2 text-[10px]">{Math.round(scrollProgress * 100)}% TRAVEL</div>
     </nav>
   );
 }

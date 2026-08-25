@@ -22,6 +22,7 @@ export const THEMES = [
       '--color-ink': '#FFFFFF',
       '--color-ink-secondary': '#CCFBF1',
       '--color-ink-tertiary': '#99F6E4',
+      '--color-ink-on-stroke': '#042F2E',
     },
   },
   {
@@ -43,6 +44,7 @@ export const THEMES = [
       '--color-ink': '#1C1917',
       '--color-ink-secondary': '#44403C',
       '--color-ink-tertiary': '#78716C',
+      '--color-ink-on-stroke': '#FFF7ED',
     },
   },
   {
@@ -64,6 +66,7 @@ export const THEMES = [
       '--color-ink': '#FFFFFF',
       '--color-ink-secondary': '#EFF6FF',
       '--color-ink-tertiary': '#BFDBFE',
+      '--color-ink-on-stroke': '#1E3A8A',
     },
   },
 ];

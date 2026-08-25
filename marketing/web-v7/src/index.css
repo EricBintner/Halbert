@@ -25,20 +25,6 @@
   }
 }
 
-/* Kinetic Parallax Stage */
-.camera-stage {
-  perspective: 1000px;
-  transform-style: preserve-3d;
-  will-change: transform;
-}
-
-/* Aged Texture & Subtle Noise */
-.vector-grit {
-  background-image:
-    radial-gradient(circle at 50% 50%, transparent 65%, rgba(0, 0, 0, 0.15) 100%),
-    repeating-linear-gradient(0deg, transparent, transparent 4px, rgba(255, 255, 255, 0.02) 4px, rgba(255, 255, 255, 0.02) 8px);
-}
-
 /* High-Contrast CMYK Bleed */
 .cmyk-edge {
   text-shadow:

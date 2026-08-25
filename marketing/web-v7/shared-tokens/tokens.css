@@ -15,6 +15,7 @@
   --color-ink-secondary:     #CCFBF1;   /* Soft Ice Aquamarine */
   --color-ink-tertiary:      #99F6E4;   /* Pale Seafoam */
   --color-ink-dark:          #042F2E;   /* Deepest Ink */
+  --color-ink-on-stroke:     #042F2E;   /* Ink used on top of the stroke colour */
 
   /* ===== Strategic CMYK / Contrast Highlights ===== */
   --color-cmyk-cyan:         #00F0FF;   /* Neon Cyan */

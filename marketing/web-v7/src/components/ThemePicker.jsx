@@ -30,22 +30,23 @@ export function ThemePicker({ defaultTheme = 'chartreuse-teal' }) {
   const currentTheme = THEMES.find((t) => t.id === activeThemeId) || THEMES[0];
 
   return (
-    <aside aria-label="Developer theme picker" className="fixed bottom-4 left-6 z-40 font-mono select-none">
+    <aside aria-label="Developer theme picker" className="fixed bottom-4 left-4 sm:left-6 z-40 font-mono select-none">
       {/* Minimized Docked Pill */}
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="px-3.5 py-2 bg-[#115E59] text-white text-xs font-bold uppercase tracking-wider border border-[var(--color-vector-lime)] shadow-xl hover:bg-[var(--color-vector-lime)] hover:text-[#042F2E] transition-all flex items-center space-x-2 cursor-pointer"
+          aria-label={`Palette: ${currentTheme.name}`}
+          className="px-2.5 sm:px-3.5 py-2 bg-[#115E59] text-white text-xs font-bold uppercase tracking-wider border border-[var(--color-vector-lime)] shadow-xl hover:bg-[var(--color-vector-lime)] hover:text-[#042F2E] transition-all flex items-center space-x-2 cursor-pointer"
         >
           <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: currentTheme.preview.accent }} />
-          <span>PALETTE: {currentTheme.name}</span>
+          <span className="hidden sm:inline">PALETTE: {currentTheme.name}</span>
           <span className="text-[10px] opacity-75">▾</span>
         </button>
       )}
 
       {/* Expanded Drawer */}
       {isOpen && (
-        <div className="w-80 bg-[#115E59] text-white border-2 border-[var(--color-vector-lime)] shadow-2xl p-5 space-y-4 text-xs font-mono">
+        <div className="w-[calc(100vw-2rem)] sm:w-80 bg-[#115E59] text-white border-2 border-[var(--color-vector-lime)] shadow-2xl p-5 space-y-4 text-xs font-mono">
           {/* Header */}
           <div className="flex justify-between items-baseline border-b border-white/20 pb-2.5">
             <div className="space-y-0.5">

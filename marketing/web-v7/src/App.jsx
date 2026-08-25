@@ -1,57 +1,100 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { getCameraState, WAYPOINTS } from './lib/cameraMotion';
+import React, { useEffect, useState } from 'react';
+import { getCameraState, stopCenterS, timelineFor } from './lib/cameraEngine';
+import { STOPS } from './lib/storyboard';
+import { STOP_CONTENT } from './content/stops';
 import { VectorCanvas } from './components/VectorCanvas';
-import { WaypointOverlay } from './components/WaypointOverlay';
+import { LayoutStage } from './components/LayoutStage';
 import { ScrollHUD } from './components/ScrollHUD';
 import { ThemePicker } from './components/ThemePicker';
+import { Reticle } from './components/Reticle';
+import { HalbertMark } from './components/HalbertMark';
+
+function useViewport() {
+  const read = () => ({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1920,
+    height: typeof window !== 'undefined' ? window.innerHeight : 1080,
+  });
+  const [viewport, setViewport] = useState(read);
+  useEffect(() => {
+    const onResize = () => setViewport(read());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return viewport;
+}
+
+function useScrollProgress() {
+  const [s, setS] = useState(0);
+  useEffect(() => {
+    let raf = 0;
+    const read = () => {
+      raf = 0;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      setS(max > 0 ? Math.max(0, Math.min(1, window.scrollY / max)) : 0);
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(read);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    read();
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+  return s;
+}
 
 export function App() {
-  const [scrollProgress, setScrollProgress] = useState(0);
-  const containerRef = useRef(null);
+  const viewport = useViewport();
+  const s = useScrollProgress();
+  const [reticle, setReticle] = useState(false);
 
   useEffect(() => {
-    const handleScroll = () => {
-      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
-      if (maxScroll > 0) {
-        const s = Math.max(0, Math.min(1, window.scrollY / maxScroll));
-        setScrollProgress(s);
-      }
+    const onKey = (e) => {
+      if (e.key === 'd' || e.key === 'D') setReticle((v) => !v);
     };
-
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll();
-    return () => window.removeEventListener('scroll', handleScroll);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const camera = getCameraState(scrollProgress);
+  const aspect = viewport.width / Math.max(1, viewport.height);
+  const timeline = timelineFor(aspect);
+  const camera = getCameraState(s, aspect, timeline);
 
-  const handleJumpToWaypoint = (wpIndex) => {
-    const targetWp = WAYPOINTS[wpIndex];
-    if (targetWp) {
-      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
-      window.scrollTo({
-        top: targetWp.sCenter * maxScroll,
-        behavior: 'smooth',
-      });
-    }
+  const jumpToStop = (i) => {
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    window.scrollTo({ top: stopCenterS(i, aspect) * max, behavior: 'smooth' });
   };
 
   return (
-    <div ref={containerRef} className="relative min-h-[500vh] bg-[var(--color-canvas)] text-white vector-grit">
-      {/* Dynamic 1000% Vector Canvas Layer */}
-      <VectorCanvas camera={camera} />
+    <div
+      className="relative bg-[var(--color-canvas)] text-[var(--color-ink)]"
+      style={{ height: `${timeline.totalWeight * 100}vh` }}
+    >
+      <VectorCanvas camera={camera} viewport={viewport} />
 
-      {/* Interactive Waypoint Content & HUD Layer */}
-      <WaypointOverlay camera={camera} onJumpToWaypoint={handleJumpToWaypoint} />
+      <LayoutStage camera={camera} stops={STOPS} content={STOP_CONTENT} viewport={viewport} />
 
-      {/* Right Scroll Scrubber HUD */}
-      <ScrollHUD
-        currentWaypoint={camera.activeWaypoint}
-        onSelectWaypoint={handleJumpToWaypoint}
-        scrollProgress={scrollProgress}
-      />
+      {/* Folio bar — chrome that never moves */}
+      <header className="fixed top-0 inset-x-0 z-30 flex items-center justify-between px-6 py-4 text-[11px] font-mono mix-blend-difference text-white pointer-events-none">
+        <div className="flex items-center space-x-3">
+          <HalbertMark size={20} color="currentColor" strokeWidth={36} />
+          <span className="font-bold tracking-wider">HALBERT</span>
+        </div>
+        <div className="hidden md:flex items-center space-x-4 opacity-80">
+          <span>STOP {String(camera.stopIndex + 1).padStart(2, '0')} / {String(STOPS.length).padStart(2, '0')} · {camera.layout.kind.toUpperCase()}</span>
+          <span>ZOOM {Math.round(camera.scale * 100)}%</span>
+          <span>[D] RETICLE</span>
+        </div>
+      </header>
 
-      {/* Dev Theme Switcher */}
+      <ScrollHUD currentStop={camera.stopIndex} onSelectStop={jumpToStop} scrollProgress={s} />
+
+      <Reticle visible={reticle} camera={camera} />
+
       <ThemePicker defaultTheme="chartreuse-teal" />
     </div>
   );

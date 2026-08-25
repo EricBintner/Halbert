@@ -1,73 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { MARK, MARK_PATH_D, viewBoxFor } from '../lib/markGeometry';
 
 /**
- * Authentic Vector Canvas for Site V7
- * Renders the exact 1024x1024 Halbert SVG path with zero aspect-ratio drift,
- * pinning the camera focal coordinate (cx, cy) mathematically at the exact center of the screen.
+ * Renders the Halbert mark with the camera focal point (cx, cy) pinned to the
+ * exact centre of the viewport. The viewBox is sized from the live aspect
+ * ratio, so 1 mark unit is the same number of pixels horizontally and
+ * vertically — edges stay straight and angles stay true on any screen.
  */
-export function VectorCanvas({ camera }) {
-  const [dimensions, setDimensions] = useState({
-    width: typeof window !== 'undefined' ? window.innerWidth : 1920,
-    height: typeof window !== 'undefined' ? window.innerHeight : 1080,
-  });
-
-  useEffect(() => {
-    const handleResize = () => {
-      setDimensions({
-        width: window.innerWidth,
-        height: window.innerHeight,
-      });
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  // Compute viewBox dimensions based on window aspect ratio to prevent slicing or focal drift
-  const aspect = dimensions.width / Math.max(1, dimensions.height);
-  const h = 1024 / Math.max(0.1, camera.scale);
-  const w = h * aspect;
-
-  const minX = camera.cx - w / 2;
-  const minY = camera.cy - h / 2;
-
-  const pathData = [
-    'M 512.00 80.00 V 512.00',
-    'M 464.00 82.67 V 512.00 A 48.00 48.00 0 0 0 560.00 512.00 V 82.67',
-    'M 416.00 90.80 V 512.00 A 96.00 96.00 0 0 0 608.00 512.00 V 90.80',
-    'M 368.00 104.71 V 512.00 A 144.00 144.00 0 0 0 656.00 512.00 V 104.71',
-    'M 320.00 125.01 V 512.00 A 192.00 192.00 0 0 0 704.00 512.00 V 125.01',
-    'M 272.00 152.80 V 512.00 A 240.00 240.00 0 0 0 752.00 512.00 V 152.80',
-    'M 224.00 190.01 V 512.00 A 288.00 288.00 0 0 0 800.00 512.00 V 190.01',
-    'M 176.00 240.47 V 512.00 A 336.00 336.00 0 0 0 848.00 512.00 V 240.47',
-    'M 128.00 314.09 V 512.00 A 384.00 384.00 0 0 0 896.00 512.00 V 314.09',
-    'M 80.00 512.00 A 432.00 432.00 0 0 0 944.00 512.00'
-  ].join(' ');
+export function VectorCanvas({ camera, viewport }) {
+  const aspect = viewport.width / Math.max(1, viewport.height);
+  const { minX, minY, w, h } = viewBoxFor(camera, aspect);
 
   return (
-    <div
-      className="fixed inset-0 w-full h-full pointer-events-none z-0 transition-transform duration-75 ease-out select-none"
-      style={{
-        transform: `rotate(${camera.rotation}deg)`,
-      }}
-    >
+    <div className="fixed inset-0 w-full h-full pointer-events-none z-0 select-none" aria-hidden="true">
       <svg
         viewBox={`${minX} ${minY} ${w} ${h}`}
         preserveAspectRatio="none"
-        className="w-full h-full"
+        className="w-full h-full block"
         xmlns="http://www.w3.org/2000/svg"
       >
-        {/* Solid Background Canvas */}
-        <rect width="1024" height="1024" fill="var(--color-canvas)" />
-
-        {/* Clean, Authentic Halbert Vector Paths in Pop Chartreuse */}
         <g
           fill="none"
           stroke="var(--color-vector-lime)"
-          strokeWidth="32"
+          strokeWidth={MARK.strokeWidth}
           strokeLinecap="round"
           strokeLinejoin="round"
         >
-          <path d={pathData} />
+          <path d={MARK_PATH_D} />
         </g>
       </svg>
     </div>
