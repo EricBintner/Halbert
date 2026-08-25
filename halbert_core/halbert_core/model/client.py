@@ -15,20 +15,33 @@ Functions:
   _score_query_complexity() — query complexity for guide vs specialist routing
   _estimate_tokens()       — rough token count
   _truncate_messages_for_context() — truncate message list to fit context
+
+Config schema:
+  Reads the unified LLMConfig schema (shared with SourcePrep) from the
+  'llm_config' key in models.yml. Falls back to the legacy
+  'orchestrator'/'specialist'/'vision' keys for backward compatibility.
+
+  Unified schema mapping:
+    guide (orchestrator)  → llm_config.small_model (or large_model if small disabled)
+    specialist            → llm_config.large_model
+    vision                → legacy 'vision' key (no unified equivalent yet)
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
 logger = logging.getLogger("halbert.model.client")
 
 
-def get_ollama_endpoint() -> str:
-    """Get the Ollama endpoint URL from config (guide model's endpoint)."""
+# ── Unified LLMConfig loader ────────────────────────────────────
+
+
+def _load_models_config() -> Dict[str, Any]:
+    """Load the raw models.yml config dict."""
     try:
         from ..utils.platform import get_config_dir
         import yaml
@@ -36,95 +49,146 @@ def get_ollama_endpoint() -> str:
         config_path = get_config_dir() / "models.yml"
         if config_path.exists():
             with open(config_path, "r") as f:
-                config = yaml.safe_load(f) or {}
+                return yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.debug(f"Could not load models.yml: {e}")
+    return {}
 
-            orch = config.get("orchestrator", {})
-            if orch.get("endpoint"):
-                return orch["endpoint"]
 
-        return "http://localhost:11434"
-    except Exception:
-        return "http://localhost:11434"
+def _resolve_endpoint(
+    llm_config: Dict[str, Any], endpoint_id: Optional[str]
+) -> Tuple[str, str]:
+    """Resolve an endpoint_id from saved_endpoints to (url, provider).
+
+    Returns ("http://localhost:11434", "ollama") as fallback.
+    """
+    if not endpoint_id:
+        return ("http://localhost:11434", "ollama")
+
+    endpoints = llm_config.get("saved_endpoints") or []
+    for ep in endpoints:
+        if ep.get("id") == endpoint_id:
+            return (ep.get("url", "http://localhost:11434"), ep.get("provider", "ollama"))
+
+    return ("http://localhost:11434", "ollama")
+
+
+def _get_slot_config(
+    config: Dict[str, Any], slot: str
+) -> Optional[Dict[str, Any]]:
+    """Get a model slot from the unified llm_config schema.
+
+    Args:
+        config: The raw models.yml dict.
+        slot: One of 'small_model', 'large_model', 'code_model', 'coordinator_model'.
+
+    Returns:
+        The slot dict if the slot is enabled and has a model, else None.
+    """
+    llm_config = config.get("llm_config") or {}
+    slot_cfg = llm_config.get(slot) or {}
+    if not slot_cfg.get("enabled", False):
+        return None
+    if not slot_cfg.get("model"):
+        return None
+    return slot_cfg
+
+
+def get_ollama_endpoint() -> str:
+    """Get the Ollama endpoint URL from config (guide model's endpoint).
+
+    Reads from the unified llm_config.small_model (or large_model) slot,
+    falling back to the legacy orchestrator key.
+    """
+    config = _load_models_config()
+
+    # Try unified schema: small_model first, then large_model
+    for slot in ("small_model", "large_model"):
+        slot_cfg = _get_slot_config(config, slot)
+        if slot_cfg:
+            llm_config = config.get("llm_config") or {}
+            url, _ = _resolve_endpoint(llm_config, slot_cfg.get("endpoint_id"))
+            return url
+
+    # Fall back to legacy orchestrator key
+    orch = config.get("orchestrator", {})
+    if orch.get("endpoint"):
+        return orch["endpoint"]
+
+    return "http://localhost:11434"
 
 
 def get_configured_model() -> str:
-    """Get the configured guide model name from config."""
-    try:
-        from ..utils.platform import get_config_dir
-        import yaml
+    """Get the configured guide model name from config.
 
-        config_path = get_config_dir() / "models.yml"
-        if config_path.exists():
-            with open(config_path, "r") as f:
-                config = yaml.safe_load(f) or {}
+    Reads from the unified llm_config.small_model (or large_model) slot,
+    falling back to the legacy orchestrator key.
+    """
+    config = _load_models_config()
 
-            orch = config.get("orchestrator", {})
-            if orch.get("model"):
-                return orch["model"]
+    # Try unified schema: small_model first, then large_model
+    for slot in ("small_model", "large_model"):
+        slot_cfg = _get_slot_config(config, slot)
+        if slot_cfg:
+            return slot_cfg["model"]
 
-        return "llama3.1:8b"
-    except Exception:
-        return "llama3.1:8b"
+    # Fall back to legacy orchestrator key
+    orch = config.get("orchestrator", {})
+    if orch.get("model"):
+        return orch["model"]
+
+    return "llama3.1:8b"
 
 
-def get_specialist_model() -> Tuple[str, str, str]:
+def get_specialist_model() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Get the configured specialist/executor model name, endpoint, and provider.
+
+    Reads from the unified llm_config.large_model slot, falling back to
+    the legacy 'specialist' key.
 
     Returns:
         Tuple of (model_name, endpoint_url, provider) or (None, None, None)
         if not enabled. Provider is 'ollama' or 'openai'.
     """
-    try:
-        from ..utils.platform import get_config_dir
-        import yaml
+    config = _load_models_config()
 
-        config_path = get_config_dir() / "models.yml"
-        if config_path.exists():
-            with open(config_path, "r") as f:
-                config = yaml.safe_load(f) or {}
+    # Try unified schema: large_model
+    slot_cfg = _get_slot_config(config, "large_model")
+    if slot_cfg:
+        llm_config = config.get("llm_config") or {}
+        url, provider = _resolve_endpoint(llm_config, slot_cfg.get("endpoint_id"))
+        model = slot_cfg["model"]
+        logger.info(f"Specialist (large_model) enabled: {model} at {url} (provider: {provider})")
+        return (model, url, provider)
 
-            specialist = config.get("specialist", {})
-            if not specialist.get("enabled", False):
-                logger.debug("Specialist not enabled in config")
-                return (None, None, None)
-
-            model = specialist.get("model", "llama3.1:70b")
-            endpoint = specialist.get("endpoint", get_ollama_endpoint())
-            provider = specialist.get("provider", "ollama")
-            logger.info(
-                f"Specialist enabled: {model} at {endpoint} (provider: {provider})"
-            )
-            return (model, endpoint, provider)
-
+    # Fall back to legacy specialist key
+    specialist = config.get("specialist", {})
+    if not specialist.get("enabled", False):
+        logger.debug("Specialist not enabled in config")
         return (None, None, None)
-    except Exception as e:
-        logger.warning(f"Error loading specialist config: {e}")
-        return (None, None, None)
+
+    model = specialist.get("model", "llama3.1:70b")
+    endpoint = specialist.get("endpoint", get_ollama_endpoint())
+    provider = specialist.get("provider", "ollama")
+    logger.info(f"Specialist enabled: {model} at {endpoint} (provider: {provider})")
+    return (model, endpoint, provider)
 
 
 def get_vision_model() -> Tuple[str, str]:
     """Get the configured vision model name and endpoint.
 
+    Reads from the legacy 'vision' key (no unified equivalent yet — the
+    unified LLMConfig schema doesn't have a dedicated vision slot).
+
     Returns:
         Tuple of (model_name, endpoint_url)
     """
-    try:
-        from ..utils.platform import get_config_dir
-        import yaml
+    config = _load_models_config()
 
-        config_path = get_config_dir() / "models.yml"
-        if config_path.exists():
-            with open(config_path, "r") as f:
-                config = yaml.safe_load(f) or {}
-
-            vision = config.get("vision", {})
-            model = vision.get("model", "llava:34b")
-            endpoint = vision.get("endpoint", get_ollama_endpoint())
-            return (model, endpoint)
-
-        return ("llava:34b", get_ollama_endpoint())
-    except Exception:
-        return ("llava:34b", get_ollama_endpoint())
+    vision = config.get("vision", {})
+    model = vision.get("model", "llava:34b")
+    endpoint = vision.get("endpoint", get_ollama_endpoint())
+    return (model, endpoint)
 
 
 def call_llm_chat(
