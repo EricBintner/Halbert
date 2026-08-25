@@ -71,4 +71,4 @@ where = ["."]
 include = ["halbert_core*"]
 
 [tool.pytest.ini_options]
-asyncio_mode = "strict"
+asyncio_mode = "auto"
