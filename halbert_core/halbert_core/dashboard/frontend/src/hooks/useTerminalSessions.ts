@@ -26,6 +26,7 @@ export interface TerminalSession {
   exitCode: number | null;
   visible: boolean;
   sandboxed: boolean;
+  startedAt: number; // epoch ms when spawned (for the tile's elapsed timer)
 }
 
 export interface SpawnOptions {
@@ -94,6 +95,7 @@ class TerminalSessionStore {
       exitCode: null,
       visible: this.visibleCount() < MAX_VISIBLE,
       sandboxed: !!data.sandboxed,
+      startedAt: Date.now(),
     };
     this.sessions.set(id, session);
     this.connect(id);

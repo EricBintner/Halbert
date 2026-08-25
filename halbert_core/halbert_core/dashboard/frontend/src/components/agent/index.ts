@@ -18,3 +18,5 @@ export { ContextBar, ContextPill, ContextPreview, type ContextItem, type Context
 export { DiffBlock, DiffSummary } from './DiffBlock';
 export { AgentChat } from './AgentChat';
 export { TaskPanel, type TaskState, type TaskPanelProps } from './TaskPanel';
+
+export { TerminalTile } from './TerminalTile'
