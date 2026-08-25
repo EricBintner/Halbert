@@ -26,6 +26,7 @@ from .capabilities import (
 from .providers import ModelProvider, ModelResponse, OllamaProvider
 from .providers.base import GenerationError, ModelNotFoundError
 from .rate_limiter import RateLimiter
+from .outcome_store import OutcomeStore
 from ..agents.error_recovery import get_recovery_manager
 
 logger = logging.getLogger('halbert.model.tier_router')
@@ -236,6 +237,10 @@ class TierRouter:
 
         # HTTP rate-limit handler (A2b): 429/529 with Retry-After
         self.rate_limiter = RateLimiter()
+
+        # Outcome store for self-tuning router (A3): records per-call results
+        # so MetaHarnessRouter (C2a) can blend evidence with priors.
+        self.outcome_store = OutcomeStore()
 
         logger.info(f"TierRouter initialized with {len(self.config.models)} models")
     
@@ -585,6 +590,8 @@ class TierRouter:
 
                 # Success: clear any rate-limit state for this model
                 self.rate_limiter.reset(selection.model.model_id)
+                # Record outcome for the self-tuning router (A3)
+                self._record_outcome(selection.model.model_id, response, success=True)
                 return response, selection
 
             except GenerationError as e:
@@ -614,6 +621,8 @@ class TierRouter:
 
                 # Non-rate-limit error, or rate-limit retries exhausted: fallback
                 logger.error(f"Generation failed with {model_id}: {e}")
+                # Record the failure (best-effort) for the self-tuning router (A3)
+                self._record_outcome(model_id, None, success=False)
 
                 # Try fallback
                 if not selection.fallback_used:
@@ -632,6 +641,35 @@ class TierRouter:
                     )
 
                 raise
+
+    def _record_outcome(
+        self, model_id: str, response: Optional[ModelResponse], success: bool
+    ) -> None:
+        """Record a model-call outcome (A3). Best-effort; never raises.
+
+        Tokens/cost feed the MetaHarnessRouter's evidence blending (C2a). The
+        store is guarded so a missing/None store (e.g. in tests that bypass
+        __init__) silently skips recording.
+        """
+        store = getattr(self, "outcome_store", None)
+        if store is None:
+            return
+        try:
+            meta = getattr(response, "metadata", None) or {}
+            in_tok = meta.get("input_tokens", 0) if isinstance(meta, dict) else 0
+            out_tok = meta.get("output_tokens", 0) if isinstance(meta, dict) else 0
+            store.record(
+                model=model_id,
+                success=success,
+                latency_ms=getattr(response, "latency_ms", 0) or 0,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                cost_usd=0.0,  # price table wired in C2
+                complexity=None,
+                task=None,
+            )
+        except Exception as ex:
+            logger.debug(f"Outcome recording failed (non-fatal): {ex}")
     
     def get_status(self) -> Dict[str, Any]:
         """Get router status for debugging/UI."""
