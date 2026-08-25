@@ -62,6 +62,15 @@ class AgentStateResponse(BaseModel):
     crag_action: str = "PENDING"
 
 
+class IntakeRequest(BaseModel):
+    """Request to run the intake pipeline on a message without executing the agent.
+
+    Used by the boot-gate smoke and operational checks to verify intake routing
+    (guide vs specialist vs vision) independently of a full agent round-trip.
+    """
+    message: str = Field(..., description="User message to classify")
+
+
 # -----------------------------------------------------------------------------
 # Agent Instance Management
 # -----------------------------------------------------------------------------
@@ -738,6 +747,41 @@ if FASTAPI_AVAILABLE:
                 "error": str(e)
             }
     
+    @router.post("/intake")
+    def run_intake(request: IntakeRequest):
+        """Run the intake pipeline on a message and return routing classification.
+
+        Read-only: classifies the message (guide / specialist / vision) without
+        executing the agent. Used by the boot-gate smoke to verify intake routing
+        deterministically. Sync handler so the (potentially blocking) complexity
+        LLM call runs off the event loop in FastAPI's threadpool.
+        """
+        try:
+            agent = get_agent()
+        except Exception as e:
+            raise HTTPException(500, f"Agent initialization failed: {e}")
+
+        pipeline = agent.intake_pipeline
+        if pipeline is None:
+            raise HTTPException(
+                503,
+                "Intake pipeline not available (configured without Phase 3 intake)",
+            )
+
+        result = pipeline.analyze(request.message)
+        specialist_enabled = bool(
+            _load_model_config().get("specialist", {}).get("enabled", False)
+        )
+        return {
+            "recommended_model": result.recommended_model,
+            "complexity_score": result.complexity_score,
+            "complexity_level": result.complexity_level,
+            "intent": result.intent,
+            "is_greeting": result.is_greeting,
+            "is_troubleshooting": result.is_troubleshooting,
+            "specialist_enabled": specialist_enabled,
+        }
+
     @router.get("/sessions")
     async def list_sessions():
         """List active agent sessions."""
