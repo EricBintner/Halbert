@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from ..findings.store import (
     FindingStore,
@@ -29,6 +29,7 @@ from ..config.being_config import BeingConfig, load_being_config
 from ..autonomy.guardrails import GuardrailEnforcer
 from .events import ProactiveEvent, get_event_bus
 from .gate import ProactiveGate
+from .reflexes import ReflexMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class DetectorRunner:
         being_config: BeingConfig | None = None,
         guardrails: GuardrailEnforcer | None = None,
         gate: ProactiveGate | None = None,
+        reflex_matcher: ReflexMatcher | None = None,
     ):
         self.findings = finding_store or FindingStore()
         self.proposals = proposal_store or ProposalStore()
@@ -65,6 +67,8 @@ class DetectorRunner:
             guardrail_enforcer=self.guardrails,
             finding_store=self.findings,
         )
+        # F3: living reflexes evaluated on each sweep (None -> no-op)
+        self.reflex_matcher = reflex_matcher
 
         # Register detectors
         self.detectors = [
@@ -125,6 +129,21 @@ class DetectorRunner:
                         logger.info(
                             f"Finding {finding_id} suppressed by gate: {reason}"
                         )
+
+                    # F3: evaluate living reflexes against this finding
+                    if self.reflex_matcher is not None:
+                        for reflex in self.reflex_matcher.match(
+                            title=finding.title,
+                            body=finding.description,
+                            severity=finding.severity,
+                            category=finding.detector,
+                        ):
+                            reflex_event = self._reflex_event(reflex, finding, finding_id)
+                            try:
+                                await get_event_bus().publish(reflex_event)
+                                published_events.append(reflex_event)
+                            except Exception as e:
+                                logger.warning(f"reflex publish failed: {e}")
             except Exception as e:
                 logger.warning(f"Detector {detector.__class__.__name__} failed: {e}")
 
@@ -132,6 +151,38 @@ class DetectorRunner:
             f"Detector sweep complete: {len(published_events)} events published"
         )
         return published_events
+
+    def _reflex_event(
+        self, reflex: Any, finding: Finding, finding_id: str
+    ) -> ProactiveEvent:
+        """Build a proactive event for a fired reflex (F3).
+
+        action=notify    -> reflex_fired (at the finding's severity)
+        action=escalate  -> reflex_escalate (forced to critical)
+        action=command   -> reflex_command_proposed (carries the command; the
+                            approval/agent layer executes it, not the runner)
+        """
+        action = reflex.action or "notify"
+        if action == "escalate":
+            return ProactiveEvent.create(
+                type="reflex_escalate", severity="critical",
+                title=f"Reflex escalated: {reflex.name}",
+                body=finding.title,
+                finding_id=finding_id, category=reflex.category or "general",
+            )
+        if action == "command":
+            return ProactiveEvent.create(
+                type="reflex_command_proposed", severity="warning",
+                title=f"Reflex command proposed: {reflex.name}",
+                body=reflex.command or "",
+                finding_id=finding_id, category=reflex.category or "general",
+            )
+        return ProactiveEvent.create(
+            type="reflex_fired", severity=finding.severity,
+            title=f"Reflex fired: {reflex.name}",
+            body=finding.title,
+            finding_id=finding_id, category=reflex.category or "general",
+        )
 
     def run_all_sync(self) -> List[ProactiveEvent]:
         """Synchronous wrapper for run_all().
