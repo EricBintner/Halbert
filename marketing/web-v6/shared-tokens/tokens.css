@@ -1,0 +1,33 @@
+@theme {
+  /* ===== Surface Ramp (Off-White Gallery Canvas) ===== */
+  --color-canvas:            #FAF8F5;   /* Warm Gallery Linen Canvas */
+  --color-surface:           #FFFFFF;   /* Crisp White Card */
+  --color-surface-subtle:    #F0EDE6;   /* Recessed Paper Plate */
+  --color-surface-muted:     #E5E0D8;   /* Ink Hairline */
+
+  /* ===== Light Blue-Violet Installation Spectrum ===== */
+  --color-violet-light:      #C7D2FE;   /* Periwinkle 200 */
+  --color-violet-primary:    #818CF8;   /* Light Blue-Violet 400 */
+  --color-violet-deep:       #6366F1;   /* Indigo 500 */
+  --color-violet-dark:       #4F46E5;   /* Deep Blue-Violet 600 */
+
+  /* ===== Strategic CMYK Bleed Accents ===== */
+  --color-cmyk-cyan:         #00E5FF;   /* Process Cyan */
+  --color-cmyk-magenta:      #FF007A;   /* Process Magenta */
+  --color-cmyk-yellow:       #FFD600;   /* Process Yellow */
+  --color-cmyk-key:          #121417;   /* Process Black / Charcoal */
+
+  /* ===== Ink Hierarchy ===== */
+  --color-ink:               #121417;   /* Deep Carbon Black */
+  --color-ink-secondary:     #4B5563;   /* Secondary Muted Charcoal */
+  --color-ink-tertiary:      #9CA3AF;   /* Light Stone */
+  --color-ink-ghost:         #D1D5DB;   /* Faint Guideline */
+
+  /* ===== Typography ===== */
+  --font-display:            "Fraunces", "DM Serif Display", Georgia, serif;
+  --font-sans:               "Space Grotesk", "Plus Jakarta Sans", sans-serif;
+  --font-mono:               "JetBrains Mono", "DM Mono", monospace;
+
+  /* ===== Viewport Dimensions ===== */
+  --viewport-hero-height:    100vh;
+}

@@ -1,0 +1,85 @@
+@import "tailwindcss";
+@import "../shared-tokens/tokens.css";
+
+@layer base {
+  html {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    overflow-x: hidden;
+    line-height: 1.5;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    letter-spacing: -0.035em;
+  }
+
+  code, pre {
+    font-family: var(--font-mono);
+  }
+}
+
+/* Strategic CMYK Misregistration / Bleed Shift */
+.cmyk-bleed {
+  text-shadow:
+    -1.5px -0.5px 0 rgba(0, 229, 255, 0.7),
+     1.5px  0.5px 0 rgba(255, 0, 122, 0.7);
+}
+
+.cmyk-box-bleed {
+  box-shadow:
+    -3px -2px 0 rgba(0, 229, 255, 0.35),
+     3px  2px 0 rgba(255, 0, 122, 0.35);
+}
+
+/* Aged Paper & Grain Texture */
+.aged-grit {
+  background-image:
+    radial-gradient(circle at 50% 50%, transparent 60%, rgba(18, 20, 23, 0.03) 100%),
+    repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(99, 102, 241, 0.015) 10px, rgba(99, 102, 241, 0.015) 20px);
+}
+
+/* CMYK Registration Color Bars */
+.cmyk-strip {
+  display: inline-flex;
+  height: 8px;
+}
+.cmyk-strip span {
+  width: 12px;
+  height: 100%;
+}
+
+/* Full Viewport Window Snap */
+.full-window-section {
+  min-height: 100vh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-canvas);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-violet-primary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-violet-deep);
+}
