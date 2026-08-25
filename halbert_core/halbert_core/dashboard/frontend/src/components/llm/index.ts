@@ -1,5 +1,6 @@
 export { AIModelsSettings } from './AIModelsSettings';
 export type { AIModelsSettingsProps } from './AIModelsSettings';
+export { UnifiedLLMSettings } from './UnifiedLLMSettings';
 export { ModelCard } from './ModelCard';
 export type { ModelCardProps } from './ModelCard';
 export { EndpointManager } from './EndpointManager';

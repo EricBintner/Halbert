@@ -48,6 +48,7 @@ import {
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { PageHeader, ChromaDBSettings, DatasetManager, DataVersionCard } from '@/components/domain'
 import { CompressionSettings } from '@/components/CompressionSettings'
+import { UnifiedLLMSettings } from '@/components/llm'
 
 const API_BASE = '/api'
 
@@ -1507,7 +1508,10 @@ export function Settings() {
 
         {/* AI Models Tab - includes model config and knowledge sources */}
         <TabsContent value="ai" className="space-y-4">
-          {/* Connection Status Card */}
+          {/* Unified LLM Model Picker (SourcePrep integration) */}
+          <UnifiedLLMSettings />
+
+          {/* Legacy Connection Status Card — will be removed in Step 4 */}
           <Card className={modelStatus?.ollama_connected 
             ? (modelStatus?.model_installed ? 'border-green-500' : 'border-yellow-500') 
             : 'border-red-500'
