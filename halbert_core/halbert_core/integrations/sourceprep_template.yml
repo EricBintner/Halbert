@@ -36,25 +36,29 @@ project:
     # nothing useful over system config + prose docs. deepening is off in
     # both profiles (per-file gate) AND listed here so the stage never
     # dispatches at all.
-    disabled_stages: ["deepening", "rules", "concepts", "audit", "antibodies"]
+    # catalogue: temporarily disabled for the initial smoke-test build —
+    # the local 27B model times out and the Ollama cloud quota is exhausted.
+    # Re-enable (remove from this list) once a fast LLM is available; T-V.0
+    # then decides whether prose_docs v1 keeps it on permanently.
+    disabled_stages: ["deepening", "rules", "concepts", "audit", "antibodies", "catalogue"]
 
 scopes:
   # Template `id` maps to the daemon scope's display_name; daemon assigns
   # the real id. Reconciliation is keyed on display_name.
   - id: host
-    paths: ["host/"]
+    paths: ["host"]
     pipeline_profile: system_config
   - id: knowledge-linux
-    paths: ["knowledge/linux/"]
+    paths: ["knowledge/linux"]
     pipeline_profile: prose_docs
   - id: knowledge-macos
-    paths: ["knowledge/macos/"]
+    paths: ["knowledge/macos"]
     pipeline_profile: prose_docs
   - id: knowledge-bsd
-    paths: ["knowledge/bsd/"]
+    paths: ["knowledge/bsd"]
     pipeline_profile: prose_docs
   - id: knowledge-common
-    paths: ["knowledge/common/"]
+    paths: ["knowledge/common"]
     pipeline_profile: prose_docs
 
 post_build:

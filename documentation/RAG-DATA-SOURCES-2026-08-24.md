@@ -52,6 +52,32 @@ Linux, macOS, and BSD. It is organized into four platform buckets:
 | FreeBSD man pages | 181 | bsd | FreeBSD Documentation License |
 | **Total** | **28,869** | | |
 
+### 1.1 Git tracking and user access
+
+All 53 JSONL data files plus `manifest.json` and the cleanup reports are
+**committed to git** (~25MB tracked, ~95MB on disk uncompressed). Users
+get the full corpus on `git clone` — no download or scraping step is
+required to run Halbert with RAG.
+
+The `.gitignore` explicitly marks `data/macos/`, `data/bsd/`, and
+`data/common/` as public. `data/linux/` is also tracked. The only
+gitignored data paths are `data/.cache/` (model/embedding cache) and
+`data/memory/` (runtime memory).
+
+**For users who want fresh data without re-scraping:** the HuggingFace
+datasets (§2) will provide versioned snapshots. The `remote_url` and
+`check_updates_url` fields in `manifest.json` are currently empty —
+they will be populated by `scripts/upload_hf_dataset.py` on first
+publish.
+
+### 1.2 SourcePrep staging
+
+`data/staging/sourceprep/` contains a SourcePrep project configuration
+and a mirror of the corpus converted to markdown for SourcePrep
+ingestion. This is the bridge between the JSONL corpus and the
+SourcePrep retrieval backend. The staging directory is not part of the
+canonical corpus — it is a build artifact for the retrieval engine.
+
 ---
 
 ## 2. HuggingFace Dataset Plan
@@ -705,14 +731,21 @@ to fetch and convert pages.
 
 ### 4.4 HuggingFace dataset download
 
-`scripts/download_hf_datasets.py` downloads datasets from HuggingFace:
+`scripts/download_hf_datasets.py` downloads datasets from HuggingFace
+and converts them to the unified JSONL schema:
 - `tmskss/linux-man-pages-tldr-summarized` (481 examples)
 - `harpomaxx/unix-commands` (100 examples)
 - `Dam-Buty/arch-wiki` (12,657 examples)
-- `hannah-eee/arch-wiki-docs` (clean Arch Wiki, ~10K pages)
 
-These were used to supplement the web-scraped content. The hannah-eee
-dataset is the cleanest Arch Wiki source.
+The script's docstring lists these three. A fourth dataset,
+`hannah-eee/arch-wiki-docs` (~10K clean Arch Wiki pages), is referenced
+in the Arch Wiki scraper (§3.1) as an alternative cleaner source but is
+not downloaded by `download_hf_datasets.py` — it was used as a one-time
+supplement during initial corpus building.
+
+These were one-time supplements to bootstrap the corpus, not ongoing
+pipeline inputs. The monthly refresh (§5.1) re-scrapes from live
+sources instead.
 
 ### 4.5 Merge and cleanup scripts
 
@@ -721,6 +754,21 @@ dataset is the cleanest Arch Wiki source.
 - `scripts/clean_man_pages.py` — strips backspace formatting from man pages
 - `scripts/arch_wiki_dedup.py` — deduplicates Arch Wiki pages
 - `scripts/verify_rag_coverage.py` — verifies corpus coverage
+- `scripts/remove_empty_docs.py` — removes empty/near-empty docs (<50 chars) and stale merged artifacts
+- `scripts/normalize_schema.py` — normalizes all JSONL to the unified schema
+- `scripts/dedup_corpus.py` — cross-source exact dedup (writes `data/dedup_report.json`)
+- `scripts/manpage_near_dedup.py` — macOS/FreeBSD man page near-dedup (writes `data/manpage_near_dedup_report.json`)
+- `scripts/corpus_quality_gate.py` — 20 test queries against the corpus
+- `scripts/retrieval_eval.py` — 40+ benchmark queries against SourcePrep, measures precision/coverage/latency
+- `scripts/upload_hf_dataset.py` — uploads JSONL to HuggingFace as a versioned dataset, updates manifest with `remote_url` and `check_updates_url`
+
+### 4.6 Cleanup artifacts
+
+The Phase 0 cleanup (2026-08-23) produced two reports that are tracked in
+git alongside the data:
+
+- `data/dedup_report.json` — cross-source dedup results (28,874 scanned, 5 exact duplicates removed)
+- `data/manpage_near_dedup_report.json` — macOS/FreeBSD man page overlap analysis (91 overlapping commands, 30 high-similarity, 61 distinct versions)
 
 ---
 
@@ -849,21 +897,29 @@ jobs:
           git push
 ```
 
-### 5.4 Scripts that need to be written
+### 5.4 Scripts status
 
-The following scripts are referenced in the automation pipeline but don't
-exist yet:
+The following scripts are referenced in the automation pipeline. Most now
+exist after the Phase 0 cleanup work (2026-08-23):
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/tldr_to_jsonl.py` | Convert TLDR GitHub repo to JSONL |
-| `scripts/normalize_schema.py` | Normalize all JSONL to unified schema |
-| `scripts/dedup_corpus.py` | Cross-source exact dedup |
-| `scripts/manpage_near_dedup.py` | macOS/FreeBSD man page near-dedup |
-| `scripts/corpus_quality_gate.py` | 20 test queries against SourcePrep |
-| `scripts/update_manifest.py` | Update manifest.json with actual counts |
-| `scripts/publish_to_hf.py` | Publish JSONL to HuggingFace datasets |
-| `scripts/refresh_all.sh` | Orchestrate the full monthly refresh |
+| Script | Purpose | Status |
+|--------|---------|--------|
+| `scripts/normalize_schema.py` | Normalize all JSONL to unified schema | **Exists** |
+| `scripts/dedup_corpus.py` | Cross-source exact dedup | **Exists** |
+| `scripts/manpage_near_dedup.py` | macOS/FreeBSD man page near-dedup | **Exists** |
+| `scripts/corpus_quality_gate.py` | 20 test queries against SourcePrep | **Exists** |
+| `scripts/remove_empty_docs.py` | Remove empty/near-empty docs (<50 chars) | **Exists** |
+| `scripts/retrieval_eval.py` | 40+ benchmark queries against SourcePrep | **Exists** |
+| `scripts/upload_hf_dataset.py` | Upload JSONL to HuggingFace, update manifest | **Exists** |
+| `scripts/tldr_to_jsonl.py` | Convert TLDR GitHub repo to JSONL | **Missing** |
+| `scripts/update_manifest.py` | Update manifest.json with actual counts | **Missing** (manual edit currently) |
+| `scripts/publish_to_hf.py` | Publish JSONL to HuggingFace datasets | **Missing** (use `upload_hf_dataset.py` instead) |
+| `scripts/refresh_all.sh` | Orchestrate the full monthly refresh | **Missing** |
+
+**Note:** `scripts/upload_hf_dataset.py` already handles HuggingFace
+publishing and updates `manifest.json` with `remote_url` and
+`check_updates_url`. The `publish_to_hf.py` entry above is obsolete —
+use `upload_hf_dataset.py` directly.
 
 ---
 
@@ -890,6 +946,12 @@ exist yet:
 **Important:** SS64 content (CC BY-NC 4.0) must be excluded from any
 paid/commercial build (e.g., Mac App Store). The synthetic guides are
 Halbert-authored and can replace SS64 content for commercial builds.
+
+**Missing artifact:** `manifest.json` references
+`THIRD-PARTY-LICENSES.txt` in its `notes.attribution_requirements`
+section, but this file does not exist yet. It must be created before
+any public distribution (HuggingFace publish or App Store build). The
+§6 table above is the source material for that file.
 
 ---
 
