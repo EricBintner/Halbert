@@ -17,11 +17,11 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
   const wp = camera.activeWaypoint;
 
   return (
-    <div className="fixed inset-0 pointer-events-none z-20 flex flex-col justify-between p-6 sm:p-12 font-sans select-none">
-      {/* Top Coordinate Header Bar */}
+    <div className="fixed inset-0 pointer-events-none z-20 flex flex-col justify-between p-6 sm:p-10 lg:p-14 font-sans select-none">
+      {/* Top Header Folio Strip */}
       <div className="w-full flex justify-between items-center text-xs font-mono text-[var(--color-ink-secondary)] pointer-events-auto border-b border-white/20 pb-3">
         <div className="flex items-center space-x-3">
-          <HalbertMark size={20} color="#D4E157" strokeWidth={32} />
+          <HalbertMark size={22} color="#D4E157" strokeWidth={32} />
           <span className="font-bold text-white tracking-wider">HALBERT KINETIC WORKSPACE</span>
           <span className="text-[var(--color-vector-lime)] font-mono hidden sm:inline">
             // ZOOM: {Math.round(camera.scale * 100)}%
@@ -30,161 +30,194 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
 
         <div className="flex items-center space-x-4">
           <div className="text-[11px] text-white/70 font-mono hidden md:inline">
-            POS: ({Math.round(camera.cx)}, {Math.round(camera.cy)})
+            FOCAL RETICLE: ({Math.round(camera.cx)}, {Math.round(camera.cy)})
           </div>
           <button
             onClick={() => onJumpToWaypoint(4)}
-            className="px-3 py-1 bg-[var(--color-vector-lime)] text-[#042F2E] font-bold text-xs uppercase tracking-wider hover:bg-white transition-colors cursor-pointer"
+            className="px-3.5 py-1 bg-[var(--color-vector-lime)] text-[#042F2E] font-bold text-xs uppercase tracking-wider hover:bg-white transition-colors cursor-pointer"
           >
-            Reveal Mark ↗
+            Zoom-Out Reveal ↗
           </button>
         </div>
       </div>
 
-      {/* Main Dynamic Viewport Waypoint Stage */}
-      <div className="w-full max-w-6xl mx-auto my-auto pointer-events-auto">
-        {/* WAYPOINT 0: Left / Right Vertical Split */}
+      {/* Dynamic Waypoint Canvas Stage */}
+      <div className="w-full max-w-7xl mx-auto my-auto pointer-events-auto">
+        {/* ========================================================================= */}
+        {/* WAYPOINT 0: Vertical Split (Left Copy | Right Interactive Telemetry)     */}
+        {/* ========================================================================= */}
         {wp === 0 && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center transition-all duration-300 animate-fadeIn">
-            {/* Left Column: Huge Headline */}
-            <div className="lg:col-span-7 space-y-6 text-left">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center transition-all duration-300 animate-fadeIn">
+            {/* Left Column: Entire Copy Stack */}
+            <div className="space-y-6 text-left pr-0 lg:pr-8">
               <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase">
-                01 // VERTICAL VECTOR ENTRY (1000% ZOOM)
+                01 // VERTICAL STEM (LEFT / RIGHT SPLIT)
               </div>
-              <h1 className="text-5xl sm:text-7xl lg:text-[76px] font-display font-black text-white tracking-tight leading-[0.98] cmyk-edge">
+
+              <h1 className="text-5xl sm:text-6xl lg:text-7xl font-display font-black text-white tracking-tight leading-[0.98] cmyk-edge">
                 I know what’s <span className="text-[var(--color-vector-lime)] italic">wrong</span> with me<span className="text-[var(--color-vector-lime)]">.</span>
               </h1>
-              <p className="text-base sm:text-xl text-[var(--color-ink-secondary)] leading-relaxed max-w-xl">
-                The massive vertical stroke before you is a single lane of the Halbert host apparatus. Scroll down to ride the curve.
+
+              <p className="text-base sm:text-lg text-[var(--color-ink-secondary)] leading-relaxed">
+                The massive vertical stroke dividing your screen is a single path of the Halbert apparatus. Halbert runs on your hardware, feels its own diodes, and preserves human intent.
               </p>
+
+              <div className="pt-2 text-xs font-mono text-[var(--color-vector-lime)] flex items-center space-x-2">
+                <span>SCROLL DOWN TO RIDE THE CURVE</span>
+                <span>↓</span>
+              </div>
             </div>
 
-            {/* Right Column: Inked Note */}
-            <div className="lg:col-span-5 vector-plate p-6 sm:p-8 space-y-4 text-left">
-              <div className="text-xs font-mono text-[var(--color-vector-lime)] font-bold uppercase tracking-wider">
-                THE EMBODIED HOST MANIFESTO
+            {/* Right Column: Interactive Hardware Telemetry */}
+            <div className="vector-plate p-6 sm:p-8 space-y-4 text-left pl-6">
+              <div className="flex justify-between items-center border-b border-white/20 pb-2">
+                <span className="text-xs font-mono font-bold text-[var(--color-vector-lime)] uppercase">
+                  PHYSIOLOGICAL SENSORY INTAKE
+                </span>
+                <span className="text-[10px] font-mono text-emerald-400">● 16 ZONES LIVE</span>
               </div>
-              <p className="text-sm text-white/90 leading-relaxed font-sans">
-                Generic AI models are deaf and dumb to physical reality because they live in remote clouds. Halbert runs on your hardware, feels its own thermal diodes, and preserves your configuration history.
+
+              <div className="grid grid-cols-2 gap-3 text-xs font-mono pt-1">
+                <div className="p-3 bg-black/30 border border-white/10">
+                  <div className="text-white/60 text-[10px]">CPU THERMAL</div>
+                  <div className="text-xl font-bold text-white mt-1">44.2°C</div>
+                </div>
+                <div className="p-3 bg-black/30 border border-white/10">
+                  <div className="text-white/60 text-[10px]">NVMe WEAR</div>
+                  <div className="text-xl font-bold text-white mt-1">0.0%</div>
+                </div>
+              </div>
+
+              <p className="text-xs text-white/80 leading-relaxed font-sans pt-1">
+                When a secondary backup drive logs read timeouts at dawn, Halbert stages a proactive triage note before the drive fails.
               </p>
-              <div className="pt-2 text-[11px] font-mono text-[var(--color-ink-tertiary)] flex justify-between">
-                <span>SCROLL TO RIDE VECTOR</span>
-                <span className="text-[var(--color-vector-lime)] font-bold">↓ APEX AHEAD</span>
-              </div>
             </div>
           </div>
         )}
 
-        {/* WAYPOINT 1: Top / Bottom Apex Transformation */}
+        {/* ========================================================================= */}
+        {/* WAYPOINT 1: Top / Bottom Horizontal Apex Division                        */}
+        {/* ========================================================================= */}
         {wp === 1 && (
-          <div className="space-y-6 text-center max-w-4xl mx-auto transition-all duration-300 animate-fadeIn">
-            <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase">
-              02 // AT THE BOTTOM APEX (HORIZONTAL TRANSFORMATION)
-            </div>
-
-            <h2 className="text-4xl sm:text-6xl font-display font-black text-white tracking-tight cmyk-edge">
-              I can feel my own temperature<span className="text-[var(--color-vector-lime)]">.</span>
-            </h2>
-
-            {/* Framed Sensory Plate */}
-            <div className="vector-plate p-6 sm:p-8 text-left grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
-              <div className="p-3 bg-black/20 border border-white/20">
-                <div className="text-white/60 text-[10px] uppercase">16 THERMAL DIODES</div>
-                <div className="text-2xl font-bold text-white mt-1">44.2°C</div>
-                <div className="text-[10px] text-[#34D399] mt-0.5">COOL &amp; QUIET</div>
+          <div className="space-y-8 text-center max-w-4xl mx-auto transition-all duration-300 animate-fadeIn">
+            {/* Top Field: Headline & Thesis */}
+            <div className="space-y-3">
+              <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase">
+                02 // AT THE BOTTOM APEX (TOP / BOTTOM SPLIT)
               </div>
 
-              <div className="p-3 bg-black/20 border border-white/20">
-                <div className="text-white/60 text-[10px] uppercase">PRIMARY NVMe LIFE</div>
-                <div className="text-2xl font-bold text-white mt-1">100%</div>
+              <h2 className="text-4xl sm:text-6xl font-display font-black text-white tracking-tight cmyk-edge">
+                I can feel my own temperature<span className="text-[var(--color-vector-lime)]">.</span>
+              </h2>
+
+              <p className="text-base sm:text-lg text-[var(--color-ink-secondary)] max-w-2xl mx-auto">
+                The vector stroke has turned horizontal across the center of your screen. Halbert lives on the host and perceives physical reality.
+              </p>
+            </div>
+
+            {/* Bottom Field: 3-Column Telemetry Plate */}
+            <div className="vector-plate p-6 sm:p-8 text-left grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
+              <div className="p-3 bg-black/30 border border-white/20">
+                <div className="text-white/60 text-[10px] uppercase">16 THERMAL DIODES</div>
+                <div className="text-2xl font-bold text-white mt-1">44.2°C</div>
+                <div className="text-[10px] text-[#34D399] mt-0.5">NOMINAL FAN CURVES</div>
+              </div>
+
+              <div className="p-3 bg-black/30 border border-white/20">
+                <div className="text-white/60 text-[10px] uppercase">PRIMARY STORAGE</div>
+                <div className="text-2xl font-bold text-white mt-1">100% HEALTH</div>
                 <div className="text-[10px] text-[#34D399] mt-0.5">0 BAD SECTORS</div>
               </div>
 
-              <div className="p-3 bg-black/20 border border-[#F59E0B]/50">
-                <div className="text-[10px] text-[#F59E0B] uppercase">SECONDARY /dev/sda1</div>
+              <div className="p-3 bg-black/30 border border-[#F59E0B]/50">
+                <div className="text-[10px] text-[#F59E0B] uppercase">MIRROR /dev/sda1</div>
                 <div className="text-2xl font-bold text-[#FBBF24] mt-1">3 TIMEOUTS</div>
                 <div className="text-[10px] text-[#F59E0B] mt-0.5">TRIAGE STAGED</div>
               </div>
             </div>
-
-            <p className="text-sm text-[var(--color-ink-secondary)] font-mono">
-              [ Next: Scroll to slide perpendicular across to the inner lane → ]
-            </p>
           </div>
         )}
 
-        {/* WAYPOINT 2: Perpendicular Lane Hop */}
+        {/* ========================================================================= */}
+        {/* WAYPOINT 2: Perpendicular Lane Hop (Concentric Tracks)                   */}
+        {/* ========================================================================= */}
         {wp === 2 && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center text-left transition-all duration-300 animate-fadeIn">
-            <div className="lg:col-span-6 space-y-5">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center text-left transition-all duration-300 animate-fadeIn">
+            {/* Left Column */}
+            <div className="space-y-5">
               <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase">
-                03 // PERPENDICULAR LANE HOP (CONCENTRIC MATRIX)
+                03 // PERPENDICULAR LANE HOP (CONCENTRIC TRACKS)
               </div>
-              <h2 className="text-3xl sm:text-5xl font-display font-black text-white tracking-tight cmyk-edge">
+              <h2 className="text-4xl sm:text-5xl font-display font-black text-white tracking-tight cmyk-edge">
                 I remember why you changed that<span className="text-[var(--color-vector-lime)]">.</span>
               </h2>
               <p className="text-base text-[var(--color-ink-secondary)] leading-relaxed">
-                We have hopped across concentric tracks into Halbert's configuration archaeology. It records human intent alongside AST diffs.
+                Sliding laterally across vector lanes into configuration archaeology. Halbert links human rationale directly to configuration AST diffs.
               </p>
             </div>
 
-            <div className="lg:col-span-6 vector-plate p-6 font-mono text-xs space-y-3">
+            {/* Right Column: AST Diff Plate */}
+            <div className="vector-plate p-6 font-mono text-xs space-y-3">
               <div className="flex justify-between border-b border-white/20 pb-2 text-[11px] text-[var(--color-vector-lime)] font-bold">
                 <span>/etc/ssh/sshd_config.d/50-custom.conf</span>
                 <span>JULY 14, 2026</span>
               </div>
-              <div className="p-3 bg-black/30 border border-white/10 space-y-1">
+              <div className="p-3 bg-black/40 border border-white/10 space-y-1">
                 <div className="text-[#F87171]">- Port 22</div>
                 <div className="text-[#34D399] font-bold">+ Port 2222</div>
                 <div className="text-white/80 text-[11px] pt-2 border-t border-white/10">
-                  <strong className="text-[var(--color-vector-lime)]">HUMAN RATIONALE:</strong> "Automated brute-force bots logged 4.2k attempts per day."
+                  <strong className="text-[var(--color-vector-lime)]">INTENT:</strong> "Automated brute-force bots flooded auth log with 4.2k attempts per day."
                 </div>
               </div>
               <div className="text-[10px] text-white/60">
-                BLAST RADIUS: LOW · STORED IN LOCAL SQLITE MEMORY
+                PROVENANCE RECORDED IN LOCAL SQLITE STORE
               </div>
             </div>
           </div>
         )}
 
-        {/* WAYPOINT 3: Ascending Inner Spine */}
+        {/* ========================================================================= */}
+        {/* WAYPOINT 3: Centered on Shape Cap (Rounded Terminal End)                 */}
+        {/* ========================================================================= */}
         {wp === 3 && (
           <div className="space-y-6 text-center max-w-3xl mx-auto transition-all duration-300 animate-fadeIn">
             <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase">
-              04 // ASCENDING THE INNER SPINE
+              04 // FOCUSED ON ROUNDED SHAPE CAP
             </div>
 
             <h2 className="text-4xl sm:text-6xl font-display font-black text-white tracking-tight cmyk-edge">
               I know 16,000 manuals by heart<span className="text-[var(--color-vector-lime)]">.</span>
             </h2>
 
-            <div className="vector-plate p-6 text-left space-y-4 text-xs font-mono">
+            <div className="vector-plate p-6 text-left space-y-3 text-xs font-mono max-w-xl mx-auto">
               <div className="flex justify-between border-b border-white/20 pb-2 text-white/70">
                 <span>LOCAL SOURCEPREP RAG</span>
-                <span className="text-[#34D399]">● ZERO CLOUD EGRESS</span>
+                <span className="text-[#34D399]">● 100% AIRGAPPED</span>
               </div>
-              <div className="p-3 bg-black/30 border border-white/10 space-y-2 text-white/90">
+              <div className="p-3 bg-black/40 border border-white/10 space-y-1.5 text-white/90">
                 <div>&gt; halbert propose storage-compress /data --dry-run</div>
-                <div className="text-[var(--color-vector-lime)]">
+                <div className="text-[var(--color-vector-lime)] font-bold">
                   Proposed: `mount -o remount,compression=lz4 /data`
                 </div>
-                <div className="text-white/60 text-[11px]">
-                  Estimated space recovery: 35% with zero unmount downtime.
+                <div className="text-white/60 text-[10px]">
+                  Estimated space recovery: 35% with zero unmount downtime. Requires Polkit approval.
                 </div>
               </div>
             </div>
 
             <p className="text-xs text-[var(--color-ink-secondary)] font-mono">
-              [ Scroll to pull back the camera for the Grand Zoom-Out Reveal ↓ ]
+              [ Scroll to initiate Grand Zoom-Out Reveal ↓ ]
             </p>
           </div>
         )}
 
-        {/* WAYPOINT 4: Grand Zoom-Out Reveal */}
+        {/* ========================================================================= */}
+        {/* WAYPOINT 4: Grand Zoom-Out Finale (100% Mark Reveal)                     */}
+        {/* ========================================================================= */}
         {wp === 4 && (
           <div className="space-y-8 text-center max-w-2xl mx-auto transition-all duration-500 animate-fadeIn">
             <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase">
-              05 // THE REVEAL · 100% SCALE
+              05 // THE GRAND REVEAL · 100% SCALE
             </div>
 
             <h2 className="text-4xl sm:text-6xl lg:text-7xl font-display font-black text-white tracking-tight leading-[0.98] cmyk-edge">
@@ -193,13 +226,13 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
             </h2>
 
             <p className="text-base sm:text-lg text-[var(--color-ink-secondary)]">
-              The entire Halbert concentric vector mark is now in full view. 100% local host intelligence for macOS and Linux.
+              The entire Halbert concentric vector mark is revealed in its full geometric symmetry. 100% local host intelligence for macOS and Linux.
             </p>
 
             {/* Email Dispatch Registry */}
             <div className="vector-plate p-6 sm:p-8">
               {status === 'success' ? (
-                <div className="p-4 bg-black/30 border border-[var(--color-vector-lime)] text-[var(--color-vector-lime)] font-display font-bold text-sm">
+                <div className="p-4 bg-black/40 border border-[var(--color-vector-lime)] text-[var(--color-vector-lime)] font-display font-bold text-sm">
                   ✓ Registered to Early Preview Roster.
                 </div>
               ) : (
@@ -226,10 +259,10 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
         )}
       </div>
 
-      {/* Bottom Footer Navigation Coordinates */}
+      {/* Bottom Coordinates & Stage Info */}
       <div className="w-full flex justify-between items-center text-[11px] font-mono text-[var(--color-ink-tertiary)] pointer-events-auto border-t border-white/20 pt-3">
-        <div>STAGE: 0{wp + 1} OF 05</div>
-        <div>HALBERT HOST ENGINE // OLLAMA EMBEDDED</div>
+        <div>STAGE: 0{wp + 1} OF 05 // {camera.layoutType.toUpperCase()}</div>
+        <div>HALBERT HOST APPARATUS · ZERO CLOUD EGRESS</div>
       </div>
     </div>
   );

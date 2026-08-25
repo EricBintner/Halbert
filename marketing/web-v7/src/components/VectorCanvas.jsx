@@ -1,7 +1,11 @@
 import React from 'react';
 
+/**
+ * Authentic Vector Canvas for Site V7
+ * Renders the exact 1024x1024 Halbert SVG path with zero artificial shadow duplicates,
+ * enabling pristine screen-splitting at 1000% zoom.
+ */
 export function VectorCanvas({ camera }) {
-  // Compute dynamic viewBox from camera center and scale
   const baseDim = 1024;
   const w = baseDim / Math.max(0.1, camera.scale);
   const h = baseDim / Math.max(0.1, camera.scale);
@@ -34,68 +38,18 @@ export function VectorCanvas({ camera }) {
         className="w-full h-full"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <defs>
-          <filter id="cmyk-misreg">
-            <feOffset in="SourceGraphic" dx="-1.5" dy="-0.5" result="cyan" />
-            <feOffset in="SourceGraphic" dx="1.5" dy="0.5" result="magenta" />
-            <feMerge>
-              <feMergeNode in="cyan" />
-              <feMergeNode in="magenta" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-        </defs>
-
-        {/* Outer Background Canvas */}
+        {/* Solid Background Canvas */}
         <rect width="1024" height="1024" fill="var(--color-canvas)" />
 
-        {/* Architectural Tangent Guidelines & Crosshairs */}
-        <g stroke="rgba(255,255,255,0.12)" strokeWidth="1" strokeDasharray="4 8">
-          <line x1="512" y1="0" x2="512" y2="1024" />
-          <line x1="0" y1="512" x2="1024" y2="512" />
-          <circle cx="512" cy="512" r="432" fill="none" />
-          <circle cx="512" cy="512" r="288" fill="none" />
-          <circle cx="512" cy="512" r="144" fill="none" />
-        </g>
-
-        {/* CMYK Underprint Shadow (Offset Cyan & Magenta) */}
-        <g
-          fill="none"
-          stroke="rgba(0, 240, 255, 0.4)"
-          strokeWidth="38"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          transform="translate(-2, -1)"
-        >
-          <path d={pathData} />
-        </g>
-        <g
-          fill="none"
-          stroke="rgba(255, 0, 127, 0.4)"
-          strokeWidth="38"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          transform="translate(2, 1)"
-        >
-          <path d={pathData} />
-        </g>
-
-        {/* Main Solid Vibrant Vector Tracks in Pop Chartreuse */}
+        {/* Clean, Authentic Halbert Vector Paths in Pop Chartreuse */}
         <g
           fill="none"
           stroke="var(--color-vector-lime)"
-          strokeWidth="36"
+          strokeWidth="32"
           strokeLinecap="round"
           strokeLinejoin="round"
         >
           <path d={pathData} />
-        </g>
-
-        {/* Dynamic Camera Focal Target Reticle */}
-        <g transform={`translate(${camera.cx}, ${camera.cy})`}>
-          <circle r="12" fill="none" stroke="#FFFFFF" strokeWidth="1.5" opacity="0.6" strokeDasharray="3 3" />
-          <line x1="-18" y1="0" x2="18" y2="0" stroke="#FFFFFF" strokeWidth="1" opacity="0.6" />
-          <line x1="0" y1="-18" x2="0" y2="18" stroke="#FFFFFF" strokeWidth="1" opacity="0.6" />
         </g>
       </svg>
     </div>
