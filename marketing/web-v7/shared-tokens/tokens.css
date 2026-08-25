@@ -1,0 +1,28 @@
+@theme {
+  /* ===== Surface Ramp (Vibrant Teal & Lime Field) ===== */
+  --color-canvas:            #0F766E;   /* Deep Aegean Teal / Cyan Canvas */
+  --color-surface:           #115E59;   /* Inked surface plate */
+  --color-surface-subtle:    #134E4A;   /* Recessed teal well */
+  --color-surface-muted:     rgba(255, 255, 255, 0.25);
+
+  /* ===== Pop Chartreuse Vector Stroke ===== */
+  --color-vector-lime:       #D4E157;   /* Pop Lime / Chartreuse */
+  --color-vector-light:      #E6EE9C;   /* Light Chartreuse Tint */
+  --color-vector-glow:       rgba(212, 225, 87, 0.35);
+
+  /* ===== Ink Hierarchy ===== */
+  --color-ink:               #FFFFFF;   /* Crisp White Display */
+  --color-ink-secondary:     #CCFBF1;   /* Soft Ice Aquamarine */
+  --color-ink-tertiary:      #99F6E4;   /* Pale Seafoam */
+  --color-ink-dark:          #042F2E;   /* Deepest Ink */
+
+  /* ===== Strategic CMYK / Contrast Highlights ===== */
+  --color-cmyk-cyan:         #00F0FF;   /* Neon Cyan */
+  --color-cmyk-magenta:      #FF007F;   /* Neon Magenta */
+  --color-cmyk-yellow:       #FFE600;   /* Process Yellow */
+
+  /* ===== Typography ===== */
+  --font-display:            "Fraunces", "DM Serif Display", Georgia, serif;
+  --font-sans:               "Space Grotesk", "Plus Jakarta Sans", sans-serif;
+  --font-mono:               "JetBrains Mono", monospace;
+}
