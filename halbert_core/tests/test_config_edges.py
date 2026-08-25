@@ -327,7 +327,7 @@ class TestSourcePrepClientExtensions:
     def test_push_external_edges_calls_post(self):
         from halbert_core.integrations.sourceprep_client import SourcePrepClient
 
-        client = SourcePrepClient(base_url="http://localhost:17717", project_id="test")
+        client = SourcePrepClient(base_url="http://localhost:8400", project_id="test")
         with patch.object(client, "_post") as mock_post:
             mock_post.return_value = {"accepted": 5}
             edges = [
@@ -343,7 +343,7 @@ class TestSourcePrepClientExtensions:
     def test_push_external_edges_without_replace(self):
         from halbert_core.integrations.sourceprep_client import SourcePrepClient
 
-        client = SourcePrepClient(base_url="http://localhost:17717", project_id="test")
+        client = SourcePrepClient(base_url="http://localhost:8400", project_id="test")
         with patch.object(client, "_post") as mock_post:
             mock_post.return_value = {"accepted": 1}
             edges = [
@@ -357,7 +357,7 @@ class TestSourcePrepClientExtensions:
     def test_get_impact_builds_correct_url(self):
         from halbert_core.integrations.sourceprep_client import SourcePrepClient
 
-        client = SourcePrepClient(base_url="http://localhost:17717", project_id="test")
+        client = SourcePrepClient(base_url="http://localhost:8400", project_id="test")
         with patch("halbert_core.integrations.sourceprep_client.requests.get") as mock_get:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
@@ -374,7 +374,7 @@ class TestSourcePrepClientExtensions:
     def test_get_impact_accepts_node_id_format(self):
         from halbert_core.integrations.sourceprep_client import SourcePrepClient
 
-        client = SourcePrepClient(base_url="http://localhost:17717", project_id="test")
+        client = SourcePrepClient(base_url="http://localhost:8400", project_id="test")
         with patch("halbert_core.integrations.sourceprep_client.requests.get") as mock_get:
             mock_resp = MagicMock()
             mock_resp.status_code = 200

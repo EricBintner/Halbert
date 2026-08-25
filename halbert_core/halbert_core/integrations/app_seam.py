@@ -197,7 +197,7 @@ def wire_halbert_seam(
         sourceprep_project_id: SourcePrep project ID for the host config
             tree. If None, reads from SOURCEPREP_PROJECT_ID env var.
         sourceprep_url: SourcePrep daemon URL. If None, reads from
-            SOURCEPREP_URL env var, defaults to http://localhost:17717.
+            SOURCEPREP_URL env var, defaults to http://localhost:8400.
         ollama_url: Ollama URL. If None, reads from OLLAMA_URL env var.
         model: Default LLM model. If None, reads from HALBERT_MODEL env var.
         skip_retrieval: If True, don't wire the retrieval backend (for

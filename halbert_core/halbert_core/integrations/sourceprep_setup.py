@@ -127,7 +127,7 @@ class SourcePrepSetup:
 
         self.base_url = (
             base_url
-            or os.environ.get("SOURCEPREP_URL", "http://localhost:17717")
+            or os.environ.get("SOURCEPREP_URL", "http://localhost:8400")
         ).rstrip("/")
         self.template_path = Path(template_path)
         self.transport = transport or _requests_transport(self.base_url, timeout)

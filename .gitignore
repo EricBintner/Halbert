@@ -129,3 +129,6 @@ data/linux/man-pages/
 data/staging/
 
 .playwright-mcp/
+
+# SourcePrep volatile index + agent context (auto-generated, machine-local; keep ignored)
+.sourceprep/

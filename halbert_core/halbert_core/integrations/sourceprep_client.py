@@ -40,7 +40,7 @@ class SourcePrepClient:
     ):
         self.base_url = (
             base_url
-            or os.environ.get("SOURCEPREP_URL", "http://localhost:17717")
+            or os.environ.get("SOURCEPREP_URL", "http://localhost:8400")
         ).rstrip("/")
         self.project_id = project_id or os.environ.get(
             "SOURCEPREP_PROJECT_ID", ""

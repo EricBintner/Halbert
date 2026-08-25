@@ -216,11 +216,17 @@ stored in the same YAML file (SourcePrep migrates from SQLite to YAML as part of
 No mention of Halbert. This is the current state, basically unchanged except the storage
 backend.
 
-**Both installed:** Both apps read and write the same YAML file automatically. No setting
-to toggle, no "share config" checkbox. Changing models in one app is reflected in the
-other because they're literally the same file. The file lock prevents write conflicts. This
-is invisible to the user — they just notice both apps always agree on which models are
-configured.
+**Both installed:** Both apps read the same YAML file automatically — config is always
+in sync because there is only one file. However, **Halbert's model picker becomes read-only
+when the SourcePrep daemon is detected running.** Instead of a duplicate editable picker,
+Halbert's Settings page shows the current model configuration (read from the shared YAML)
+with editing disabled, plus a **"Manage SourcePrep models"** button that links to
+SourcePrep's dashboard (`http://localhost:8400`). This avoids two identical editable pickers
+competing for the same config file. The user manages models in one place (SourcePrep's
+dashboard); Halbert reflects those changes immediately via the shared YAML. If the
+SourcePrep daemon stops, Halbert's picker re-enables automatically. A small status indicator
+shows which state Halbert is in: "Model config managed by SourcePrep" (daemon detected) or
+"Model config managed here" (daemon not detected).
 
 ### 3.5 Slot mapping: Halbert's roles → SourcePrep's slots
 
@@ -348,14 +354,30 @@ of validation saves days of misdirected work.
    - Hardware-tier recommendations ("Apply Recommended Config" button)
    - Compression settings card (already a separate component: `CompressionSettings.tsx`)
    - Model test results display
+8. **Daemon detection — picker deferral.** Add a daemon-detection check (port probe to
+   `http://localhost:8400/api/system/health`, polled every ~10s while the Settings page is
+   open):
+   - **Daemon detected:** Render `AIModelsSettings` in **read-only mode** (all inputs
+     disabled, greyed out). Show a banner: "Model config managed by SourcePrep" with a
+     **"Manage SourcePrep models"** button that opens `http://localhost:8400` in a new tab.
+     The current config is still displayed (read from the shared YAML) so the user can see
+     what's configured — they just can't edit it from Halbert.
+   - **Daemon not detected:** Render `AIModelsSettings` in normal editable mode. Show a
+     subtle status line: "Model config managed here."
+   - The detection is client-side polling, not a one-time check — if the daemon starts or
+     stops while the Settings page is open, the picker mode switches in real time.
 
 **Pass criteria:**
 - Settings page renders `AIModelsSettings` with the current `models.yml` config.
-- User can add/edit/delete endpoints.
-- User can assign models to slots (small/large/vision).
+- User can add/edit/delete endpoints **when SourcePrep daemon is not running.**
+- User can assign models to slots (small/large/vision) **when SourcePrep daemon is not running.**
 - Model test works (clicks "Test" → gets a success/failure result).
 - "Apply Recommended Config" still works (either as a Halbert-specific button outside the
   component, or as a custom prop injected into `AIModelsSettings`).
+- **When SourcePrep daemon is running:** picker is read-only, "Manage SourcePrep models"
+  button links to `http://localhost:8400`, current config is still visible.
+- **When daemon transitions from running → stopped:** picker re-enables automatically
+  within ~10s.
 - No visual regression in the rest of the Settings page.
 
 **Styling note:** `@prep/ui` uses Tailwind with a specific design-token system
@@ -543,6 +565,7 @@ Each step has pass criteria (above). Additionally, after all steps are complete:
 - `halbert_core/halbert_core/dashboard/routes/llm.py` — vendored LLM router (from SourcePrep)
 - `halbert_core/halbert_core/dashboard/routes/global_config.py` — vendored `/global/config` endpoint
 - `halbert_core/halbert_core/config/llm_config_store.py` — `ConfigStore` protocol + YAML backend
+- `halbert_core/halbert_core/dashboard/frontend/src/hooks/useSourcePrepDaemon.ts` — daemon detection hook (port probe to `:8400`, polls every ~10s, returns `{ detected: boolean, dashboardUrl: string }`)
 - (If `@prep/ui` can't be linked) `halbert_core/halbert_core/dashboard/frontend/src/components/llm/` — copied components
 
 ### Files to modify (Halbert)
@@ -578,6 +601,7 @@ Each step has pass criteria (above). Additionally, after all steps are complete:
 | 2026-08-23 | No migration script | Self-healing: new code normalizes old shape in memory; first save writes new shape. Zero-downtime. |
 | 2026-08-23 | Keep `apply-recommended` and `install` as Halbert-specific routes | These are Halbert features (hardware-tier detection, Ollama pull) not in SourcePrep's router. |
 | 2026-08-23 | Single YAML file, no fallback cache | A fallback cache creates silent divergence — user sees stale model list without knowing daemon is down. One file, one source of truth. Both apps read/write the same path. File lock prevents corruption. |
+| 2026-08-24 | Halbert picker defers to SourcePrep when daemon detected | Avoids two identical editable pickers competing for the same YAML. When SourcePrep daemon is running, Halbert's picker becomes read-only with a "Manage SourcePrep models" link to the SP dashboard. Halbert's picker re-enables when the daemon goes down. Config still syncs via the shared YAML in both directions. |
 
 ---
 
@@ -638,19 +662,27 @@ No dependency prompts, no "please also install X," no confusing second app appea
 3. If the first app closes, the daemon may stay alive (if the second app is still connected)
    or shut down gracefully (reference-counted lifecycle, or the second app takes over
    ownership).
-4. Both apps share the same LLM config (since they're talking to the same daemon). Changing
-   models in one is reflected in the other. This is automatic, not a setting.
-5. **The user doesn't need to understand this.** They just notice that both apps agree on
+4. Both apps share the same LLM config (since they're reading the same YAML file). Config
+   is always in sync — there is only one file.
+5. **Halbert's model picker is read-only when the SourcePrep daemon is detected.** Instead
+   of a duplicate editable picker, Halbert shows the current config with editing disabled
+   and a **"Manage SourcePrep models"** button linking to SourcePrep's dashboard
+   (`http://localhost:8400`). The user manages models in one place; Halbert reflects
+   changes via the shared YAML. If the daemon stops, Halbert's picker re-enables
+   automatically. A status indicator reads: "Model config managed by SourcePrep" (daemon
+   detected) or "Model config managed here" (daemon not detected).
+6. **The user doesn't need to understand this.** They just notice that both apps agree on
    which models are configured. If they only ever use one at a time, they never even notice
    the other exists.
 
 ### 11.4 What if the daemon crashes or won't start?
 
 - **Halbert:** Chat still works. Halbert reads `models.yml` directly (the same file the
-  daemon reads — not a fallback copy, the actual store). Model picker still works (Halbert's
-  vendored router reads/writes the same file). Code-awareness features (prep_search, trace)
-  are degraded — a non-blocking notification suggests restarting. The user never sees a
-  different model list because there is only one list.
+  daemon reads — not a fallback copy, the actual store). **The model picker re-enables**
+  (since the SourcePrep daemon is no longer detected, Halbert takes over as the config
+  editor). Code-awareness features (prep_search, trace) are degraded — a non-blocking
+  notification suggests restarting. The user never sees a different model list because
+  there is only one list.
 - **SourcePrep:** MCP tools and dashboard are degraded. The daemon restarts on next app
   launch. Config is preserved in the same YAML file.
 
