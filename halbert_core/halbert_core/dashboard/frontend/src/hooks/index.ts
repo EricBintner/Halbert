@@ -7,9 +7,9 @@
 
 export { useScanPage, type ScanType } from './useScanPage'
 export { useCopyToClipboard } from './useCopyToClipboard'
-export { 
-  useAgentStream, 
-  type AgentState, 
+export {
+  useAgentStream,
+  type AgentState,
   type CRAGAction,
   type PlanStep,
   type ToolExecution,
@@ -21,3 +21,10 @@ export {
   type UseAgentStreamOptions,
   type UseAgentStreamReturn,
 } from './useAgentStream'
+export {
+  useTerminalSessions,
+  type TerminalSession,
+  type TerminalSessionStatus,
+  type SpawnOptions,
+  type UseTerminalSessions,
+} from './useTerminalSessions'
