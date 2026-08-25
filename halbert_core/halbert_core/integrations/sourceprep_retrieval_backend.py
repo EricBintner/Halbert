@@ -32,8 +32,10 @@ logger = logging.getLogger(__name__)
 #
 # Map a natural-language query to a SourcePrep scope so retrieval targets the
 # right corpus: this host's live config tree ("host") or the per-platform
-# reference/knowledge corpus ("knowledge-<platform>"). Ambiguous queries stay
-# unscoped (full union). This is a v1 keyword heuristic — the retrieval quality
+# reference/knowledge corpus ("knowledge_<platform>" — scope IDs on the
+# SourcePrep daemon use underscores, e.g. "knowledge_macos"; hyphens silently
+# fall back to the global union). Ambiguous queries stay unscoped (full
+# union). This is a v1 keyword heuristic — the retrieval quality
 # gate (T-V.2) validates it on the real corpus and the corpus-classification
 # pre-flight (T-V.0) informs tuning.
 
@@ -85,10 +87,10 @@ def scope_for_query(query: str, *, platform: Optional[str] = None) -> Optional[s
     1. Detect intake domains; if a host-operational domain is present AND the
        query is phrased about the host's own state → ``"host"``.
     2. Else if a platform is named (or the *platform* override / the running
-       host's platform) → ``"knowledge-<platform>"``.
+       host's platform) → ``"knowledge_<platform>"``.
     3. Else if a host-operational domain is present but not host-possessive →
        treat as reference knowledge about the default platform →
-       ``"knowledge-<default>"``.
+       ``"knowledge_<default>"``.
     4. Ambiguous / no signal → ``None`` (unscoped union).
     """
     if not query or not query.strip():
@@ -123,7 +125,7 @@ def scope_for_query(query: str, *, platform: Optional[str] = None) -> Optional[s
     # A host-operational domain without a host cue reads as reference
     # knowledge about the platform (e.g. "explain the Port directive").
     if host_operational or m:
-        return f"knowledge-{plat}"
+        return f"knowledge_{plat}"
 
     return None
 

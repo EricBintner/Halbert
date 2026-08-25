@@ -21,13 +21,13 @@ from halbert_core.integrations.sourceprep_retrieval_backend import scope_for_que
         ("is my sshd using port 22", "host"),
         ("what's currently configured on this host", "host"),
         # Platform named → knowledge-<platform>.
-        ("how do I configure sshd on linux?", "knowledge-linux"),
-        ("how to set up nfs on macos", "knowledge-macos"),
-        ("freebsd service management", "knowledge-bsd"),
+        ("how do I configure sshd on linux?", "knowledge_linux"),
+        ("how to set up nfs on macos", "knowledge_macos"),
+        ("freebsd service management", "knowledge_bsd"),
         # Operational domain, no host cue → reference knowledge about the
         # default platform.
-        ("explain the Port directive", "knowledge-linux"),
-        ("how does dns resolution work", "knowledge-linux"),
+        ("explain the Port directive", "knowledge_linux"),
+        ("how does dns resolution work", "knowledge_linux"),
         # No signal → unscoped union.
         ("what does PermitRootLogin accept", None),
         ("tell me a joke", None),
@@ -40,7 +40,7 @@ def test_scope_for_query_routes(query, expected):
 
 def test_scope_for_query_platform_override():
     # Default platform comes from the override / running host when none named.
-    assert scope_for_query("explain the Port directive", platform="macos") == "knowledge-macos"
+    assert scope_for_query("explain the Port directive", platform="macos") == "knowledge_macos"
 
 
 def test_get_context_passes_scope(monkeypatch):
@@ -82,6 +82,6 @@ def test_backend_search_passes_figure_id_as_scope(monkeypatch):
             return {"chunks": []}
 
     backend = SourcePrepRetrievalBackend(client=_FakeClient())
-    backend.search("how do I configure sshd on linux?", k=3, figure_id="knowledge-linux")
-    assert captured["scope"] == "knowledge-linux"
+    backend.search("how do I configure sshd on linux?", k=3, figure_id="knowledge_linux")
+    assert captured["scope"] == "knowledge_linux"
     assert captured["trace_expand"] is True
