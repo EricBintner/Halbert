@@ -18,7 +18,7 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
 
   return (
     <div className="fixed inset-0 pointer-events-none z-20 flex flex-col justify-between p-6 sm:p-10 lg:p-14 font-sans select-none">
-      {/* Top Header Folio Strip */}
+      {/* Top Header Folio Bar */}
       <div className="w-full flex justify-between items-center text-xs font-mono text-[var(--color-ink-secondary)] pointer-events-auto border-b border-white/20 pb-3">
         <div className="flex items-center space-x-3">
           <HalbertMark size={22} color="#D4E157" strokeWidth={32} />
@@ -41,34 +41,34 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
         </div>
       </div>
 
-      {/* Dynamic Waypoint Canvas Stage */}
+      {/* Main Dynamic Viewport Waypoint Stage */}
       <div className="w-full max-w-7xl mx-auto my-auto pointer-events-auto">
         {/* ========================================================================= */}
-        {/* WAYPOINT 0: Vertical Split (Left Copy | Right Interactive Telemetry)     */}
+        {/* WAYPOINT 0: 50/50 Vertical Split (Left Copy | Right Interactive Telemetry)*/}
         {/* ========================================================================= */}
         {wp === 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center transition-all duration-300 animate-fadeIn">
-            {/* Left Column: Entire Copy Stack */}
-            <div className="space-y-6 text-left pr-0 lg:pr-8">
-              <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase">
-                01 // VERTICAL STEM (LEFT / RIGHT SPLIT)
+            {/* Left Column (Over Chartreuse Stroke Field) */}
+            <div className="space-y-6 text-left pr-0 lg:pr-8 text-[#042F2E]">
+              <div className="inline-block px-3 py-1 bg-[#042F2E] text-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest uppercase">
+                01 // VERTICAL VECTOR SPLIT
               </div>
 
-              <h1 className="text-5xl sm:text-6xl lg:text-7xl font-display font-black text-white tracking-tight leading-[0.98] cmyk-edge">
-                I know what’s <span className="text-[var(--color-vector-lime)] italic">wrong</span> with me<span className="text-[var(--color-vector-lime)]">.</span>
+              <h1 className="text-5xl sm:text-6xl lg:text-7xl font-display font-black text-[#042F2E] tracking-tight leading-[0.98]">
+                I know what’s <span className="italic underline decoration-2">wrong</span> with me<span className="text-teal-900">.</span>
               </h1>
 
-              <p className="text-base sm:text-lg text-[var(--color-ink-secondary)] leading-relaxed">
-                The massive vertical stroke dividing your screen is a single path of the Halbert apparatus. Halbert runs on your hardware, feels its own diodes, and preserves human intent.
+              <p className="text-base sm:text-lg text-[#0F3935] leading-relaxed font-medium">
+                The massive stroke dividing your screen is a single path of the Halbert apparatus. Halbert runs on your hardware, feels its own diodes, and preserves human intent.
               </p>
 
-              <div className="pt-2 text-xs font-mono text-[var(--color-vector-lime)] flex items-center space-x-2">
+              <div className="pt-2 text-xs font-mono text-[#042F2E] font-bold flex items-center space-x-2">
                 <span>SCROLL DOWN TO RIDE THE CURVE</span>
                 <span>↓</span>
               </div>
             </div>
 
-            {/* Right Column: Interactive Hardware Telemetry */}
+            {/* Right Column (Over Teal Background Field) */}
             <div className="vector-plate p-6 sm:p-8 space-y-4 text-left pl-6">
               <div className="flex justify-between items-center border-b border-white/20 pb-2">
                 <span className="text-xs font-mono font-bold text-[var(--color-vector-lime)] uppercase">
