@@ -27,6 +27,7 @@ from .providers import ModelProvider, ModelResponse, OllamaProvider
 from .providers.base import GenerationError, ModelNotFoundError
 from .rate_limiter import RateLimiter
 from .outcome_store import OutcomeStore
+from .cascade_router import MetaHarnessRouter
 from ..agents.error_recovery import get_recovery_manager
 
 logger = logging.getLogger('halbert.model.tier_router')
@@ -242,6 +243,10 @@ class TierRouter:
         # so MetaHarnessRouter (C2a) can blend evidence with priors.
         self.outcome_store = OutcomeStore()
 
+        # Cost-cascade router with outcome-based self-tuning (C2a/C2b). Opt-in;
+        # when disabled, route_request uses the heuristic path below.
+        self.cascade_router = MetaHarnessRouter(self, self.outcome_store)
+
         logger.info(f"TierRouter initialized with {len(self.config.models)} models")
     
     def _find_config(self, config_path: Optional[Path]) -> Path:
@@ -448,69 +453,46 @@ class TierRouter:
                 tier=ModelTier.VISION,
                 require_vision=True,
             )
-        
-        # Score complexity
-        complexity = self._score_complexity(query)
-        
+
+        # Explicit overrides still apply even when cascade routing is enabled.
+        if prefer_specialist or (task_type and task_type in self.config.force_specialist_tasks):
+            complexity = self.cascade_router.estimate_complexity(query)
+            return self.select_model(
+                tier=ModelTier.SPECIALIST,
+                require_reasoning=self._should_use_reasoning(query, complexity),
+                complexity_score=complexity,
+            )
+
+        # Cost-cascade router (C2b): when enabled, delegate model selection to
+        # MetaHarnessRouter, which blends tier priors with recorded outcomes.
+        # When disabled (default), behavior is byte-identical to the old
+        # heuristic path below (now using the shared estimate_complexity).
+        if self.cascade_router.is_enabled():
+            model = self.cascade_router.route(query)
+            if model is not None:
+                return ModelSelection(
+                    model=model,
+                    reason="cascade_router",
+                    fallback_used=False,
+                    capabilities=model.capabilities,
+                )
+
+        complexity = self.cascade_router.estimate_complexity(query)
         # Determine tier
-        if prefer_specialist:
-            tier = ModelTier.SPECIALIST
-        elif task_type and task_type in self.config.force_specialist_tasks:
-            tier = ModelTier.SPECIALIST
-        elif complexity >= self.config.complexity_threshold:
+        if complexity >= self.config.complexity_threshold:
             tier = ModelTier.SPECIALIST
         else:
             tier = ModelTier.GUIDE
-        
+
         # Check if reasoning would be beneficial
         require_reasoning = self._should_use_reasoning(query, complexity)
-        
+
         return self.select_model(
             tier=tier,
             require_reasoning=require_reasoning,
             complexity_score=complexity,
         )
-    
-    def _score_complexity(self, query: str) -> float:
-        """Score query complexity (0.0 to 1.0)."""
-        score = 0.0
-        query_lower = query.lower()
-        words = query.split()
-        
-        # Length
-        if len(words) > 50:
-            score += 0.2
-        elif len(words) > 20:
-            score += 0.1
-        
-        # Code indicators
-        if any(kw in query_lower for kw in [
-            'write', 'create', 'script', 'code', 'implement',
-            'debug', 'fix', 'error', 'optimize'
-        ]):
-            score += 0.3
-        
-        # Multi-step indicators
-        if any(kw in query_lower for kw in [
-            'step by step', 'first', 'then', 'compare', 'analyze'
-        ]):
-            score += 0.2
-        
-        # Complex sysadmin
-        if any(kw in query_lower for kw in [
-            'troubleshoot', 'diagnose', 'investigate', 'security',
-            'performance', 'configure', 'architecture'
-        ]):
-            score += 0.2
-        
-        # Simple query reduction
-        if any(kw in query_lower for kw in [
-            'what is', 'show me', 'list', 'status'
-        ]) and len(words) < 15:
-            score -= 0.2
-        
-        return max(0.0, min(1.0, score))
-    
+
     def _should_use_reasoning(self, query: str, complexity: float) -> bool:
         """Determine if reasoning model would be beneficial."""
         if not self.config.prefer_reasoning:
