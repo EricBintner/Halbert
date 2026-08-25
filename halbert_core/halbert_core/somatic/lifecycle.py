@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .block import BlockStatus, BlockType, SomaticBlock
 from .store import SomaticStore
+from .checkpoints import CheckpointManager
 
 logger = logging.getLogger("halbert.somatic.lifecycle")
 
@@ -61,6 +62,7 @@ class SomaticLifecycle:
         recovery_executor: Optional[Any] = None,
         guardrail_enforcer: Optional[Any] = None,
         handle_approval_decision: Callable = _handle_approval_decision_default,
+        checkpoints: Optional[CheckpointManager] = None,
     ):
         self.store = store
         self.generator = proposal_generator
@@ -68,6 +70,7 @@ class SomaticLifecycle:
         self.recovery_executor = recovery_executor
         self.guardrail_enforcer = guardrail_enforcer
         self._handle_approval_decision = handle_approval_decision
+        self.checkpoints = checkpoints if checkpoints is not None else CheckpointManager()
 
     # ------------------------------------------------------------------
     # Phases
@@ -150,6 +153,14 @@ class SomaticLifecycle:
         block.status = BlockStatus.EXECUTING
         self._persist(block)
 
+        # Checkpoint affected files before executing so a failed/rolled-back
+        # action can be undone (C1c). Best-effort: no paths -> nothing saved.
+        affected = []
+        if approved:
+            affected = self._affected_paths(block)
+            if affected:
+                self.checkpoints.checkpoint_many(affected)
+
         result = self._handle_approval_decision(
             block.approval_request_id, approved, reason, generator=self.generator
         )
@@ -161,11 +172,17 @@ class SomaticLifecycle:
             block.action_id = result.get("proposal_id") or block.proposal_id
         elif approved and status_str == "rolled_back":
             block.status = BlockStatus.ROLLED_BACK
+            # Execution failed and rolled back via WriteConfig; also restore
+            # our checkpoints as a belt-and-suspenders undo (C1c).
+            if affected:
+                self.checkpoints.rollback_many(affected)
         elif not approved:
             block.status = BlockStatus.REJECTED
         else:
             # approved but unclear result -> rolled back (safe default)
             block.status = BlockStatus.ROLLED_BACK
+            if affected:
+                self.checkpoints.rollback_many(affected)
 
         self._persist(block, action_id=block.action_id)
         return block
@@ -191,3 +208,41 @@ class SomaticLifecycle:
         block.updated_at = time.time()
         # link_ids are already set on the in-memory block; save() upserts all.
         self.store.save(block)
+
+    def _affected_paths(self, block: SomaticBlock) -> List[str]:
+        """Best-effort extraction of file paths a proposal will modify.
+
+        Prefers the finding's ``affected_paths``; falls back to path-like keys
+        in the proposal's ``changes``. Returns [] if nothing is determinable.
+        """
+        paths: List[str] = []
+        seen = set()
+        # 1. finding.affected_paths
+        finding = None
+        if block.finding_id and hasattr(self.generator, "findings"):
+            try:
+                finding = self.generator.findings.get(block.finding_id)
+            except Exception:
+                finding = None
+        if finding is not None:
+            for p in getattr(finding, "affected_paths", None) or []:
+                if p and p not in seen:
+                    seen.add(p)
+                    paths.append(p)
+        # 2. proposal.changes path-like keys
+        proposal = None
+        if block.proposal_id and hasattr(self.generator, "proposals"):
+            try:
+                proposal = self.generator.proposals.get(block.proposal_id)
+            except Exception:
+                proposal = None
+        if proposal is not None:
+            for change in getattr(proposal, "changes", None) or []:
+                if not isinstance(change, dict):
+                    continue
+                for key in ("path", "file", "target", "file_path"):
+                    p = change.get(key)
+                    if p and p not in seen:
+                        seen.add(p)
+                        paths.append(p)
+        return paths
