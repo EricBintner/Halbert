@@ -19,6 +19,7 @@ sandbox.mjs / Sandbox.wrapCommand).
 
 from __future__ import annotations
 
+import json
 import logging
 import platform
 import shlex
@@ -26,6 +27,17 @@ import shutil
 from typing import List, Optional
 
 logger = logging.getLogger("halbert.streaming.sandbox")
+
+
+def _seatbelt_str(path: str) -> str:
+    """Quote a path as a seatbelt string literal (double-quoted).
+
+    shlex.quote produces shell quoting (single quotes / backslashes) which
+    seatbelt does NOT understand — a bare ``/etc`` token is read as a variable
+    reference ("unbound variable: /etc"). Seatbelt uses Lisp-style double-
+    quoted strings, so we use json.dumps.
+    """
+    return json.dumps(path)
 
 
 class Sandbox:
@@ -117,23 +129,33 @@ class Sandbox:
         return f"sandbox-exec -p {shlex.quote(profile)} /bin/sh -c {shlex.quote(command)}"
 
     def _seatbelt_profile(self, writable: List[str]) -> str:
-        """Build a seatbelt profile string allowing exec + reads, denying a
-        few sensitive read paths, and restricting writes to ``writable``."""
+        """Build a permissive seatbelt profile for v1.
+
+        Seatbelt is allow-by-default: only the explicit ``deny`` rules
+        restrict. This profile denies writes to system directories and reads
+        to a few sensitive paths, leaving normal commands usable. ``writable``
+        is accepted for API compatibility but, in permissive v1 mode, writes
+        outside the denied system dirs are already allowed.
+        """
         rules = [
+            "(version 1)",
+            # Seatbelt is default-deny for process-exec; allow broadly (v1
+            # permissive), then deny writes to system dirs / reads to sensitive.
             "(allow process-exec)",
             "(allow process-fork)",
             "(allow signal (target self))",
             "(allow file-read*)",
-            "(allow file-read-metadata*)",
-            "(deny file-write*)",
-            "(deny file-write* (subpath \"/private/etc\"))",
+            "(allow file-write*)",
         ]
+        # Deny writes to system directories (override the broad allow)
+        system_dirs = [
+            "/etc", "/usr", "/System", "/Library",
+            "/bin", "/sbin", "/private/etc", "/var/db",
+        ]
+        for d in system_dirs:
+            rules.append(f"(deny file-write* (subpath {_seatbelt_str(d)}))")
+        # Deny reads to sensitive paths
         for p in self._deny_read_subpaths:
-            rules.append(f"(deny file-read* (subpath {shlex.quote(p)}))")
-        for p in writable:
-            # Re-allow writes only to the designated paths
-            rules.append(f"(allow file-write* (subpath {shlex.quote(p)}))")
-        # Allow writes to a few tmp/scratch locations so basic commands work
-        rules.append("(allow file-write* (subpath \"/tmp\"))")
-        rules.append("(allow file-write* (subpath \"/private/tmp\"))")
-        return "(version 1)\n" + "\n".join(rules)
+            rules.append(f"(deny file-read* (subpath {_seatbelt_str(p)}))")
+        # (writable is acknowledged but redundant in permissive v1 mode)
+        return "\n".join(rules)

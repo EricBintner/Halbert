@@ -65,8 +65,8 @@ def test_wrap_macos_seatbelt(monkeypatch, sandbox):
     wrapped = sandbox.wrap_command("ls /", writable_paths=["/tmp/halbert"])
     assert wrapped.startswith("sandbox-exec -p ")
     assert "/bin/sh -c " in wrapped
-    # The writable path appears in the profile
-    assert "/tmp/halbert" in wrapped
+    # Permissive v1 profile carries system-dir write denies
+    assert "/etc" in wrapped
 
 
 def test_wrap_unsupported_platform_returns_command(monkeypatch, sandbox):
@@ -114,11 +114,11 @@ def test_is_available_linux_no_bwrap(monkeypatch, sandbox):
     assert sandbox.is_available() is False
 
 
-def test_seatbelt_profile_contains_writable_allow(monkeypatch, sandbox):
+def test_seatbelt_profile_contains_system_dir_denies(monkeypatch, sandbox):
     monkeypatch.setattr("halbert_core.streaming.sandbox.platform.system", lambda: "Darwin")
     profile = sandbox._seatbelt_profile(["/tmp/halbert"])
-    # shlex.quote leaves simple paths unquoted inside the profile
-    assert "(allow file-write* (subpath /tmp/halbert))" in profile
-    assert "(deny file-write*)" in profile
-    # sensitive read denies present
-    assert "/etc/ssh" in profile
+    # Permissive v1: deny writes to system dirs, deny reads to sensitive paths.
+    # Paths are seatbelt double-quoted strings (json.dumps), e.g. (subpath "/etc")
+    assert '(deny file-write* (subpath "/etc"))' in profile
+    assert '(deny file-write* (subpath "/System"))' in profile
+    assert '/etc/ssh' in profile  # sensitive read deny present
