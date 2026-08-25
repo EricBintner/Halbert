@@ -344,9 +344,16 @@ class SourcePrepAdapter:
             return []
 
         k = limit or self._default_k
+        # T-H1.3: route the query to the right SourcePrep scope (host config
+        # tree vs per-platform knowledge corpus). Ambiguous → unscoped union.
+        try:
+            from ..integrations.sourceprep_retrieval_backend import scope_for_query
+            scope = scope_for_query(query)
+        except Exception:  # pragma: no cover - routing must never block retrieval
+            scope = None
         try:
             results = await asyncio.to_thread(
-                self._backend.search, query, k=k
+                self._backend.search, query, k=k, figure_id=scope
             )
         except Exception as e:
             logger.warning(f"SourcePrep adapter search failed: {e}")

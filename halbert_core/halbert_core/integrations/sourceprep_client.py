@@ -90,6 +90,7 @@ class SourcePrepClient:
         trace_expand: bool = True,
         min_score: float = 0.15,
         project_id: Optional[str] = None,
+        scope: Optional[str] = None,
     ) -> Dict[str, Any]:
         """POST /projects/{id}/context — structured context assembly.
 
@@ -97,19 +98,23 @@ class SourcePrepClient:
         individual result chunks. This is the primary retrieval method for
         the RetrievalBackend adapter — we render from structured chunks, not
         stashed markdown.
+
+        ``scope`` (T-H1.3) is included in the request body only when set —
+        the SourcePrep API already supports per-scope masking (scope_resolver).
+        None (default) leaves the query unscoped (full union).
         """
-        return self._post(
-            "/projects/{project_id}/context",
-            {
-                "query": query,
-                "k": k,
-                "max_chars": max_chars,
-                "structured": structured,
-                "trace_expand": trace_expand,
-                "min_score": min_score,
-                "include_sources": True,
-            },
-        )
+        body = {
+            "query": query,
+            "k": k,
+            "max_chars": max_chars,
+            "structured": structured,
+            "trace_expand": trace_expand,
+            "min_score": min_score,
+            "include_sources": True,
+        }
+        if scope is not None:
+            body["scope"] = scope
+        return self._post("/projects/{project_id}/context", body)
 
     def search(
         self,

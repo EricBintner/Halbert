@@ -32,8 +32,16 @@ logger = logging.getLogger(__name__)
 
 PROJECT_NAME = "halbert-host"
 
-# Staging directory: ~/.local/share/halbert/host-config-staging/
-STAGING_DIR = data_subdir("host-config-staging")
+# Staging directory for the host config tree. T-H1.1 unified the two-project
+# split into one SourcePrep project under a single root:
+#   ~/.local/share/halbert/sourceprep/
+#       host/      ← live config snapshots (this registrar)
+#       knowledge/  ← jsonl_to_markdown.py doc corpus
+# The host config files stage to sourceprep/host/ so the unified "halbert"
+# project's `host/` scope covers them. A custom --staging-dir override still
+# works for debugging and points wherever the caller wants.
+SOURCEPREP_ROOT = data_subdir("sourceprep")
+STAGING_DIR = data_subdir("sourceprep", "host")
 
 # OS-specific config file collections to stage
 _LINUX_CONFIG_PATHS = [

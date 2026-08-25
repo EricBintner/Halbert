@@ -166,15 +166,23 @@ class ConfigWatcher:
 
 
 # ---------------------------------------------------------------------------
-# SourcePrep re-index callback (Phase 5 / T5a.2)
+# SourcePrep re-index callback (Phase 5 / T5a.2; T-H1.4 unified project)
 # ---------------------------------------------------------------------------
 
 def create_sourceprep_reindex_callback(
-    project_name: str = "halbert-host",
+    project_name: str = "halbert",
     debounce_s: float = 5.0,
 ) -> Callback:
-    """Create a debounced callback that re-stages config files and triggers
-    a SourcePrep rebuild for the halbert-host project.
+    """Create a debounced callback that re-stages host config files and
+    triggers an incremental SourcePrep rebuild of the unified "halbert"
+    project (T-H1.4).
+
+    Replaces the old two-project HostProjectRegistrar.register("halbert-host")
+    path: the unified template's apply(build_fast_sync_only=True) re-stages
+    host/, runs an incremental fast_sync, and re-pushes the config external
+    edges with replace_origin="config". knowledge/ is untouched — the
+    changeset gate drops its unchanged doc files, so this never re-embeds
+    the doc corpus.
 
     Usage:
         watcher = ConfigWatcher(
@@ -190,13 +198,17 @@ def create_sourceprep_reindex_callback(
 
     def _do_reindex() -> None:
         try:
-            from ..tools.register_host_project import HostProjectRegistrar
-            registrar = HostProjectRegistrar()
-            result = registrar.register(name=project_name, build=True)
-            logger.info(
-                f"SourcePrep re-index: staged={result.get('files_staged', 0)}, "
-                f"created={result.get('created')}"
-            )
+            from ..integrations.sourceprep_setup import SourcePrepSetup
+            setup = SourcePrepSetup()
+            result = setup.apply(build_fast_sync_only=True)
+            if result.get("status") == "skipped":
+                logger.info(f"SourcePrep re-index skipped: {result.get('reason')}")
+            else:
+                build = result.get("build", {}) if isinstance(result.get("build"), dict) else {}
+                logger.info(
+                    f"SourcePrep re-index: project={result.get('project')} "
+                    f"fast_sync={build.get('fast_sync', {}).get('status', 'n/a')}"
+                )
         except Exception as e:
             logger.warning(f"SourcePrep re-index failed (non-fatal): {e}")
 

@@ -17,7 +17,14 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..utils.paths import data_subdir
+
 logger = logging.getLogger("halbert.rag.jsonl_to_markdown")
+
+# T-H1.1: unified SourcePrep knowledge corpus root. convert_corpus mirrors
+# the data/{linux,macos,bsd,common} hierarchy under staging_dir, so the
+# default output lands at sourceprep/knowledge/{linux,macos,bsd,common}/.
+DEFAULT_STAGING_DIR = Path(data_subdir("sourceprep", "knowledge"))
 
 DEFAULT_MAX_DOCS = 500
 DEFAULT_MAX_BYTES = 500_000  # 500 KB threshold
@@ -260,8 +267,10 @@ def main():
     parser.add_argument(
         "--staging-dir",
         type=Path,
-        default=Path("data/staging/sourceprep"),
-        help="Path to staging output directory",
+        default=DEFAULT_STAGING_DIR,
+        help="Path to staging output directory (default: the unified "
+             "~/.local/share/halbert/sourceprep/knowledge/ root; convert_corpus "
+             "mirrors the per-platform data subdirs under it)",
     )
     parser.add_argument(
         "--max-docs",

@@ -19,11 +19,113 @@ passed as the `scope` parameter to SourcePrep's context endpoint.
 from __future__ import annotations
 
 import logging
+import platform
+import re
 from typing import Any, Dict, List, Optional
 
 from .sourceprep_client import SourcePrepClient
 
 logger = logging.getLogger(__name__)
+
+
+# ── Intake-domain → scope routing (T-H1.3) ────────────────────────────
+#
+# Map a natural-language query to a SourcePrep scope so retrieval targets the
+# right corpus: this host's live config tree ("host") or the per-platform
+# reference/knowledge corpus ("knowledge-<platform>"). Ambiguous queries stay
+# unscoped (full union). This is a v1 keyword heuristic — the retrieval quality
+# gate (T-V.2) validates it on the real corpus and the corpus-classification
+# pre-flight (T-V.0) informs tuning.
+
+# Domains from intake/signals.py that are about THIS host's own state/config.
+_HOST_DOMAINS = {"config", "service", "security", "network", "storage"}
+
+# Possessive / "this host" language — strong signal the query is about the
+# host's own configuration, not general reference knowledge.
+_HOST_CUE = re.compile(
+    r"\b("
+    r"my\s+(?:host|machine|system|server|config|sshd|ssh|firewall|network|service|setup)"
+    r"|this\s+(?:host|machine|system|server)"
+    r"|currently\s+(?:set|configured|running|using|enabled|disabled)"
+    r"|what'?s\s+(?:my|set|configured|currently)"
+    r"|on\s+(?:this\s+host|my\s+(?:system|machine|host))"
+    r"|show\s+me\s+my"
+    r")",
+    re.IGNORECASE,
+)
+
+# Platform name → knowledge scope suffix.
+_PLATFORM_SCOPES = {
+    "linux": "linux",
+    "darwin": "macos",
+    "macos": "macos",
+    "freebsd": "bsd",
+    "bsd": "bsd",
+    "common": "common",
+}
+_PLATFORM_RE = re.compile(r"\b(linux|mac\s?os|os\s?x|darwin|freebsd|bsd)\b", re.IGNORECASE)
+
+
+def _default_platform_scope() -> str:
+    """Map the running platform to a knowledge scope suffix."""
+    sysname = platform.system().lower()
+    if sysname == "linux":
+        return "linux"
+    if sysname == "darwin":
+        return "macos"
+    if "bsd" in sysname:
+        return "bsd"
+    return "common"
+
+
+def scope_for_query(query: str, *, platform: Optional[str] = None) -> Optional[str]:
+    """Route *query* to a SourcePrep scope (T-H1.3).
+
+    Resolution:
+    1. Detect intake domains; if a host-operational domain is present AND the
+       query is phrased about the host's own state → ``"host"``.
+    2. Else if a platform is named (or the *platform* override / the running
+       host's platform) → ``"knowledge-<platform>"``.
+    3. Else if a host-operational domain is present but not host-possessive →
+       treat as reference knowledge about the default platform →
+       ``"knowledge-<default>"``.
+    4. Ambiguous / no signal → ``None`` (unscoped union).
+    """
+    if not query or not query.strip():
+        return None
+
+    # Detect intake domains (cheap, no import cycle: signals is intake).
+    domains: set = set()
+    try:
+        from ..intake.signals import analyze_message  # type: ignore
+
+        sig = analyze_message(query)
+        domains = set(sig.detected_domains)
+    except Exception:  # pragma: no cover - routing must never raise
+        logger.debug("scope_for_query: domain detection failed", exc_info=True)
+
+    host_operational = bool(domains & _HOST_DOMAINS)
+    host_cue = bool(_HOST_CUE.search(query))
+
+    # A possessive/this-host cue is specific enough to route to the host
+    # config tree on its own — "what's my sshd_config set to?" is about THIS
+    # host regardless of which domain keyword matched.
+    if host_cue:
+        return "host"
+
+    # Named platform in the query wins over the default.
+    m = _PLATFORM_RE.search(query)
+    plat = _PLATFORM_SCOPES.get((m.group(1).lower().replace(" ", "").replace("osx", "macos")
+                                 if m else ""), None)
+    if plat is None:
+        plat = platform or _default_platform_scope()
+
+    # A host-operational domain without a host cue reads as reference
+    # knowledge about the platform (e.g. "explain the Port directive").
+    if host_operational or m:
+        return f"knowledge-{plat}"
+
+    return None
 
 
 class SourcePrepRetrievalBackend:
