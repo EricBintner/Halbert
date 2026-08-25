@@ -113,6 +113,78 @@ def check_modules(base_url: str) -> tuple[bool, str]:
     return False, f"'vitals' not in module list: {names}"
 
 
+# A troubleshooting prompt that intake should classify as non-trivial.
+# When specialist routing is enabled (models.yml), this routes to 'specialist';
+# when disabled (e.g. a dev host without models.yml), it falls back to 'guide'
+# but is_troubleshooting is still true — which is what we assert in that case.
+_TROUBLESHOOTING_MSG = (
+    "my nginx service keeps crashing with exit code 1 and the journal shows a "
+    "bind error on port 80, how do I fix this?"
+)
+
+
+def _post_json(url: str, payload: dict, timeout: float = HTTP_TIMEOUT_S) -> dict:
+    """POST JSON and parse the response body as JSON."""
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def check_intake_routing(base_url: str) -> tuple[bool, str]:
+    """Check 5: POST /api/agent/intake classifies routing correctly.
+
+    Greetings must route to the guide. A troubleshooting prompt must route to
+    the specialist when specialist routing is enabled; when it is not enabled
+    (dev host without models.yml), we instead assert that intake still flagged
+    the message as troubleshooting (signal detection is correct even though
+    model selection falls back to guide).
+    """
+    url = f"{base_url}/api/agent/intake"
+
+    # 5a: greeting -> guide
+    try:
+        greeting = _post_json(url, {"message": "hi"}, timeout=AGENT_TIMEOUT_S)
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
+        return False, f"POST {url} (greeting) failed: {e}"
+    if greeting.get("recommended_model") != "guide":
+        return False, f"greeting routed to {greeting.get('recommended_model')!r}, expected 'guide'"
+    if not greeting.get("is_greeting"):
+        return False, "greeting not detected as is_greeting"
+
+    # 5b: troubleshooting -> specialist (when enabled) or at least flagged as troubleshooting
+    try:
+        trouble = _post_json(url, {"message": _TROUBLESHOOTING_MSG}, timeout=AGENT_TIMEOUT_S)
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
+        return False, f"POST {url} (troubleshooting) failed: {e}"
+
+    specialist_enabled = bool(trouble.get("specialist_enabled"))
+    if specialist_enabled:
+        if trouble.get("recommended_model") != "specialist":
+            return False, (
+                f"troubleshooting routed to {trouble.get('recommended_model')!r}, "
+                f"expected 'specialist' (specialist_enabled=True, "
+                f"complexity={trouble.get('complexity_score')})"
+            )
+        routing_detail = "troubleshooting->specialist"
+    else:
+        if not trouble.get("is_troubleshooting"):
+            return False, (
+                "troubleshooting not detected as is_troubleshooting "
+                "(specialist disabled, so routing fell back to guide — "
+                "but signal detection must still fire)"
+            )
+        routing_detail = (
+            f"troubleshooting flagged (specialist disabled; routed to "
+            f"{trouble.get('recommended_model')!r})"
+        )
+
+    return True, f"greeting->guide, {routing_detail}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Halbert boot-gate smoke check")
     parser.add_argument(
@@ -130,6 +202,7 @@ def main() -> int:
         ("agent send round-trip ('hi')", check_agent_send),
         ("being config exposes voice", check_being_config),
         ("module registry lists vitals", check_modules),
+        ("intake routing (guide / specialist)", check_intake_routing),
     ]
 
     failures = 0

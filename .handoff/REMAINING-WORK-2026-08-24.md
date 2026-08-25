@@ -1,5 +1,10 @@
 # Remaining Work — Halbert Being Overhaul
 
+> **⚠️ STALE — superseded 2026-08-24 by `FABLE-HANDOFF-2026-08-24.md`.**
+> This doc was written *before* commit `682468f` ("fix: close remaining-work items...") landed. That commit **closed** §1.3 (in-doc chunking), §1.4 (vision routing), §2.1 (5 state-machine failures — fixed via `asyncio.run()`), §2.2 (`importorskip`), and the §3 UTC-morning-report watch item. Verified this session: `halbert_core/tests/` = **418 passed / 2 skipped / 0 failed** (deterministic ×2). The §3 marketing-ports watch item is also resolved (intentional, landed in `d93c12e`, `dev-restart.sh` depends on 5173).
+>
+> **Only four items below are still open:** §1.1 (chat.py retirement — fable-level), §1.2 (Ubuntu boot gate — blocked on Linux host; Mac run done, 5/5, see `BOOT-GATE-RESULT-2026-08-24.md`), §1.5 (drive-health SMART — blocked on Linux), §1.6 (SourcePrep scopes — blocked upstream). Read `FABLE-HANDOFF-2026-08-24.md` for the corrected, current picture. The body below is left unchanged for the record.
+
 **Created:** 2026-08-24
 **Context:** Follow-up to the full audit of `.handoff/IMPLEMENTATION-PLAN-2026-08-23.md` (74 tasks, Phases 0–8) and the fix pass that closed the found gaps. Everything committable from that pass landed in the same-day commits; this document is the leftover list — what is deliberately open, what is deferred, and what to watch.
 
