@@ -409,6 +409,25 @@ class StreamEvent:
                 "waiting_for": waiting_for,
             },
         )
+
+    @classmethod
+    def somatic_block(
+        cls,
+        session_id: str,
+        block_type: str,
+        block_id: str,
+        status: str,
+        **kwargs: Any,
+    ) -> 'StreamEvent':
+        """Emit a somatic block phase/status change (C1d).
+
+        Drives the UI's somatic-block timeline. Extra fields (finding_id,
+        proposal_id, approval_request_id, action_id, reflection_id) are
+        passed through as kwargs.
+        """
+        data = {"block_type": block_type, "block_id": block_id, "status": status}
+        data.update(kwargs)
+        return cls(type="somatic_block", session_id=session_id, data=data)
     
     @classmethod
     def heartbeat(cls, session_id: str = "system") -> 'StreamEvent':

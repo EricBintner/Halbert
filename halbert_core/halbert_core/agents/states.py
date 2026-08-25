@@ -131,6 +131,10 @@ class StateContext:
     conversation_status: "ConversationStatusMachine" = field(
         default_factory=_new_conversation_status
     )
+
+    # Somatic block currently active for this turn (C1d); None when no somatic
+    # cycle is in progress.
+    current_somatic_block_id: Optional[str] = None
     
     # Planning
     plan: List[PlanStep] = field(default_factory=list)

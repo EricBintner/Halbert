@@ -73,10 +73,12 @@ class AgentStateMachine:
         cognition_tick: Callable = None,
         event_mapper = None,
         intake_pipeline = None,
+        somatic_lifecycle = None,
+        somatic_store = None,
     ):
         """
         Initialize the agent state machine.
-        
+
         Args:
             llm_client: Client for LLM calls (chat, stream)
             tool_executor: Tool execution with safety checks
@@ -90,6 +92,9 @@ class AgentStateMachine:
             cognition_tick: Haloysius advance_turn callable
             event_mapper: System event → persona emotion mapper
             intake_pipeline: Phase 3 IntakePipeline for pre-cognitive message analysis
+            somatic_lifecycle: Optional SomaticLifecycle (C1d). When None, the
+                somatic seams are no-ops.
+            somatic_store: Optional SomaticStore backing the lifecycle.
         """
         self.llm = llm_client
         self.tools = tool_executor
@@ -99,6 +104,8 @@ class AgentStateMachine:
         self.rag = rag_service
         self.memory = memory_service
         self.intake = intake_pipeline
+        self.somatic_lifecycle = somatic_lifecycle
+        self.somatic_store = somatic_store
         
         self.max_loops = max_loops
         self.crag_threshold = crag_threshold
@@ -393,6 +400,34 @@ class AgentStateMachine:
             blocked_action=self.ctx.conversation_status.blocked_action(),
             waiting_for=self.ctx.conversation_status.waiting_for(),
         )
+
+    async def _emit_somatic_block(self, block: Any) -> StreamEvent:
+        """Build a somatic_block SSE event and also publish it to the
+        ProactiveEventBus (C1d). Best-effort on the proactive side.
+        """
+        event = StreamEvent.somatic_block(
+            self.ctx.session_id,
+            block.block_type.value if hasattr(block.block_type, "value") else str(block.block_type),
+            block.id,
+            block.status.value if hasattr(block.status, "value") else str(block.status),
+            finding_id=block.finding_id,
+            proposal_id=block.proposal_id,
+            approval_request_id=block.approval_request_id,
+            action_id=block.action_id,
+            reflection_id=block.reflection_id,
+        )
+        try:
+            from ..proactive.events import ProactiveEvent, get_event_bus
+            pe = ProactiveEvent.create(
+                type="somatic_block",
+                severity="info",
+                title=f"Block {event.data['block_type']}: {event.data['status']}",
+                body=f"session={block.session_id} block={block.id}",
+            )
+            await get_event_bus().publish(pe)
+        except Exception as e:
+            logger.debug(f"Proactive somatic publish failed (non-fatal): {e}")
+        return event
     
     def _get_handler(self) -> Optional[Callable]:
         """Get the handler function for the current state."""
@@ -813,6 +848,19 @@ class AgentStateMachine:
                 # Non-fatal: continue to responding
         else:
             logger.debug("No cognition_tick wired, skipping reflection")
+
+        # C1d: if a somatic block is active for this turn, advance it to
+        # reflection and emit the block event (SSE + ProactiveEventBus).
+        if (self.somatic_lifecycle is not None and self.somatic_store is not None
+                and self.ctx.current_somatic_block_id):
+            block = self.somatic_store.get(self.ctx.current_somatic_block_id)
+            if block is not None:
+                try:
+                    await self.somatic_lifecycle.advance_to_reflection(block)
+                    self.somatic_store.save(block)
+                    yield await self._emit_somatic_block(block)
+                except Exception as e:
+                    logger.warning(f"Somatic reflection failed (non-fatal): {e}")
 
         # Always proceed to responding after reflection
         yield await self._transition(AgentState.RESPONDING)
