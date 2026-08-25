@@ -1,6 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useScan } from '@/contexts/ScanContext'
-import { useDebug } from '@/contexts/DebugContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -8,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ConfirmDialog, Toast } from '@/components/ui/confirm-dialog'
+import { Toast } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/api'
 import type { SystemInfo } from '@/lib/tauri'
 import { getSystemInfo } from '@/lib/tauri'
@@ -23,7 +22,6 @@ import {
   Brain,
   Users,
   BookOpen,
-  Server,
   Check,
   X,
   Plus,
@@ -39,7 +37,6 @@ import {
   Shield,
   ShieldCheck,
   AlertTriangle,
-  Eye,
   Palette,
   Lock,
   FileCode,
@@ -65,35 +62,6 @@ interface DiscoveryStats {
   by_type: Record<string, number>
 }
 
-// New structure: endpoints are saved without models
-interface SavedEndpoint {
-  id: string
-  name: string
-  url: string
-  provider: string
-  api_key?: string
-}
-
-interface ModelAssignment {
-  endpoint_id?: string
-  endpoint: string
-  provider: string
-  model: string
-  name: string
-  enabled?: boolean
-}
-
-interface ModelConfig {
-  orchestrator: ModelAssignment
-  specialist: ModelAssignment & { enabled: boolean }
-  vision: ModelAssignment & { enabled: boolean }
-  routing: {
-    strategy: string
-    prefer_specialist_for: string[]
-  }
-  saved_endpoints: SavedEndpoint[]
-}
-
 interface ModelStatus {
   ollama_connected: boolean
   model_installed: boolean
@@ -106,43 +74,6 @@ interface ModelStatus {
   total_vram_gb?: number | null
   compression_available?: boolean
   compression_backend?: string
-}
-
-// Helper to detect model capabilities from name
-function getModelCapabilities(modelName: string): { thinking: boolean; vision: boolean; code: boolean; largeContext: boolean } {
-  const name = modelName.toLowerCase()
-  return {
-    // Thinking/reasoning models
-    thinking: name.includes('thinking') || 
-              name.includes('-r1') || 
-              name.includes('deepseek-r1') ||
-              name.includes('qwen3') ||  // qwen3 has thinking by default
-              name.includes('qwq') ||
-              name.includes('reasoning'),
-    // Vision/multimodal models
-    // IMPORTANT: mistral-small 3.1+ (24B) has built-in vision!
-    vision: name.includes('vision') || 
-            name.includes('llava') || 
-            name.includes('llama3.2-vision') ||
-            name.includes('gemma3') ||  // gemma3 is multimodal
-            name.includes('pixtral') ||
-            name.includes('bakllava') ||
-            (name.includes('mistral-small') && !name.includes('2.')) ||  // mistral-small 3.1+ has vision
-            name.includes('mistral-small-3'),  // explicit 3.x version
-    // Code-focused models
-    code: name.includes('coder') || 
-          name.includes('codestral') ||
-          name.includes('starcoder') ||
-          name.includes('deepseek-coder') ||
-          name.includes('qwen2.5-coder'),
-    // Large context window (128K+)
-    largeContext: name.includes('mistral-small') ||  // mistral-small has 128K
-                  name.includes('gemma3') ||  // gemma3 has 128K
-                  name.includes('qwen') ||  // qwen models have 128K
-                  name.includes('llama3.1') ||  // llama3.1 has 128K
-                  name.includes('llama3.2') ||  // llama3.2 has 128K
-                  name.includes('llama3.3')  // llama3.3 has 128K
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -439,8 +370,6 @@ function BeingSettings() {
 export function Settings() {
   // Scan context for coordinated system-wide scanning
   const { triggerDeepScan, isDeepScanning } = useScan()
-  // Debug context for logging
-  const { addLog } = useDebug()
   
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [alertRules, setAlertRules] = useState<AlertRule[]>([])
@@ -456,11 +385,8 @@ export function Settings() {
   const [clearing, setClearing] = useState(false)
   
   // Model config state
-  const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null)
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
-  const [testingEndpoint, setTestingEndpoint] = useState(false)
-  const [testResult, setTestResult] = useState<{success: boolean, message: string} | null>(null)
   
   // Persona state
   const [activePersona, setActivePersona] = useState<string>('it_admin')
@@ -472,31 +398,8 @@ export function Settings() {
   const [editingPersonaName, setEditingPersonaName] = useState<string | null>(null)
   const [savingName, setSavingName] = useState(false)
   
-  // New endpoint form (without model)
-  const [newEndpoint, setNewEndpoint] = useState({
-    name: '',
-    url: '',
-    provider: 'ollama',
-    api_key: ''
-  })
-  
   // Editing endpoint state
-  const [editingEndpoint, setEditingEndpoint] = useState<SavedEndpoint & { index: number } | null>(null)
-  const [showAddEndpoint, setShowAddEndpoint] = useState(false)
   const [showAddKnowledgeSource, setShowAddKnowledgeSource] = useState(false)
-  
-  // Model selector state (separate per role to avoid cross-contamination)
-  const [guideEndpointId, setGuideEndpointId] = useState<string>('')
-  const [guideModels, setGuideModels] = useState<string[]>([])
-  const [loadingGuideModels, setLoadingGuideModels] = useState(false)
-  
-  const [specialistEndpointId, setSpecialistEndpointId] = useState<string>('')
-  const [specialistModels, setSpecialistModels] = useState<string[]>([])
-  const [loadingSpecialistModels, setLoadingSpecialistModels] = useState(false)
-  
-  const [visionEndpointId, setVisionEndpointId] = useState<string>('')
-  const [visionModels, setVisionModels] = useState<string[]>([])
-  const [loadingVisionModels, setLoadingVisionModels] = useState(false)
   
   // RAG knowledge source state
   const [newSourceUrl, setNewSourceUrl] = useState('')
@@ -595,14 +498,6 @@ export function Settings() {
   const [newKnowledge, setNewKnowledge] = useState({ subject: '', content: '', rationale: '' })
   const [addingKnowledge, setAddingKnowledge] = useState(false)
   const [showAddKnowledge, setShowAddKnowledge] = useState(false)
-  
-  // Delete confirmation dialog state
-  const [deleteConfirm, setDeleteConfirm] = useState<{
-    open: boolean
-    endpointName?: string
-    isSpecialist: boolean
-  }>({ open: false, isSpecialist: false })
-  const [deleting, setDeleting] = useState(false)
   
   // Toast notification state
   const [toast, setToast] = useState<{ open: boolean, message: string, variant: 'success' | 'error' | 'info' }>({ 
@@ -761,15 +656,6 @@ export function Settings() {
       console.error('Failed to load policy:', err)
     }
     
-    // Load model config
-    try {
-      const res = await fetch(`${API_BASE}/settings/model`)
-      const data = await res.json()
-      setModelConfig(data)
-    } catch (err) {
-      console.error('Failed to load model config:', err)
-    }
-    
     // Load model status (connection + availability)
     // This may auto-configure Local Ollama on fresh install
     setLoadingStatus(true)
@@ -777,13 +663,6 @@ export function Settings() {
       const res = await fetch(`${API_BASE}/settings/model/status`)
       const data = await res.json()
       setModelStatus(data)
-      
-      // If auto-configured, reload the model config to get updated endpoints
-      if (data.auto_configured) {
-        const configRes = await fetch(`${API_BASE}/settings/model`)
-        const configData = await configRes.json()
-        setModelConfig(configData)
-      }
     } catch (err) {
       console.error('Failed to load model status:', err)
       setModelStatus({ ollama_connected: false, model_installed: false, model_name: '', endpoint: 'http://localhost:11434', available_models: [], recommended_model: null })
@@ -838,23 +717,6 @@ export function Settings() {
     await new Promise(resolve => setTimeout(resolve, 1000))
     setClearing(false)
     alert('Cache cleared. Run a new scan to refresh.')
-  }
-  
-  const handleTestEndpoint = async (endpoint: string, provider: string) => {
-    setTestingEndpoint(true)
-    setTestResult(null)
-    try {
-      const res = await fetch(`${API_BASE}/settings/model/test`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ endpoint, provider, model: '' })
-      })
-      const data = await res.json()
-      setTestResult(data)
-    } catch (err) {
-      setTestResult({ success: false, message: 'Request failed' })
-    }
-    setTestingEndpoint(false)
   }
   
   // System Profile functions
@@ -984,172 +846,6 @@ export function Settings() {
       console.error('Failed to save persona name:', err)
     }
     setSavingName(false)
-  }
-  
-  const handleSaveEndpoint = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/settings/endpoints`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newEndpoint.name,
-          url: newEndpoint.url,
-          provider: newEndpoint.provider,
-          api_key: newEndpoint.api_key || null
-        })
-      })
-      const data = await res.json()
-      if (data.success) {
-        setNewEndpoint({ name: '', url: '', provider: 'ollama', api_key: '' })
-        setToast({ open: true, message: 'Endpoint saved', variant: 'success' })
-        loadSettings()
-      } else {
-        setToast({ open: true, message: data.detail || 'Failed to save endpoint', variant: 'error' })
-      }
-    } catch (err) {
-      console.error('Failed to save endpoint:', err)
-      setToast({ open: true, message: 'Failed to save endpoint', variant: 'error' })
-    }
-  }
-  
-  // Update endpoint (using new structure without model)
-  const handleUpdateEndpoint = async () => {
-    if (!editingEndpoint) return
-    try {
-      await fetch(`${API_BASE}/settings/endpoints`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: editingEndpoint.id,
-          name: editingEndpoint.name,
-          url: editingEndpoint.url,
-          provider: editingEndpoint.provider,
-          api_key: editingEndpoint.api_key || null
-        })
-      })
-      setEditingEndpoint(null)
-      loadSettings()
-    } catch (err) {
-      console.error('Failed to update endpoint:', err)
-    }
-  }
-  
-  // Delete endpoint state - use ref to avoid stale closure
-  const deleteEndpointIdRef = useRef<string | null>(null)
-  
-  // Show delete confirmation dialog
-  const promptDeleteEndpoint = (ep: SavedEndpoint) => {
-    deleteEndpointIdRef.current = ep.id
-    setDeleteConfirm({ open: true, endpointName: ep.name, isSpecialist: false })
-  }
-  
-  // Actually perform the delete after confirmation
-  const handleConfirmDelete = async () => {
-    const endpointId = deleteEndpointIdRef.current
-    console.log('handleConfirmDelete called, deleteEndpointId:', endpointId)
-    if (!endpointId) {
-      console.log('No deleteEndpointId, returning early')
-      return
-    }
-    
-    setDeleting(true)
-    
-    try {
-      const url = `${API_BASE}/settings/endpoints/${endpointId}`
-      console.log('Deleting endpoint:', url)
-      const res = await fetch(url, { method: 'DELETE' })
-      const data = await res.json()
-      console.log('Delete response:', data)
-      
-      setToast({ 
-        open: true, 
-        message: 'Endpoint deleted',
-        variant: 'success'
-      })
-      loadSettings()
-    } catch (err) {
-      console.error('Failed to delete endpoint:', err)
-      setToast({ open: true, message: 'Failed to delete endpoint', variant: 'error' })
-    }
-    
-    setDeleting(false)
-    deleteEndpointIdRef.current = null
-    setDeleteConfirm({ open: false, isSpecialist: false })
-  }
-  
-  // Fetch models from an endpoint
-  const fetchEndpointModels = async (endpointId: string): Promise<string[]> => {
-    try {
-      const res = await fetch(`${API_BASE}/settings/endpoints/${endpointId}/models`)
-      const data = await res.json()
-      return data.models || []
-    } catch (err) {
-      console.error('Failed to fetch models:', err)
-      return []
-    }
-  }
-  
-  // Test endpoint connectivity
-  const [testingEndpointId, setTestingEndpointId] = useState<string | null>(null)
-  const [endpointTestResults, setEndpointTestResults] = useState<Record<string, {success: boolean, message: string}>>({})
-  
-  // Test specialist model
-  const [testingSpecialist, setTestingSpecialist] = useState(false)
-  const [specialistTestResult, setSpecialistTestResult] = useState<{success: boolean, message: string} | null>(null)
-  
-  const handleTestSpecialist = async () => {
-    setTestingSpecialist(true)
-    setSpecialistTestResult(null)
-    const startTime = Date.now()
-    addLog({ type: 'request', category: 'api', message: 'Testing specialist model...' })
-    try {
-      const res = await fetch(`${API_BASE}/settings/specialist/test`, { method: 'POST' })
-      const data = await res.json()
-      setSpecialistTestResult(data)
-      const duration = Date.now() - startTime
-      if (data.success) {
-        addLog({ type: 'response', category: 'api', message: `Specialist test passed: ${data.message}`, duration })
-      } else {
-        addLog({ type: 'error', category: 'api', message: `Specialist test failed: ${data.message}`, duration })
-      }
-    } catch (err) {
-      setSpecialistTestResult({ success: false, message: 'Request failed' })
-      addLog({ type: 'error', category: 'api', message: `Specialist test error: ${err}`, duration: Date.now() - startTime })
-    }
-    setTestingSpecialist(false)
-  }
-  
-  const handleTestSavedEndpoint = async (endpointId: string) => {
-    setTestingEndpointId(endpointId)
-    try {
-      const res = await fetch(`${API_BASE}/settings/endpoints/${endpointId}/test`, { method: 'POST' })
-      const data = await res.json()
-      setEndpointTestResults(prev => ({ ...prev, [endpointId]: data }))
-    } catch (err) {
-      setEndpointTestResults(prev => ({ ...prev, [endpointId]: { success: false, message: 'Request failed' } }))
-    }
-    setTestingEndpointId(null)
-  }
-  
-  // Assign model to role
-  const handleAssignModel = async (role: 'guide' | 'specialist' | 'vision', endpointId: string, model: string) => {
-    try {
-      const res = await fetch(`${API_BASE}/settings/assign/${role}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ endpoint_id: endpointId, model })
-      })
-      const data = await res.json()
-      if (data.success) {
-        setToast({ open: true, message: `${role.charAt(0).toUpperCase() + role.slice(1)} set to ${model}`, variant: 'success' })
-        loadSettings()
-      } else {
-        setToast({ open: true, message: data.detail || 'Failed to assign model', variant: 'error' })
-      }
-    } catch (err) {
-      console.error(`Failed to assign ${role}:`, err)
-      setToast({ open: true, message: `Failed to assign ${role}`, variant: 'error' })
-    }
   }
   
   const handleAddKnowledgeSource = async () => {
@@ -1687,627 +1383,8 @@ export function Settings() {
             </CardContent>
           </Card>
 
-          {/* Model Assignment Cards with Endpoint + Model Dropdowns */}
-          <div className="grid grid-cols-3 gap-4">
-            {/* Chat Model Card - green only if configured AND verified connected */}
-            <Card className={
-              modelConfig?.orchestrator?.model && modelStatus?.ollama_connected && modelStatus?.model_installed
-                ? 'border-green-500'  // Configured and verified working
-                : modelConfig?.orchestrator?.model && !modelStatus?.ollama_connected
-                  ? 'border-red-500'  // Configured but NOT connected (stale config)
-                  : modelStatus?.ollama_connected 
-                    ? 'border-yellow-500'  // Connected but not configured
-                    : ''
-            }>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Brain className="h-4 w-4" />
-                  Chat Model
-                  {!modelConfig?.orchestrator?.model && (
-                    <Badge variant="secondary" className="text-xs bg-yellow-100 text-yellow-800">Required</Badge>
-                  )}
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  Dashboard chat & general assistance
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {modelConfig?.orchestrator?.model ? (
-                  <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">{modelConfig.orchestrator.name || 'Endpoint'}</p>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <code className="text-sm bg-muted px-2 py-1 rounded inline-block">{modelConfig.orchestrator.model}</code>
-                      {(() => {
-                        const caps = getModelCapabilities(modelConfig.orchestrator.model)
-                        return (
-                          <>
-                            {caps.thinking && <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">Thinking</Badge>}
-                            {caps.vision && <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">👁️ Vision</Badge>}
-                            {caps.code && <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Code</Badge>}
-                            {caps.largeContext && <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">128K</Badge>}
-                          </>
-                        )
-                      })()}
-                    </div>
-                    
-                    {/* Show warning if configured but not connected */}
-                    {!modelStatus?.ollama_connected && (
-                      <p className="text-xs text-red-600 flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3" />
-                        Endpoint not reachable - clear and reconfigure
-                      </p>
-                    )}
-                    {modelStatus?.ollama_connected && !modelStatus?.model_installed && (
-                      <p className="text-xs text-yellow-600 flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3" />
-                        Model not found on endpoint
-                      </p>
-                    )}
-                    
-                    <div className="flex gap-1">
-                      {/* Retry button when not connected */}
-                      {!modelStatus?.ollama_connected && (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="h-7 px-2 text-xs"
-                          onClick={() => loadSettings()}
-                        >
-                          <RefreshCw className="h-3 w-3 mr-1" />
-                          Retry
-                        </Button>
-                      )}
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="h-7 px-2 text-xs text-muted-foreground"
-                        onClick={async () => {
-                          await fetch(`${API_BASE}/settings/guide/clear`, { method: 'POST' })
-                          loadSettings()
-                        }}
-                      >
-                        <X className="h-3 w-3 mr-1" />
-                        Clear
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Not configured</p>
-                )}
-                {/* Only show selection if not configured */}
-                {!modelConfig?.orchestrator?.model && (
-                <div className="space-y-2 pt-2 border-t">
-                  <Label className="text-xs">Endpoint</Label>
-                  <Select 
-                    variant="sm"
-                    value={guideEndpointId}
-                    onChange={async (e) => {
-                      setGuideEndpointId(e.target.value)
-                      if (e.target.value) {
-                        setLoadingGuideModels(true)
-                        const models = await fetchEndpointModels(e.target.value)
-                        setGuideModels(models)
-                        setLoadingGuideModels(false)
-                      }
-                    }}
-                  >
-                    <option value="">Select endpoint...</option>
-                    {modelConfig?.saved_endpoints.map(ep => (
-                      <option key={ep.id} value={ep.id}>{ep.name}</option>
-                    ))}
-                  </Select>
-                  {guideEndpointId && (
-                    <>
-                      <Label className="text-xs">Model</Label>
-                      <Select 
-                        variant="sm"
-                        disabled={loadingGuideModels}
-                        onChange={async (e) => {
-                          if (e.target.value) {
-                            await handleAssignModel('guide', guideEndpointId, e.target.value)
-                            setGuideEndpointId('')
-                            setGuideModels([])
-                          }
-                        }}
-                      >
-                        <option value="">{loadingGuideModels ? 'Loading...' : 'Select model...'}</option>
-                        {guideModels.map((m: string) => {
-                          // Priority: mistral-small (has vision+128K), then other good models
-                          const caps = getModelCapabilities(m)
-                          const isTop = m.includes('mistral-small')  // Best: vision + 128K context
-                          const isRecommended = ['qwen2.5:14b', 'qwen2.5:7b', 'mistral:7b', 'pixtral'].some(r => m.includes(r))
-                          const prefix = isTop ? '★★ ' : isRecommended ? '★ ' : ''
-                          const suffix = caps.vision ? ' 👁️' : ''
-                          return <option key={m} value={m}>{prefix}{m}{suffix}</option>
-                        })}
-                      </Select>
-                    </>
-                  )}
-                </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Specialist Model Card */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Zap className="h-4 w-4" />
-                  Specialist Model
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  Code generation & complex analysis.
-                  {modelConfig?.specialist?.provider === 'openai' && (
-                    <span className="block mt-1 text-yellow-600">
-                      Tip: Set context length to 16K+ tokens in LM Studio for best results.
-                    </span>
-                  )}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {modelConfig?.specialist?.enabled && modelConfig?.specialist?.model ? (
-                  <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">{modelConfig.specialist.name || 'Endpoint'}</p>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <code className="text-sm bg-muted px-2 py-1 rounded inline-block">{modelConfig.specialist.model}</code>
-                      {(() => {
-                        const caps = getModelCapabilities(modelConfig.specialist.model)
-                        return (
-                          <>
-                            {caps.thinking && <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">Thinking</Badge>}
-                            {caps.vision && <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">Vision</Badge>}
-                            {caps.code && <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Code</Badge>}
-                          </>
-                        )
-                      })()}
-                    </div>
-                    {/* Test result */}
-                    {specialistTestResult && (
-                      <Badge 
-                        variant={specialistTestResult.success ? "default" : "destructive"} 
-                        className="text-xs"
-                      >
-                        {specialistTestResult.success ? <Check className="h-3 w-3 mr-1" /> : <X className="h-3 w-3 mr-1" />}
-                        {specialistTestResult.message}
-                      </Badge>
-                    )}
-                    <div className="flex gap-1">
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        className="h-7 px-2 text-xs"
-                        onClick={handleTestSpecialist}
-                        disabled={testingSpecialist}
-                      >
-                        {testingSpecialist ? (
-                          <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                        ) : (
-                          <Zap className="h-3 w-3 mr-1" />
-                        )}
-                        Test
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="h-7 px-2 text-xs text-muted-foreground"
-                        onClick={async () => {
-                          await fetch(`${API_BASE}/settings/specialist/clear`, { method: 'POST' })
-                          setSpecialistTestResult(null)
-                          loadSettings()
-                        }}
-                      >
-                        <X className="h-3 w-3 mr-1" />
-                        Clear
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Not configured (optional)</p>
-                )}
-                {/* Only show selection if not configured */}
-                {!(modelConfig?.specialist?.enabled && modelConfig?.specialist?.model) && (
-                <div className="space-y-2 pt-2 border-t">
-                  <Label className="text-xs">Endpoint</Label>
-                  <Select 
-                    variant="sm"
-                    value={specialistEndpointId}
-                    onChange={async (e) => {
-                      setSpecialistEndpointId(e.target.value)
-                      if (e.target.value) {
-                        setLoadingSpecialistModels(true)
-                        const models = await fetchEndpointModels(e.target.value)
-                        setSpecialistModels(models)
-                        setLoadingSpecialistModels(false)
-                      }
-                    }}
-                  >
-                    <option value="">Select endpoint...</option>
-                    {modelConfig?.saved_endpoints.map(ep => (
-                      <option key={ep.id} value={ep.id}>{ep.name}</option>
-                    ))}
-                  </Select>
-                  {specialistEndpointId && (
-                    <>
-                      <Label className="text-xs">Model</Label>
-                      <Select 
-                        variant="sm"
-                        disabled={loadingSpecialistModels}
-                        onChange={async (e) => {
-                          if (e.target.value) {
-                            await handleAssignModel('specialist', specialistEndpointId, e.target.value)
-                            setSpecialistEndpointId('')
-                            setSpecialistModels([])
-                          }
-                        }}
-                      >
-                        <option value="">{loadingSpecialistModels ? 'Loading...' : 'Select model...'}</option>
-                        {specialistModels.map((m: string) => {
-                          const isRecommended = ['llama3.3:70b', 'qwen2.5:32b', 'deepseek-coder:33b', 'codestral'].includes(m)
-                          return <option key={m} value={m}>{isRecommended ? `★ ${m}` : m}</option>
-                        })}
-                      </Select>
-                    </>
-                  )}
-                </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Vision Model Card - auto-disable if Chat model has vision */}
-            {(() => {
-              const chatHasVision = modelConfig?.orchestrator?.model 
-                ? getModelCapabilities(modelConfig.orchestrator.model).vision 
-                : false
-              return (
-            <Card className={chatHasVision ? 'opacity-60' : ''}>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Eye className="h-4 w-4" />
-                  Vision Model
-                  {chatHasVision && (
-                    <Badge variant="secondary" className="text-xs bg-blue-100 text-blue-800">Provided by Chat</Badge>
-                  )}
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  {chatHasVision 
-                    ? `Vision provided by ${modelConfig?.orchestrator?.model || 'Chat Model'}` 
-                    : 'Image analysis & screenshots'}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {/* Show message when Chat model has vision */}
-                {chatHasVision && !modelConfig?.vision?.enabled && (
-                  <div className="text-xs text-muted-foreground bg-blue-50 dark:bg-blue-950/30 rounded p-2">
-                    <p className="font-medium text-blue-700 dark:text-blue-300">✓ Vision already available</p>
-                    <p className="mt-1">Your Chat Model has built-in vision. No separate vision model needed.</p>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="h-6 px-2 text-xs mt-2"
-                      onClick={() => {
-                        // Allow user to enable anyway
-                        setVisionEndpointId(modelConfig?.saved_endpoints[0]?.id || '')
-                      }}
-                    >
-                      Enable anyway →
-                    </Button>
-                  </div>
-                )}
-                {(!chatHasVision || modelConfig?.vision?.enabled) && modelConfig?.vision?.enabled && modelConfig?.vision?.model ? (
-                  <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">{modelConfig.vision.name || 'Endpoint'}</p>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <code className="text-sm bg-muted px-2 py-1 rounded inline-block">{modelConfig.vision.model}</code>
-                      {(() => {
-                        const caps = getModelCapabilities(modelConfig.vision.model)
-                        return (
-                          <>
-                            {caps.thinking && <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">Thinking</Badge>}
-                            {caps.vision && <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">Vision</Badge>}
-                            {caps.code && <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Code</Badge>}
-                          </>
-                        )
-                      })()}
-                    </div>
-                    <div>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="h-7 px-2 text-xs text-muted-foreground"
-                        onClick={async () => {
-                          await fetch(`${API_BASE}/settings/vision/clear`, { method: 'POST' })
-                          loadSettings()
-                        }}
-                      >
-                        <X className="h-3 w-3 mr-1" />
-                        Clear
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Not configured (optional)</p>
-                )}
-                {/* Only show selection if not configured */}
-                {!(modelConfig?.vision?.enabled && modelConfig?.vision?.model) && (
-                <div className="space-y-2 pt-2 border-t">
-                  <Label className="text-xs">Endpoint</Label>
-                  <Select 
-                    variant="sm"
-                    value={visionEndpointId}
-                    onChange={async (e) => {
-                      setVisionEndpointId(e.target.value)
-                      if (e.target.value) {
-                        setLoadingVisionModels(true)
-                        const models = await fetchEndpointModels(e.target.value)
-                        setVisionModels(models)
-                        setLoadingVisionModels(false)
-                      }
-                    }}
-                  >
-                    <option value="">Select endpoint...</option>
-                    {modelConfig?.saved_endpoints.map(ep => (
-                      <option key={ep.id} value={ep.id}>{ep.name}</option>
-                    ))}
-                  </Select>
-                  {visionEndpointId && (
-                    <>
-                      <Label className="text-xs">Model</Label>
-                      <Select 
-                        variant="sm"
-                        disabled={loadingVisionModels}
-                        onChange={async (e) => {
-                          if (e.target.value) {
-                            await handleAssignModel('vision', visionEndpointId, e.target.value)
-                            setVisionEndpointId('')
-                            setVisionModels([])
-                          }
-                        }}
-                      >
-                        <option value="">{loadingVisionModels ? 'Loading...' : 'Select model...'}</option>
-                        {visionModels.map((m: string) => {
-                          const isRecommended = ['llama3.2-vision', 'gemma3', 'llava:34b', 'pixtral'].some(r => m.includes(r))
-                          return <option key={m} value={m}>{isRecommended ? `★ ${m}` : m}</option>
-                        })}
-                      </Select>
-                    </>
-                  )}
-                </div>
-                )}
-              </CardContent>
-            </Card>
-              )
-            })()}
-          </div>
-
-          {/* Multimodal hint - Updated for mistral-small 3.1 */}
-          <div className="text-xs text-muted-foreground bg-gradient-to-r from-blue-50 to-amber-50 dark:from-blue-950/30 dark:to-amber-950/30 rounded-lg p-3 border border-blue-200/50 dark:border-blue-800/50">
-            <strong>★★ Recommended:</strong> Use <code className="bg-muted px-1 rounded font-semibold">mistral-small:24b</code> (v3.1+) as your Chat Model. 
-            It includes <span className="text-blue-600 dark:text-blue-400 font-medium">built-in vision</span>, <span className="text-amber-600 dark:text-amber-400 font-medium">128K context</span>, and handles most tasks without needing Specialist or Vision models.
-            <br/><span className="text-muted-foreground/70 mt-1 inline-block">For 24GB GPUs, use <code className="bg-muted px-1 rounded">qwen2.5:14b</code> + separate vision model.</span>
-          </div>
-
           {/* Context Compression - Phase 72 */}
           <CompressionSettings />
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Server className="h-5 w-5" />
-                Saved Endpoints
-              </CardTitle>
-              <CardDescription>
-                Add LLM server endpoints. Models are selected separately for each role.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Saved endpoints list */}
-              <div className="space-y-2">
-                {modelConfig?.saved_endpoints.map((ep, i) => (
-                  <div key={ep.id || i} className="p-3 border rounded-lg hover:border-primary/50 transition-colors">
-                    {editingEndpoint?.index === i ? (
-                      /* Edit mode */
-                      <div className="space-y-3">
-                        <div className="grid grid-cols-2 gap-2">
-                          <Input 
-                            value={editingEndpoint.name}
-                            onChange={(e) => setEditingEndpoint({...editingEndpoint, name: e.target.value})}
-                            placeholder="Display name"
-                          />
-                          <Input 
-                            value={editingEndpoint.url}
-                            onChange={(e) => setEditingEndpoint({...editingEndpoint, url: e.target.value})}
-                            placeholder="http://localhost:11434"
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <Select 
-                            value={editingEndpoint.provider}
-                            onChange={(e) => setEditingEndpoint({...editingEndpoint, provider: e.target.value})}
-                          >
-                            <option value="ollama">Ollama</option>
-                            <option value="openai">OpenAI-compatible</option>
-                          </Select>
-                          <Input 
-                            value={editingEndpoint.api_key || ''}
-                            onChange={(e) => setEditingEndpoint({...editingEndpoint, api_key: e.target.value})}
-                            placeholder="API Key (optional)"
-                            type="password"
-                          />
-                        </div>
-                        <div className="flex gap-2">
-                          <Button size="sm" onClick={handleUpdateEndpoint}>
-                            <Check className="h-3 w-3 mr-1" />
-                            Save
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => setEditingEndpoint(null)}>
-                            Cancel
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      /* View mode */
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-medium">{ep.name || 'Unnamed Endpoint'}</p>
-                            <Badge variant="outline" className="text-xs">{ep.provider}</Badge>
-                            {ep.api_key && <Badge variant="outline" className="text-xs">🔑 API Key</Badge>}
-                            {modelConfig?.orchestrator?.endpoint_id === ep.id && (
-                              <code className="text-xs bg-muted px-1.5 py-0.5 rounded flex items-center gap-1">
-                                <Brain className="h-3 w-3" />
-                                Guide: {modelConfig.orchestrator.model}
-                              </code>
-                            )}
-                            {modelConfig?.specialist?.endpoint_id === ep.id && (
-                              <code className="text-xs bg-muted px-1.5 py-0.5 rounded flex items-center gap-1">
-                                <Zap className="h-3 w-3" />
-                                Specialist: {modelConfig.specialist.model}
-                              </code>
-                            )}
-                            {modelConfig?.vision?.endpoint_id === ep.id && (
-                              <code className="text-xs bg-muted px-1.5 py-0.5 rounded flex items-center gap-1">
-                                <Eye className="h-3 w-3" />
-                                Vision: {modelConfig.vision.model}
-                              </code>
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-1">{ep.url || (ep as any).endpoint || ''}</p>
-                          {endpointTestResults[ep.id] && (
-                            <Badge 
-                              variant={endpointTestResults[ep.id].success ? "default" : "destructive"} 
-                              className="mt-1 text-xs"
-                            >
-                              {endpointTestResults[ep.id].success ? <Check className="h-3 w-3 mr-1" /> : <X className="h-3 w-3 mr-1" />}
-                              {endpointTestResults[ep.id].message}
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            className="h-8 px-2"
-                            onClick={() => handleTestSavedEndpoint(ep.id)}
-                            disabled={testingEndpointId === ep.id}
-                            title="Test Connection"
-                          >
-                            {testingEndpointId === ep.id ? (
-                              <RefreshCw className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <Zap className="h-3 w-3" />
-                            )}
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            className="h-8 px-2"
-                            onClick={() => setEditingEndpoint({index: i, ...ep})}
-                            title="Edit"
-                          >
-                            <Edit3 className="h-3 w-3" />
-                          </Button>
-                          {/* Don't allow deleting Local Ollama default endpoint - use placeholder for alignment */}
-                          {(ep.url || (ep as any).endpoint) === 'http://localhost:11434' ? (
-                            <div className="h-8 w-8" />
-                          ) : (
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              className="h-8 px-2"
-                              onClick={() => promptDeleteEndpoint(ep)}
-                              title="Delete"
-                            >
-                              <Trash2 className="h-3 w-3 text-destructive" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {(!modelConfig?.saved_endpoints || modelConfig.saved_endpoints.length === 0) && (
-                  <p className="text-sm text-muted-foreground">No saved endpoints. Add one below to get started.</p>
-                )}
-              </div>
-              
-              {/* Add new endpoint - collapsible */}
-              <div className="border-t pt-4 space-y-4">
-                <button 
-                  className="font-medium flex items-center gap-2 hover:text-primary transition-colors w-full text-left"
-                  onClick={() => setShowAddEndpoint(!showAddEndpoint)}
-                >
-                  <Plus className={`h-4 w-4 transition-transform ${showAddEndpoint ? 'rotate-45' : ''}`} />
-                  Add Endpoint
-                  <ChevronDown className={`h-4 w-4 ml-auto transition-transform ${showAddEndpoint ? 'rotate-180' : ''}`} />
-                </button>
-                {showAddEndpoint && (
-                <>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Display Name</Label>
-                    <Input 
-                      value={newEndpoint.name}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewEndpoint({...newEndpoint, name: e.target.value})}
-                      placeholder="Local Ollama, GPU Server, etc."
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Endpoint URL</Label>
-                    <Input 
-                      value={newEndpoint.url}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewEndpoint({...newEndpoint, url: e.target.value})}
-                      placeholder="http://localhost:11434"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Provider</Label>
-                    <Select 
-                      value={newEndpoint.provider}
-                      onChange={(e) => setNewEndpoint({...newEndpoint, provider: e.target.value})}
-                    >
-                      <option value="ollama">Ollama</option>
-                      <option value="openai">OpenAI-compatible</option>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>API Key (optional)</Label>
-                    <Input 
-                      value={newEndpoint.api_key}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewEndpoint({...newEndpoint, api_key: e.target.value})}
-                      placeholder="For OpenAI/Anthropic/etc."
-                      type="password"
-                    />
-                  </div>
-                </div>
-                <div className="flex gap-2 items-center">
-                  <Button 
-                    variant="outline" 
-                    onClick={() => handleTestEndpoint(newEndpoint.url, newEndpoint.provider)}
-                    disabled={!newEndpoint.url || testingEndpoint}
-                  >
-                    {testingEndpoint ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
-                    Test Connection
-                  </Button>
-                  <Button 
-                    onClick={handleSaveEndpoint} 
-                    disabled={!newEndpoint.url || !newEndpoint.name}
-                  >
-                    Save Endpoint
-                  </Button>
-                  {testResult && (
-                    <Badge variant={testResult.success ? "default" : "destructive"} className="ml-2">
-                      {testResult.success ? <Check className="h-3 w-3 mr-1" /> : <X className="h-3 w-3 mr-1" />}
-                      {testResult.message}
-                    </Badge>
-                  )}
-                </div>
-                </>
-                )}
-              </div>
-            </CardContent>
-          </Card>
 
           {/* GPU Tweaks Section */}
           <Card>
@@ -3562,22 +2639,6 @@ export function Settings() {
       {showComponentLibrary && (
         <ComponentLibraryViewer onClose={() => setShowComponentLibrary(false)} />
       )}
-      
-      {/* Delete Endpoint Confirmation Dialog */}
-      <ConfirmDialog
-        open={deleteConfirm.open}
-        onClose={() => setDeleteConfirm({ open: false, isSpecialist: false })}
-        onConfirm={handleConfirmDelete}
-        title="Delete Endpoint?"
-        description={`Are you sure you want to delete "${deleteConfirm.endpointName || 'this endpoint'}"?`}
-        warning={deleteConfirm.isSpecialist 
-          ? "This endpoint is currently set as your Specialist model. Deleting it will also clear the specialist configuration."
-          : undefined
-        }
-        confirmText="Delete"
-        variant="destructive"
-        loading={deleting}
-      />
       
       {/* Toast Notifications */}
       <Toast 
