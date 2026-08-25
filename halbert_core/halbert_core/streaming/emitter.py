@@ -7,11 +7,10 @@ Based on research5.md Part 16.1.
 
 from __future__ import annotations
 import asyncio
-import json
 import time
 import logging
-from dataclasses import dataclass, field
-from typing import AsyncIterator, Dict, List, Optional, Any, Callable
+from dataclasses import dataclass
+from typing import AsyncIterator, Dict, List, Optional
 
 logger = logging.getLogger('halbert.streaming.emitter')
 
@@ -25,78 +24,11 @@ class StreamConfig:
     max_subscribers: int = 100
 
 
-@dataclass
-class StreamEvent:
-    """An event in the stream."""
-    type: str
-    session_id: str
-    data: Dict[str, Any] = field(default_factory=dict)
-    timestamp: float = field(default_factory=time.time)
-    
-    def to_dict(self) -> Dict:
-        return {
-            "type": self.type,
-            "session_id": self.session_id,
-            "timestamp": self.timestamp,
-            **self.data
-        }
-    
-    def to_sse(self) -> str:
-        """Format as Server-Sent Event."""
-        return f"data: {json.dumps(self.to_dict())}\n\n"
-    
-    @classmethod
-    def state_change(cls, session_id: str, new_state: str, previous_state: str = None):
-        return cls(
-            type="state_change",
-            session_id=session_id,
-            data={"state": new_state, "previous_state": previous_state}
-        )
-    
-    @classmethod
-    def response_chunk(cls, session_id: str, content: str):
-        return cls(
-            type="response_chunk",
-            session_id=session_id,
-            data={"content": content}
-        )
-    
-    @classmethod
-    def tool_start(cls, session_id: str, tool: str, args: Dict, execution_id: str):
-        return cls(
-            type="tool_start",
-            session_id=session_id,
-            data={"tool": tool, "args": args, "execution_id": execution_id}
-        )
-    
-    @classmethod
-    def tool_complete(cls, session_id: str, execution_id: str, success: bool, result: Any = None, error: str = None):
-        return cls(
-            type="tool_complete",
-            session_id=session_id,
-            data={
-                "execution_id": execution_id,
-                "success": success,
-                "result": result,
-                "error": error
-            }
-        )
-    
-    @classmethod
-    def error(cls, session_id: str, message: str, recoverable: bool = True):
-        return cls(
-            type="error",
-            session_id=session_id,
-            data={"message": message, "recoverable": recoverable}
-        )
-    
-    @classmethod
-    def heartbeat(cls, session_id: str = "system"):
-        return cls(
-            type="heartbeat",
-            session_id=session_id,
-            data={"time": int(time.time())}
-        )
+# StreamEvent is unified with the canonical agents.events.StreamEvent (A0b).
+# The streaming/SSE layer re-exports that class instead of maintaining a
+# duplicate definition, so new event factory methods are added in exactly one
+# place (agents/events.py). See STRATEGY-V2-SCRUTINY.md §2 Hidden Dependency 1.
+from ..agents.events import StreamEvent  # noqa: E402  (re-exported for SSE layer)
 
 
 class EventEmitter:
