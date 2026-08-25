@@ -186,7 +186,7 @@ CREATE TABLE host_sessions (
     topic_category TEXT NOT NULL,      -- "network", "storage", "security", etc.
     entities_json TEXT NOT NULL,       -- Touched files, services, packages, PIDs
     compacted_summary TEXT NOT NULL,   -- MemoryLOD Level 2/3 summary
-    embedding BLOB,                    -- 384-dim vector for semantic search
+    embedding BLOB,                    -- 384-dim vector for semantic search (deferred)
     parent_session_id TEXT             -- For subagent / forked threads
 );
 
@@ -198,3 +198,50 @@ CREATE TABLE session_somatic_blocks (
     created_at TIMESTAMP NOT NULL
 );
 ```
+
+---
+
+## 8. Codebase Reality Check (August 2026 Audit)
+
+### 8.1 Sessions Are JSON Files, Not SQLite
+
+`agents/conversation.py` `ConversationStore` (lines 201-355) writes conversations to `~/.halbert/conversations/{id}.json` — individual JSON files on disk. The `search()` method (line 326) is a **linear scan** of all JSON files, loading and parsing each one. There is:
+- No SQLite database
+- No FTS5 index
+- No embedding column
+- No affinity scoring
+- No `host_sessions` or `session_somatic_blocks` tables
+
+The schema in §7 above is the **target**, not the current state. Migrating from JSON to SQLite + FTS5 is ~120 lines and is Stage 3 of the build plan.
+
+### 8.2 The Session Affinity Router Does Not Exist
+
+The 3-step routing pipeline (§4: entity extraction → affinity scoring → execution routing) is pure spec. No code implements:
+- Entity & temporal extraction from user prompts (though `intake/signals.py` could be extended for this)
+- $S_{\text{affinity}}$ scoring with FTS5 + ONNX embeddings + temporal decay
+- The high/ambiguous/low match routing policy
+
+### 8.3 Contradiction With the Feasibility Doc — Resolved
+
+**The orchestrator doc (§4) prescribes** a 15ms affinity pass with ONNX embeddings + FTS5 + temporal decay on every prompt.
+
+**The feasibility doc (§4) prescribes** deterministic FTS5-only routing and explicitly warns: *"never run an expensive, slow, non-deterministic LLM classifier on every keystroke."*
+
+**Resolution: The feasibility doc is correct.** The routing pipeline should be:
+1. **Default (90% of turns):** Stay in current session. Zero routing overhead.
+2. **Explicit keyword (10%):** FTS5 search on session summaries in <5ms. No embeddings.
+3. **Embeddings deferred:** Only use ONNX cosine similarity for the ambiguous-match tier (0.45 ≤ score < 0.75), and only when FTS5 returns candidates. Do not run embeddings on every prompt.
+
+The `embedding BLOB` column in the §7 schema is marked `(deferred)` to reflect this.
+
+### 8.4 Subagent Forking Does Not Exist
+
+The autonomous subagent forking described in §5 is not implemented. See the SUBAGENTS-AND-TASK-DAEMONS doc §5 for the full reality check. The orchestrator cannot multiplex synchronous chat + asynchronous background tasks until the PTY backend and `spawn_subagent()` method are built.
+
+### 8.5 The Dream Cycle Is Not Scheduled
+
+`proactive/morning_report.py` (225 lines) exists but is not wired to a 03:00 scheduler. The `scheduler/` directory exists but the dream cycle consolidation (thread compaction, SourcePrep concept ingestion, session auto-graphing) is not implemented. This must be **opt-in, not default** — a 03:00 background job that consumes LLM tokens without explicit user consent is a footgun.
+
+### 8.6 The Continuous Timeline UI Does Not Exist
+
+The "no New Chat button, continuous lifelong timeline" (Layer 1, §3) requires frontend changes to `SidePanel.tsx` that have not been made. The current UI has standard conversation list + conversation view. Temporal dividers (`[Monday, Aug 24]`, `[System Boot 08:30]`) are spec only.

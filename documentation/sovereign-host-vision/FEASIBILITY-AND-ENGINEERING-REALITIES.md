@@ -137,13 +137,35 @@ async def route_session_context(user_query: str, current_session_id: str) -> str
 
 All necessary building blocks already exist in the codebase. Here is where the work lives:
 
-| Component | Target File | What to Implement | Lines of Code |
+| Component | Target File | What to Implement | Lines of Code | Status (Aug 2026) |
+|---|---|---|---|---|
+| **Context Watermark & Truncation** | `halbert_core/context/assembler.py` | Add 75% token watermark check and wire `conversation/summarization.py` to compact turns older than $N=6$. | ~60 lines | **Not started.** `_compress_with_cascade()` exists (lines 642-725) but no watermark, no 2hr temporal gate, no topic boundary gate. |
+| **Stateless SQLite Session Store** | `halbert_core/agents/conversation.py` | Persist conversation turns directly into SQLite with auto-generated thread summaries. | ~120 lines | **Not started.** Currently JSON files on disk (`~/.halbert/conversations/{id}.json`). `search()` is a linear scan of JSON files. No SQLite, no FTS5. |
+| **PTY Process Reaper & Ring Buffer** | `halbert_core/dashboard/routes/terminal.py` | Add 5-minute TTL reaper and 1MB circular buffer for streaming PTYs. | ~90 lines | **Not started.** Backend is `subprocess.run()` stub. Frontend xterm.js is wired and waiting. This is the highest-leverage gap. |
+| **Ephemeral Subagent Loop** | `halbert_core/agents/react_agent.py` | Implement `spawn_subagent()` method that executes a scoped child ReAct loop in a child PTY. | ~150 lines | **Not started.** Zero `spawn_subagent` matches. Hard-blocked on PTY backend (row above). |
+
+### What Already Exists (Not in Original Table)
+
+The original roadmap above was written as if all four components were greenfield. In reality, significant supporting infrastructure already exists:
+
+| Existing Component | Location | Lines | Relevance |
 |---|---|---|---|
-| **Context Watermark & Truncation** | `halbert_core/context/assembler.py` | Add 75% token watermark check and wire `conversation/summarization.py` to compact turns older than $N=6$. | ~60 lines |
-| **Stateless SQLite Session Store** | `halbert_core/agents/conversation.py` | Persist conversation turns directly into SQLite with auto-generated thread summaries. | ~120 lines |
-| **PTY Process Reaper & Ring Buffer** | `halbert_core/dashboard/routes/terminal.py` | Add 5-minute TTL reaper and 1MB circular buffer for streaming PTYs. | ~90 lines |
-| **Ephemeral Subagent Loop** | `halbert_core/agents/react_agent.py` | Implement `spawn_subagent()` method that executes a scoped child ReAct loop in a child PTY. | ~150 lines |
+| Source-aware compression cascade | `context/assembler.py` `_compress_with_cascade()` | 84 | The watermark row above plugs into this existing cascade |
+| Approval + dry-run simulation | `approval/engine.py`, `approval/simulator.py` | 797 | Subagents should emit `Proposal` objects via this existing pipeline |
+| Rollback + guardrails | `autonomy/recovery.py`, `autonomy/guardrails.py` | 599 | The PTY reaper and subagent loop should defer to these for safety |
+| Blast-radius + precedence | `findings/blast_radius.py`, `findings/precedence.py` | 441 | Proposals are already scored; subagents consume these |
+| Cognitive tick at REFLECTING | `agents/state_machine.py` line 733 | — | Haloysius integration is wired; subagent results feed back through this |
+| Morning report | `proactive/morning_report.py` | 225 | Dream Cycle foundation exists but is not scheduled |
+| Model-tier routing | `intake/budget.py`, `model/client.py` | — | 4-tier biological allocation (§3 of SOMATIC doc) is built |
+| Zero-LLM signal detection | `intake/signals.py` | — | Tier 0 spinal reflexes (<1ms regex) are built |
 
 ### Summary Feasibility Verdict:
 * **Is it feasible?** **Yes, 100%.**
 * **Why it's tractable:** By making sessions stateless in SQLite, enforcing strict PTY timeouts, using the existing 3-tier compression cascade (`MemoryLOD`), and relying on fast FTS5 keyword lookups instead of slow AI routers, the implementation requires only **~420 lines of clean Python code** across 4 existing modules.
+* **Why it's even more tractable than the original estimate:** The approval, rollback, blast-radius, precedence, and cognitive-tick infrastructure already exists (~2,500 lines across `findings/`, `approval/`, `autonomy/`). The 420-line estimate covers only the four missing pieces; it does not need to re-implement the safety and proposal pipeline.
+
+### 6. Contradiction Note: Routing Complexity
+
+This document (§4) prescribes deterministic FTS5-only routing and warns against LLM classifiers on every keystroke. The CONTINUOUS-ORCHESTRATOR doc (§4) prescribes a 15ms affinity pass with ONNX embeddings + FTS5 + temporal decay on every prompt.
+
+**This document is correct.** The orchestrator doc has been amended (§8.3) to defer embeddings to the ambiguous-match tier only. FTS5 alone handles 90% of routing decisions in <5ms.

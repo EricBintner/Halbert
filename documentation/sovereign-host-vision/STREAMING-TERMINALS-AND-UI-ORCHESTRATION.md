@@ -171,3 +171,44 @@ In the right-hand Context Stage, active and recent terminals live in a clean, hi
    - `Cmd+K`: Open Module and Reflex summoning palette.
 3. **Host-Aware Predictive Ghosting:**
    - As you type in the prompt bar, Halbert's local Tier 1 fast model predicts command parameters based on live host state (e.g. auto-suggesting failed systemd unit names, active device paths, or recent config files).
+
+---
+
+## 6. Codebase Reality Check (August 2026 Audit)
+
+### 6.1 Frontend: xterm.js Wired, But No Docking
+
+`dashboard/frontend/src/pages/Terminal.tsx` (482 lines) has xterm.js + FitAddon + WebLinksAddon wired and rendering. However:
+- **No `IntersectionObserver`** — the out-of-view docking state machine (§3) does not exist
+- **No accordion dock** — `SidePanel.tsx` (2,334 lines) is a single conversation panel, not a flowing-terminal-with-right-dock layout
+- **No `TerminalSessionManager` singleton** — no shared PTY store that persists across docking transitions
+- **No tether chips** — no `[Terminal #1: docked in Stage →]` indicator in the conversation stream
+- **No GSAP FLIP animation** — the 300ms transition is spec only
+
+A grep for `Accordion`/`IntersectionObserver`/`TerminalTile`/`StreamingTerminal` across `src/` (excluding `node_modules`) returns matches only in `pages/Terminal.tsx` and `components/domain/ChromaDBSettings.tsx` (unrelated).
+
+### 6.2 Backend: PTY Is a Subprocess Stub
+
+`dashboard/routes/terminal.py` (299 lines) is explicit in its docstring: *"Uses subprocess for now - can be upgraded to full PTY later."* The actual execution path is `subprocess.run()`, which means:
+- No interactive stdin (password prompts, `y/N` confirmations break)
+- No `SIGWINCH` handling (terminal resize signals)
+- No streaming — output is collected and returned as a blob
+- No ring buffer (§3 Gate 4 in the feasibility doc: 1MB circular buffer)
+- No TTL reaper (§3 Gate 3: 60s idle PTY suspension)
+
+**This is the single highest-leverage infrastructure gap.** The frontend is ready; the backend is not.
+
+### 6.3 The Unified Input Bar (§5) Does Not Exist
+
+The intelligent mode detection (shell command vs. natural language), `Cmd+Enter` override, and host-aware predictive ghosting are all spec. The current input is a standard chat text field in `SidePanel.tsx`. The `intake/signals.py` module (zero-LLM signal detection, <1ms) could power the mode detection — it already extracts intent, shell commands, and file paths via regex — but it is not wired to the frontend input bar.
+
+### 6.4 Build Sequence
+
+| Step | What | Effort | Dependency |
+|---|---|---|---|
+| **6.4.1** | Replace `subprocess.run()` with async PTY (`aiopty`/`pexpect`) + 1MB ring buffer + 60s idle reaper in `terminal.py` | ~90 lines | None — this is the unblocker |
+| **6.4.2** | Add `TerminalSessionManager` singleton (shared PTY store, persists across docking) | ~80 lines | 6.4.1 |
+| **6.4.3** | Build `TerminalAccordionDock` component in right column of `SidePanel.tsx` | ~200 lines frontend | 6.4.2 |
+| **6.4.4** | Add `IntersectionObserver` + tether chips to conversation stream | ~100 lines frontend | 6.4.3 |
+| **6.4.5** | Wire `intake/signals.py` to input bar for shell-vs-natural-language mode detection | ~40 lines | 6.4.3 |
+| **Deferred** | GSAP FLIP 300ms animation, host-aware predictive ghosting | — | Ship the dock first, animate later |

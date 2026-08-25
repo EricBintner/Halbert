@@ -105,3 +105,43 @@ Every active subagent is paired with a **Live Streaming Terminal Tile**:
 1. **Spawned Inline:** Appears as an interactive, collapsible terminal block in the left conversation stream.
 2. **Auto-Docking:** If the user scrolls past the terminal or continues chatting, the subagent's terminal smoothly docks into the **Right-Column Accordion Dock**.
 3. **Completion Receipt:** Once finished, the terminal folds into a compact badge: `[✓ StorageAuditor: Completed in 4m 12s | 0 Errors]`. Clicking the badge re-opens the terminal output with full ANSI color and scrollback.
+
+---
+
+## 5. Codebase Reality Check (August 2026 Audit)
+
+### 5.1 Subagents Do Not Exist
+
+A grep for `spawn_subagent`/`SubagentHandle`/`subagent` across `halbert_core/` returns **zero matches**. The `agents/react_agent.py` (442 lines) has no `spawn_subagent()` method. All 5 specialized subagents (StorageAuditor, ConfigRefactor, IncidentInvestigator, SecurityHardening, EphemeralTask) are pure spec — none are implemented.
+
+### 5.2 The PTY Backend Required for Subagents Is a Stub
+
+`dashboard/routes/terminal.py` (299 lines) explicitly states *"Uses subprocess for now - can be upgraded to full PTY later."* The backend is `subprocess.run()`, not a real PTY. This means:
+- No interactive stdin (password prompts, `y/N` confirmations)
+- No `SIGWINCH` (terminal resize)
+- No ring buffer for long-running output
+- No TTL reaper for orphaned processes
+
+**This is the hard dependency.** Subagents cannot be built until the PTY backend is real. The frontend xterm.js (`pages/Terminal.tsx`, 482 lines) is already wired and waiting.
+
+### 5.3 Context Isolation Infrastructure Partially Exists
+
+The spec's §3.2 (Context Isolation & Epistemic Scoping) requires:
+- **Isolated context buffer:** `context/assembler.py` `ContextAssembler` can be instantiated per-subagent with scoped sources — the architecture supports this but no spawn logic exists
+- **Deterministic output shape:** `findings/proposals.py` `Proposal` dataclass is the right shape for subagent output, but no subagent emits it yet
+- **Archived terminal session reference:** No terminal session persistence exists
+
+### 5.4 Concurrency Ceiling Not Enforced
+
+The feasibility doc (§3, Gate 2) specifies a max of 2 background workers with FIFO queuing in SQLite. **No concurrency limiter exists in code.** This must be built alongside the first subagent.
+
+### 5.5 Refined Build Plan: One Subagent First
+
+Do not build all 5 subagents. Build **`StorageAuditorAgent` only** as a proof-of-concept:
+
+1. **Prerequisite:** Replace `subprocess.run()` in `terminal.py` with async PTY (`aiopty` or `pexpect` async) + 1MB ring buffer + 60s idle reaper (~90 lines)
+2. **Add concurrency limiter:** Simple `asyncio.Semaphore(2)` with SQLite-backed FIFO queue for overflow (~40 lines)
+3. **Build `subagents/storage_auditor.py`:** Runs `smartctl -t long` / `zpool scrub` in isolated PTY, streams output, emits a `Proposal` Somatic Block on completion (~150 lines)
+4. **Wire into `react_agent.py`:** Add `spawn_subagent()` method that creates scoped `ContextAssembler` + isolated PTY + emits `SubagentHandle` (~60 lines)
+
+**Total: ~340 lines** to get one real subagent running end-to-end. If the pattern works, the other 4 subagents are mechanical variations.

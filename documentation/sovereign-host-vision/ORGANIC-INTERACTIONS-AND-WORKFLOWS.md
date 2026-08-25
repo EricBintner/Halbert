@@ -155,3 +155,32 @@ Machines frequently have recurring hardware or software quirks (e.g. an external
 2. The user names it: `"Clear Stale Docker Lock"`.
 3. Next time that exact error signature or journald trace appears, Halbert proactively prompts:
    > *"I detected the stale Docker daemon lock error. [Run 'Clear Stale Docker Lock' Reflex (1-Click)]"*
+
+---
+
+## 7. Codebase Reality Check (August 2026 Audit)
+
+### 7.1 Superpower Status Summary
+
+| Superpower | Backend | Frontend | Status |
+|---|---|---|---|
+| **1. Lasso-to-Mind** | `intake/signals.py` can extract error context; `findings/proposals.py` can generate proposals | No selection-to-fix UI in terminal tiles | **Backend ready, frontend missing** |
+| **2. Parametric Sliders** | `approval/simulator.py` computes before/after state; `findings/blast_radius.py` scores impact | No slider component; no live headroom simulation UI | **Backend partial, frontend missing — deferred** |
+| **3. Tethered Accordion** | PTY backend is `subprocess.run()` stub (see STREAMING-TERMINALS doc §6) | No `IntersectionObserver`, no accordion dock, no tether chips | **Hard blocked on PTY backend** |
+| **4. "What Changed?"** | No config snapshot infrastructure exists; no package version tracking; no port conflict detection | No diff view UI | **Not started — deferred** |
+| **5. Living Reflexes** | Zero `reflex`/`Reflex` matches in Python; no YAML store; no trigger matching | No 1-click reflex UI | **Not started — depends on Somatic Block unification** |
+
+### 7.2 What Can Be Built Now vs. What Must Wait
+
+**Build now (backend exists, needs frontend):**
+- **Lasso-to-Mind (Superpower 1):** `intake/signals.py` already extracts error indicators, file paths, and code blocks via regex in <1ms. `findings/proposals.py` generates `Proposal` objects with dry-run diffs. The missing piece is a frontend pill (`[Fix with Halbert]`) on text selection in `pages/Terminal.tsx` that calls a new endpoint to generate a proposal from the selected text + terminal context. ~80 lines frontend + ~30 lines backend.
+
+**Build after PTY backend (Stage 2):**
+- **Tethered Accordion (Superpower 3):** Hard blocked on real PTY. See STREAMING-TERMINALS doc §6.4 for build sequence.
+
+**Build after Somatic Block unification (Stage 1):**
+- **Living Reflexes (Superpower 5):** The Reflection block must exist first to synthesize reflexes from resolved incidents. Then add `reflexes/` YAML store + Tier 0 trigger matching.
+
+**Deferred (significant new infrastructure):**
+- **Parametric Sliders (Superpower 2):** Requires live RAM/headroom simulation engine that doesn't exist. The `approval/simulator.py` computes static before/after but not live parameter sweeps. Defer until the core terminal + somatic pipeline is working.
+- **"What Changed?" (Superpower 4):** Requires config snapshot infrastructure (periodic `/etc` snapshots, package version tracking, port state baselines). This is a new subsystem — defer.
