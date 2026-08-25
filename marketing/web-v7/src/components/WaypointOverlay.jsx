@@ -14,12 +14,38 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
     }, 500);
   };
 
-  const wp = camera.activeWaypoint;
+  const s = camera.s; // Eased continuous scroll progress in [0, 1]
+
+  // Compute continuous physical motion offsets for each waypoint section
+  // Section 0: Hero (Center at s = 0.08)
+  const offset0 = (s - 0.08);
+  const transY0 = -offset0 * 1400; // Scrolls up naturally as user scrolls down
+  const opacity0 = Math.max(0, Math.min(1, 1 - Math.abs(offset0) * 8));
+
+  // Section 1: Apex (Center at s = 0.32)
+  const offset1 = (s - 0.32);
+  const transY1 = -offset1 * 1200; // Curves up into view from bottom
+  const opacity1 = Math.max(0, Math.min(1, 1 - Math.abs(offset1) * 8));
+
+  // Section 2: Lane Hop (Center at s = 0.54)
+  const offset2 = (s - 0.54);
+  const transX2 = -offset2 * 1000; // Glides laterally across concentric lanes
+  const opacity2 = Math.max(0, Math.min(1, 1 - Math.abs(offset2) * 8));
+
+  // Section 3: Shape Cap (Center at s = 0.74)
+  const offset3 = (s - 0.74);
+  const transY3 = -offset3 * 900;
+  const opacity3 = Math.max(0, Math.min(1, 1 - Math.abs(offset3) * 8));
+
+  // Section 4: Grand Reveal (Center at s = 0.94)
+  const offset4 = (s - 0.94);
+  const scale4 = Math.max(0.8, 1 - Math.abs(offset4) * 0.5);
+  const opacity4 = Math.max(0, Math.min(1, 1 - Math.abs(offset4) * 8));
 
   return (
-    <div className="fixed inset-0 pointer-events-none z-20 flex flex-col justify-between p-6 sm:p-10 lg:p-14 font-sans select-none">
+    <div className="fixed inset-0 pointer-events-none z-20 flex flex-col justify-between p-6 sm:p-10 lg:p-14 font-sans select-none overflow-hidden">
       {/* Top Header Folio Bar */}
-      <div className="w-full flex justify-between items-center text-xs font-mono text-[var(--color-ink-secondary)] pointer-events-auto border-b border-white/20 pb-3">
+      <div className="w-full flex justify-between items-center text-xs font-mono text-[var(--color-ink-secondary)] pointer-events-auto border-b border-white/20 pb-3 z-30">
         <div className="flex items-center space-x-3">
           <HalbertMark size={22} color="#D4E157" strokeWidth={32} />
           <span className="font-bold text-white tracking-wider">HALBERT KINETIC WORKSPACE</span>
@@ -41,13 +67,19 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
         </div>
       </div>
 
-      {/* Main Dynamic Viewport Waypoint Stage */}
-      <div className="w-full max-w-7xl mx-auto my-auto pointer-events-auto">
+      {/* Main Dynamic Viewport Waypoint Stage with Continuous Physical Scroll Motion */}
+      <div className="relative w-full max-w-7xl mx-auto my-auto h-[70vh] flex items-center justify-center pointer-events-none">
         {/* ========================================================================= */}
-        {/* WAYPOINT 0: 50/50 Vertical Split (Left Copy | Right Interactive Telemetry)*/}
+        {/* WAYPOINT 0: 50/50 Vertical Split (Scrolls physically UP as user scrolls DOWN) */}
         {/* ========================================================================= */}
-        {wp === 0 && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center transition-all duration-300 animate-fadeIn">
+        {opacity0 > 0.01 && (
+          <div
+            className="absolute inset-0 grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center pointer-events-auto will-change-transform"
+            style={{
+              transform: `translateY(${transY0}px)`,
+              opacity: opacity0,
+            }}
+          >
             {/* Left Column (Over Chartreuse Stroke Field) */}
             <div className="space-y-6 text-left pr-0 lg:pr-8 text-[#042F2E]">
               <div className="inline-block px-3 py-1 bg-[#042F2E] text-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest uppercase">
@@ -98,8 +130,14 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
         {/* ========================================================================= */}
         {/* WAYPOINT 1: Top / Bottom Horizontal Apex Division                        */}
         {/* ========================================================================= */}
-        {wp === 1 && (
-          <div className="space-y-8 text-center max-w-4xl mx-auto transition-all duration-300 animate-fadeIn">
+        {opacity1 > 0.01 && (
+          <div
+            className="absolute inset-0 flex flex-col justify-center space-y-8 text-center max-w-4xl mx-auto pointer-events-auto will-change-transform"
+            style={{
+              transform: `translateY(${transY1}px)`,
+              opacity: opacity1,
+            }}
+          >
             {/* Top Field: Headline & Thesis */}
             <div className="space-y-3">
               <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase">
@@ -139,10 +177,16 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
         )}
 
         {/* ========================================================================= */}
-        {/* WAYPOINT 2: Perpendicular Lane Hop (Concentric Tracks)                   */}
+        {/* WAYPOINT 2: Perpendicular Lane Hop (Slides Laterally across Tracks)      */}
         {/* ========================================================================= */}
-        {wp === 2 && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center text-left transition-all duration-300 animate-fadeIn">
+        {opacity2 > 0.01 && (
+          <div
+            className="absolute inset-0 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center text-left pointer-events-auto will-change-transform"
+            style={{
+              transform: `translateX(${transX2}px)`,
+              opacity: opacity2,
+            }}
+          >
             {/* Left Column */}
             <div className="space-y-5">
               <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase">
@@ -179,9 +223,15 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
         {/* ========================================================================= */}
         {/* WAYPOINT 3: Centered on Shape Cap (Rounded Terminal End)                 */}
         {/* ========================================================================= */}
-        {wp === 3 && (
-          <div className="space-y-6 text-center max-w-3xl mx-auto transition-all duration-300 animate-fadeIn">
-            <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase">
+        {opacity3 > 0.01 && (
+          <div
+            className="absolute inset-0 flex flex-col justify-center space-y-6 text-center max-w-3xl mx-auto pointer-events-auto will-change-transform"
+            style={{
+              transform: `translateY(${transY3}px)`,
+              opacity: opacity3,
+            }}
+          >
+            <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase mx-auto">
               04 // FOCUSED ON ROUNDED SHAPE CAP
             </div>
 
@@ -214,9 +264,15 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
         {/* ========================================================================= */}
         {/* WAYPOINT 4: Grand Zoom-Out Finale (100% Mark Reveal)                     */}
         {/* ========================================================================= */}
-        {wp === 4 && (
-          <div className="space-y-8 text-center max-w-2xl mx-auto transition-all duration-500 animate-fadeIn">
-            <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase">
+        {opacity4 > 0.01 && (
+          <div
+            className="absolute inset-0 flex flex-col justify-center space-y-8 text-center max-w-2xl mx-auto pointer-events-auto will-change-transform"
+            style={{
+              transform: `scale(${scale4})`,
+              opacity: opacity4,
+            }}
+          >
+            <div className="inline-block px-3 py-1 bg-[#134E4A] border border-[var(--color-vector-lime)] text-xs font-mono font-bold tracking-widest text-[var(--color-vector-lime)] uppercase mx-auto">
               05 // THE GRAND REVEAL · 100% SCALE
             </div>
 
@@ -260,8 +316,8 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
       </div>
 
       {/* Bottom Coordinates & Stage Info */}
-      <div className="w-full flex justify-between items-center text-[11px] font-mono text-[var(--color-ink-tertiary)] pointer-events-auto border-t border-white/20 pt-3">
-        <div>STAGE: 0{wp + 1} OF 05 // {camera.layoutType.toUpperCase()}</div>
+      <div className="w-full flex justify-between items-center text-[11px] font-mono text-[var(--color-ink-tertiary)] pointer-events-auto border-t border-white/20 pt-3 z-30">
+        <div>STAGE: 0{camera.activeWaypoint + 1} OF 05 // {camera.layoutType.toUpperCase()}</div>
         <div>HALBERT HOST APPARATUS · ZERO CLOUD EGRESS</div>
       </div>
     </div>
