@@ -428,6 +428,24 @@ class StreamEvent:
         data = {"block_type": block_type, "block_id": block_id, "status": status}
         data.update(kwargs)
         return cls(type="somatic_block", session_id=session_id, data=data)
+
+    @classmethod
+    def subagent_event(
+        cls,
+        session_id: str,
+        event_type: str,
+        handle_id: str,
+        **kwargs: Any,
+    ) -> 'StreamEvent':
+        """Emit a subagent lifecycle event (D1c).
+
+        ``event_type`` is one of: spawned, state_changed, session_started,
+        timed_out, at_capacity, completed, failed, cancelled. Extra fields
+        (agent_type, status, result_block_id, error, ...) pass through as kwargs.
+        """
+        data = {"subagent_event": event_type, "handle_id": handle_id}
+        data.update(kwargs)
+        return cls(type="subagent_event", session_id=session_id, data=data)
     
     @classmethod
     def heartbeat(cls, session_id: str = "system") -> 'StreamEvent':

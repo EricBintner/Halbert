@@ -16,6 +16,7 @@ See OPUS-HANDOFF §D1a.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 import time
@@ -98,18 +99,25 @@ class SubagentManager:
     # ------------------------------------------------------------------
 
     def _emit(self, event_type: str, handle: SubagentHandle, **extra: Any) -> None:
-        if self._on_event is None:
-            return
+        event = {
+            "type": event_type,
+            "handle_id": handle.id,
+            "agent_type": handle.agent_type,
+            "status": handle.status,
+            **extra,
+        }
+        if self._on_event is not None:
+            try:
+                self._on_event(event)
+            except Exception as e:
+                logger.debug(f"subagent on_event callback failed: {e}")
+        # Also publish to the proactive channel (best-effort; no-op if no loop)
         try:
-            self._on_event({
-                "type": event_type,
-                "handle_id": handle.id,
-                "agent_type": handle.agent_type,
-                "status": handle.status,
-                **extra,
-            })
+            asyncio.get_running_loop().create_task(publish_subagent_event(event))
+        except RuntimeError:
+            pass
         except Exception as e:
-            logger.debug(f"subagent on_event callback failed: {e}")
+            logger.debug(f"subagent proactive schedule failed: {e}")
 
     # ------------------------------------------------------------------
     # Spawn / complete / cancel
@@ -231,3 +239,43 @@ class SubagentManager:
     @property
     def queued_count(self) -> int:
         return len(self._queue)
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle event stream (D1c)
+# ---------------------------------------------------------------------------
+
+def subagent_event_to_stream(session_id: str, event: Dict[str, Any]) -> "Any":
+    """Convert a SubagentManager event dict to a StreamEvent for SSE.
+
+    The manager emits plain dicts via ``on_event``; call this to turn one into
+    a ``StreamEvent.subagent_event`` for the SSE channel.
+    """
+    from .events import StreamEvent
+    return StreamEvent.subagent_event(
+        session_id=session_id,
+        event_type=event.get("type", "state_changed"),
+        handle_id=event.get("handle_id", ""),
+        agent_type=event.get("agent_type"),
+        status=event.get("status"),
+    )
+
+
+async def publish_subagent_event(event: Dict[str, Any]) -> None:
+    """Publish a subagent lifecycle event to the ProactiveEventBus (D1c).
+
+    Best-effort: never raises (a missing/bus-less environment just skips).
+    """
+    try:
+        from ..proactive.events import ProactiveEvent, get_event_bus
+        event_type = event.get("type", "state_changed")
+        agent_type = event.get("agent_type", "subagent")
+        pe = ProactiveEvent.create(
+            type="subagent_event",
+            severity="info" if event_type != "failed" else "warning",
+            title=f"Subagent {event_type}: {agent_type}",
+            body=f"handle={event.get('handle_id')} status={event.get('status')}",
+        )
+        await get_event_bus().publish(pe)
+    except Exception as e:
+        logger.debug(f"subagent proactive publish failed (non-fatal): {e}")
