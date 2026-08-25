@@ -20,3 +20,4 @@ export { AgentChat } from './AgentChat';
 export { TaskPanel, type TaskState, type TaskPanelProps } from './TaskPanel';
 
 export { TerminalTile } from './TerminalTile'
+export { TerminalAccordionDock } from './TerminalAccordionDock'
