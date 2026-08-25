@@ -384,6 +384,31 @@ class StreamEvent:
             session_id=session_id,
             data={"message": "Session cancelled"}
         )
+
+    @classmethod
+    def conversation_status(
+        cls,
+        session_id: str,
+        status: Any,
+        blocked_action: Optional[Dict[str, Any]] = None,
+        waiting_for: Optional[str] = None,
+    ) -> 'StreamEvent':
+        """Emit a user-facing conversation status change (A2c).
+
+        ``status`` may be a ``ConversationStatus`` enum or its string value.
+        Drives the UI's conversation status badge (in_progress / blocked /
+        waiting / success / error / cancelled).
+        """
+        sval = status.value if hasattr(status, "value") else str(status)
+        return cls(
+            type="conversation_status",
+            session_id=session_id,
+            data={
+                "status": sval,
+                "blocked_action": blocked_action,
+                "waiting_for": waiting_for,
+            },
+        )
     
     @classmethod
     def heartbeat(cls, session_id: str = "system") -> 'StreamEvent':

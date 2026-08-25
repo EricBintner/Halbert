@@ -15,6 +15,14 @@ from .blocks import TextBlock, ToolUseBlock, ToolResultBlock
 
 if TYPE_CHECKING:
     from ..intake import MessageIntake
+    from .conversation_status import ConversationStatusMachine
+
+
+def _new_conversation_status() -> "ConversationStatusMachine":
+    """Lazy factory for the conversation status machine (avoids a circular
+    import: conversation_status.py imports ConversationStatus from states)."""
+    from .conversation_status import ConversationStatusMachine
+    return ConversationStatusMachine()
 
 
 class AgentState(Enum):
@@ -118,6 +126,11 @@ class StateContext:
     
     # Conversation
     conversation_history: List[Dict[str, Any]] = field(default_factory=list)
+
+    # User-facing conversation status (A2c), separate from AgentState
+    conversation_status: "ConversationStatusMachine" = field(
+        default_factory=_new_conversation_status
+    )
     
     # Planning
     plan: List[PlanStep] = field(default_factory=list)

@@ -11,7 +11,7 @@ import logging
 import uuid
 from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHECKING
 
-from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep
+from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep, ConversationStatus
 from .events import StreamEvent
 
 if TYPE_CHECKING:
@@ -249,6 +249,8 @@ class AgentStateMachine:
                             # RESPONDING, which would fail identically forever.
                             # End the session instead (non-recoverable error).
                             yield StreamEvent.error(session_id, str(e), recoverable=False)
+                            # User-facing status: terminal error (A2c)
+                            yield self._set_conversation_status(ConversationStatus.ERROR)
                             self.current_state = AgentState.IDLE
                         else:
                             yield StreamEvent.error(session_id, str(e))
@@ -303,8 +305,10 @@ class AgentStateMachine:
         if confirmed:
             # Execute the confirmed action
             self.ctx.pending_confirmation["confirmed"] = True
+            # Approval granted: resume working (A2c)
+            yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
             yield await self._transition(AgentState.EXECUTING)
-            
+
             # Continue processing
             async for event in self._handle_executing():
                 yield event
@@ -312,11 +316,23 @@ class AgentStateMachine:
             # User rejected - go back to planning
             self.ctx.pending_confirmation = None
             self.ctx.add_observation("User rejected the action")
+            # Rejection resumes the conversation (the agent re-plans and still
+            # responds), so this is IN_PROGRESS, not a terminal CANCELLED.
+            # True cancellation is cancel_session() below. (A2c)
+            yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
             yield await self._transition(AgentState.PLANNING)
     
     def cancel_session(self, session_id: str) -> bool:
         """Cancel an active session."""
         if session_id in self.active_sessions:
+            ctx = self.active_sessions[session_id]
+            # User-facing status: cancelled (A2c). Guard against an already-
+            # terminal conversation (e.g. already SUCCESS/ERROR).
+            if not ctx.conversation_status.is_terminal():
+                try:
+                    ctx.conversation_status.transition(ConversationStatus.CANCELLED)
+                except ValueError:
+                    pass
             del self.active_sessions[session_id]
             self.current_state = AgentState.IDLE
             return True
@@ -359,6 +375,23 @@ class AgentStateMachine:
             self.ctx.session_id,
             new_state.value,
             old_state.value
+        )
+
+    def _set_conversation_status(
+        self, new_status: ConversationStatus, **kwargs
+    ) -> StreamEvent:
+        """Transition the user-facing conversation status and return its SSE event.
+
+        Validates the transition via ConversationStatusMachine and emits a
+        ``conversation_status`` StreamEvent carrying the new status plus any
+        blocked_action / waiting_for context (A2c).
+        """
+        self.ctx.conversation_status.transition(new_status, **kwargs)
+        return StreamEvent.conversation_status(
+            self.ctx.session_id,
+            self.ctx.conversation_status.current(),
+            blocked_action=self.ctx.conversation_status.blocked_action(),
+            waiting_for=self.ctx.conversation_status.waiting_for(),
         )
     
     def _get_handler(self) -> Optional[Callable]:
@@ -651,6 +684,12 @@ class AgentStateMachine:
                     result.risk_level.value
                 )
                 
+                # User-facing status: blocked on approval (A2c)
+                yield self._set_conversation_status(
+                    ConversationStatus.BLOCKED,
+                    blocked_action=self.ctx.pending_confirmation,
+                )
+
                 yield await self._transition(AgentState.AWAITING_CONFIRMATION)
                 return
             
@@ -904,6 +943,8 @@ class AgentStateMachine:
         complete_event = StreamEvent.response_complete(self.ctx.session_id)
         complete_event.data["content"] = clean_response
         yield complete_event
+        # User-facing status: success (A2c)
+        yield self._set_conversation_status(ConversationStatus.SUCCESS)
         yield await self._transition(AgentState.IDLE)
     
     async def _handle_error(self) -> AsyncIterator[StreamEvent]:
@@ -918,10 +959,14 @@ class AgentStateMachine:
         
         if self.ctx.error_recovery_attempts >= 3:
             # Give up, respond with error context
+            yield self._set_conversation_status(ConversationStatus.ERROR)
             yield await self._transition(AgentState.RESPONDING)
         else:
             # Try to recover by replanning
             self.ctx.error = None
+            # Transient error → resume working (A2c)
+            yield self._set_conversation_status(ConversationStatus.TRANSIENT_ERROR)
+            yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
             yield await self._transition(AgentState.PLANNING)
     
     async def _handle_awaiting_confirmation(self) -> AsyncIterator[StreamEvent]:
