@@ -1,14 +1,32 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 /**
  * Authentic Vector Canvas for Site V7
- * Renders the exact 1024x1024 Halbert SVG path with zero artificial shadow duplicates,
- * enabling pristine screen-splitting at 1000% zoom.
+ * Renders the exact 1024x1024 Halbert SVG path with zero aspect-ratio drift,
+ * pinning the camera focal coordinate (cx, cy) mathematically at the exact center of the screen.
  */
 export function VectorCanvas({ camera }) {
-  const baseDim = 1024;
-  const w = baseDim / Math.max(0.1, camera.scale);
-  const h = baseDim / Math.max(0.1, camera.scale);
+  const [dimensions, setDimensions] = useState({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1920,
+    height: typeof window !== 'undefined' ? window.innerHeight : 1080,
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setDimensions({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Compute viewBox dimensions based on window aspect ratio to prevent slicing or focal drift
+  const aspect = dimensions.width / Math.max(1, dimensions.height);
+  const h = 1024 / Math.max(0.1, camera.scale);
+  const w = h * aspect;
+
   const minX = camera.cx - w / 2;
   const minY = camera.cy - h / 2;
 
@@ -34,7 +52,7 @@ export function VectorCanvas({ camera }) {
     >
       <svg
         viewBox={`${minX} ${minY} ${w} ${h}`}
-        preserveAspectRatio="xMidYMid slice"
+        preserveAspectRatio="none"
         className="w-full h-full"
         xmlns="http://www.w3.org/2000/svg"
       >

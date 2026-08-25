@@ -20,27 +20,27 @@ export function WaypointOverlay({ camera, onJumpToWaypoint }) {
   // Section 0: Hero (Center at s = 0.08)
   const offset0 = (s - 0.08);
   const transY0 = -offset0 * 1400; // Scrolls up naturally as user scrolls down
-  const opacity0 = Math.max(0, Math.min(1, 1 - Math.abs(offset0) * 8));
+  const opacity0 = Math.max(0, Math.min(1, 1 - Math.abs(offset0) * 6));
 
-  // Section 1: Apex (Center at s = 0.32)
-  const offset1 = (s - 0.32);
+  // Section 1: Apex (Center at s = 0.35)
+  const offset1 = (s - 0.35);
   const transY1 = -offset1 * 1200; // Curves up into view from bottom
-  const opacity1 = Math.max(0, Math.min(1, 1 - Math.abs(offset1) * 8));
+  const opacity1 = Math.max(0, Math.min(1, 1 - Math.abs(offset1) * 6));
 
-  // Section 2: Lane Hop (Center at s = 0.54)
-  const offset2 = (s - 0.54);
+  // Section 2: Lane Hop (Center at s = 0.55)
+  const offset2 = (s - 0.55);
   const transX2 = -offset2 * 1000; // Glides laterally across concentric lanes
-  const opacity2 = Math.max(0, Math.min(1, 1 - Math.abs(offset2) * 8));
+  const opacity2 = Math.max(0, Math.min(1, 1 - Math.abs(offset2) * 6));
 
   // Section 3: Shape Cap (Center at s = 0.74)
   const offset3 = (s - 0.74);
   const transY3 = -offset3 * 900;
-  const opacity3 = Math.max(0, Math.min(1, 1 - Math.abs(offset3) * 8));
+  const opacity3 = Math.max(0, Math.min(1, 1 - Math.abs(offset3) * 6));
 
   // Section 4: Grand Reveal (Center at s = 0.94)
   const offset4 = (s - 0.94);
   const scale4 = Math.max(0.8, 1 - Math.abs(offset4) * 0.5);
-  const opacity4 = Math.max(0, Math.min(1, 1 - Math.abs(offset4) * 8));
+  const opacity4 = Math.max(0, Math.min(1, 1 - Math.abs(offset4) * 6));
 
   return (
     <div className="fixed inset-0 pointer-events-none z-20 flex flex-col justify-between p-6 sm:p-10 lg:p-14 font-sans select-none overflow-hidden">
