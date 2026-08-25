@@ -355,6 +355,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
     }
     if (llmConfig.small_model.endpoint_id) endpointIds.add(llmConfig.small_model.endpoint_id)
     if (llmConfig.large_model.endpoint_id) endpointIds.add(llmConfig.large_model.endpoint_id)
+    if (llmConfig.code_model.endpoint_id) endpointIds.add(llmConfig.code_model.endpoint_id)
     if (llmConfig.coordinator_model?.endpoint_id) endpointIds.add(llmConfig.coordinator_model.endpoint_id)
 
     for (const epId of endpointIds) {

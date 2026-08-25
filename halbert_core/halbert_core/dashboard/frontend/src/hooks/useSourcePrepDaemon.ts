@@ -50,13 +50,14 @@ export function useSourcePrepDaemon({
     const controller = new AbortController()
     abortRef.current = controller
 
+    // Set timeout BEFORE the fetch so it actually races against the request.
+    // If the fetch hangs, the timeout fires and aborts the controller.
+    const timeoutId = setTimeout(() => controller.abort(), 3000)
+
     try {
       const r = await fetch(`${daemonUrl}/health`, {
         signal: controller.signal,
-        // Short timeout via AbortController
       })
-      // Use a manual timeout race
-      const timeoutId = setTimeout(() => controller.abort(), 3000)
       if (r.ok) {
         setIsDaemonRunning(true)
         setError(null)
@@ -64,7 +65,6 @@ export function useSourcePrepDaemon({
         setIsDaemonRunning(false)
         setError(`HTTP ${r.status}`)
       }
-      clearTimeout(timeoutId)
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         // Expected from timeout or cancellation — don't update state
@@ -73,6 +73,7 @@ export function useSourcePrepDaemon({
         setError(err instanceof Error ? err.message : 'Connection failed')
       }
     } finally {
+      clearTimeout(timeoutId)
       setIsProbing(false)
     }
   }, [daemonUrl])

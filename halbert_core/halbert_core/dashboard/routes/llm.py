@@ -29,7 +29,9 @@ from __future__ import annotations
 import ipaddress
 import logging
 import socket
+import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -419,6 +421,96 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
         return {"error": {"code": "CONNECTION_FAILED", "message": str(e)}}
 
     return {"data": {"models": models, "model_details": model_details}}
+
+
+# ── Ollama Cloud model discovery ─────────────────────────────────
+
+# Candidate Ollama Cloud model tags to probe via /api/show.
+# Inlined from SourcePrep's ollama_cloud_catalog.py — Halbert doesn't
+# have that module. Each candidate costs one /api/show call, so the
+# list is bounded. Inaccessible candidates are pruned by /api/show.
+_OLLAMA_CLOUD_CANDIDATES: tuple[str, ...] = (
+    "glm-5.2:cloud",
+    "kimi-k2.5:cloud",
+    "kimi-k2.6:cloud",
+    "kimi-k2.7-code:cloud",
+    "gemini-3-flash-preview:cloud",
+    "qwen3-coder-next:cloud",
+    "gpt-5:cloud",
+    "gpt-4.1:cloud",
+    "claude-opus-4.8:cloud",
+    "claude-sonnet-5:cloud",
+    "claude-haiku-4.5:cloud",
+    "gemini-3-pro:cloud",
+    "deepseek-v3.5:cloud",
+    "deepseek-r1:cloud",
+    "mistral-large:cloud",
+    "command-r:cloud",
+)
+
+# In-memory probe cache keyed by (url, catalog_version) with a 5-min TTL.
+_cloud_probe_cache: Dict[tuple, tuple] = {}
+_CLOUD_PROBE_TTL_SEC = 300.0
+
+
+@router.post("/api/llm/proxy/cloud-models")
+def proxy_cloud_models(req: LLMProxyRequest) -> Dict[str, Any]:
+    """List on-demand Ollama Cloud models not in /api/tags.
+
+    Probes each candidate via /api/show (concurrent, max 8 in flight),
+    returns only those Ollama actually serves, minus any already in
+    /api/tags. Non-Ollama providers return empty.
+    """
+    url = req.url.rstrip("/")
+    if not is_safe_url(url, req.provider):
+        return {"data": {"cloud_models": [], "cloud_model_details": [], "error": "Invalid or unsafe URL"}}
+
+    if req.provider != "ollama":
+        return {"data": {"cloud_models": [], "cloud_model_details": []}}
+
+    cache_key = (url, 1)  # catalog version 1
+    now = time.monotonic()
+    cached = _cloud_probe_cache.get(cache_key)
+    if cached and (now - cached[0]) < _CLOUD_PROBE_TTL_SEC:
+        return {"data": cached[1]}
+
+    # Subscribed set from /api/tags — dedupe so we don't surface models
+    # the picker already shows.
+    subscribed: set = set()
+    try:
+        tags_r = requests.get(f"{url}/api/tags", timeout=5)
+        if tags_r.status_code == 200:
+            for m in tags_r.json().get("models", []):
+                if isinstance(m, dict) and m.get("name"):
+                    subscribed.add(str(m["name"]))
+    except Exception:
+        pass
+
+    candidates = [c for c in _OLLAMA_CLOUD_CANDIDATES if c not in subscribed]
+
+    cloud_models: List[str] = []
+    cloud_model_details: List[Dict[str, Any]] = []
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        shows = list(pool.map(lambda name: _ollama_show_detail(url, name), candidates))
+
+    for name, show in zip(candidates, shows):
+        if not show:
+            continue
+        cloud_models.append(name)
+        detail: Dict[str, Any] = {
+            "name": name,
+            "cost_tier": "Cloud (on-demand)",
+            "on_demand_cloud": True,
+        }
+        if show.get("context_tokens", 0) > 0:
+            detail["context_tokens"] = show["context_tokens"]
+            detail["context_window"] = show["context_window"]
+        cloud_model_details.append(detail)
+
+    payload = {"cloud_models": cloud_models, "cloud_model_details": cloud_model_details}
+    _cloud_probe_cache[cache_key] = (now, payload)
+    return {"data": payload}
 
 
 @router.post("/api/llm/proxy/test")
