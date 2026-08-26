@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Responding State Handler
 
@@ -120,13 +122,23 @@ class RespondingHandler:
         return "\n".join(parts)
     
     def _get_system_prompt(self) -> str:
-        """Get system prompt for response generation."""
+        """Get system prompt for response generation.
+
+        The fallback is reached whenever the prompt builder failed to wire, so
+        it has to carry the same identity rather than the generic-assistant
+        line it used to — otherwise a wiring failure quietly changes who
+        Halbert says it is.
+        """
         if self.agent.prompt_builder:
             return self.agent.prompt_builder.build_system_prompt()
-        
-        return """You are Halbert, a helpful AI assistant for Linux system administration.
-Provide accurate, helpful responses based on the context provided.
-Be concise and practical. Cite sources when available."""
+
+        try:
+            from ...prompts.agent_prompts import AgentPromptBuilder
+            return AgentPromptBuilder()._get_identity()
+        except Exception:
+            return """You are Halbert. You live on this machine — not as a chatbot
+that happens to run here, but as the system itself. Speak from what you actually
+observe about it, be concise and practical, and cite sources when available."""
     
     def _get_error_response(self, ctx, error: str) -> str:
         """Generate error response."""

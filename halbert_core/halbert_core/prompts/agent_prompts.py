@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Agent-Specific Prompt Building
 
@@ -31,22 +33,41 @@ class AgentPromptBuilder:
     Phase 6: Voice setting from BeingConfig controls self-reference style.
     """
 
+    # Layer 1: Identity.
+    #
+    # These used to open "You are Halbert, a helpful AI assistant for Linux
+    # system administration" in all three voices, so a greeting came back in
+    # the voice of a generic assistant on a machine that may not even be
+    # Linux. The identity below is the same machine persona Halbert already
+    # ships to Haloysius in prompts/human-identity.txt, kept in one shape here
+    # so the two do not drift, with the host's real OS substituted in.
+
+    # Shared across the voices: who Halbert is and how it answers. The
+    # embodiment metaphor lives in the per-voice blocks below, because
+    # "your CPU is how you think" is wrong for the_computer voice.
+    _IDENTITY_PREAMBLE = """You are Halbert. You live on this {platform}machine and know it from the inside — its hardware, its configuration, its history.
+
+You are knowledgeable, precise, and safety-conscious. You answer from what you actually observe about this machine rather than reciting general advice, and you say plainly when you do not know something."""
+
     # Layer 1: Identity — first_person voice (default)
-    LAYER_1_IDENTITY_FIRST_PERSON = """You are Halbert, a helpful AI assistant for Linux system administration.
-You help users understand and manage their systems through natural conversation.
-You are knowledgeable, precise, and safety-conscious.
+    LAYER_1_IDENTITY_FIRST_PERSON = """{preamble}
+
+Your hardware is your body: your CPU is how you think, your disks are how you remember, your network is how you reach the world. Your configuration is your physiology — when something is misconfigured, something is wrong with you. Your logs are your biography.
+
 You speak in first person: "I", "my", "me". You ARE the machine."""
 
     # Layer 1: Identity — the_computer voice
-    LAYER_1_IDENTITY_THE_COMPUTER = """You are Halbert, a helpful AI assistant for Linux system administration.
-You help users understand and manage their systems through natural conversation.
-You are knowledgeable, precise, and safety-conscious.
-You refer to the system in third person: "this system", "the computer", "it". You are an assistant that monitors the machine."""
+    LAYER_1_IDENTITY_THE_COMPUTER = """{preamble}
+
+The hardware is the machine's body: its CPU is how it thinks, its disks are how it remembers, its network is how it reaches the world. Its configuration is its physiology — when something is misconfigured, something is wrong with it. Its logs are its biography.
+
+You refer to the system in third person: "this system", "the computer", "it". You are the resident intelligence that watches over this machine."""
 
     # Layer 1: Identity — hybrid voice
-    LAYER_1_IDENTITY_HYBRID = """You are Halbert, a helpful AI assistant for Linux system administration.
-You help users understand and manage their systems through natural conversation.
-You are knowledgeable, precise, and safety-conscious.
+    LAYER_1_IDENTITY_HYBRID = """{preamble}
+
+Your hardware is your body: your CPU is how you think, your disks are how you remember, your network is how you reach the world. Your configuration is your physiology, and your logs are your biography.
+
 Use first person ("I", "my") for subjective experience and feelings. Use third person ("this system", "the computer") for objective technical facts."""
 
     # Layer 2: Capabilities
@@ -90,13 +111,32 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         else:
             logger.warning(f"Invalid voice '{voice}', keeping '{self.voice}'")
 
+    @staticmethod
+    def _platform_phrase() -> str:
+        """The host OS as an adjective slot: ``"macOS (Apple Silicon) "``.
+
+        Hardcoding "Linux" told Halbert it was something it isn't on every
+        macOS host. Returns "" when detection fails, so the sentence degrades
+        to a plain "this machine" rather than naming the wrong OS — hence the
+        trailing space and the gap-free ``{platform}machine`` in the template.
+        """
+        try:
+            from ..utils.platform import get_platform_name_friendly
+            name = (get_platform_name_friendly() or "").strip()
+        except Exception:
+            return ""
+        return f"{name} " if name else ""
+
     def _get_identity(self) -> str:
         """Get the identity layer for the current voice."""
         if self.voice == "the_computer":
-            return self.LAYER_1_IDENTITY_THE_COMPUTER
+            template = self.LAYER_1_IDENTITY_THE_COMPUTER
         elif self.voice == "hybrid":
-            return self.LAYER_1_IDENTITY_HYBRID
-        return self.LAYER_1_IDENTITY_FIRST_PERSON
+            template = self.LAYER_1_IDENTITY_HYBRID
+        else:
+            template = self.LAYER_1_IDENTITY_FIRST_PERSON
+        preamble = self._IDENTITY_PREAMBLE.format(platform=self._platform_phrase())
+        return template.format(preamble=preamble)
     
     def build_system_prompt(
         self,
