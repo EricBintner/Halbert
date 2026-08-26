@@ -1,14 +1,14 @@
 """
 SourcePrep Retrieval Backend
 
-Wraps the SourcePrep HTTP client behind Haloysius's RetrievalBackend protocol.
-This is the seam adapter that lets Haloysius's cognitive core retrieve context
-from SourcePrep's semantic index without knowing about SourcePrep directly.
+Wraps the SourcePrep HTTP client behind the shape of Haloysius's
+RetrievalBackend protocol. Its live consumer is
+halbert_core.context.adapters.SourcePrepAdapter (the agent's ContextAssembler
+retrieval source); Haloysius defines the Protocol but does not call it.
 
-Implements the RetrievalBackend protocol from haloysius.seam:
+Methods:
     load(figure_id) -> bool
     search(query, k, figure_id) -> List[Dict[str, Any]]
-    format_context(results, max_chars) -> str
 
 The `figure_id` parameter is repurposed as a scope filter — SourcePrep supports
 named scopes (Phase 120) which can partition the config tree by domain
@@ -131,28 +131,26 @@ def scope_for_query(query: str, *, platform: Optional[str] = None) -> Optional[s
 
 
 class SourcePrepRetrievalBackend:
-    """RetrievalBackend implementation backed by SourcePrep's HTTP API.
+    """Retrieval backend backed by SourcePrep's HTTP API.
 
-    Implements the RetrievalBackend protocol from haloysius.seam.
-    Haloysius's cognitive core calls search() and format_context() to
-    inject retrieved context into prompts.
+    search() is consumed by halbert_core.context.adapters.SourcePrepAdapter
+    (the agent's ContextAssembler retrieval source). Haloysius defines the
+    RetrievalBackend Protocol but does not call it.
+
+    Note: haloysius.seam.RetrievalBackend is @runtime_checkable and lists a
+    format_context() method that this class deliberately does not implement
+    (it had no callers). No isinstance(..., RetrievalBackend) checks exist in
+    Halbert or Haloysius; HalbertAppSeam only type-annotates the backend.
 
     Usage:
-        from halbert_core.integrations.sourceprep_retrieval_backend import SourcePrepRetrievalBackend
+        # Live agent path (retrieval):
+        from halbert_core.context.adapters import SourcePrepAdapter
+        adapter = SourcePrepAdapter(project_id="halbert-host")
+        docs = await adapter.search("why is sshd refusing connections?")
 
-        backend = SourcePrepRetrievalBackend(
-            project_id="halbert-host",
-        )
-
-        # Register with Haloysius
-        from haloysius.seam import register_app_seam, AppSeam
-
-        class HalbertAppSeam:
-            def get_model_backend(self): return None  # wired separately
-            def get_retrieval_backend(self): return backend
-            def get_governance(self): return None  # permissive for now
-
-        register_app_seam(HalbertAppSeam())
+        # Seam registration (retrieval + model + governance):
+        from halbert_core.integrations.app_seam import wire_halbert_seam
+        wire_halbert_seam(sourceprep_project_id="halbert-host")
     """
 
     def __init__(
@@ -302,55 +300,3 @@ class SourcePrepRetrievalBackend:
 
         logger.debug(f"SourcePrep response had no parseable content")
         return []
-
-    def format_context(
-        self,
-        results: List[Dict[str, Any]],
-        max_chars: int = 1500,
-    ) -> str:
-        """Format search results into a context string for prompt injection.
-
-        Produces a clean, readable context block with source citations:
-
-            [Source: /etc/fstab]
-            UUID=a1b2... / ext4 defaults 0 1
-            ...
-
-            [Source: /etc/systemd/system/foo.service]
-            [Unit]
-            ...
-
-        Args:
-            results: List of result dicts from search().
-            max_chars: Maximum total characters to include.
-
-        Returns:
-            Formatted context string.
-        """
-        if not results:
-            return ""
-
-        parts: List[str] = []
-        total = 0
-
-        for r in results:
-            text = r.get("text", "")
-            source = r.get("source_path", "")
-
-            if not text:
-                continue
-
-            header = f"[Source: {source}]" if source else "[Source: unknown]"
-            block = f"{header}\n{text}"
-
-            if total + len(block) > max_chars:
-                remaining = max_chars - total
-                if remaining > 100:
-                    block = block[:remaining] + "\n...[truncated]"
-                    parts.append(block)
-                break
-
-            parts.append(block)
-            total += len(block)
-
-        return "\n\n".join(parts)

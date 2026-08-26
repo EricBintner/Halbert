@@ -1,10 +1,21 @@
 """
 Halbert App Seam
 
-Wires Halbert's integration components into Haloysius's AppSeam protocol.
-This is the startup glue that registers the SourcePrep retrieval backend,
-the LLM model backend, and the governance policy with Haloysius's
-cognitive core.
+Implements Haloysius's AppSeam Protocols (ModelBackend, RetrievalBackend,
+GovernancePolicy) and registers a HalbertAppSeam via ``register_app_seam``.
+
+What the seam actually is: Haloysius defines the seam Protocols in
+``haloysius.seam`` but has no internal call sites — nothing in Haloysius's
+core reads ``get_app_seam()``. The seam is a consumer-side contract, and its
+consumers are Halbert-side: ``integrations.cognition_wiring`` reads the
+registered model backend and hands ``HalbertModelBackend.generate_text`` to
+a ``ThoughtGenerator`` for ``advance_turn`` (when HALBERT_LLM_THOUGHTS is
+enabled). ``RetrievalBackend.search()`` is consumed by
+``context.adapters.SourcePrepAdapter`` directly, not via the seam registry.
+
+haloysius is imported lazily (inside ``wire_halbert_seam``), so this module
+is importable without the cognition extra; the Protocol names below are
+annotation-only.
 
 Called once at application startup:
     from halbert_core.integrations.app_seam import wire_halbert_seam
@@ -15,15 +26,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from haloysius.seam import (
-    AppSeam,
-    GovernancePolicy,
-    ModelBackend,
-    RetrievalBackend,
-    register_app_seam,
-)
+if TYPE_CHECKING:  # Protocol names are annotation-only (PEP 563 via __future__ annotations)
+    from haloysius.seam import GovernancePolicy, ModelBackend, RetrievalBackend
 
 from .sourceprep_retrieval_backend import SourcePrepRetrievalBackend
 from .sourceprep_client import SourcePrepClient
@@ -64,8 +70,10 @@ class HalbertGovernancePolicy:
 class HalbertModelBackend:
     """ModelBackend adapter wrapping Halbert's LLM routing.
 
-    Bridges Haloysius's ModelBackend protocol to Halbert's TierRouter
-    (``model/tier_router.py``): non-streaming ``chat()`` calls are flattened
+    Implements Haloysius's ModelBackend Protocol on top of Halbert's TierRouter
+    (``model/tier_router.py``). Haloysius itself never calls this; its one real
+    consumer is ``cognition_wiring``, which passes ``generate_text`` to a
+    ``ThoughtGenerator``. Non-streaming ``chat()`` calls are flattened
     to a prompt and routed through ``TierRouter.generate()`` so they get
     tier selection, health-based fallback, rate-limit retry, and outcome
     recording. A raw Ollama ``/api/chat`` call remains as the safety net
@@ -77,17 +85,44 @@ class HalbertModelBackend:
     - the caller pins an explicit ``model=`` kwarg (the router picks models
       itself, so a pinned model id goes straight to Ollama).
 
+    Configuration converges on the agent's own: the router reads
+    ``get_config_dir()/models.yml`` (the same file ``model.client`` reads) and
+    the raw-Ollama defaults are explicit arg -> env (HALBERT_MODEL /
+    OLLAMA_URL) -> ``model.client.get_configured_model()`` /
+    ``get_ollama_endpoint()``.
+
     TierRouter is imported lazily inside ``_get_tier_router`` so this module
     stays importable regardless of model-package import order.
     """
 
     def __init__(self, ollama_url: Optional[str] = None, model: Optional[str] = None):
-        self.ollama_url = ollama_url or os.environ.get(
-            "OLLAMA_URL", "http://localhost:11434"
+        self._explicit_model = model or os.environ.get("HALBERT_MODEL")
+        self.model = self._explicit_model or self._configured_guide_model()
+        self.ollama_url = (
+            ollama_url or os.environ.get("OLLAMA_URL") or self._configured_endpoint()
         )
-        self.model = model or os.environ.get("HALBERT_MODEL", "llama3.2")
         self._tier_router: Any = None
         self._tier_router_unavailable = False
+
+    @staticmethod
+    def _configured_guide_model() -> str:
+        """Same guide model the agent uses (models.yml via get_configured_model)."""
+        try:
+            from ..model.client import get_configured_model
+
+            return get_configured_model()
+        except Exception:
+            return "llama3.1:8b"  # matches get_configured_model()'s own default
+
+    @staticmethod
+    def _configured_endpoint() -> str:
+        """Same Ollama endpoint the agent uses (via get_ollama_endpoint)."""
+        try:
+            from ..model.client import get_ollama_endpoint
+
+            return get_ollama_endpoint()
+        except Exception:
+            return "http://localhost:11434"
 
     # -- TierRouter access -------------------------------------------------
 
@@ -103,7 +138,22 @@ class HalbertModelBackend:
         try:
             from ..model.tier_router import TierRouter  # lazy: import-order safety
 
-            router = TierRouter()
+            from ..model.config_locator import find_models_config, user_models_config
+
+            # Same lookup semantics as the chat client: env override, then the
+            # user config dir (never the repo checkout). If no user file
+            # exists we deliberately do NOT construct TierRouter, because its
+            # own _find_config would fall through to the repo config/models.yml
+            # (with its Tailscale specialist) and silently diverge from chat.
+            path = find_models_config(include_repo=False) or user_models_config()
+            if not path.is_file():
+                logger.warning(
+                    f"No user models.yml at {path} — TierRouter unavailable; "
+                    "HalbertModelBackend will use raw Ollama"
+                )
+                self._tier_router_unavailable = True
+                return None
+            router = TierRouter(config_path=path)
             models = getattr(getattr(router, "config", None), "models", None)
             if not models:
                 logger.warning(
@@ -236,6 +286,11 @@ class HalbertModelBackend:
         data = resp.json()
         return data.get("message", {}).get("content", "")
 
+    def generate_text(self, prompt: str) -> str:
+        """Callable[[str], str] adapter for haloysius ThoughtGenerator(llm_generate=...)."""
+        out = self.chat([{"role": "user", "content": prompt}], temperature=0.8, max_tokens=256)
+        return out if isinstance(out, str) else "".join(out)
+
     def raw_provider(self) -> Any:
         """Return the TierRouter's guide-tier provider, or None if unrouted."""
         router = self._get_tier_router()
@@ -254,10 +309,15 @@ class HalbertModelBackend:
 class HalbertAppSeam:
     """AppSeam implementation for Halbert.
 
-    Provides Haloysius's cognitive core with:
-    - ModelBackend: Ollama-based LLM via HalbertModelBackend
+    Bundles:
+    - ModelBackend: TierRouter/Ollama LLM via HalbertModelBackend
     - RetrievalBackend: SourcePrep semantic search via SourcePrepRetrievalBackend
     - GovernancePolicy: Permissive policy via HalbertGovernancePolicy
+
+    Haloysius defines the AppSeam Protocol but has no internal call sites for
+    it; consumers of ``get_app_seam()`` are Halbert-side (cognition_wiring
+    passes the model backend to ThoughtGenerator). RetrievalBackend.search()
+    is consumed by context/adapters.SourcePrepAdapter, not via this registry.
     """
 
     def __init__(
@@ -288,7 +348,10 @@ def wire_halbert_seam(
     skip_retrieval: bool = False,
     skip_model: bool = False,
 ) -> HalbertAppSeam:
-    """Wire Halbert's integration components into Haloysius's AppSeam.
+    """Build a HalbertAppSeam and register it with haloysius.seam.
+
+    Idempotent enough to call more than once (re-registers). Haloysius does
+    not read the registry itself; see the module docstring for who does.
 
     Call this once at application startup, after the SourcePrep daemon
     is running and the host config project is registered.
@@ -344,7 +407,9 @@ def wire_halbert_seam(
         governance=governance,
     )
 
+    from haloysius.seam import register_app_seam  # lazy: haloysius is optional at import time
+
     register_app_seam(seam)
-    logger.info("Halbert AppSeam registered with Haloysius")
+    logger.info("Halbert AppSeam registered with haloysius.seam")
 
     return seam
