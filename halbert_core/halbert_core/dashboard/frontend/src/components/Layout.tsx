@@ -44,6 +44,7 @@ import { ModeSwitch } from './shell/ModeSwitch'
 import { HostShell } from './shell/HostShell'
 import { useDebug } from '@/contexts/DebugContext'
 import { useShellMode } from '@/contexts/ShellModeContext'
+import { askHost, runOnHost, configWithHost } from '@/lib/hostConversation'
 import { apiUrl } from '@/lib/apiBase'
 
 const navigation = [
@@ -108,7 +109,7 @@ function ProgressPill({ icon, label, percent, detail, tone }: ProgressPillProps)
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const { isDebugMode, setDebugMode, chatMetrics, logs, clearLogs } = useDebug()
-  const { isEngaged } = useShellMode()
+  const { isEngaged, setMode } = useShellMode()
 
   // Global config editor state (triggered from chat "Edit Config" button)
   const [editingConfigPath, setEditingConfigPath] = useState<string | null>(null)
@@ -130,6 +131,74 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }>({ percent: 0, currentPhase: null })
 
   // Listen for open-config-editor events from chat
+  /**
+   * The dashboard-to-conversation bridge.
+   *
+   * Mounted HERE, above the mode ternary, and deliberately not on AgentChat:
+   * every one of these buttons renders in browsing mode, where AgentChat does
+   * not exist. A listener on AgentChat could never hear the event whose job is
+   * to bring AgentChat up.
+   *
+   * Each handler parks the request and flips to engaged; the conversation
+   * drains it once it mounts.
+   */
+  useEffect(() => {
+    const toEngaged = () => setMode('engaged')
+
+    const onOpenChat = (event: Event) => {
+      const detail = (event as CustomEvent).detail ?? {}
+      askHost({
+        // OpenChatEvent calls it prefillMessage.
+        prefill: detail.prefillMessage,
+        context: detail.context ?? detail.description,
+        itemId: detail.itemId,
+        title: detail.title,
+        configPath: detail.configPath,
+      })
+      toEngaged()
+    }
+
+    // Staged, never executed — see runOnHost.
+    const onRunCommand = (event: Event) => {
+      const detail = (event as CustomEvent).detail ?? {}
+      const command = typeof detail === 'string' ? detail : detail.command
+      if (!command) return
+      runOnHost(command, detail.title)
+      toEngaged()
+    }
+
+    const onSendToChat = (event: Event) => {
+      const detail = (event as CustomEvent).detail ?? {}
+      // GPU's 'Send to chat for execution' sends a command plus its rationale.
+      // Staged for reading, like every other command path.
+      askHost({
+        prefill: detail.command
+          ? `Please run this command:\n\n\`\`\`bash\n${detail.command}\n\`\`\``
+          : detail.text,
+        context: detail.context,
+        title: detail.title,
+      })
+      toEngaged()
+    }
+
+    const onSetConfigContext = (event: Event) => {
+      const detail = (event as CustomEvent).detail ?? {}
+      const path = detail.configPath ?? detail.config_path ?? detail.path
+      if (path) configWithHost(path, detail.context)
+    }
+
+    window.addEventListener('halbert:open-chat', onOpenChat as EventListener)
+    window.addEventListener('halbert:run-command', onRunCommand as EventListener)
+    window.addEventListener('halbert:send-to-chat', onSendToChat as EventListener)
+    window.addEventListener('halbert:set-config-context', onSetConfigContext as EventListener)
+    return () => {
+      window.removeEventListener('halbert:open-chat', onOpenChat as EventListener)
+      window.removeEventListener('halbert:run-command', onRunCommand as EventListener)
+      window.removeEventListener('halbert:send-to-chat', onSendToChat as EventListener)
+      window.removeEventListener('halbert:set-config-context', onSetConfigContext as EventListener)
+    }
+  }, [setMode])
+
   useEffect(() => {
     const handleOpenConfigEditor = (e: CustomEvent<{ filePath: string }>) => {
       console.log('[Layout] Opening config editor for:', e.detail.filePath)

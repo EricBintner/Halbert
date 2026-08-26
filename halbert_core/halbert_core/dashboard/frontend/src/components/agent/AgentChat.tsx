@@ -46,6 +46,7 @@ import { HostGreeting } from './HostGreeting';
 import { InlineTerminals } from './InlineTerminals';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
+import { subscribeHost } from '../../lib/hostConversation';
 
 interface UserMessage {
   id: string;
@@ -189,6 +190,23 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const conversationDropdownRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Drain requests parked by the dashboard bridge.
+   *
+   * The prefill is placed in the composer and NOT sent: a staged command must
+   * be readable before it runs, and an "ask about this" should still be the
+   * user's sentence. Anything queued before this mounted arrives here too, so
+   * the mode flip does not drop it.
+   */
+  useEffect(() => subscribeHost((request) => {
+    if (request.prefill) {
+      setInput(request.prefill);
+    } else if (request.itemId) {
+      setInput((current) => `${current}@${request.itemId} `);
+    }
+    inputRef.current?.focus();
+  }), []);
   
   // Phase 59: Conversation management
   const [conversations, setConversations] = useState<AgentConversation[]>([]);
