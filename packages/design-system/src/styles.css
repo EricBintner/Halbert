@@ -1,0 +1,444 @@
+/*
+ * Halbert design system — component styles
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+ *
+ * Plain CSS on purpose. This library is consumed by one app on Tailwind v3 and
+ * another on Tailwind v4; utility classes in library source would have to be
+ * scanned by both and would drift across the majors. Token variables are the
+ * portable layer, so the components use them directly.
+ *
+ * Every colour here is a var(). There are no literal colours in this file, and
+ * adding one creates the fourth palette. See
+ * documentation/design/BRAND-GUIDELINES-AND-AESTHETIC.md §8.
+ */
+
+@import "../../../shared-tokens/tokens.css";
+
+/* ---------------------------------------------------------------- shared -- */
+
+.hb-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* One focus treatment for the whole system. The ring is the single boundary
+ * WCAG 1.4.11 / 2.4.13 require to stand on its own, so it is never removed. */
+.hb-btn:focus-visible,
+.hb-input:focus-visible,
+.hb-select:focus-visible,
+.hb-slider__input:focus-visible,
+.hb-window__toggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* --------------------------------------------------------------- button -- */
+
+.hb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--duration-switch) var(--ease-switch),
+              border-color var(--duration-switch) var(--ease-switch),
+              color var(--duration-switch) var(--ease-switch);
+}
+
+.hb-btn--sm { padding: var(--space-1) var(--space-2); font-size: 12px; min-height: 26px; }
+.hb-btn--md { padding: var(--space-2) var(--space-3); font-size: 13px; min-height: 32px; }
+.hb-btn--lg { padding: var(--space-3) var(--space-5); font-size: 15px; min-height: 40px; }
+
+/* accent-STRONG, not accent: the brand shade is 4.30:1 under white and fails
+ * AA as a text-bearing fill. */
+.hb-btn--primary {
+  background-color: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+  color: var(--color-ink-on-accent);
+}
+.hb-btn--primary:hover:not(:disabled):not([aria-disabled='true']) {
+  background-color: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+.hb-btn--primary:active:not(:disabled):not([aria-disabled='true']) {
+  background-color: var(--color-accent-active);
+  border-color: var(--color-accent-active);
+}
+
+.hb-btn--outline {
+  background-color: transparent;
+  border-color: var(--color-line);
+  color: var(--color-ink);
+}
+.hb-btn--outline:hover:not(:disabled):not([aria-disabled='true']) {
+  background-color: var(--color-surface-subtle);
+  border-color: var(--color-line-strong);
+}
+
+.hb-btn--ghost {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--color-ink-secondary);
+}
+.hb-btn--ghost:hover:not(:disabled):not([aria-disabled='true']) {
+  background-color: var(--color-surface-subtle);
+  color: var(--color-ink);
+}
+
+/* Distinct from primary on purpose: vermilion means "act", critical means
+ * "something is wrong". A vermilion delete button reads as encouragement. */
+.hb-btn--danger {
+  background-color: var(--color-status-critical);
+  border-color: var(--color-status-critical);
+  color: var(--color-ink-on-accent);
+}
+.hb-btn--danger:hover:not(:disabled):not([aria-disabled='true']) { filter: brightness(0.92); }
+
+.hb-btn:disabled,
+.hb-btn[aria-disabled='true'] {
+  background-color: var(--color-surface-muted);
+  border-color: transparent;
+  color: var(--color-ink-ghost);
+  cursor: not-allowed;
+}
+
+.hb-btn__spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: var(--radius-full);
+  animation: hb-spin 640ms linear infinite;
+}
+.hb-btn.is-loading .hb-btn__label { opacity: 0.7; }
+
+@keyframes hb-spin { to { transform: rotate(360deg); } }
+
+/* Motion Restraint Gate: the one looping animation in the system stops. */
+@media (prefers-reduced-motion: reduce) {
+  .hb-btn__spinner { animation: none; opacity: 0.6; }
+}
+
+/* ---------------------------------------------------------------- badge -- */
+
+.hb-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid;
+  border-radius: var(--radius-full);
+  padding: 2px var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.hb-badge--nominal   { color: var(--color-status-nominal);   background: var(--color-status-nominal-bg);   border-color: var(--color-status-nominal-line); }
+.hb-badge--warning   { color: var(--color-status-warning);   background: var(--color-status-warning-bg);   border-color: var(--color-status-warning-line); }
+.hb-badge--critical  { color: var(--color-status-critical);  background: var(--color-status-critical-bg);  border-color: var(--color-status-critical-line); }
+.hb-badge--telemetry { color: var(--color-status-telemetry); background: var(--color-status-telemetry-bg); border-color: var(--color-status-telemetry-line); }
+.hb-badge--neutral   { color: var(--color-ink-secondary);    background: var(--color-surface-subtle);      border-color: var(--color-line); }
+
+/* ---------------------------------------------------------- field/input -- */
+
+.hb-field { display: flex; flex-direction: column; gap: var(--space-1); }
+
+.hb-field__label {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-ink-secondary);
+}
+
+.hb-input,
+.hb-select {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.4;
+  transition: border-color var(--duration-switch) var(--ease-switch);
+}
+.hb-input--mono { font-family: var(--font-mono); }
+
+.hb-input::placeholder {
+  /* tertiary, not ghost: ghost is 3.21:1 and is not licensed for text. */
+  color: var(--color-ink-tertiary);
+}
+
+.hb-input:hover:not(:disabled),
+.hb-select:hover:not(:disabled) { border-color: var(--color-line-strong); }
+
+.hb-input:disabled,
+.hb-select:disabled {
+  background-color: var(--color-surface-muted);
+  color: var(--color-ink-ghost);
+  cursor: not-allowed;
+}
+
+.hb-field.is-invalid .hb-input,
+.hb-field.is-invalid .hb-select { border-color: var(--color-status-critical); }
+
+.hb-field__hint  { font-size: 11px; color: var(--color-ink-tertiary); margin: 0; }
+.hb-field__error { font-size: 11px; color: var(--color-status-critical); margin: 0; }
+
+/* --------------------------------------------------------------- select -- */
+
+.hb-select__wrap { position: relative; display: block; }
+.hb-select { appearance: none; padding-right: var(--space-8); cursor: pointer; }
+
+.hb-select__chevron {
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--color-ink-tertiary);
+  border-bottom: 1.5px solid var(--color-ink-tertiary);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------- slider -- */
+
+.hb-slider { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.hb-slider__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+
+.hb-slider__label { font-family: var(--font-sans); font-size: 12px; font-weight: 600; color: var(--color-ink-secondary); }
+
+.hb-slider__value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+}
+.hb-slider.is-caution .hb-slider__value { color: var(--color-status-warning); }
+
+.hb-slider__input {
+  --hb-slider-pct: 0%;
+  appearance: none;
+  width: 100%;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+}
+.hb-slider.is-disabled .hb-slider__input { cursor: not-allowed; }
+
+/* The track carries the fill, so the two vendor branches below differ only in
+ * the pseudo-element they hang on. They cannot be combined in one rule: an
+ * unrecognised selector invalidates the whole list. */
+.hb-slider__input::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(
+    to right,
+    var(--color-accent-strong) var(--hb-slider-pct),
+    var(--color-surface-muted) var(--hb-slider-pct)
+  );
+}
+.hb-slider__input::-moz-range-track {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-muted);
+}
+.hb-slider__input::-moz-range-progress {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+}
+
+.hb-slider__input::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  border: 2px solid var(--color-accent-strong);
+  box-shadow: var(--shadow-subtle);
+}
+.hb-slider__input::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  border: 2px solid var(--color-accent-strong);
+  box-shadow: var(--shadow-subtle);
+}
+
+.hb-slider.is-caution .hb-slider__input::-webkit-slider-thumb { border-color: var(--color-status-warning); }
+.hb-slider.is-caution .hb-slider__input::-moz-range-thumb { border-color: var(--color-status-warning); }
+
+.hb-slider__preview {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-ink-tertiary);
+}
+.hb-slider.is-caution .hb-slider__preview { color: var(--color-status-warning); }
+
+/* --------------------------------------------------------------- window -- */
+
+.hb-window {
+  display: block;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-plate);
+  overflow: hidden;
+  font-family: var(--font-sans);
+  text-align: left;
+}
+
+.hb-window__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-canvas);
+  border-bottom: 1px solid var(--color-line);
+  font-size: 12px;
+  font-weight: 500;
+}
+.hb-window.is-collapsed .hb-window__head { border-bottom-color: transparent; }
+
+.hb-window__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.hb-window__chevron {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--color-ink-tertiary);
+  border-bottom: 1.5px solid var(--color-ink-tertiary);
+  transform: rotate(45deg);
+  transition: transform var(--duration-switch) var(--ease-switch);
+}
+.hb-window.is-collapsed .hb-window__chevron { transform: rotate(-45deg); }
+
+.hb-window__title { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+
+.hb-window__pulse {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+}
+
+.hb-window__meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-ink-tertiary);
+  white-space: nowrap;
+}
+
+.hb-window__body { padding: var(--space-3); }
+
+.hb-window__foot {
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-line);
+  background-color: var(--color-canvas);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-ink-tertiary);
+}
+
+/* --------------------------------------------------------------- metric -- */
+
+.hb-metric {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  font-family: var(--font-sans);
+}
+
+.hb-metric__label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--color-ink-tertiary);
+}
+
+.hb-metric__value {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-ink);
+  /* Tabular figures: a vitals plate ticking every second must not reflow. */
+  font-variant-numeric: tabular-nums;
+}
+
+.hb-metric__gauge {
+  height: 4px;
+  margin-top: var(--space-1);
+  border-radius: var(--radius-full);
+  background-color: var(--color-surface-subtle);
+  overflow: hidden;
+}
+
+.hb-metric__fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+  transition: width var(--duration-shutter) var(--ease-shutter);
+}
+
+.hb-metric__sub { margin-top: var(--space-1); font-size: 11px; color: var(--color-ink-secondary); }
+
+.hb-metric--nominal   .hb-metric__fill { background-color: var(--color-status-nominal); }
+.hb-metric--warning   .hb-metric__fill { background-color: var(--color-status-warning); }
+.hb-metric--critical  .hb-metric__fill { background-color: var(--color-status-critical); }
+.hb-metric--telemetry .hb-metric__fill { background-color: var(--color-status-telemetry); }
+
+.hb-metric--nominal   .hb-metric__sub { color: var(--color-status-nominal); }
+.hb-metric--warning   .hb-metric__sub { color: var(--color-status-warning); }
+.hb-metric--critical  .hb-metric__sub { color: var(--color-status-critical); }
+.hb-metric--telemetry .hb-metric__sub { color: var(--color-status-telemetry); }
+
+/* Honest degraded state — never a plausible-looking zero. */
+.hb-metric__offline {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--color-ink-tertiary);
+}

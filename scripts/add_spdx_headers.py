@@ -46,6 +46,7 @@ ROOTS: Sequence[str] = (
     "halbert_core",
     "scripts",
     "tests",
+    "packages",
     "config",
     "packaging",
 )
