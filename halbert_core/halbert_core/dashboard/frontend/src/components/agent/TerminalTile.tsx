@@ -39,7 +39,7 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
-  const writtenRef = useRef(0); // chars already written to xterm
+  const writtenRef = useRef(0); // absolute stream chars already written to xterm
   const [now, setNow] = useState(Date.now());
   const [copied, setCopied] = useState(false);
 
@@ -103,21 +103,31 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id]);
 
-  // Write any new output incrementally (don't rewrite the whole buffer)
+  // Write any new output incrementally (don't rewrite the whole buffer).
+  // writtenRef is absolute (includes chars the store has dropped from the
+  // front of the buffer), so trimming the scrollback does not stall the writer.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    const total = session.output.length;
-    if (total > writtenRef.current) {
-      term.write(session.output.slice(writtenRef.current));
-      writtenRef.current = total;
-    } else if (total < writtenRef.current) {
-      // scrollback was trimmed in the store -> reset and rewrite
+    const dropped = session.droppedChars;
+    const absTotal = dropped + session.output.length;
+    if (absTotal > writtenRef.current) {
+      const start = writtenRef.current - dropped;
+      if (start < 0) {
+        // our write point fell out of the trimmed buffer -> resync on the tail
+        term.reset();
+        term.write(session.output);
+      } else {
+        term.write(session.output.slice(start));
+      }
+      writtenRef.current = absTotal;
+    } else if (absTotal < writtenRef.current) {
+      // buffer shrank behind us (store reset) -> reset and rewrite
       term.reset();
       term.write(session.output);
-      writtenRef.current = total;
+      writtenRef.current = absTotal;
     }
-  }, [session.output]);
+  }, [session.output, session.droppedChars]);
 
   const handleTerminate = async () => {
     await kill(session.id);

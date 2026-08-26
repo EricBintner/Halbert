@@ -24,6 +24,7 @@ export interface TerminalSession {
   command: string;
   status: TerminalSessionStatus;
   output: string; // bounded scrollback
+  droppedChars: number; // monotonic count of chars trimmed from the front
   exitCode: number | null;
   visible: boolean;
   sandboxed: boolean;
@@ -91,6 +92,7 @@ class TerminalSessionStore {
       command,
       status: 'running',
       output: '',
+      droppedChars: 0,
       exitCode: null,
       visible: this.visibleCount() < MAX_VISIBLE,
       sandboxed: !!data.sandboxed,
@@ -119,7 +121,9 @@ class TerminalSessionStore {
         s.output += msg.data;
         // bound the scrollback
         if (s.output.length > SCROLLBACK_MAX_CHARS) {
+          const dropped = s.output.length - SCROLLBACK_MAX_CHARS;
           s.output = s.output.slice(-SCROLLBACK_MAX_CHARS);
+          s.droppedChars += dropped;
         }
         this.emit();
       } else if (msg.type === 'exit') {
