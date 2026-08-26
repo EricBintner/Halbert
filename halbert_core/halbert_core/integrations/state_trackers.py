@@ -36,6 +36,30 @@ def _record(ledger, persona_id: str, subject: str, predicate: str,
         logger.warning(f"Failed to record {subject}/{predicate}: {e}")
 
 
+def default_ledger_path():
+    """Halbert's own state-ledger db.
+
+    Deliberately not the shared Haloysius default, which carries other
+    personas' state; Halbert's machine-state audit trail is its own file.
+    """
+    from pathlib import Path
+
+    p = Path.home() / ".local" / "share" / "halbert" / "state_ledger.db"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _default_ledger():
+    """Open the Halbert state ledger, or return None if unavailable."""
+    try:
+        from haloysius.memory_v2 import get_state_ledger
+
+        return get_state_ledger(str(default_ledger_path()))
+    except Exception as e:
+        logger.warning(f"State ledger unavailable, trackers will not record: {e}")
+        return None
+
+
 class DiskHealthTracker:
     """Tracks disk health state for the persona.
 
@@ -236,7 +260,7 @@ def register_halbert_predicates() -> None:
     logger.info("Registered Halbert predicates and subject labels")
 
 
-def register_halbert_state_trackers(ledger=None) -> dict:
+def register_halbert_state_trackers(ledger=None, persona_id: str = DEFAULT_PERSONA_ID) -> dict:
     """Register all Halbert state trackers with Haloysius continuity.
 
     Clears default (human-persona) trackers first, then registers
@@ -258,12 +282,15 @@ def register_halbert_state_trackers(ledger=None) -> dict:
     # Clear human-persona defaults (clothing, location)
     clear_state_trackers()
 
+    if ledger is None:
+        ledger = _default_ledger()
+
     # Create tracker instances
     trackers = {
-        "disk_health": DiskHealthTracker(ledger=ledger),
-        "service_status": ServiceStatusTracker(ledger=ledger),
-        "system_resources": SystemResourceTracker(ledger=ledger),
-        "admin_presence": AdminPresenceTracker(ledger=ledger),
+        "disk_health": DiskHealthTracker(ledger=ledger, persona_id=persona_id),
+        "service_status": ServiceStatusTracker(ledger=ledger, persona_id=persona_id),
+        "system_resources": SystemResourceTracker(ledger=ledger, persona_id=persona_id),
+        "admin_presence": AdminPresenceTracker(ledger=ledger, persona_id=persona_id),
     }
 
     # Register each

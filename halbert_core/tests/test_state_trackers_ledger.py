@@ -114,3 +114,32 @@ class TestAdminPresenceTracker:
         t = AdminPresenceTracker(ledger=ledger)
         t.update_from_turn(persona_id="halbert", user_message="check nginx", ai_response="")
         assert _current(ledger)[("user", "admin_presence")] == "present"
+
+
+class TestRegistration:
+    def test_default_ledger_path_is_halbert_owned(self):
+        from halbert_core.integrations.state_trackers import default_ledger_path
+
+        p = str(default_ledger_path())
+        assert "halbert" in p and p.endswith("state_ledger.db")
+        assert "haloysius/state_ledger" not in p   # not the shared human-persona db
+
+    def test_register_wires_a_live_ledger(self, tmp_path, monkeypatch):
+        import halbert_core.integrations.state_trackers as st
+
+        monkeypatch.setattr(st, "default_ledger_path", lambda: tmp_path / "l.db")
+        trackers = st.register_halbert_state_trackers()
+        assert set(trackers) == {
+            "disk_health", "service_status", "system_resources", "admin_presence"}
+        for t in trackers.values():
+            assert t._ledger is not None
+
+        trackers["service_status"].update_status("nginx", "running")
+        cur = trackers["service_status"]._ledger.get_current("halbert")
+        assert [(t.subject, t.object) for t in cur] == [("service:nginx", "running")]
+
+    def test_explicit_ledger_wins(self, ledger):
+        import halbert_core.integrations.state_trackers as st
+
+        trackers = st.register_halbert_state_trackers(ledger=ledger)
+        assert all(t._ledger is ledger for t in trackers.values())
