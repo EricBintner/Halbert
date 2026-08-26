@@ -810,3 +810,168 @@ class TestReceipts:
         assert len(snips) == 1 and "smb.conf" in snips[0]
         assert store.search_snippets("t", "what's") == []
         assert store.search_snippets("other", "media") == []
+
+
+# ---------------------------------------------------------------------------
+# A3 review fixes: FTS-gating recovery, real-index term matching, hidden-row
+# exclusion in snippets (see conversation_sqlite.py Receipts section)
+# ---------------------------------------------------------------------------
+
+class TestReceiptsReviewFixes:
+    """Finding 1: ``upsert_receipt``/``search_receipts``/``search_snippets``
+    used to gate on ``self._fts_ok`` directly instead of calling
+    ``self._fts_recover()`` like every other FTS caller in this file, so a
+    stale/transient-degraded flag would permanently skip receipts_fts writes
+    and reads. Finding 2: match-term scoring used a crude one-character stem
+    that undercounts real porter -ing/-ed suffix matches. Finding 3:
+    ``search_snippets`` had no ``visible_in_timeline`` filter. Finding 4:
+    none of the above had direct coverage, nor did the ``score = 0.25``
+    default branch or top-N ranking with more matches than ``limit``.
+    """
+
+    def _seed(self, store):
+        store.create_thread("samba", "Samba media share")
+        store.update_thread("samba", status="closed", last_active=100.0)
+        store.upsert_receipt("samba", "Samba media share",
+            "Title: Samba media share\nEntities: samba, share, /etc/samba/smb.conf\n"
+            "Started with: add a samba share for the media folder\nCommands: testparm (exit 0)")
+        store.create_thread("nas", "NAS disk swap")
+        store.update_thread("nas", status="paused", last_active=200.0)
+        store.upsert_receipt("nas", "NAS disk swap",
+            "Title: NAS disk swap\nEntities: zfs, nvme\nStarted with: swap the failing nvme in the zfs pool")
+
+    # -- finding 1: recovery instead of a permanent _fts_ok gate ----------
+
+    def test_upsert_receipt_recovers_a_stale_degraded_flag(self, store):
+        """A stale ``_fts_ok = False`` left over from a past transient
+        failure (the tables themselves are fine) must not make
+        ``upsert_receipt`` skip the receipts_fts row forever."""
+        store.create_thread("d1", "Docker network")
+        store._fts_ok = False
+        assert store.upsert_receipt("d1", "Docker network", "Entities: macvlan, bridge") is True
+        assert store.healthy is True
+        assert store._conn.execute(
+            "SELECT COUNT(*) FROM receipts_fts WHERE thread_id = 'd1'"
+        ).fetchone()[0] == 1
+        assert store.search_receipts("macvlan")[0]["thread_id"] == "d1"
+
+    def test_search_receipts_recovers_a_stale_degraded_flag(self, store):
+        """Query term only appears in the receipt body, never in any
+        title, so the title-LIKE fallback cannot find it -- only a real
+        receipts_fts MATCH can, which the old code skipped whenever
+        ``_fts_ok`` was (possibly stale) False."""
+        self._seed(store)
+        store._fts_ok = False
+        hits = store.search_receipts("testparm")
+        assert [h["thread_id"] for h in hits] == ["samba"]
+        assert store.healthy is True
+
+    def test_search_snippets_recovers_a_stale_degraded_flag(self, store):
+        store.create_thread("t", "T")
+        store.append_message("t", "user", "edit /etc/samba/smb.conf for the media share")
+        store._fts_ok = False
+        snips = store.search_snippets("t", "smb.conf")
+        assert len(snips) == 1 and "smb.conf" in snips[0]
+        assert store.healthy is True
+
+    def test_fts_recover_backfills_receipts_written_while_genuinely_degraded(self, store, monkeypatch):
+        """Mirrors ``test_recovery_backfills_messages_written_while_genuinely_degraded``
+        in ``TestFtsHealth`` for receipts: a receipt upserted while FTS is
+        genuinely unavailable (not just a stale flag) must be missing from
+        receipts_fts until recovery runs, and recovery must then backfill it
+        -- not just leave the table permanently thin."""
+        store.create_thread("d1", "Docker network")
+        monkeypatch.setattr(store, "_fts_recover", lambda: False)
+        store._fts_ok = False
+        assert store.upsert_receipt("d1", "Docker network", "Entities: macvlan, bridge") is True
+        assert store._conn.execute("SELECT COUNT(*) FROM receipts_fts").fetchone()[0] == 0
+        assert store.search_receipts("macvlan") == []  # confirms genuinely not indexed
+
+        monkeypatch.undo()  # restore the real _fts_recover
+        assert store.healthy is False  # still latched False until something recovers it
+
+        assert store._fts_recover() is True
+        assert store.healthy is True
+        assert store._conn.execute(
+            "SELECT COUNT(*) FROM receipts_fts WHERE thread_id = 'd1'"
+        ).fetchone()[0] == 1
+        assert store.search_receipts("macvlan")[0]["thread_id"] == "d1"
+
+    def test_reopen_backfills_receipts_missing_from_an_already_versioned_fts_index(self, tmp_path):
+        """The connect-time mirror of the above (parallels
+        ``test_reopen_backfills_messages_missing_from_an_already_versioned_fts_index``):
+        a DB already at ``SCHEMA_VERSION`` whose ``receipts_fts`` table
+        exists but is missing a row a degraded runtime wrote must be
+        backfilled by simply reopening it."""
+        path = tmp_path / "thin_receipts.db"
+        s = SqliteConversationStore(str(path))
+        s.create_thread("d1", "Docker network")
+        s.upsert_receipt("d1", "Docker network", "Entities: macvlan, bridge")
+        s._conn.execute("DELETE FROM receipts_fts WHERE thread_id = 'd1'")
+        s._conn.commit()
+        assert s.search_receipts("macvlan") == []
+        s.close()
+
+        s2 = SqliteConversationStore(str(path))
+        assert s2.healthy is True
+        assert s2.search_receipts("macvlan")[0]["thread_id"] == "d1"
+        s2.close()
+
+    # -- finding 2: match terms re-derived from the real FTS index --------
+
+    def test_porter_suffix_forms_score_against_the_real_index(self, store):
+        """Query terms in -ing form must credit a match against the
+        receipt's un-suffixed form, the same way the porter tokenizer that
+        built receipts_fts already treats them as the same token -- not
+        just literal terms found by a crude one-character-trim stem."""
+        store.create_thread("pool", "ZFS pool")
+        store.update_thread("pool", status="open", last_active=1.0)
+        store.upsert_receipt("pool", "ZFS pool", "Entities: zfs, resilver, pool, disk")
+        hits = store.search_receipts("is the resilvering finished on that pool")
+        assert hits[0]["thread_id"] == "pool"
+        assert set(hits[0]["match_terms"]) == {"resilvering", "pool"}
+        # contracts.md ``strong := ... candidates[0].score >= 0.5``
+        assert hits[0]["score"] >= 0.5
+
+    def test_receipt_hit_default_score_for_an_unverifiable_match(self, store):
+        """Direct unit coverage of the ``score = 0.25`` default branch in
+        ``_receipt_hit``: a term that plainly is not in the row's index at
+        all (the defensive case -- every per-term recheck comes back
+        empty) must not crash and must fall back to the documented low
+        default rather than 0.0 or an exception."""
+        store.create_thread("t", "T")
+        store.upsert_receipt("t", "T", "Entities: alpha")
+        row = store._conn.execute(
+            "SELECT r.thread_id, r.title, r.receipt, c.last_active, c.status "
+            "FROM receipts_fts r JOIN conversations c ON c.id = r.thread_id "
+            "WHERE r.thread_id = 't'"
+        ).fetchone()
+        hit = store._receipt_hit(row, ["zzz_never_indexed"], real_fts=True)
+        assert hit["match_terms"] == [] and hit["score"] == 0.25
+
+    # -- finding 3: search_snippets excludes hidden rows -------------------
+
+    def test_search_snippets_excludes_hidden_rows(self, store):
+        store.create_thread("t", "T")
+        store.append_message("t", "assistant", "reply", origin="assistant")
+        store.append_message(
+            "t", "system", "admin retracted recall of 'NFS export mounts'",
+            origin="system", visible_in_timeline=False,
+        )
+        assert store.search_snippets("t", "retracted recall") == []
+
+    # -- finding 4: top-N ranking with more matches than limit -------------
+
+    def test_search_receipts_ranks_by_score_then_recency_beyond_limit(self, store):
+        for i in range(8):
+            tid = f"t{i}"
+            store.create_thread(tid, f"Thread {i}")
+            store.update_thread(tid, last_active=float(i))
+            extra = " gadget" if i % 2 == 0 else ""
+            store.upsert_receipt(tid, f"Thread {i}", f"Entities: widget{extra}")
+        hits = store.search_receipts("widget gadget", limit=3)
+        assert len(hits) == 3
+        # Two-term hits (score 1.0) rank above one-term hits (score 0.5);
+        # within the same score, higher last_active ranks first.
+        assert [h["thread_id"] for h in hits] == ["t6", "t4", "t2"]
+        assert all(h["score"] == 1.0 for h in hits)

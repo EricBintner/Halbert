@@ -369,6 +369,18 @@ class SqliteConversationStore:
                         "thread_id UNINDEXED, title, receipt, "
                         "tokenize='porter unicode61')"
                     )
+                    # Backfill: same rationale as the messages_fts backfill
+                    # just above -- a DB that had receipts written while a
+                    # runtime without FTS5 was in charge would otherwise
+                    # reopen "healthy" over a receipts_fts table missing
+                    # those rows forever (mirrors A1 review finding 2, closed
+                    # here for receipts_fts per the A3 review).
+                    cur.execute(
+                        "INSERT INTO receipts_fts(thread_id, title, receipt) "
+                        "SELECT id, title, receipt FROM conversations "
+                        "WHERE receipt != '' AND id NOT IN "
+                        "(SELECT thread_id FROM receipts_fts)"
+                    )
                 except sqlite3.OperationalError as e:
                     logger.warning(f"FTS5 unavailable, falling back to LIKE: {e}")
                     fts_ready = False
@@ -425,7 +437,12 @@ class SqliteConversationStore:
         ``messages_fts`` is indexed, so a table that was just (re)created
         by ``CREATE VIRTUAL TABLE IF NOT EXISTS`` does not report healthy
         over what would otherwise stay a permanently empty index for rows
-        written before recovery (A1 review finding 2).
+        written before recovery (A1 review finding 2). ``receipts_fts`` gets
+        the identical backfill for the identical reason: ``upsert_receipt``
+        writes ``conversations.receipt`` unconditionally but only mirrors it
+        into ``receipts_fts`` while ``self._fts_recover()`` reports healthy,
+        so any receipt written during a degraded window would otherwise
+        never appear in the index, even after recovery (A3 review finding 1).
         """
         if self._fts_ok or self._conn is None:
             return self._fts_ok
@@ -446,6 +463,12 @@ class SqliteConversationStore:
                     "CREATE VIRTUAL TABLE IF NOT EXISTS receipts_fts USING fts5("
                     "thread_id UNINDEXED, title, receipt, "
                     "tokenize='porter unicode61')"
+                )
+                self._conn.execute(
+                    "INSERT INTO receipts_fts(thread_id, title, receipt) "
+                    "SELECT id, title, receipt FROM conversations "
+                    "WHERE receipt != '' AND id NOT IN "
+                    "(SELECT thread_id FROM receipts_fts)"
                 )
                 if not nested:
                     self._conn.commit()
@@ -1128,7 +1151,13 @@ class SqliteConversationStore:
                 )
                 if cur.rowcount == 0:
                     return False
-                if self._fts_ok:
+                # ``_fts_recover()``, not ``self._fts_ok`` directly: a stale
+                # degraded flag from a past transient failure must not skip
+                # this row forever -- the same rule A1 review finding 3 set
+                # for every other FTS-gated caller in this file, which this
+                # method (added by A3) had not been following (A3 review
+                # finding 1).
+                if self._fts_recover():
                     self._conn.execute(
                         "DELETE FROM receipts_fts WHERE thread_id = ?", (thread_id,)
                     )
@@ -1141,12 +1170,55 @@ class SqliteConversationStore:
             logger.warning(f"upsert_receipt {thread_id} failed: {e}")
             return False
 
-    @staticmethod
-    def _receipt_hit(row: sqlite3.Row, terms: Sequence[str]) -> Dict[str, Any]:
-        haystack = f"{row['title'] or ''} {row['receipt'] or ''}".lower()
-        matched = _term_hits(terms, haystack)
+    def _fts_term_hits(self, thread_id: str, terms: Sequence[str]) -> List[str]:
+        """Which ``terms`` the real ``receipts_fts`` index matches for this
+        thread, checked one quoted term at a time against the tokenizer/
+        stemmer the index actually runs (``porter unicode61``).
+
+        A3 review finding 2: the crude local stem in ``_term_hits`` (drop the
+        last letter past 4 chars) only catches suffixes exactly one letter
+        long, so a real porter match on an -ing/-ed/-ion form (e.g. query
+        "resilvering" against an indexed "resilver") scored zero locally even
+        though the row was returned by the very MATCH query that used that
+        same term. Re-asking FTS per term instead of re-implementing Porter
+        in Python is by construction never out of step with what indexed the
+        row: this table's OR-joined MATCH (``_fts_query``) guarantees at
+        least one term individually matches any row it returns.
+        """
+        out: List[str] = []
+        for t in terms:
+            try:
+                with self._lock:
+                    hit = self._conn.execute(
+                        "SELECT 1 FROM receipts_fts WHERE thread_id = ? "
+                        "AND receipts_fts MATCH ? LIMIT 1",
+                        (thread_id, _fts_query([t])),
+                    ).fetchone()
+            except Exception:
+                hit = None
+            if hit is not None:
+                out.append(t)
+        return out
+
+    def _receipt_hit(
+        self, row: sqlite3.Row, terms: Sequence[str], *, real_fts: bool
+    ) -> Dict[str, Any]:
+        """``real_fts=True`` for a row the ``receipts_fts`` MATCH query
+        itself returned (re-derive matched terms from the index, per finding
+        2 above); ``real_fts=False`` for a row found only via the title LIKE
+        fallback, where there is no live FTS match to re-ask and the crude
+        local stem is the best available signal."""
+        if real_fts:
+            matched = self._fts_term_hits(row["thread_id"], terms)
+        else:
+            haystack = f"{row['title'] or ''} {row['receipt'] or ''}".lower()
+            matched = _term_hits(terms, haystack)
         # Two topical terms are enough for a full score; a single hit on a
-        # one-word query also scores 1.0. Unverifiable FTS hits keep 0.25.
+        # one-word query also scores 1.0. Unverifiable FTS hits keep 0.25 --
+        # kept as a defensive default (e.g. every per-term recheck above
+        # raising); reachable rows can no longer land here empty by
+        # construction now that ``matched`` is re-derived from the same
+        # index that selected the row (finding 2).
         score = min(1.0, len(matched) / max(1, min(len(terms), 3))) if matched else 0.25
         return {
             "thread_id": row["thread_id"],
@@ -1172,7 +1244,7 @@ class SqliteConversationStore:
         if not terms:
             return []
         hits: Dict[str, Dict[str, Any]] = {}
-        if self._fts_ok:
+        if self._fts_recover():
             try:
                 with self._lock:
                     rows = self._conn.execute(
@@ -1186,7 +1258,7 @@ class SqliteConversationStore:
                          max(limit * 4, 20)),
                     ).fetchall()
                 for r in rows:
-                    hits[r["thread_id"]] = self._receipt_hit(r, terms)
+                    hits[r["thread_id"]] = self._receipt_hit(r, terms, real_fts=True)
             except Exception as e:
                 logger.warning(f"receipt FTS search failed (LIKE fallback only): {e}")
         try:
@@ -1203,7 +1275,7 @@ class SqliteConversationStore:
                     ).fetchall())
             for r in like_rows:
                 if r["thread_id"] not in hits:
-                    hits[r["thread_id"]] = self._receipt_hit(r, terms)
+                    hits[r["thread_id"]] = self._receipt_hit(r, terms, real_fts=False)
         except Exception as e:
             logger.warning(f"receipt title search failed: {e}")
         ranked = sorted(
@@ -1212,11 +1284,18 @@ class SqliteConversationStore:
         return ranked[:limit]
 
     def search_snippets(self, thread_id: str, query: str, limit: int = 5) -> List[str]:
-        """FTS snippets of one thread's messages matching ``query`` (best first)."""
-        if self._conn is None or not self._fts_ok or not query:
+        """FTS snippets of one thread's messages matching ``query`` (best
+        first), excluding hidden (``visible_in_timeline = 0``) rows -- the
+        same rule every other reader in this file applies (A3 review finding
+        3: internal bookkeeping rows such as A6d's retracted-recall marker
+        must not surface as a user-facing recall snippet).
+        """
+        if self._conn is None or not query:
             return []
         terms = _fts_terms(query)
         if not terms:
+            return []
+        if not self._fts_recover():
             return []
         try:
             with self._lock:
@@ -1224,6 +1303,10 @@ class SqliteConversationStore:
                     """SELECT snippet(messages_fts, 1, '', '', '…', 12) AS snip
                        FROM messages_fts
                        WHERE conversation_id = ? AND messages_fts MATCH ?
+                         AND EXISTS (
+                             SELECT 1 FROM messages m
+                             WHERE m.id = messages_fts.rowid AND m.visible_in_timeline = 1
+                         )
                        ORDER BY bm25(messages_fts) LIMIT ?""",
                     (thread_id, _fts_query(terms), int(limit)),
                 ).fetchall()
