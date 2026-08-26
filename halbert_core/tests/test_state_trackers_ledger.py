@@ -61,3 +61,56 @@ class TestDiskHealthTracker:
         t = DiskHealthTracker(ledger=Boom())
         t.update_health("/dev/sda1", "healthy")   # must not raise
         assert "disk" in caplog.text.lower()
+
+
+class TestServiceStatusTracker:
+    def test_records_and_supersedes(self, ledger):
+        t = ServiceStatusTracker(ledger=ledger)
+        t.update_status("nginx", "running")
+        t.update_status("nginx", "stopped")
+        cur = ledger.get_current("halbert")
+        assert len(cur) == 1 and cur[0].object == "stopped"
+        assert cur[0].subject == "service:nginx"
+        assert cur[0].source == "state_tracker:service_status"
+
+    def test_two_services_are_independent(self, ledger):
+        t = ServiceStatusTracker(ledger=ledger)
+        t.update_status("nginx", "running")
+        t.update_status("smbd", "stopped")
+        assert _current(ledger) == {
+            ("service:nginx", "service_status"): "running",
+            ("service:smbd", "service_status"): "stopped",
+        }
+
+
+class TestSystemResourceTracker:
+    def test_records_three_predicates(self, ledger):
+        t = SystemResourceTracker(ledger=ledger)
+        t.update_resources(cpu=42.4, mem=61.6, load=1.234)
+        assert _current(ledger) == {
+            ("system", "cpu_load"): "42%",
+            ("system", "memory_usage"): "62%",
+            ("system", "load_average"): "1.23",
+        }
+
+    def test_resample_supersedes_each_predicate(self, ledger):
+        t = SystemResourceTracker(ledger=ledger)
+        t.update_resources(cpu=10.0, mem=20.0, load=0.5)
+        t.update_resources(cpu=90.0, mem=80.0, load=4.0)
+        assert len(ledger.get_current("halbert")) == 3
+        assert _current(ledger)[("system", "cpu_load")] == "90%"
+
+
+class TestAdminPresenceTracker:
+    def test_set_and_clear(self, ledger):
+        t = AdminPresenceTracker(ledger=ledger)
+        t.set_admin("eric")
+        assert _current(ledger)[("user", "admin_presence")] == "present"
+        t.clear_admin()
+        assert _current(ledger)[("user", "admin_presence")] == "absent"
+        assert len(ledger.get_current("halbert")) == 1
+
+    def test_update_from_turn_marks_present(self, ledger):
+        t = AdminPresenceTracker(ledger=ledger)
+        t.update_from_turn(persona_id="halbert", user_message="check nginx", ai_response="")
+        assert _current(ledger)[("user", "admin_presence")] == "present"
