@@ -192,15 +192,15 @@ function ProbeSummaryGrid({ result }: { result: ProbeResult }) {
     <dl className="grid grid-cols-3 gap-2 text-[11px]">
       <div>
         <dt className="text-text-subtle">p50</dt>
-        <dd className="tabular-nums font-medium text-text">{fmt(result.wall_clock_ms.p50)}</dd>
+        <dd className="font-mono tabular-nums font-medium text-text">{fmt(result.wall_clock_ms.p50)}</dd>
       </div>
       <div>
         <dt className="text-text-subtle">p90</dt>
-        <dd className="tabular-nums font-medium text-text">{fmt(result.wall_clock_ms.p90)}</dd>
+        <dd className="font-mono tabular-nums font-medium text-text">{fmt(result.wall_clock_ms.p90)}</dd>
       </div>
       <div>
         <dt className="text-text-subtle">p99</dt>
-        <dd className="tabular-nums font-medium text-text">{fmt(result.wall_clock_ms.p99)}</dd>
+        <dd className="font-mono tabular-nums font-medium text-text">{fmt(result.wall_clock_ms.p99)}</dd>
       </div>
       <div className="col-span-3 flex items-center gap-2 text-[11px] pt-1">
         <span className="text-text-subtle">Saturation:</span>

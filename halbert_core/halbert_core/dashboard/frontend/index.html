@@ -17,10 +17,12 @@
     <link rel="preload" href="/Halbert.png" as="image" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Halbert Dashboard</title>
-    <!-- Brand Font: Karla -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Self-hosted brand typefaces. Halbert is local-first; fetching faces from
+         a CDN at runtime contradicts that and fails outright in the packaged
+         app. Synced from /shared-tokens/fonts by scripts/sync_fonts.py. -->
+    <link rel="preload" href="/fonts/files/space-grotesk-latin-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/files/jetbrains-mono-latin-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/fonts/fonts.css">
   </head>
   <body>
     <div id="root"></div>

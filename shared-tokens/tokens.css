@@ -206,7 +206,7 @@
    * into --hb-* / public so the Tailwind adapter has one uniform rule: it
    * always points at --hb-*, and never at a name it is itself emitting. */
   --hb-font-display: "Fraunces", "DM Serif Display", Georgia, serif;
-  --hb-font-sans:    "Space Grotesk", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --hb-font-sans:    "Space Grotesk", -apple-system, BlinkMacSystemFont, sans-serif;
   --hb-font-mono:    "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
 
   --font-display: var(--hb-font-display);

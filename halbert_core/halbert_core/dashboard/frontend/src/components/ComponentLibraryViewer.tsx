@@ -96,13 +96,15 @@ const COMPONENT_LIBRARY: ComponentCategory[] = [
       {
         id: 'typography',
         name: 'Typography',
-        description: 'Karla font family with consistent type scale',
+        description: 'The brand triad — Fraunces, Space Grotesk, JetBrains Mono',
         status: 'stable',
         preview: (
           <div className="space-y-6 w-full">
             <div className="space-y-1">
-              <p className="text-xs text-muted-foreground uppercase tracking-wide">Font Family</p>
-              <p className="text-2xl">Karla</p>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">Font Families</p>
+              <p className="text-2xl font-display">Fraunces &mdash; display</p>
+              <p className="text-2xl">Space Grotesk &mdash; chrome &amp; body</p>
+              <p className="text-2xl font-mono">JetBrains Mono &mdash; telemetry</p>
             </div>
             <div className="space-y-4">
               <div className="flex items-baseline gap-4">
@@ -142,11 +144,14 @@ const COMPONENT_LIBRARY: ComponentCategory[] = [
           </div>
         ),
         props: [],
-        code: `/* Brand Typography - Karla */
+        code: `/* Brand Typography - the triad, from shared-tokens/tokens.css */
 
-/* Headings (auto-applied via index.css) */
-h1 { @apply text-3xl font-bold tracking-tight; }
-h2 { @apply text-2xl font-semibold tracking-tight; }
+/* Headings (auto-applied via index.css). Fraunces carries an optical-size
+   axis, so font-optical-sizing lets it redraw for the rendered size. */
+h1 { @apply text-3xl font-bold; font-family: var(--hb-font-display);
+     font-optical-sizing: auto; letter-spacing: var(--tracking-display); }
+h2 { @apply text-2xl font-semibold; font-family: var(--hb-font-display);
+     font-optical-sizing: auto; letter-spacing: var(--tracking-display); }
 h3 { @apply text-lg font-semibold; }
 h4 { @apply text-base font-semibold; }
 

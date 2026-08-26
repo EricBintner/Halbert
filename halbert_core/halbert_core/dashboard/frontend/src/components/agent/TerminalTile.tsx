@@ -21,6 +21,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import { useTerminalSessions, type TerminalSession } from '../../hooks/useTerminalSessions';
+import { xtermTheme, terminalFontReady } from '../../lib/xtermTheme';
 
 interface TerminalTileProps {
   session: TerminalSession;
@@ -38,32 +39,6 @@ function formatElapsed(startedAt: number, now: number): string {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${r.toString().padStart(2, '0')}`;
-}
-
-/**
- * Build xterm's theme from the live design tokens.
- *
- * xterm paints to a canvas and cannot read CSS variables, so the values have to
- * be resolved to concrete colours at mount time. Reading them from the document
- * rather than hardcoding a palette means the terminal follows the Olivetti
- * identity and the light/dark swap like everything else — the plan calls for a
- * bone-canvas terminal, not the Tokyo Night default this used to ship.
- */
-function xtermTheme() {
-  const root = typeof document !== 'undefined' ? document.documentElement : null;
-  const read = (token: string, fallback: string) => {
-    if (!root) return fallback;
-    const value = getComputedStyle(root).getPropertyValue(token).trim();
-    return value || fallback;
-  };
-  return {
-    // The terminal interior is a recessed tray, not the page field.
-    background: read('--color-surface-subtle', '#EDE8DC'),
-    foreground: read('--color-ink', '#1C1917'),
-    // The letterpress cursor.
-    cursor: read('--color-accent-strong', '#C4451D'),
-    selectionBackground: read('--color-accent-tint', '#FDF2EE'),
-  };
 }
 
 export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
@@ -87,7 +62,27 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
   useEffect(() => {
     if (!containerRef.current || termRef.current) return;
 
-    const term = new XTerm({
+    // xterm measures the cell grid from the mounted font at construction time.
+    // Now that JetBrains Mono is self-hosted rather than always-warm from a
+    // CDN, a cold load can measure the fallback and lock in a grid that is
+    // wrong for every subsequent row. Waiting for the face closes that window.
+    //
+    // The effect itself stays SYNCHRONOUS on purpose: React discards a Promise
+    // return value, so an `async` effect would silently drop the cleanup below
+    // and leak an XTerm, a ResizeObserver and an onData disposer on every
+    // unmount — twice over, since main.tsx renders in StrictMode.
+    let cancelled = false;
+    let term: XTerm | null = null;
+    let ro: ResizeObserver | null = null;
+    let disposeData: { dispose: () => void } | null = null;
+
+    void terminalFontReady(13).then(() => {
+      if (cancelled || !containerRef.current || termRef.current) return;
+      mount();
+    });
+
+    function mount() {
+    const t = new XTerm({
       cursorBlink: session.status === 'running' && interactive,
       disableStdin: !interactive,
       cursorStyle: 'bar',
@@ -98,35 +93,38 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
       theme: xtermTheme(),
     });
     const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon());
-    term.open(containerRef.current);
+    t.loadAddon(fit);
+    t.loadAddon(new WebLinksAddon());
+    t.open(containerRef.current!);
     fit.fit();
-    termRef.current = term;
+    term = t;
+    termRef.current = t;
     fitRef.current = fit;
 
     // Forward keystrokes to the PTY (only a real PTY can receive them)
-    const disposeData = term.onData((data) => {
+    disposeData = t.onData((data) => {
       if (interactive) sendInput(session.id, data);
     });
 
     // Resize observer -> backend resize
-    const ro = new ResizeObserver(() => {
+    ro = new ResizeObserver(() => {
       try {
         fit.fit();
-        if (interactive && term.cols && term.rows) {
-          resize(session.id, term.cols, term.rows);
+        if (interactive && t.cols && t.rows) {
+          resize(session.id, t.cols, t.rows);
         }
       } catch {
         // ignore fit errors during teardown
       }
     });
-    ro.observe(containerRef.current);
+    ro.observe(containerRef.current!);
+    }
 
     return () => {
-      disposeData.dispose();
-      ro.disconnect();
-      term.dispose();
+      cancelled = true;
+      disposeData?.dispose();
+      ro?.disconnect();
+      term?.dispose();
       termRef.current = null;
       fitRef.current = null;
       writtenRef.current = 0;

@@ -78,7 +78,7 @@ export function UsageBar({
       </div>
       {showPercent && (
         <span className={cn(
-          "text-muted-foreground tabular-nums",
+          "text-muted-foreground font-mono tabular-nums",
           height === 'sm' ? 'text-xs w-10' : 'text-sm w-12',
           "text-right"
         )}>

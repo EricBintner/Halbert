@@ -16,14 +16,19 @@ module.exports = {
       },
     },
     extend: {
+      /* Every family points at the token tier, so the stacks are defined once
+       * in shared-tokens/tokens.css and Tailwind's preflight, the utilities and
+       * the base rules cannot disagree. The old `grotesk` alias is gone —
+       * `sans` IS Space Grotesk now. */
       fontFamily: {
-        sans: ['Karla', 'system-ui', 'sans-serif'],
-        heading: ['Karla', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Menlo', 'monospace'],
-        /* The brand triad. `sans`/`heading` stay on Karla until Track 5
-         * migrates the shell, so type does not shift under the current UI. */
-        display: ['Fraunces', 'DM Serif Display', 'Georgia', 'serif'],
-        grotesk: ['Space Grotesk', 'Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+        sans: ['var(--hb-font-sans)'],
+        heading: ['var(--hb-font-display)'],
+        display: ['var(--hb-font-display)'],
+        mono: ['var(--hb-font-mono)'],
+      },
+      letterSpacing: {
+        display: 'var(--tracking-display)',
+        label: 'var(--tracking-label)',
       },
       boxShadow: {
         plate: "var(--shadow-plate)",

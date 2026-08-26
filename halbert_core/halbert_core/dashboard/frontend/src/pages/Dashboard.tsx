@@ -156,7 +156,7 @@ export function Dashboard() {
             )} />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{systemStatus?.cpu_percent.toFixed(1)}%</div>
+            <div className="text-2xl font-bold font-mono tabular-nums">{systemStatus?.cpu_percent.toFixed(1)}%</div>
             <Progress 
               value={systemStatus?.cpu_percent || 0} 
               className={cn("h-1 mt-2", (systemStatus?.cpu_percent || 0) > 80 && "[&>div]:bg-error")}
@@ -173,7 +173,7 @@ export function Dashboard() {
             )} />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{systemStatus?.memory_percent.toFixed(1)}%</div>
+            <div className="text-2xl font-bold font-mono tabular-nums">{systemStatus?.memory_percent.toFixed(1)}%</div>
             <Progress 
               value={systemStatus?.memory_percent || 0} 
               className={cn("h-1 mt-2", (systemStatus?.memory_percent || 0) > 85 && "[&>div]:bg-warning")}
@@ -190,7 +190,7 @@ export function Dashboard() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-2xl font-bold font-mono tabular-nums">
               {formatUptime(systemStatus?.uptime_seconds || 0)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -205,7 +205,7 @@ export function Dashboard() {
             <CheckCircle className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.total || 0}</div>
+            <div className="text-2xl font-bold font-mono tabular-nums">{stats?.total || 0}</div>
             <p className="text-xs text-muted-foreground mt-1">
               {stats?.by_type?.service || 0} services, {stats?.by_type?.backup || 0} backups
             </p>

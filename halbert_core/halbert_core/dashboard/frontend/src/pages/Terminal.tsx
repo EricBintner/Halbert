@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useRef, useState, KeyboardEvent } from 'react'
+import { xtermTheme, terminalFontReady } from '@/lib/xtermTheme'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -64,34 +65,27 @@ export function Terminal() {
   useEffect(() => {
     if (!terminalRef.current || xtermRef.current) return
 
-    const term = new XTerm({
+    // Wait for the self-hosted mono face before xterm measures its cell grid.
+    // The effect stays synchronous: React discards a Promise return, so an
+    // `async` effect would drop the cleanup below and leak the XTerm, the
+    // resize listener and the WebSocket on every unmount — twice, under
+    // StrictMode.
+    let cancelled = false
+    let term: XTerm | null = null
+    let handleResize: (() => void) | null = null
+
+    void terminalFontReady(14).then(() => {
+      if (cancelled || !terminalRef.current || xtermRef.current) return
+      mount()
+    })
+
+    function mount() {
+    const t = new XTerm({
       cursorBlink: false,
       cursorStyle: 'bar',
       fontSize: 14,
       fontFamily: 'JetBrains Mono, Menlo, Monaco, monospace',
-      theme: {
-        background: '#1a1b26',
-        foreground: '#a9b1d6',
-        cursor: '#c0caf5',
-        cursorAccent: '#1a1b26',
-        selectionBackground: '#33467c',
-        black: '#32344a',
-        red: '#f7768e',
-        green: '#9ece6a',
-        yellow: '#e0af68',
-        blue: '#7aa2f7',
-        magenta: '#bb9af7',
-        cyan: '#7dcfff',
-        white: '#a9b1d6',
-        brightBlack: '#444b6a',
-        brightRed: '#ff7a93',
-        brightGreen: '#b9f27c',
-        brightYellow: '#ff9e64',
-        brightBlue: '#7da6ff',
-        brightMagenta: '#c29fff',
-        brightCyan: '#0db9d7',
-        brightWhite: '#c0caf5',
-      },
+      theme: xtermTheme(),
       scrollback: 5000,
       convertEol: true,
     })
@@ -99,34 +93,38 @@ export function Terminal() {
     const fitAddon = new FitAddon()
     const webLinksAddon = new WebLinksAddon()
     
-    term.loadAddon(fitAddon)
-    term.loadAddon(webLinksAddon)
-    term.open(terminalRef.current)
+    t.loadAddon(fitAddon)
+    t.loadAddon(webLinksAddon)
+    t.open(terminalRef.current!)
     
     fitAddon.fit()
     
-    xtermRef.current = term
+    xtermRef.current = t
     fitAddonRef.current = fitAddon
 
     // Welcome message
-    term.writeln('\x1b[1;36m╔══════════════════════════════════════════╗\x1b[0m')
-    term.writeln('\x1b[1;36m║\x1b[0m  \x1b[1;33mHalbert Terminal\x1b[0m                       \x1b[1;36m║\x1b[0m')
-    term.writeln('\x1b[1;36m║\x1b[0m  AI-enhanced shell with /explain /dryrun \x1b[1;36m║\x1b[0m')
-    term.writeln('\x1b[1;36m╚══════════════════════════════════════════╝\x1b[0m')
-    term.writeln('')
+    t.writeln('\x1b[1;36m╔══════════════════════════════════════════╗\x1b[0m')
+    t.writeln('\x1b[1;36m║\x1b[0m  \x1b[1;33mHalbert Terminal\x1b[0m                       \x1b[1;36m║\x1b[0m')
+    t.writeln('\x1b[1;36m║\x1b[0m  AI-enhanced shell with /explain /dryrun \x1b[1;36m║\x1b[0m')
+    t.writeln('\x1b[1;36m╚══════════════════════════════════════════╝\x1b[0m')
+    t.writeln('')
 
     // Handle resize
-    const handleResize = () => {
+    handleResize = () => {
       fitAddon.fit()
     }
     window.addEventListener('resize', handleResize)
 
+    term = t
+
     // Connect WebSocket
     connectWebSocket()
+    }
 
     return () => {
-      window.removeEventListener('resize', handleResize)
-      term.dispose()
+      cancelled = true
+      if (handleResize) window.removeEventListener('resize', handleResize)
+      term?.dispose()
       wsRef.current?.close()
     }
   }, [])

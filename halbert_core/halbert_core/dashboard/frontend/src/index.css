@@ -107,7 +107,8 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: 'Karla', system-ui, sans-serif;
+    /* One source: the token tier, not a second hardcoded stack. */
+    font-family: var(--hb-font-sans);
   }
   
   /* Custom select styling for dark/light mode */
@@ -119,20 +120,30 @@
     @apply bg-background text-foreground;
   }
   .dark select {
-    background-color: hsl(222.2 84% 4.9%);
-    color: hsl(210 40% 98%);
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
   }
   .dark select option {
-    background-color: hsl(217.2 32.6% 12%);
-    color: hsl(210 40% 98%);
+    background-color: var(--color-surface);
+    color: var(--color-ink);
   }
   
-  /* Brand Typography */
+  /* Brand Typography — §4: Fraunces takes the headings, Space Grotesk the
+   * chrome and body. h3/h4 stay on the sans face: at 18px and 16px they sit at
+   * or below the display face's floor, and they read as UI rather than
+   * editorial. --tracking-display is the face's own tracking, not Tailwind's
+   * generic tracking-tight. */
   h1 {
-    @apply text-3xl font-bold tracking-tight;
+    @apply text-3xl font-bold;
+    font-family: var(--hb-font-display);
+    font-optical-sizing: auto;
+    letter-spacing: var(--tracking-display);
   }
   h2 {
-    @apply text-2xl font-semibold tracking-tight;
+    @apply text-2xl font-semibold;
+    font-family: var(--hb-font-display);
+    font-optical-sizing: auto;
+    letter-spacing: var(--tracking-display);
   }
   h3 {
     @apply text-lg font-semibold;
