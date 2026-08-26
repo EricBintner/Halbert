@@ -139,3 +139,6 @@ data/staging/
 
 # SourcePrep volatile index + agent context (auto-generated, machine-local; keep ignored)
 .sourceprep/
+
+# Storybook static build
+storybook-static/

@@ -211,7 +211,7 @@ To execute this transition without stalling ongoing feature development, work is
   - Convert `AppWindow`, `Pill`, `Btn`, and `StatTile` to TypeScript.
   - Build missing form primitives: `Input`, `Select`, `ParametricSlider`.
   - Ensure full ARIA accessibility and keyboard navigation.
-* **Deliverable:** `packages/design-system/src/primitives/`.
+* **Deliverable:** `packages/design-system/src/primitives/`. **DONE — 2026-08-26.** Also `src/surfaces/`, 24 accessibility tests, and a `design-system` CI job.
 
 ### Track 4: Storybook Infrastructure Initialization
 * **Goal:** Deploy a fully functional Storybook 8 development environment.
@@ -219,7 +219,7 @@ To execute this transition without stalling ongoing feature development, work is
   - Configure Storybook with `@storybook/react-vite`.
   - Import `tokens.css` and web fonts (`Fraunces`, `Space Grotesk`, `JetBrains Mono`).
   - Create stories for all tokens, primitives, and domain plates.
-* **Deliverable:** Running Storybook accessible via `npm run storybook`.
+* **Deliverable:** Running Storybook accessible via `npm run storybook`. **DONE — 2026-08-26.** Includes a light/dark toolbar bound to `data-theme`, the a11y addon, and a live Contrast Audit story that recomputes every licensed pair in-browser.
 
 ### Track 5: Desktop App Shell Realignment
 * **Goal:** Apply the design system to the live desktop application shell without breaking existing dashboard pages.
