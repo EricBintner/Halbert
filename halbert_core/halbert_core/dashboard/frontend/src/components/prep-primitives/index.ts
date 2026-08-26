@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 export { Select, selectVariants } from './Select';
 export type { SelectOption, SelectProps } from './Select';
 export { Button, buttonVariants } from './Button';

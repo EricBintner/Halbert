@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """B4: the seam ModelBackend gets one real consumer — a ThoughtGenerator
 passed into advance_turn — but only when HALBERT_LLM_THOUGHTS is enabled."""
 

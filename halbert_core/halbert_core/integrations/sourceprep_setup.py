@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """SourcePrep unified-project template apply (T-H1.2).
 
 Applies `sourceprep_template.yml` against a running SourcePrep daemon:

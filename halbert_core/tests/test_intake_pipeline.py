@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Tests for intake/pipeline.py — the IntakePipeline orchestrator.
 """
@@ -15,14 +17,14 @@ from halbert_core.intake.pipeline import IntakePipeline, MessageIntake
 # ── Fixtures ─────────────────────────────────────────────────────
 
 MODEL_CONFIG = {
-    "orchestrator": {"model": "qwen2.5:14b-instruct-q4_0"},
-    "specialist": {"model": "qwen2.5:32b", "enabled": True},
+    "orchestrator": {"model": "example-guide:14b-instruct-q4_0"},
+    "specialist": {"model": "example-specialist:32b", "enabled": True},
     "routing": {"complexity_threshold": 3},
 }
 
 MODEL_CONFIG_WITH_VISION = {
     **MODEL_CONFIG,
-    "vision": {"model": "llama3.2-vision"},
+    "vision": {"model": "example-vision:8b"},
 }
 
 
@@ -164,14 +166,14 @@ class TestBudgetIntegration:
         pipeline = make_pipeline(score=2)
         result = pipeline.analyze("simple question")
         assert result.recommended_model == "guide"
-        assert result.model_tier == "medium"  # qwen2.5:14b -> MEDIUM
+        assert result.model_tier == "medium"  # 14b guide -> MEDIUM
         assert result.context_budget.total == 2000
 
     def test_specialist_model_budget(self):
         pipeline = make_pipeline(score=4)
         result = pipeline.analyze("complex diagnostic query about nginx configuration")
         assert result.recommended_model == "specialist"
-        assert result.model_tier == "large"  # qwen2.5:32b -> LARGE
+        assert result.model_tier == "large"  # 32b specialist -> LARGE
         assert result.context_budget.total == 4000
 
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * Agent Stream Hook
  * 
@@ -7,6 +9,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { apiUrl } from '@/lib/apiBase';
+import { terminalSessionStore } from './useTerminalSessions';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -110,6 +113,8 @@ export interface AgentSession {
   conversationStatus?: string | null;
   somaticBlocks?: SomaticBlockEvent[];
   subagentEvents?: SubagentEvent[];
+  /** Terminal sessions opened during this turn, oldest first (E1f). */
+  terminalSessions?: string[];
 }
 
 export interface StreamEvent {
@@ -160,6 +165,49 @@ export interface ModuleInvocation {
   props: Record<string, any>;
 }
 
+/**
+ * Terminal events (E1f) drive the shared terminal-session store rather than
+ * React state, so the tiles in the conversation and the rows in the accordion
+ * dock are the same live sessions.
+ *
+ * This runs *outside* the setSession updater on purpose: updaters must be pure
+ * (React 18 StrictMode invokes them twice), and appending output twice would
+ * duplicate every chunk on screen.
+ */
+export function applyTerminalEvent(event: StreamEvent): void {
+  const terminalId = event.terminal_session_id as string | undefined;
+  if (!terminalId) return;
+
+  switch (event.type) {
+    case 'terminal_spawn': {
+      const info = {
+        command: (event.command as string) ?? '',
+        pid: (event.pid as number) ?? 0,
+        sandboxed: !!event.sandboxed,
+        cwd: (event.cwd as string | undefined) ?? undefined,
+        originSessionId: event.session_id,
+      };
+      // 'ws' means a real PTY the backend session manager owns — attach a
+      // socket for full duplex. Otherwise the output rides this SSE stream.
+      if (event.attach === 'ws') {
+        terminalSessionStore.attach(terminalId, info);
+      } else {
+        terminalSessionStore.adopt(terminalId, info);
+      }
+      break;
+    }
+    case 'terminal_output':
+      terminalSessionStore.appendOutput(terminalId, (event.data as string) ?? '');
+      break;
+    case 'terminal_complete':
+      terminalSessionStore.complete(
+        terminalId,
+        typeof event.exit_code === 'number' ? event.exit_code : -1,
+      );
+      break;
+  }
+}
+
 export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStreamReturn {
   const [session, setSession] = useState<AgentSession | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -200,11 +248,20 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       activeScan: null,
       contextItems: [],
       diffProposals: [],
+      terminalSessions: [],
     });
     sessionIdRef.current = sessionId;
   }, []);
 
   const handleEvent = useCallback((event: StreamEvent) => {
+    if (
+      event.type === 'terminal_spawn' ||
+      event.type === 'terminal_output' ||
+      event.type === 'terminal_complete'
+    ) {
+      applyTerminalEvent(event);
+    }
+
     setSession(prev => {
       if (!prev) return prev;
 
@@ -414,6 +471,25 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
               reflection_id: event.reflection_id as string | undefined,
             }],
           };
+
+        // E1f: a terminal came alive inside this turn. The store already has
+        // it (applyTerminalEvent above); record the id so the conversation can
+        // render its tile inline.
+        case 'terminal_spawn': {
+          const terminalId = event.terminal_session_id as string;
+          if (!terminalId || (prev.terminalSessions ?? []).includes(terminalId)) {
+            return prev;
+          }
+          return {
+            ...prev,
+            terminalSessions: [...(prev.terminalSessions ?? []), terminalId],
+          };
+        }
+
+        case 'terminal_output':
+        case 'terminal_complete':
+          // Output and exit live in the terminal store, not in session state.
+          return prev;
 
         // D1c: subagent lifecycle event
         case 'subagent_event':
@@ -641,6 +717,12 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
 
   const reset = useCallback(() => {
     cancel();
+    // Drop the terminals this turn opened so a new conversation does not
+    // inherit the last one's dock. Terminals the user opened by hand carry no
+    // origin and survive.
+    if (sessionIdRef.current) {
+      terminalSessionStore.clearOrigin(sessionIdRef.current);
+    }
     setSession(null);
     setResponse('');
     setThinking('');

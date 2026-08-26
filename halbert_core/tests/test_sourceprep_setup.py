@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Tests for the SourcePrep unified-template apply script (T-H1.2).
 
 Runtime verification against a live daemon is deferred (needs the S1/S2

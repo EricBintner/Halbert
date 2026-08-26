@@ -266,6 +266,43 @@ attribution and license references.
 | `halbert-api-{arch}` | GPL-3.0 | Pre-built FastAPI server shipped in the Tauri bundle |
 | `sourceprep` (optional) | GPL-3.0 | Code-awareness daemon (user-installed) |
 
+### 3.5 Source Files Derived from Third-Party Code
+
+Most of the repository is first-party and tagged `SPDX-License-Identifier:
+GPL-3.0-or-later`. The files below were copied from, or closely derived from,
+third-party code and keep the upstream license identifier in their header so
+that the upstream copyright and permission notice is retained.
+
+| Files | Upstream | License |
+| :--- | :--- | :--- |
+| `halbert_core/halbert_core/dashboard/frontend/src/components/ui/` — `badge.tsx`, `button.tsx`, `card.tsx`, `dropdown-menu.tsx`, `input.tsx`, `label.tsx`, `progress.tsx`, `sheet.tsx`, `tabs.tsx`; `src/lib/utils.ts` | [shadcn/ui](https://ui.shadcn.com) — Copyright (c) 2023 shadcn | MIT |
+| `dashboard/routes/llm.py` (Ollama Cloud candidate list), `frontend/src/types/llm.ts`, `frontend/src/components/llm/*` (unified model picker) | SourcePrep `@prep/ui` (same author) | GPL-3.0 |
+
+MIT License text retained for the shadcn/ui-derived files:
+
+> Copyright (c) 2023 shadcn
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+Supporting libraries used by those files: `class-variance-authority`
+(Apache-2.0), `clsx` (MIT), `tailwind-merge` (MIT), `@radix-ui/*` (MIT).
+
 ---
 
 ## 4. Attribution Notice for Redistributions
@@ -279,25 +316,41 @@ App Store or LemonSqueezy — you must include:
 4. For any corpus subset included in the binary: the per-source attribution
    lines from §2 above, with the upstream URL preserved in the JSONL `url`
    field of each record.
-5. The "Built with Llama 3.1" notice (and equivalent notices for any other
-   foundation model bundled or recommended) per §5 below.
+5. For any model weights bundled with the binary: the licence text, the
+   NOTICE sentence and the display notice that model's licence prescribes
+   (§5 below).
 
 ---
 
-## 5. Foundation Model Attribution
+## 5. Model Licences and Attribution
 
-Halbert's model catalog references third-party foundation models. Each model's
-license requires user-facing attribution when the model is in use:
+Halbert does not bundle, recommend, or list AI models. You choose a model from
+whatever your runtime (Ollama, MLX, LM Studio, or a cloud API) already serves,
+and the licence for that model is between you and its publisher. Halbert's
+part is to make the licence visible:
 
-| Model | License | Required notice |
-| :--- | :--- | :--- |
-| Meta Llama 3.1 | Llama 3.1 Community License | "Built with Llama 3.1." |
-| DeepSeek | DeepSeek License | "Powered by DeepSeek." |
-| Qwen | Apache 2.0 / Tongyi Qianwen License | "Powered by Qwen." |
-| nomic-embed-text-v1.5 | Apache 2.0 | "Embeddings by Nomic AI." |
+- **Where the licence comes from.** Ollama attaches each model's licence text
+  to the model itself (`ollama show <model> --license`; `POST /api/show` →
+  `license`). `halbert_core/halbert_core/model/attribution.py` reads that text
+  and extracts the licence name, any user-facing display notice the licence
+  requires (some publisher "community" licences require a fixed phrase on a
+  related website, UI, or documentation page), the sentence a NOTICE file must
+  carry if the weights are redistributed, and whether the licence is
+  non-commercial. Detection is by licence wording, not by model name, so no
+  list of models is kept anywhere in the code.
+- **Where it is shown.** The model picker (Settings → AI Models) shows the
+  licence and the required notice next to the selected model;
+  `halbert model-list-all` and `halbert model-router-status` print them; the
+  About / Legal Notices panel lists the licences of the models in use.
+- **Hosted providers.** For cloud endpoints Halbert shows the provider's terms
+  of service instead; prompts and context leave the machine — see
+  [`PRIVACY.md`](./PRIVACY.md).
 
-These notices are rendered in the Model Catalog UI and the `halbert info` CLI
-output (see `LEG-MOD-04`).
+Because Halbert ships no weights, redistribution obligations (copies of the
+licence, NOTICE files, acceptable-use pass-through) do not attach to the
+Halbert release. A future build that bundles weights must include, for each
+bundled model, the licence text, the NOTICE sentence the licence prescribes,
+and the display notice — all of which `attribution.py` reports for that model.
 
 ---
 

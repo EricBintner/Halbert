@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Ollama Management Utilities
 
@@ -85,6 +87,24 @@ def get_models(endpoint: str = DEFAULT_ENDPOINT) -> List[OllamaModel]:
     return []
 
 
+def list_models_raw(endpoint: str = DEFAULT_ENDPOINT) -> List[dict]:
+    """
+    Get raw model entries from Ollama ``GET /api/tags``.
+
+    Each entry keeps the runtime metadata Ollama reports (``size`` in bytes,
+    ``details.parameter_size``, ``details.quantization_level``) so callers
+    can size models against a hardware budget without naming any model.
+    """
+    try:
+        import requests
+        response = requests.get(f"{endpoint}/api/tags", timeout=5)
+        if response.status_code == 200:
+            return list(response.json().get('models', []))
+    except Exception as e:
+        logger.debug(f"Failed to list models: {e}")
+    return []
+
+
 def _format_size(size_bytes: int) -> str:
     """Format bytes to human-readable size."""
     for unit in ['B', 'KB', 'MB', 'GB']:
@@ -150,7 +170,7 @@ def pull_model(model_name: str, endpoint: str = DEFAULT_ENDPOINT) -> Tuple[bool,
     Pull a model from Ollama registry.
     
     Args:
-        model_name: Name of model to pull (e.g., "llama3.1:8b")
+        model_name: Name of model to pull, as listed on the Ollama registry
         endpoint: Ollama API endpoint
     
     Returns:
@@ -219,33 +239,3 @@ def ensure_ready(endpoint: str = DEFAULT_ENDPOINT) -> Tuple[bool, str]:
         return True, "Ollama ready"
     
     return start_ollama()
-
-
-def get_recommended_models() -> List[dict]:
-    """Get list of recommended models for Halbert."""
-    return [
-        {
-            "name": "llama3.2:3b",
-            "role": "guide",
-            "description": "Fast, efficient for simple queries",
-            "size": "~2GB",
-        },
-        {
-            "name": "llama3.1:8b",
-            "role": "specialist",
-            "description": "Balanced performance for complex tasks",
-            "size": "~4.7GB",
-        },
-        {
-            "name": "llama3.1:70b",
-            "role": "expert",
-            "description": "Maximum capability for difficult problems",
-            "size": "~40GB",
-        },
-        {
-            "name": "llava:7b",
-            "role": "vision",
-            "description": "Image understanding capabilities",
-            "size": "~4.5GB",
-        },
-    ]

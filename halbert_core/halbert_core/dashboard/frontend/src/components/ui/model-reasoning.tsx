@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * ModelReasoning - Phase 32 Extended Thinking UI
  * 
- * Displays reasoning/thinking content from reasoning models like
- * DeepSeek R1, QwQ, or Claude with extended thinking.
+ * Displays reasoning/thinking content from reasoning-capable models
+ * that emit extended-thinking blocks.
  * 
  * Shows the model's chain-of-thought in a collapsible "Reasoned for Xs" format.
  * Different from ThinkingSteps (ReAct tool loops) - this shows internal reasoning.

@@ -234,6 +234,10 @@ def get_configured_model() -> str:
 
     Reads from the unified llm_config.small_model (or large_model) slot,
     falling back to the legacy orchestrator key.
+
+    Returns "" when no guide model is configured. Callers must treat an
+    empty value as "not configured" and surface a clear error (choose a
+    model in Settings -> AI Models) instead of posting model="".
     """
     config = _load_models_config()
 
@@ -248,7 +252,7 @@ def get_configured_model() -> str:
     if orch.get("model"):
         return orch["model"]
 
-    return "llama3.1:8b"
+    return ""
 
 
 def get_specialist_model() -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -278,26 +282,31 @@ def get_specialist_model() -> Tuple[Optional[str], Optional[str], Optional[str]]
         logger.debug("Specialist not enabled in config")
         return (None, None, None)
 
-    model = specialist.get("model", "llama3.1:70b")
+    model = specialist.get("model")
+    if not model:
+        logger.debug("Specialist enabled but no model configured")
+        return (None, None, None)
     endpoint = specialist.get("endpoint", get_ollama_endpoint())
     provider = specialist.get("provider", "ollama")
     logger.info(f"Specialist enabled: {model} at {endpoint} (provider: {provider})")
     return (model, endpoint, provider)
 
 
-def get_vision_model() -> Tuple[str, str]:
+def get_vision_model() -> Tuple[Optional[str], str]:
     """Get the configured vision model name and endpoint.
 
     Reads from the legacy 'vision' key (no unified equivalent yet — the
     unified LLMConfig schema doesn't have a dedicated vision slot).
 
     Returns:
-        Tuple of (model_name, endpoint_url)
+        Tuple of (model_name, endpoint_url). model_name is None when no
+        vision model is configured; callers must fall back to the guide /
+        specialist model or report "no vision model configured".
     """
     config = _load_models_config()
 
     vision = config.get("vision", {})
-    model = vision.get("model", "llava:34b")
+    model = vision.get("model") or None
     endpoint = vision.get("endpoint", get_ollama_endpoint())
     return (model, endpoint)
 
@@ -550,7 +559,7 @@ def _score_query_complexity(prompt: str) -> float:
     """Score query complexity to decide guide vs specialist routing.
 
     Returns:
-        Float from 0.0 (simple -> use 8b guide) to 1.0 (complex -> use 70b specialist)
+        Float from 0.0 (simple -> guide tier) to 1.0 (complex -> specialist tier)
     """
     score = 0.0
     prompt_lower = prompt.lower()
@@ -697,8 +706,7 @@ def is_model_loaded(
         loaded_name = m.get("name", m.get("id", ""))
         if loaded_name == model_name or loaded_name.startswith(model_name + ":"):
             return True
-        # Provided name may be a prefix (user says "llama3.1", loaded is
-        # "llama3.1:8b")
+        # Provided name may be a family prefix without the size tag
         if model_name.startswith(loaded_name.split(":")[0]):
             return True
     return False

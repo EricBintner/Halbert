@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """HalbertModelBackend: TierRouter delegation with raw-Ollama fallback.
 
 app_seam imports haloysius lazily (B7), so these tests run without the
@@ -217,7 +219,6 @@ def test_default_model_comes_from_configured_guide_model():
     backend = HalbertModelBackend()
     assert backend.model == "guide-x"
     assert backend.ollama_url == "http://ep.test"
-    assert backend.model != "llama3.2"
 
 
 def test_env_and_explicit_model_override_configured(monkeypatch):
@@ -238,7 +239,7 @@ def test_default_model_falls_back_when_config_unreadable(monkeypatch):
     monkeypatch.setattr(client, "get_configured_model", boom)
     monkeypatch.setattr(client, "get_ollama_endpoint", boom)
     backend = HalbertModelBackend()
-    assert backend.model == "llama3.1:8b"
+    assert backend.model == ""  # no fabricated model id; chat() refuses to post
     assert backend.ollama_url == "http://localhost:11434"
 
 

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Context Handoff Engine for Multi-Model Routing (Phase 5 M2).
 
@@ -151,7 +153,7 @@ class ContextHandoffEngine:
         # Prepare for specialist
         handoff_context = engine.prepare_handoff(
             context=context,
-            target_model="deepseek-coder:33b",
+            target_model="<specialist model id>",
             max_tokens=4096,
             strategy=HandoffStrategy.SUMMARIZED
         )

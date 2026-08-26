@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Tests for the rewritten terminal route (B1e).
 
 Calls the endpoint functions directly (avoids needing httpx/TestClient) and

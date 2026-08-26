@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 ReAct Agent - Thought-Action-Observation Loop
 
@@ -122,7 +124,7 @@ class ReActAgent:
         Initialize ReAct agent.
         
         Args:
-            model: Ollama model name (e.g., "llama3.1:8b")
+            model: model id as configured on your endpoint
             endpoint: Ollama API endpoint URL
             tools: List of tool definitions in Ollama format
             execute_tool_fn: Function to execute tools (name, args) -> result

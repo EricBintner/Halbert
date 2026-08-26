@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Performance monitoring for multi-model system (Phase 5 M5).
 
@@ -145,8 +147,8 @@ class PerformanceMonitor:
         monitor = PerformanceMonitor()
         
         # Record metrics
-        monitor.record_request("llama3.1:8b", latency_ms=234, success=True)
-        monitor.record_quality("llama3.1:8b", quality_score=0.92)
+        monitor.record_request("<model-id>", latency_ms=234, success=True)
+        monitor.record_quality("<model-id>", quality_score=0.92)
         
         # Get status
         status = monitor.get_status()

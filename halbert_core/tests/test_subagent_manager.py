@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Tests for SubagentManager (D1a)."""
 
 import pytest
@@ -59,8 +61,8 @@ class TestSpawnAndCapacity:
 
     def test_freeze_config_on_handle(self, events):
         mgr, _ = events()
-        h = mgr.spawn("a", "g", agent_config={"model": "claude", "temp": 0.7})
-        assert h.agent_config_snapshot == {"model": "claude", "temp": 0.7}
+        h = mgr.spawn("a", "g", agent_config={"model": "example-model:latest", "temp": 0.7})
+        assert h.agent_config_snapshot == {"model": "example-model:latest", "temp": 0.7}
 
     def test_handle_has_id_and_metadata(self, events):
         mgr, _ = events()

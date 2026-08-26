@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """SomaticBlock dataclass + status/type enums (C1a).
 
 A SomaticBlock is the wrapper that drives one self-management cycle. It

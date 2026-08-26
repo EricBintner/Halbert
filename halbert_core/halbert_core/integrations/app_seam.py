@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Halbert App Seam
 
@@ -112,7 +114,7 @@ class HalbertModelBackend:
 
             return get_configured_model()
         except Exception:
-            return "llama3.1:8b"  # matches get_configured_model()'s own default
+            return ""  # no guide model resolvable; chat() raises before posting model=""
 
     @staticmethod
     def _configured_endpoint() -> str:
@@ -245,6 +247,12 @@ class HalbertModelBackend:
     ) -> Any:
         """Safety-net path: direct Ollama /api/chat call (streaming or not)."""
         import requests
+
+        if not model:
+            raise ValueError(
+                "No model configured — choose one in Settings → AI Models "
+                "(or pass model= / set HALBERT_MODEL)"
+            )
 
         payload = {
             "model": model,

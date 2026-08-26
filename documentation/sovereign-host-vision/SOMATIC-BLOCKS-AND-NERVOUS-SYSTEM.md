@@ -88,7 +88,7 @@ To eliminate latency, avoid excessive cloud API costs, and guarantee local-first
 │                                      ▼                                      │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
 │   │ TIER 1: BRAINSTEM & CEREBELLUM (Local Fast Model | <250ms)          │   │
-│   │ • Qwen-2.5-Coder 3B / Mistral-7B / Apple Silicon MLX 4-bit          │   │
+│   │ • Small local model (3B–7B) / Apple Silicon MLX 4-bit               │   │
 │   │ • Intent routing, command syntax generation, host autocompletion    │   │
 │   │ • WhyChip citation extraction & live conversational banter          │   │
 │   └──────────────────────────────────┬──────────────────────────────────┘   │

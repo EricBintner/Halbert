@@ -57,7 +57,7 @@ ollama serve
 
 ### Model Not Found
 
-**Symptom**: `model 'llama3.2:3b' not found`
+**Symptom**: `model '<name>' not found`
 
 **Solution**:
 ```bash
@@ -65,7 +65,7 @@ ollama serve
 ollama list
 
 # Pull the model
-ollama pull llama3.2:3b
+ollama pull <model>
 
 # Verify
 ollama list
@@ -77,14 +77,14 @@ ollama list
 
 **Solution**:
 ```bash
-# Use smaller model
-ollama pull llama3.2:1b
+# Use a smaller model (fewer parameters)
+ollama pull <smaller-model>
 
-# Or use quantized version
-ollama pull llama3.2:3b-q4_0
+# Or use a quantized build of your current model
+ollama pull <model>:<tag>-q4_0
 
 # Update config
-echo "default_model: llama3.2:3b-q4_0" >> ~/.config/halbert/model.yml
+echo "default_model: <model>:<tag>-q4_0" >> ~/.config/halbert/model.yml
 ```
 
 ### Slow Generation
@@ -101,8 +101,8 @@ echo "default_model: llama3.2:3b-q4_0" >> ~/.config/halbert/model.yml
 # Check memory usage during generation
 watch -n 1 free -h
 
-# If swapping, use smaller model
-ollama pull llama3.2:1b
+# If swapping, use a smaller model
+ollama pull <smaller-model>
 
 # Check GPU usage (NVIDIA)
 nvidia-smi
@@ -171,7 +171,7 @@ python Halbert/main.py init
 ```bash
 # Manual download
 pip install sentence-transformers
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+python -c "from halbert_core.halbert_core.rag.embeddings import EmbeddingManager; EmbeddingManager().embedder"  # downloads the configured embedding model
 
 # Or use offline mode after initial download
 export TRANSFORMERS_OFFLINE=1

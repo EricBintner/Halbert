@@ -1,8 +1,10 @@
 # Model Selection
 
-Choosing and configuring LLMs for Halbert.
+Sizing and configuring LLMs for Halbert.
 
-> **Local-first, cloud-optional**: Halbert is designed to run entirely on local LLMs via Ollama—no API keys or internet required. However, you can optionally connect to cloud LLM providers (OpenAI, Claude, Gemini) if you prefer faster responses or don't have local GPU resources.
+> **Local-first, cloud-optional**: Halbert is designed to run entirely on local LLMs via Ollama—no API keys or internet required. However, you can optionally connect to a cloud LLM provider if you prefer faster responses or don't have local GPU resources.
+
+Halbert does not ship with, endorse, or pick a model for you. Any chat model your endpoint serves will work; the guidance below is expressed in parameter counts and memory budgets, not model names.
 
 ---
 
@@ -10,53 +12,67 @@ Choosing and configuring LLMs for Halbert.
 
 Halbert uses up to three models for different tasks:
 
-| Role | Purpose | Recommended |
-|------|---------|-------------|
-| **Guide** | Conversational assistant, quick responses | 8B model |
-| **Specialist** | Complex reasoning, code, system analysis | 70B model |
-| **Vision** | Screenshot/image analysis | Multimodal model |
+| Role | Purpose | Typical size |
+|------|---------|--------------|
+| **Guide** | Conversational assistant, quick responses | ~8B-parameter model |
+| **Specialist** | Complex reasoning, code, system analysis | ~70B-parameter model |
+| **Vision** | Screenshot/image analysis | Any multimodal model |
+
+A single model that supports vision, tool calling, and a long context window can serve all three roles.
 
 ---
 
-## Recommended Models
+## Sizing a Model for Your Hardware
+
+Memory is the constraint. Rule of thumb for the weights alone: 16-bit ≈ 2 GB per billion parameters, 8-bit ≈ 1 GB per billion, 4-bit ≈ 0.5–0.6 GB per billion. Add 1–4 GB on top for the context window (KV cache).
+
+| Parameters | 4-bit (`-q4_0`) | 8-bit (`-q8_0`) | 16-bit |
+|------------|-----------------|-----------------|--------|
+| ~3B | ~2 GB | ~3.5 GB | ~6 GB |
+| ~8B | ~5 GB | ~9 GB | ~16 GB |
+| ~14B | ~9–10 GB | ~15 GB | ~28 GB |
+| ~24–32B | ~15–20 GB | ~26–34 GB | ~50–65 GB |
+| ~70B | ~40 GB | ~75 GB | ~140 GB |
+
+Ollama lists what your endpoint has pulled; Settings → AI Models lets you assign any of them to a role.
 
 ### Best Performance (64 GB+ RAM or GPU offload)
 
 ```bash
-# Specialist - best overall
-ollama pull llama3.3:70b
+# Specialist - a ~70B-class model
+ollama pull <specialist-model>
 
-# Guide - fast responses
-ollama pull llama3.2:8b
+# Guide - a ~8B-class model for fast responses
+ollama pull <guide-model>
 
-# Vision - multimodal
-ollama pull llama3.2-vision:90b
+# Vision - any multimodal model
+ollama pull <vision-model>
 ```
 
 ### Balanced (32 GB RAM)
 
 ```bash
-# Specialist (quantized)
-ollama pull llama3.3:70b-q4_0
+# Specialist - a 4-bit quantized ~70B-class model, or a ~14B–32B model
+ollama pull <specialist-model>:<tag>-q4_0
 
-# Guide
-ollama pull llama3.2:8b
+# Guide - a ~8B-class model
+ollama pull <guide-model>
 
-# Vision (smaller)
-ollama pull llava:13b
+# Vision - a smaller multimodal model
+ollama pull <vision-model>
 ```
 
 ### Minimum (16 GB RAM)
 
 ```bash
-# Single model for both roles
-ollama pull llama3.2:8b
+# One ~8B-class model serves both the Guide and Specialist roles
+ollama pull <model>
 
-# Vision
-ollama pull llava:7b
+# Vision (optional) - a small multimodal model
+ollama pull <vision-model>
 ```
 
-> **⚠️ Caution**: 3B models (like `llama3.2:3b`) are not recommended for system administration tasks. They lack the reasoning capability needed for accurate Linux guidance and may produce unreliable advice.
+> **⚠️ Caution**: Very small (≈3B-parameter and below) models struggle with system administration tasks. They lack the reasoning capability needed for accurate Linux guidance and may produce unreliable advice.
 
 ---
 
@@ -69,15 +85,15 @@ Assign models in Settings → AI Models, or via config:
 
 guide:
   endpoint: http://localhost:11434
-  model: llama3.2:8b
+  model: <guide-model>
 
 specialist:
   endpoint: http://localhost:11434
-  model: llama3.3:70b
+  model: <specialist-model>
 
 vision:
   endpoint: http://localhost:11434
-  model: llama3.2-vision:90b
+  model: <vision-model>
 ```
 
 ---
@@ -93,7 +109,7 @@ Smaller models via quantization:
 | -q4_0 | 4 | ~25% | Acceptable |
 
 ```bash
-ollama pull llama3.1:8b-q4_0
+ollama pull <model>:<tag>-q4_0
 ```
 
 ---
@@ -107,7 +123,7 @@ python Halbert/main.py hardware-detect --recommend
 Shows:
 - Available RAM
 - GPU (if any)
-- Recommended models
+- Model sizes your hardware can run
 
 ---
 
@@ -147,7 +163,7 @@ nvidia-smi  # Verify GPU
 
 ```bash
 export HSA_OVERRIDE_GFX_VERSION=10.3.0
-ollama run llama3.2:8b
+ollama run <model>
 ```
 
 ---
@@ -170,9 +186,9 @@ If you prefer cloud APIs over local models, Halbert supports any OpenAI-compatib
 
 | Provider | Endpoint URL | Notes |
 |----------|--------------|-------|
-| **OpenAI** | `https://api.openai.com` | GPT-4o, GPT-4-turbo |
-| **Anthropic Claude** | Use OpenRouter or LiteLLM | Claude 3.5 Sonnet |
-| **Google Gemini** | Use OpenRouter or LiteLLM | Gemini Pro |
+| **OpenAI** | `https://api.openai.com` | Any chat model on your account |
+| **Anthropic** | Select the **Anthropic** provider type | Any model on your account |
+| **Google** | Use OpenRouter or LiteLLM | Any model on your account |
 | **OpenRouter** | `https://openrouter.ai/api` | Access all providers |
 | **Together AI** | `https://api.together.xyz` | Open-source models |
 | **Groq** | `https://api.groq.com/openai` | Ultra-fast inference |
@@ -189,11 +205,11 @@ In **Settings → AI Models**:
 
 ### Example: OpenRouter (Access All Providers)
 
-OpenRouter gives you access to Claude, GPT-4, Gemini, and more through one API:
+OpenRouter gives you access to many providers' models through one API:
 
 1. Get API key at [openrouter.ai](https://openrouter.ai)
 2. Add endpoint: `https://openrouter.ai/api/v1`
-3. Models appear as: `anthropic/claude-3.5-sonnet`, `openai/gpt-4o`, etc.
+3. Models appear as `<provider>/<model>` ids; pick any from your OpenRouter model list.
 
 ### Example: OpenAI Direct
 
@@ -208,7 +224,7 @@ saved_endpoints:
 
 orchestrator:
   endpoint_id: openai
-  model: gpt-4o
+  model: <model-id-from-your-provider>
 ```
 
 ### Why Local-First?
@@ -221,5 +237,5 @@ Local LLMs offer:
 
 Cloud LLMs offer:
 - **No GPU required** — Works on any machine
-- **Latest models** — Access GPT-4o, Claude 3.5, etc.
+- **Latest models** — Access whatever your provider currently serves
 - **Fast** — Enterprise-grade inference servers

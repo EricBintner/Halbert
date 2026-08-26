@@ -54,12 +54,9 @@ trademark.
 | systemd | Lennart Poettering / Red Hat | An init system Halbert operates on |
 | Ollama | Ollama (Mozilla AI) | A local LLM runtime Halbert integrates with |
 | MLX | Apple Inc. | A machine-learning framework Halbert integrates with on Apple Silicon |
-| OpenAI, ChatGPT, GPT-4 | OpenAI, L.L.C. | An optional cloud model provider |
+| OpenAI, ChatGPT | OpenAI, L.L.C. | An optional cloud model provider |
 | Anthropic, Claude | Anthropic PBC | An optional cloud model provider |
 | Google, Gemini | Google LLC | An optional cloud model provider |
-| Meta, Llama | Meta Platforms, Inc. | A foundation model Halbert optionally uses |
-| DeepSeek | DeepSeek (High-Flyer) | A foundation model Halbert optionally uses |
-| Qwen, Tongyi Qianwen | Alibaba Cloud | A foundation model Halbert optionally uses |
 | HuggingFace | Hugging Face, Inc. | A model and dataset hosting platform Halbert publishes to |
 | GitHub | GitHub, Inc. (Microsoft) | Source code hosting |
 | Stack Exchange, Ask Different | Stack Exchange Inc. | A Q&A platform; Ask Different is a RAG source |

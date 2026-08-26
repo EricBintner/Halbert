@@ -4,7 +4,7 @@
 
 The Halbert knowledge corpus (man pages, Arch Wiki, FreeBSD handbook, common
 CLI references) is ~28,000 documents across 252 Markdown files. Embedding
-these with `nomic-ai/nomic-embed-text-v1.5` on a local CoreML/GPU takes
+these with the configured embedding model on a local CoreML/GPU takes
 1-2 hours on an M-series Mac. This is unacceptable as an onboarding step.
 
 The knowledge corpus is **identical for every user** — it's reference
@@ -110,7 +110,7 @@ This is a small change to the retrieval backend: instead of one
 ### Versioning
 
 The knowledge index is versioned by corpus version + embedding model:
-`halbert-knowledge-index-v{corpus}-nomic-embed-v1.5.tar.zst`
+`halbert-knowledge-index-v{corpus}-{embedding-model}.tar.zst`
 
 When the corpus is updated (new man pages, new wiki dumps), a new version
 is published. Halbert checks for updates periodically and offers to

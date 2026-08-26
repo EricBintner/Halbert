@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Discovery API routes.
 
@@ -426,7 +428,7 @@ if FASTAPI_AVAILABLE:
     class AnalysisRequest(BaseModel):
         """Request for AI analysis."""
         type: str = "backup"  # backup, service, storage, etc.
-        use_specialist: bool = False  # Use 70b model for deep research
+        use_specialist: bool = False  # Use the configured specialist model for deep research
     
     
     @router.post("/analyze/{analysis_type}")
@@ -434,8 +436,8 @@ if FASTAPI_AVAILABLE:
         """
         Get AI-powered analysis of discoveries.
         
-        Uses the orchestrator model (7b) for quick overview,
-        or specialist model (70b) for deep research if use_specialist=true.
+        Uses the configured guide model for a quick overview, or the
+        configured specialist model for deep research if use_specialist=true.
         """
         engine = get_engine()
         
@@ -1106,6 +1108,9 @@ async def _call_llm_analysis(context: str, use_specialist: bool = False) -> Dict
         model = get_configured_model()
         logger.info(f"Using guide model for analysis: {model}")
     
+    if not model:
+        raise Exception("No model configured — choose one in Settings → AI Models")
+    
     system_prompt = """You are a Linux system analyst and debugger. You have access to actual script contents, logs, and configuration files from this system.
 
 YOUR TWO MODES:
@@ -1386,8 +1391,14 @@ def _build_overview_context(overview_type: str, discoveries: list) -> str:
 
 
 async def _generate_overview(context: str, overview_type: str) -> Dict[str, Any]:
-    """Generate ecosystem overview using LLM."""
+    """Generate ecosystem overview using the configured guide model."""
     import json
+    from ...model.client import get_configured_model, get_ollama_endpoint
+    
+    model = get_configured_model()
+    if not model:
+        raise Exception("No model configured — choose one in Settings → AI Models")
+    endpoint = get_ollama_endpoint()
     
     system_prompt = f"""You are describing a user's {overview_type} setup in plain English. 
 Write a concise 2-3 sentence overview that a human would understand.
@@ -1408,9 +1419,9 @@ Be specific about actual hardware models, sizes, and tools. Don't be generic."""
 
     try:
         response = requests.post(
-            "http://localhost:11434/api/chat",
+            f"{endpoint}/api/chat",
             json={
-                "model": "llama3.1:8b",
+                "model": model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": context}

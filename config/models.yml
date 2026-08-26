@@ -4,37 +4,32 @@ providers:
     timeout: 120
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Hardware Tier Recommendations (Phase 58)
+# Model slots
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# Tier 1 (RTX 4090 / 24GB VRAM): qwen2.5:14b chat, local compression (Semantic), API specialist
-# Tier 2 (RTX 5090 / 48GB+ VRAM): mistral-small chat, local compression (Lingua), local specialist
-# Tier 3 (Apple Silicon 64GB+): mistral-small chat, local compression (Lingua), API/MLX specialist
-#
-# Run "Apply Recommended Config" in Settings to auto-configure for your hardware.
+# This file is a neutral template. Every `model:` value below is empty; slots
+# with an empty model are ignored until a model is chosen in
+# Settings → AI Models (which writes the user-level models.yml). Any model
+# served by your endpoint can fill a slot; pick a size that fits your memory
+# budget (roughly: a ~14B-parameter model at 4-bit quantization needs ~10 GB).
 
 orchestrator:
-  # Recommended: qwen2.5:14b (Tier 1) or mistral-small (Tier 2/3)
-  model: qwen2.5:14b-instruct-q4_0  # Smart 14B model, ~8GB VRAM
+  model: ""  # set in Settings → AI Models
   provider: ollama
   always_loaded: true
   purpose: Primary chat model, intent classification, simple Q&A, context selection
 
 specialist:
   enabled: true
-  # Recommended: API for Tier 1, local llama3.3:70b for Tier 2
-  model: qwen2.5:32b  # Larger model for complex reasoning
-  endpoint: http://100.74.58.17:11434
+  model: ""  # set in Settings → AI Models
+  endpoint: http://localhost:11434
   purpose: Complex diagnostics, failure analysis, multi-step reasoning
-  # Phase 32: To use a reasoning model (shows <think> blocks in UI), set model to:
-  # - qwq:32b (QwQ reasoning model)
-  # - deepseek-r1:70b (DeepSeek R1)
-  # Reasoning models output chain-of-thought in collapsible "Reasoned for Xs" UI
+  # Phase 32: models that emit <think> blocks are supported; their reasoning is
+  # shown in a collapsible "Reasoned for Xs" section in the UI.
 
 vision:
-  # Recommended: llama3.2-vision:11b or qwen3-v1:32b
-  model: qwen3-v1:32b
-  endpoint: http://100.74.58.17:11434  # Same as specialist endpoint
+  model: ""  # set in Settings → AI Models
+  endpoint: http://localhost:11434  # Same as specialist endpoint
   purpose: Image analysis, screenshot interpretation, visual troubleshooting
 
 # Compression system (Phase 72 port from LinuxBrain)

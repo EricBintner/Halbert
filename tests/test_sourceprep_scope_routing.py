@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Tests: SourcePrep intake-domain → scope routing (T-H1.3).
 
 The scope_for_query heuristic routes a natural-language query to the right

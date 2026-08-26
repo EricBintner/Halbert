@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Toggle } from '@/components/prep-primitives/Toggle';
@@ -72,7 +74,7 @@ export function AdvancedLLMSettings({ value, onChange }: Props): JSX.Element {
             />
             <p className="text-[10px] text-text-muted leading-relaxed">
               Hard cap on <code className="font-mono">num_predict</code> when{' '}
-              <code className="font-mono">think=True</code> (Kimi). Default 24576.
+              <code className="font-mono">think=True</code> (thinking-capable models). Default 24576.
             </p>
           </div>
         </div>

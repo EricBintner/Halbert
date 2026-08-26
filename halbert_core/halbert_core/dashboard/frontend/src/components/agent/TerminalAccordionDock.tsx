@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * TerminalAccordionDock — right-column accordion of all terminal sessions (E1c).
  *
@@ -5,8 +7,12 @@
  * accordion: collapsed shows a compact summary (status dot, command, PID,
  * exit code); expanded mounts a live TerminalTile for full PTY interactivity.
  * Expanding a row marks it visible (live xterm); the store caps visible
- * sessions at 3 and demotes the oldest. A "jump to origin" button scrolls
- * the conversation back to where the inline tile was (wired by the parent).
+ * sessions at 3 and demotes the oldest, and only visible rows mount an xterm
+ * so the cap is real rather than advisory.
+ *
+ * With no sessions the dock does NOT disappear. An empty dock that says the
+ * nervous system is live — and offers a shell — is the difference between
+ * "the feature isn't there" and "nothing is running right now".
  *
  * Sits below the ContextBar in the right column; coexists with it.
  */
@@ -22,13 +28,19 @@ interface TerminalAccordionDockProps {
   onTerminated?: (sessionId: string) => void;
   /** Optional title for the dock header (defaults to "Terminals"). */
   title?: string;
+  /** Hide the idle state's shell launcher (e.g. inside the conversation). */
+  hideLauncher?: boolean;
 }
 
 const STATUS_DOT: Record<string, string> = {
   running: 'bg-emerald-400',
-  done: 'bg-slate-400',
+  done: 'bg-zinc-500',
   idle: 'bg-amber-400',
 };
+
+// An interactive login shell. /bin/sh -c runs it, so $SHELL is expanded by the
+// child; the fallback keeps this working on hosts with no $SHELL exported.
+const NEW_SHELL_COMMAND = 'exec "${SHELL:-/bin/bash}" -i';
 
 function RowSummary({ session }: { session: TerminalSession }) {
   const dot = STATUS_DOT[session.status] ?? STATUS_DOT.idle;
@@ -36,10 +48,10 @@ function RowSummary({ session }: { session: TerminalSession }) {
   return (
     <div className="flex items-center gap-2 min-w-0 text-xs">
       <span className={`h-2 w-2 rounded-full shrink-0 ${dot}`} />
-      <span className="text-slate-400 font-mono truncate flex-1" title={session.command}>
+      <span className="text-zinc-300 font-mono truncate flex-1" title={session.command}>
         $ {session.command}
       </span>
-      <span className="text-slate-600 font-mono shrink-0">pid {session.pid}{exitInfo}</span>
+      <span className="text-zinc-500 font-mono shrink-0">pid {session.pid}{exitInfo}</span>
     </div>
   );
 }
@@ -48,72 +60,118 @@ export function TerminalAccordionDock({
   onJumpTo,
   onTerminated,
   title = 'Terminals',
+  hideLauncher = false,
 }: TerminalAccordionDockProps) {
-  const { sessions, setVisible } = useTerminalSessions();
+  const { sessions, setVisible, spawn } = useTerminalSessions();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [launching, setLaunching] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
 
   const toggle = (id: string) => {
+    // The store write happens here, not inside the updater: a useState
+    // updater must be pure (StrictMode calls it twice).
+    const willOpen = !expanded.has(id);
+    setVisible(id, willOpen);
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-        setVisible(id, false);
-      } else {
-        next.add(id);
-        setVisible(id, true);
-      }
+      if (willOpen) next.add(id);
+      else next.delete(id);
       return next;
     });
   };
 
-  if (sessions.length === 0) {
-    return null; // no dock when there are no sessions
-  }
+  const launchShell = async () => {
+    setLaunching(true);
+    setLaunchError(null);
+    try {
+      await spawn(NEW_SHELL_COMMAND);
+    } catch (err) {
+      setLaunchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLaunching(false);
+    }
+  };
+
+  const runningCount = sessions.filter((s) => s.status === 'running').length;
 
   return (
-    <div className="border-t border-slate-700/60 bg-slate-900/40">
+    <div className="border-t border-zinc-800 bg-zinc-900/70">
       {/* Dock header */}
-      <div className="flex items-center justify-between px-3 py-1.5 text-xs text-slate-400">
+      <div className="flex items-center justify-between px-3 py-1.5 text-xs text-zinc-300">
         <span className="font-semibold uppercase tracking-wide">{title}</span>
-        <span className="text-slate-600">{sessions.length}</span>
+        <span className="text-zinc-500 font-mono">
+          {sessions.length === 0 ? 'idle' : `${runningCount}/${sessions.length} running`}
+        </span>
       </div>
 
-      {/* Session rows */}
-      <div className="divide-y divide-slate-800/60">
-        {sessions.map((s) => {
-          const isOpen = expanded.has(s.id);
-          return (
-            <div key={s.id}>
-              {/* Collapsed header */}
-              <div className="flex items-center gap-1 px-3 py-1.5 hover:bg-slate-800/40 cursor-pointer" onClick={() => toggle(s.id)}>
-                <span className="text-slate-500 text-[10px] w-3">{isOpen ? '▼' : '▶'}</span>
-                <div className="flex-1 min-w-0">
-                  <RowSummary session={s} />
+      {/* Idle: the nervous system is up, nothing is running on it yet. */}
+      {sessions.length === 0 ? (
+        <div className="px-3 pb-3 space-y-2">
+          <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-zinc-600" />
+            <span>No terminals running. PTY bridge ready.</span>
+          </div>
+          {!hideLauncher && (
+            <button
+              type="button"
+              onClick={launchShell}
+              disabled={launching}
+              className="w-full rounded border border-dashed border-zinc-700 px-2 py-1.5 text-[11px] font-mono text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 disabled:opacity-50 transition-colors"
+            >
+              {launching ? 'Opening shell…' : '+ New Terminal'}
+            </button>
+          )}
+          {launchError && (
+            <p className="text-[10px] text-rose-400 font-mono break-words">{launchError}</p>
+          )}
+        </div>
+      ) : (
+        <div className="divide-y divide-zinc-800/70">
+          {sessions.map((s) => {
+            const isOpen = expanded.has(s.id);
+            return (
+              <div key={s.id}>
+                {/* Collapsed header */}
+                <div className="flex items-center gap-1 px-3 py-1.5 hover:bg-zinc-800/50 cursor-pointer" onClick={() => toggle(s.id)}>
+                  <span className="text-zinc-400 text-[10px] w-3">{isOpen ? '▼' : '▶'}</span>
+                  <div className="flex-1 min-w-0">
+                    <RowSummary session={s} />
+                  </div>
+                  {onJumpTo && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onJumpTo(s.id);
+                      }}
+                      title="Jump to origin in conversation"
+                      className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 hover:text-zinc-100 text-[10px] shrink-0"
+                    >
+                      ⤴
+                    </button>
+                  )}
                 </div>
-                {onJumpTo && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onJumpTo(s.id);
-                    }}
-                    title="Jump to origin in conversation"
-                    className="px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400 hover:text-slate-200 text-[10px] shrink-0"
-                  >
-                    ⤴
-                  </button>
+
+                {/* Expanded: live TerminalTile — but only for sessions the
+                    store actually promoted to visible, so MAX_VISIBLE really
+                    caps the number of live xterm instances. */}
+                {isOpen && (
+                  <div className="px-2 pb-2">
+                    {s.visible ? (
+                      <TerminalTile session={s} onTerminated={onTerminated} />
+                    ) : (
+                      <div className="rounded border border-zinc-800 bg-zinc-900 px-2 py-3 text-[11px] text-zinc-400">
+                        Held headless — too many live terminals. Collapse another
+                        to bring this one back on screen; its output is still
+                        being buffered.
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
-
-              {/* Expanded: live TerminalTile */}
-              {isOpen && (
-                <div className="px-2 pb-2">
-                  <TerminalTile session={s} onTerminated={onTerminated} />
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

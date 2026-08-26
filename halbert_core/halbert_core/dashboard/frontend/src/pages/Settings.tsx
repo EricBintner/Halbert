@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useEffect, useState } from 'react'
 import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -70,7 +72,6 @@ interface ModelStatus {
   model_name: string
   endpoint: string
   available_models: string[]
-  recommended_model: string | null
   // Phase 58: Hardware tier detection
   hardware_tier?: number  // 1=24GB, 2=48GB+, 3=Apple Silicon
   total_vram_gb?: number | null
@@ -389,6 +390,7 @@ export function Settings() {
   // Model config state
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
+  const [hardwareDefaultsMessage, setHardwareDefaultsMessage] = useState<string | null>(null)
   
   // Persona state
   const [activePersona, setActivePersona] = useState<string>('it_admin')
@@ -670,7 +672,7 @@ export function Settings() {
       setModelStatus(data)
     } catch (err) {
       console.error('Failed to load model status:', err)
-      setModelStatus({ ollama_connected: false, model_installed: false, model_name: '', endpoint: 'http://localhost:11434', available_models: [], recommended_model: null })
+      setModelStatus({ ollama_connected: false, model_installed: false, model_name: '', endpoint: 'http://localhost:11434', available_models: [] })
     } finally {
       setLoadingStatus(false)
     }
@@ -1326,14 +1328,14 @@ export function Settings() {
                   </div>
                 )}
                 
-                {/* Apply Recommended Config - Phase 58 */}
+                {/* Apply Hardware Defaults - Phase 58 */}
                 {modelStatus?.ollama_connected && !modelStatus?.model_installed && (
                   <div className="pt-2 border-t">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-medium">Quick Setup</p>
+                        <p className="text-sm font-medium">Hardware Defaults</p>
                         <p className="text-xs text-muted-foreground">
-                          Auto-configure based on your {modelStatus?.total_vram_gb ? `${modelStatus.total_vram_gb}GB GPU` : 'hardware'}
+                          Set compression for your {modelStatus?.total_vram_gb ? `${modelStatus.total_vram_gb}GB GPU` : 'hardware'} and use the largest installed model that fits it
                         </p>
                       </div>
                       <Button 
@@ -1342,20 +1344,23 @@ export function Settings() {
                           try {
                             const res = await fetch(`${API_BASE}/settings/model/apply-recommended`, { method: 'POST' })
                             const data = await res.json()
+                            setHardwareDefaultsMessage(data.message || null)
                             if (data.success) {
                               loadSettings()
-                              // Show success toast or message
-                              console.log('Applied:', data.message)
                             }
                           } catch (err) {
-                            console.error('Failed to apply recommended config:', err)
+                            console.error('Failed to apply hardware defaults:', err)
+                            setHardwareDefaultsMessage('Failed to apply hardware defaults')
                           }
                         }}
                       >
                         <Zap className="h-3 w-3 mr-1" />
-                        Apply Recommended
+                        Apply Hardware Defaults
                       </Button>
                     </div>
+                    {hardwareDefaultsMessage && (
+                      <p className="text-xs text-muted-foreground mt-2">{hardwareDefaultsMessage}</p>
+                    )}
                   </div>
                 )}
                 

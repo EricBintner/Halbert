@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * Stub for LLMAssignmentBlockCard — mapped mode assignment card.
  * Halbert uses structured mode only, so this renders a placeholder.

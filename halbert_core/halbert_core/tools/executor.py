@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Tool Executor
 
@@ -10,10 +12,14 @@ import asyncio
 import os
 import time
 import logging
+import uuid
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, Callable, List, TYPE_CHECKING
 
 from .safety import ToolSafetyFramework, RiskLevel, SafetyCheckResult
+from ..streaming.terminal_bridge import (
+    current_agent_session, publish_terminal_event, terminal_stream_wanted,
+)
 
 if TYPE_CHECKING:
     from .base import BaseTool
@@ -269,15 +275,22 @@ class ToolExecutor:
             )
         
         # Execute the tool
+        #
+        # The agent session id rides in a ContextVar rather than a handler
+        # parameter: handlers take only their args dict, and threading an extra
+        # argument would break every registered tool. Anything running under
+        # the handler (notably _run_command) can therefore publish terminal
+        # lifecycle events to the right SSE stream. See streaming/terminal_bridge.
+        session_token = current_agent_session.set(session_id)
         try:
             handler = self.tools[tool_name]
-            
+
             # Handle both sync and async handlers
             if asyncio.iscoroutinefunction(handler):
                 result = await handler(args)
             else:
                 result = handler(args)
-            
+
             elapsed = (time.time() - start) * 1000
             
             logger.info(f"Executed {tool_name}: success in {elapsed:.0f}ms")
@@ -311,7 +324,10 @@ class ToolExecutor:
                 execution_time_ms=elapsed,
                 risk_level=safety_result.risk_level
             )
-    
+
+        finally:
+            current_agent_session.reset(session_token)
+
     def _audit(
         self,
         tool_name: str,
@@ -338,43 +354,111 @@ class ToolExecutor:
     # -------------------------------------------------------------------------
     
     async def _run_command(self, args: Dict) -> str:
-        """Execute a shell command."""
+        """Execute a shell command.
+
+        When an agent turn is streaming (``terminal_stream_wanted()``), the
+        command's output is also published chunk-by-chunk to the terminal event
+        bridge so the conversation can render a live terminal tile while the
+        command is still running. The return value — what the model sees — is
+        identical either way.
+        """
         command = args["command"]
         timeout = args.get("timeout", self.DEFAULT_TIMEOUT)
         cwd = args.get("cwd")
-        
+
         # Expand user paths
         if cwd:
             cwd = os.path.expanduser(cwd)
-        
+
         logger.debug(f"Running command: {command}")
-        
+
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd
         )
-        
+
+        streaming = terminal_stream_wanted()
+        terminal_id = f"cmd-{uuid.uuid4()}"
+        if streaming:
+            publish_terminal_event({
+                "kind": "spawn",
+                "terminal_session_id": terminal_id,
+                "command": command,
+                "pid": proc.pid,
+                "cwd": cwd,
+                "sandboxed": False,
+                "attach": "sse",
+            })
+
+        out_buf: List[str] = []
+        err_buf: List[str] = []
+
+        async def pump(stream, buf: List[str]) -> None:
+            """Drain one pipe, buffering it and (optionally) streaming it."""
+            while True:
+                chunk = await stream.read(4096)
+                if not chunk:
+                    return
+                text = chunk.decode('utf-8', errors='replace')
+                buf.append(text)
+                if streaming:
+                    publish_terminal_event({
+                        "kind": "output",
+                        "terminal_session_id": terminal_id,
+                        "data": text,
+                    })
+
+        pumps = asyncio.gather(
+            pump(proc.stdout, out_buf),
+            pump(proc.stderr, err_buf),
+        )
+
+        async def drain_and_wait() -> int:
+            """Drain both pipes, then reap the child."""
+            await pumps
+            return await proc.wait()
+
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=timeout
-            )
-            
-            output = stdout.decode('utf-8', errors='replace') if stdout else ""
-            errors = stderr.decode('utf-8', errors='replace') if stderr else ""
-            
-            if proc.returncode != 0:
-                return f"Exit code {proc.returncode}\n{output}\n{errors}".strip()
-            
+            # One deadline covers draining *and* exit. EOF on the pipes is not
+            # the same event as the child exiting: a process that closes or
+            # redirects its std fds and keeps running (`exec 1>&- 2>&-; sleep`,
+            # a daemonising helper) reaches EOF immediately. Timing only the
+            # drain would let such a command outlive its timeout entirely —
+            # the proc.communicate() this replaced bounded exit for free.
+            returncode = await asyncio.wait_for(drain_and_wait(), timeout=timeout)
+
+            output = "".join(out_buf)
+            errors = "".join(err_buf)
+
+            if streaming:
+                publish_terminal_event({
+                    "kind": "complete",
+                    "terminal_session_id": terminal_id,
+                    "exit_code": returncode,
+                })
+
+            if returncode != 0:
+                return f"Exit code {returncode}\n{output}\n{errors}".strip()
+
             return output.strip() if output else "(no output)"
-            
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+
+        except BaseException:
+            # Timeout (wait_for cancelled the pumps) or an unexpected reader
+            # failure. Either way the child must not outlive the tool call.
+            pumps.cancel()
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            if streaming:
+                publish_terminal_event({
+                    "kind": "complete",
+                    "terminal_session_id": terminal_id,
+                    "exit_code": proc.returncode if proc.returncode is not None else -1,
+                })
             raise
-    
+
     async def _read_file(self, args: Dict) -> str:
         """Read file contents."""
         path = args["path"]

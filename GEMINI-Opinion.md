@@ -130,7 +130,7 @@ As detailed in `.handoff/HALOYSIUS-CORE-HANDOFF.md`, the chat and cognition arch
 #### What Haloysius Provides Halbert:
 1. **The Cognitive Tick (`advance_turn`):** A rigorous turn-by-turn state machine handling continuity, temporal grounding, and thought pipelines without coupling to web frameworks.
 2. **Protocol-Driven App-Seams:** Pure abstract interfaces for:
-   - `ModelBackend`: Connecting local Ollama models (Mistral-Small, Qwen) or hosted BYOK keys.
+   - `ModelBackend`: Connecting local Ollama models or hosted BYOK keys.
    - `RetrievalBackend`: Feeding rich, bounded host context into the cognitive tick.
    - `GovernancePolicy`: Standardizing safety guardrails, rate limits, and approvals.
 3. **Removal of Private Fork Rot:** Halbert can completely discard the 4,240-line `chat.py` monolith, `agents/state_machine.py`, and fragmented prompt files, replacing them with a maintained, single-purpose cognitive engine. Halbert operates as an image-free (or vision-observing) sysadmin consumer.
@@ -184,7 +184,7 @@ To achieve the founder's vision—a delicate, self-aware AI assistant as the com
 │                    Returns Bounded │ Synthesized Context                    │
 │                                    ▼                                        │
 │                     ┌─────────────────────────────┐                         │
-│                     │   Local LLM (Mistral/Qwen)  │                         │
+│                     │   Local LLM (via Ollama)    │                         │
 │                     │  Formulates Action & Diffs  │                         │
 │                     └──────────────┬──────────────┘                         │
 │                                    │                                        │
@@ -235,7 +235,7 @@ Instead of maintaining naive string snapshots in `data/config/`, treat the host 
 ### Phase 3: Adopt Haloysius as the Agnostic Cognitive Core
 When Haloysius workspace packages reach staging (WP-13/WP-14/WP-15):
 1. **Implement Halbert App-Seams:**
-   - `ModelBackend`: Direct connector to local Ollama (e.g. `mistral-small:24b` or `qwen2.5:14b`) and cloud fallbacks.
+   - `ModelBackend`: Direct connector to local Ollama (whatever model the user configured) and cloud fallbacks.
    - `RetrievalBackend`: Plug directly into the SourcePrep host index.
    - `GovernancePolicy`: Plug into Halbert's dry-run, approval engine, and guardrails.
 2. **Leverage the Cognitive Tick:** Let Haloysius drive turn state, temporal progression, and persona coherence, freeing Halbert to focus strictly on system operations.

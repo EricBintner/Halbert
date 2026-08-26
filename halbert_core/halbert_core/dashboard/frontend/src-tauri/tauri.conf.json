@@ -34,6 +34,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "copyright": "Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors",
+    "license": "GPL-3.0-or-later",
     "externalBin": [
       "binaries/halbert-api"
     ],
@@ -60,7 +62,10 @@
         "bundleMediaFramework": false
       },
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"],
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ],
         "section": "utils",
         "priority": "optional"
       },

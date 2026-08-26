@@ -30,19 +30,19 @@ providers:
   # See: docs/Phase38-robust-model-heirarchy/DESIGN.md
   
   # Guide tier model (fast responses)
-  - id: ollama:llama3.1:8b
+  - id: ollama:<your-guide-model>   # set to the guide model from ~/.config/halbert/models.yml
     label: guide
     config:
       temperature: 0.3
-      
+
   # Specialist tier model (complex reasoning)
-  # - id: ollama:llama3.3:70b
+  # - id: ollama:<your-specialist-model>
   #   label: specialist
   #   config:
   #     temperature: 0.3
-      
-  # Or use Anthropic API if configured:
-  # - id: anthropic:claude-3-5-sonnet-20241022
+
+  # Or use a hosted API provider if configured:
+  # - id: anthropic:<your-hosted-specialist-model>
   #   label: specialist
 
 tests:

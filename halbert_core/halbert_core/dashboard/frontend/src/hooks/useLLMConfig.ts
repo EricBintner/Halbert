@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import type {
   LLMConfig,
@@ -62,7 +64,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
     saved_endpoints: [
       { id: 'default_ollama', name: 'Default Ollama', provider: 'ollama', url: 'http://localhost:11434' },
     ],
-    embedding: { source: 'endpoint', endpoint_id: 'default_ollama', model: 'nomic-embed-text' },
+    embedding: { source: 'endpoint', endpoint_id: 'default_ollama' },
     small_model: { enabled: false },
     large_model: { enabled: false },
     code_model: { enabled: false },

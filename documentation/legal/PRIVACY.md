@@ -1,227 +1,96 @@
-# Privacy Policy
+# Halbert Privacy Policy
 
-**Effective date:** 2026-08-25
-**Applies to:** Halbert core engine, Halbert Pro, the Tauri dashboard, the
-`halbert` CLI, the marketing website at the Halbert domain, and any binary or
-source distribution of the Halbert project.
-
-Halbert's defining feature is **local data sovereignty**: your system state,
-your conversations, and your memory never leave your machine unless you
-explicitly configure a cloud model provider. This document is the formal
-statement of that commitment.
+**Effective Date:** 2026-08-25  
+**Last Updated:** 2026-08-25  
+**Scope:** Halbert Software (Core CLI, Desktop Application, Background Daemons) and the Halbert Project Website (`halbert.net` / marketing web).
 
 ---
 
-## 1. The One-Sentence Version
+## 1. Core Commitment: Sovereign by Design
 
-**By default, Halbert collects, transmits, and shares nothing. Every byte of
-data Halbert reads stays on the host it was read from.**
+Halbert is built on an uncompromising principle: **your computer's data belongs to you.**
 
----
-
-## 2. Local-First by Default
-
-Halbert runs as a local process on your machine. The default model backend is a
-local inference engine (Ollama or MLX on Apple Silicon). In the default
-configuration:
-
-- No telemetry is collected.
-- No analytics are collected.
-- No behavioral tracking occurs.
-- No crash reports are sent anywhere.
-- No "phone home" calls are made to any Halbert-controlled server.
-- No usage statistics are reported.
-- No account is required and no account exists.
-
-Halbert does not embed any third-party analytics SDK (no Google Analytics, no
-Sentry, no PostHog, no Mixpanel, no Amplitude, no Segment, no Hotjar). The
-marketing website likewise runs no analytics scripts.
+Unlike traditional cloud-based AI tools, Halbert operates **100% local-first by default**. We do not harvest, monetize, train on, or transmit your logs, telemetry, configuration files, terminal commands, or conversational prompts.
 
 ---
 
-## 3. What Halbert Reads
+## 2. The Halbert Software Application
 
-To do its job, Halbert reads the following from your local system:
+### 2.1 What Halbert Accesses Locally
+To function as a host custodian, Halbert reads local machine state on your system:
+- Hardware sensor telemetry (`hwmon`, CPU/GPU temperatures, memory and disk utilization).
+- Operating system logs (`systemd-journald`, `syslog`, `/var/log`).
+- Configuration files (`/etc`, dotfiles in `$HOME`, `launchd` plists, systemd service units).
+- Shell history and environment variables (`$PATH`, shell profiles).
 
-| Data | Source | Stored where |
-| :--- | :--- | :--- |
-| System profile | `uname`, `/proc`, `sysctl`, `system_profiler` | In-memory; cached summary in `~/.local/share/halbert/` |
-| Service state | `systemctl`, `launchctl`, `service` | In-memory |
-| Disk & filesystem state | `df`, `diskutil`, `mount` | In-memory |
-| Network state | `ifconfig`, `ss`, `netstat` | In-memory |
-| Package inventory | `dpkg`, `brew list`, `pacman -Q` | In-memory |
-| Configuration files | `/etc/**`, `~/.config/**`, `/Library/LaunchDaemons/**` | Read into context; copies staged into `~/.local/share/halbert/sourceprep/host/` for indexing |
-| Logs | `journalctl`, `log show` | Read into context; not persisted by Halbert |
-| Your chat messages | The dashboard / CLI input | Persisted in `~/.local/share/halbert/memory/` |
-| Halbert's own responses | Generated locally | Persisted in `~/.local/share/halbert/memory/` |
-| RAG corpus | `data/**` (shipped in the repo) | Indexed in `~/.local/share/halbert/sourceprep/` |
+**All of this data remains strictly on your local machine.** It is stored in standard local directories adhering to the XDG Base Directory Specification:
+- Configuration: `~/.config/halbert/`
+- Data & Vector Indices: `~/.local/share/halbert/`
+- State & Local Logs: `~/.local/state/halbert/`
 
-All of the above stays on your machine. None of it is transmitted anywhere by
-Halbert in the default configuration.
+### 2.2 Zero Telemetry, Analytics, or Crash Reporting
+- Halbert **does not collect telemetry**, event pings, or usage analytics.
+- Halbert **does not phone home** on startup, execution, or shutdown.
+- There are no background beacon scripts, tracking SDKs, or third-party diagnostic collectors embedded in Halbert.
 
----
+### 2.3 Optional Cloud Model Connections
+Halbert runs on local models (via Ollama or Apple Silicon MLX) by default. 
 
-## 4. Where Halbert Stores Data
-
-Halbert uses XDG Base Directory conventions. On a typical Linux install:
-
-| Path | Contents |
-| :--- | :--- |
-| `~/.local/share/halbert/` | Memory, vector index, staged host config, SourcePrep project |
-| `~/.config/halbert/` | User configuration (`config.yml`, `policy.yml`) |
-| `~/.cache/halbert/` | Embedding model cache, transient scratch |
-
-On macOS the equivalent paths live under `~/Library/Application Support/halbert/`,
-`~/Library/Preferences/halbert/`, and `~/Library/Caches/halbert/` per Apple
-conventions.
-
-You can inspect, export, or delete any of this data at any time. Halbert ships
-no obfuscation and no DRM. To wipe Halbert's local state:
-
-```bash
-rm -rf ~/.local/share/halbert ~/.config/halbert ~/.cache/halbert
-```
+If you **explicitly choose** to configure external cloud API keys (e.g., Anthropic Claude, OpenAI GPT, Google Gemini):
+- Only the specific prompt and relevant retrieved context snippets required to answer your query are sent to the designated cloud provider.
+- Your data transfer is governed strictly by your personal direct agreement with that cloud provider (e.g., Anthropic Commercial Terms of Service, OpenAI API Data Usage Policies).
+- Halbert never proxies your cloud requests through intermediate Halbert servers.
 
 ---
 
-## 5. Cloud API Mode (Optional, Off by Default)
+## 3. The Halbert Project Website
 
-Halbert supports optional configuration of cloud model providers — OpenAI,
-Anthropic, Google, and other OpenAI-compatible endpoints — for users who want
-higher-quality reasoning than a local model can provide.
+### 3.1 Early Access Email Collection
+On our website, we offer an early access signup form.
+- **What We Collect**: Your email address (if voluntarily submitted).
+- **Purpose**: To notify you when new release builds (Linux, macOS) or beta invitations become available.
+- **Storage & Retention**: We do not sell, rent, trade, or share your email address with third parties or data brokers. You may unsubscribe or request permanent deletion at any time by contacting `privacy@halbert.net`.
 
-**When you enable a cloud provider, the privacy posture changes.** This is the
-only path by which your data leaves your machine.
+### 3.2 Hosting & Infrastructure Server Logs
+Our website is statically served via modern content delivery networks (e.g., Netlify / Cloudflare).
+- Like all web servers, standard non-identifying request metadata (IP address, browser user-agent, referring URL, timestamp) is temporarily logged by the CDN infrastructure for network security, DDoS mitigation, and reliable asset delivery.
+- These logs are standard operational technical logs maintained pursuant to the CDN provider's security practices and are purged on standard operational rotation.
 
-### 5.1 What is sent
-
-When a cloud model is selected for a given turn, Halbert sends to the provider:
-
-- Your chat message for that turn.
-- The assembled context for that turn — which may include excerpts of your
-  system profile, configuration files, service state, log snippets, and
-  retrieved RAG chunks.
-- The system prompt and any persona instructions in effect.
-
-### 5.2 What is not sent
-
-- Your full filesystem.
-- Your full memory history (only the context window for the current turn).
-- Your credentials, API keys, or secrets (these are filtered out of context by
-  the safety adapters before transmission).
-- Anything from turns that use a local model.
-
-### 5.3 Provider terms
-
-Each cloud provider processes your data under that provider's own terms of
-service and privacy policy. Halbert's maintainers are not a party to that
-relationship and have no visibility into, or control over, what the provider
-does with your data — including whether the provider retains it, logs it, or
-uses it for model training. **Review the provider's policy before enabling
-cloud mode on systems that process sensitive, regulated, or restricted data.**
-
-| Provider | Privacy policy |
-| :--- | :--- |
-| OpenAI | https://openai.com/policies/privacy-policy |
-| Anthropic | https://www.anthropic.com/legal/privacy |
-| Google | https://policies.google.com/privacy |
-
-### 5.4 Consent gate
-
-The dashboard surfaces a confirmation dialog the first time a cloud provider is
-enabled, stating that enabling cloud models sends system logs and prompts to
-the named provider and should not be enabled on systems processing sensitive or
-restricted data. See `LEG-MOD-02` in the action plan.
+### 3.3 Cookies & Tracking Technologies
+- **No Advertising Cookies**: The Halbert website does not use advertising cookies, retargeting pixels, or behavioral cross-site trackers.
+- **No Third-Party Analytics**: We do not use Google Analytics or invasive tracking scripts. Any performance metrics are cookieless, aggregate, and privacy-preserving.
 
 ---
 
-## 6. The Marketing Website
+## 4. Commercial Purchases (Halbert Pro via LemonSqueezy)
 
-The Halbert marketing website (`index.html` and the Vite app under
-`marketing/web/`) is a static site. It:
-
-- Loads no analytics scripts.
-- Loads no tracking pixels.
-- Sets no tracking cookies. The only client-side state is the theme picker
-  preference, stored in `localStorage` on the visitor's browser and never
-  transmitted.
-- Makes no API calls to any Halbert-controlled backend.
-- The subscription input on the footer is a front-end form; submission is
-  handled by the hosting provider (Netlify form handling) and is governed by
-  Netlify's privacy policy, not Halbert's.
+For paid software tiers (Halbert Pro for macOS):
+- Payments and order fulfillment are processed by our Merchant of Record, **LemonSqueezy** (Lemon Squeezy LLC).
+- LemonSqueezy handles payment processing, global VAT/sales tax compliance, and order delivery.
+- Financial data (such as full credit card numbers) is handled directly by LemonSqueezy and its payment processors (Stripe/PayPal) and is never seen, stored, or processed by Halbert servers.
+- LemonSqueezy's privacy practices are governed by the [Lemon Squeezy Privacy Policy](https://www.lemonsqueezy.com/privacy).
 
 ---
 
-## 7. The RAG Corpus
+## 5. Your Data Protection Rights (GDPR & CCPA/CPRA)
 
-The RAG corpus shipped in `data/` is a static dataset committed to git. It
-contains no personal data. It contains publicly available technical
-documentation under the licenses enumerated in
-[`THIRD-PARTY-LICENSES.md`](./THIRD-PARTY-LICENSES.md). When Halbert retrieves
-from the corpus, retrieval is local — no query is sent to any upstream source.
+Whether you reside in the European Economic Area (EEA), the United Kingdom, California, or elsewhere, you possess the right to:
+1. **Access & Portability**: Request confirmation of any personal data we hold (e.g. early access email list).
+2. **Erasure / Deletion**: Request that your email address be permanently deleted from our communication lists.
+3. **No Sale of Personal Information**: Halbert does not sell personal information and has never done so.
 
-The corpus is also published to HuggingFace as versioned datasets
-(`halbert-rag-linux`, `halbert-rag-macos`, `halbert-rag-eval`). Those datasets
-contain only the same public technical documentation, with per-source license
-metadata preserved in each record. See `LEG-MAJ-03`.
+To exercise any of these rights, email: `privacy@halbert.net`.
 
 ---
 
-## 8. SourcePrep Daemon
+## 6. Changes to this Policy
 
-Halbert optionally integrates with a local SourcePrep daemon (port 8400) for
-code-awareness retrieval. The daemon is a local process. It reads files from
-your local filesystem and your staged host config tree. It does not transmit
-data off-host. If you have configured SourcePrep's optional cloud catalogue
-feature (an LLM-based enrichment stage), that stage's data flow is governed by
-SourcePrep's own privacy documentation, not this policy.
+If we update this Privacy Policy, we will post the updated document with a revised "Last Updated" date. Because our core architecture is strictly local-first, changes will only reflect updates to external services (such as distribution platforms or website infrastructure).
 
 ---
 
-## 9. Children's Privacy
+## 7. Contact Information
 
-Halbert is not directed at children under 16 and is not intended for use by
-children. Halbert does not knowingly collect any personal information from
-anyone, of any age.
-
----
-
-## 10. Your Rights
-
-Because Halbert collects no personal data, the standard GDPR / CCPA data
-subject rights (access, rectification, erasure, portability, objection) are
-trivially satisfied: there is no personal data about you in Halbert's
-possession to access, rectify, erase, port, or object to. The data on your
-machine is yours; you can inspect and delete it as described in §4.
-
-For the marketing website's Netlify-hosted subscription form, contact the
-maintainer at the address in §12 to exercise any rights over the email address
-you submitted.
-
----
-
-## 11. Changes to This Policy
-
-Material changes to this policy will be reflected by updating this document and
-bumping the "Effective date" above. The git history of this file is the
-authoritative changelog. Halbert's first-run onboarding will re-prompt for
-acknowledgment if a material change is detected.
-
----
-
-## 12. Contact
-
-For privacy questions or requests, open an issue on the Halbert GitHub
-repository or contact the maintainer directly via the channels listed on the
-repository's `README.md`. Halbert does not operate a dedicated privacy email
-address because there is no data to request.
-
----
-
-## 13. Cross-References
-
-- [`THIRD-PARTY-LICENSES.md`](./THIRD-PARTY-LICENSES.md) — Per-source license attribution
-- [`DISCLAIMER.md`](./DISCLAIMER.md) — Autonomous action liability waiver
-- [`TRADEMARKS.md`](./TRADEMARKS.md) — Third-party trademark notices
-- [`SECURITY.md`](./SECURITY.md) — Security model and trust boundaries
-- [`LEGAL-AND-LICENSING-TODO.md`](./LEGAL-AND-LICENSING-TODO.md) — Compliance action plan
+For inquiries regarding this Privacy Policy or Halbert's privacy practices:
+- **Email**: `privacy@halbert.net`
+- **Project Repository**: `https://github.com/EricBintner/Halbert`

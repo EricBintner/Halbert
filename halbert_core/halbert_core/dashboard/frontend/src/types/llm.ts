@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * LLM Configuration Types
  *
@@ -133,6 +135,8 @@ export interface LLMSlotConfig {
 }
 
 export interface AdvancedLLMSettings {
+  /** Ollama Cloud tags to probe for on-demand discovery (empty by default; set in models.yml). */
+  ollama_cloud_candidates?: string[];
   enforce_cloud_token_safety: boolean;
   max_thinking_budget: number;
 }

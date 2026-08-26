@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Model-tier detection and context budget allocation.
 
@@ -10,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict
+from typing import Dict, Optional, Union
 
 
 class ModelTier(Enum):
@@ -83,21 +85,46 @@ CONTEXT_BUDGETS: Dict[ModelTier, ContextBudget] = {
 
 # Match patterns like ":14b", "-14b", ":14b-instruct", "_14b"
 _SIZE_RE = re.compile(r"[:\-_](\d+(?:\.\d+)?)b\b", re.IGNORECASE)
-_MOE_RE = re.compile(r"\b(moe|mixtral|deepseek.?r1|qwq)\b", re.IGNORECASE)
+# Mixture-of-experts: an explicit "moe" token or an "<experts>x<size>b" tag
+# such as "8x22b". Generic only -- never keyed on vendor or model names.
+_MOE_RE = re.compile(r"\bmoe\b|\b\d+x\d+(?:\.\d+)?b\b", re.IGNORECASE)
 
 
-def detect_model_tier(model_name: str) -> ModelTier:
-    """Parse a model name for size hints and return the matching tier.
+def _coerce_tier(tier: Union[ModelTier, str, None]) -> Optional[ModelTier]:
+    """Accept a ModelTier or its string value (e.g. from models.yml ``tier:``)."""
+    if tier is None or tier == "":
+        return None
+    if isinstance(tier, ModelTier):
+        return tier
+    try:
+        return ModelTier(str(tier).strip().lower())
+    except ValueError:
+        return None
+
+
+def detect_model_tier(
+    model_name: str,
+    tier: Union[ModelTier, str, None] = None,
+) -> ModelTier:
+    """Return the hardware tier for a model.
+
+    An explicit ``tier`` override (a ModelTier or its value, e.g. a
+    models.yml ``tier: large``) wins. Otherwise the name is parsed for
+    generic size hints only:
 
     Examples:
-        qwen2.5:14b-instruct-q4_0 -> MEDIUM
-        qwen2.5:32b               -> LARGE
-        llama3.1:8b               -> SMALL
-        llama3.1:70b              -> XLARGE
-        mixtral:8x22b             -> MASSIVE
+        <name>:14b-instruct-q4_0 -> MEDIUM
+        <name>:32b               -> LARGE
+        <name>:8b                -> SMALL
+        <name>:70b               -> XLARGE
+        <name>:8x22b (MoE)       -> MASSIVE
 
     Fallback: MEDIUM (safe default).
     """
+    override = _coerce_tier(tier)
+    if override is not None:
+        return override
+
     if not model_name:
         return ModelTier.MEDIUM
 
@@ -123,6 +150,9 @@ def detect_model_tier(model_name: str) -> ModelTier:
         return ModelTier.XLARGE
 
 
-def get_context_budget(model_name: str) -> ContextBudget:
-    """Detect the model tier and return its context budget."""
-    return CONTEXT_BUDGETS[detect_model_tier(model_name)]
+def get_context_budget(
+    model_name: str,
+    tier: Union[ModelTier, str, None] = None,
+) -> ContextBudget:
+    """Detect the model tier (or honour an explicit ``tier``) and return its budget."""
+    return CONTEXT_BUDGETS[detect_model_tier(model_name, tier)]

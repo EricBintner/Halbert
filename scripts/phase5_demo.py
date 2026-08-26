@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Halbert Phase 5 Demo Script
 
@@ -111,9 +113,9 @@ def demo_context_handoff():
 
 
 def demo_hardware_detection():
-    """Demo 3: Hardware detection and recommendations"""
+    """Demo 3: Hardware detection"""
     print("\n" + "="*70)
-    print("DEMO 3: Hardware Detection & Model Recommendations")
+    print("DEMO 3: Hardware Detection")
     print("="*70)
     
     try:
@@ -135,23 +137,9 @@ def demo_hardware_detection():
         
         if hardware.has_nvidia_gpu:
             print(f"  NVIDIA GPU: Yes ✅")
-        
-        # Get recommendation
-        recommendation = detector.recommend_models(hardware)
-        
-        print(f"\n💡 Recommended Configuration:")
-        print(f"  Orchestrator: {recommendation.orchestrator_model}")
-        print(f"  Provider: {recommendation.orchestrator_provider}")
-        
-        if recommendation.specialist_enabled:
-            print(f"  Specialist: {recommendation.specialist_model}")
-            print(f"  Provider: {recommendation.specialist_provider}")
-        else:
-            print(f"  Specialist: Disabled (orchestrator-only)")
-        
-        print(f"\n  Expected Memory: {recommendation.expected_memory_mb}MB")
-        print(f"  Reasoning: {recommendation.reasoning}")
-        
+
+        print("\n  Choose a model that fits this memory budget in Settings → AI Models.")
+
         print("\n✅ Demo 3 complete!")
         return True
         
@@ -273,7 +261,7 @@ def main():
     demos = [
         ("Basic Multi-Model Routing", demo_basic_routing),
         ("Context Handoff & Conversation", demo_context_handoff),
-        ("Hardware Detection & Recommendations", demo_hardware_detection),
+        ("Hardware Detection", demo_hardware_detection),
         ("Performance Monitoring", demo_performance_monitoring),
         ("LoRA Persona System (Mac)", demo_lora_info),
     ]

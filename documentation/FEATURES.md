@@ -117,8 +117,8 @@ A comprehensive list of implemented features as of December 2025.
 #### AI Models Tab
 - **Saved Endpoints**: Configure Ollama instances (local, remote)
 - **Model Roles**:
-  - **Guide**: Fast model (8B) for simple queries
-  - **Specialist**: Large model (70B) for complex reasoning
+  - **Guide**: Fast, small model for simple queries
+  - **Specialist**: Large model for complex reasoning
   - **Vision**: Multimodal model for image analysis
 - Test endpoint connectivity
 - Per-role endpoint + model selection
@@ -149,8 +149,8 @@ A comprehensive list of implemented features as of December 2025.
 ### Smart Model Routing
 **Automatic selection between Guide and Specialist.**
 
-- Simple queries → Guide (8B, fast)
-- Complex diagnostics → Specialist (70B, thorough)
+- Simple queries → Guide (small, fast)
+- Complex diagnostics → Specialist (large, thorough)
 - Complexity scoring based on keywords and length
 - Debug mode shows routing decisions
 
@@ -391,16 +391,16 @@ Features:
 ```yaml
 orchestrator:
   endpoint: http://localhost:11434
-  model: llama3.1:8b
+  model: <guide-model>
 
 specialist:
   enabled: true
   endpoint: http://remote-server:11434
-  model: llama3.1:70b
+  model: <specialist-model>
 
 vision:
   endpoint: http://localhost:11434
-  model: llava:34b
+  model: <vision-model>
 ```
 
 ---

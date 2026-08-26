@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { Button } from '@/components/prep-primitives/Button';
 import { Select } from '@/components/prep-primitives/Select';
 import { SearchableSelect } from '@/components/prep-primitives/SearchableSelect';
@@ -26,7 +28,7 @@ export interface ModelCardProps {
   
   // Model selection
   availableModels?: string[];
-  modelDetails?: Array<{ name: string; context_window?: string; context_tokens?: number; cost_tier?: string; batch_profile?: string; rate_limits?: { rpd?: number; rpm?: number }; batch_estimate?: { files_per_request: number; daily_file_capacity?: number } }>;
+  modelDetails?: Array<{ name: string; context_window?: string; context_tokens?: number; cost_tier?: string; batch_profile?: string; rate_limits?: { rpd?: number; rpm?: number }; batch_estimate?: { files_per_request: number; daily_file_capacity?: number }; license?: string; license_id?: string; license_url?: string; attribution?: string }>;
   onModelChange?: (model: string) => void;
   onRefreshModels?: () => void;
   loadingModels?: boolean;
@@ -154,7 +156,7 @@ export function buildModelOptions({
  * that are NOT in /api/tags. Rendered under a section header only when the
  * user has toggled "Show all cloud models". Deduped against the pulled
  * `availableModels` set AND the currently-saved `model` so a cloud model
- * that is also subscribed (e.g. `kimi-k2.5:cloud`) or already selected never
+ * that is also subscribed (e.g. a `<name>:cloud` tag) or already selected never
  * appears twice.
  */
 export function buildCloudModelOptions({
@@ -386,7 +388,7 @@ export function ModelCard({
                           "flex items-center gap-1 text-[10px] text-text-muted whitespace-nowrap shrink-0 select-none",
                           disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
                         )}
-                        title="Show on-demand Ollama Cloud models this endpoint can serve but that aren't in /api/tags"
+                        title="Show on-demand Ollama Cloud models this endpoint can serve but that aren't in /api/tags. Candidates come from advanced.ollama_cloud_candidates in your LLM config (models.yml)."
                       >
                         <input
                           type="checkbox"
@@ -431,6 +433,45 @@ export function ModelCard({
                             </span>
                           ))}
                         </div>
+                      </div>
+                    );
+                  })()}
+                  {/* Foundation-model licence + attribution notice (LEG-MOD-04). The
+                      backend annotates /api/llm/proxy/models entries from
+                      halbert_core.model.attribution; e.g. licences that mandate a
+                      "Built with …" notice surface it here. */}
+                  {(() => {
+                    if (!model || !modelDetails) return null;
+                    const detail = modelDetails.find((d) => isSameModel(d.name, model));
+                    if (!detail || (!detail.license && !detail.attribution)) return null;
+                    return (
+                      <div
+                        className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-text-muted leading-normal"
+                        data-testid="model-license"
+                      >
+                        {detail.license && (
+                          detail.license_url ? (
+                            <a
+                              href={detail.license_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Model licence terms"
+                              className="underline decoration-dotted underline-offset-2 hover:text-text"
+                            >
+                              {detail.license}
+                            </a>
+                          ) : (
+                            <span title="Model licence terms">{detail.license}</span>
+                          )
+                        )}
+                        {detail.attribution && (
+                          <span
+                            title="Attribution notice requested by the model licence"
+                            className="px-1.5 py-0.5 rounded border border-border/60 bg-surface-raised/60 font-medium text-text"
+                          >
+                            {detail.attribution}
+                          </span>
+                        )}
                       </div>
                     );
                   })()}

@@ -147,9 +147,9 @@ python Halbert/main.py memory-write \
 Memory uses sentence-transformers for embeddings:
 
 ```python
-# Default: all-MiniLM-L6-v2
+# Default: the embedding model configured for Halbert
 # Small, fast, good quality for semantic search
-model = SentenceTransformer('all-MiniLM-L6-v2')
+model = SentenceTransformer('<embedding-model>')
 ```
 
 Model is cached at `~/.cache/halbert/models/`.

@@ -54,7 +54,7 @@ This document provides a comprehensive view of Halbert's architecture, explainin
 │                     │  │                     │  │                         │
 │  ┌───────────────┐  │  │  ┌───────────────┐  │  │  ┌─────────────────┐    │
 │  │    Ollama     │  │  │  │   ChromaDB    │  │  │  │   read_sensor   │    │
-│  │   (Llama 3)   │  │  │  │ (Embeddings)  │  │  │  │   write_config  │    │
+│  │  (local LLM)  │  │  │  │ (Embeddings)  │  │  │  │   write_config  │    │
 │  └───────────────┘  │  │  └───────────────┘  │  │  │   schedule_cron │    │
 │  ┌───────────────┐  │  │  ┌───────────────┐  │  │  │   query_journal │    │
 │  │    Prompt     │  │  │  │   Retrieval   │  │  │  │   ...           │    │

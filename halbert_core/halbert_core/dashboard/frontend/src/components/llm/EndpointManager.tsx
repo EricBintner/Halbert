@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import type { SavedEndpoint, LLMProvider, EndpointTestResult, ComputeNode, AdminPolicy } from '@/types/llm';
@@ -490,7 +492,7 @@ export function EndpointManager({
                               options={OLLAMA_CLOUD_OPTIONS as unknown as Array<{value: string; label: string}>}
                               className="w-full"
                             />
-                            <p className="text-[9px] text-text-subtle mt-0.5">Proxied (kimi, gemini…)</p>
+                            <p className="text-[9px] text-text-subtle mt-0.5">Proxied cloud models</p>
                             <p className="text-[9px] text-text-subtle mt-0.5">
                               Ollama cloud = {ollamaCloudTier(formCloudConcurrency || 1)}
                             </p>
@@ -763,7 +765,7 @@ export function EndpointManager({
                       options={OLLAMA_CLOUD_OPTIONS as unknown as Array<{value: string; label: string}>}
                       className="w-full"
                     />
-                    <p className="text-[9px] text-text-subtle mt-0.5">Proxied (kimi, gemini…)</p>
+                    <p className="text-[9px] text-text-subtle mt-0.5">Proxied cloud models</p>
                     <p className="text-[9px] text-text-subtle mt-0.5">
                       Ollama cloud = {ollamaCloudTier(formCloudConcurrency || 1)}
                     </p>

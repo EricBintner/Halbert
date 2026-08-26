@@ -15,6 +15,17 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 try:
+    from halbert_core.halbert_core import __version__ as HALBERT_VERSION, LEGAL_NOTICE
+except Exception:  # core package unimportable: still show the GPLv3 notice
+    HALBERT_VERSION = 'unknown'
+    LEGAL_NOTICE = (
+        "Halbert  Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors\n"
+        "This program comes with ABSOLUTELY NO WARRANTY; for details type 'halbert license'.\n"
+        "This is free software, and you are welcome to redistribute it under certain\n"
+        "conditions (GNU GPL v3.0 or later); type 'halbert license --full' for the licence text."
+    )
+
+try:
     from halbert_core.halbert_core.ingestion.runner import run_journald
     from halbert_core.halbert_core.ingestion.hwmon_runner import run_hwmon
     from halbert_core.halbert_core.config.snapshot import snapshot as snapshot_configs
@@ -93,32 +104,52 @@ def read_text(path):
 
 
 def cmd_info(args):
-    print("Halbert — Local-First Multi-Agent OS Companion")
-    print("Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors")
-    print("License: GNU General Public License v3.0 (GPL-3.0)")
-    print("This is free software with ABSOLUTELY NO WARRANTY. Type 'halbert license' for details.")
+    print(f"Halbert {HALBERT_VERSION} — Local-First Multi-Agent OS Companion")
     print("Offline-first, confirm-by-default, auditable tools.")
     print()
-    print("Documentation: documentation/ (or docs/)")
-    print("Legal & Licensing: documentation/legal/")
+    # GPLv3 §5(d) "Appropriate Legal Notices": copyright, no-warranty, may redistribute, how to view the licence.
+    print(LEGAL_NOTICE)
+    print()
+    print("Documentation:      documentation/")
+    print("Legal & licensing:  documentation/legal/  (halbert license | halbert license --third-party)")
+    print("Foundation models:  'halbert model-list-all' shows the licence and attribution notice for each model.")
 
 
 def cmd_license(args):
+    """GPLv3 §5(d): show the copyright notice, the licence, and how to view its full text."""
     license_file = os.path.join(REPO_ROOT, 'LICENSE')
     license_md = os.path.join(LEGAL_ROOT, 'LICENSE.md')
-    if getattr(args, 'full', False) and os.path.exists(license_file):
-        print(read_text(license_file))
-    elif os.path.exists(license_md):
+    third_party_md = os.path.join(LEGAL_ROOT, 'THIRD-PARTY-LICENSES.md')
+
+    if getattr(args, 'third_party', False):
+        if os.path.exists(third_party_md):
+            print(read_text(third_party_md))
+        else:
+            print("Third-party notices file not found: documentation/legal/THIRD-PARTY-LICENSES.md")
+            print("See https://github.com/EricBintner/Halbert/blob/main/documentation/legal/THIRD-PARTY-LICENSES.md")
+        return
+
+    if getattr(args, 'full', False):
+        if os.path.exists(license_file):
+            print(read_text(license_file))
+        else:
+            print("Full licence text not found locally (LICENSE). See https://www.gnu.org/licenses/gpl-3.0.html")
+        return
+
+    print(LEGAL_NOTICE)
+    print()
+    if os.path.exists(license_md):
         print(read_text(license_md))
-        print("\nTo view the complete verbatim GPLv3 text, run: halbert license --full (or inspect LICENSE)")
     elif os.path.exists(license_file):
         print(read_text(license_file))
     else:
-        print("Halbert is licensed under the GNU General Public License v3.0 (GPL-3.0).")
+        print("Halbert is licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).")
         print("See https://www.gnu.org/licenses/gpl-3.0.html")
-    print("\n" + "=" * 60)
-    print("Third-Party RAG Knowledge & Software Components:")
-    print("For full upstream licenses, see: documentation/legal/THIRD-PARTY-LICENSES.md")
+    print()
+    print("=" * 60)
+    print("halbert license --full         verbatim GNU GPLv3 text (LICENSE)")
+    print("halbert license --third-party  RAG corpus, dependency and foundation-model notices")
+    print("                               (documentation/legal/THIRD-PARTY-LICENSES.md)")
     print("=" * 60)
 
 
@@ -1187,6 +1218,31 @@ def cmd_memory_export(args):
         traceback.print_exc()
 
 
+def _model_license(model_id, provider=None, endpoint=None):
+    """Licence facts for a model, read from the licence text the runtime ships (LEG-MOD-04)."""
+    try:
+        from halbert_core.halbert_core.model.attribution import (
+            default_ollama_url, license_for_ollama_model, provider_terms,
+        )
+        prov = (provider or 'ollama').lower()
+        if prov == 'ollama':
+            return license_for_ollama_model(endpoint or default_ollama_url(), model_id or '')
+        return provider_terms(prov)
+    except Exception:
+        return None
+
+
+def _print_model_attribution(model_id, indent="    ", provider=None, endpoint=None):
+    info = _model_license(model_id, provider=provider, endpoint=endpoint)
+    if info is None:
+        return
+    print(f"{indent}License: {info.name}")
+    if info.notice:
+        print(f"{indent}Notice: {info.notice}")
+    if info.non_commercial:
+        print(f"{indent}Non-commercial licence")
+
+
 def cmd_model_list(args):
     """List available models across all providers (Phase 5 M1)."""
     if ModelRouter is None:
@@ -1199,8 +1255,9 @@ def cmd_model_list(args):
         
         if not models:
             print("\n⚠ No models available")
-            print("   Install Ollama and pull a model:")
-            print("   $ ollama pull llama3.1:8b-instruct")
+            print("   Install Ollama and pull a model of your choice:")
+            print("   $ ollama pull <model>")
+            print("   then select it in Settings → AI Models")
             print()
             return
         
@@ -1225,6 +1282,8 @@ def cmd_model_list(args):
                 print(f"    Capabilities: {', '.join(c.value for c in model.capabilities)}")
                 if model.quantization:
                     print(f"    Quantization: {model.quantization}")
+                _print_model_attribution(model.model_id, indent="    ", provider=getattr(model, 'provider', None),
+                                         endpoint=getattr(model, 'endpoint_url', None))
         
         print("\n" + "=" * 70 + "\n")
     
@@ -1253,6 +1312,8 @@ def cmd_model_status(args):
         print(f"  Model: {status['orchestrator']['model_id'] or 'Not configured'}")
         print(f"  Provider: {status['orchestrator']['provider']}")
         print(f"  Loaded: {'Yes' if status['orchestrator']['loaded'] else 'No'}")
+        _print_model_attribution(status['orchestrator']['model_id'] or '', indent="  ",
+                                 provider=status['orchestrator'].get('provider'))
         
         # Specialist
         print(f"\nSpecialist:")
@@ -1260,6 +1321,8 @@ def cmd_model_status(args):
             print(f"  Model: {status['specialist']['model_id'] or 'Not configured'}")
             print(f"  Provider: {status['specialist']['provider']}")
             print(f"  Loaded: {'Yes' if status['specialist']['loaded'] else 'No'}")
+            _print_model_attribution(status['specialist']['model_id'] or '', indent="  ",
+                                     provider=status['specialist'].get('provider'))
         else:
             print(f"  Disabled (orchestrator-only mode)")
         
@@ -1365,33 +1428,26 @@ def cmd_hardware_detect(args):
         
         print("\n" + "=" * 70 + "\n")
         
-        # Show recommendation if requested
-        if args.recommend:
-            recommendation = detector.recommend_models(hardware)
-            
-            print("RECOMMENDED CONFIGURATION:")
+        # Model size budget (parameter counts, never model names)
+        budget = detector.recommend_budget(hardware)
+        
+        print("MODEL SIZE BUDGET:")
+        print()
+        print(f"  {budget.summary}")
+        print()
+        print(f"  Memory for weights: {budget.memory_budget_gb:.0f}GB ({budget.memory_source})")
+        print(f"  Max parameters at 4-bit: ~{budget.max_params_b_4bit}B")
+        print(f"  Max parameters at 8-bit: ~{budget.max_params_b_8bit}B")
+        
+        if budget.notes:
             print()
-            print(f"Orchestrator: {recommendation.orchestrator_model}")
-            print(f"  Provider: {recommendation.orchestrator_provider}")
-            
-            if recommendation.specialist_enabled:
-                print(f"Specialist: {recommendation.specialist_model}")
-                print(f"  Provider: {recommendation.specialist_provider}")
-            else:
-                print(f"Specialist: Disabled (orchestrator-only)")
-            
-            print()
-            print(f"Expected Memory: {recommendation.expected_memory_mb}MB")
-            print()
-            print(f"Reasoning: {recommendation.reasoning}")
-            
-            if recommendation.performance_notes:
-                print()
-                print("Performance Notes:")
-                for note in recommendation.performance_notes:
-                    print(f"  • {note}")
-            
-            print()
+            print("Notes:")
+            for note in budget.notes:
+                print(f"  • {note}")
+        
+        print()
+        print("Pick any model within this budget and select it in Settings → AI Models.")
+        print()
     
     except Exception as e:
         print(f"Error detecting hardware: {e}")
@@ -1411,7 +1467,7 @@ def cmd_config_wizard_run(args):
         # Auto or interactive mode
         if args.auto:
             print("Running automatic configuration...")
-            config = wizard.run_auto()
+            config = wizard.run_auto(model=args.model)
         else:
             config = wizard.run_interactive()
         
@@ -1422,11 +1478,8 @@ def cmd_config_wizard_run(args):
         config_path = wizard.save_config(config)
         print(f"\n📄 Configuration saved to: {config_path}")
         
-        # Show installation instructions if requested
-        if args.install_help:
-            hardware = wizard.detect_hardware()
-            recommendation = wizard.get_recommendation(hardware)
-            wizard.show_installation_instructions(recommendation)
+        if not config.get('orchestrator', {}).get('model'):
+            print("   No model configured — set one in Settings → AI Models or rerun with --model <model>")
     
     except Exception as e:
         print(f"Error running configuration wizard: {e}")
@@ -1756,7 +1809,10 @@ def cmd_autonomous_run(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Halbert CLI')
+    parser = argparse.ArgumentParser(description='Halbert CLI',
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--version', action='version',
+                        version=f"halbert {HALBERT_VERSION}\n{LEGAL_NOTICE}")
     sub = parser.add_subparsers(required=True)
 
     p_info = sub.add_parser('info', help='Show product info and legal summary')
@@ -1764,6 +1820,8 @@ def main():
 
     p_lic = sub.add_parser('license', help='Show software license and third-party notices')
     p_lic.add_argument('--full', action='store_true', help='Show complete verbatim GNU GPLv3 license text')
+    p_lic.add_argument('--third-party', action='store_true',
+                       help='Show third-party notices (RAG corpus sources, dependencies, foundation models)')
     p_lic.set_defaults(func=cmd_license)
 
     p_rm = sub.add_parser('roadmap', help='Show Phase 1 roadmap (docs/Phase1/ROADMAP.md)')
@@ -1990,7 +2048,7 @@ def main():
     p_model_status_router.set_defaults(func=cmd_model_status)
 
     p_model_select_router = sub.add_parser('model-select-specialist', help='Select specialist model (Phase 5 M1)')
-    p_model_select_router.add_argument('--model', required=True, help='Model ID (e.g., deepseek-coder:33b)')
+    p_model_select_router.add_argument('--model', required=True, help='Model ID as served by your endpoint')
     p_model_select_router.add_argument('--provider', default='ollama', help='Provider (ollama, llamacpp, mlx)')
     p_model_select_router.set_defaults(func=cmd_model_select)
 
@@ -1998,13 +2056,12 @@ def main():
     p_model_disable.set_defaults(func=cmd_model_disable_specialist)
 
     # Phase 5 M3: User Configuration & Hardware Detection
-    p_hardware_detect = sub.add_parser('hardware-detect', help='Detect hardware and show capabilities (Phase 5 M3)')
-    p_hardware_detect.add_argument('--recommend', action='store_true', help='Show model recommendations')
+    p_hardware_detect = sub.add_parser('hardware-detect', help='Detect hardware and show the model size budget (Phase 5 M3)')
     p_hardware_detect.set_defaults(func=cmd_hardware_detect)
 
     p_config_wizard = sub.add_parser('config-wizard', help='Run configuration wizard (Phase 5 M3)')
     p_config_wizard.add_argument('--auto', action='store_true', help='Run automatically without prompts')
-    p_config_wizard.add_argument('--install-help', action='store_true', help='Show installation instructions')
+    p_config_wizard.add_argument('--model', default=None, help='Guide model ID as served by your endpoint (default: largest installed model that fits)')
     p_config_wizard.set_defaults(func=cmd_config_wizard_run)
 
     p_config_validate = sub.add_parser('config-validate', help='Validate model configuration (Phase 5 M3)')
@@ -2035,7 +2092,7 @@ def main():
     # Phase 7: RAG commands
     p_ask = sub.add_parser('ask', help='Ask a Linux/DevOps question using RAG + LLM (Phase 7)')
     p_ask.add_argument('question', nargs='*', help='Question to ask (can be multiple words)')
-    p_ask.add_argument('--model', default='llama3.2:3b', help='Ollama model to use (default: llama3.2:3b)')
+    p_ask.add_argument('--model', default=None, help='Ollama model to use (default: the model configured in Settings → AI Models)')
     p_ask.add_argument('--no-llm', action='store_true', help='Just retrieve docs, no LLM generation')
     p_ask.add_argument('--top-k', type=int, default=3, help='Number of documents to retrieve (default: 3)')
     def _cmd_ask(args):
@@ -2122,8 +2179,20 @@ def main():
                 return
             
             # Generate with LLM
+            model_name = args.model
+            if not model_name:
+                from halbert_core.halbert_core.model.client import get_configured_model
+                model_name = get_configured_model() or ''
+            if not model_name:
+                print('\n⚠️  No model configured — set one in Settings → AI Models or pass --model')
+                print('    Showing retrieved docs instead.')
+                for doc in docs[:2]:
+                    print(f'\n--- {doc["name"]} ---')
+                    print(doc['content'][:500])
+                return
+            
             print('\n💭 Generating answer...')
-            llm = OllamaLLM(config=LLMConfig(model=args.model, temperature=0.3))
+            llm = OllamaLLM(config=LLMConfig(model=model_name, temperature=0.3))
             
             if not llm.check_available():
                 print('⚠️  Ollama not available. Start with: ollama serve')

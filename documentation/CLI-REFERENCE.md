@@ -202,7 +202,7 @@ python Halbert/main.py ask "How do I fix a broken apt database?"
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--model` | Ollama model | `llama3.2:3b` |
+| `--model` | Ollama model | the guide model configured in `models.yml` |
 | `--no-llm` | Retrieve only, no generation | false |
 | `--top-k` | Number of documents to retrieve | 3 |
 

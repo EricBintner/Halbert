@@ -1,12 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
-Hardware detection and profiling for model recommendations (Phase 5 M3).
+Hardware detection and profiling (Phase 5 M3).
 
-Detects system resources and recommends optimal models for the hardware.
+Detects system resources (RAM / VRAM / GPU / Apple Silicon) and converts
+them into a model *size budget* -- the largest parameter count that fits at
+4-bit and 8-bit quantization. It never names or recommends specific models;
+the user picks whichever model fits the budget.
 """
 
 from __future__ import annotations
 from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import re
 from enum import Enum
 import psutil
 import platform
@@ -37,7 +43,7 @@ class HardwareCapabilities:
     """
     Hardware capabilities and constraints.
     
-    Used for model selection and configuration recommendations.
+    Used to derive a model size budget for configuration.
     """
     total_ram_gb: int
     available_ram_gb: float
@@ -74,57 +80,156 @@ class HardwareCapabilities:
         }
 
 
+# Rough memory cost per billion parameters, including KV-cache / runtime
+# overhead. Used only to translate a memory budget into a parameter count.
+GB_PER_BILLION_PARAMS_4BIT = 0.65
+GB_PER_BILLION_PARAMS_8BIT = 1.15
+
+# Fraction of each memory pool that can realistically hold model weights.
+UNIFIED_MEMORY_FRACTION = 0.75   # macOS caps GPU use of unified memory
+VRAM_RESERVE_GB = 1.0            # driver / display headroom on discrete GPUs
+SYSTEM_RAM_FRACTION = 0.6        # leave room for the OS and other processes
+
+
 @dataclass
-class ModelRecommendation:
+class ModelBudget:
     """
-    Model recommendation for specific hardware.
+    Model size budget derived from detected hardware.
+
+    Expressed as parameter counts and memory, never as model names --
+    the user chooses any model that fits.
     """
-    orchestrator_model: str
-    orchestrator_provider: str
-    
-    specialist_model: Optional[str] = None
-    specialist_provider: Optional[str] = None
-    specialist_enabled: bool = False
-    
-    reasoning: str = ""
-    expected_memory_mb: int = 0
-    performance_notes: List[str] = None
-    
-    def __post_init__(self):
-        if self.performance_notes is None:
-            self.performance_notes = []
-    
+    memory_budget_gb: float
+    max_params_b_4bit: int
+    max_params_b_8bit: int
+    memory_source: str          # "unified", "vram" or "ram"
+    provider: str               # runtime suited to this platform (ollama / mlx / llamacpp)
+
+    summary: str = ""
+    notes: List[str] = field(default_factory=list)
+
+    def fits(self, params_b: float, bits: int = 4) -> bool:
+        """Return True if a model of ``params_b`` billion parameters fits."""
+        limit = self.max_params_b_8bit if bits >= 8 else self.max_params_b_4bit
+        return params_b <= limit
+
+    def fits_bytes(self, size_bytes: int, overhead: float = 1.2) -> bool:
+        """Return True if weights of ``size_bytes`` (plus runtime overhead) fit."""
+        return (size_bytes / (1024 ** 3)) * overhead <= self.memory_budget_gb
+
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for configuration."""
+        """Convert to dictionary for configuration / API responses."""
         return {
-            "orchestrator": {
-                "model": self.orchestrator_model,
-                "provider": self.orchestrator_provider,
-            },
-            "specialist": {
-                "enabled": self.specialist_enabled,
-                "model": self.specialist_model,
-                "provider": self.specialist_provider,
-            },
-            "reasoning": self.reasoning,
-            "expected_memory_mb": self.expected_memory_mb,
-            "performance_notes": self.performance_notes,
+            "memory_budget_gb": round(self.memory_budget_gb, 1),
+            "max_params_b_4bit": self.max_params_b_4bit,
+            "max_params_b_8bit": self.max_params_b_8bit,
+            "memory_source": self.memory_source,
+            "provider": self.provider,
+            "summary": self.summary,
+            "notes": self.notes,
         }
+
+
+# Backwards-compatible name kept for ``halbert_core.model`` re-exports.
+ModelRecommendation = ModelBudget
+
+
+_PARAM_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([mMbB])\b")
+_NAME_TAG_RE = re.compile(r":(?:(\d+)x)?(\d+(?:\.\d+)?)b(?:[-_.]|$)", re.IGNORECASE)
+
+
+def parse_parameter_size(value: Optional[str]) -> Optional[float]:
+    """
+    Parse a parameter-size string ("7.6B", "137M") into billions of parameters.
+
+    Returns None when the value cannot be parsed.
+    """
+    if not value:
+        return None
+    m = _PARAM_SIZE_RE.search(str(value))
+    if not m:
+        return None
+    number = float(m.group(1))
+    unit = m.group(2).lower()
+    return number / 1000.0 if unit == "m" else number
+
+
+def estimate_model_params_b(model: Dict[str, Any]) -> Optional[float]:
+    """
+    Estimate parameter count (billions) for an Ollama ``/api/tags`` entry.
+
+    Prefers runtime metadata (``details.parameter_size``), then a generic
+    size tag in the name (":7b", ":8x22b"), then the weight file size.
+    """
+    details = model.get("details") or {}
+    params = parse_parameter_size(details.get("parameter_size"))
+    if params is not None:
+        return params
+
+    name = model.get("name") or model.get("model") or ""
+    m = _NAME_TAG_RE.search(name)
+    if m:
+        experts = int(m.group(1)) if m.group(1) else 1
+        return experts * float(m.group(2))
+
+    size_bytes = model.get("size")
+    if isinstance(size_bytes, (int, float)) and size_bytes > 0:
+        # Assume 4-bit weights when nothing better is known.
+        return round(size_bytes / (1024 ** 3) / 0.55, 1)
+
+    return None
+
+
+def pick_installed_model(models: List[Dict[str, Any]], budget: ModelBudget) -> Optional[Dict[str, Any]]:
+    """
+    Choose the largest already-installed model that fits the budget.
+
+    Args:
+        models: Raw entries from Ollama ``GET /api/tags`` (``data["models"]``).
+        budget: Size budget from :meth:`HardwareDetector.recommend_budget`.
+
+    Returns:
+        The chosen entry (with an added ``params_b`` key) or None when no
+        installed model fits. Embedding models are skipped.
+    """
+    best: Optional[Dict[str, Any]] = None
+    best_key = (-1.0, -1.0)
+
+    for entry in models or []:
+        name = entry.get("name") or entry.get("model") or ""
+        if not name or "embed" in name.lower():
+            continue
+
+        size_bytes = entry.get("size") or 0
+        params_b = estimate_model_params_b(entry)
+
+        if size_bytes and not budget.fits_bytes(size_bytes):
+            continue
+        if not size_bytes and (params_b is None or not budget.fits(params_b)):
+            continue
+
+        key = (params_b or 0.0, float(size_bytes))
+        if key > best_key:
+            best_key = key
+            best = dict(entry)
+            best["params_b"] = params_b
+
+    return best
 
 
 class HardwareDetector:
     """
-    Detect system hardware and recommend optimal model configuration.
+    Detect system hardware and derive a model size budget.
     
     Phase 5 M3: Auto-configuration based on hardware
     
     Usage:
         detector = HardwareDetector()
         hardware = detector.detect()
-        recommendation = detector.recommend_models(hardware)
+        budget = detector.recommend_budget(hardware)
         
         print(f"Profile: {hardware.profile}")
-        print(f"Recommended: {recommendation.orchestrator_model}")
+        print(budget.summary)
     """
     
     def __init__(self):
@@ -272,184 +377,100 @@ class HardwareDetector:
         
         return HardwareProfile.UNKNOWN
     
-    def recommend_models(self, hw: HardwareCapabilities) -> ModelRecommendation:
+    def recommend_budget(self, hw: HardwareCapabilities) -> ModelBudget:
         """
-        Recommend optimal models for hardware.
+        Convert detected hardware into a model size budget.
         
         Args:
             hw: Hardware capabilities
         
         Returns:
-            Model recommendation
+            ModelBudget with the largest parameter counts that fit at 4-bit
+            and 8-bit quantization, plus a human-readable summary.
         """
-        logger.info(f"Generating model recommendation for profile: {hw.profile}")
+        logger.info(f"Computing model size budget for profile: {hw.profile}")
         
-        if hw.profile == HardwareProfile.MAC_STUDIO_128GB:
-            return self._recommend_mac_studio_128gb(hw)
-        elif hw.profile == HardwareProfile.SERVER_128GB_PLUS:
-            return self._recommend_server_128gb_plus(hw)
-        elif hw.profile == HardwareProfile.WORKSTATION_64GB:
-            return self._recommend_workstation_64gb(hw)
-        elif hw.profile == HardwareProfile.WORKSTATION_32GB:
-            return self._recommend_workstation_32gb(hw)
-        elif hw.profile == HardwareProfile.LAPTOP_16GB:
-            return self._recommend_laptop_16gb(hw)
+        if hw.is_apple_silicon and hw.unified_memory_gb:
+            memory_gb = hw.unified_memory_gb * UNIFIED_MEMORY_FRACTION
+            source = "unified"
+            provider = "mlx"
+        elif (hw.has_nvidia_gpu or hw.has_amd_gpu) and hw.gpu_memory_gb:
+            memory_gb = max(hw.gpu_memory_gb - VRAM_RESERVE_GB, 0.0)
+            source = "vram"
+            provider = "ollama"
         else:
-            return self._recommend_fallback(hw)
-    
-    def _recommend_mac_studio_128gb(self, hw: HardwareCapabilities) -> ModelRecommendation:
-        """Recommend for Mac Studio with 128GB unified memory."""
-        return ModelRecommendation(
-            orchestrator_model="llama3.1:8b-instruct",
-            orchestrator_provider="mlx",  # Use MLX on Apple Silicon!
-            specialist_model="deepseek-coder:33b",
-            specialist_provider="mlx",
-            specialist_enabled=True,
-            reasoning="Mac Studio with 128GB unified memory - optimal for MLX provider. "
-                     "Can load both orchestrator and specialist simultaneously.",
-            expected_memory_mb=41000,  # 8GB + 33GB
-            performance_notes=[
-                "MLX provider optimized for Apple Silicon",
-                "Unified memory enables simultaneous model loading",
-                "Expected: 20+ tokens/sec (orchestrator), 10+ tokens/sec (specialist)"
-            ]
-        )
-    
-    def _recommend_server_128gb_plus(self, hw: HardwareCapabilities) -> ModelRecommendation:
-        """Recommend for high-end server (128GB+ RAM)."""
-        provider = "ollama"
-        if hw.has_nvidia_gpu:
-            provider = "ollama"  # Ollama with CUDA
+            memory_gb = hw.total_ram_gb * SYSTEM_RAM_FRACTION
+            source = "ram"
+            provider = "ollama"
         
-        return ModelRecommendation(
-            orchestrator_model="llama3.1:8b-instruct",
-            orchestrator_provider=provider,
-            specialist_model="deepseek-coder:33b",
-            specialist_provider=provider,
-            specialist_enabled=True,
-            reasoning=f"High-end server with {hw.total_ram_gb}GB RAM. "
-                     f"Can run both orchestrator and large specialist. "
-                     f"GPU: {'NVIDIA (CUDA)' if hw.has_nvidia_gpu else 'CPU'}",
-            expected_memory_mb=41000,
-            performance_notes=[
-                "Sufficient RAM for large models",
-                "GPU acceleration available" if hw.has_nvidia_gpu else "CPU inference",
-                "Can experiment with larger models if needed",
-                "Consider Qwen2.5-Coder-32B or CodeLlama-70B for specialist"
-            ]
+        max_4bit = int(memory_gb // GB_PER_BILLION_PARAMS_4BIT)
+        max_8bit = int(memory_gb // GB_PER_BILLION_PARAMS_8BIT)
+        
+        source_label = {
+            "unified": "unified memory",
+            "vram": "GPU VRAM",
+            "ram": "system RAM",
+        }[source]
+        summary = (
+            f"About {memory_gb:.0f} GB of {source_label} is available for model weights: "
+            f"a ~{max_4bit}B-parameter model at 4-bit quantization or a ~{max_8bit}B model "
+            f"at 8-bit fits."
+        )
+        
+        notes: List[str] = []
+        if source == "unified":
+            notes.append("Apple Silicon shares memory between CPU and GPU; MLX or Ollama both work")
+        elif source == "vram":
+            notes.append("Models larger than VRAM spill to system RAM and run much slower")
+        else:
+            notes.append("No discrete GPU detected; inference runs on the CPU")
+        if max_4bit >= 30:
+            notes.append("Enough headroom to keep a guide model and a larger specialist loaded at once")
+        else:
+            notes.append("Best used with a single model; a second model would split this budget")
+        notes.append("Parameter counts are estimates -- check the model's actual download size")
+        
+        return ModelBudget(
+            memory_budget_gb=memory_gb,
+            max_params_b_4bit=max_4bit,
+            max_params_b_8bit=max_8bit,
+            memory_source=source,
+            provider=provider,
+            summary=summary,
+            notes=notes,
         )
     
-    def _recommend_workstation_64gb(self, hw: HardwareCapabilities) -> ModelRecommendation:
-        """Recommend for workstation with 64GB RAM."""
-        return ModelRecommendation(
-            orchestrator_model="llama3.1:8b-instruct",
-            orchestrator_provider="ollama",
-            specialist_model="deepseek-coder:33b",
-            specialist_provider="ollama",
-            specialist_enabled=True,
-            reasoning=f"Workstation with {hw.total_ram_gb}GB RAM - great balance. "
-                     "Can run orchestrator + large specialist (DeepSeek Coder 33B).",
-            expected_memory_mb=41000,
-            performance_notes=[
-                "Optimal for heavy development work",
-                "Best code quality with DeepSeek Coder 33B",
-                "GPU recommended for faster inference" if not hw.has_nvidia_gpu else "GPU acceleration active",
-                "Expected: 15-20 tokens/sec (orchestrator), 8-12 tokens/sec (specialist)"
-            ]
-        )
-    
-    def _recommend_workstation_32gb(self, hw: HardwareCapabilities) -> ModelRecommendation:
-        """Recommend for workstation with 32GB RAM."""
-        return ModelRecommendation(
-            orchestrator_model="llama3.1:8b-instruct",
-            orchestrator_provider="ollama",
-            specialist_model="qwen2.5-coder:14b",
-            specialist_provider="ollama",
-            specialist_enabled=True,
-            reasoning=f"Workstation with {hw.total_ram_gb}GB RAM - good for development. "
-                     "Orchestrator + small specialist (Qwen2.5-Coder 14B) for speed.",
-            expected_memory_mb=22000,  # 8GB + 14GB
-            performance_notes=[
-                "Good balance of speed and quality",
-                "Qwen2.5-Coder 14B is fast and capable",
-                "Sufficient for most coding tasks",
-                "Expected: 20+ tokens/sec (orchestrator), 12-15 tokens/sec (specialist)"
-            ]
-        )
-    
-    def _recommend_laptop_16gb(self, hw: HardwareCapabilities) -> ModelRecommendation:
-        """Recommend for laptop with 16GB RAM."""
-        return ModelRecommendation(
-            orchestrator_model="llama3.1:8b-instruct",
-            orchestrator_provider="ollama",
-            specialist_model=None,
-            specialist_provider=None,
-            specialist_enabled=False,
-            reasoning=f"Laptop with {hw.total_ram_gb}GB RAM - run orchestrator only. "
-                     "Llama 3.1 8B is very capable for most tasks.",
-            expected_memory_mb=8000,
-            performance_notes=[
-                "Orchestrator-only mode recommended",
-                "Llama 3.1 8B handles most tasks well",
-                "128k context window is very useful",
-                "Enable specialist only when needed",
-                "Expected: 15-20 tokens/sec (orchestrator)"
-            ]
-        )
-    
-    def _recommend_fallback(self, hw: HardwareCapabilities) -> ModelRecommendation:
-        """Fallback recommendation for unknown hardware."""
-        return ModelRecommendation(
-            orchestrator_model="llama3.1:8b-instruct",
-            orchestrator_provider="ollama",
-            specialist_model=None,
-            specialist_provider=None,
-            specialist_enabled=False,
-            reasoning=f"Conservative recommendation for {hw.total_ram_gb}GB RAM. "
-                     "Start with orchestrator only, enable specialist if performance allows.",
-            expected_memory_mb=8000,
-            performance_notes=[
-                "Conservative configuration",
-                "Monitor memory usage",
-                "Upgrade to specialist if RAM allows"
-            ]
-        )
-    
-    def get_installation_commands(self, recommendation: ModelRecommendation) -> Dict[str, List[str]]:
+    def get_installation_commands(self, budget: ModelBudget) -> Dict[str, List[str]]:
         """
-        Get installation commands for recommended models.
+        Get generic installation commands for the budget's runtime.
+        
+        The commands use a ``<model>`` placeholder; no model is named.
         
         Args:
-            recommendation: Model recommendation
+            budget: Model size budget
         
         Returns:
             Dict with installation commands per provider
         """
-        commands = {}
+        commands: Dict[str, List[str]] = {}
         
-        if recommendation.orchestrator_provider == "ollama":
-            commands["ollama"] = [
-                "# Install Ollama",
-                "curl -fsSL https://ollama.com/install.sh | sh",
-                "",
-                "# Pull orchestrator model",
-                f"ollama pull {recommendation.orchestrator_model}",
-            ]
-            
-            if recommendation.specialist_enabled and recommendation.specialist_model:
-                commands["ollama"].extend([
-                    "",
-                    "# Pull specialist model",
-                    f"ollama pull {recommendation.specialist_model}",
-                ])
-        
-        elif recommendation.orchestrator_provider == "mlx":
+        if budget.provider == "mlx":
             commands["mlx"] = [
                 "# Install MLX (Mac Apple Silicon only)",
                 "pip install mlx mlx-lm",
                 "",
-                "# Models will be downloaded on first use",
-                "# MLX uses HuggingFace Hub for model downloads",
+                "# Models are downloaded from HuggingFace Hub on first use",
+                f"# Choose one of up to ~{budget.max_params_b_4bit}B parameters at 4-bit",
             ]
+        
+        commands["ollama"] = [
+            "# Install Ollama",
+            "curl -fsSL https://ollama.com/install.sh | sh",
+            "",
+            f"# Pull any model of up to ~{budget.max_params_b_4bit}B parameters (4-bit)",
+            "ollama pull <model>",
+            "",
+            "# Then select it in Halbert: Settings -> AI Models",
+        ]
         
         return commands

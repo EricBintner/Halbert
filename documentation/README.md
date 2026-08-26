@@ -164,7 +164,11 @@ LinuxBrain/
 
 ## License
 
-Halbert is open source under the **GPL-3.0** license. See [legal/LICENSE.md](legal/LICENSE.md).
+Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors.
+
+Halbert is free software under the **GNU General Public License v3.0 or later** (`GPL-3.0-or-later`).
+See [legal/LICENSE.md](legal/LICENSE.md) for the summary and the [legal hub](legal/README.md) for
+third-party notices, the privacy policy, trademarks, and the autonomous-action disclaimer.
 
 ---
 

@@ -63,11 +63,10 @@ Supported formats:
 
 ### Embedding Model
 
-Default: `sentence-transformers/all-MiniLM-L6-v2`
+Default: the configured embedding model (`embedding_model` in `RAGConfig`, see `halbert_core/rag/pipeline.py`). The same model must be used to build and to query an index, so change it only when rebuilding.
 
-- 384-dimensional vectors
-- Fast inference
-- Good semantic similarity
+- Small, fast sentence-embedding model
+- Good semantic similarity for documentation retrieval
 
 ### Vector Store
 
@@ -95,7 +94,7 @@ pipeline = RAGPipeline(
 ```python
 from halbert_core.halbert_core.rag.llm import OllamaLLM
 
-llm = OllamaLLM(model="llama3.2:3b")
+llm = OllamaLLM(model="<model>")
 response = pipeline.generate(query="Why did docker fail?", llm=llm)
 ```
 
@@ -134,7 +133,7 @@ python Halbert/main.py ask "How do I fix broken apt packages?"
 python Halbert/main.py ask "systemd timers" --no-llm
 
 # Use different model
-python Halbert/main.py ask "docker networking" --model llama3.1:70b
+python Halbert/main.py ask "docker networking" --model <larger-model>
 
 # Retrieve more documents
 python Halbert/main.py ask "nginx config" --top-k 10
@@ -204,8 +203,8 @@ pipeline = RAGPipeline(
     top_k=5,
     use_reranking=True,
     
-    # Embedding model
-    embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+    # Embedding model (defaults to the configured embedding model)
+    embedding_model="<embedding-model>",
     
     # Chunking
     chunk_size=512,

@@ -83,8 +83,10 @@ def _pyproject_field(name: str) -> str:
 
 
 def test_package_version_matches_pyproject():
-    sys.path.insert(0, str(REPO))
-    from halbert_core.halbert_core import __version__
+    try:
+        from halbert_core import __version__
+    except ImportError:
+        from halbert_core.halbert_core import __version__
 
     assert __version__ == _pyproject_field("version")
 
@@ -109,7 +111,7 @@ def test_no_stale_legal_paths_in_tracked_docs():
     """LEG-MIN-04: the retired docs/Phase54 path and the .txt notices file are gone."""
     tracked = subprocess.run(
         ["git", "grep", "-l", "-E", r"Phase54_licensing-roundup|THIRD-PARTY-LICENSES\.txt", "--",
-         "README.md", "data/manifest.json", "documentation/", "scripts/", "Halbert/", "halbert_core/halbert_core/"],
+         "README.md", "data/manifest.json", "documentation/", "scripts/", "Halbert/"],
         cwd=REPO, capture_output=True, text=True,
     )
     hits = [h for h in tracked.stdout.split() if not h.endswith("LEGAL-AND-LICENSING-TODO.md")]

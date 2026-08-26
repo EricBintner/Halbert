@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Outcome store for model-call self-tuning (A3).
 
 Records per-call outcomes (model, success, latency, tokens, cost, complexity,

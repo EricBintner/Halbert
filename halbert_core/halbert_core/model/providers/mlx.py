@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 MLX provider implementation (Phase 5 M1).
 
@@ -107,7 +109,7 @@ class MLXProvider(ModelProvider):
             True if successful
         
         Example:
-            provider.load_model("mlx-community/Llama-3.1-8B-Instruct-4bit")
+            provider.load_model("<hf-org>/<mlx-model-repo>")
         """
         if model_id in self._loaded_models:
             logger.info(f"Model already loaded: {model_id}")

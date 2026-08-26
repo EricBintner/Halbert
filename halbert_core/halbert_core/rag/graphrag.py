@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 GraphRAG: Graph-enhanced Retrieval Augmented Generation
 
@@ -132,8 +134,13 @@ class LinuxGraphRAG:
         context = graph.get_graph_context("how to configure nginx")
     """
     
-    def __init__(self, llm_model: str = "llama3.1:8b"):
-        """Initialize GraphRAG."""
+    def __init__(self, llm_model: Optional[str] = None):
+        """Initialize GraphRAG.
+
+        Args:
+            llm_model: LLM for entity extraction; None means the configured
+                guide model (resolved at call time).
+        """
         self.llm_model = llm_model
         
         self._entities: Dict[str, GraphEntity] = {}
@@ -239,13 +246,18 @@ JSON:"""
         
         try:
             import requests
-            from ..model.client import get_ollama_endpoint
+            from ..model.client import get_configured_model, get_ollama_endpoint
             
+            model = self.llm_model or get_configured_model()
+            if not model:
+                raise ValueError(
+                    "No model configured — choose one in Settings → AI Models"
+                )
             endpoint = get_ollama_endpoint()
             response = requests.post(
                 f"{endpoint}/api/generate",
                 json={
-                    "model": self.llm_model,
+                    "model": model,
                     "prompt": prompt,
                     "stream": False,
                     "format": "json",

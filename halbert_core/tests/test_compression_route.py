@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """/api/compression/config reads and writes the user models.yml via config_locator."""
 import pytest
 import yaml
@@ -42,11 +44,11 @@ def test_post_creates_user_file(client):
 
 def test_post_preserves_other_keys(client):
     c, tmp = client
-    (tmp / "models.yml").write_text("orchestrator:\n  model: kimi\ncompression:\n  enabled: true\n")
+    (tmp / "models.yml").write_text("orchestrator:\n  model: example-model:latest\ncompression:\n  enabled: true\n")
     r = c.post("/api/compression/config", json={"threshold": 1234})
     assert r.status_code == 200, r.text
     cfg = yaml.safe_load((tmp / "models.yml").read_text())
-    assert cfg["orchestrator"] == {"model": "kimi"}
+    assert cfg["orchestrator"] == {"model": "example-model:latest"}
     assert cfg["compression"] == {"enabled": True, "threshold": 1234}
 
 

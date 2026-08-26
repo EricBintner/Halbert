@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Base model provider interface (Phase 5 M1).
 
@@ -30,7 +32,7 @@ class ModelConfig:
     
     Defines a model's identity, capabilities, and resource requirements.
     """
-    model_id: str                    # e.g., "llama3.1:8b-instruct"
+    model_id: str                    # provider-specific model tag
     provider: str                    # "ollama", "llamacpp", "mlx"
     capabilities: List[ModelCapability]
     memory_mb: int                   # Estimated memory usage

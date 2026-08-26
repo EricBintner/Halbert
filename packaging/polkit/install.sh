@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 # Install Halbert PolicyKit configuration for privileged operations
 # This enables GUI password prompts when accessing protected files or running privileged commands
 

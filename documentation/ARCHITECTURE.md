@@ -83,7 +83,7 @@ The dashboard is the primary interface with 16 pages covering system management.
 The chat engine processes user queries through:
 1. **Context injection** — Keywords trigger relevant discovery injection
 2. **Memory retrieval** — ChromaDB semantic search for past conversations  
-3. **Model selection** — Complexity scoring routes to Guide (8B) or Specialist (70B)
+3. **Model selection** — Complexity scoring routes to Guide (small, fast) or Specialist (large)
 4. **Ollama API** — Direct API calls to local LLM
 5. **Response + actions** — Response with suggested actions and tool calling
 
@@ -91,8 +91,8 @@ The chat engine processes user queries through:
 
 | Component | Location | Purpose | Status |
 |-----------|----------|---------|--------|
-| **Guide Model** | Configurable | Fast 8B model for simple queries | ✅ |
-| **Specialist Model** | Configurable | Large 70B model for complex reasoning | ✅ |
+| **Guide Model** | Configurable | Fast, small model for simple queries | ✅ |
+| **Specialist Model** | Configurable | Large model for complex reasoning | ✅ |
 | **Vision Model** | Configurable | Multimodal for image analysis | ✅ |
 | **Model Config** | `~/.config/halbert/models.yml` | Endpoint + model assignments | ✅ |
 
@@ -102,14 +102,14 @@ Models are configured per-role with separate endpoints. Complexity scoring route
 # ~/.config/halbert/models.yml
 orchestrator:
   endpoint: http://localhost:11434
-  model: llama3.1:8b
+  model: <guide-model>
 specialist:
   enabled: true
   endpoint: http://remote:11434
-  model: llama3.1:70b
+  model: <specialist-model>
 vision:
   endpoint: http://localhost:11434
-  model: llava:34b
+  model: <vision-model>
 ```
 
 ### 4. Memory System ✅

@@ -6,7 +6,7 @@
 
 **Local-first AI assistant for Linux system administration.**
 
-Halbert runs on your machine using local LLMs by default—no cloud required. Optionally connect to cloud APIs (OpenAI, Claude, Gemini) if you prefer. It ingests system logs, tracks configuration changes, and answers questions grounded in real system data.
+Halbert runs on your machine using local LLMs by default—no cloud required. Optionally connect a cloud provider's API if you prefer. It ingests system logs, tracks configuration changes, and answers questions grounded in real system data.
 
 ---
 
@@ -21,7 +21,7 @@ Halbert runs on your machine using local LLMs by default—no cloud required. Op
 ## Features
 
 - **Local LLM** — Runs on Ollama by default, no cloud required
-- **Cloud optional** — Connect OpenAI, Claude, or Gemini if you prefer
+- **Cloud optional** — Connect a cloud provider's API if you prefer
 - **System-aware** — Ingests journald logs and hardware sensors
 - **RAG-powered** — Answers grounded in Linux documentation
 - **Safe by default** — Dry-run mode, approval system, policy engine
@@ -32,10 +32,9 @@ Halbert runs on your machine using local LLMs by default—no cloud required. Op
 ## Quick Start
 
 ```bash
-# 1. Install Ollama
+# 1. Install Ollama and pull a chat model sized for your hardware
 curl -fsSL https://ollama.ai/install.sh | sh
-ollama pull mistral-small  # Recommended: vision + 128K context
-# Or for 24GB GPUs: ollama pull qwen2.5:14b
+ollama pull <model>
 
 # 2. Clone and install
 git clone https://github.com/EricBintner/Halbert.git
@@ -51,17 +50,11 @@ make dev-web
 make dev  
 ```
 
-### Recommended Models by GPU
+### Choosing a Model
 
-| GPU VRAM | Chat Model | Features | Notes |
-|----------|------------|----------|-------|
-| **48GB+** (RTX 5090) | `mistral-small:24b` | 👁️ Vision, 128K context | **Best choice** - one model does everything |
-| **24GB** (RTX 4090) | `qwen2.5:14b` | 128K context | Add `pixtral:12b` for vision |
-| **Apple 64GB+** | `mistral-small:24b` | 👁️ Vision, 128K context | Works via unified memory |
+Halbert works with whatever chat model your endpoint serves — it does not ship with or endorse a particular one. Pick a model sized for your RAM/VRAM: as a rule of thumb, a ~8B-parameter model at 4-bit quantization needs ~5 GB, a ~14B model ~10 GB, and a ~70B model ~40 GB. A single model that supports vision and tool calling can cover the Guide, Specialist, and Vision roles by itself. Assign models in **Settings → AI Models**.
 
-**★★ Top Pick:** `mistral-small:24b` (v3.1+) includes built-in vision, 128K context, and function calling. No need for separate Specialist or Vision models!
-
-See [Quick Start Guide](docs/guides/QUICK-START-MISTRAL.md) for full setup.
+See the [Quick Start Guide](documentation/guides/quickstart.md) for full setup and the [Model Selection guide](documentation/guides/model-selection.md) for hardware sizing and cloud provider setup.
 
 ---
 
@@ -160,4 +153,13 @@ See [CONTRIBUTING.md](documentation/contributing/CONTRIBUTING.md).
 
 ## License
 
-GPL-3.0. See [LICENSE](LICENSE).
+Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors.
+
+Halbert is free software under the **GNU General Public License v3.0 or later**
+(`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full text, and
+[documentation/legal/](documentation/legal/README.md) for the licence summary,
+[third-party notices](documentation/legal/THIRD-PARTY-LICENSES.md) (RAG corpus
+sources, dependencies, foundation models), the [privacy policy](documentation/legal/PRIVACY.md),
+[trademarks](documentation/legal/TRADEMARKS.md), and the
+[autonomous-action disclaimer](documentation/legal/DISCLAIMER.md).
+`halbert license` prints the same information from the CLI.

@@ -17,6 +17,7 @@ from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHEC
 
 from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep, ConversationStatus
 from .events import StreamEvent
+from ..streaming.terminal_bridge import get_terminal_event_bus
 
 if TYPE_CHECKING:
     from ..tools.safety import ToolSafetyFramework
@@ -919,6 +920,91 @@ class AgentStateMachine:
         
         yield await self._transition(AgentState.OBSERVING)
     
+    # -------------------------------------------------------------------------
+    # Terminal streaming bridge (E1f)
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _terminal_event(session_id: str, payload: Dict[str, Any]) -> Optional[StreamEvent]:
+        """Convert a terminal-bridge payload into its SSE event."""
+        kind = payload.get("kind")
+        terminal_id = str(payload.get("terminal_session_id", ""))
+        if kind == "spawn":
+            return StreamEvent.terminal_spawn(
+                session_id,
+                terminal_id,
+                command=str(payload.get("command", "")),
+                pid=int(payload.get("pid") or 0),
+                sandboxed=bool(payload.get("sandboxed")),
+                cwd=payload.get("cwd"),
+                attach=str(payload.get("attach", "sse")),
+            )
+        if kind == "output":
+            return StreamEvent.terminal_output(
+                session_id, terminal_id, str(payload.get("data", ""))
+            )
+        if kind == "complete":
+            exit_code = payload.get("exit_code")
+            return StreamEvent.terminal_complete(
+                session_id,
+                terminal_id,
+                int(exit_code) if exit_code is not None else -1,
+            )
+        return None
+
+    async def _run_tool_streaming(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        confirmed: bool,
+        sink: List[Any],
+    ) -> AsyncIterator[StreamEvent]:
+        """Execute a tool, yielding terminal events while it runs.
+
+        The tool executor publishes terminal lifecycle payloads onto the
+        terminal bridge (streaming/terminal_bridge) for the current agent
+        session. Draining that bus concurrently with the tool task is what
+        makes a running command visible in the conversation *as it runs*;
+        awaiting the tool first would only ever produce a finished transcript.
+
+        The ExecutionResult is appended to ``sink`` — an async generator
+        cannot return a value.
+        """
+        bus = get_terminal_event_bus()
+        queue = bus.subscribe(self.ctx.session_id)
+        task = asyncio.ensure_future(self.tools.execute(
+            tool_name,
+            tool_args,
+            session_id=self.ctx.session_id,
+            confirmed=confirmed,
+        ))
+        try:
+            while True:
+                getter = asyncio.ensure_future(queue.get())
+                done, _pending = await asyncio.wait(
+                    {task, getter}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if getter in done:
+                    event = self._terminal_event(self.ctx.session_id, getter.result())
+                    if event is not None:
+                        yield event
+                    continue
+                # Tool finished with nothing queued: stop waiting on the queue.
+                getter.cancel()
+                break
+
+            # Flush whatever the tool published on its way out.
+            while not queue.empty():
+                event = self._terminal_event(self.ctx.session_id, queue.get_nowait())
+                if event is not None:
+                    yield event
+
+            sink.append(await task)
+        finally:
+            bus.unsubscribe(self.ctx.session_id, queue)
+            if not task.done():
+                task.cancel()
+
     async def _handle_executing(self) -> AsyncIterator[StreamEvent]:
         """
         EXECUTING state: Execute tool calls with safety checks.
@@ -953,13 +1039,18 @@ class AgentStateMachine:
                 self.ctx.pending_confirmation.get("confirmed", False)
             )
             
-            result = await self.tools.execute(
-                tool_name,
-                tool_args,
-                session_id=self.ctx.session_id,
-                confirmed=confirmed
-            )
-            
+            # Run the tool while relaying anything it prints to a terminal
+            # (E1f). _run_tool_streaming yields terminal_* SSE events as the
+            # command produces output and leaves the ExecutionResult in `sink`,
+            # so the conversation shows a live tile instead of a wall of text
+            # once the command has already finished.
+            sink: List[Any] = []
+            async for terminal_event in self._run_tool_streaming(
+                tool_name, tool_args, confirmed, sink
+            ):
+                yield terminal_event
+            result = sink[0]
+
             tool_call.completed_at = __import__('time').time()
             
             if result.requires_confirmation:

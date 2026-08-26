@@ -1,6 +1,7 @@
 {
   "runtime": "ollama",
-  "model_id": "llama3.1:8b-instruct",
+  "_note": "Template. Set model_id to a model served by your runtime, or choose one in Settings → AI Models.",
+  "model_id": "",
   "quantization": null,
   "max_context": 8192,
   "temperature": 0.7,

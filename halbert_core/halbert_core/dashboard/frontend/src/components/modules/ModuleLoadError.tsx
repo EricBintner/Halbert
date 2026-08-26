@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * ModuleLoadError — compact "couldn't load <module>" state shared by all
  * inline conversation modules. HTTP 403 (path/source not allowed) renders

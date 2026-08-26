@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Subagent handles + manager (D1a).
 
 A subagent is a scoped, reproducible unit of work (e.g. a storage auditor)

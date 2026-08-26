@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Command sandboxing for PTY-executed commands (B1c).
 
 Wraps a command string with a platform-specific sandbox so agent-emitted

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * useTerminalSessions — singleton store of live PTY sessions (E1a).
  *
@@ -5,6 +7,13 @@
  * buffer and per-session status (running/done/idle). At most MAX_VISIBLE
  * sessions are flagged "visible" (driving live xterm.js instances); the rest
  * stay headless in the store so their output is preserved when re-attached.
+ *
+ * Sessions arrive two ways:
+ *   - `spawn()` / `attach()` — a real PTY owned by the backend session manager.
+ *     Transport 'ws': full duplex over /ws/terminal/{id}, stdin and resize work.
+ *   - `adopt()` — a command the *agent* started mid-turn (E1f). Transport 'sse':
+ *     output arrives as terminal_output events on the agent stream and is
+ *     pushed in with `appendOutput`; there is no stdin to write to.
  *
  * Backend contract (B1e/B1f):
  *   POST   /api/terminal/sessions            -> {session_id, pid, sandboxed}
@@ -18,6 +27,12 @@ import { apiUrl, wsUrl as backendWsUrl } from '@/lib/apiBase';
 
 export type TerminalSessionStatus = 'running' | 'done' | 'idle';
 
+/**
+ * How a session's output reaches the store. 'ws' sessions are interactive PTYs;
+ * 'sse' sessions are read-only mirrors of a command the agent is running.
+ */
+export type TerminalTransport = 'ws' | 'sse';
+
 export interface TerminalSession {
   id: string;
   pid: number;
@@ -29,6 +44,19 @@ export interface TerminalSession {
   visible: boolean;
   sandboxed: boolean;
   startedAt: number; // epoch ms when spawned (for the tile's elapsed timer)
+  transport: TerminalTransport;
+  cwd?: string;
+  /** Agent turn that spawned this session, when it came from the agent stream. */
+  originSessionId?: string;
+}
+
+/** What the agent stream knows about a session it did not open locally. */
+export interface AdoptInfo {
+  command?: string;
+  pid?: number;
+  sandboxed?: boolean;
+  cwd?: string;
+  originSessionId?: string;
 }
 
 export interface SpawnOptions {
@@ -97,11 +125,82 @@ class TerminalSessionStore {
       visible: this.visibleCount() < MAX_VISIBLE,
       sandboxed: !!data.sandboxed,
       startedAt: Date.now(),
+      transport: 'ws',
+      cwd: opts.cwd,
     };
     this.sessions.set(id, session);
     this.connect(id);
     this.emit();
     return id;
+  }
+
+  // ---------- sessions started elsewhere (E1f) ----------
+
+  /**
+   * Register a PTY the backend already spawned (e.g. the agent asked the
+   * session manager for one) and attach a WebSocket to it. Idempotent: a
+   * second call for the same id is ignored so a replayed SSE event cannot
+   * open two sockets onto one PTY.
+   */
+  attach(id: string, info: AdoptInfo = {}): void {
+    if (this.sessions.has(id)) return;
+    this.sessions.set(id, this.makeSession(id, info, 'ws'));
+    this.connect(id);
+    this.emit();
+  }
+
+  /**
+   * Register a command the agent is running whose output arrives on the agent
+   * SSE stream rather than a socket. Read-only: no stdin, no resize.
+   */
+  adopt(id: string, info: AdoptInfo = {}): void {
+    if (this.sessions.has(id)) return;
+    this.sessions.set(id, this.makeSession(id, info, 'sse'));
+    this.emit();
+  }
+
+  /** Append a chunk of output to an adopted session (terminal_output). */
+  appendOutput(id: string, data: string): void {
+    const s = this.sessions.get(id);
+    if (!s || !data) return;
+    s.output += data;
+    if (s.output.length > SCROLLBACK_MAX_CHARS) {
+      const dropped = s.output.length - SCROLLBACK_MAX_CHARS;
+      s.output = s.output.slice(-SCROLLBACK_MAX_CHARS);
+      s.droppedChars += dropped;
+    }
+    this.emit();
+  }
+
+  /** Mark a session finished (terminal_complete / ws exit). */
+  complete(id: string, exitCode: number): void {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    s.status = 'done';
+    s.exitCode = exitCode;
+    this.emit();
+  }
+
+  private makeSession(
+    id: string,
+    info: AdoptInfo,
+    transport: TerminalTransport,
+  ): TerminalSession {
+    return {
+      id,
+      pid: info.pid ?? 0,
+      command: info.command ?? '',
+      status: 'running',
+      output: '',
+      droppedChars: 0,
+      exitCode: null,
+      visible: this.visibleCount() < MAX_VISIBLE,
+      sandboxed: !!info.sandboxed,
+      startedAt: Date.now(),
+      transport,
+      cwd: info.cwd,
+      originSessionId: info.originSessionId,
+    };
   }
 
   private connect(id: string): void {
@@ -150,6 +249,12 @@ class TerminalSessionStore {
   }
 
   // ---------- input / resize / kill ----------
+  /** True when the session accepts keystrokes (a real PTY, still running). */
+  isInteractive(id: string): boolean {
+    const s = this.sessions.get(id);
+    return !!s && s.transport === 'ws' && s.status === 'running';
+  }
+
   sendInput(id: string, data: string): void {
     const ws = this.sockets.get(id);
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -165,14 +270,32 @@ class TerminalSessionStore {
   }
 
   async kill(id: string): Promise<void> {
-    try {
-      await fetch(apiUrl(`/api/terminal/sessions/${id}`), { method: 'DELETE' });
-    } catch {
-      // ignore — close the socket regardless
+    const session = this.sessions.get(id);
+    // Only PTY-backed sessions exist server-side; an SSE mirror has no
+    // /api/terminal/sessions row and DELETEing it would just 404.
+    if (!session || session.transport === 'ws') {
+      try {
+        await fetch(apiUrl(`/api/terminal/sessions/${id}`), { method: 'DELETE' });
+      } catch {
+        // ignore — close the socket regardless
+      }
     }
     this.closeSocket(id);
     this.sessions.delete(id);
     this.emit();
+  }
+
+  /** Forget every session belonging to one agent turn (e.g. on reset). */
+  clearOrigin(originSessionId: string): void {
+    let changed = false;
+    for (const [id, s] of Array.from(this.sessions.entries())) {
+      if (s.originSessionId === originSessionId) {
+        this.closeSocket(id);
+        this.sessions.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) this.emit();
   }
 
   private closeSocket(id: string): void {
@@ -243,6 +366,7 @@ export interface UseTerminalSessions {
   resize: (id: string, cols: number, rows: number) => void;
   kill: (id: string) => Promise<void>;
   setVisible: (id: string, visible: boolean) => void;
+  isInteractive: (id: string) => boolean;
 }
 
 /**
@@ -257,8 +381,9 @@ export function useTerminalSessions(): UseTerminalSessions {
   const resize = useCallback((id: string, cols: number, rows: number) => store.resize(id, cols, rows), []);
   const kill = useCallback((id: string) => store.kill(id), []);
   const setVisible = useCallback((id: string, visible: boolean) => store.setVisible(id, visible), []);
+  const isInteractive = useCallback((id: string) => store.isInteractive(id), []);
 
-  return { sessions, spawn, sendInput, resize, kill, setVisible };
+  return { sessions, spawn, sendInput, resize, kill, setVisible, isInteractive };
 }
 
 export { store as terminalSessionStore };

@@ -1,19 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Reasoning Model Support - Phase 32
 
-Utilities for parsing and handling extended thinking/reasoning from models
-like DeepSeek R1, QwQ, or Claude with extended thinking.
+Utilities for parsing and handling extended thinking/reasoning output.
 
 Reasoning models output their chain-of-thought in special blocks:
-- DeepSeek R1 / QwQ: &lt;think&gt;...&lt;/think&gt;
-- Some models use: &lt;reasoning&gt;...&lt;/reasoning&gt;
+- &lt;think&gt;...&lt;/think&gt;
+- &lt;reasoning&gt;...&lt;/reasoning&gt;
 """
 
 from __future__ import annotations
 import re
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple, List
+from typing import Any, Iterable, Mapping, Optional, Tuple, List
 
 logger = logging.getLogger('halbert.utils.reasoning')
 
@@ -32,7 +33,7 @@ def parse_thinking_blocks(text: str) -> ReasoningResult:
     Parse thinking/reasoning blocks from model output.
     
     Supports multiple formats:
-    - &lt;think&gt;...&lt;/think&gt; (DeepSeek R1, QwQ, Qwen)
+    - &lt;think&gt;...&lt;/think&gt;
     - &lt;reasoning&gt;...&lt;/reasoning&gt;
     - &lt;thought&gt;...&lt;/thought&gt;
     
@@ -82,30 +83,56 @@ def parse_thinking_blocks(text: str) -> ReasoningResult:
     )
 
 
-def is_reasoning_model(model_name: str) -> bool:
+# Generic, vendor-neutral tokens that mark a model id as a reasoning /
+# extended-thinking model ("think" covers "thinking", "reason" covers
+# "reasoning" and "reasoner").
+_REASONING_TOKENS = ('think', 'reason')
+
+# Capability labels (as reported by a provider, e.g. Ollama /api/show
+# "capabilities", or a models.yml ``capabilities:`` override) that mean
+# the model emits thinking blocks.
+_REASONING_CAPABILITY_LABELS = frozenset({'thinking', 'think', 'reasoning', 'reason'})
+
+
+def is_reasoning_model(
+    model_name: Optional[str],
+    capabilities: Optional[Any] = None,
+) -> bool:
     """
-    Check if a model is known to support extended thinking.
-    
+    Check whether a model should be treated as an extended-thinking model.
+
+    Detection never keys on vendor or model-family names. Preference order:
+
+    1. ``capabilities`` hint, when supplied. Accepts a mapping (e.g. a
+       models.yml ``capabilities:`` override such as ``{"reasoning": true}``)
+       or an iterable of capability labels (e.g. the ``capabilities`` list
+       returned by Ollama ``/api/show``, which contains ``"thinking"``).
+    2. Generic tokens in the model id: "think" / "reason".
+
     Args:
-        model_name: Model identifier (e.g., "qwq:32b", "deepseek-r1:70b")
-        
+        model_name: Model identifier as configured (may be None/empty)
+        capabilities: Optional capability hint (mapping or iterable of labels)
+
     Returns:
-        True if model supports reasoning output
+        True if the model is expected to emit thinking/reasoning blocks
     """
-    reasoning_patterns = [
-        'qwq',           # QwQ reasoning model
-        'qwen3',         # Qwen3 thinking models
-        'qwen-thinking', # Qwen thinking models
-        'thinking',      # Generic thinking models (e.g., qwen3-next-80b-a3b-thinking)
-        'deepseek-r1',   # DeepSeek R1
-        'deepseek-reasoner',
-        'o1',            # OpenAI o1 (if available)
-        'o3',            # OpenAI o3
-        'reasoning',     # Generic reasoning models
-    ]
-    
+    if capabilities:
+        if isinstance(capabilities, Mapping):
+            if any(bool(capabilities.get(key)) for key in ('reasoning', 'thinking')):
+                return True
+        elif isinstance(capabilities, str):
+            if capabilities.lower() in _REASONING_CAPABILITY_LABELS:
+                return True
+        elif isinstance(capabilities, Iterable):
+            for label in capabilities:
+                if str(label).lower() in _REASONING_CAPABILITY_LABELS:
+                    return True
+
+    if not model_name:
+        return False
+
     model_lower = model_name.lower()
-    return any(pattern in model_lower for pattern in reasoning_patterns)
+    return any(token in model_lower for token in _REASONING_TOKENS)
 
 
 class StreamingReasoningParser:
@@ -120,8 +147,8 @@ class StreamingReasoningParser:
         self.buffer = ""
         self.thinking_content = ""
         self.response_content = ""
-        # Qwen3-Thinking models start in thinking mode WITHOUT opening <think> tag
-        # The chat template includes <think> implicitly
+        # Some thinking-mode models start in thinking mode WITHOUT an opening
+        # <think> tag (the chat template includes it implicitly)
         self.in_thinking = assume_thinking_mode
         self.thinking_complete = False
         self._thinking_start_patterns = ['<think>', '<thinking>', '<reasoning>', '<thought>']

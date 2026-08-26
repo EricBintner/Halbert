@@ -59,6 +59,11 @@ docs: update CLI reference
 refactor: extract common tool patterns
 ```
 
+Sign off every commit (`git commit -s`). The trailer
+`Signed-off-by: Full Name <email@example.com>` certifies the
+[Developer Certificate of Origin](#1-developer-certificate-of-origin-dco-11) and is
+checked by CI (`.github/workflows/dco.yml`; run `scripts/check-dco.sh` locally).
+
 ### Pull Request Process
 
 1. Create a feature branch from `main`

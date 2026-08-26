@@ -83,22 +83,17 @@ Compared to legacy `base-safety.txt`: ~200 tokens (13x increase)
 
 The legacy `base-safety.txt` remains for fallback. New code should use the v2 system via `PromptBuilder`.
 
-## Recommended Models
+## Models
 
-See [models/README.md](models/README.md) for tested model recommendations.
-
-**Quick Setup:**
-```bash
-ollama pull qwen2.5:14b      # Guide tier
-ollama pull deepseek-r1:32b  # Specialist tier  
-ollama pull qwen2-vl:32b     # Vision tier
-```
+Halbert works with whichever models you configure on your endpoint
+(Settings → AI Models). See [models/README.md](models/README.md) for notes on
+how the prompt system adapts to different model sizes and behaviours.
 
 ### Model-Specific Overrides
 
 For models that need different constraint styles:
-- `models/small-model-overrides.xml` - Stronger rules for 7B-14B models
-- `models/reasoning-model-overrides.xml` - Thinking block handling for deepseek-r1, qwq
+- `models/small-model-overrides.xml` - Stronger rules for smaller (roughly 7B-14B parameter) models
+- `models/reasoning-model-overrides.xml` - Thinking block handling for models that emit `<think>` blocks
 
 ## See Also
 

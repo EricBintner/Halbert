@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Morning report generator — consolidates the last 24 hours into a
 natural-language summary published as a ProactiveEvent.

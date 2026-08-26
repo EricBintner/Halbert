@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import os
 from halbert_core.utils.paths import config_dir, data_dir, log_dir, data_subdir, log_subdir, state_subdir
 

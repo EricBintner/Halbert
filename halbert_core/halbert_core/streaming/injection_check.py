@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Command injection / danger check for PTY commands (B1d).
 
 A superset of the existing ``dashboard/routes/terminal.py`` safety checks.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { cn } from '@/lib/utils';
 import { isLocalProvider } from './provider-utils';
 import { ModelCard } from './ModelCard';
@@ -92,21 +94,6 @@ export interface AIModelsSettingsProps {
   baseUrl?: string;
 }
 
-// Recommended models per slot.
-// Phase 112: quality-first cloud-centric stack.
-// Small + Coordinator share gemini-3-flash-preview:cloud (JSON-reliable,
-// 1M ctx, no thinking overhead). Large = kimi-k2.5:cloud for deep reasoning.
-// qwen3 base family removed (8b/14b/30b) in favor of the cloud stack or
-// gemma3 for air-gapped fallback. qwen3-coder retained for code slot.
-// See docs/Phase112_Gemini/SWARM_UI_PLAN_v2.md §4.
-const RECOMMENDED_MODELS: Record<string, string[]> = {
-  embedding: ['nomic-embed-text', 'nomic-embed-code'],
-  small: ['gemini-3-flash-preview:cloud', 'gemma3:12b'],
-  large: ['kimi-k2.5:cloud', 'gemma3:27b'],
-  coordinator: ['gemini-3-flash-preview:cloud', 'gemma3:27b'],
-  code: ['qwen3-coder-next:cloud', 'qwen3-coder:30b'],
-};
-
 /** Check if a model name matches an entry in the available list (handles ':latest' suffix) */
 function modelInList(model: string, list: string[]): boolean {
   return list.some(
@@ -115,16 +102,15 @@ function modelInList(model: string, list: string[]): boolean {
   );
 }
 
-/** Find the first recommended model present in the available list */
-function findRecommended(slot: string, list: string[]): string | undefined {
-  const recs = RECOMMENDED_MODELS[slot] ?? [];
-  for (const rec of recs) {
-    const match = list.find(
-      (m) => m === rec || m === `${rec}:latest` || m.replace(/:latest$/, '') === rec.replace(/:latest$/, '')
-    );
-    if (match) return match;
-  }
-  return undefined;
+/**
+ * Auto-select an embedding model from the endpoint's model list without
+ * naming any model: a single served model wins outright, otherwise the
+ * first model whose name says "embed". Returns undefined when nothing
+ * matches so the user picks from the dropdown.
+ */
+function suggestEmbeddingModel(list: string[]): string | undefined {
+  if (list.length === 1) return list[0];
+  return list.find((m) => /embed/i.test(m));
 }
 
 // ── Compute Node CRUD Panel (Phase 45D) ──────────────────────
@@ -506,7 +492,7 @@ export function AIModelsSettings({
       embedding: { ...config.embedding, endpoint_id: endpointId, model: undefined },
     });
     const models = await onFetchModels(endpointId, 'embedding');
-    const suggested = findRecommended('embedding', models);
+    const suggested = suggestEmbeddingModel(models);
     if (suggested) {
       onConfigChange({
         ...config,
@@ -786,7 +772,7 @@ export function AIModelsSettings({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
               </svg>
             }
-            info="Recommended: Built-in ONNX (nomic-embed-text-v1.5) — works offline, no Ollama needed. Alternatively, use nomic-embed-text via Ollama or an OpenAI-compatible cloud provider."
+            info="Choose any embedding model served by your endpoint (Ollama or an OpenAI-compatible provider), or use the built-in offline embedder if one is bundled."
             source={config.embedding.source}
             endpoint={config.embedding.endpoint_id}
             model={config.embedding.model}
@@ -799,8 +785,8 @@ export function AIModelsSettings({
             cloudModels={cloudModels[config.embedding.endpoint_id || ''] || []}
             loadingCloudModels={loadingCloudModels[config.embedding.endpoint_id || '']}
             onFetchCloudModels={onFetchCloudModels}
-            hfEnabled={true}
-            hfRepoId="nomic-ai/nomic-embed-text-v1.5"
+            hfEnabled={!!config.embedding.hf_repo_id}
+            hfRepoId={config.embedding.hf_repo_id}
             hfDownloaded={config.embedding.hf_downloaded}
             hfDownloadProgress={config.embedding.hf_download_progress}
             onHFDownload={() => onHFDownload('embedding')}
@@ -859,7 +845,7 @@ export function AIModelsSettings({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
                   </svg>
                 }
-                info="Optional code-specialized model for inferring cross-file relationships. Falls back to the Fast model if not configured. Best with code-tuned models like qwen2.5-coder or deepseek-coder."
+                info="Optional code-specialized model for inferring cross-file relationships. Falls back to the Fast model if not configured. Works best with a code-tuned model from your endpoint."
                 infoLink="https://docs.sourceprep.io/guides/models"
                 endpoint={config.code_model?.endpoint_id}
                 model={config.code_model?.model}
@@ -921,8 +907,8 @@ export function AIModelsSettings({
                   <span className="font-medium text-text">Swarm Coordinator (Optional):</span>{' '}
                   During Deep Enrichment, SourcePrep fans out per-file analysis to the Thinking Model
                   (the Worker) and uses a separate model to plan clusters and synthesize domain modules.
-                  Assign a fast, JSON-reliable model here (e.g. Gemini Flash) to avoid token exhaustion
-                  on reasoning-heavy workers like Kimi. Leave inherited to use the Thinking Model for both.
+                  Assign a fast, JSON-reliable model here to avoid token exhaustion on reasoning-heavy
+                  workers. Leave inherited to use the Thinking Model for both.
                 </div>
                 <ModelCard
                   title="Swarm Coordinator"
@@ -933,7 +919,7 @@ export function AIModelsSettings({
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2l2.39 4.84L20 8l-4 3.9.94 5.48L12 14.77l-4.94 2.6L8 11.9 4 8l5.61-1.16L12 2z" />
                     </svg>
                   }
-                  info="Routes large-context planning and synthesis to a fast, JSON-reliable model (e.g. Gemini Flash). If left inherited, the Thinking Model handles both worker and coordinator roles."
+                  info="Routes large-context planning and synthesis to a fast, JSON-reliable model. If left inherited, the Thinking Model handles both worker and coordinator roles."
                   infoLink="https://docs.sourceprep.io/guides/models"
                   endpoint={coordinatorSlot.endpoint_id}
                   model={coordinatorSlot.model}
@@ -1151,19 +1137,14 @@ export function AIModelsSettings({
         <Info className="w-5 h-5 text-info shrink-0 mt-0.5" />
         <div>
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold font-mono text-text">Model Recommendations (Ollama)</h4>
-            <a href="https://docs.sourceprep.io/guides/model-advisor" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Setup Advisor →</a>
+            <h4 className="text-sm font-semibold font-mono text-text">Slot Guide</h4>
           </div>
           <ul className="text-xs text-text-muted space-y-1.5 list-disc pl-4">
-            <li><strong>Embedding:</strong> nomic-embed-text-v1.5 (Built-in ONNX — no Ollama needed)</li>
-            <li>
-              <strong>Fast:</strong> <a href="https://ollama.com/library/qwen3" target="_blank" rel="noreferrer" className="text-primary hover:underline">qwen3:8b</a> (5.2GB) — strong quality for fast tasks. Alt: qwen3:14b (9.3GB) for better output
-            </li>
-            <li>
-              <strong>Thinking:</strong> <a href="https://ollama.com/library/qwen3" target="_blank" rel="noreferrer" className="text-primary hover:underline">qwen3:8b</a> (5.2GB) — strong reasoning. Alt: qwen3:14b (9.3GB) or qwen3:30b MoE (19GB) for better quality
-            </li>
-            <li><strong>Code:</strong> <a href="https://ollama.com/library/qwen3-coder" target="_blank" rel="noreferrer" className="text-primary hover:underline">qwen3-coder:30b</a> MoE (19GB, 3.3B active) — best code model. Alt: qwen2.5-coder:7b (optional — falls back to Fast model)</li>
-            <li><strong>Swarm Coordinator:</strong> Gemini 3 Flash or any fast, JSON-reliable cloud model. Used to plan clusters and synthesize domain modules during Deep Enrichment. Optional — falls back to Thinking Model.</li>
+            <li><strong>Embedding:</strong> any embedding model served by your endpoint; small models are fine and load quickly.</li>
+            <li><strong>Fast:</strong> a small, quick model (roughly 4–10 GB on disk) for classification and short tasks.</li>
+            <li><strong>Thinking:</strong> the largest reasoning-capable model your GPU can hold with room for context (leave ~20% VRAM free).</li>
+            <li><strong>Code:</strong> optional code-tuned model from your endpoint; falls back to the Fast model when unset.</li>
+            <li><strong>Swarm Coordinator:</strong> any fast, JSON-reliable model. Used to plan clusters and synthesize domain modules during Deep Enrichment. Optional — falls back to Thinking Model.</li>
             <li><strong>Compression:</strong> LOD extracts code at configurable detail levels (no model needed)</li>
           </ul>
         </div>

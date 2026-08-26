@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 # Halbert Dashboard - Web-only Development Launcher
 # Starts backend API only (frontend served from dist/)
 # Faster startup - no Tauri compilation needed

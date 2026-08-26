@@ -1,8 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
-Anthropic (Claude) provider implementation - Phase 38.
+Anthropic provider implementation - Phase 38.
 
-Supports Claude models via the Anthropic API for high-quality
-reasoning, vision, and general tasks.
+Talks to the Anthropic Messages API. Model ids are passed straight
+through to the API; the model to use comes from models.yml, never from
+a list baked into this module.
 """
 
 from __future__ import annotations
@@ -51,55 +54,21 @@ def _extract_http_context(exc: Exception) -> tuple:
     return status_code, headers
 
 
-# Claude model configurations
-CLAUDE_MODELS = {
-    'claude-3-5-sonnet-20241022': {
-        'capabilities': [ModelCapability.CHAT, ModelCapability.REASONING, ModelCapability.CODE, ModelCapability.TECHNICAL],
-        'context_length': 200000,
-        'memory_mb': 0,  # API - no local memory
-        'vision': True,
-        'max_output': 8192,
-    },
-    'claude-3-5-haiku-20241022': {
-        'capabilities': [ModelCapability.CHAT, ModelCapability.FAST, ModelCapability.CODE],
-        'context_length': 200000,
-        'memory_mb': 0,
-        'vision': True,
-        'max_output': 8192,
-    },
-    'claude-3-opus-20240229': {
-        'capabilities': [ModelCapability.CHAT, ModelCapability.REASONING, ModelCapability.CODE, ModelCapability.TECHNICAL],
-        'context_length': 200000,
-        'memory_mb': 0,
-        'vision': True,
-        'max_output': 4096,
-    },
-    'claude-3-sonnet-20240229': {
-        'capabilities': [ModelCapability.CHAT, ModelCapability.REASONING, ModelCapability.CODE],
-        'context_length': 200000,
-        'memory_mb': 0,
-        'vision': True,
-        'max_output': 4096,
-    },
-    'claude-3-haiku-20240307': {
-        'capabilities': [ModelCapability.CHAT, ModelCapability.FAST],
-        'context_length': 200000,
-        'memory_mb': 0,
-        'vision': True,
-        'max_output': 4096,
-    },
-}
+# Provider-level facts that hold for every model behind the Messages API.
+# Per-model differences (max output, thinking support) are not enumerated
+# here; declare them in models.yml ``capabilities:`` if routing needs them.
+_PROVIDER_CAPABILITIES = [ModelCapability.CHAT, ModelCapability.CODE, ModelCapability.TECHNICAL]
+_PROVIDER_CONTEXT_LENGTH = 200000
+_PROVIDER_MAX_OUTPUT = 4096
 
 
 class AnthropicProvider(ModelProvider):
     """
-    Anthropic Claude API provider.
+    Anthropic Messages API provider.
     
     Supports:
-    - Claude 3.5 Sonnet (best quality)
-    - Claude 3.5 Haiku (fast)
-    - Claude 3 Opus (highest quality)
-    - Vision/multimodal capabilities
+    - Any model id accepted by the Anthropic Messages API
+    - Vision/multimodal input
     - Tool use / function calling
     
     Requires ANTHROPIC_API_KEY environment variable.
@@ -121,38 +90,72 @@ class AnthropicProvider(ModelProvider):
         
         self.client = anthropic.Anthropic(api_key=self.api_key)
         self._active_model: Optional[str] = None
+        # Model ids this provider has been asked to use (configured ids);
+        # used as the list_models() fallback when the API listing fails.
+        self._known_models: List[str] = []
         
         logger.info("Anthropic provider initialized")
     
+    def _model_config(self, model_id: str, display_name: Optional[str] = None) -> ModelConfig:
+        """Build a ModelConfig from provider-level facts (no per-model table)."""
+        metadata: Dict[str, Any] = {
+            'vision': True,
+            'max_output': _PROVIDER_MAX_OUTPUT,
+        }
+        if display_name:
+            metadata['display_name'] = display_name
+        return ModelConfig(
+            model_id=model_id,
+            provider="anthropic",
+            capabilities=list(_PROVIDER_CAPABILITIES),
+            memory_mb=0,  # API - no local memory
+            context_length=_PROVIDER_CONTEXT_LENGTH,
+            metadata=metadata,
+        )
+    
+    def _remember(self, model_id: str) -> None:
+        if model_id and model_id not in self._known_models:
+            self._known_models.append(model_id)
+    
     def list_models(self) -> List[ModelConfig]:
-        """List available Claude models."""
-        models = []
+        """
+        List models available to this API key via ``client.models.list()``.
         
-        for model_id, config in CLAUDE_MODELS.items():
-            models.append(ModelConfig(
-                model_id=model_id,
-                provider="anthropic",
-                capabilities=config['capabilities'],
-                memory_mb=config['memory_mb'],
-                context_length=config['context_length'],
-                metadata={
-                    'vision': config.get('vision', False),
-                    'max_output': config.get('max_output', 4096),
-                }
-            ))
+        Falls back to the ids this provider has been configured with
+        (``load_model`` / ``chat`` calls) when the listing endpoint is
+        unavailable, so callers still see the configured model.
+        """
+        models: List[ModelConfig] = []
+        try:
+            page = self.client.models.list()
+            seen = set()
+            for item in getattr(page, 'data', None) or page or []:
+                model_id = getattr(item, 'id', None) or (item.get('id') if isinstance(item, dict) else None)
+                if not model_id or model_id in seen:
+                    continue
+                seen.add(model_id)
+                display_name = getattr(item, 'display_name', None)
+                models.append(self._model_config(model_id, display_name))
+        except Exception as e:  # noqa: BLE001 - listing is best-effort
+            logger.warning(f"Anthropic models.list() unavailable, using configured ids: {e}")
         
+        if not models:
+            models = [self._model_config(mid) for mid in self._known_models]
         return models
     
     def load_model(self, model_id: str, **kwargs) -> bool:
         """
         'Load' a model (API models are always available).
         
-        Just validates the model ID exists.
+        The id is passed through to the API as-is; an unknown id surfaces
+        as an API error on first use rather than being rejected here.
         """
-        if model_id not in CLAUDE_MODELS:
-            raise ModelNotFoundError(f"Unknown Claude model: {model_id}")
-        
+        if not model_id:
+            raise ModelNotFoundError(
+                "No model configured — choose one in Settings → AI Models"
+            )
         self._active_model = model_id
+        self._remember(model_id)
         logger.info(f"Anthropic model selected: {model_id}")
         return True
     
@@ -170,7 +173,7 @@ class AnthropicProvider(ModelProvider):
         temperature: float = 0.7,
         **kwargs
     ) -> ModelResponse:
-        """Generate text using Claude API."""
+        """Generate text using the Anthropic Messages API."""
         return self.chat(
             messages=[{"role": "user", "content": prompt}],
             model_id=model_id,
@@ -190,11 +193,11 @@ class AnthropicProvider(ModelProvider):
         **kwargs
     ) -> ModelResponse:
         """
-        Generate response using Claude chat API.
+        Generate response using the Anthropic Messages API.
         
         Args:
             messages: List of {"role": "user|assistant", "content": "..."}
-            model_id: Claude model to use
+            model_id: Model id to use (passed through to the API)
             max_tokens: Maximum tokens to generate
             temperature: Sampling temperature
             system: System prompt
@@ -203,8 +206,11 @@ class AnthropicProvider(ModelProvider):
         Returns:
             ModelResponse with generated text
         """
-        if model_id not in CLAUDE_MODELS:
-            raise ModelNotFoundError(f"Unknown Claude model: {model_id}")
+        if not model_id:
+            raise ModelNotFoundError(
+                "No model configured — choose one in Settings → AI Models"
+            )
+        self._remember(model_id)
         
         start_time = time.time()
         
@@ -279,7 +285,7 @@ class AnthropicProvider(ModelProvider):
             status_code, headers = _extract_http_context(e)
             logger.error(f"Anthropic API error {status_code}: {e}")
             raise GenerationError(
-                f"Claude API error {status_code}: {e}",
+                f"Anthropic API error {status_code}: {e}",
                 status_code=status_code,
                 headers=headers,
             )
@@ -297,12 +303,15 @@ class AnthropicProvider(ModelProvider):
         **kwargs
     ) -> Iterator[str]:
         """
-        Stream chat response from Claude.
+        Stream chat response from the Anthropic Messages API.
         
         Yields tokens as they are generated.
         """
-        if model_id not in CLAUDE_MODELS:
-            raise ModelNotFoundError(f"Unknown Claude model: {model_id}")
+        if not model_id:
+            raise ModelNotFoundError(
+                "No model configured — choose one in Settings → AI Models"
+            )
+        self._remember(model_id)
         
         try:
             # Convert messages to Anthropic format
@@ -333,49 +342,53 @@ class AnthropicProvider(ModelProvider):
             status_code, headers = _extract_http_context(e)
             logger.error(f"Anthropic streaming error {status_code}: {e}")
             raise GenerationError(
-                f"Claude streaming error {status_code}: {e}",
+                f"Anthropic streaming error {status_code}: {e}",
                 status_code=status_code,
                 headers=headers,
             )
     
     def is_loaded(self, model_id: str) -> bool:
-        """API models are always 'loaded'."""
-        return model_id in CLAUDE_MODELS
+        """API models are always 'loaded' (any non-empty id)."""
+        return bool(model_id)
     
     def get_model_info(self, model_id: str) -> ModelConfig:
-        """Get model configuration."""
-        if model_id not in CLAUDE_MODELS:
-            raise ModelNotFoundError(f"Unknown Claude model: {model_id}")
-        
-        config = CLAUDE_MODELS[model_id]
-        return ModelConfig(
-            model_id=model_id,
-            provider="anthropic",
-            capabilities=config['capabilities'],
-            memory_mb=config['memory_mb'],
-            context_length=config['context_length'],
-            metadata={
-                'vision': config.get('vision', False),
-                'max_output': config.get('max_output', 4096),
-            }
-        )
-    
-    def health_check(self) -> bool:
-        """Check if Anthropic API is accessible."""
-        try:
-            # Simple API validation
-            self.client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=10,
-                messages=[{"role": "user", "content": "hi"}]
+        """Get model configuration built from provider-level facts."""
+        if not model_id:
+            raise ModelNotFoundError(
+                "No model configured — choose one in Settings → AI Models"
             )
+        return self._model_config(model_id)
+    
+    def health_check(self, model_id: Optional[str] = None) -> bool:
+        """
+        Check that the Anthropic API is reachable with this key.
+        
+        Probes with the model it is asked about (``model_id``), else the
+        active model selected via ``load_model``. When neither is known
+        it falls back to ``client.models.list()``, which validates the
+        key without sending a message to any particular model.
+        """
+        probe_model = model_id or self._active_model
+        try:
+            if probe_model:
+                self.client.messages.create(
+                    model=probe_model,
+                    max_tokens=1,
+                    messages=[{"role": "user", "content": "hi"}]
+                )
+            else:
+                self.client.models.list(limit=1)
             return True
         except Exception as e:
             logger.warning(f"Anthropic health check failed: {e}")
             return False
     
     def has_vision(self, model_id: str) -> bool:
-        """Check if model supports vision."""
-        if model_id in CLAUDE_MODELS:
-            return CLAUDE_MODELS[model_id].get('vision', False)
-        return False
+        """
+        Check if model supports vision.
+        
+        Provider-level fact: models behind the Messages API accept image
+        input. Declare ``capabilities: {vision: false}`` in models.yml for
+        a model that should not be routed images.
+        """
+        return bool(model_id)

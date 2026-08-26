@@ -198,6 +198,13 @@ export const STOP_CONTENT = {
         <div className="mt-4 text-[11px] font-mono tracking-wider uppercase opacity-70 text-center">
           Linux today · macOS in beta · Open source · Runs on Ollama
         </div>
+        <div className="mt-3 flex items-center justify-center space-x-3 text-[10px] font-mono opacity-50 uppercase tracking-widest">
+          <a href="/privacy.html" className="hover:opacity-100 hover:underline">Privacy</a>
+          <span>·</span>
+          <a href="/terms.html" className="hover:opacity-100 hover:underline">Terms</a>
+          <span>·</span>
+          <a href="https://github.com/EricBintner/Halbert" target="_blank" rel="noopener noreferrer" className="hover:opacity-100 hover:underline">GPL-3.0</a>
+        </div>
       </>
     ),
   },

@@ -1,7 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
-Test hardware detection and model recommendations (Phase 5 M3).
+Test hardware detection and model size budgets (Phase 5 M3).
 
-Tests the hardware detector, model recommendations, and configuration wizard.
+Tests the hardware detector, the size-budget derivation, installed-model
+selection against that budget, and the configuration wizard. No specific
+model is named anywhere; fixtures use neutral ids.
 """
 
 import sys
@@ -40,32 +44,85 @@ def test_hardware_detection():
         return False
 
 
-def test_model_recommendations():
-    """Test model recommendation engine."""
+def test_model_budget():
+    """Test hardware -> model size budget derivation."""
     try:
         from halbert_core.model import HardwareDetector
         
         detector = HardwareDetector()
         hardware = detector.detect()
-        recommendation = detector.recommend_models(hardware)
+        budget = detector.recommend_budget(hardware)
         
-        # Verify recommendation structure
-        assert recommendation.orchestrator_model is not None
-        assert recommendation.orchestrator_provider is not None
-        assert recommendation.reasoning is not None
-        assert recommendation.expected_memory_mb > 0
+        # Verify budget structure: sizes and a sentence, never model names
+        assert budget.memory_budget_gb > 0
+        assert budget.max_params_b_4bit > 0
+        assert budget.max_params_b_8bit > 0
+        assert budget.max_params_b_4bit >= budget.max_params_b_8bit
+        assert budget.memory_source in ("unified", "vram", "ram")
+        assert budget.provider in ("ollama", "mlx", "llamacpp")
+        assert budget.summary
+        assert "B-parameter" in budget.summary
         
-        print("✅ Model recommendation test passed")
-        print(f"   Orchestrator: {recommendation.orchestrator_model}")
-        print(f"   Provider: {recommendation.orchestrator_provider}")
-        if recommendation.specialist_enabled:
-            print(f"   Specialist: {recommendation.specialist_model}")
-        else:
-            print(f"   Specialist: Disabled")
+        d = budget.to_dict()
+        assert set(d) >= {"memory_budget_gb", "max_params_b_4bit", "max_params_b_8bit", "summary"}
+        
+        print("✅ Model budget test passed")
+        print(f"   {budget.summary}")
         return True
     
     except Exception as e:
-        print(f"❌ Model recommendation test failed: {e}")
+        print(f"❌ Model budget test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_installed_model_selection():
+    """Test picking the largest already-installed model that fits the budget."""
+    try:
+        from halbert_core.model.hardware_detector import (
+            ModelBudget, pick_installed_model, estimate_model_params_b, parse_parameter_size
+        )
+        
+        GB = 1024 ** 3
+        budget = ModelBudget(
+            memory_budget_gb=12.0,
+            max_params_b_4bit=18,
+            max_params_b_8bit=10,
+            memory_source="ram",
+            provider="ollama",
+        )
+        
+        installed = [
+            {"name": "example-model:latest", "size": 2 * GB, "details": {"parameter_size": "3.2B"}},
+            {"name": "example-guide:8b", "size": 5 * GB, "details": {"parameter_size": "8.0B"}},
+            {"name": "example-specialist:70b", "size": 40 * GB, "details": {"parameter_size": "70.6B"}},
+            {"name": "example-embed", "size": 300 * 1024 ** 2, "details": {"parameter_size": "137M"}},
+        ]
+        
+        chosen = pick_installed_model(installed, budget)
+        assert chosen is not None
+        assert chosen["name"] == "example-guide:8b"  # largest that fits; 70b too big, embed skipped
+        assert chosen["params_b"] == 8.0
+        
+        # Nothing fits -> None (caller must ask the user to pull a smaller model)
+        assert pick_installed_model([installed[2]], budget) is None
+        assert pick_installed_model([], budget) is None
+        
+        # Size parsing is vendor-neutral: metadata, then size tag, then bytes
+        assert parse_parameter_size("7.6B") == 7.6
+        assert parse_parameter_size("137M") == 0.137
+        assert parse_parameter_size(None) is None
+        assert estimate_model_params_b({"name": "example-moe:8x22b"}) == 176.0
+        assert estimate_model_params_b({"name": "example-think:32b"}) == 32.0
+        assert estimate_model_params_b({"name": "unknown", "size": 0}) is None
+        
+        print("✅ Installed model selection test passed")
+        print(f"   Chosen: {chosen['name']}")
+        return True
+    
+    except Exception as e:
+        print(f"❌ Installed model selection test failed: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -127,7 +184,9 @@ def test_config_wizard_auto():
         from halbert_core.model import ConfigWizard
         
         wizard = ConfigWizard()
-        config = wizard.run_auto()
+        
+        # Explicit model: written through verbatim, no fabricated default
+        config = wizard.run_auto(model="example-model:latest")
         
         # Verify config structure
         assert "orchestrator" in config
@@ -136,13 +195,18 @@ def test_config_wizard_auto():
         assert "handoff" in config
         
         # Verify orchestrator config
-        assert "model" in config["orchestrator"]
+        assert config["orchestrator"]["model"] == "example-model:latest"
         assert "provider" in config["orchestrator"]
+        assert config["specialist"]["enabled"] is False
+        assert "model_budget" in config["hardware"]
+        
+        # No model and nothing installed that fits -> slot left unset (None), never a placeholder id
+        config = wizard.run_auto(endpoint="http://127.0.0.1:9")
+        assert "model" in config["orchestrator"]
+        assert config["orchestrator"]["model"] is None
         
         print("✅ Config wizard auto test passed")
         print(f"   Orchestrator: {config['orchestrator']['model']}")
-        if config["specialist"]["enabled"]:
-            print(f"   Specialist: {config['specialist']['model']}")
         return True
     
     except Exception as e:
@@ -159,17 +223,18 @@ def test_installation_commands():
         
         detector = HardwareDetector()
         hardware = detector.detect()
-        recommendation = detector.recommend_models(hardware)
+        budget = detector.recommend_budget(hardware)
         
-        commands = detector.get_installation_commands(recommendation)
+        commands = detector.get_installation_commands(budget)
         
         # Should have at least one provider
         assert len(commands) > 0
         
-        # Commands should be a list of strings
+        # Commands should be a list of strings and use a placeholder, never a model name
         for provider, cmd_list in commands.items():
             assert isinstance(cmd_list, list)
             assert len(cmd_list) > 0
+        assert any("ollama pull <model>" in c for c in commands["ollama"])
         
         print("✅ Installation commands test passed")
         print(f"   Providers with commands: {', '.join(commands.keys())}")
@@ -225,7 +290,8 @@ def main():
     
     tests = [
         ("Hardware Detection", test_hardware_detection),
-        ("Model Recommendations", test_model_recommendations),
+        ("Model Budget", test_model_budget),
+        ("Installed Model Selection", test_installed_model_selection),
         ("Hardware Profiles", test_hardware_profiles),
         ("Mac Detection", test_mac_detection),
         ("Config Wizard Auto", test_config_wizard_auto),

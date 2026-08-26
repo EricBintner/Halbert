@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Somatic blocks package (C1).
 
 A somatic block is the wrapper that drives a single self-management cycle

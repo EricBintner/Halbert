@@ -1,7 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Configuration wizard for model setup (Phase 5 M3).
 
-Interactive wizard to help users configure models based on their hardware.
+Interactive wizard that detects hardware, reports the model size budget
+that fits it, and writes models.yml around the model the user chooses.
+It never recommends or names specific models.
 """
 
 from __future__ import annotations
@@ -9,7 +13,10 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 import yaml
 
-from .hardware_detector import HardwareDetector, HardwareCapabilities, ModelRecommendation
+from .hardware_detector import (
+    HardwareDetector, HardwareCapabilities, ModelBudget, pick_installed_model
+)
+from ..utils.ollama import list_models_raw, DEFAULT_ENDPOINT
 from ..utils.platform import get_config_dir, ensure_directories
 from ..obs.logging import get_logger
 
@@ -42,23 +49,44 @@ class ConfigWizard:
         """
         return self.detector.detect()
     
-    def get_recommendation(self, hardware: HardwareCapabilities) -> ModelRecommendation:
+    def get_budget(self, hardware: HardwareCapabilities) -> ModelBudget:
         """
-        Get model recommendation for hardware.
+        Get the model size budget for detected hardware.
         
         Args:
             hardware: Hardware capabilities
         
         Returns:
-            Model recommendation
+            Model size budget (parameter counts, never model names)
         """
-        return self.detector.recommend_models(hardware)
+        return self.detector.recommend_budget(hardware)
     
-    def run_auto(self) -> Dict[str, Any]:
+    def find_installed_model(
+        self,
+        budget: ModelBudget,
+        endpoint: str = DEFAULT_ENDPOINT,
+    ) -> Optional[str]:
+        """
+        Pick the largest model already installed on the endpoint that fits.
+        
+        Returns:
+            Model name, or None when nothing installed fits (or Ollama is down).
+        """
+        chosen = pick_installed_model(list_models_raw(endpoint), budget)
+        return chosen["name"] if chosen else None
+    
+    def run_auto(self, model: Optional[str] = None, endpoint: str = DEFAULT_ENDPOINT) -> Dict[str, Any]:
         """
         Run automatic configuration (non-interactive).
         
-        Detects hardware and creates optimal configuration automatically.
+        Detects hardware and writes a configuration around ``model``. When no
+        model is given, the largest already-installed model that fits the
+        budget is used; if none fits, the guide model is left unset and must
+        be chosen in Settings -> AI Models.
+        
+        Args:
+            model: Model name as served by the endpoint (optional)
+            endpoint: Ollama endpoint used to look up installed models
         
         Returns:
             Configuration dictionary
@@ -69,16 +97,23 @@ class ConfigWizard:
         hardware = self.detect_hardware()
         logger.info(f"Detected profile: {hardware.profile.value}")
         
-        # Get recommendation
-        recommendation = self.get_recommendation(hardware)
-        logger.info(f"Recommended: {recommendation.orchestrator_model}")
+        # Size budget
+        budget = self.get_budget(hardware)
+        logger.info(f"Model budget: {budget.summary}")
+        
+        if not model:
+            model = self.find_installed_model(budget, endpoint)
+        if model:
+            logger.info(f"Guide model: {model}")
+        else:
+            logger.warning("No model configured - choose one in Settings -> AI Models")
         
         # Build configuration
-        config = self._build_config(recommendation, hardware)
+        config = self._build_config(model, "ollama", budget, hardware)
         
         return config
     
-    def run_interactive(self) -> Dict[str, Any]:
+    def run_interactive(self, endpoint: str = DEFAULT_ENDPOINT) -> Dict[str, Any]:
         """
         Run interactive configuration wizard.
         
@@ -111,31 +146,40 @@ class ConfigWizard:
         print(f"  Profile: {hardware.profile.value}")
         print()
         
-        # Get recommendation
-        print("💡 Generating recommendation...")
-        recommendation = self.get_recommendation(hardware)
-        
-        # Show recommendation
+        # Size budget
+        print("📐 Model size budget:")
+        budget = self.get_budget(hardware)
+        print(f"  {budget.summary}")
+        for note in budget.notes:
+            print(f"  • {note}")
         print()
-        print("Recommended Configuration:")
-        print(f"  Orchestrator: {recommendation.orchestrator_model} ({recommendation.orchestrator_provider})")
         
-        if recommendation.specialist_enabled:
-            print(f"  Specialist: {recommendation.specialist_model} ({recommendation.specialist_provider})")
+        # Installed models on the endpoint (the user's own, not suggestions)
+        installed = list_models_raw(endpoint)
+        default_model = None
+        if installed:
+            print(f"Models installed on {endpoint}:")
+            for entry in installed:
+                size_gb = (entry.get("size") or 0) / (1024 ** 3)
+                fits = "fits" if budget.fits_bytes(entry.get("size") or 0) else "too large"
+                print(f"  - {entry.get('name')}  ({size_gb:.1f} GB, {fits})")
+            chosen = pick_installed_model(installed, budget)
+            default_model = chosen["name"] if chosen else None
         else:
-            print(f"  Specialist: Disabled (orchestrator-only mode)")
+            print("No models found on the endpoint. Pull one that fits the budget with")
+            print("  ollama pull <model>")
+        print()
+        
+        prompt = "Guide model name"
+        if default_model:
+            prompt += f" [{default_model}]"
+        prompt += " (leave blank to choose later in Settings): "
+        model = input(prompt).strip() or default_model
         
         print()
-        print(f"Reasoning: {recommendation.reasoning}")
-        print()
-        print(f"Expected Memory Usage: {recommendation.expected_memory_mb}MB")
-        
-        if recommendation.performance_notes:
-            print()
-            print("Performance Notes:")
-            for note in recommendation.performance_notes:
-                print(f"  • {note}")
-        
+        print("Configuration:")
+        print(f"  Guide model: {model or 'not set'}")
+        print(f"  Provider: ollama")
         print()
         
         # Ask for confirmation
@@ -147,23 +191,29 @@ class ConfigWizard:
             return {}
         
         # Build configuration
-        config = self._build_config(recommendation, hardware)
+        config = self._build_config(model, "ollama", budget, hardware)
         
         print()
         print("✅ Configuration created!")
+        if not model:
+            print("   No model configured — choose one in Settings → AI Models")
         
         return config
     
     def _build_config(
         self,
-        recommendation: ModelRecommendation,
+        model: Optional[str],
+        provider: str,
+        budget: ModelBudget,
         hardware: HardwareCapabilities
     ) -> Dict[str, Any]:
         """
-        Build configuration dictionary from recommendation.
+        Build configuration dictionary.
         
         Args:
-            recommendation: Model recommendation
+            model: Guide model name (None leaves the slot unset)
+            provider: Runtime serving the model
+            budget: Model size budget
             hardware: Hardware capabilities
         
         Returns:
@@ -175,15 +225,15 @@ class ConfigWizard:
             "# Edit this file to customize model selection": None,
             
             "orchestrator": {
-                "model": recommendation.orchestrator_model,
-                "provider": recommendation.orchestrator_provider,
+                "model": model,
+                "provider": provider,
                 "always_loaded": True,
             },
             
             "specialist": {
-                "enabled": recommendation.specialist_enabled,
-                "model": recommendation.specialist_model,
-                "provider": recommendation.specialist_provider or "ollama",
+                "enabled": False,
+                "model": None,
+                "provider": provider,
                 "load_strategy": "on_demand",
             },
             
@@ -207,6 +257,7 @@ class ConfigWizard:
                 "total_ram_gb": hardware.total_ram_gb,
                 "platform": hardware.platform,
                 "is_apple_silicon": hardware.is_apple_silicon,
+                "model_budget": budget.to_dict(),
             },
         }
         
@@ -254,31 +305,6 @@ class ConfigWizard:
         
         return config_path
     
-    def show_installation_instructions(self, recommendation: ModelRecommendation):
-        """
-        Show installation instructions for recommended models.
-        
-        Args:
-            recommendation: Model recommendation
-        """
-        print()
-        print("=" * 70)
-        print("INSTALLATION INSTRUCTIONS")
-        print("=" * 70)
-        print()
-        
-        commands = self.detector.get_installation_commands(recommendation)
-        
-        for provider, cmd_list in commands.items():
-            print(f"Provider: {provider.upper()}")
-            print()
-            for cmd in cmd_list:
-                print(cmd)
-            print()
-        
-        print("After installation, models will be automatically downloaded on first use.")
-        print()
-    
     def validate_config(self, config_path: Optional[Path] = None) -> bool:
         """
         Validate existing configuration.
@@ -321,13 +347,19 @@ class ConfigWizard:
             logger.error(f"Configuration validation failed: {e}")
             return False
     
-    def generate_summary(self, hardware: HardwareCapabilities, recommendation: ModelRecommendation) -> str:
+    def generate_summary(
+        self,
+        hardware: HardwareCapabilities,
+        budget: ModelBudget,
+        model: Optional[str] = None,
+    ) -> str:
         """
         Generate human-readable configuration summary.
         
         Args:
             hardware: Hardware capabilities
-            recommendation: Model recommendation
+            budget: Model size budget
+            model: Configured guide model, if any
         
         Returns:
             Summary string
@@ -347,29 +379,17 @@ class ConfigWizard:
             lines.append(f"  Apple Silicon: {hardware.unified_memory_gb}GB unified memory")
         
         lines.append("")
+        lines.append("Model size budget:")
+        lines.append(f"  {budget.summary}")
+        for note in budget.notes:
+            lines.append(f"  • {note}")
+        
+        lines.append("")
         lines.append("Configuration:")
-        lines.append(f"  Orchestrator: {recommendation.orchestrator_model}")
-        lines.append(f"    Provider: {recommendation.orchestrator_provider}")
+        lines.append(f"  Guide model: {model or 'not set (choose one in Settings -> AI Models)'}")
+        lines.append(f"    Provider: ollama")
         lines.append(f"    Always loaded: Yes")
-        
-        if recommendation.specialist_enabled:
-            lines.append(f"  Specialist: {recommendation.specialist_model}")
-            lines.append(f"    Provider: {recommendation.specialist_provider}")
-            lines.append(f"    Load strategy: On-demand")
-        else:
-            lines.append(f"  Specialist: Disabled")
-        
-        lines.append("")
-        lines.append(f"Expected Memory: {recommendation.expected_memory_mb}MB")
-        lines.append("")
-        lines.append("Reasoning:")
-        lines.append(f"  {recommendation.reasoning}")
-        
-        if recommendation.performance_notes:
-            lines.append("")
-            lines.append("Performance Notes:")
-            for note in recommendation.performance_notes:
-                lines.append(f"  • {note}")
+        lines.append(f"  Specialist: Disabled")
         
         lines.append("")
         lines.append("=" * 70)

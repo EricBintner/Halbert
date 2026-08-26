@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Stream Event Definitions
 
@@ -447,6 +449,70 @@ class StreamEvent:
         data.update(kwargs)
         return cls(type="subagent_event", session_id=session_id, data=data)
     
+    @classmethod
+    def terminal_spawn(
+        cls,
+        session_id: str,
+        terminal_session_id: str,
+        command: str,
+        pid: int,
+        sandboxed: bool = False,
+        cwd: Optional[str] = None,
+        attach: str = "sse",
+    ) -> 'StreamEvent':
+        """Announce that a terminal came alive inside this turn (E1f).
+
+        ``attach`` tells the frontend how to source the session's output:
+        ``"sse"``  — the output arrives as ``terminal_output`` events on this
+                     same stream (a one-shot command run by the agent);
+        ``"ws"``   — the session is a live PTY owned by the terminal session
+                     manager and the frontend should attach to
+                     ``/ws/terminal/{terminal_session_id}`` for full duplex.
+        """
+        return cls(
+            type="terminal_spawn",
+            session_id=session_id,
+            data={
+                "terminal_session_id": terminal_session_id,
+                "command": command,
+                "pid": pid,
+                "sandboxed": sandboxed,
+                "cwd": cwd,
+                "attach": attach,
+            },
+        )
+
+    @classmethod
+    def terminal_output(
+        cls,
+        session_id: str,
+        terminal_session_id: str,
+        data: str,
+    ) -> 'StreamEvent':
+        """A chunk of terminal output for an ``attach="sse"`` session (E1f)."""
+        return cls(
+            type="terminal_output",
+            session_id=session_id,
+            data={"terminal_session_id": terminal_session_id, "data": data},
+        )
+
+    @classmethod
+    def terminal_complete(
+        cls,
+        session_id: str,
+        terminal_session_id: str,
+        exit_code: int,
+    ) -> 'StreamEvent':
+        """The terminal's child process exited (E1f)."""
+        return cls(
+            type="terminal_complete",
+            session_id=session_id,
+            data={
+                "terminal_session_id": terminal_session_id,
+                "exit_code": exit_code,
+            },
+        )
+
     @classmethod
     def heartbeat(cls, session_id: str = "system") -> 'StreamEvent':
         """Emit periodic heartbeat to keep connection alive.

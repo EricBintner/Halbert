@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 # Halbert Phase 5 Quick Start Script
 # Automates setup and testing of Phase 5 multi-model system
 
@@ -41,7 +43,7 @@ echo ""
 
 # Step 3: Detect hardware
 echo -e "${YELLOW}[3/6] Detecting hardware...${NC}"
-python3 Halbert/main.py hardware-detect --recommend || true
+python3 Halbert/main.py hardware-detect || true
 echo ""
 
 # Step 4: Check/install model provider

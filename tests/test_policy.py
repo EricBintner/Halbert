@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import os
 from halbert_core.tools.write_config import WriteConfig
 from halbert_core.tools.schedule_cron import ScheduleCron

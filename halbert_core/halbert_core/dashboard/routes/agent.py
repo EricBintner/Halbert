@@ -324,6 +324,8 @@ class LLMClientAdapter:
 
         # Route based on complexity
         model = get_configured_model()
+        if not model:
+            raise HTTPException(400, "No model configured — choose one in Settings → AI Models (models.yml)")
         endpoint = get_ollama_endpoint()
         provider = "ollama"
 
@@ -374,6 +376,8 @@ class LLMClientAdapter:
             if specialist_model and model == specialist_model:
                 logger.info("Falling back to guide model")
                 guide_model = get_configured_model()
+                if not guide_model:
+                    raise HTTPException(400, "No model configured — choose one in Settings → AI Models (models.yml)")
                 guide_endpoint = get_ollama_endpoint()
                 result = call_llm_chat(
                     endpoint=guide_endpoint,
@@ -430,6 +434,8 @@ class LLMClientAdapter:
         # Route based on complexity (skipped if vision model already selected)
         if not use_vision or not vision_model:
             model = get_configured_model()
+            if not model:
+                raise HTTPException(400, "No model configured — choose one in Settings → AI Models (models.yml)")
             endpoint = get_ollama_endpoint()
             provider = "ollama"
         

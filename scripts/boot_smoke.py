@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Boot-gate smoke check for the Halbert stack (Phase 4.5).
 
 Read-only verification that a live dashboard serves the agent path, the

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en" class="bg-[#F7F4EE] text-[#1C1917]">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Privacy Policy — Halbert</title>
+    <meta name="description" content="Halbert Privacy Policy: Local-first, zero telemetry, and complete data sovereignty." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      body {
+        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        background-color: #F7F4EE;
+        color: #1C1917;
+        line-height: 1.6;
+      }
+      h1, h2, h3 {
+        font-family: 'Space Grotesk', sans-serif;
+        letter-spacing: -0.03em;
+      }
+      code, pre, .font-mono {
+        font-family: 'JetBrains Mono', monospace;
+      }
+      a {
+        color: #D34E24;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      a:hover {
+        opacity: 0.8;
+      }
+    </style>
+  </head>
+  <body class="max-w-3xl mx-auto px-6 py-12">
+    <header class="mb-12 pb-6 border-b border-[#1C1917]/20 flex items-center justify-between">
+      <a href="/" class="text-xs font-mono font-bold uppercase tracking-wider text-[#1C1917] no-underline hover:text-[#D34E24]">
+        ← Back to Halbert
+      </a>
+      <span class="text-xs font-mono opacity-60 uppercase">Legal / Privacy</span>
+    </header>
+
+    <main class="space-y-8">
+      <div>
+        <div class="text-xs font-mono uppercase tracking-widest text-[#D34E24] font-bold mb-2">Legal Policy</div>
+        <h1 class="text-4xl md:text-5xl font-black mb-4">Privacy Policy</h1>
+        <p class="text-sm font-mono opacity-60">Effective Date: August 25, 2026 · Last Updated: August 25, 2026</p>
+      </div>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">1. Core Commitment: Sovereign by Design</h2>
+        <p>Halbert is built on an uncompromising principle: <strong>your computer's data belongs to you.</strong></p>
+        <p>Unlike traditional cloud-based AI tools, Halbert operates <strong>100% local-first by default</strong>. We do not harvest, monetize, train on, or transmit your logs, telemetry, configuration files, terminal commands, or conversational prompts.</p>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">2. The Halbert Software Application</h2>
+        <h3 class="text-lg font-bold">2.1 What Halbert Accesses Locally</h3>
+        <p>To function as a host custodian, Halbert reads local machine state on your system:</p>
+        <ul class="list-disc pl-6 space-y-1 text-sm">
+          <li>Hardware sensor telemetry (<code>hwmon</code>, CPU/GPU temperatures, memory and disk utilization).</li>
+          <li>Operating system logs (<code>systemd-journald</code>, <code>syslog</code>, <code>/var/log</code>).</li>
+          <li>Configuration files (<code>/etc</code>, dotfiles in <code>$HOME</code>, <code>launchd</code> plists, systemd service units).</li>
+          <li>Shell history and environment variables (<code>$PATH</code>, shell profiles).</li>
+        </ul>
+        <p class="text-sm bg-[#EFECE5] p-4 border-l-4 border-[#D34E24] font-mono">
+          <strong>All of this data remains strictly on your local machine.</strong> It is stored in standard local directories adhering to the XDG Base Directory Specification: <code>~/.config/halbert/</code>, <code>~/.local/share/halbert/</code>, and <code>~/.local/state/halbert/</code>.
+        </p>
+
+        <h3 class="text-lg font-bold mt-4">2.2 Zero Telemetry, Analytics, or Crash Reporting</h3>
+        <p>Halbert <strong>does not collect telemetry</strong>, event pings, or usage analytics. Halbert <strong>does not phone home</strong> on startup, execution, or shutdown. There are no background beacon scripts, tracking SDKs, or third-party diagnostic collectors embedded in Halbert.</p>
+
+        <h3 class="text-lg font-bold mt-4">2.3 Optional Cloud Model Connections</h3>
+        <p>Halbert runs on local models (via Ollama or Apple Silicon MLX) by default. If you <strong>explicitly choose</strong> to configure external cloud API keys (e.g., Anthropic Claude, OpenAI GPT, Google Gemini):</p>
+        <ul class="list-disc pl-6 space-y-1 text-sm">
+          <li>Only the specific prompt and relevant retrieved context snippets required to answer your query are sent to the designated cloud provider.</li>
+          <li>Your data transfer is governed strictly by your direct agreement with that cloud provider.</li>
+          <li>Halbert never proxies your cloud requests through intermediate servers.</li>
+        </ul>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">3. The Halbert Project Website</h2>
+        <h3 class="text-lg font-bold">3.1 Early Access Email Collection</h3>
+        <p>On our website, we offer an early access signup form. We collect your email address solely to notify you when release builds or beta invitations become available. We do not sell, rent, trade, or share your email address with third parties or data brokers. You may unsubscribe or request permanent deletion at any time by emailing <code>privacy@halbert.net</code>.</p>
+
+        <h3 class="text-lg font-bold mt-4">3.2 Hosting & CDN Server Logs</h3>
+        <p>Our website is statically served via modern content delivery networks. Standard non-identifying request metadata (IP address, browser user-agent, referring URL, timestamp) is temporarily logged by CDN infrastructure for network security, DDoS mitigation, and reliable asset delivery.</p>
+
+        <h3 class="text-lg font-bold mt-4">3.3 Cookies & Tracking</h3>
+        <p>The Halbert website does not use advertising cookies, retargeting pixels, Google Analytics, or behavioral cross-site trackers.</p>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">4. Commercial Purchases (LemonSqueezy)</h2>
+        <p>For paid software tiers (Halbert Pro for macOS), orders are processed by our Merchant of Record, <strong>LemonSqueezy</strong> (Lemon Squeezy LLC). Financial data (such as credit cards) is handled directly by LemonSqueezy and its payment processors and is never seen, stored, or processed by Halbert servers.</p>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">5. Your Data Rights (GDPR & CCPA)</h2>
+        <p>You possess the right to access or delete any personal data we hold (e.g. early access email list). Halbert does not sell personal information. To exercise your rights, email: <a href="mailto:privacy@halbert.net">privacy@halbert.net</a>.</p>
+      </section>
+
+      <footer class="pt-8 mt-12 border-t border-[#1C1917]/20 flex flex-wrap gap-4 text-xs font-mono opacity-80 justify-between items-center">
+        <div>© 2024–2026 Eric Bintner and Halbert Contributors</div>
+        <div class="flex gap-4">
+          <a href="/terms.html">Terms of Service</a>
+          <a href="https://github.com/EricBintner/Halbert">GitHub (GPL-3.0)</a>
+        </div>
+      </footer>
+    </main>
+  </body>
+</html>

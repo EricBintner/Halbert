@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 GPU API Routes
 
@@ -679,23 +681,14 @@ Provide:
             
             # Call LLM for analysis
             try:
-                # Get configured endpoint
-                from ...utils.platform import get_config_dir
-                import yaml
-                
-                endpoint = "http://localhost:11434"
-                model = "llama3.1:8b"
-                
-                config_path = get_config_dir() / 'models.yml'
-                if config_path.exists():
-                    with open(config_path, 'r') as f:
-                        config = yaml.safe_load(f) or {}
-                    orch = config.get('orchestrator', {})
-                    if orch.get('endpoint'):
-                        endpoint = orch['endpoint']
-                    if orch.get('model'):
-                        model = orch['model']
-                
+                # Configured guide model + endpoint (models.yml); never a built-in default id
+                from ...model.client import get_configured_model, get_ollama_endpoint
+
+                endpoint = get_ollama_endpoint()
+                model = get_configured_model()
+                if not model:
+                    raise ValueError("No model configured — choose one in Settings → AI Models (models.yml)")
+
                 response = requests.post(
                     f"{endpoint}/api/chat",
                     json={

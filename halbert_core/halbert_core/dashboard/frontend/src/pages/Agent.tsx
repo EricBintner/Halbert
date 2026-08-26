@@ -1,25 +1,31 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * Agent Page
- * 
- * Cascade-style agent chat interface.
- * Based on research2.md: State machine that streams internal logs to user.
+ *
+ * The conversation with the host, reachable from the browsing navigation.
+ * It is the same canvas the Sovereign Host surface gives the whole window —
+ * this page is the way in while you are browsing dashboard pages, so it also
+ * offers the jump to the full surface.
  */
 
 import { PageHeader } from '@/components/domain';
 import { AgentChat } from '@/components/agent';
-import { Bot, Settings, History } from 'lucide-react';
+import { MessageSquare, Maximize2, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useShellMode } from '@/contexts/ShellModeContext';
 import { useState } from 'react';
 
 export function Agent() {
   const [showHistory, setShowHistory] = useState(false);
+  const { setMode } = useShellMode();
 
   return (
     <div className="flex flex-col h-full">
       <PageHeader
-        title="Halbert Agent"
-        description="AI-powered system assistant with state machine workflow"
-        icon={<Bot className="h-6 w-6" />}
+        title="Talk to this machine"
+        description="The host speaks for itself — vitals, configuration and terminals in one conversation"
+        icon={<MessageSquare className="h-6 w-6" />}
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -31,14 +37,20 @@ export function Agent() {
               <History className="h-4 w-4" />
               History
             </Button>
-            <Button variant="outline" size="sm" className="gap-2">
-              <Settings className="h-4 w-4" />
-              Settings
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setMode('engaged')}
+              className="gap-2"
+              title="Open the full Sovereign Host surface (Cmd/Ctrl+B)"
+            >
+              <Maximize2 className="h-4 w-4" />
+              Sovereign Host
             </Button>
           </div>
         }
       />
-      
+
       <div className="flex-1 min-h-0">
         <AgentChat className="h-full" />
       </div>

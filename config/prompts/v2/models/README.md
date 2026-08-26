@@ -1,82 +1,25 @@
-# Recommended Models for Halbert
+# Model Notes
 
-Based on testing, these models work best with Halbert's prompt system.
+Halbert does not recommend or list specific models. Configure whichever models
+your endpoint serves in Settings → AI Models; the prompt system adapts to the
+configured model's size and behaviour through the override files in this
+directory.
 
-## Tier: Guide (Quick Responses)
+## Override Files
 
-| Model | Size | Quality | System Prompt | Notes |
-|-------|------|---------|---------------|-------|
-| **qwen3:14b** | 14B | ⭐⭐⭐⭐ | ✅ Yes | **Currently tested** - good reasoning |
-| qwen2.5:14b | 14B | ⭐⭐⭐⭐ | ✅ Yes | Good balance of speed and instruction following |
-| llama3.1:8b | 8B | ⭐⭐ | ✅ Yes | Fast but hallucinates examples, verbose |
+- `small-model-overrides.xml` - Stronger, more repetitive constraints for
+  smaller models (roughly 7B-14B parameters) that need extra reinforcement.
+- `reasoning-model-overrides.xml` - Handling for models that emit
+  `<think>...</think>` reasoning blocks before their answer. The reasoning is
+  captured separately and shown to the user as a collapsible "Reasoning"
+  section.
 
-**Recommended**: `qwen3:14b` (tested)
+Only `.xml` files in this directory are loaded by `PromptLoader`; this README
+is documentation only.
 
-## Tier: Specialist (Complex Analysis)
+## Sizing Guidance
 
-| Model | Size | Quality | System Prompt | Notes |
-|-------|------|---------|---------------|-------|
-| **deepseek-r1:32b** | 32B | ⭐⭐⭐⭐⭐ | ❌ Injected | **Currently tested** - excellent reasoning |
-| **qwen3-next:80b** | 80B (3B active) | ⭐⭐⭐⭐⭐ | ✅ Yes | Future option - outperforms Gemini-2.5-Flash |
-| qwen3:32b | 32B | ⭐⭐⭐⭐ | ✅ Yes | Good analysis, fast |
-
-**Recommended**: `deepseek-r1:32b` (tested) or `qwen3-next:80b` (future)
-
-## Tier: Vision (Image Analysis)
-
-| Model | Size | Quality | System Prompt | Notes |
-|-------|------|---------|---------------|-------|
-| **qwen3-v1:32b** | 32B | ⭐⭐⭐⭐ | ✅ Yes | **Currently tested** - good multimodal |
-| qwen2-vl:32b | 32B | ⭐⭐⭐⭐⭐ | ✅ Yes | Best vision understanding |
-
-**Recommended**: `qwen3-v1:32b` (tested)
-
-## System Prompt Handling
-
-**Key Finding**: Not all models want system prompts!
-
-| Model Family | System Prompt? | How Halbert Handles It |
-|--------------|----------------|------------------------|
-| Qwen3 | ✅ Yes | Standard system message |
-| Qwen3-Next | ✅ Yes | Standard system message |
-| **DeepSeek-R1** | ❌ NO | **Injects into user message** |
-| Llama 3.x | ✅ Yes | Standard system message |
-| Mistral | ⚠️ Limited | Standard (may ignore) |
-
-### DeepSeek-R1 Special Handling
-Per [official recommendation](https://huggingface.co/deepseek-ai/DeepSeek-R1):
-> "Avoid adding a system prompt; all instructions should be contained within the user prompt."
-
-Halbert automatically detects `deepseek-r1` models and injects the system prompt into the user message instead.
-
-## Known Issues by Model
-
-### llama3.1:8b
-- ❌ Hallucinates "example output" in code blocks
-- ❌ Verbose preambles ("Let me think...")
-- ❌ Ignores one-command-at-a-time rule
-- ✅ Fast response time
-
-### qwen3:14b  
-- ⚠️ Sometimes batches multiple commands
-- ✅ Good instruction following
-- ✅ Accurate Linux knowledge
-
-### deepseek-r1:32b
-- ✅ Excellent reasoning
-- ✅ Follows constraints well
-- ⚠️ Thinking blocks need special handling (auto-parsed)
-- ⚠️ Slower response time
-- ⚠️ No system prompt (handled automatically)
-
-## Installation
-
-```bash
-# Current tested setup
-ollama pull qwen3:14b        # Guide
-ollama pull deepseek-r1:32b  # Specialist (on Mac Studio)
-ollama pull qwen3-v1:32b     # Vision (on Mac Studio)
-
-# Future specialist option
-ollama pull qwen3-next:80b   # When available
-```
+Choose a model by memory budget rather than by name. As a rough rule, a
+~14B-parameter model at 4-bit quantization fits in ~10 GB, and a ~32B model at
+4-bit needs ~20 GB. Pull a model of your choice with `ollama pull <model>` and
+select it in Settings → AI Models.

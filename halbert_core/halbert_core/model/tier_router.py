@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Phase 38: Tier-Based Model Router with Intelligent Fallbacks
 
@@ -21,7 +23,6 @@ import yaml
 
 from .capabilities import (
     ModelCapabilities, ModelDefinition, TierConfig, ModelTier,
-    get_known_capabilities, KNOWN_CAPABILITIES
 )
 from .providers import ModelProvider, ModelResponse, OllamaProvider
 from .providers.base import GenerationError, ModelNotFoundError
@@ -200,22 +201,11 @@ class TierRouter:
     - Graceful fallback chains
     - Capability-based routing
     
-    Example configurations:
+    Example topologies:
     
-    1. Full Local:
-       guide: llama3.1:8b (localhost)
-       specialist: llama3.3:70b (GPU server)
-       vision: llava:34b (GPU server)
-    
-    2. Hybrid Local + API:
-       guide: llama3.1:8b (localhost)
-       specialist: claude-3.5-sonnet (Anthropic API)
-       vision: claude-3.5-sonnet (Anthropic API)
-    
-    3. Cloud Only:
-       guide: claude-3-haiku (fast, cheap)
-       specialist: claude-3.5-sonnet (quality)
-       vision: claude-3.5-sonnet (multimodal)
+    1. Fully local: all three tiers on local endpoints.
+    2. Hybrid: guide local, specialist/vision on an API provider.
+    3. Cloud only: every tier on an API provider.
     """
     
     def __init__(self, config_path: Optional[Path] = None):

@@ -144,7 +144,10 @@ def has_header(text: str) -> bool:
 
 
 def header_lines_for(path: Path) -> Tuple[str, ...]:
-    rel = path.relative_to(REPO_ROOT).as_posix()
+    try:
+        rel = path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        rel = ""  # outside the repo (e.g. tests): first-party default
     if rel in THIRD_PARTY_HEADERS:
         return THIRD_PARTY_HEADERS[rel]
     return (f"{SPDX_TAG} {LICENSE_ID}", COPYRIGHT)

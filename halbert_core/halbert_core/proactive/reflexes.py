@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Living Reflexes (F3).
 
 A reflex is a user-defined rule that fires when a detector finding / system

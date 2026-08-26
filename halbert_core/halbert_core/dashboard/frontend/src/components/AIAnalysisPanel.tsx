@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * AIAnalysisPanel - Reusable AI analysis component.
  * 
  * Provides a consistent UI for AI-powered analysis across all pages.
- * Supports quick analysis (7b model) and deep research (70b model).
+ * Supports quick analysis (guide model) and deep research (specialist model).
  */
 
 import { useState } from 'react'

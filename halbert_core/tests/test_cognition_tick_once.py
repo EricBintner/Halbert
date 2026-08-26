@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 B1: the Haloysius cognition tick must run exactly once per agent turn,
 regardless of which states the loop visits, and PLANNING's terminal

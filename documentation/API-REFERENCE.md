@@ -59,7 +59,7 @@ Content-Type: application/json
 {
   "response": "Looking at the storage discoveries...",
   "debug": {
-    "model_used": "llama3.1:70b",
+    "model_used": "<specialist-model-id>",
     "model_type": "specialist",
     "complexity_score": 0.7,
     "tokens_used": 512
@@ -400,7 +400,7 @@ POST /api/settings/guide/clear       # Clear guide assignment
 ```json
 {
   "endpoint_id": "local-ollama",
-  "model": "llama3.1:8b"
+  "model": "<model-id>"
 }
 ```
 

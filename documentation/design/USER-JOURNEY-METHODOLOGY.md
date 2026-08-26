@@ -75,7 +75,7 @@ Click "Meet Host" ───────> First Greeting Stream ─────�
 **Step-by-Step Experience:**
 1. **First Launch:** The user launches the Tauri app. The window opens with warm paper canvas (`#F7F5F0`) and clear mid-century typography.
 2. **Telemetry Ingestion:** Halbert quietly inspects local hardware sensors (`/sys/class/hwmon`), `/etc/os-release`, and mounted drives in under `400ms`.
-3. **Model Selection:** The `UnifiedModelPicker` identifies active local Ollama models (e.g. `llama3:8b`, `qwen2.5-coder:7b`) with zero complex API keys required.
+3. **Model Selection:** The `UnifiedModelPicker` identifies active local Ollama models (whatever your endpoint has pulled) with zero complex API keys required.
 4. **The Awakening:** Halbert speaks its first sentence:  
    > *"Hello. I am `ubuntu-server-01`. I run Ubuntu 24.04 on an AMD Ryzen 9 with 64GB RAM. I've mapped 3 storage volumes and calibrated my sensors. How can I help you today?"*
 5. **Outcome:** The user feels immediate trust and understanding—Halbert is not an alien bot; it is their computer.

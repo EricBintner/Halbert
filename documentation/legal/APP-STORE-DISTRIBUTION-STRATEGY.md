@@ -202,10 +202,11 @@ address:
   `documentation/legal/CORPUS-LICENSING-ARCHITECTURE.md`.
 * **Third-party code.** Covered by the dependency constraint in §4.1.
 * **Model weights.** Ollama/MLX models are downloaded by the user at runtime, not
-  bundled. Meta Llama 3.1, Qwen and DeepSeek each carry their own terms and
-  attribution obligations (`LEG-MOD-04`). Bundling weights into an App Store
-  build would open a separate licensing question and should not be done without
-  re-reviewing each model's licence.
+  bundled. Each model carries its own publisher terms and attribution
+  obligations, which Halbert reads from the licence text the runtime ships with
+  the model (`LEG-MOD-04`). Bundling weights into an App Store build would open
+  a separate licensing question and should not be done without reviewing each
+  bundled model's licence.
 * **Apple's own review requirements.** Independent of licensing, and independently
   capable of rejecting the build.
 

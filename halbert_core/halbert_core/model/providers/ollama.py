@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Ollama provider implementation (Phase 5 M1).
 
@@ -7,6 +9,7 @@ Supports model management and generation.
 
 from __future__ import annotations
 from typing import Dict, Any, List, Optional
+import re
 import requests
 import time
 import logging
@@ -15,8 +18,13 @@ from .base import (
     ModelProvider, ModelConfig, ModelResponse, ModelCapability,
     ModelLoadError, ModelNotLoadedError, ModelNotFoundError, GenerationError
 )
+from ...utils.reasoning import is_reasoning_model
 
 logger = logging.getLogger('halbert.model')
+
+# Size tag in a model id, e.g. ":7b", "-14b", ":8b-instruct"
+_SIZE_TAG_RE = re.compile(r"[:\-_](\d+(?:\.\d+)?)b\b", re.IGNORECASE)
+_DEFAULT_CONTEXT_LENGTH = 4096  # Conservative default when the runtime does not report one
 
 
 class OllamaProvider(ModelProvider):
@@ -41,6 +49,9 @@ class OllamaProvider(ModelProvider):
         """
         self.base_url = base_url.rstrip('/')
         self._loaded_models: Dict[str, ModelConfig] = {}
+        # Per-model metadata from /api/show (capabilities, context length),
+        # cached because list_models() is called on every load/get_model_info.
+        self._show_cache: Dict[str, Dict[str, Any]] = {}
         
         logger.info(f"Ollama provider initialized: {base_url}")
     
@@ -56,8 +67,9 @@ class OllamaProvider(ModelProvider):
             for model_data in data.get("models", []):
                 model_id = model_data.get("name", "")
                 
-                # Parse capabilities from model name
-                capabilities = self._infer_capabilities(model_id)
+                # Runtime metadata (capabilities, context length) from /api/show
+                show = self.show_model(model_id)
+                capabilities = self._infer_capabilities(model_id, show)
                 
                 # Estimate memory from size
                 size_bytes = model_data.get("size", 0)
@@ -68,12 +80,14 @@ class OllamaProvider(ModelProvider):
                     provider="ollama",
                     capabilities=capabilities,
                     memory_mb=memory_mb,
-                    context_length=self._infer_context_length(model_id),
+                    context_length=self._infer_context_length(model_id, show),
                     quantization=self._extract_quantization(model_id),
                     metadata={
                         "size_bytes": size_bytes,
                         "modified": model_data.get("modified_at"),
-                        "family": model_data.get("details", {}).get("family")
+                        "family": model_data.get("details", {}).get("family"),
+                        "runtime_capabilities": list(show.get("capabilities") or []),
+                        "vision": "vision" in (show.get("capabilities") or []),
                     }
                 )
                 
@@ -281,45 +295,93 @@ class OllamaProvider(ModelProvider):
         except Exception:
             return False
     
-    def _infer_capabilities(self, model_id: str) -> List[ModelCapability]:
-        """Infer model capabilities from model name."""
+    def show_model(self, model_id: str) -> Dict[str, Any]:
+        """
+        Fetch runtime metadata for a model via ``POST /api/show``.
+
+        Returns a dict with:
+        - ``capabilities``: list of labels reported by Ollama (may contain
+          "completion", "vision", "thinking", "tools", "embedding")
+        - ``context_length``: int from ``model_info["<arch>.context_length"]``
+          when reported, else None
+        - ``family``: model family string from ``details`` when reported
+
+        Results are cached per model id for the lifetime of the provider;
+        failures are not cached and yield an empty dict.
+        """
+        if not model_id:
+            return {}
+        cached = self._show_cache.get(model_id)
+        if cached is not None:
+            return cached
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/show",
+                json={"model": model_id, "name": model_id},
+                timeout=5,
+            )
+            response.raise_for_status()
+            data = response.json() or {}
+        except Exception as e:  # noqa: BLE001 - metadata is best-effort
+            logger.debug(f"/api/show failed for {model_id}: {e}")
+            return {}
+        
+        context_length: Optional[int] = None
+        model_info = data.get("model_info") or {}
+        if isinstance(model_info, dict):
+            for key, value in model_info.items():
+                if str(key).endswith(".context_length") and isinstance(value, (int, float)) and value > 0:
+                    context_length = int(value)
+                    break
+        
+        info = {
+            "capabilities": [str(c).lower() for c in (data.get("capabilities") or [])],
+            "context_length": context_length,
+            "family": (data.get("details") or {}).get("family"),
+        }
+        self._show_cache[model_id] = info
+        return info
+    
+    def _infer_capabilities(
+        self, model_id: str, show: Optional[Dict[str, Any]] = None
+    ) -> List[ModelCapability]:
+        """
+        Infer model capabilities from runtime metadata, then generic tokens.
+
+        Never keys on vendor or model-family names: uses the ``capabilities``
+        list from ``/api/show`` when available, otherwise generic substrings
+        ("code"/"coder", "think"/"reason") and parameter-size tags.
+        """
         capabilities = [ModelCapability.CHAT]  # All models can chat
         
         model_lower = model_id.lower()
+        runtime_caps = list((show or {}).get("capabilities") or [])
         
         # Code models
-        if any(kw in model_lower for kw in ["code", "coder", "qwen2.5-coder", "deepseek-coder"]):
+        if "code" in model_lower:  # also matches "coder"
             capabilities.append(ModelCapability.CODE)
         
-        # Reasoning models
-        if any(kw in model_lower for kw in ["deepseek", "qwen", "llama-3.1"]):
+        # Reasoning / thinking models
+        if is_reasoning_model(model_lower, runtime_caps or None):
             capabilities.append(ModelCapability.REASONING)
         
         # Fast models (smaller parameter counts)
-        if any(kw in model_lower for kw in ["7b", "8b", "14b"]):
+        size_match = _SIZE_TAG_RE.search(model_lower)
+        if size_match and float(size_match.group(1)) <= 14:
             capabilities.append(ModelCapability.FAST)
-        
-        # Technical models
-        if any(kw in model_lower for kw in ["llama", "mistral"]):
-            capabilities.append(ModelCapability.TECHNICAL)
         
         return capabilities
     
-    def _infer_context_length(self, model_id: str) -> int:
-        """Infer context length from model name."""
-        model_lower = model_id.lower()
-        
-        # Known context lengths
-        if "llama-3.1" in model_lower:
-            return 128000  # Llama 3.1 has 128k context
-        elif "llama-3" in model_lower:
-            return 8192
-        elif "qwen2.5" in model_lower:
-            return 32768
-        elif "deepseek" in model_lower:
-            return 16384
-        else:
-            return 4096  # Conservative default
+    def _infer_context_length(
+        self, model_id: str, show: Optional[Dict[str, Any]] = None
+    ) -> int:
+        """Context length from ``/api/show`` when reported, else a conservative default."""
+        if show is None:
+            show = self.show_model(model_id)
+        ctx = (show or {}).get("context_length")
+        if isinstance(ctx, int) and ctx > 0:
+            return ctx
+        return _DEFAULT_CONTEXT_LENGTH
     
     def _extract_quantization(self, model_id: str) -> Optional[str]:
         """Extract quantization level from model name."""

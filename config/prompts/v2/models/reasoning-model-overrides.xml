@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- 
   Override settings for reasoning models that use thinking blocks.
-  Apply these when using: deepseek-r1, qwq, o1-style models
+  Apply these when using models that emit <think>...</think> reasoning blocks
 -->
 <model_overrides target="reasoning">
   

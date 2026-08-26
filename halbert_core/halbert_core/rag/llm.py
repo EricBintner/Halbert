@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 LLM integration for RAG system using Ollama.
 """
@@ -13,8 +15,12 @@ logger = logging.getLogger('halbert')
 
 @dataclass
 class LLMConfig:
-    """Configuration for LLM."""
-    model: str = "llama3.2:3b"
+    """Configuration for LLM.
+
+    ``model`` defaults to None and is resolved from models.yml (the
+    configured guide model) in OllamaLLM.__init__.
+    """
+    model: Optional[str] = None
     base_url: str = "http://localhost:11434"
     temperature: float = 0.7
     max_tokens: int = 1024
@@ -36,6 +42,12 @@ class OllamaLLM:
             config: LLM configuration
         """
         self.config = config or LLMConfig()
+        if not self.config.model:
+            try:
+                from ..model.client import get_configured_model
+                self.config.model = get_configured_model() or None
+            except Exception:
+                self.config.model = None
         self.base_url = self.config.base_url.rstrip('/')
         logger.info(f"Initialized OllamaLLM with model={self.config.model}")
     
@@ -76,6 +88,10 @@ class OllamaLLM:
         Returns:
             Generated text
         """
+        if not self.config.model:
+            raise ValueError(
+                "No model configured — choose one in Settings → AI Models"
+            )
         payload = {
             "model": self.config.model,
             "prompt": prompt,

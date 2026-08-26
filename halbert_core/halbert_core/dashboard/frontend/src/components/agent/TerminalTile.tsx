@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * TerminalTile — inline xterm.js terminal for a live PTY session (E1b).
  *
@@ -7,6 +9,10 @@
  * (Pin/toggle-visible, Terminate, Copy). User input is forwarded to the
  * backend PTY via useTerminalSessions.sendInput; resize via FitAddon +
  * ResizeObserver calls store.resize.
+ *
+ * Sessions the agent is mirroring over SSE (transport 'sse') are read-only:
+ * there is no socket to write keystrokes to, so input, resize and terminate
+ * are suppressed rather than silently dropped.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -36,6 +42,7 @@ function formatElapsed(startedAt: number, now: number): string {
 
 export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
   const { sendInput, resize, kill, setVisible } = useTerminalSessions();
+  const interactive = session.transport === 'ws';
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -55,7 +62,8 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
     if (!containerRef.current || termRef.current) return;
 
     const term = new XTerm({
-      cursorBlink: session.status === 'running',
+      cursorBlink: session.status === 'running' && interactive,
+      disableStdin: !interactive,
       cursorStyle: 'bar',
       fontSize: 13,
       fontFamily: 'JetBrains Mono, Menlo, Monaco, monospace',
@@ -76,14 +84,16 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
     termRef.current = term;
     fitRef.current = fit;
 
-    // Forward keystrokes to the PTY
-    const disposeData = term.onData((data) => sendInput(session.id, data));
+    // Forward keystrokes to the PTY (only a real PTY can receive them)
+    const disposeData = term.onData((data) => {
+      if (interactive) sendInput(session.id, data);
+    });
 
     // Resize observer -> backend resize
     const ro = new ResizeObserver(() => {
       try {
         fit.fit();
-        if (term.cols && term.rows) {
+        if (interactive && term.cols && term.rows) {
           resize(session.id, term.cols, term.rows);
         }
       } catch {
@@ -165,6 +175,14 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
         {session.sandboxed && (
           <span className="px-1 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">sandbox</span>
         )}
+        {!interactive && (
+          <span
+            className="px-1 py-0.5 rounded bg-violet-500/20 text-violet-300 border border-violet-500/40"
+            title="Halbert is running this — mirrored read-only"
+          >
+            agent
+          </span>
+        )}
 
         {/* Quick actions */}
         <div className="flex items-center gap-1 ml-1">
@@ -182,7 +200,7 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
           >
             {copied ? '✓' : '⧉'}
           </button>
-          {session.status === 'running' && (
+          {session.status === 'running' && interactive && (
             <button
               onClick={handleTerminate}
               title="Terminate"

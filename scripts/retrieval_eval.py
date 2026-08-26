@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Retrieval Evaluation Suite for Halbert RAG (Phase 0 T0e.2).
 Evaluates precision, coverage, and latency across 40+ system administration queries.

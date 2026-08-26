@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 from __future__ import annotations
 from typing import Dict, Any
 from .graph import Graph, friend_and_guide, eyes_monitor, deep_thinker

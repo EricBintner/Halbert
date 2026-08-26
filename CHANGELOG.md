@@ -6,6 +6,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- Legal hub under `documentation/legal/`: `LICENSE.md`, `THIRD-PARTY-LICENSES.md`,
+  `PRIVACY.md`, `DISCLAIMER.md`, `TRADEMARKS.md`, and the compliance action plan.
+- `halbert license` (`--full`, `--third-party`) and `halbert --version`; `halbert info`
+  and the dashboard server now print the GPLv3 legal notice.
+- Foundation-model licence and attribution notices (`halbert_core.model.attribution`)
+  in `halbert model-list-all`, `/api/llm/proxy/models`, and the model picker UI.
+- SPDX licence headers on all first-party source files, enforced by
+  `scripts/add_spdx_headers.py --check`; DCO sign-off check for pull requests.
+
+### Changed
+- Licence declared as `GPL-3.0-or-later` consistently across source headers,
+  `pyproject.toml`, `Cargo.toml`, `package.json`, and `tauri.conf.json`.
+
+---
+
 ## [0.1.1] - 2025-12-15
 
 ### Removed

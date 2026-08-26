@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * AgentChat Component
  * 
@@ -40,6 +42,8 @@ import { ScanBlock } from './ScanBlock';
 import { ContextBar } from './ContextBar';
 import { DiffBlock } from './DiffBlock';
 import { CodeBlock } from '../domain/CodeBlock';
+import { HostGreeting } from './HostGreeting';
+import { InlineTerminals } from './InlineTerminals';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
 
@@ -630,32 +634,8 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
       )}
       
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {/* Empty State */}
-        {userMessages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center px-8">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center mb-4">
-              <span className="text-3xl">🤖</span>
-            </div>
-            <h2 className="text-xl font-semibold text-zinc-200 mb-2">
-              Halbert Agent
-            </h2>
-            <p className="text-sm text-zinc-400 max-w-md mb-6">
-              I can help you manage your system, search documentation, execute commands, 
-              and more. Ask me anything about your Linux environment.
-            </p>
-            <div className="flex flex-wrap gap-2 justify-center">
-              {['Check system status', 'Search docs', 'Manage services', 'Run diagnostics'].map((suggestion) => (
-                <button
-                  key={suggestion}
-                  onClick={() => setInput(suggestion)}
-                  className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-full border border-zinc-700 transition-colors"
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Empty state: the host introduces itself (not a generic assistant) */}
+        {userMessages.length === 0 && <HostGreeting onPrompt={setInput} />}
         
         {userMessages.map((msg, idx) => (
           <div key={msg.id} className="space-y-3">
@@ -693,6 +673,10 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
                   {session.toolExecutions.map((exec) => (
                     <ToolExecutionCard key={exec.executionId} execution={exec} />
                   ))}
+
+                  {/* Terminals Halbert opened for this turn, flowing in the
+                      conversation; they dock to the right column on scroll. */}
+                  <InlineTerminals sessionIds={session.terminalSessions ?? []} />
                   
                   {/* Diff Proposals */}
                   {session.diffProposals.map((diff) => (

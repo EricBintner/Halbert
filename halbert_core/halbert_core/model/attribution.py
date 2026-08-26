@@ -1,385 +1,253 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-"""Foundation-model licence metadata and user-facing attribution notices.
+"""Model licence notices, derived from the licence text a model ships with.
 
-Single source of truth for LEG-MOD-04 (documentation/legal/LEGAL-AND-LICENSING-TODO.md).
-Consumed by:
+Halbert neither bundles nor recommends models. Whatever the user has installed,
+the runtime that serves it already carries the licence: Ollama returns it from
+``POST /api/show`` (``license`` field, the verbatim text the publisher attached
+to the weights). This module reads that text and extracts what Halbert has to
+surface — the licence name, any user-facing display notice the licence asks
+for (some community licences require a fixed phrase on a related UI or
+documentation page), the sentence a NOTICE file must carry when the weights are
+redistributed, and whether the licence is non-commercial.
 
-* ``Halbert/main.py`` — ``halbert model list`` / ``model status`` / ``info``
-* ``halbert_core.dashboard.routes.llm`` — ``license`` / ``attribution`` fields on
-  every entry returned by ``POST /api/llm/proxy/models``
-* ``halbert_core.dashboard.routes.legal`` — foundation-model section of the
-  "About / Legal Notices" panel
+Nothing here names a model. Detection is by licence *wording*, so a model
+released tomorrow under an existing licence family is handled without a code
+change, and a model under an unknown licence still gets its title reported.
 
-Halbert does not bundle model weights: models are pulled by the user through
-Ollama / MLX / a cloud API. Several community licences (Meta Llama in
-particular) only *require* a display notice from parties that distribute the
-weights or ship a product that contains them. Halbert shows the notices anyway
-so that a future build that does bundle weights (Halbert Pro) is compliant by
-construction, and so users can see the terms of the model they are talking to.
+Consumers:
 
-Matching is by model *family* (the part of an Ollama tag before ``:``), so
-``llama3.1:8b-instruct-q4_K_M`` and ``llama3.1`` resolve to the same entry.
-Unknown models resolve to ``None`` — callers must treat that as "no notice",
-never as "no licence".
+* ``halbert_core.dashboard.routes.llm`` — ``license`` / ``license_id`` /
+  ``attribution`` fields on ``POST /api/llm/proxy/models`` entries
+* ``Halbert/main.py`` — ``halbert model-list-all`` / ``model-router-status``
+* the dashboard "About / Legal Notices" panel (see LEG-MOD-01)
 """
 
 from __future__ import annotations
 
+import os
 import re
-from dataclasses import asdict, dataclass, field
-from typing import Dict, Iterable, List, Optional, Tuple
+from dataclasses import asdict, dataclass
+from typing import Callable, Dict, Iterable, List, Optional
 
 __all__ = [
-    "ModelAttribution",
-    "FOUNDATION_MODEL_LICENSES",
-    "attribution_for",
+    "LicenseInfo",
+    "classify_license_text",
+    "fetch_ollama_license",
+    "license_for_ollama_model",
+    "provider_terms",
     "notices_for",
-    "normalize_model_id",
     "as_dict",
+    "default_ollama_url",
 ]
 
 
 @dataclass(frozen=True)
-class ModelAttribution:
-    """Licence facts for one model family."""
+class LicenseInfo:
+    """What a model licence asks of Halbert and its users."""
 
-    family: str
-    """Human-readable family name, e.g. ``"Meta Llama 3.1"``."""
-    license_name: str
-    """Licence name as it appears in the licence document itself."""
+    name: str
+    """Licence name as the licence text calls itself (e.g. ``"Apache License 2.0"``)."""
     license_id: str
     """SPDX identifier where one exists, otherwise a ``LicenseRef-`` tag."""
-    license_url: str
     notice: Optional[str] = None
-    """User-facing display text the licence asks for (``None`` when it asks for nothing)."""
-    notice_required_when: Optional[str] = None
-    """Plain-language trigger for the notice obligation."""
-    notes: Tuple[str, ...] = field(default_factory=tuple)
-    """Extra terms worth surfacing (use restrictions, geographic limits, base-model licences)."""
+    """Exact user-facing display text the licence requires, or ``None``."""
+    notice_file_sentence: Optional[str] = None
+    """Sentence a NOTICE file must contain when the weights are redistributed."""
+    derived_model_notice: Optional[str] = None
+    """Display text required only for models trained/fine-tuned from this one."""
+    non_commercial: bool = False
+    """True when the licence restricts use to non-commercial / research purposes."""
+    acceptable_use_policy: bool = False
+    """True when an Acceptable Use Policy is bundled with the licence."""
+    license_url: Optional[str] = None
+    source: str = "license-text"
+    """Where the facts came from: ``license-text`` (runtime-provided) or ``provider``."""
 
 
-_LLAMA_TRIGGER = (
-    "Required only when distributing the Llama weights or a product/service that "
-    "contains them; shown by Halbert as a courtesy because the model is recommended in its catalog."
-)
+# ── licence-family detection (by wording, never by model name) ───────────────
 
-# Ordered: first matching pattern wins, so put the more specific families first.
-FOUNDATION_MODEL_LICENSES: Tuple[Tuple[re.Pattern[str], ModelAttribution], ...] = (
-    # ── Meta Llama ────────────────────────────────────────────────────────
-    (
-        re.compile(r"^(llama-?4|meta-llama/llama-4)"),
-        ModelAttribution(
-            family="Meta Llama 4",
-            license_name="Llama 4 Community License Agreement",
-            license_id="LicenseRef-Meta-Llama-4-Community",
-            license_url="https://www.llama.com/llama4/license/",
-            notice="Built with Llama",
-            notice_required_when=_LLAMA_TRIGGER,
-            notes=(
-                "Derived models must carry \"Llama\" at the start of their name.",
-                "Not licensed to individuals or companies domiciled in the European Union for multimodal use.",
-            ),
-        ),
-    ),
-    (
-        re.compile(r"^(llama-?3\.3|meta-llama/llama-3\.3)"),
-        ModelAttribution(
-            family="Meta Llama 3.3",
-            license_name="Llama 3.3 Community License Agreement",
-            license_id="LicenseRef-Meta-Llama-3.3-Community",
-            license_url="https://www.llama.com/llama3_3/license/",
-            notice="Built with Llama",
-            notice_required_when=_LLAMA_TRIGGER,
-            notes=("Derived models must carry \"Llama\" at the start of their name.",),
-        ),
-    ),
-    (
-        re.compile(r"^(llama-?3\.2|meta-llama/llama-3\.2)"),
-        ModelAttribution(
-            family="Meta Llama 3.2",
-            license_name="Llama 3.2 Community License Agreement",
-            license_id="LicenseRef-Meta-Llama-3.2-Community",
-            license_url="https://www.llama.com/llama3_2/license/",
-            notice="Built with Llama",
-            notice_required_when=_LLAMA_TRIGGER,
-            notes=(
-                "Derived models must carry \"Llama\" at the start of their name.",
-                "Multimodal (vision) variants: licence rights are not granted to individuals or companies domiciled in the European Union.",
-            ),
-        ),
-    ),
-    (
-        re.compile(r"^(llama-?3\.1|meta-llama/(meta-)?llama-3\.1)"),
-        ModelAttribution(
-            family="Meta Llama 3.1",
-            license_name="Llama 3.1 Community License Agreement",
-            license_id="LicenseRef-Meta-Llama-3.1-Community",
-            license_url="https://www.llama.com/llama3_1/license/",
-            notice="Built with Llama",
-            notice_required_when=_LLAMA_TRIGGER,
-            notes=("Derived models must carry \"Llama\" at the start of their name.",),
-        ),
-    ),
-    (
-        re.compile(r"^(llama-?3(?![.\d])|meta-llama/meta-llama-3-)"),
-        ModelAttribution(
-            family="Meta Llama 3",
-            license_name="Meta Llama 3 Community License Agreement",
-            license_id="LicenseRef-Meta-Llama-3-Community",
-            license_url="https://www.llama.com/llama3/license/",
-            notice="Built with Meta Llama 3",
-            notice_required_when=_LLAMA_TRIGGER,
-            notes=("Derived models must carry \"Meta Llama 3\" at the start of their name.",),
-        ),
-    ),
-    (
-        re.compile(r"^(codellama|code-?llama|llama-?2|meta-llama/llama-2)"),
-        ModelAttribution(
-            family="Meta Llama 2 / Code Llama",
-            license_name="Llama 2 Community License Agreement",
-            license_id="LicenseRef-Meta-Llama-2-Community",
-            license_url="https://ai.meta.com/llama/license/",
-            notice=None,
-            notice_required_when=(
-                "No display notice. Distributed copies must carry a Notice file reading: "
-                "\"Llama 2 is licensed under the LLAMA 2 Community License, Copyright (c) Meta Platforms, Inc. All Rights Reserved.\""
-            ),
-            notes=("Code Llama is released under the Llama 2 Community License.",),
-        ),
-    ),
-    # ── DeepSeek ──────────────────────────────────────────────────────────
-    (
-        re.compile(r"^(deepseek-r1|deepseek-ai/deepseek-r1)"),
-        ModelAttribution(
-            family="DeepSeek-R1",
-            license_name="MIT License",
-            license_id="MIT",
-            license_url="https://huggingface.co/deepseek-ai/DeepSeek-R1/blob/main/LICENSE",
-            notice=None,
-            notice_required_when="MIT requires the copyright and permission notice to accompany distributed copies of the weights; no product display notice.",
-            notes=(
-                "Distilled variants also inherit their base model's licence: the 70B distill is built on Llama 3.3 "
-                "(Llama 3.3 Community License, \"Built with Llama\"); the 1.5B–32B distills are built on Qwen 2.5 (Apache-2.0).",
-            ),
-        ),
-    ),
-    (
-        re.compile(r"^(deepseek-coder|deepseek-ai/deepseek-coder)"),
-        ModelAttribution(
-            family="DeepSeek Coder",
-            license_name="DeepSeek License Agreement (model weights); MIT (code)",
-            license_id="LicenseRef-DeepSeek-Model-License",
-            license_url="https://github.com/deepseek-ai/DeepSeek-Coder/blob/main/LICENSE-MODEL",
-            notice=None,
-            notice_required_when="No product display notice. Redistribution must include the licence text and the Attachment A use restrictions.",
-            notes=("Attachment A use-based restrictions apply (no unlawful, harmful or discriminatory use).",),
-        ),
-    ),
-    (
-        re.compile(r"^(deepseek|deepseek-ai/)"),
-        ModelAttribution(
-            family="DeepSeek",
-            license_name="DeepSeek License Agreement / MIT (varies by model)",
-            license_id="LicenseRef-DeepSeek-Model-License",
-            license_url="https://github.com/deepseek-ai/DeepSeek-LLM/blob/main/LICENSE-MODEL",
-            notice=None,
-            notice_required_when="Check the specific model card; V3 and R1 weights are MIT, earlier releases use the DeepSeek License Agreement.",
-        ),
-    ),
-    # ── Alibaba Qwen ──────────────────────────────────────────────────────
-    (
-        re.compile(r"^(qwq|qwen/qwq)"),
-        ModelAttribution(
-            family="Alibaba QwQ",
-            license_name="Apache License 2.0",
-            license_id="Apache-2.0",
-            license_url="https://huggingface.co/Qwen/QwQ-32B/blob/main/LICENSE",
-            notice=None,
-            notice_required_when="Apache-2.0: no product display notice; keep the licence and NOTICE with distributed copies.",
-        ),
-    ),
-    (
-        re.compile(r"^(qwen3|qwen/qwen3)"),
-        ModelAttribution(
-            family="Alibaba Qwen3",
-            license_name="Apache License 2.0",
-            license_id="Apache-2.0",
-            license_url="https://huggingface.co/Qwen/Qwen3-32B/blob/main/LICENSE",
-            notice=None,
-            notice_required_when="Apache-2.0: no product display notice; keep the licence and NOTICE with distributed copies.",
-        ),
-    ),
-    (
-        re.compile(r"^(qwen2\.5-coder|qwen/qwen2\.5-coder)"),
-        ModelAttribution(
-            family="Alibaba Qwen2.5-Coder",
-            license_name="Apache License 2.0",
-            license_id="Apache-2.0",
-            license_url="https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct/blob/main/LICENSE",
-            notice=None,
-            notice_required_when="Apache-2.0: no product display notice; keep the licence and NOTICE with distributed copies.",
-            notes=("Exception: the 3B size is under the Qwen Research License (non-commercial).",),
-        ),
-    ),
-    (
-        re.compile(r"^(qwen2\.5|qwen/qwen2\.5|qwen2(?![.\d])|qwen/qwen2-)"),
-        ModelAttribution(
-            family="Alibaba Qwen2.5",
-            license_name="Apache License 2.0",
-            license_id="Apache-2.0",
-            license_url="https://huggingface.co/Qwen/Qwen2.5-14B-Instruct/blob/main/LICENSE",
-            notice=None,
-            notice_required_when="Apache-2.0: no product display notice; keep the licence and NOTICE with distributed copies.",
-            notes=(
-                "Exceptions: the 3B size is under the Qwen Research License (non-commercial); "
-                "the 72B size is under the Qwen License Agreement, which requires \"Built with Qwen\" or "
-                "\"Improved using Qwen\" in product documentation when distributed.",
-            ),
-        ),
-    ),
-    # ── Mistral ───────────────────────────────────────────────────────────
-    (
-        re.compile(r"^(mistral-small|mistralai/mistral-small)"),
-        ModelAttribution(
-            family="Mistral Small",
-            license_name="Apache License 2.0",
-            license_id="Apache-2.0",
-            license_url="https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503",
-            notice=None,
-            notice_required_when="Apache-2.0: no product display notice.",
-            notes=("Mistral Small 3.x is Apache-2.0; the older Mistral Small 22B (2409) was under the Mistral Research License (non-commercial).",),
-        ),
-    ),
-    (
-        re.compile(r"^(mistral|mixtral|mistral-nemo|mistralai/)"),
-        ModelAttribution(
-            family="Mistral",
-            license_name="Apache License 2.0",
-            license_id="Apache-2.0",
-            license_url="https://mistral.ai/news/announcing-mistral-7b",
-            notice=None,
-            notice_required_when="Apache-2.0: no product display notice.",
-            notes=("Mistral Large / Medium and 'Research' releases are NOT Apache-2.0; check the model card.",),
-        ),
-    ),
-    # ── Google Gemma ──────────────────────────────────────────────────────
-    (
-        re.compile(r"^(gemma|google/gemma)"),
-        ModelAttribution(
-            family="Google Gemma",
-            license_name="Gemma Terms of Use",
-            license_id="LicenseRef-Gemma-Terms-of-Use",
-            license_url="https://ai.google.dev/gemma/terms",
-            notice=None,
-            notice_required_when="No product display notice. Distributed copies must include the Gemma Terms and the Prohibited Use Policy.",
-        ),
-    ),
-    # ── Microsoft Phi ─────────────────────────────────────────────────────
-    (
-        re.compile(r"^(phi|microsoft/phi)"),
-        ModelAttribution(
-            family="Microsoft Phi",
-            license_name="MIT License",
-            license_id="MIT",
-            license_url="https://huggingface.co/microsoft/Phi-4/blob/main/LICENSE",
-            notice=None,
-            notice_required_when="MIT: no product display notice.",
-        ),
-    ),
-    # ── Embeddings ────────────────────────────────────────────────────────
-    (
-        re.compile(r"^(nomic-embed-text|nomic-ai/nomic-embed-text)"),
-        ModelAttribution(
-            family="Nomic Embed Text",
-            license_name="Apache License 2.0",
-            license_id="Apache-2.0",
-            license_url="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5",
-            notice=None,
-            notice_required_when="Apache-2.0: no product display notice.",
-        ),
-    ),
-    # ── Hosted / proprietary APIs ─────────────────────────────────────────
-    (
-        re.compile(r"^(gpt-|o[134](-|$)|chatgpt|openai/)"),
-        ModelAttribution(
-            family="OpenAI",
-            license_name="OpenAI Terms of Use (hosted service)",
-            license_id="LicenseRef-Proprietary-OpenAI",
-            license_url="https://openai.com/policies/terms-of-use/",
-            notice=None,
-            notice_required_when="Hosted API: prompts and context leave the machine. See PRIVACY.md and the cloud data-flow disclosure.",
-        ),
-    ),
-    (
-        re.compile(r"^(claude|anthropic/)"),
-        ModelAttribution(
-            family="Anthropic Claude",
-            license_name="Anthropic Consumer/Commercial Terms (hosted service)",
-            license_id="LicenseRef-Proprietary-Anthropic",
-            license_url="https://www.anthropic.com/legal/commercial-terms",
-            notice=None,
-            notice_required_when="Hosted API: prompts and context leave the machine. See PRIVACY.md and the cloud data-flow disclosure.",
-        ),
-    ),
-    (
-        re.compile(r"^(gemini|google/gemini|models/gemini)"),
-        ModelAttribution(
-            family="Google Gemini",
-            license_name="Google APIs / Gemini API Terms (hosted service)",
-            license_id="LicenseRef-Proprietary-Google",
-            license_url="https://ai.google.dev/gemini-api/terms",
-            notice=None,
-            notice_required_when="Hosted API: prompts and context leave the machine. See PRIVACY.md and the cloud data-flow disclosure.",
-        ),
-    ),
-)
+_WS = re.compile(r"\s+")
 
 
-_PROVIDER_PREFIXES = ("ollama/", "mlx/", "mlx-community/", "hf.co/", "huggingface.co/")
+def _normalize(text: str) -> str:
+    return _WS.sub(" ", text.replace("“", '"').replace("”", '"').replace("’", "'")).strip()
 
 
-def normalize_model_id(model_id: str) -> str:
-    """Lower-case, strip provider prefixes, and drop the Ollama ``:tag`` suffix.
+def _slug(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9.]+", "-", name).strip("-")
 
-    ``"Ollama/Llama3.1:8b-instruct-q4_K_M"`` → ``"llama3.1"``.
-    HuggingFace-style ``org/name`` ids are preserved (minus a trailing ``:tag``).
+
+_COMMUNITY_TITLE = re.compile(r"\b([A-Z][A-Z0-9 .]{1,40}?)\s+COMMUNITY LICENSE AGREEMENT\b", re.I)
+_RESEARCH_TITLE = re.compile(r"\b([A-Z][A-Za-z0-9 .]{1,40}?)\s+RESEARCH LICENSE(?: AGREEMENT)?\b", re.I)
+_LICENSE_AGREEMENT_TITLE = re.compile(r"\b([A-Z][A-Z0-9 .]{1,40}?)\s+LICENSE AGREEMENT\b", re.I)
+_TERMS_OF_USE_TITLE = re.compile(r"\b([A-Z][A-Za-z0-9 .]{1,40}?)\s+Terms of Use\b")
+
+# "prominently display "Built with X" on a related website, user interface, ..."
+_DISPLAY_CLAUSE = re.compile(r'(?:prominently\s+)?display\s+"([^"]{3,80})"', re.I)
+_BUILT_WITH = re.compile(r'"(Built with [^"]{1,60}|Improved using [^"]{1,60})"')
+_NOTICE_FILE = re.compile(r'"([^"]{0,60}?is licensed under[^"]{0,200}?All Rights Reserved\.?)"', re.I)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.;])\s+")
+_TRAINING_WORDS = re.compile(r"fine[- ]?tun|\btrain|distill|improve an AI model|create.*?AI model", re.I)
+
+
+def _title_case(s: str) -> str:
+    # "LLAMA 3.1" -> "Llama 3.1"; keep acronyms shorter than 4 chars upper-cased.
+    out = []
+    for w in s.split():
+        out.append(w if (w.isupper() and len(w) <= 3) or any(c.isdigit() for c in w) else w.capitalize())
+    return " ".join(out)
+
+
+def _extract_display_notice(norm: str) -> tuple[Optional[str], Optional[str]]:
+    """Return (display_notice, derived_model_notice) from the licence wording."""
+    display: Optional[str] = None
+    derived: Optional[str] = None
+    for sentence in _SENTENCE_SPLIT.split(norm):
+        m = _DISPLAY_CLAUSE.search(sentence) or _BUILT_WITH.search(sentence)
+        if not m:
+            continue
+        phrase = m.group(1).strip()
+        if _TRAINING_WORDS.search(sentence):
+            derived = derived or phrase
+        else:
+            display = display or phrase
+    return display, derived
+
+
+def classify_license_text(text: Optional[str]) -> Optional[LicenseInfo]:
+    """Classify a licence text (as returned by the model runtime) into a ``LicenseInfo``.
+
+    Returns ``None`` for empty input. Unknown licences are still returned with
+    their title line as ``name`` and ``license_id="LicenseRef-Unknown"`` so the
+    UI can at least show *that* a licence exists.
     """
-    mid = (model_id or "").strip().lower()
-    for prefix in _PROVIDER_PREFIXES:
-        if mid.startswith(prefix):
-            mid = mid[len(prefix):]
-            break
-    if ":" in mid:
-        mid = mid.split(":", 1)[0]
-    return mid
-
-
-def attribution_for(model_id: str) -> Optional[ModelAttribution]:
-    """Return the licence entry for ``model_id`` or ``None`` when unknown."""
-    mid = normalize_model_id(model_id)
-    if not mid:
+    if not text or not text.strip():
         return None
-    for pattern, entry in FOUNDATION_MODEL_LICENSES:
-        if pattern.search(mid):
-            return entry
-    return None
+    norm = _normalize(text)
+    first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")[:120]
+
+    display, derived = _extract_display_notice(norm)
+    nf = _NOTICE_FILE.search(norm)
+    notice_file = nf.group(1).strip() if nf else None
+    aup = "acceptable use policy" in norm.lower()
+    non_commercial = bool(re.search(r"non[- ]commercial (purposes )?only|solely for (non[- ]commercial|research)", norm, re.I))
+
+    name: str
+    lic_id: str
+    url: Optional[str] = None
+
+    m = _COMMUNITY_TITLE.search(norm)
+    if m:
+        name = f"{_title_case(m.group(1))} Community License Agreement"
+        lic_id = f"LicenseRef-{_slug(_title_case(m.group(1)))}-Community-License"
+    elif re.search(r"\bApache License\b.*?\bVersion 2\.0\b", norm, re.I):
+        name, lic_id, url = "Apache License 2.0", "Apache-2.0", "https://www.apache.org/licenses/LICENSE-2.0"
+    elif re.search(r"\bMIT License\b|Permission is hereby granted, free of charge", norm, re.I):
+        name, lic_id, url = "MIT License", "MIT", "https://opensource.org/license/mit"
+    elif (m := _RESEARCH_TITLE.search(norm)):
+        name = f"{_title_case(m.group(1))} Research License"
+        lic_id = f"LicenseRef-{_slug(_title_case(m.group(1)))}-Research-License"
+        non_commercial = True
+    elif re.search(r"\bGNU GENERAL PUBLIC LICENSE\b", norm, re.I):
+        v = re.search(r"Version (\d)", norm)
+        ver = v.group(1) if v else "3"
+        name, lic_id = f"GNU General Public License v{ver}", f"GPL-{ver}.0-or-later"
+        url = "https://www.gnu.org/licenses/"
+    elif re.search(r"\bBSD\b", norm) and "Redistribution and use in source and binary forms" in norm:
+        clauses = 3 if "Neither the name" in norm else 2
+        name, lic_id = f"BSD {clauses}-Clause License", f"BSD-{clauses}-Clause"
+    elif re.search(r"Creative Commons", norm, re.I):
+        name, lic_id = first_line or "Creative Commons License", "LicenseRef-Creative-Commons"
+        non_commercial = non_commercial or bool(re.search(r"NonCommercial|BY-NC", norm))
+    elif (m := _TERMS_OF_USE_TITLE.search(norm)):
+        name = f"{m.group(1).strip()} Terms of Use"
+        lic_id = f"LicenseRef-{_slug(m.group(1))}-Terms-of-Use"
+    elif (m := _LICENSE_AGREEMENT_TITLE.search(norm)):
+        name = f"{_title_case(m.group(1))} License Agreement"
+        lic_id = f"LicenseRef-{_slug(_title_case(m.group(1)))}-License-Agreement"
+    else:
+        name, lic_id = (first_line or "Unknown licence"), "LicenseRef-Unknown"
+
+    return LicenseInfo(
+        name=name,
+        license_id=lic_id,
+        notice=display,
+        notice_file_sentence=notice_file,
+        derived_model_notice=derived,
+        non_commercial=non_commercial,
+        acceptable_use_policy=aup,
+        license_url=url,
+        source="license-text",
+    )
 
 
-def notices_for(model_ids: Iterable[str]) -> List[str]:
-    """De-duplicated display notices (e.g. ``["Built with Llama"]``) for a set of models."""
+# ── runtime lookups ──────────────────────────────────────────────────────────
+
+def default_ollama_url() -> str:
+    host = os.environ.get("OLLAMA_HOST", "").strip()
+    if not host:
+        return "http://localhost:11434"
+    if not host.startswith(("http://", "https://")):
+        host = f"http://{host}"
+    return host.rstrip("/")
+
+
+def fetch_ollama_license(base_url: str, model: str, timeout: float = 3.0) -> Optional[str]:
+    """Return the licence text Ollama attached to ``model`` (``/api/show``), or ``None``."""
+    try:
+        import requests
+
+        r = requests.post(f"{base_url.rstrip('/')}/api/show", json={"name": model}, timeout=timeout)
+        if r.status_code != 200:
+            return None
+        lic = r.json().get("license")
+        if isinstance(lic, list):
+            lic = "\n\n".join(str(x) for x in lic)
+        return lic if isinstance(lic, str) and lic.strip() else None
+    except Exception:
+        return None
+
+
+def license_for_ollama_model(
+    base_url: str,
+    model: str,
+    fetcher: Callable[[str, str], Optional[str]] = fetch_ollama_license,
+) -> Optional[LicenseInfo]:
+    """Licence facts for a model served by the Ollama endpoint at ``base_url``."""
+    return classify_license_text(fetcher(base_url, model))
+
+
+_PROVIDER_TERMS: Dict[str, LicenseInfo] = {
+    "openai": LicenseInfo("OpenAI Terms of Use (hosted service)", "LicenseRef-Provider-Terms",
+                          license_url="https://openai.com/policies/terms-of-use/", source="provider"),
+    "anthropic": LicenseInfo("Anthropic Commercial Terms of Service (hosted service)", "LicenseRef-Provider-Terms",
+                             license_url="https://www.anthropic.com/legal/commercial-terms", source="provider"),
+    "google": LicenseInfo("Gemini API Additional Terms of Service (hosted service)", "LicenseRef-Provider-Terms",
+                          license_url="https://ai.google.dev/gemini-api/terms", source="provider"),
+    "openai-compatible": LicenseInfo("Endpoint operator's terms (hosted or self-hosted API)", "LicenseRef-Provider-Terms",
+                                     source="provider"),
+    "lm-studio": LicenseInfo("Per-model licence (see the model's page in LM Studio)", "LicenseRef-Provider-Terms",
+                             source="provider"),
+}
+
+
+def provider_terms(provider: str) -> Optional[LicenseInfo]:
+    """Terms that apply to models reached through a provider that does not expose per-model licences."""
+    return _PROVIDER_TERMS.get((provider or "").strip().lower())
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def notices_for(infos: Iterable[Optional[LicenseInfo]]) -> List[str]:
+    """De-duplicated display notices for a set of licences, in first-seen order."""
     seen: List[str] = []
-    for mid in model_ids:
-        entry = attribution_for(mid)
-        if entry and entry.notice and entry.notice not in seen:
-            seen.append(entry.notice)
+    for info in infos:
+        if info and info.notice and info.notice not in seen:
+            seen.append(info.notice)
     return seen
 
 
-def as_dict(entry: Optional[ModelAttribution]) -> Optional[Dict[str, object]]:
+def as_dict(info: Optional[LicenseInfo]) -> Optional[Dict[str, object]]:
     """JSON-friendly view used by the dashboard API."""
-    if entry is None:
-        return None
-    d = asdict(entry)
-    d["notes"] = list(entry.notes)
-    return d
+    return None if info is None else asdict(info)

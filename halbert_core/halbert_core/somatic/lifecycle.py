@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """SomaticLifecycle (C1b).
 
 Drives a SomaticBlock through its 5 phases by *calling* the existing modules —

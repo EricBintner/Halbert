@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useCallback } from 'react'
 import { ExternalLink, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { AIModelsSettings } from '@/components/llm'

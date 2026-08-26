@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Trending Topics Discovery for RAG
 
@@ -535,6 +537,8 @@ async def analyze_repo_with_llm(
             cfg_endpoint, cfg_model = get_ollama_endpoint(), get_configured_model()
             llm_endpoint = llm_endpoint or cfg_endpoint
             model = model or cfg_model
+            if not model:
+                raise ValueError("No model configured — choose one in Settings → AI Models (models.yml)")
         
         # Format user stack for prompt
         stack_str = ", ".join([
@@ -618,6 +622,8 @@ def analyze_repo_with_llm_sync(
             cfg_endpoint, cfg_model = get_ollama_endpoint(), get_configured_model()
             llm_endpoint = llm_endpoint or cfg_endpoint
             model = model or cfg_model
+            if not model:
+                raise ValueError("No model configured — choose one in Settings → AI Models (models.yml)")
         
         # Format user stack for prompt
         stack_str = ", ".join([

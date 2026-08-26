@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Tests for the ``python -m halbert_core.dashboard`` entry point (B5)."""
 import importlib
 import subprocess

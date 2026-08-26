@@ -1,10 +1,12 @@
 name: DCO Check
 
 # Every commit in a pull request must carry a Developer Certificate of Origin
-# sign-off ("Signed-off-by: Name <email>"), added with `git commit -s`.
-# See documentation/contributing/CONTRIBUTING.md § Contributor Licensing.
+# sign-off ("Signed-off-by: Name <email>") matching the commit author, added
+# with `git commit -s`. See documentation/contributing/CONTRIBUTING.md
+# § Contributor Licensing.
 #
-# The same check runs locally via `scripts/check-dco.sh <base>..<head>`.
+# The same check runs locally via `scripts/check-dco.sh origin/main`.
+# Merge commits and bot-authored commits (dependabot[bot], …) are skipped.
 
 on:
   pull_request:
@@ -18,15 +20,16 @@ jobs:
     name: Signed-off-by on every commit
     runs-on: ubuntu-latest
     steps:
-      - name: Check out pull request history
+      - name: Check out pull request head with full history
         uses: actions/checkout@v4
         with:
-          # Full history so the base..head range resolves for every PR size.
-          fetch-depth: 0
+          # The PR tip rather than the synthetic refs/pull/N/merge commit, and
+          # full history so merge-base(base, head) resolves for every PR size.
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
 
       - name: Verify DCO sign-off on each commit
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: origin/${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: bash scripts/check-dco.sh "${BASE_SHA}..${HEAD_SHA}"
+        run: bash scripts/check-dco.sh "${BASE_REF}" "${HEAD_SHA}"

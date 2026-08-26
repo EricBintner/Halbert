@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Tests for C2b: tier_router.route_request delegates to MetaHarnessRouter
 when enabled and uses the heuristic path (with the shared estimate_complexity)
 when disabled."""

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Settings management API routes (Phase 11).
 
@@ -50,7 +52,7 @@ class ModelEndpoint(BaseModel):
     """LLM endpoint configuration (legacy, still used for assignments)."""
     endpoint: str  # e.g., "http://localhost:11434"
     provider: str = "ollama"  # ollama, llamacpp, mlx, openai
-    model: str  # e.g., "llama3.1:8b-instruct"
+    model: str  # model name as served by the endpoint
     name: str = ""  # User-friendly name
     api_key: Optional[str] = None  # For OpenAI-compatible
 
@@ -173,7 +175,6 @@ async def get_model_status() -> Dict[str, Any]:
         'model_name': model,
         'endpoint': endpoint,
         'available_models': [],
-        'recommended_model': None,
         'auto_configured': False,
         # Phase 72: Hardware tier detection for compression recommendations
         'hardware_tier': 1,  # 1=24GB, 2=48GB+, 3=Apple Silicon
@@ -230,30 +231,9 @@ async def get_model_status() -> Dict[str, Any]:
                     
                     logger.info("Auto-created Local Ollama saved endpoint")
                     result['auto_configured'] = True
-                    
-                    # Set recommended model for UI to suggest
-                    # Phase 58: Tier-aware recommendations (qwen2.5:14b for 24GB, mistral-small for 48GB+)
-                    preferred = ['qwen2.5:14b', 'qwen2.5:7b', 'mistral:7b', 'llama3.1:8b', 'llama3.2:3b']
-                    for pref in preferred:
-                        if pref in models:
-                            result['recommended_model'] = pref
-                            break
-                    if not result['recommended_model']:
-                        result['recommended_model'] = models[0]
                 
                 # Check if configured model is installed
-                result['model_installed'] = model and model in models
-                
-                # Recommend a model if none configured or configured not available
-                if models and (not model or model not in models):
-                    # Phase 58: Tier-aware recommendations
-                    preferred = ['qwen2.5:14b', 'qwen2.5:7b', 'mistral:7b', 'llama3.1:8b', 'llama3.2:3b']
-                    for pref in preferred:
-                        if pref in models:
-                            result['recommended_model'] = pref
-                            break
-                    if not result['recommended_model']:
-                        result['recommended_model'] = models[0]
+                result['model_installed'] = bool(model) and model in models
                         
     except Exception as e:
         logger.warning(f"Ollama connection check failed: {e}")
@@ -264,13 +244,20 @@ async def get_model_status() -> Dict[str, Any]:
 @router.post("/model/apply-recommended")
 async def apply_recommended_config() -> Dict[str, Any]:
     """
-    Apply recommended model configuration based on detected hardware tier.
+    Apply hardware-appropriate defaults based on the detected model size budget.
 
-    Phase 72: Auto-configures Chat model and compression based on VRAM:
-    - Tier 1 (24GB): qwen2.5:14b chat, Semantic compression (always works)
-    - Tier 2 (48GB+): mistral-small chat, Lingua compression (178MB neural)
-    - Tier 3 (Apple Silicon): mistral-small chat, Lingua compression
+    Sets the context-compression backend by hardware tier (Tier 1 <40GB CUDA:
+    semantic; Tier 2 >=40GB CUDA: lingua; Tier 3 Apple Silicon: lingua).
+
+    For the guide model it never picks from a fixed list: it selects the
+    largest model ALREADY INSTALLED on the endpoint (from GET /api/tags) that
+    fits the detected budget. If nothing installed fits, it returns
+    ``success: false`` and asks the user to pull a model of at most N billion
+    parameters.
     """
+    import httpx
+    from ...model.hardware_detector import HardwareDetector, pick_installed_model
+
     config_path = get_config_dir() / 'models.yml'
 
     # Load existing config
@@ -280,7 +267,7 @@ async def apply_recommended_config() -> Dict[str, Any]:
     else:
         config = {}
 
-    # Detect hardware tier
+    # Detect hardware tier (drives compression backend only)
     tier = 1
     total_vram = None
     try:
@@ -293,27 +280,49 @@ async def apply_recommended_config() -> Dict[str, Any]:
     except ImportError:
         pass
 
-    # Determine recommended models based on tier
-    if tier == 1:
-        # Tier 1: 24GB - smaller chat model, semantic compression
-        recommended_chat = 'qwen2.5:14b'
-        compression_backend = 'semantic'
-    elif tier == 2:
-        # Tier 2: 48GB+ - larger chat model, neural compression
-        recommended_chat = 'mistral-small'
-        compression_backend = 'lingua'
-    else:
-        # Tier 3: Apple Silicon - can run neural compression on CPU
-        recommended_chat = 'mistral-small'
-        compression_backend = 'lingua'
+    compression_backend = 'semantic' if tier == 1 else 'lingua'
+
+    # Model size budget from detected hardware (parameter counts, no names)
+    detector = HardwareDetector()
+    budget = detector.recommend_budget(detector.detect())
+
+    # Pick the largest already-installed model that fits the budget
+    orchestrator = config.get('orchestrator') or {}
+    endpoint = orchestrator.get('endpoint') or 'http://localhost:11434'
+    installed: List[Dict[str, Any]] = []
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{endpoint}/api/tags")
+            if response.status_code == 200:
+                installed = response.json().get('models', [])
+    except Exception as e:
+        logger.warning(f"Could not list installed models at {endpoint}: {e}")
+
+    chosen = pick_installed_model(installed, budget)
+    if not chosen:
+        return {
+            'success': False,
+            'hardware_tier': tier,
+            'total_vram_gb': round(total_vram, 1) if total_vram else None,
+            'budget': budget.to_dict(),
+            'message': (
+                f"No installed model fits your hardware budget "
+                f"(~{budget.max_params_b_4bit}B parameters at 4-bit, "
+                f"{budget.memory_budget_gb:.0f}GB for weights). "
+                f"Pull a model of at most ~{budget.max_params_b_4bit}B parameters with "
+                f"'ollama pull <model>' and try again, or pick one in Settings → AI Models."
+            ),
+        }
+
+    chat_model = chosen['name']
 
     # Update orchestrator config
-    if 'orchestrator' not in config:
+    if 'orchestrator' not in config or config['orchestrator'] is None:
         config['orchestrator'] = {}
-    config['orchestrator']['model'] = recommended_chat
+    config['orchestrator']['model'] = chat_model
 
     # Update compression config
-    if 'compression' not in config:
+    if 'compression' not in config or config['compression'] is None:
         config['compression'] = {}
     config['compression']['backend'] = compression_backend
     config['compression']['enabled'] = True
@@ -327,16 +336,21 @@ async def apply_recommended_config() -> Dict[str, Any]:
         'success': True,
         'hardware_tier': tier,
         'total_vram_gb': round(total_vram, 1) if total_vram else None,
+        'budget': budget.to_dict(),
         'applied': {
-            'chat_model': recommended_chat,
+            'chat_model': chat_model,
             'compression_backend': compression_backend,
         },
-        'message': f"Applied Tier {tier} configuration: {recommended_chat} + {compression_backend} compression",
+        'message': (
+            f"Applied Tier {tier} configuration: {chat_model} "
+            f"(largest installed model within your ~{budget.max_params_b_4bit}B budget) "
+            f"+ {compression_backend} compression"
+        ),
     }
 
 
 @router.post("/model/install")
-async def install_model(model_name: str = "llama3.1:8b") -> Dict[str, Any]:
+async def install_model(model_name: str) -> Dict[str, Any]:
     """
     Install a model via Ollama pull.
     

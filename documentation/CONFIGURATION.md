@@ -31,8 +31,8 @@ LLM configuration.
 ```yaml
 # ~/.config/halbert/model.yml
 
-# Default model for all operations
-default_model: llama3.2:3b
+# Default model for all operations (the guide model configured in models.yml)
+default_model: <model>
 
 # Ollama connection
 ollama_host: http://localhost:11434
@@ -41,9 +41,9 @@ ollama_timeout: 120
 # Model routing (optional)
 routing:
   enabled: false
-  quick_tasks: llama3.2:3b
-  complex_analysis: llama3.1:70b
-  code_generation: deepseek-coder:33b
+  quick_tasks: <small-model>
+  complex_analysis: <large-model>
+  code_generation: <code-model>
 
 # Generation defaults
 generation:

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Prompt Builder - Assemble complete system prompts from components.
 
@@ -10,6 +12,7 @@ import logging
 
 from .loader import PromptLoader
 from ..agents.blocks import content_to_text
+from ..utils.reasoning import is_reasoning_model as _is_reasoning_model
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +256,7 @@ class PromptBuilder:
         Get model-specific prompt overrides based on model name.
         
         Args:
-            model_name: Name of the model (e.g., "llama3.1:8b", "deepseek-r1:32b")
+            model_name: Name of the model as configured
             
         Returns:
             Model-specific override rules as string, or empty string
@@ -262,7 +265,7 @@ class PromptBuilder:
         
         # Detect model category
         is_small_model = any(size in model_lower for size in [":7b", ":8b", ":9b", ":14b", "7b-", "8b-"])
-        is_reasoning_model = any(name in model_lower for name in ["deepseek-r1", "qwq", "o1"])
+        is_reasoning_model = _is_reasoning_model(model_name)
         
         overrides = []
         

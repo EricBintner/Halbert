@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Model router for multi-model orchestration (Phase 5 M1).
 
@@ -137,7 +139,7 @@ class ModelRouter:
         # Default configuration
         return {
             "orchestrator": {
-                "model": "llama3.1:8b-instruct",
+                "model": None,  # no built-in default; configure in models.yml
                 "provider": "ollama",
                 "always_loaded": True
             },
@@ -233,7 +235,10 @@ class ModelRouter:
         model_id, provider_name, endpoint_url = self._route_task(task_type, prefer_specialist, prompt)
         
         if not model_id:
-            raise ValueError(f"No model available for task: {task_type}")
+            raise ValueError(
+                f"No model configured for task {task_type} — "
+                "choose one in Settings → AI Models (models.yml)"
+            )
         
         # Get or create provider for this endpoint
         provider = self._get_provider_for_endpoint(provider_name, endpoint_url)
@@ -323,7 +328,10 @@ class ModelRouter:
         model_id, provider_name, endpoint_url = self._route_task(task_type, prefer_specialist, prompt)
         
         if not model_id:
-            raise ValueError(f"No model available for task: {task_type}")
+            raise ValueError(
+                f"No model configured for task {task_type} — "
+                "choose one in Settings → AI Models (models.yml)"
+            )
         
         # Get or create provider for this endpoint
         provider = self._get_provider_for_endpoint(provider_name, endpoint_url)

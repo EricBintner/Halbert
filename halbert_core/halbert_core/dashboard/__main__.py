@@ -27,6 +27,23 @@ logging.basicConfig(
 
 logger = logging.getLogger('halbert.main')
 
+try:
+    from .. import __version__ as HALBERT_VERSION, LEGAL_NOTICE
+except Exception:  # run from the repo root: `halbert_core` is the outer namespace package
+    try:
+        from halbert_core.halbert_core import __version__ as HALBERT_VERSION, LEGAL_NOTICE
+    except Exception:
+        try:
+            from halbert_core import __version__ as HALBERT_VERSION, LEGAL_NOTICE
+        except Exception:  # pragma: no cover - keep the notice even if the package is unimportable
+            HALBERT_VERSION = 'unknown'
+            LEGAL_NOTICE = (
+                "Halbert  Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors\n"
+                "This program comes with ABSOLUTELY NO WARRANTY; for details type 'halbert license'.\n"
+                "This is free software, and you are welcome to redistribute it under certain\n"
+                "conditions (GNU GPL v3.0 or later); type 'halbert license --full' for the licence text."
+            )
+
 
 def find_available_port(start: int = 8000, end: int = 8100) -> int:
     """Find an available port in the given range."""
@@ -107,8 +124,13 @@ Examples:
     parser.add_argument('--reload', action='store_true', help='Enable auto-reload for development')
     parser.add_argument('--no-ollama-check', action='store_true', help='Skip Ollama availability check')
     parser.add_argument('--find-port', action='store_true', help='Automatically find available port')
-    
+    parser.add_argument('--version', action='version', version=f"halbert {HALBERT_VERSION}\n{LEGAL_NOTICE}")
+
     args = parser.parse_args()
+
+    # GPLv3 §5(d) Appropriate Legal Notices for the interactive server session.
+    for line in LEGAL_NOTICE.splitlines():
+        logger.info(line)
     
     # Check Ollama
     if not args.no_ollama_check:

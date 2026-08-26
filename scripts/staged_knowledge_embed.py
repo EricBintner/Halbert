@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Staged external CodeIndex builder for Halbert's SourcePrep project.
 
@@ -53,7 +55,7 @@ Config parity (must match the daemon's build for model/reuse compatibility):
   (sourceprep_template.yml / GET /projects/<PID>)
 - use_gitignore=False (project config)
 - embedder resolved via prep's own embedder_factory so the manifest `model`
-  string ("native:nomic-embed-text-v1.5") matches — required for the
+  string matches the daemon's manifest `model` value — required for the
   incremental-reuse path (prev_model == cur_model) to ever trigger.
 """
 

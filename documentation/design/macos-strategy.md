@@ -225,7 +225,7 @@ SourcePrep replaces naive ChromaDB vector chunking with a live structural and ep
 │                                    ▼                                                   │
 │   ┌────────────────────────────────────────────────────────────────────────────────┐   │
 │   │                         COGNITIVE CORE (Haloysius)                             │   │
-│   │   • Local LLM (Mistral/Qwen/Apple MLX) formulates exact PATH fix               │   │
+│   │   • Local LLM (Ollama or Apple MLX)    formulates exact PATH fix               │   │
 │   └────────────────────────────────┬───────────────────────────────────────────────┘   │
 │                                    │ Proposed Diff                                     │
 │                                    ▼                                                   │

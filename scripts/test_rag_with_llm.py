@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Test RAG system with LLM integration.
 """
@@ -11,12 +13,30 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'halbert_core'))
 from halbert_core.rag import RAGPipeline
 from halbert_core.rag.llm import OllamaLLM, LLMConfig
 
+NO_MODEL_MESSAGE = "No model configured — choose one in Settings → AI Models."
+
+
+def _configured_model():
+    """Return the configured guide model id, or None when nothing is configured."""
+    from halbert_core.model.client import get_configured_model
+
+    try:
+        model = get_configured_model()
+    except Exception:
+        return None
+    return model or None
+
 
 def test_rag_with_llm():
     print("="*70)
     print("Halbert RAG + LLM DEMO")
     print("="*70)
-    
+
+    model = _configured_model()
+    if not model:
+        print(NO_MODEL_MESSAGE)
+        return
+
     # Initialize RAG
     print("\n1. Initializing RAG pipeline...")
     pipeline = RAGPipeline(
@@ -32,7 +52,7 @@ def test_rag_with_llm():
     # Initialize LLM
     print("\n3. Initializing LLM...")
     llm_config = LLMConfig(
-        model="llama3.2:3b",  # Fast, good quality
+        model=model,  # guide model from models.yml
         temperature=0.3,  # Lower for more factual responses
         max_tokens=512
     )
@@ -85,12 +105,17 @@ def test_interactive():
     print("Halbert RAG + LLM: Interactive Mode")
     print("="*70)
     print("\nType your questions (or 'quit' to exit)\n")
-    
+
+    model = _configured_model()
+    if not model:
+        print(NO_MODEL_MESSAGE)
+        return
+
     # Initialize
     pipeline = RAGPipeline(data_dir=Path('data'), use_reranking=True, top_k=3)
     pipeline.load_and_index_documents()
-    
-    llm = OllamaLLM(config=LLMConfig(model="llama3.2:3b", temperature=0.3))
+
+    llm = OllamaLLM(config=LLMConfig(model=model, temperature=0.3))
     
     if not llm.check_available():
         print("✗ Ollama not available. Start with: ollama serve")

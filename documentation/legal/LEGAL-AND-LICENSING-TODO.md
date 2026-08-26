@@ -30,7 +30,7 @@ Every task is labeled with the appropriate agent or human execution tier:
 │          │       │ Missing Privacy Policy, LemonSqueezy Commercial EULA,               │
 │          │       │ Arch Wiki GNU FDL macOS Isolation, DCO Commit Sign-off Setup        │
 │ MODERATE │ 5     │ Dashboard UI Attribution Modal, Cloud API Data Flow Disclosure,     │
-│          │       │ Third-Party Trademark Notice, Meta Llama 3.1 Attribution Badge,     │
+│          │       │ Third-Party Trademark Notice, Model Licence Attribution Badge,      │
 │          │       │ CLI First-Run Disclaimers                                           │
 │ MINOR    │ 4     │ SPDX-License-Identifier Source Tagging, Repository Copyright Sync,  │
 │          │       │ Upstream RAG Scraper License Checks, Docs Cross-Reference Cleanup   │
@@ -167,12 +167,12 @@ Every task is labeled with the appropriate agent or human execution tier:
     2. Include standard non-affiliation and nominative fair use disclaimers.
     3. Add a condensed footer to `marketing/web/index.html`.
 
-- [x] **`LEG-MOD-04`** `[fable]` **Meta Llama 3.1 & Foundation Model Attribution Notice**
-  - **Problem**: The Meta Llama 3.1 Community License requires the user-facing notice *"Built with Llama"* (§1.b.i — the exact phrase, with no version number; the older Meta Llama 3 licence says *"Built with Meta Llama 3"*) from anyone who distributes the weights or a product that contains them.
+- [x] **`LEG-MOD-04`** `[fable]` **Model Licence & Attribution Notices**
+  - **Problem**: Some publisher "community" licences require a fixed user-facing phrase (e.g. *"Built with …"*) on a related UI or documentation page from anyone who distributes the weights or a product that contains them; others are non-commercial or bundle an acceptable-use policy. Users need to see the terms of the model they chose.
   - **Action**:
-    1. Add model attribution tags in the Model Catalog UI and CLI `info` command.
-    2. Verify compliance with DeepSeek and Qwen license terms.
-  - **Status (2026-08-25, fable):** Done. `halbert_core/halbert_core/model/attribution.py` is the single source of truth (family → licence name/id/URL, required display notice, NOTICE-file sentence, notes), verified against the licence texts. Wired into `halbert model-list-all`, `halbert model-router-status`, `halbert info`, `POST /api/llm/proxy/models` (`license`, `license_id`, `license_url`, `attribution` per model) and the model picker (`ModelCard.tsx` renders the licence link and the notice badge). `config/model-catalog.yml` and `THIRD-PARTY-LICENSES.md` §5 corrected: Llama 3.1 → "Built with Llama"; Qwen2.5-Coder-14B → Apache-2.0; the "Powered by DeepSeek/Qwen" notices were not required by any licence and were removed. `tests/test_model_attribution.py`.
+    1. Show each model's licence and any required notice in the model picker and the CLI.
+    2. Do this without maintaining a list of models: Halbert neither bundles nor recommends models.
+  - **Status (2026-08-25, fable):** Done. `halbert_core/halbert_core/model/attribution.py` reads the licence text the runtime ships with each model (Ollama `POST /api/show` → `license`) and extracts the licence name/id, the exact display notice the licence requires (if any), the NOTICE-file sentence for redistributed weights, and non-commercial / acceptable-use flags — by licence wording, so **no model names exist in code**. Wired into `halbert model-list-all`, `halbert model-router-status`, `POST /api/llm/proxy/models` (`license`, `license_id`, `license_url`, `attribution`, `non_commercial` per model) and the model picker (`ModelCard.tsx`). Hosted providers get provider-level terms. `config/model-catalog.yml` (a recommendation list no code read) was removed and `THIRD-PARTY-LICENSES.md` §5 rewritten to describe the mechanism instead of listing models. Verified live against a local Ollama. `tests/test_model_attribution.py` uses synthetic licence texts.
 
 - [x] **`LEG-MOD-05`** `[fable]` **CLI First-Run Banner Legal Notice (GPLv3 §5d Compliance)**
   - **Problem**: GPL-3.0 §5(d) expects interactive terminal tools to display copyright, warranty exclusion, and license inspection commands.
@@ -252,7 +252,7 @@ Every task is labeled with the appropriate agent or human execution tier:
 
 ### ⚙️ Fable Tasks (`[fable]`) — all complete 2026-08-25
 1. ✅ `LEG-MAJ-06`: DCO workflow check (`scripts/check-dco.sh` + `.github/workflows/dco.yml`) and PR template.
-2. ✅ `LEG-MOD-04`: Foundation-model attribution (`halbert_core/model/attribution.py` → CLI, API, model picker).
+2. ✅ `LEG-MOD-04`: Model licence notices read from the runtime's licence text (`halbert_core/model/attribution.py` → CLI, API, model picker); no model list.
 3. ✅ `LEG-MOD-05`: CLI legal notices (`--version`, `info`, `license [--full|--third-party]`, dashboard `--version`).
 4. ✅ `LEG-MIN-01`: SPDX headers on all 579 first-party source files (`scripts/add_spdx_headers.py --check`).
 5. ✅ `LEG-MIN-02`: Copyright + `GPL-3.0-or-later` synchronized across package manifests and docs.
@@ -263,26 +263,24 @@ Every task is labeled with the appropriate agent or human execution tier:
 ## 5. Fable Review — 2026-08-25 (second pass)
 
 Reviewed the initial fable pass, verified the licence facts against primary
-sources (Meta Llama 2 / 3 / 3.1 / 3.2 / 3.3 licence texts and the licence
-blobs Ollama ships, Qwen / DeepSeek / Mistral / Nomic model cards and LICENSE
-files, GPLv3 §0 / §5(d) / appendix, developercertificate.org, the probot DCO
-app source, the Tauri v2 config schema, PEP 639 + setuptools 84, REUSE 3.3,
-shadcn/ui LICENSE.md), and completed every `[fable]` item above.
+sources (the publishers' licence texts and the licence blobs Ollama ships,
+model-card LICENSE files, GPLv3 §0 / §5(d) / appendix, developercertificate.org,
+the probot DCO app source, the Tauri v2 config schema, PEP 639 + setuptools 84,
+REUSE 3.3, shadcn/ui LICENSE.md), and completed every `[fable]` item above.
 
 Verification run: `pytest tests/test_legal_metadata.py tests/test_model_attribution.py
-tests/test_cli_smoke.py` (43 passed), `scripts/add_spdx_headers.py --check`
-(579/579), frontend `tsc --noEmit` (clean), `cargo metadata` (Cargo.toml valid),
-`python -m halbert_core.dashboard --version`, `halbert --version|info|license`.
+tests/test_cli_smoke.py`, full `pytest tests/ --ignore=tests/rag/` (141 passed),
+`scripts/add_spdx_headers.py --check` (579/579), frontend `tsc --noEmit` (clean),
+`cargo metadata` (Cargo.toml valid), `python -m halbert_core.dashboard --version`,
+`halbert --version|info|license`, and the licence classifier against every model
+on a local Ollama instance.
 
 ### 5.1 Corrections to the initial pass
 
 | Item | Initial pass | Corrected | Primary source |
 | :--- | :--- | :--- | :--- |
-| LEG-MOD-04 | `attribution: "Built with Meta Llama 3.1"` (catalog); `"Built with Llama 3.1."` (THIRD-PARTY §5) | **"Built with Llama"** — Llama 3.1 / 3.2 / 3.3 §1.b.i require exactly this phrase; only the older Meta Llama 3 licence uses "Built with Meta Llama 3" | llama.com/llama3_1/license (identical clause in 3.2, 3.3) |
-| LEG-MOD-04 | "Powered by DeepSeek." / "Powered by Qwen." listed as *required* notices | Removed — no DeepSeek or Qwen licence contains any display-notice requirement | DeepSeek LICENSE-MODEL v1.0; Qwen Apache-2.0 / Qwen License / Qwen Research License texts |
-| LEG-MOD-04 | Qwen2.5-Coder-14B: "Apache-2.0 / Qwen Community License" | Apache-2.0 (only the 3B size is Qwen Research License; Qwen2.5-72B is the Qwen License Agreement) | HF `Qwen/Qwen2.5-Coder-14B-Instruct` LICENSE |
-| LEG-MOD-04 | `deepseek-r1:70b` treated as plain MIT | MIT **and** Llama 3.3 Community License — it is distilled from Llama-3.3-70B-Instruct, so "Built with Llama" applies | HF `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` |
-| LEG-MOD-04 | Code Llama: "CodeLlama by Meta AI" as attribution | No display notice under the Llama 2 Community License; only a NOTICE-file sentence when weights are distributed | ai.meta.com/llama/license |
+| LEG-MOD-04 | Hand-typed `attribution:` strings per model in a catalog file; several did not match the licence wording (a version number added to a fixed phrase; "Powered by …" notices that no licence asks for; a permissive licence mislabelled as a community licence) | Notices are extracted from the licence text the runtime ships with the model, so the phrase is whatever the licence literally says; nothing is typed by hand and no model is listed | Publisher licence texts; Ollama `/api/show` |
+| LEG-MOD-04 | Recommendation catalog (`config/model-catalog.yml`) carried the licence data | File removed — it recommended models, and no code read it | — |
 | LEG-MAJ-06 | Workflow ranged `origin/$base_ref..HEAD` against the synthetic merge commit, accepted any `Signed-off-by` text, mis-labelled checkout step | Checks out `pull_request.head.sha` with full history; `merge-base(base, head)..head`; sign-off must match author or committer; merge + `[bot]` commits skipped; logic in `scripts/check-dco.sh` (runs locally, tested) | github.com/apps/dco; actions/checkout README |
 | LEG-MOD-05 | `info` / `license` only; licence read from LICENSE.md | + `--version` on both CLIs, `license --third-party`, dashboard startup notice; four-line notice wording from the GPLv3 appendix | gnu.org/licenses/gpl-3.0.txt |
 | LEG-MIN-01 | 3 / 579 files tagged | 579 / 579 with an idempotent tool + CI check; shadcn/ui-derived files keep MIT | REUSE 3.3; shadcn LICENSE.md (MIT) |
@@ -304,20 +302,21 @@ tests/test_cli_smoke.py` (43 passed), `scripts/add_spdx_headers.py --check`
    permission. Until decided, CONTRIBUTING §2–3 is a statement of intent, not a
    binding grant. (Also: `LEG-CRIT-02` / `LEG-CRIT-03` are still unchecked
    above even though CONTRIBUTING already contains the exception text.)
-2. **Llama notices bind distributors, not recommenders.** Llama 3.x §1.b.i
-   triggers on distributing the weights, a derivative, or a product that
-   *contains* them; recommending a model the user pulls via Ollama does not.
-   Halbert shows "Built with Llama" anyway (courtesy + Pro-readiness). A
-   Halbert Pro build that bundles Llama weights must also ship a copy of the
-   Agreement and the per-version NOTICE sentence (`notice_file_sentence` in
-   `attribution.py`). The older Meta Llama 3 licence has a broader trigger ("a
-   product or service that *uses* any of them") and a no-improve-other-LLM
-   clause — consider dropping `llama3-8b` from the catalog (already marked
-   superseded).
-3. **Llama 3.2 vision + EU.** The restriction is in the Llama 3.2 *Acceptable
-   Use Policy*, not the licence; it bars EU-domiciled licensees, not end users
-   of products that incorporate the model. Only matters if Halbert Pro bundles
-   `llama3.2-vision`.
+2. **Model-licence notices bind distributors, not recommenders.** The
+   community licences that require a display phrase trigger on distributing
+   the weights, a derivative, or a product that *contains* them; a product the
+   user points at a model they installed themselves does not. Halbert shows
+   the notice anyway (courtesy + readiness). A future build that bundles
+   weights must also ship a copy of each licence and the NOTICE sentence the
+   licence prescribes (`notice_file_sentence` from `attribution.py`), and must
+   check for non-commercial or geographically restricted licences — the
+   classifier flags both. Some older community licences forbid using the model
+   or its outputs to improve any other model; the flag is in the licence text.
+3. **Halbert no longer names or recommends models anywhere** (founder
+   directive, 2026-08-25): the catalog is gone, defaults are chosen by the user
+   from what their endpoint serves, and hardware guidance is expressed as
+   memory budgets rather than model names. See the model-mention sweep record
+   in `.handoff/FABLE-HANDOFF-LEGAL-AND-LICENSING-2026-08-25.md` §5.
 4. **Outbound licence id.** This plan, the initial pass and CONTRIBUTING use
    `GPL-3.0-or-later`; README / LICENSE.md said bare "GPL-3.0" (deprecated
    SPDX id, meaning `-only`). Everything now says `-or-later` — confirm.
@@ -335,31 +334,25 @@ tests/test_cli_smoke.py` (43 passed), `scripts/add_spdx_headers.py --check`
 ### 5.3 Defects found in files owned by other active sessions (not edited)
 
 - `halbert_core/halbert_core/dashboard/routes/legal.py` `_FOUNDATION_MODELS`:
-  "Built with Llama 3.1.", "Powered by DeepSeek.", "Powered by Qwen." are wrong
-  (§5.1). Replace the hard-coded list with
-  `halbert_core.model.attribution.FOUNDATION_MODEL_LICENSES` / `as_dict()` so
-  the About panel, the API and the CLI cannot drift. (LEG-MOD-01 owner)
-- `config/models.yml`: `qwen3-v1:32b` is not an Ollama tag — probably
-  `qwen3-vl:32b` (Apache-2.0).
-- `config/model-catalog.yml`: `llama3.1:8b-instruct` and `llama3:8b-instruct`
-  do not exist on the Ollama registry (404 MANIFEST_UNKNOWN); the registry has
-  `llama3.1:8b` and suffixed `…:8b-instruct-q4_K_M` tags. The catalog is also
-  not read by any code path. Left as-is — product decision.
-- ~~`scripts/scrape_macos.sh:138`: `for jsonl in "${source_file}"*.jsonl 2>/dev/null; do`
+  a hand-typed list of models with invented notice strings. Replace it with
+  the licences of the models actually configured, via
+  `halbert_core.model.attribution.license_for_ollama_model` / `as_dict()`, so
+  the About panel, the API and the CLI cannot drift and no model is listed.
+  (LEG-MOD-01 owner)
+- `scripts/scrape_macos.sh:138`: `for jsonl in "${source_file}"*.jsonl 2>/dev/null; do`
   is a bash syntax error (a redirection on a `for` word list); the script
-  cannot run.~~ **Fixed 2026-08-25** (LEG-MAJ-05). The script also now runs
-  `scripts/quarantine_ss64.py` after the SS64 scrape, which otherwise
-  re-populated the shippable corpus with CC BY-NC content on every run.
+  cannot run. (LEG-MAJ-05 owner)
 - `Halbert/main.py`: every `model-*` / `persona-*` command prints "… not
   available" in this venv because the single top-level `try:` import block
-  soft-fails as a whole; the attribution output was verified by calling
+  soft-fails as a whole; the licence output was verified by calling
   `_print_model_attribution` directly. Pre-existing.
 
 ### 5.4 Open questions the research could not settle
 
 - Whether a product that runs `ollama pull` on the user's behalf (onboarding)
-  "makes available" Llama Materials under §1.b.i. Conservative reading: the
-  notices are already shown, so nothing changes unless weights are bundled.
+  "makes available" the weights under a community licence's redistribution
+  clause. Conservative reading: the notices are already shown, so nothing
+  changes unless weights are bundled.
 - Whether `github.event.pull_request.base.sha` is refreshed on `synchronize`
   events; the workflow avoids the question by using `merge-base` against
   `origin/<base branch>`.

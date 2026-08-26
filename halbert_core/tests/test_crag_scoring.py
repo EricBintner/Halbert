@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """CRAG scoring regression tests (round 2).
 
 Round-1 live run logged, on every evaluation (including a turn where SEARCHING

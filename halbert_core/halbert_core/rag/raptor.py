@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval
 
@@ -86,8 +88,7 @@ class RaptorIndex:
         self,
         cluster_size: int = 5,
         max_levels: int = 4,
-        summary_model: str = "llama3.1:8b",
-        embedding_model: str = "all-MiniLM-L6-v2"
+        summary_model: Optional[str] = None,
     ):
         """
         Initialize RAPTOR index.
@@ -95,13 +96,12 @@ class RaptorIndex:
         Args:
             cluster_size: Number of nodes to cluster at each level
             max_levels: Maximum tree depth
-            summary_model: LLM for generating summaries
-            embedding_model: Model for embeddings
+            summary_model: LLM for generating summaries; None means the
+                configured guide model (resolved at call time)
         """
         self.cluster_size = cluster_size
         self.max_levels = max_levels
         self.summary_model = summary_model
-        self.embedding_model = embedding_model
         
         self._nodes: Dict[str, RaptorNode] = {}
         self._level_index: Dict[int, List[str]] = {}  # level -> node IDs
@@ -189,13 +189,18 @@ Summary:"""
         
         try:
             import requests
-            from ..model.client import get_ollama_endpoint
+            from ..model.client import get_configured_model, get_ollama_endpoint
             
+            model = self.summary_model or get_configured_model()
+            if not model:
+                raise ValueError(
+                    "No model configured — choose one in Settings → AI Models"
+                )
             endpoint = get_ollama_endpoint()
             response = requests.post(
                 f"{endpoint}/api/generate",
                 json={
-                    "model": self.summary_model,
+                    "model": model,
                     "prompt": prompt,
                     "stream": False,
                 },

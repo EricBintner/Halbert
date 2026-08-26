@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * SendToChat - Universal component to send context to chat.
  * 
@@ -11,7 +13,7 @@
  * - type: Type of item (backup, service, storage, etc.)
  * - itemId: Optional ID for @mention
  * - alwaysNewChat: If true, always creates new conversation
- * - useSpecialist: If true, uses 70b model for deep research
+ * - useSpecialist: If true, uses the configured specialist model for deep research
  * - className: Additional CSS classes
  */
 

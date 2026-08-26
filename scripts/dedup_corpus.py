@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Cross-source exact deduplication for Halbert RAG corpus.
 Computes SHA-256 content hashes across all JSONL files, removes duplicates,

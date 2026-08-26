@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useState, useEffect, useRef } from 'react'
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/Layout'
@@ -21,6 +23,7 @@ import { DebugProvider } from './contexts/DebugContext'
 import { ScanProvider } from './contexts/ScanContext'
 import { PageContextProvider } from './contexts/PageContext'
 import { AgentSessionProvider } from './contexts/AgentSessionContext'
+import { ShellModeProvider } from './contexts/ShellModeContext'
 import { apiUrl } from '@/lib/apiBase'
 
 function App() {
@@ -85,25 +88,27 @@ function App() {
           <Onboarding open={showOnboarding} onComplete={handleOnboardingComplete} />
           <Router>
             <PageContextProvider>
-              <Layout>
-                <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/terminal" element={<Terminal />} />
-                  <Route path="/services" element={<Services />} />
-                  <Route path="/storage" element={<Storage />} />
-                  <Route path="/gpu" element={<GPU />} />
-                  <Route path="/containers" element={<Containers />} />
-                  <Route path="/development" element={<Development />} />
-                  <Route path="/network" element={<Network />} />
-                  <Route path="/sharing" element={<Sharing />} />
-                  <Route path="/security" element={<Security />} />
-                  <Route path="/backups" element={<Backups />} />
-                  <Route path="/apps" element={<Apps />} />
-                  <Route path="/approvals" element={<Approvals />} />
-                  <Route path="/settings" element={<Settings />} />
-                  <Route path="/agent" element={<Agent />} />
-                </Routes>
-              </Layout>
+              <ShellModeProvider>
+                <Layout>
+                  <Routes>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/terminal" element={<Terminal />} />
+                    <Route path="/services" element={<Services />} />
+                    <Route path="/storage" element={<Storage />} />
+                    <Route path="/gpu" element={<GPU />} />
+                    <Route path="/containers" element={<Containers />} />
+                    <Route path="/development" element={<Development />} />
+                    <Route path="/network" element={<Network />} />
+                    <Route path="/sharing" element={<Sharing />} />
+                    <Route path="/security" element={<Security />} />
+                    <Route path="/backups" element={<Backups />} />
+                    <Route path="/apps" element={<Apps />} />
+                    <Route path="/approvals" element={<Approvals />} />
+                    <Route path="/settings" element={<Settings />} />
+                    <Route path="/agent" element={<Agent />} />
+                  </Routes>
+                </Layout>
+              </ShellModeProvider>
             </PageContextProvider>
           </Router>
         </AgentSessionProvider>

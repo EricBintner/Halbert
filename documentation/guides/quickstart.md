@@ -18,10 +18,10 @@ Get Halbert running in 5 minutes.
 curl -fsSL https://ollama.ai/install.sh | sh
 ```
 
-Pull a model:
+Pull a chat model sized for your hardware (a ~8B-parameter model at 4-bit quantization needs ~5 GB; see the [Model Selection guide](model-selection.md)):
 
 ```bash
-ollama pull llama3.2:3b
+ollama pull <model>
 ```
 
 ---
@@ -128,7 +128,7 @@ systemctl --user start ollama
 ### Model not found
 
 ```bash
-ollama pull llama3.2:3b
+ollama pull <model>
 ```
 
 ### Permission denied on journald

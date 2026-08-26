@@ -1,12 +1,16 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "halbert-core"
 version = "0.1.1"
 description = "Halbert Phase 1 runtime skeleton (agents, tools, ingestion, index, obs, eval)"
-authors = [{ name = "Halbert Team" }]
+authors = [{ name = "Eric Bintner" }]
+maintainers = [{ name = "Eric Bintner and Halbert Contributors" }]
+# PEP 639 licence expression (setuptools >= 77). Full text: ../LICENSE
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]  # copy of ../LICENSE; PEP 639 forbids '..' here
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

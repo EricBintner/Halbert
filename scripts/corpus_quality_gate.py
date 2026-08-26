@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Corpus Quality Gate (Phase 0 T0e.1).
 Executes 20 curated test queries spanning Linux, macOS, BSD, storage, networking,

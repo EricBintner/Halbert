@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 CORS tests for the dashboard app: the Tauri webview origin (tauri://localhost
 on macOS/Linux, http://tauri.localhost on Windows) must be allowed, plus any

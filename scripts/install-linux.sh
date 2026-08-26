@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 # =============================================================================
 # Halbert Linux Installation Script
 # =============================================================================
@@ -70,11 +72,14 @@ if ! pgrep -x "ollama" > /dev/null; then
     sleep 2
 fi
 
-# Pull recommended model if not present
-echo "  Checking for llama3.2:3b model..."
-if ! ollama list 2>/dev/null | grep -q "llama3.2:3b"; then
-    echo "  Pulling llama3.2:3b (this may take a few minutes)..."
-    ollama pull llama3.2:3b
+# Halbert does not pull a model for you. Check whether any model is present
+# and tell the user how to choose one.
+if [ -z "$(ollama list 2>/dev/null | tail -n +2)" ]; then
+    echo -e "  ${YELLOW}No models found on this Ollama instance.${NC}"
+    echo "  Pull a model whose size fits your RAM (roughly: a ~14B-parameter"
+    echo "  model at 4-bit quantization needs ~10 GB) with:"
+    echo "    ollama pull <model>"
+    echo "  then select it in Halbert Settings → AI Models."
 fi
 echo -e "  ${GREEN}✓ Ollama ready${NC}"
 
@@ -182,8 +187,7 @@ echo "  2. Manually:      python3 -m halbert_core.dashboard"
 echo ""
 echo "Then open your browser to: http://localhost:8000"
 echo ""
-echo "Recommended: Pull additional models for better performance:"
-echo "  ollama pull llama3.1:8b    # Better reasoning"
-echo "  ollama pull llava:7b       # Image understanding"
+echo "Pull a model that fits your RAM with 'ollama pull <model>' and choose it"
+echo "in Settings → AI Models before chatting."
 echo ""
 echo -e "${BLUE}Thank you for installing Halbert!${NC}"

@@ -947,11 +947,10 @@ use `upload_hf_dataset.py` directly.
 paid/commercial build (e.g., Mac App Store). The synthetic guides are
 Halbert-authored and can replace SS64 content for commercial builds.
 
-**Missing artifact:** `manifest.json` references
-`THIRD-PARTY-LICENSES.txt` in its `notes.attribution_requirements`
-section, but this file does not exist yet. It must be created before
-any public distribution (HuggingFace publish or App Store build). The
-§6 table above is the source material for that file.
+**Attribution artifact:** `manifest.json` (`notes.attribution_requirements`)
+points to `documentation/legal/THIRD-PARTY-LICENSES.md`, created 2026-08-25
+(LEG-MAJ-01) from the §6 table above. Keep the two in sync whenever a source is
+added or an upstream licence changes; `halbert license --third-party` prints it.
 
 ---
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * AgentPanel Component
  * 
@@ -16,7 +18,7 @@ import { ToolExecutionCard } from './ToolExecutionCard';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { ScanBlock } from './ScanBlock';
 import { ContextBar } from './ContextBar';
-import { TerminalAccordionDock } from './TerminalAccordionDock';
+import { InlineTerminals } from './InlineTerminals';
 import { DiffBlock } from './DiffBlock';
 import { ConfidenceIndicator } from './ConfidenceIndicator';
 import { MarkdownRenderer } from '../domain/MarkdownRenderer';
@@ -349,8 +351,8 @@ export function AgentPanel({
                       </div>
                     )}
 
-                    {/* Terminal sessions dock (E1f) */}
-                    <TerminalAccordionDock />
+                    {/* Terminals opened for this turn, inline (E1f) */}
+                    <InlineTerminals sessionIds={session.terminalSessions ?? []} />
                   </div>
                 )}
               </div>

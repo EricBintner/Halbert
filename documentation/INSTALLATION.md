@@ -71,11 +71,11 @@ ollama list
 ### Step 2: Pull a Model
 
 ```bash
-# Recommended for most systems (8B parameters, ~4GB)
-ollama pull llama3.1:8b
+# Pull a chat model sized for your hardware (a ~8B-parameter model needs ~4-5GB)
+ollama pull <model>
 
-# For systems with 32GB+ RAM (70B parameters, ~40GB)
-ollama pull llama3.1:70b
+# For systems with 32GB+ RAM (a ~70B-parameter model needs ~40GB)
+ollama pull <larger-model>
 
 # Verify the model is available
 ollama list
@@ -149,13 +149,13 @@ python Halbert/main.py model-test "Hello, who are you?"
 Edit `~/.config/halbert/model.yml`:
 
 ```yaml
-default_model: llama3.1:8b
+default_model: <model>
 ollama_host: http://localhost:11434
 
 # Model routing (optional)
 routing:
-  quick_tasks: llama3.1:8b
-  complex_analysis: llama3.1:70b
+  quick_tasks: <small-model>
+  complex_analysis: <large-model>
 ```
 
 ### Ingestion Settings
@@ -251,7 +251,7 @@ nvidia-smi
 
 # Ollama automatically uses CUDA if available
 # Verify GPU usage
-ollama run llama3.1:8b "test" --verbose
+ollama run <model> "test" --verbose
 ```
 
 ### AMD (ROCm)
@@ -262,7 +262,7 @@ ollama run llama3.1:8b "test" --verbose
 
 # Set environment for Ollama
 export HSA_OVERRIDE_GFX_VERSION=10.3.0  # Adjust for your GPU
-ollama run llama3.1:8b "test"
+ollama run <model> "test"
 ```
 
 ---
@@ -289,7 +289,7 @@ journalctl --user -u ollama -f
 ollama list
 
 # Pull the model
-ollama pull llama3.1:8b
+ollama pull <model>
 ```
 
 ### Permission Denied (journald)
@@ -315,10 +315,10 @@ python Halbert/main.py init
 
 ```bash
 # Use a smaller model
-ollama pull llama3.1:8b-q4_0  # 4-bit quantized, ~2GB
+ollama pull <model>:<tag>-q4_0  # 4-bit quantized build of your model
 
 # Update config
-echo "default_model: llama3.1:8b-q4_0" >> ~/.config/halbert/model.yml
+echo "default_model: <model>:<tag>-q4_0" >> ~/.config/halbert/model.yml
 ```
 
 ---

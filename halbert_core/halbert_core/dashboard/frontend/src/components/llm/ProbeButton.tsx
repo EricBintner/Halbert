@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useState } from 'react';
 import { Activity, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/prep-primitives/Button';

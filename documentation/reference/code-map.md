@@ -291,7 +291,6 @@ The platform layer abstracts OS-specific operations (journald, systemd, /proc, e
 | `config-registry.yml` | `~/.config/halbert/` | Tracked config files |
 | `policy.yml` | `~/.config/halbert/` | Policy rules |
 | `autonomy.yml` | `config/` | Guardrail settings |
-| `model-catalog.yml` | `config/` | Model recommendations |
 | `prompts/*.txt` | `config/prompts/` | System prompts |
 
 ---

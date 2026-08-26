@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- 
   Override constraints for smaller models (7B-14B) that need stronger reinforcement.
-  Apply these when using: llama3.1:8b, gemma2:9b, qwen2.5:7b, mistral:7b
+  Apply these when using smaller models (roughly 7B-14B parameters)
 -->
 <model_overrides target="small">
   

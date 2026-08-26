@@ -35,7 +35,7 @@ AI-powered assistant for system management.
 **Features**:
 - Natural language queries about your system
 - Context-aware responses (auto-injects relevant discoveries)
-- Multi-model routing (Guide 8B → Specialist 70B)
+- Multi-model routing (Guide → Specialist)
 - Tool calling for system actions
 - Vision support (paste/drop images, screenshots)
 - Command execution with auto-analysis

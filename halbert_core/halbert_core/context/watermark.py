@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Context watermark (F4).
 
 Decides *when* to compact the agent's context, plus a cheap micro-compaction

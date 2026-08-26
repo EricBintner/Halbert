@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 LLM Client Wrapper
 
@@ -71,18 +73,32 @@ class OllamaClient(BaseLLMClient):
     """
     Ollama LLM client with streaming support.
     
-    Supports tool calling for compatible models (llama3.1, etc.)
+    Supports tool calling for models that advertise it.
     """
     
     def __init__(
         self,
-        model: str = "llama3.1:8b",
+        model: Optional[str] = None,
         endpoint: str = "http://localhost:11434",
         timeout: int = 120,
     ):
+        if not model:
+            # Resolve lazily from models.yml; may still be empty if unconfigured
+            try:
+                from ..model.client import get_configured_model
+                model = get_configured_model() or None
+            except Exception:
+                model = None
         self.model = model
         self.endpoint = endpoint.rstrip('/')
         self.timeout = timeout
+    
+    def _require_model(self) -> str:
+        if not self.model:
+            raise ValueError(
+                "No model configured — choose one in Settings → AI Models"
+            )
+        return self.model
     
     async def chat(
         self,
@@ -105,7 +121,7 @@ class OllamaClient(BaseLLMClient):
             LLMResponse with content and optional tool calls
         """
         payload = {
-            "model": self.model,
+            "model": self._require_model(),
             "messages": messages,
             "stream": False,
             "options": {
@@ -149,7 +165,7 @@ class OllamaClient(BaseLLMClient):
         Yields content chunks as they arrive.
         """
         payload = {
-            "model": self.model,
+            "model": self._require_model(),
             "messages": messages,
             "stream": True,
             "options": {
@@ -247,13 +263,16 @@ class OllamaClient(BaseLLMClient):
 
 class AnthropicClient(BaseLLMClient):
     """
-    Anthropic Claude client with streaming support.
+    Anthropic Messages API client with streaming support.
+
+    The model id must be supplied by the caller (or models.yml); there is
+    no built-in default.
     """
     
     def __init__(
         self,
         api_key: str = None,
-        model: str = "claude-3-haiku-20240307",
+        model: Optional[str] = None,
         timeout: int = 120,
     ):
         import os
@@ -261,6 +280,14 @@ class AnthropicClient(BaseLLMClient):
         self.model = model
         self.timeout = timeout
         self.endpoint = "https://api.anthropic.com/v1/messages"
+    
+    def _require_model(self) -> str:
+        if not self.model:
+            raise ValueError(
+                "No model configured for AnthropicClient — pass model= "
+                "or choose one in Settings → AI Models"
+            )
+        return self.model
     
     async def chat(
         self,
@@ -273,24 +300,25 @@ class AnthropicClient(BaseLLMClient):
         """Send chat completion to Anthropic."""
         if not self.api_key:
             raise ValueError("Anthropic API key not configured")
+        model = self._require_model()
         
         # Convert messages to Anthropic format
         system_msg = ""
-        claude_messages = []
+        api_messages = []
         
         for msg in messages:
             if msg.get("role") == "system":
                 system_msg = msg.get("content", "")
             else:
-                claude_messages.append({
+                api_messages.append({
                     "role": msg.get("role", "user"),
                     "content": msg.get("content", "")
                 })
         
         payload = {
-            "model": self.model,
+            "model": model,
             "max_tokens": max_tokens,
-            "messages": claude_messages,
+            "messages": api_messages,
         }
         
         if system_msg:
@@ -328,24 +356,25 @@ class AnthropicClient(BaseLLMClient):
         """Stream chat completion from Anthropic."""
         if not self.api_key:
             raise ValueError("Anthropic API key not configured")
+        model = self._require_model()
         
         # Convert messages
         system_msg = ""
-        claude_messages = []
+        api_messages = []
         
         for msg in messages:
             if msg.get("role") == "system":
                 system_msg = msg.get("content", "")
             else:
-                claude_messages.append({
+                api_messages.append({
                     "role": msg.get("role", "user"),
                     "content": msg.get("content", "")
                 })
         
         payload = {
-            "model": self.model,
+            "model": model,
             "max_tokens": max_tokens,
-            "messages": claude_messages,
+            "messages": api_messages,
             "stream": True
         }
         

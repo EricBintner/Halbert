@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Model loader for LLM backends (Ollama, llama.cpp)
 
@@ -18,7 +20,7 @@ logger = logging.getLogger('halbert.model')
 class ModelConfig:
     """Configuration for model loading."""
     runtime: str  # "ollama" or "llamacpp"
-    model_id: str  # e.g., "llama3.1:8b-instruct"
+    model_id: str  # model tag as known to the runtime, or a GGUF path for llamacpp
     quantization: Optional[str] = None  # e.g., "Q4_K_M" for llamacpp
     max_context: int = 8192
     temperature: float = 0.7
@@ -242,11 +244,16 @@ class ModelManager:
             if config_path.exists():
                 config = ModelConfig.from_file(config_path)
             else:
-                # Default config
-                config = ModelConfig(
-                    runtime='ollama',
-                    model_id='llama3.1:8b-instruct'
-                )
+                # No legacy model.json: converge on models.yml via model.client
+                from .client import get_configured_model
+
+                model_id = get_configured_model()
+                if not model_id:
+                    raise RuntimeError(
+                        "No model configured — choose one in Settings → AI Models "
+                        "(models.yml), or pass an explicit ModelConfig"
+                    )
+                config = ModelConfig(runtime='ollama', model_id=model_id)
         
         self.config = config
         self.backend: Optional[ModelBackend] = None

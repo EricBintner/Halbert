@@ -58,8 +58,14 @@ documentation/
 │   └── SECURITY.md              # Security policy
 │
 └── legal/
-    ├── LICENSE.md               # GPL-3.0 full text
-    └── THIRD-PARTY.md           # Third-party licenses
+    ├── README.md                # Legal hub (index of the documents below)
+    ├── LICENSE.md               # GPL-3.0-or-later summary (full text: /LICENSE)
+    ├── THIRD-PARTY-LICENSES.md  # RAG corpus, dependency and foundation-model notices
+    ├── PRIVACY.md               # Zero-telemetry privacy policy
+    ├── DISCLAIMER.md            # Autonomous-action liability notice
+    ├── TRADEMARKS.md            # Third-party trademark notice
+    ├── SECURITY.md              # Security policy
+    └── LEGAL-AND-LICENSING-TODO.md  # Compliance action plan
 ```
 
 ---
@@ -157,8 +163,8 @@ Before any doc is published, verify:
 ### Phase 6: Legal & Final Polish
 31. ✅ `legal/LICENSE.md`
 32. ✅ `legal/SECURITY.md`
-33. ⬜ `legal/THIRD-PARTY.md` (optional)
-34. ⬜ Final cross-reference audit
+33. ✅ `legal/THIRD-PARTY-LICENSES.md` (+ `PRIVACY.md`, `DISCLAIMER.md`, `TRADEMARKS.md`, `README.md`, 2026-08-25)
+34. ✅ Legal cross-reference audit (LEG-MIN-04, 2026-08-25); remaining docs: see item 35
 35. ⬜ Link validation
 
 ---

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Halbert LLM Router — unified model picker backend.
 
@@ -44,6 +46,31 @@ from ...utils.platform import get_config_dir
 logger = logging.getLogger("halbert.dashboard")
 
 router = APIRouter(tags=["llm"])
+
+
+def _annotate_license(detail: Dict[str, Any], license_text: Optional[str] = None, provider: str = "") -> None:
+    """Attach licence metadata to a model_details entry (LEG-MOD-04).
+
+    Ollama ships each model's licence text (``/api/show`` → ``license``); the
+    notice, if any, is read from that text. Other providers only get their
+    provider-level terms. No model names are involved.
+    """
+    try:
+        from ...model.attribution import classify_license_text, provider_terms
+
+        info = classify_license_text(license_text) if license_text else provider_terms(provider)
+    except Exception:
+        return
+    if info is None:
+        return
+    detail["license"] = info.name
+    detail["license_id"] = info.license_id
+    if info.license_url:
+        detail["license_url"] = info.license_url
+    if info.notice:
+        detail["attribution"] = info.notice
+    if info.non_commercial:
+        detail["non_commercial"] = True
 
 # ── SSRF Protection ──────────────────────────────────────────────
 
@@ -107,6 +134,9 @@ def _default_llm_config() -> Dict[str, Any]:
         "advanced": {
             "enforce_cloud_token_safety": True,
             "max_thinking_budget": 24576,
+            # On-demand Ollama Cloud tags probed by /api/llm/proxy/cloud-models.
+            # Halbert ships no built-in list; users add tags here.
+            "ollama_cloud_candidates": [],
         },
         "saved_endpoints": [],
     }
@@ -264,7 +294,7 @@ async def update_global_config(req: Request) -> Dict[str, Any]:
 
 
 def _ollama_show_detail(url: str, name: str, timeout: float = 3.0) -> Optional[Dict[str, Any]]:
-    """Fetch context length from Ollama /api/show for a single model."""
+    """Fetch context length and licence text from Ollama /api/show for a single model."""
     try:
         r = requests.post(
             f"{url}/api/show",
@@ -295,7 +325,10 @@ def _ollama_show_detail(url: str, name: str, timeout: float = 3.0) -> Optional[D
                         pass
                     break
         ctx_label = f"{ctx // 1000}k" if ctx >= 1000 else str(ctx) if ctx > 0 else ""
-        return {"context_tokens": ctx, "context_window": ctx_label}
+        lic = data.get("license")
+        if isinstance(lic, list):
+            lic = "\n\n".join(str(x) for x in lic)
+        return {"context_tokens": ctx, "context_window": ctx_label, "license": lic if isinstance(lic, str) else None}
     except Exception:
         return None
 
@@ -342,9 +375,13 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                 # Fetch context_length via /api/show (batched, max 20)
                 for md in model_details[:20]:
                     show = _ollama_show_detail(url, md["name"])
-                    if show and show["context_tokens"] > 0:
+                    if not show:
+                        continue
+                    if show["context_tokens"] > 0:
                         md["context_tokens"] = show["context_tokens"]
                         md["context_window"] = show["context_window"]
+                    if show.get("license"):
+                        _annotate_license(md, license_text=show["license"])
 
         elif req.provider in ("openai", "openai-compatible", "lm-studio", "anthropic"):
             headers = {}
@@ -420,35 +457,38 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
     except Exception as e:
         return {"error": {"code": "CONNECTION_FAILED", "message": str(e)}}
 
+    if req.provider != "ollama":
+        for md in model_details:
+            _annotate_license(md, provider=req.provider)
+
     return {"data": {"models": models, "model_details": model_details}}
 
 
 # ── Ollama Cloud model discovery ─────────────────────────────────
 
-# Candidate Ollama Cloud model tags to probe via /api/show.
-# Inlined from SourcePrep's ollama_cloud_catalog.py — Halbert doesn't
-# have that module. Each candidate costs one /api/show call, so the
-# list is bounded. Inaccessible candidates are pruned by /api/show.
-_OLLAMA_CLOUD_CANDIDATES: tuple[str, ...] = (
-    "glm-5.2:cloud",
-    "kimi-k2.5:cloud",
-    "kimi-k2.6:cloud",
-    "kimi-k2.7-code:cloud",
-    "gemini-3-flash-preview:cloud",
-    "qwen3-coder-next:cloud",
-    "gpt-5:cloud",
-    "gpt-4.1:cloud",
-    "claude-opus-4.8:cloud",
-    "claude-sonnet-5:cloud",
-    "claude-haiku-4.5:cloud",
-    "gemini-3-pro:cloud",
-    "deepseek-v3.5:cloud",
-    "deepseek-r1:cloud",
-    "mistral-large:cloud",
-    "command-r:cloud",
-)
+def _ollama_cloud_candidates() -> tuple[str, ...]:
+    """Candidate Ollama Cloud model tags to probe via /api/show.
 
-# In-memory probe cache keyed by (url, catalog_version) with a 5-min TTL.
+    Read at request time from the user's llm config
+    (``advanced.ollama_cloud_candidates``); Halbert ships no built-in
+    list, so the default is empty. Each candidate costs one /api/show
+    call, so keep the configured list bounded. Inaccessible candidates
+    are pruned by /api/show.
+    """
+    raw = load_llm_config().get("advanced", {}).get("ollama_cloud_candidates", [])
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    seen: set = set()
+    out: List[str] = []
+    for item in raw:
+        tag = str(item).strip() if item is not None else ""
+        if tag and tag not in seen:
+            seen.add(tag)
+            out.append(tag)
+    return tuple(out)
+
+
+# In-memory probe cache keyed by (url, candidate_tuple) with a 5-min TTL.
 _cloud_probe_cache: Dict[tuple, tuple] = {}
 _CLOUD_PROBE_TTL_SEC = 300.0
 
@@ -457,9 +497,11 @@ _CLOUD_PROBE_TTL_SEC = 300.0
 def proxy_cloud_models(req: LLMProxyRequest) -> Dict[str, Any]:
     """List on-demand Ollama Cloud models not in /api/tags.
 
-    Probes each candidate via /api/show (concurrent, max 8 in flight),
-    returns only those Ollama actually serves, minus any already in
-    /api/tags. Non-Ollama providers return empty.
+    Candidates come from ``advanced.ollama_cloud_candidates`` in the
+    user's llm config (empty by default). Probes each candidate via
+    /api/show (concurrent, max 8 in flight), returns only those Ollama
+    actually serves, minus any already in /api/tags. Non-Ollama
+    providers return empty.
     """
     url = req.url.rstrip("/")
     if not is_safe_url(url, req.provider):
@@ -468,7 +510,11 @@ def proxy_cloud_models(req: LLMProxyRequest) -> Dict[str, Any]:
     if req.provider != "ollama":
         return {"data": {"cloud_models": [], "cloud_model_details": []}}
 
-    cache_key = (url, 1)  # catalog version 1
+    all_candidates = _ollama_cloud_candidates()
+    if not all_candidates:
+        return {"data": {"cloud_models": [], "cloud_model_details": []}}
+
+    cache_key = (url, all_candidates)
     now = time.monotonic()
     cached = _cloud_probe_cache.get(cache_key)
     if cached and (now - cached[0]) < _CLOUD_PROBE_TTL_SEC:
@@ -486,7 +532,7 @@ def proxy_cloud_models(req: LLMProxyRequest) -> Dict[str, Any]:
     except Exception:
         pass
 
-    candidates = [c for c in _OLLAMA_CLOUD_CANDIDATES if c not in subscribed]
+    candidates = [c for c in all_candidates if c not in subscribed]
 
     cloud_models: List[str] = []
     cloud_model_details: List[Dict[str, Any]] = []
