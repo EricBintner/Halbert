@@ -991,18 +991,31 @@ class SqliteConversationStore:
                     anchor = self._turn_first_id(around_turn_id)
                     if anchor is None:
                         return []
-                    half = limit // 2
+                    # Fetch up to `limit` on each side so a shortfall on one
+                    # side can be topped up from the other -- otherwise a
+                    # page anchored near either end of the timeline returns
+                    # fewer than `limit` turns with nothing backfilling it.
                     before = self._conn.execute(
                         f"SELECT turn_key FROM ({_TURN_KEYS_SQL}) WHERE first_id < ? "
                         "ORDER BY first_id DESC LIMIT ?",
-                        (anchor, half),
+                        (anchor, limit),
                     ).fetchall()
                     after = self._conn.execute(
                         f"SELECT turn_key FROM ({_TURN_KEYS_SQL}) WHERE first_id >= ? "
                         "ORDER BY first_id ASC LIMIT ?",
-                        (anchor, limit - half),
+                        (anchor, limit),
                     ).fetchall()
-                    keys = [r["turn_key"] for r in before][::-1] + [r["turn_key"] for r in after]
+                    before_keys = [r["turn_key"] for r in before]  # newest-first
+                    after_keys = [r["turn_key"] for r in after]  # oldest-first
+                    want_before = limit // 2
+                    want_after = limit - want_before
+                    if len(before_keys) < want_before:
+                        want_after = min(len(after_keys), want_after + (want_before - len(before_keys)))
+                        want_before = len(before_keys)
+                    elif len(after_keys) < want_after:
+                        want_before = min(len(before_keys), want_before + (want_after - len(after_keys)))
+                        want_after = len(after_keys)
+                    keys = before_keys[:want_before][::-1] + after_keys[:want_after]
                 else:
                     rows = self._conn.execute(
                         f"SELECT turn_key FROM ({_TURN_KEYS_SQL}) "

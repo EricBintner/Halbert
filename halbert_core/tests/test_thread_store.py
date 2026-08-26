@@ -646,6 +646,29 @@ class TestThreadReaders:
         assert store.list_turns(before_turn_id="nope") == []
         assert store.list_turns(before_turn_id="turn-0") == []
 
+    def test_list_turns_around_backfills_from_either_edge(self, store):
+        """Round-2 A1b review: ``around_turn_id`` must return exactly
+        ``limit`` turns (when that many exist) even when the anchor sits
+        near either end of the timeline, by topping up from the side that
+        still has turns left."""
+        store.create_thread("t1", "T")
+        for i in range(20):
+            tid = f"turn-{i:02d}"
+            store.append_message("t1", "user", f"q{i}", turn_id=tid, timestamp=float(i * 10))
+            store.append_message("t1", "assistant", f"a{i}", origin="assistant", turn_id=tid,
+                                 timestamp=float(i * 10 + 1))
+        # Anchored on the newest turn: nothing sits after it, so the whole
+        # shortfall must be backfilled from the older side.
+        turns = store.list_turns(around_turn_id="turn-19", limit=11)
+        assert [t["turn_id"] for t in turns] == [f"turn-{i:02d}" for i in range(9, 20)]
+        # Anchored on the oldest turn: nothing sits before it, so the whole
+        # shortfall must be backfilled from the newer side.
+        turns = store.list_turns(around_turn_id="turn-00", limit=11)
+        assert [t["turn_id"] for t in turns] == [f"turn-{i:02d}" for i in range(0, 11)]
+        # Anchored in the middle: both sides have plenty, half/half holds.
+        turns = store.list_turns(around_turn_id="turn-10", limit=11)
+        assert [t["turn_id"] for t in turns] == [f"turn-{i:02d}" for i in range(5, 16)]
+
     def test_list_turns_rows_without_turn_id(self, store):
         store.create_thread("t1", "T")
         mid = store.append_message("t1", "user", "legacy row")
