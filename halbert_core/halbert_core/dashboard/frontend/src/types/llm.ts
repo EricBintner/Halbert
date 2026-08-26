@@ -147,6 +147,7 @@ export interface LLMConfig {
   small_model: LLMSlotConfig;
   large_model: LLMSlotConfig;
   code_model: LLMSlotConfig;
+  vision_model?: LLMSlotConfig;
   coordinator_model?: LLMSlotConfig & { inherit_from_large?: boolean };
   advanced?: AdvancedLLMSettings;
   saved_endpoints: SavedEndpoint[];
@@ -155,7 +156,7 @@ export interface LLMConfig {
   model_context_cache?: Record<string, number>;
 }
 
-export type ModelSlotType = 'embedding' | 'small' | 'large' | 'code' | 'coordinator';
+export type ModelSlotType = 'embedding' | 'small' | 'large' | 'code' | 'vision' | 'coordinator';
 
 export interface HFDownloadStatus {
   model_type: ModelSlotType;
@@ -299,6 +300,7 @@ export interface LLMSlotsStatus {
   small_model: LLMSlotStatus;
   large_model: LLMSlotStatus;
   code_model: LLMSlotStatus;
+  vision_model?: LLMSlotStatus;
   coordinator_model?: LLMSlotStatus;
   swarm_phases?: SwarmPhasesBreakdown | null;
 }

@@ -19,7 +19,6 @@ export { ScanBlock, type ScanSource } from './ScanBlock';
 export { ContextBar, ContextPill, ContextPreview, type ContextItem, type ContextType } from './ContextBar';
 export { DiffBlock, DiffSummary } from './DiffBlock';
 export { AgentChat } from './AgentChat';
-export { TaskPanel, type TaskState, type TaskPanelProps } from './TaskPanel';
 
 export { TerminalTile } from './TerminalTile'
 export { TerminalAccordionDock } from './TerminalAccordionDock'

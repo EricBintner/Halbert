@@ -68,13 +68,14 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
     small_model: { enabled: false },
     large_model: { enabled: false },
     code_model: { enabled: false },
+    vision_model: { enabled: false },
   })
   const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({})
   const [modelDetails, setModelDetails] = useState<Record<string, Array<{ name: string; context_window?: string; cost_tier?: string; rate_limits?: { rpd?: number; rpm?: number }; batch_estimate?: { files_per_request: number; daily_file_capacity?: number } }>>>({})
   const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({})
   const [cloudModels, setCloudModels] = useState<Record<string, string[]>>({})
   const [loadingCloudModels, setLoadingCloudModels] = useState<Record<string, boolean>>({})
-  const [testingSlot, setTestingSlot] = useState<'embedding' | 'small' | 'large' | 'code' | 'coordinator' | null>(null)
+  const [testingSlot, setTestingSlot] = useState<'embedding' | 'small' | 'large' | 'code' | 'vision' | 'coordinator' | null>(null)
   const [testResults, setTestResults] = useState<Record<string, EndpointTestResult>>({})
   const [llmSlotsStatus, setLlmSlotsStatus] = useState<LLMSlotsStatus | null>(null)
 
@@ -208,7 +209,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
     }
   }, [llmConfig.saved_endpoints, cloudModels])
 
-  const handleTestModel = useCallback(async (slotType: 'embedding' | 'small' | 'large' | 'code' | 'coordinator') => {
+  const handleTestModel = useCallback(async (slotType: 'embedding' | 'small' | 'large' | 'code' | 'vision' | 'coordinator') => {
     let endpointId: string | undefined
     let model: string | undefined
     let kind = 'completion'
@@ -218,6 +219,8 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
       endpointId = llmConfig.small_model.endpoint_id; model = llmConfig.small_model.model
     } else if (slotType === 'code') {
       endpointId = llmConfig.code_model.endpoint_id; model = llmConfig.code_model.model
+    } else if (slotType === 'vision') {
+      endpointId = llmConfig.vision_model?.endpoint_id; model = llmConfig.vision_model?.model
     } else if (slotType === 'coordinator') {
       endpointId = llmConfig.coordinator_model?.endpoint_id; model = llmConfig.coordinator_model?.model
     } else {
@@ -231,7 +234,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
     }
     setTestingSlot(slotType)
     try {
-      const slotKey = slotType === 'small' ? 'small_model' : slotType === 'large' ? 'large_model' : slotType === 'code' ? 'code_model' : slotType === 'coordinator' ? 'coordinator_model' : undefined
+      const slotKey = slotType === 'small' ? 'small_model' : slotType === 'large' ? 'large_model' : slotType === 'code' ? 'code_model' : slotType === 'vision' ? 'vision_model' : slotType === 'coordinator' ? 'coordinator_model' : undefined
       const r = await fetch(apiUrl('/api/llm/proxy/test-model'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -359,6 +362,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
     if (llmConfig.small_model.endpoint_id) endpointIds.add(llmConfig.small_model.endpoint_id)
     if (llmConfig.large_model.endpoint_id) endpointIds.add(llmConfig.large_model.endpoint_id)
     if (llmConfig.code_model.endpoint_id) endpointIds.add(llmConfig.code_model.endpoint_id)
+    if (llmConfig.vision_model?.endpoint_id) endpointIds.add(llmConfig.vision_model.endpoint_id)
     if (llmConfig.coordinator_model?.endpoint_id) endpointIds.add(llmConfig.coordinator_model.endpoint_id)
 
     for (const epId of endpointIds) {

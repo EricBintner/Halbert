@@ -22,7 +22,6 @@ import { Onboarding } from './components/Onboarding'
 import { DebugProvider } from './contexts/DebugContext'
 import { ScanProvider } from './contexts/ScanContext'
 import { PageContextProvider } from './contexts/PageContext'
-import { AgentSessionProvider } from './contexts/AgentSessionContext'
 import { ShellModeProvider } from './contexts/ShellModeContext'
 import { apiUrl } from '@/lib/apiBase'
 
@@ -84,7 +83,6 @@ function App() {
   return (
     <DebugProvider>
       <ScanProvider>
-        <AgentSessionProvider>
           <Onboarding open={showOnboarding} onComplete={handleOnboardingComplete} />
           <Router>
             <PageContextProvider>
@@ -111,7 +109,6 @@ function App() {
               </ShellModeProvider>
             </PageContextProvider>
           </Router>
-        </AgentSessionProvider>
       </ScanProvider>
     </DebugProvider>
   )

@@ -36,7 +36,7 @@ export interface AIModelsSettingsProps {
   
   // Model operations
   onFetchModels: (endpointId: string, slot?: string) => Promise<string[]>;
-  onTestModel: (slotType: 'embedding' | 'small' | 'large' | 'code' | 'coordinator') => Promise<EndpointTestResult>;
+  onTestModel: (slotType: 'embedding' | 'small' | 'large' | 'code' | 'vision' | 'coordinator') => Promise<EndpointTestResult>;
   onClearTestResult?: (slot: string) => void;
   
   // HuggingFace operations
@@ -51,7 +51,7 @@ export interface AIModelsSettingsProps {
   cloudModels?: Record<string, string[]>;
   loadingCloudModels?: Record<string, boolean>;
   onFetchCloudModels?: (endpointId: string) => Promise<string[]>;
-  testingSlot?: 'embedding' | 'small' | 'large' | 'code' | 'coordinator' | null;
+  testingSlot?: 'embedding' | 'small' | 'large' | 'code' | 'vision' | 'coordinator' | null;
   testResults?: Record<string, EndpointTestResult>;
   
   fileCount?: number;
@@ -610,6 +610,41 @@ export function AIModelsSettings({
   };
 
 
+  // ── Vision Model handlers ───────────────────────────────────
+  const visionSlot = config.vision_model ?? { enabled: false };
+
+  const handleVisionEndpointChange = async (endpointId: string) => {
+    onClearTestResult?.('vision');
+    if (!endpointId || endpointId === '__disconnect__') {
+      onConfigChange({
+        ...config,
+        vision_model: { enabled: false, endpoint_id: undefined, model: undefined },
+      });
+      return;
+    }
+    onConfigChange({
+      ...config,
+      vision_model: { enabled: true, endpoint_id: endpointId, model: undefined },
+    });
+    void onFetchModels(endpointId, 'vision_model');
+  };
+
+  const handleVisionModelChange = (model: string) => {
+    onClearTestResult?.('vision');
+    onConfigChange({
+      ...config,
+      vision_model: { ...visionSlot, model, enabled: true },
+    });
+  };
+
+  const handleVisionAlwaysOnChange = (always_on: boolean) => {
+    onConfigChange({
+      ...config,
+      vision_model: { ...visionSlot, always_on },
+    });
+  };
+
+
   // ── Swarm Coordinator handlers ─────────────────────────────
   // The coordinator slot drives Phase 1 (planning) and Phase 3 (synthesis) of
   // the Swarm pipeline. When `inherit_from_large` is true, the backend falls
@@ -899,6 +934,39 @@ export function AIModelsSettings({
                 onTest={() => onTestModel('large')}
                 testResult={testResults['large']}
                 testingConnection={testingSlot === 'large'}
+              />
+
+              {/* Vision Model — screenshot interpretation, visual troubleshooting */}
+              <ModelCard
+                title="Vision Model"
+                description="Image & screenshot analysis (Optional)"
+                icon={
+                  <svg className="w-5 h-5 text-info" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                }
+                info="Optional vision-capable model for screenshot interpretation and visual troubleshooting. Falls back to the Fast Model if not configured. Use a multimodal model (e.g. kimi-k3:cloud, llava, qwen-vl)."
+                endpoint={visionSlot.endpoint_id}
+                model={visionSlot.model}
+                alwaysOn={visionSlot.always_on}
+                showAlwaysOn={isLocalProvider(endpointProviderFor(visionSlot.endpoint_id))}
+                onAlwaysOnChange={handleVisionAlwaysOnChange}
+
+                endpoints={config.saved_endpoints}
+                onEndpointChange={handleVisionEndpointChange}
+                availableModels={availableModels[visionSlot.endpoint_id || ''] || []}
+                modelDetails={modelDetails[visionSlot.endpoint_id || '']}
+                onModelChange={handleVisionModelChange}
+                onRefreshModels={() => visionSlot.endpoint_id && onFetchModels(visionSlot.endpoint_id)}
+                loadingModels={loadingModels[visionSlot.endpoint_id || '']}
+                cloudModels={cloudModels[visionSlot.endpoint_id || ''] || []}
+                loadingCloudModels={loadingCloudModels[visionSlot.endpoint_id || '']}
+                onFetchCloudModels={onFetchCloudModels}
+                status={getSlotStatus(visionSlot, 'vision')}
+                onTest={() => onTestModel('vision')}
+                testResult={testResults['vision']}
+                testingConnection={testingSlot === 'vision'}
               />
 
               {/* Swarm Coordinator — routes planning/synthesis to a fast, JSON-reliable model */}

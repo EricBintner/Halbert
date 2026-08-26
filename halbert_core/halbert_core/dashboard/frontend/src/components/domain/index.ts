@@ -13,14 +13,6 @@ export { EmptyState, type EmptyStateProps } from './EmptyState'
 
 // Phase 24: Discovery Consolidation Components
 export { ConfigFileButton, getConfigPath, type ConfigFileButtonProps } from './ConfigFileButton'
-export { 
-  GroupedDiscoveryCard, 
-  groupByConfig, 
-  shouldFuse,
-  type GroupedItem, 
-  type GroupedDiscoveryCardProps,
-  type GroupedResult 
-} from './GroupedDiscoveryCard'
 
 // Phase 20D: Shared Utilities
 export { CodeBlock } from './CodeBlock'

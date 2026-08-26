@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useCallback } from 'react'
-import { ExternalLink, ShieldCheck, AlertTriangle } from 'lucide-react'
+import { ExternalLink, Info } from 'lucide-react'
 import { AIModelsSettings } from '@/components/llm'
 import { useLLMConfig } from '@/hooks/useLLMConfig'
 import { useSourcePrepDaemon } from '@/hooks/useSourcePrepDaemon'
-import { Button } from '@/components/prep-primitives'
 
 /**
- * UnifiedLLMSettings — wrapper that renders AIModelsSettings with daemon-detection deferral.
+ * UnifiedLLMSettings — wrapper that renders AIModelsSettings with an
+ * informational banner when the SourcePrep daemon is detected.
  *
- * When the SourcePrep daemon is detected on :8400:
- *   - The native LLM picker is disabled
- *   - A banner links to the SourcePrep dashboard for model management
- *
- * When the daemon is down:
- *   - The native AIModelsSettings picker is fully active
+ * The picker is ALWAYS visible. When the SourcePrep daemon is running on
+ * :8400, a banner notes that SourcePrep's dashboard also has model settings
+ * and provides a deep link — but it does NOT hide Halbert's native picker.
+ * Halbert needs its own model configuration (Fast, Thinking, Vision) that
+ * is independent of SourcePrep's pipeline slots.
  */
 export function UnifiedLLMSettings() {
   const daemon = useSourcePrepDaemon()
@@ -25,52 +24,33 @@ export function UnifiedLLMSettings() {
     await llm.flushPendingSave()
   }, [llm])
 
-  // ── Daemon is running — defer to SourcePrep dashboard ───────
-  if (daemon.isDaemonRunning) {
-    return (
-      <div className="space-y-4">
-        <div className="rounded-lg border border-border p-6 bg-surface">
+  return (
+    <div className="space-y-4">
+      {/* SourcePrep daemon detected — informational banner (non-blocking) */}
+      {daemon.isDaemonRunning && !daemon.isProbing && (
+        <div className="rounded-lg border border-border p-4 bg-surface">
           <div className="flex items-start gap-3">
-            <ShieldCheck className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
-            <div className="space-y-2 flex-1">
-              <h3 className="text-base font-semibold text-text">
-                SourcePrep daemon is managing LLM models
-              </h3>
+            <Info className="h-4 w-4 text-info flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
               <p className="text-sm text-text-muted">
-                The SourcePrep daemon is running on port {daemon.daemonUrl.replace('http://', '')}.
-                Model configuration is managed centrally through the SourcePrep dashboard to keep
-                Halbert and SourcePrep in sync.
+                SourcePrep daemon is running on port {daemon.daemonUrl.replace('http://', '')}.
+                Halbert's model settings below are shared with SourcePrep via the same config.
+                You can also manage models from the{' '}
+                <a
+                  href={`${daemon.daemonUrl}/?settings=chunking-embeddings`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary hover:underline"
+                >
+                  SourcePrep dashboard
+                  <ExternalLink className="h-3 w-3" />
+                </a>.
               </p>
-              <div className="flex items-center gap-3 pt-2">
-                <a href={`${daemon.daemonUrl}/?settings=chunking-embeddings`} target="_blank" rel="noopener noreferrer">
-                  <Button variant="default" size="sm">
-                    <ExternalLink className="h-4 w-4" />
-                    Open SourcePrep Settings
-                  </Button>
-                </a>
-                <span className="text-xs text-text-subtle">
-                  The native model picker will re-enable when the daemon stops.
-                </span>
-              </div>
             </div>
           </div>
         </div>
-      </div>
-    )
-  }
-
-  // ── Daemon is down — render native AIModelsSettings ─────────
-  return (
-    <div className="space-y-4">
-      {daemon.isProbing ? null : (
-        <div className="flex items-center gap-2 text-xs text-text-subtle">
-          <AlertTriangle className="h-3.5 w-3.5" />
-          <span>
-            SourcePrep daemon not detected — using Halbert's native model picker.
-            Start the daemon with <code className="bg-surface-raised px-1 rounded">prep serve</code> to unify.
-          </span>
-        </div>
       )}
+
       <AIModelsSettings
         config={llm.llmConfig}
         onConfigChange={llm.handleLLMConfigChange}
