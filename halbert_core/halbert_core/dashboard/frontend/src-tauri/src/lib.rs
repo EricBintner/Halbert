@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::Serialize;
 use sysinfo::System;
@@ -11,13 +13,48 @@ use tauri_plugin_shell::ShellExt;
 struct Backend(Mutex<Option<CommandChild>>);
 
 const DEFAULT_PORT: u16 = 8000;
+/// Exclusive upper bound of the port scan. Matches the range
+/// dashboard/__main__.py's find_available_port() uses.
+const PORT_SCAN_END: u16 = 8100;
 const HOST: &str = "127.0.0.1";
 
-fn backend_port() -> u16 {
-    std::env::var("HALBERT_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
+fn port_is_free(port: u16) -> bool {
+    std::net::TcpListener::bind((HOST, port)).is_ok()
+}
+
+/// Pick the backend port.
+///
+/// Split out from `backend_port()` so the choice is testable without the
+/// process-wide cache. An explicit `HALBERT_PORT` wins outright even when the
+/// port looks busy — the user may be deliberately attaching to a backend they
+/// started themselves, and second-guessing that would be worse than failing
+/// loudly.
+fn choose_port(explicit: Option<u16>, is_free: impl Fn(u16) -> bool) -> u16 {
+    if let Some(port) = explicit {
+        return port;
+    }
+    (DEFAULT_PORT..PORT_SCAN_END)
+        .find(|p| is_free(*p))
         .unwrap_or(DEFAULT_PORT)
+}
+
+/// The backend port for this process, resolved once.
+///
+/// This used to be a bare 8000. A second Halbert — or any other dev server
+/// already holding 8000 — left the webview pointed at a backend that wasn't
+/// ours while our own sidecar failed to bind. Caching matters as much as
+/// scanning: `api_base()` is called for the injected script, the `get_api_base`
+/// command and the sidecar's env, and those three must agree.
+fn backend_port() -> u16 {
+    static PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+    *PORT.get_or_init(|| {
+        let explicit = std::env::var("HALBERT_PORT").ok().and_then(|v| v.parse().ok());
+        let port = choose_port(explicit, port_is_free);
+        if port != DEFAULT_PORT && explicit.is_none() {
+            println!("[Halbert] port {DEFAULT_PORT} busy, using {port}");
+        }
+        port
+    })
 }
 
 fn api_base() -> String {
@@ -528,5 +565,34 @@ mod tests {
     #[test]
     fn api_base_uses_default_port() {
         assert!(super::api_base().starts_with("http://127.0.0.1:"));
+    }
+
+    #[test]
+    fn explicit_port_is_honoured_even_when_busy() {
+        assert_eq!(super::choose_port(Some(9999), |_| false), 9999);
+    }
+
+    #[test]
+    fn free_default_port_is_used() {
+        assert_eq!(super::choose_port(None, |_| true), super::DEFAULT_PORT);
+    }
+
+    #[test]
+    fn busy_default_port_falls_through_to_the_next_free_one() {
+        let busy = super::DEFAULT_PORT;
+        assert_eq!(super::choose_port(None, |p| p != busy), busy + 1);
+    }
+
+    #[test]
+    fn whole_range_busy_falls_back_to_the_default() {
+        // Nothing better to pick; spawning on the default at least produces a
+        // real bind error instead of a silently wrong URL.
+        assert_eq!(super::choose_port(None, |_| false), super::DEFAULT_PORT);
+    }
+
+    #[test]
+    fn backend_port_is_stable_across_calls() {
+        // api_base(), get_api_base and the sidecar env must all agree.
+        assert_eq!(super::backend_port(), super::backend_port());
     }
 }
