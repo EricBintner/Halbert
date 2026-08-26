@@ -17,6 +17,24 @@ from typing import List, Optional
 
 logger = logging.getLogger("halbert.integrations.state_trackers")
 
+DEFAULT_PERSONA_ID = "halbert"
+
+
+def _record(ledger, persona_id: str, subject: str, predicate: str,
+            obj: str, source: str) -> None:
+    """Write one state triple, never raising.
+
+    ``TemporalStateLedger.record`` closes the previous triple for the same
+    (persona_id, subject, predicate) automatically, so callers get supersession
+    and a valid-time history for free.
+    """
+    if ledger is None:
+        return
+    try:
+        ledger.record(persona_id, subject, predicate, obj, source)
+    except Exception as e:
+        logger.warning(f"Failed to record {subject}/{predicate}: {e}")
+
 
 class DiskHealthTracker:
     """Tracks disk health state for the persona.
@@ -26,8 +44,9 @@ class DiskHealthTracker:
     sync_to_ledger() writes to the TemporalStateLedger.
     """
 
-    def __init__(self, ledger=None):
+    def __init__(self, ledger=None, persona_id: str = DEFAULT_PERSONA_ID):
         self._ledger = ledger
+        self._persona_id = persona_id
         self._disk_states: dict[str, str] = {}  # device -> health status
 
     @property
@@ -48,18 +67,9 @@ class DiskHealthTracker:
         self.sync_to_ledger()
 
     def sync_to_ledger(self) -> None:
-        if self._ledger is None:
-            return
         for device, status in self._disk_states.items():
-            subject = f"disk:{device}"
-            try:
-                self._ledger.set_state(
-                    subject=subject,
-                    predicate="disk_health",
-                    object=status,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to sync disk health for {device}: {e}")
+            _record(self._ledger, self._persona_id, f"disk:{device}",
+                    "disk_health", status, "state_tracker:disk_health")
 
 
 class ServiceStatusTracker:
