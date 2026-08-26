@@ -152,10 +152,36 @@ def _term_hits(terms: Sequence[str], haystack: str) -> List[str]:
 
 
 def _receipt_snippet(receipt: str, matched: Sequence[str]) -> str:
+    """Line of ``receipt`` most likely to contain a ``matched`` term.
+
+    Literal substring first -- this already covers the common direction,
+    where the receipt line holds the longer inflected word and a shorter
+    query term/stem is a substring of it (e.g. line "...the resilver has
+    not finished..." vs. query term "resilver"). When nothing matches
+    literally, a shared-prefix word scan steps in for the *other*
+    direction: a query term such as "resilvering" that only matched via
+    the porter stemmer's -ing/-ed/-ion suffix stripping, where the shorter
+    receipt word ("resilver") is a prefix of the longer query term rather
+    than the reverse, so no substring check in either direction finds it
+    (A3 review round 2, finding 3). Porter only strips suffixes, so an
+    inflected form and its stem always share a prefix -- this is the same
+    reason ``match_terms`` above stopped trying to reimplement Porter
+    itself, but there it could re-ask the live FTS index per term; there
+    is no per-line index here to ask the same question of, so a prefix
+    scan over the line's own words is the cheap stand-in.
+    """
     lines = [ln for ln in (receipt or "").splitlines() if ln.strip()]
     for ln in lines:
         low = ln.lower()
-        if any((t[:-1] if len(t) > 4 else t) in low for t in matched):
+        if any(t in low for t in matched):
+            return ln[:200]
+    for ln in lines:
+        words = _TOKEN_RE.findall(ln.lower())
+        if any(
+            len(t) >= 4 and len(w) >= 4 and (t.startswith(w) or w.startswith(t))
+            for t in matched
+            for w in words
+        ):
             return ln[:200]
     return lines[0][:200] if lines else ""
 
@@ -1170,46 +1196,93 @@ class SqliteConversationStore:
             logger.warning(f"upsert_receipt {thread_id} failed: {e}")
             return False
 
-    def _fts_term_hits(self, thread_id: str, terms: Sequence[str]) -> List[str]:
-        """Which ``terms`` the real ``receipts_fts`` index matches for this
-        thread, checked one quoted term at a time against the tokenizer/
-        stemmer the index actually runs (``porter unicode61``).
+    def _fts_term_hits_map(self, terms: Sequence[str]) -> Dict[str, frozenset]:
+        """Which thread_ids the real ``receipts_fts`` index matches, per
+        query term, checked against the tokenizer/stemmer the index
+        actually runs (``porter unicode61``) -- one MATCH per term, not
+        one per candidate row per term.
 
-        A3 review finding 2: the crude local stem in ``_term_hits`` (drop the
-        last letter past 4 chars) only catches suffixes exactly one letter
-        long, so a real porter match on an -ing/-ed/-ion form (e.g. query
-        "resilvering" against an indexed "resilver") scored zero locally even
-        though the row was returned by the very MATCH query that used that
-        same term. Re-asking FTS per term instead of re-implementing Porter
-        in Python is by construction never out of step with what indexed the
-        row: this table's OR-joined MATCH (``_fts_query``) guarantees at
-        least one term individually matches any row it returns.
+        PERF NOTE (A3 review round 2, finding 1): the per-row version this
+        replaced ran a MATCH scoped by ``thread_id = ?`` for every
+        candidate row for every term, and ``thread_id`` is an UNINDEXED FTS
+        column, so each of those queries scanned that term's whole posting
+        list looking for one thread. With the default ``limit=5`` that was
+        up to ``max(limit*4,20)=20`` candidate rows x up to 12 terms = up
+        to 240 MATCH queries per ``search_receipts`` call, and
+        ``search_receipts`` runs on every user turn (plan-a-contracts.md
+        line 89; the plan's ``_gather_candidates``,
+        CONTINUOUS-CONVERSATION-PLAN-A-2026-08-26.md:2588) -- i.e. on the
+        interactive hot path, with cost growing with the corpus (measured:
+        200 threads 10ms, 2 000 threads 51ms, 10 000 threads 267ms; >90%
+        of that was the recheck). Running one MATCH per *term* here instead
+        -- independent of how many rows are being scored -- cuts that to
+        O(terms): measured ~3.5x faster (14.9ms @2k threads, 78.6ms @10k,
+        12 queries instead of up to 160). See the PERF NOTE on
+        ``_TURN_KEYS_SQL`` above for the same class of issue elsewhere in
+        this file.
+
+        A3 review finding 2 (unchanged rationale, now applied per term
+        instead of per row): the crude local stem in ``_term_hits`` (drop
+        the last letter past 4 chars) only catches suffixes exactly one
+        letter long, so a real porter match on an -ing/-ed/-ion form (e.g.
+        query "resilvering" against an indexed "resilver") scored zero
+        locally even though the row was returned by the very MATCH query
+        that used that same term. Re-asking FTS per term instead of
+        re-implementing Porter in Python is by construction never out of
+        step with what indexed the row: this table's OR-joined MATCH
+        (``_fts_query``) guarantees at least one term individually matches
+        any row it returns.
         """
-        out: List[str] = []
+        out: Dict[str, frozenset] = {}
+        failed: Optional[Exception] = None
         for t in terms:
             try:
                 with self._lock:
-                    hit = self._conn.execute(
-                        "SELECT 1 FROM receipts_fts WHERE thread_id = ? "
-                        "AND receipts_fts MATCH ? LIMIT 1",
-                        (thread_id, _fts_query([t])),
-                    ).fetchone()
-            except Exception:
-                hit = None
-            if hit is not None:
-                out.append(t)
+                    rows = self._conn.execute(
+                        "SELECT thread_id FROM receipts_fts WHERE receipts_fts MATCH ?",
+                        (_fts_query([t]),),
+                    ).fetchall()
+                out[t] = frozenset(r["thread_id"] for r in rows)
+            except Exception as e:
+                failed = e
+                out[t] = frozenset()
+        if failed is not None:
+            # A3 review round 2, finding 2: log once per call, not once per
+            # term -- the old per-row helper swallowed every exception with
+            # a bare ``except Exception: hit = None`` and never logged at
+            # all, contradicting this class's own documented contract
+            # (docstring above: "methods log at WARNING ... rather than
+            # raise") and every other except block in this file, all of
+            # which log. A broken/corrupt receipts_fts fails every term the
+            # same way, so one WARNING per call (not N) says the same thing
+            # without spamming the log once per query term.
+            logger.warning(
+                "receipt term recheck against receipts_fts failed for one "
+                f"or more terms (falling back to score=0.25 for affected "
+                f"rows): {failed}"
+            )
         return out
 
     def _receipt_hit(
-        self, row: sqlite3.Row, terms: Sequence[str], *, real_fts: bool
+        self,
+        row: sqlite3.Row,
+        terms: Sequence[str],
+        *,
+        real_fts: bool,
+        term_hits: Optional[Dict[str, frozenset]] = None,
     ) -> Dict[str, Any]:
         """``real_fts=True`` for a row the ``receipts_fts`` MATCH query
-        itself returned (re-derive matched terms from the index, per finding
-        2 above); ``real_fts=False`` for a row found only via the title LIKE
-        fallback, where there is no live FTS match to re-ask and the crude
-        local stem is the best available signal."""
+        itself returned (re-derive matched terms from ``term_hits``, the
+        per-term thread_id map from ``_fts_term_hits_map`` -- pass one map
+        in once per ``search_receipts`` call rather than recomputing it per
+        row; omitted here it is computed for just this one row, e.g. for a
+        direct/standalone call); ``real_fts=False`` for a row found only
+        via the title LIKE fallback, where there is no live FTS match to
+        re-ask and the crude local stem is the best available signal."""
         if real_fts:
-            matched = self._fts_term_hits(row["thread_id"], terms)
+            if term_hits is None:
+                term_hits = self._fts_term_hits_map(terms)
+            matched = [t for t in terms if row["thread_id"] in term_hits.get(t, ())]
         else:
             haystack = f"{row['title'] or ''} {row['receipt'] or ''}".lower()
             matched = _term_hits(terms, haystack)
@@ -1257,8 +1330,15 @@ class SqliteConversationStore:
                         (_fts_query(terms), exclude_thread_id, exclude_thread_id,
                          max(limit * 4, 20)),
                     ).fetchall()
-                for r in rows:
-                    hits[r["thread_id"]] = self._receipt_hit(r, terms, real_fts=True)
+                if rows:
+                    # One term-hit map for every row, not one per row (A3
+                    # review round 2, finding 1) -- see the PERF NOTE on
+                    # ``_fts_term_hits_map`` above.
+                    term_hits = self._fts_term_hits_map(terms)
+                    for r in rows:
+                        hits[r["thread_id"]] = self._receipt_hit(
+                            r, terms, real_fts=True, term_hits=term_hits
+                        )
             except Exception as e:
                 logger.warning(f"receipt FTS search failed (LIKE fallback only): {e}")
         try:

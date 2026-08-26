@@ -923,15 +923,30 @@ class TestReceiptsReviewFixes:
         """Query terms in -ing form must credit a match against the
         receipt's un-suffixed form, the same way the porter tokenizer that
         built receipts_fts already treats them as the same token -- not
-        just literal terms found by a crude one-character-trim stem."""
+        just literal terms found by a crude one-character-trim stem.
+
+        The snippet must also point at the line that actually matched, not
+        just fall back to the receipt's first line (A3 review round 2,
+        finding 3). A single-line receipt would pass that check by
+        accident, so this receipt spans multiple lines, and the query is
+        chosen (``_fts_terms`` drops every other word as a stopword) so
+        "resilvering" is the only matched term -- nothing else in the
+        query could make a *different* line match literally and paper over
+        the snippet picking the wrong one.
+        """
         store.create_thread("pool", "ZFS pool")
         store.update_thread("pool", status="open", last_active=1.0)
-        store.upsert_receipt("pool", "ZFS pool", "Entities: zfs, resilver, pool, disk")
-        hits = store.search_receipts("is the resilvering finished on that pool")
+        store.upsert_receipt(
+            "pool", "ZFS pool",
+            "Title: ZFS pool\nEntities: zfs, disk\n"
+            "Open loop: the resilver has not finished",
+        )
+        hits = store.search_receipts("how is the resilvering going")
         assert hits[0]["thread_id"] == "pool"
-        assert set(hits[0]["match_terms"]) == {"resilvering", "pool"}
+        assert hits[0]["match_terms"] == ["resilvering"]
         # contracts.md ``strong := ... candidates[0].score >= 0.5``
         assert hits[0]["score"] >= 0.5
+        assert hits[0]["snippet"] == "Open loop: the resilver has not finished"
 
     def test_receipt_hit_default_score_for_an_unverifiable_match(self, store):
         """Direct unit coverage of the ``score = 0.25`` default branch in
@@ -975,3 +990,57 @@ class TestReceiptsReviewFixes:
         # within the same score, higher last_active ranks first.
         assert [h["thread_id"] for h in hits] == ["t6", "t4", "t2"]
         assert all(h["score"] == 1.0 for h in hits)
+
+
+class TestReceiptsRound2Findings:
+    """A3 review round 2, on top of the round-1 fix above.
+
+    Finding 1: the round-1 fix for finding 2 (re-asking the real FTS index
+    per term) ran that recheck once per *candidate row* per term, against
+    an UNINDEXED ``thread_id`` column -- an N+1 on the interactive
+    ``search_receipts`` hot path. Finding 2: that per-row recheck also
+    swallowed every exception silently with no logging, contradicting this
+    module's own documented contract. Finding 3: the snippet picker
+    (``_receipt_snippet``) was never updated to match the round-1 stemming
+    fix, so a porter-suffix match's snippet can point at the wrong line
+    (covered by the updated assertion on
+    ``test_porter_suffix_forms_score_against_the_real_index`` above instead
+    of a new test here, per the review).
+    """
+
+    def test_search_receipts_computes_term_hits_once_not_per_row(self, store, monkeypatch):
+        """The hoisted per-term map must be computed once per
+        ``search_receipts`` call, independent of how many candidate rows
+        the FTS query returns -- the whole point of moving the recheck out
+        of the per-row loop."""
+        for i in range(6):
+            tid = f"t{i}"
+            store.create_thread(tid, f"Thread {i}")
+            store.upsert_receipt(tid, f"Thread {i}", "Entities: widget")
+        calls = []
+        original = store._fts_term_hits_map
+
+        def counting(terms):
+            calls.append(list(terms))
+            return original(terms)
+
+        monkeypatch.setattr(store, "_fts_term_hits_map", counting)
+        hits = store.search_receipts("widget", limit=10)
+        assert len(hits) == 6
+        assert len(calls) == 1
+
+    def test_fts_term_hits_map_logs_once_per_call_not_once_per_term(self, store, caplog):
+        """The old per-row helper's bare ``except Exception: hit = None``
+        swallowed every failure silently. Now a broken receipts_fts must
+        log exactly one WARNING per call (not one per failing term), and
+        every term must still come back mapped to an empty set rather than
+        raising."""
+        store.create_thread("t", "T")
+        store.upsert_receipt("t", "T", "Entities: alpha")
+        store._conn.execute("DROP TABLE receipts_fts")
+        store._conn.commit()
+        with caplog.at_level(logging.WARNING, logger="halbert.agents.conversation_sqlite"):
+            term_hits = store._fts_term_hits_map(["alpha", "beta", "gamma"])
+        assert term_hits == {"alpha": frozenset(), "beta": frozenset(), "gamma": frozenset()}
+        warnings = [r for r in caplog.records if "receipt term recheck" in r.message]
+        assert len(warnings) == 1
