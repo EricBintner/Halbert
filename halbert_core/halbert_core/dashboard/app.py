@@ -468,7 +468,16 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 logger.warning(f"Config watcher failed to start (non-fatal): {e}")
 
         start_config_watcher()
-    
+
+        # Terminal session manager (B1b): start the idle/dead session reaper so
+        # exited PTY sessions don't permanently exhaust the session cap.
+        try:
+            from ..streaming.session_manager import get_terminal_manager
+            get_terminal_manager().start_reaper()
+            logger.info("Terminal session reaper started")
+        except Exception as e:
+            logger.warning(f"Failed to start terminal session reaper: {e}")
+
     # Shutdown event: stop background services
     @app.on_event("shutdown")
     async def shutdown_event():
@@ -501,6 +510,14 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             logger.info("Ingestion service stopped")
         except Exception as e:
             logger.warning(f"Failed to stop ingestion: {e}")
+
+        # Stop terminal session manager (stops the reaper, kills live sessions)
+        try:
+            from ..streaming.session_manager import get_terminal_manager
+            await get_terminal_manager().shutdown()
+            logger.info("Terminal session manager shut down")
+        except Exception as e:
+            logger.warning(f"Failed to shut down terminal session manager: {e}")
     
     logger.info("Halbert Dashboard API created")
     
