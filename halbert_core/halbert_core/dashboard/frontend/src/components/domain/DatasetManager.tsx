@@ -163,7 +163,7 @@ export function DatasetManager() {
         )
       case 'downloading':
         return (
-          <Badge variant="outline" className="text-blue-600 border-blue-600">
+          <Badge variant="outline" className="text-info border-info">
             <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
             Downloading
           </Badge>

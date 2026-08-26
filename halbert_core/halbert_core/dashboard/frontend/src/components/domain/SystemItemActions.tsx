@@ -153,7 +153,7 @@ export function SystemItemActions({
             size="icon"
             className={cn(
               buttonSize,
-              "text-muted-foreground/60 hover:text-blue-500 hover:bg-blue-500/10"
+              "text-muted-foreground/60 hover:text-info hover:bg-info/10"
             )}
             onClick={handleMention}
             title={`Mention ${item.name} in chat`}
@@ -204,7 +204,7 @@ export function SystemItemActions({
         <Button
           variant={buttonVariant}
           size="sm"
-          className={cn(buttonSizeClass, "hover:border-blue-500 hover:text-blue-500")}
+          className={cn(buttonSizeClass, "hover:border-info hover:text-info")}
           onClick={handleMention}
           title={`Mention ${item.name} in chat`}
         >

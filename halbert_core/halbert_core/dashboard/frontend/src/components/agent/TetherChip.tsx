@@ -19,7 +19,7 @@ interface TetherChipProps {
 
 export function TetherChip({ sessionId, label, docked, onClick, onHover }: TetherChipProps) {
   const stateClasses = docked
-    ? 'bg-blue-500/20 text-blue-300 border-blue-500/40 hover:bg-blue-500/30'
+    ? 'bg-info/20 text-info border-info/40 hover:bg-info/30'
     : 'bg-muted text-muted-foreground border-border hover:bg-muted/80';
 
   return (

@@ -103,7 +103,7 @@ export function TaskPanel({
   // Get status icon
   const StatusIcon = () => {
     if (isStreaming || isActive) {
-      return <Loader2 className="h-4 w-4 animate-spin text-blue-400" />;
+      return <Loader2 className="h-4 w-4 animate-spin text-info" />;
     }
     if (isSuccess) {
       return <CheckCircle2 className="h-4 w-4 text-green-400" />;
@@ -111,7 +111,7 @@ export function TaskPanel({
     if (isError) {
       return <XCircle className="h-4 w-4 text-red-400" />;
     }
-    return <Bot className="h-4 w-4 text-zinc-400" />;
+    return <Bot className="h-4 w-4 text-muted-foreground" />;
   };
 
   return (
@@ -134,7 +134,7 @@ export function TaskPanel({
           isActive && "bg-gradient-to-br from-blue-500/50 via-purple-500/40 to-blue-500/50",
           isSuccess && "bg-gradient-to-br from-green-500/40 to-emerald-500/40",
           isError && "bg-gradient-to-br from-red-500/40 to-orange-500/40",
-          !isActive && !isSuccess && !isError && "bg-zinc-700/50"
+          !isActive && !isSuccess && !isError && "bg-muted/50"
         )}
       />
       
@@ -146,7 +146,7 @@ export function TaskPanel({
           isActive && "bg-gradient-to-br from-blue-950/30 to-purple-950/30",
           isSuccess && "bg-gradient-to-br from-green-950/20 to-emerald-950/20",
           isError && "bg-gradient-to-br from-red-950/20 to-orange-950/20",
-          !isActive && !isSuccess && !isError && "bg-zinc-900/80"
+          !isActive && !isSuccess && !isError && "bg-background/80"
         )}
       >
         {/* Header - always visible */}
@@ -158,7 +158,7 @@ export function TaskPanel({
           
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-zinc-200 truncate">
+              <span className="text-sm font-medium text-foreground truncate">
                 {title}
               </span>
               {/* Only pass valid AgentState to StateBadge */}
@@ -169,24 +169,24 @@ export function TaskPanel({
                 <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-500/20 text-green-400 rounded">COMPLETE</span>
               )}
               {state === 'cancelled' && (
-                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-zinc-500/20 text-zinc-400 rounded">CANCELLED</span>
+                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-muted/20 text-muted-foreground rounded">CANCELLED</span>
               )}
             </div>
             {isCollapsed && response && (
-              <p className="text-xs text-zinc-400 truncate mt-0.5">
+              <p className="text-xs text-muted-foreground truncate mt-0.5">
                 {response.slice(0, 80)}{response.length > 80 ? '...' : ''}
               </p>
             )}
           </div>
           
           {loopCount > 0 && (
-            <span className="text-xs text-zinc-500">Loop {loopCount}</span>
+            <span className="text-xs text-muted-foreground">Loop {loopCount}</span>
           )}
           
           {isCollapsed ? (
-            <ChevronDown className="h-4 w-4 text-zinc-500" />
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
           ) : (
-            <ChevronUp className="h-4 w-4 text-zinc-500" />
+            <ChevronUp className="h-4 w-4 text-muted-foreground" />
           )}
         </button>
 
@@ -234,10 +234,10 @@ export function TaskPanel({
 
             {/* Response */}
             {response && (
-              <div className="text-sm text-zinc-300 whitespace-pre-wrap">
+              <div className="text-sm text-foreground whitespace-pre-wrap">
                 {response}
                 {isStreaming && (
-                  <span className="inline-block w-2 h-4 bg-zinc-400 animate-pulse ml-0.5" />
+                  <span className="inline-block w-2 h-4 bg-muted animate-pulse ml-0.5" />
                 )}
               </div>
             )}

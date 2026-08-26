@@ -26,7 +26,7 @@ const SEVERITY_ICONS = {
 const SEVERITY_COLORS = {
   critical: 'text-red-400 bg-red-500/10 border-red-500/30',
   warning: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30',
-  info: 'text-blue-400 bg-blue-500/10 border-blue-500/30',
+  info: 'text-info bg-info/10 border-info/30',
 }
 
 export function ProactiveEventsBadge() {
@@ -68,10 +68,10 @@ export function ProactiveEventsBadge() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={toggleOpen}
-        className="relative p-2 rounded-lg hover:bg-zinc-800 transition-colors"
+        className="relative p-2 rounded-lg hover:bg-muted transition-colors"
         title="Proactive events"
       >
-        <Bell className="h-5 w-5 text-zinc-400" />
+        <Bell className="h-5 w-5 text-muted-foreground" />
         {unreadCount > 0 && (
           <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
             {unreadCount > 9 ? '9+' : unreadCount}
@@ -80,11 +80,11 @@ export function ProactiveEventsBadge() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-96 max-h-[500px] overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl z-50">
-          <div className="flex items-center justify-between border-b border-zinc-700 px-4 py-3">
-            <span className="text-sm font-medium text-zinc-200">Proactive Events</span>
-            <button onClick={() => setIsOpen(false)} className="p-1 hover:bg-zinc-800 rounded">
-              <X className="h-4 w-4 text-zinc-400" />
+        <div className="absolute right-0 top-full mt-2 w-96 max-h-[500px] overflow-hidden rounded-lg border border-border bg-background shadow-xl z-50">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <span className="text-sm font-medium text-foreground">Proactive Events</span>
+            <button onClick={() => setIsOpen(false)} className="p-1 hover:bg-muted rounded">
+              <X className="h-4 w-4 text-muted-foreground" />
             </button>
           </div>
 
@@ -104,8 +104,8 @@ export function ProactiveEventsBadge() {
 
           <div className="max-h-[400px] overflow-y-auto">
             {events.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-zinc-500">
-                <CheckCircle className="h-8 w-8 mx-auto mb-2 text-zinc-600" />
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <CheckCircle className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
                 No active events
               </div>
             ) : (
@@ -141,17 +141,17 @@ function EventRow({
   const colorClass = SEVERITY_COLORS[event.severity] || SEVERITY_COLORS.info
 
   return (
-    <div className="border-b border-zinc-800 px-4 py-3 hover:bg-zinc-800/50">
+    <div className="border-b border-border px-4 py-3 hover:bg-muted/50">
       <div className="flex items-start gap-2">
         <div className={`rounded border px-1.5 py-0.5 ${colorClass}`}>
           <Icon className="h-3.5 w-3.5" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-zinc-200 truncate">{event.title}</div>
-          <div className="text-xs text-zinc-400 mt-0.5 line-clamp-2">{event.body}</div>
+          <div className="text-sm font-medium text-foreground truncate">{event.title}</div>
+          <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{event.body}</div>
           <div className="flex items-center gap-3 mt-2">
             {pending ? (
-              <span className="flex items-center gap-1 text-xs text-zinc-500">
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Loader2 className="h-3 w-3 animate-spin" />
                 Working...
               </span>
@@ -159,14 +159,14 @@ function EventRow({
               <>
                 <button
                   onClick={onSnooze}
-                  className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Clock className="h-3 w-3" />
                   Snooze 7d
                 </button>
                 <button
                   onClick={onDismiss}
-                  className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <X className="h-3 w-3" />
                   Dismiss

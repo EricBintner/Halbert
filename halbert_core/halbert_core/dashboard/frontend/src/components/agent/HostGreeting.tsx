@@ -70,8 +70,8 @@ function startersFor(identity: HostIdentity | null): Starter[] {
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</span>
-      <span className="text-xs font-mono text-zinc-300">{value}</span>
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="text-xs font-mono text-foreground">{value}</span>
     </div>
   );
 }
@@ -86,22 +86,22 @@ export function HostGreeting({ onPrompt, className = '' }: HostGreetingProps) {
       <div className="flex items-center gap-2 mb-3">
         <span
           className={`h-2 w-2 rounded-full ${
-            identity?.all_healthy ? 'bg-emerald-400' : identity ? 'bg-amber-400' : 'bg-zinc-600'
+            identity?.all_healthy ? 'bg-emerald-400' : identity ? 'bg-amber-400' : 'bg-muted'
           } ${identity ? 'animate-pulse' : ''}`}
         />
-        <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
           {loading && !identity ? 'coming online' : identity?.all_healthy ? 'nominal' : 'attention'}
         </span>
       </div>
 
-      <p className="text-lg leading-relaxed text-zinc-200">
+      <p className="text-lg leading-relaxed text-foreground">
         {identity ? (
           <>
             I am <span className="font-mono text-emerald-300">{identity.hostname}</span>{' '}
-            <span className="text-zinc-400">
+            <span className="text-muted-foreground">
               ({identity.os.pretty}, {identity.os.platform} {identity.os.kernel})
             </span>
-            . Uptime is <span className="text-zinc-100">{identity.uptime.human}</span>.{' '}
+            . Uptime is <span className="text-foreground">{identity.uptime.human}</span>.{' '}
             {identity.all_healthy ? (
               <>
                 All {identity.cpu.cores} cores and {identity.storage.total} storage
@@ -117,18 +117,18 @@ export function HostGreeting({ onPrompt, className = '' }: HostGreetingProps) {
             What would you like to inspect or configure?
           </>
         ) : error ? (
-          <span className="text-zinc-400">
+          <span className="text-muted-foreground">
             I cannot read my own vitals right now ({error}). The backend may still be
             starting — ask me anything and I will try.
           </span>
         ) : (
-          <span className="text-zinc-500">Reading my own vitals…</span>
+          <span className="text-muted-foreground">Reading my own vitals…</span>
         )}
       </p>
 
       {/* Vital facts */}
       {identity && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-6 pt-5 border-t border-zinc-800">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-6 pt-5 border-t border-border">
           <Fact label="CPU" value={`${identity.cpu.cores} cores · ${identity.cpu.percent.toFixed(0)}%`} />
           <Fact
             label="Memory"
@@ -151,7 +151,7 @@ export function HostGreeting({ onPrompt, className = '' }: HostGreetingProps) {
             className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
               s.urgent
                 ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 hover:bg-amber-500/20'
-                : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
+                : 'bg-muted border-border text-foreground hover:bg-muted'
             }`}
           >
             {s.label}

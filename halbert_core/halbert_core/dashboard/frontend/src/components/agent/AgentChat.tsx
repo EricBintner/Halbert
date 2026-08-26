@@ -552,34 +552,34 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
   };
 
   return (
-    <div className={cn('flex flex-col h-full bg-zinc-950', className)}>
+    <div className={cn('flex flex-col h-full bg-background', className)}>
       {/* Conversation Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 bg-zinc-900/50">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-background/50">
         <div className="relative" ref={conversationDropdownRef}>
           <button
             onClick={() => setShowConversationList(!showConversationList)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-muted rounded-lg transition-colors"
           >
-            <MessageSquare className="h-4 w-4 text-zinc-400" />
+            <MessageSquare className="h-4 w-4 text-muted-foreground" />
             <span className="max-w-[180px] truncate">{conversationTitle}</span>
-            <ChevronDown className={cn("h-4 w-4 text-zinc-400 transition-transform", showConversationList && "rotate-180")} />
+            <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", showConversationList && "rotate-180")} />
           </button>
           
           {/* Conversation Dropdown */}
           {showConversationList && (
-            <div className="absolute left-0 top-full mt-1 w-72 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 max-h-80 overflow-y-auto">
-              <div className="p-2 border-b border-zinc-700">
+            <div className="absolute left-0 top-full mt-1 w-72 bg-muted border border-border rounded-lg shadow-xl z-50 max-h-80 overflow-y-auto">
+              <div className="p-2 border-b border-border">
                 <button
                   onClick={startNewConversation}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-700 rounded-lg transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted rounded-lg transition-colors"
                 >
-                  <Plus className="h-4 w-4 text-blue-400" />
+                  <Plus className="h-4 w-4 text-info" />
                   New Conversation
                 </button>
               </div>
               
               {conversations.length === 0 ? (
-                <div className="p-4 text-center text-xs text-zinc-500">
+                <div className="p-4 text-center text-xs text-muted-foreground">
                   No saved conversations
                 </div>
               ) : (
@@ -591,11 +591,11 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
                       className={cn(
                         "w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors group",
                         currentConversationId === conv.conversation_id
-                          ? "bg-blue-600/20 text-blue-300"
-                          : "text-zinc-300 hover:bg-zinc-700"
+                          ? "bg-info/20 text-info"
+                          : "text-foreground hover:bg-muted"
                       )}
                     >
-                      <MessageSquare className="h-4 w-4 text-zinc-500 shrink-0" />
+                      <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
                       <span className="flex-1 truncate text-left">{conv.title || 'Untitled'}</span>
                       <button
                         onClick={(e) => deleteConversation(conv.conversation_id, e)}
@@ -614,7 +614,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
         
         <button
           onClick={startNewConversation}
-          className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+          className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
           title="New conversation"
         >
           <Plus className="h-4 w-4" />
@@ -640,18 +640,18 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
         {userMessages.map((msg, idx) => (
           <div key={msg.id} className="space-y-3">
             <div className="flex justify-end">
-              <div className="max-w-[80%] bg-blue-600 text-white px-4 py-2 rounded-lg">
+              <div className="max-w-[80%] bg-primary text-primary-foreground px-4 py-2 rounded-lg">
                 <p className="text-sm">{msg.content}</p>
               </div>
             </div>
             
             {idx === userMessages.length - 1 && session && (
               <div className="flex justify-start">
-                <div className="max-w-[85%] bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-4 space-y-3">
+                <div className="max-w-[85%] bg-muted/50 border border-border/50 rounded-lg p-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <StateBadge state={session.state} showPulse={isStreaming} />
                     {session.loopCount > 0 && (
-                      <span className="text-xs text-zinc-500">Loop {session.loopCount}</span>
+                      <span className="text-xs text-muted-foreground">Loop {session.loopCount}</span>
                     )}
                   </div>
                   
@@ -704,9 +704,9 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
                   )}
                   
                   {response && (
-                    <div className="text-sm text-zinc-300">
+                    <div className="text-sm text-foreground">
                       <MessageContent content={response} onRunCommand={onRunCommand} />
-                      {isStreaming && <span className="inline-block w-2 h-4 bg-zinc-400 animate-pulse ml-0.5" />}
+                      {isStreaming && <span className="inline-block w-2 h-4 bg-muted animate-pulse ml-0.5" />}
                       {/* Phase 8: Provenance chips */}
                       {!isStreaming && provenance.length > 0 && (
                         <div className="mt-2">
@@ -732,7 +732,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
                         <div key={m.key} className="relative">
                           <button
                             onClick={() => dismissExpandedModule(m.key)}
-                            className="absolute right-2 top-2 z-10 p-1 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors"
+                            className="absolute right-2 top-2 z-10 p-1 rounded bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                             title="Close"
                           >
                             <XIcon className="h-3 w-3" />
@@ -764,20 +764,20 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
       
       {/* Mention Autocomplete */}
       {showMentions && filteredMentionables.length > 0 && (
-        <div className="mx-4 mb-1 bg-zinc-800 border border-zinc-700 rounded-md shadow-lg max-h-48 overflow-y-auto">
+        <div className="mx-4 mb-1 bg-muted border border-border rounded-md shadow-lg max-h-48 overflow-y-auto">
           {filteredMentionables.map((m) => (
             <button
               key={m.id}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-700 flex items-center gap-2 text-xs"
+              className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2 text-xs"
               onClick={() => insertMention(m)}
             >
               {m.type === 'terminal' ? (
                 <Terminal className="h-3 w-3 text-green-500" />
               ) : (
-                <AtSign className="h-3 w-3 text-zinc-400" />
+                <AtSign className="h-3 w-3 text-muted-foreground" />
               )}
-              <span className="font-medium text-zinc-200">{m.mention}</span>
-              <span className="text-zinc-500 ml-auto">{m.type}</span>
+              <span className="font-medium text-foreground">{m.mention}</span>
+              <span className="text-muted-foreground ml-auto">{m.type}</span>
             </button>
           ))}
         </div>
@@ -785,8 +785,8 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
       
       <div 
         className={cn(
-          "border-t border-zinc-800 p-4 transition-colors",
-          isDraggingImage && "bg-blue-500/10 border-blue-500"
+          "border-t border-border p-4 transition-colors",
+          isDraggingImage && "bg-info/10 border-info"
         )}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -800,7 +800,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
                 <img 
                   src={img.dataUrl} 
                   alt={img.name}
-                  className="h-12 w-12 object-cover rounded border border-zinc-700"
+                  className="h-12 w-12 object-cover rounded border border-border"
                 />
                 <button
                   onClick={() => removeAttachedImage(img.id)}
@@ -815,7 +815,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
         
         {/* Drop indicator */}
         {isDraggingImage && (
-          <div className="mb-2 p-2 border-2 border-dashed border-blue-500 rounded text-center text-xs text-blue-400">
+          <div className="mb-2 p-2 border-2 border-dashed border-info rounded text-center text-xs text-info">
             <ImageIcon className="h-4 w-4 mx-auto mb-1" />
             Drop image here
           </div>
@@ -826,10 +826,10 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
           <div className="mb-2 space-y-1">
             {messageQueue.map((msg, idx) => (
               <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded text-xs">
-                <span className="text-zinc-400 truncate">Queued: {msg}</span>
+                <span className="text-muted-foreground truncate">Queued: {msg}</span>
                 <button
                   onClick={() => setMessageQueue(prev => prev.filter((_, i) => i !== idx))}
-                  className="text-zinc-400 hover:text-zinc-200 shrink-0"
+                  className="text-muted-foreground hover:text-foreground shrink-0"
                 >
                   <XIcon className="h-3 w-3" />
                 </button>
@@ -850,14 +850,14 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder={isStreaming ? "Type to queue next message..." : "Ask Halbert... (@ to mention, paste/drop images)"}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 pr-10 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 resize-none overflow-hidden min-h-[40px]"
+              className="w-full bg-muted border border-border rounded-lg px-4 py-2 pr-10 text-sm text-foreground placeholder-zinc-500 focus:outline-none focus:border-info resize-none overflow-hidden min-h-[40px]"
               rows={1}
               style={{ maxHeight: '150px' }}
             />
             <button
               type="button"
               onClick={() => window.dispatchEvent(new CustomEvent('halbert:capture-screenshot'))}
-              className="absolute right-2 bottom-2 text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="absolute right-2 bottom-2 text-muted-foreground hover:text-foreground transition-colors"
               title="Screenshot"
             >
               <Camera className="h-4 w-4" />
@@ -872,14 +872,14 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
             <button
               onClick={handleSend}
               disabled={!input.trim() && attachedImages.length === 0}
-              className="p-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex-shrink-0"
+              className="p-2 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex-shrink-0"
             >
               <Send className="h-5 w-5 text-white" />
             </button>
           )}
         </div>
         
-        <div className="flex items-center justify-between mt-2 text-xs text-zinc-500">
+        <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
           <span>{isStreaming ? 'Agent working... type to queue' : 'Press Enter to send'}</span>
           {session && <span>Session: {session.sessionId.slice(0, 8)}...</span>}
         </div>

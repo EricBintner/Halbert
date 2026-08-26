@@ -374,13 +374,18 @@ and in the dictionary, and it is verified by the same gate.
 
 Flagged rather than decided:
 
-1. **The dashboard is still stock shadcn blue.** Tokens are now available to it,
-   but nothing is repainted — that is Track 5, and repainting is a visible
-   product change, not a design-system chore. Confirm before it lands.
-2. **`Fraunces` and `Space Grotesk` are not yet loaded in the desktop app**,
-   which still sets Karla. The triad is registered as `font-display` /
-   `font-grotesk` so Track 5 can adopt it deliberately; `font-sans` is untouched
-   so nothing shifts today.
+1. ~~**The dashboard is still stock shadcn blue.**~~ **Resolved 2026-08-26** —
+   repainted on the founder's call. The shadcn slots are now *generated* from
+   the token file by `scripts/gen_shadcn_theme.py`, which contrast-checks every
+   text-on-ground pair and refuses to write a failing theme. Note the remaining
+   debt: 1,031 literal Tailwind palette classes still bypass the theme across 58
+   files. All 50 that clashed outright are fixed; the rest are saturated status
+   colours that read off-brand but stay legible, and
+   `scripts/check_literal_colors.py` ratchets them so the count cannot grow.
+2. **`Fraunces` and `Space Grotesk` are still not loaded in the desktop app**,
+   which sets Karla. The triad is registered as `font-display` / `font-grotesk`,
+   so type can be adopted deliberately rather than shifting under the repaint.
+   The colour identity has landed; the typographic one has not.
 3. **Web fonts are not self-hosted.** For a local-first, sovereign-host product,
    pulling faces from a CDN at runtime is a posture inconsistency worth
    resolving before launch.

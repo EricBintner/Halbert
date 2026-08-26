@@ -24,9 +24,9 @@ const STATE_CONFIG: Record<AgentState, { label: string; color: string; bgColor: 
   },
   planning: { 
     label: 'Planning', 
-    color: 'text-blue-600 dark:text-blue-400', 
-    bgColor: 'bg-blue-100 dark:bg-blue-500/20',
-    pulseColor: 'bg-blue-500'
+    color: 'text-info dark:text-info', 
+    bgColor: 'bg-blue-100 dark:bg-info/20',
+    pulseColor: 'bg-info'
   },
   searching: { 
     label: 'Searching', 
@@ -36,9 +36,9 @@ const STATE_CONFIG: Record<AgentState, { label: string; color: string; bgColor: 
   },
   reading: { 
     label: 'Reading', 
-    color: 'text-cyan-600 dark:text-cyan-400', 
-    bgColor: 'bg-cyan-100 dark:bg-cyan-500/20',
-    pulseColor: 'bg-cyan-500'
+    color: 'text-info dark:text-info', 
+    bgColor: 'bg-cyan-100 dark:bg-info/20',
+    pulseColor: 'bg-info'
   },
   executing: { 
     label: 'Executing', 

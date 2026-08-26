@@ -43,22 +43,22 @@ export function ThinkingPanel({
     <div className={`border rounded-lg overflow-hidden ${className}`}>
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-4 py-2 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition-colors"
+        className="w-full px-4 py-2 flex items-center justify-between bg-muted hover:bg-muted transition-colors"
       >
         <div className="flex items-center gap-2">
-          <span className="text-gray-500">
+          <span className="text-muted-foreground">
             {isStreaming ? '🧠' : '💭'}
           </span>
-          <span className="text-sm font-medium text-gray-700">
+          <span className="text-sm font-medium text-foreground">
             {isStreaming ? 'Thinking...' : 'Thought Process'}
           </span>
           {isStreaming && (
             <span className="inline-flex items-center">
-              <span className="animate-pulse text-blue-500 text-xs">●</span>
+              <span className="animate-pulse text-info text-xs">●</span>
             </span>
           )}
         </div>
-        <span className="text-gray-400 text-sm">
+        <span className="text-muted-foreground text-sm">
           {isExpanded ? '▲' : '▼'}
         </span>
       </button>
@@ -80,7 +80,7 @@ export function ThinkingPanel({
           ) : (
             <pre 
               ref={contentRef}
-              className="p-4 text-xs text-gray-600 whitespace-pre-wrap overflow-auto bg-gray-50"
+              className="p-4 text-xs text-muted-foreground whitespace-pre-wrap overflow-auto bg-muted"
               style={{ maxHeight }}
             >
               {thinking}
@@ -106,18 +106,18 @@ function ThinkingSection({ title, content, isLast, isStreaming }: ThinkingSectio
     <div>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-4 py-2 flex items-center justify-between hover:bg-gray-50 text-left"
+        className="w-full px-4 py-2 flex items-center justify-between hover:bg-muted text-left"
       >
-        <span className="text-xs font-medium text-gray-600">{title}</span>
+        <span className="text-xs font-medium text-muted-foreground">{title}</span>
         <div className="flex items-center gap-2">
           {isStreaming && isLast && (
-            <span className="animate-pulse text-blue-500 text-xs">●</span>
+            <span className="animate-pulse text-info text-xs">●</span>
           )}
-          <span className="text-gray-400 text-xs">{isOpen ? '−' : '+'}</span>
+          <span className="text-muted-foreground text-xs">{isOpen ? '−' : '+'}</span>
         </div>
       </button>
       {isOpen && (
-        <pre className="px-4 pb-3 text-xs text-gray-500 whitespace-pre-wrap">
+        <pre className="px-4 pb-3 text-xs text-muted-foreground whitespace-pre-wrap">
           {content}
         </pre>
       )}

@@ -192,23 +192,23 @@ export function CodeBlock({
   
   return (
     <div className="space-y-1 min-w-0">
-      <div className="rounded-md overflow-hidden border border-border/50 bg-zinc-900 my-2">
+      <div className="rounded-md overflow-hidden border border-border/50 bg-background my-2">
         {/* Header */}
-        <div className="flex items-center justify-between px-2 py-1 bg-zinc-800 border-b border-border/30">
+        <div className="flex items-center justify-between px-2 py-1 bg-muted border-b border-border/30">
           <div className="flex items-center gap-1.5">
             <Terminal className="h-3 w-3 text-green-400" />
-            <span className="text-[10px] text-zinc-400 font-mono">{lang || 'bash'}</span>
+            <span className="text-[10px] text-muted-foreground font-mono">{lang || 'bash'}</span>
           </div>
           <div className="flex items-center gap-1">
             <button
               onClick={handleCopy}
-              className="p-1 rounded hover:bg-zinc-700 transition-colors"
+              className="p-1 rounded hover:bg-muted transition-colors"
               title="Copy"
             >
               {copied ? (
                 <Check className="h-3 w-3 text-green-400" />
               ) : (
-                <Copy className="h-3 w-3 text-zinc-400" />
+                <Copy className="h-3 w-3 text-muted-foreground" />
               )}
             </button>
             {isShellCommand && showRunButton && !isHandled && (
@@ -216,11 +216,11 @@ export function CodeBlock({
                 <button
                   onClick={handleRun}
                   disabled={isRunning}
-                  className="p-1 rounded hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                  className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50"
                   title="Run in Terminal"
                 >
                   {isRunning ? (
-                    <Loader2 className="h-3 w-3 text-blue-400 animate-spin" />
+                    <Loader2 className="h-3 w-3 text-info animate-spin" />
                   ) : (
                     <Play className="h-3 w-3 text-green-400" />
                   )}
@@ -228,15 +228,15 @@ export function CodeBlock({
                 <button
                   onClick={handleSkip}
                   disabled={isRunning}
-                  className="p-1 rounded hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                  className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50"
                   title="Skip this command"
                 >
-                  <SkipForward className="h-3 w-3 text-zinc-400" />
+                  <SkipForward className="h-3 w-3 text-muted-foreground" />
                 </button>
               </>
             )}
             {isSkipped && (
-              <span className="text-[10px] text-zinc-500 italic">skipped</span>
+              <span className="text-[10px] text-muted-foreground italic">skipped</span>
             )}
           </div>
         </div>
@@ -245,7 +245,7 @@ export function CodeBlock({
         <pre className={`${compact ? 'p-2' : 'p-3'} text-[11px] font-mono overflow-x-auto max-w-full ${
           isShellCommand 
             ? 'text-green-300'  // Runnable command
-            : 'text-zinc-200'   // Output/display
+            : 'text-foreground'   // Output/display
         }`}>
           <code className="break-all">{code}</code>
         </pre>
@@ -270,9 +270,9 @@ export function CodeBlock({
               }`}>
                 {safetyWarning.tier === 'dangerous' ? '⚠️ Dangerous Command' : '⚡ Caution'}
               </p>
-              <p className="text-[10px] text-zinc-300 mt-0.5">{safetyWarning.warning}</p>
+              <p className="text-[10px] text-foreground mt-0.5">{safetyWarning.warning}</p>
               {safetyWarning.suggestion && (
-                <p className="text-[10px] text-zinc-400 mt-1">💡 {safetyWarning.suggestion}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">💡 {safetyWarning.suggestion}</p>
               )}
               <div className="flex gap-2 mt-2">
                 <button
@@ -288,7 +288,7 @@ export function CodeBlock({
                 </button>
                 <button
                   onClick={handleCancelRun}
-                  className="px-2 py-1 text-[10px] rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-200"
+                  className="px-2 py-1 text-[10px] rounded bg-muted hover:bg-muted text-foreground"
                 >
                   Cancel
                 </button>
@@ -300,20 +300,20 @@ export function CodeBlock({
 
       {/* Output display */}
       {output && (
-        <div className={`rounded-md border ${isError ? 'border-red-500/30 bg-red-950/20' : 'border-border/50 bg-zinc-800/50'}`}>
+        <div className={`rounded-md border ${isError ? 'border-red-500/30 bg-red-950/20' : 'border-border/50 bg-muted/50'}`}>
           <div className="flex items-center justify-between px-2 py-1 border-b border-border/30">
-            <span className={`text-[10px] font-mono ${isError ? 'text-red-400' : 'text-zinc-400'}`}>
+            <span className={`text-[10px] font-mono ${isError ? 'text-red-400' : 'text-muted-foreground'}`}>
               {isError ? 'Error' : 'Output'}
             </span>
             <button
               onClick={() => setIsCollapsed(!isCollapsed)}
-              className="text-[10px] text-zinc-500 hover:text-zinc-300"
+              className="text-[10px] text-muted-foreground hover:text-foreground"
             >
               {isCollapsed ? 'Show' : 'Hide'}
             </button>
           </div>
           {!isCollapsed && (
-            <pre className="p-2 text-[10px] font-mono text-zinc-300 overflow-x-auto max-h-40">
+            <pre className="p-2 text-[10px] font-mono text-foreground overflow-x-auto max-h-40">
               <code>{output}</code>
             </pre>
           )}

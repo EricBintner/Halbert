@@ -82,9 +82,9 @@ interface ProgressPillProps {
 /** Background work (scan / index) shown in the top bar, in either mode. */
 function ProgressPill({ icon, label, percent, detail, tone }: ProgressPillProps) {
   const toneClasses = tone === 'emerald'
-    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
-    : 'bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400'
-  const barClasses = tone === 'emerald' ? 'bg-emerald-600' : 'bg-blue-600'
+    ? 'bg-success/10 border-success/30 text-success'
+    : 'bg-info/10 border-info/30 text-info'
+  const barClasses = tone === 'emerald' ? 'bg-success' : 'bg-info'
 
   return (
     <div
@@ -271,7 +271,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Button
           variant={isDebugMode ? 'default' : 'ghost'}
           size="icon"
-          className={cn('h-6 w-6', isDebugMode && 'bg-emerald-600 hover:bg-emerald-700 text-white')}
+          className={cn('h-6 w-6', isDebugMode && 'bg-success hover:bg-success/90 text-primary-foreground')}
           onClick={() => setDebugMode(!isDebugMode)}
           title={isDebugMode ? 'Debug ON' : 'Debug'}
         >
@@ -326,42 +326,42 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Debug Panel - non-overlaying, stats on left, logs on right */}
       {isDebugMode && (
-        <div className="border-t bg-slate-800 h-48 flex text-xs font-mono shrink-0">
+        <div className="border-t bg-muted h-48 flex text-xs font-mono shrink-0">
           {/* Left: Stats */}
-          <div className="w-48 border-r border-slate-700 p-3 flex flex-col gap-2">
-            <div className="text-emerald-400 font-bold flex items-center gap-1">
+          <div className="w-48 border-r border-border p-3 flex flex-col gap-2">
+            <div className="text-success font-bold flex items-center gap-1">
               <Bug className="h-3 w-3" /> Debug Mode
             </div>
-            <div className="space-y-1 text-slate-300">
-              <div><span className="text-emerald-400">Requests:</span> {chatMetrics.totalRequests}</div>
-              <div><span className="text-emerald-400">Tokens:</span> ~{chatMetrics.totalTokensEstimate}</div>
-              <div><span className="text-emerald-400">Avg:</span> {chatMetrics.averageResponseTime > 0 ? `${chatMetrics.averageResponseTime.toFixed(0)}ms` : '-'}</div>
-              <div><span className="text-emerald-400">Last:</span> {chatMetrics.lastResponseTime && chatMetrics.lastRequestTime ? `${(chatMetrics.lastResponseTime - chatMetrics.lastRequestTime).toFixed(0)}ms` : '-'}</div>
+            <div className="space-y-1 text-foreground">
+              <div><span className="text-success">Requests:</span> {chatMetrics.totalRequests}</div>
+              <div><span className="text-success">Tokens:</span> ~{chatMetrics.totalTokensEstimate}</div>
+              <div><span className="text-success">Avg:</span> {chatMetrics.averageResponseTime > 0 ? `${chatMetrics.averageResponseTime.toFixed(0)}ms` : '-'}</div>
+              <div><span className="text-success">Last:</span> {chatMetrics.lastResponseTime && chatMetrics.lastRequestTime ? `${(chatMetrics.lastResponseTime - chatMetrics.lastRequestTime).toFixed(0)}ms` : '-'}</div>
             </div>
           </div>
           {/* Right: Logs */}
           <div className="flex-1 flex flex-col min-w-0">
-            <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-700 bg-slate-750">
-              <span className="text-slate-300">Logs ({logs.length})</span>
-              <button onClick={clearLogs} className="text-slate-400 hover:text-slate-200 text-[10px]">Clear</button>
+            <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card">
+              <span className="text-foreground">Logs ({logs.length})</span>
+              <button onClick={clearLogs} className="text-muted-foreground hover:text-foreground text-[10px]">Clear</button>
             </div>
             <div className="flex-1 overflow-auto p-2">
               {logs.length === 0 ? (
-                <div className="text-slate-500 text-center py-4">No logs yet. Interact with the app to see logs.</div>
+                <div className="text-muted-foreground text-center py-4">No logs yet. Interact with the app to see logs.</div>
               ) : (
                 logs.slice().reverse().map(log => (
                   <div key={log.id} className={cn(
                     "py-0.5",
-                    log.type === 'error' && "text-red-400",
-                    log.type === 'timing' && "text-amber-400",
-                    log.type === 'request' && "text-blue-400",
-                    log.type === 'response' && "text-green-400",
-                    log.type === 'info' && "text-slate-300"
+                    log.type === 'error' && "text-error",
+                    log.type === 'timing' && "text-warning",
+                    log.type === 'request' && "text-info",
+                    log.type === 'response' && "text-success",
+                    log.type === 'info' && "text-foreground"
                   )}>
-                    <span className="text-slate-500">[{log.timestamp.toLocaleTimeString()}]</span>
-                    <span className="text-slate-400 ml-1">[{log.category}]</span>
+                    <span className="text-muted-foreground">[{log.timestamp.toLocaleTimeString()}]</span>
+                    <span className="text-muted-foreground ml-1">[{log.category}]</span>
                     <span className="ml-1">{log.message}</span>
-                    {log.duration && <span className="text-slate-500 ml-1">({log.duration.toFixed(0)}ms)</span>}
+                    {log.duration && <span className="text-muted-foreground ml-1">({log.duration.toFixed(0)}ms)</span>}
                   </div>
                 ))
               )}

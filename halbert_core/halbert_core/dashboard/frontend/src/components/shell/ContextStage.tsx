@@ -35,10 +35,10 @@ export function ContextStage({
   className = '',
 }: ContextStageProps) {
   return (
-    <div className={`flex flex-col h-full min-h-0 bg-zinc-950 ${className}`}>
+    <div className={`flex flex-col h-full min-h-0 bg-background ${className}`}>
       {/* Stage header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800 shrink-0">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-400">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
           Host
         </span>
         <div className="ml-auto">
@@ -51,7 +51,7 @@ export function ContextStage({
         <HostVitals />
 
         {modules.length > 0 && (
-          <div className="px-3 pb-3 space-y-3 border-t border-zinc-800 pt-3">
+          <div className="px-3 pb-3 space-y-3 border-t border-border pt-3">
             {modules.map((m) => (
               <ModuleRenderer key={m.key} module={m.module} props={m.props} />
             ))}

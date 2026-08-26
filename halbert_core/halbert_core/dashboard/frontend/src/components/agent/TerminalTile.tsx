@@ -29,7 +29,7 @@ interface TerminalTileProps {
 
 const STATUS_STYLES: Record<string, string> = {
   running: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
-  done: 'bg-slate-500/20 text-slate-300 border-slate-500/40',
+  done: 'bg-muted/20 text-foreground border-border/40',
   idle: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
 };
 
@@ -38,6 +38,32 @@ function formatElapsed(startedAt: number, now: number): string {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${r.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Build xterm's theme from the live design tokens.
+ *
+ * xterm paints to a canvas and cannot read CSS variables, so the values have to
+ * be resolved to concrete colours at mount time. Reading them from the document
+ * rather than hardcoding a palette means the terminal follows the Olivetti
+ * identity and the light/dark swap like everything else — the plan calls for a
+ * bone-canvas terminal, not the Tokyo Night default this used to ship.
+ */
+function xtermTheme() {
+  const root = typeof document !== 'undefined' ? document.documentElement : null;
+  const read = (token: string, fallback: string) => {
+    if (!root) return fallback;
+    const value = getComputedStyle(root).getPropertyValue(token).trim();
+    return value || fallback;
+  };
+  return {
+    // The terminal interior is a recessed tray, not the page field.
+    background: read('--color-surface-subtle', '#EDE8DC'),
+    foreground: read('--color-ink', '#1C1917'),
+    // The letterpress cursor.
+    cursor: read('--color-accent-strong', '#C4451D'),
+    selectionBackground: read('--color-accent-tint', '#FDF2EE'),
+  };
 }
 
 export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
@@ -69,12 +95,7 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
       fontFamily: 'JetBrains Mono, Menlo, Monaco, monospace',
       scrollback: 5000,
       convertEol: true,
-      theme: {
-        background: '#1a1b26',
-        foreground: '#a9b1d6',
-        cursor: '#c0caf5',
-        selectionBackground: '#33467c',
-      },
+      theme: xtermTheme(),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -159,21 +180,21 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
   const statusStyle = STATUS_STYLES[session.status] ?? STATUS_STYLES.idle;
 
   return (
-    <div className="my-2 rounded-lg border border-slate-700/60 bg-[#1a1b26] overflow-hidden shadow-lg">
+    <div className="my-2 rounded-lg border border-border/60 bg-[#1a1b26] overflow-hidden shadow-lg">
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900/80 border-b border-slate-700/60 text-xs">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-background/80 border-b border-border/60 text-xs">
         <span className={`px-1.5 py-0.5 rounded border ${statusStyle} font-medium`}>
           {session.status === 'running' ? '● running' : session.status === 'done' ? `■ exit ${session.exitCode ?? '?'}` : '○ idle'}
         </span>
-        <span className="text-slate-400 font-mono truncate flex-1" title={session.command}>
+        <span className="text-muted-foreground font-mono truncate flex-1" title={session.command}>
           $ {session.command}
         </span>
-        <span className="text-slate-500 font-mono">pid {session.pid}</span>
+        <span className="text-muted-foreground font-mono">pid {session.pid}</span>
         {session.status === 'running' && (
-          <span className="text-slate-500 font-mono tabular-nums">{formatElapsed(session.startedAt, now)}</span>
+          <span className="text-muted-foreground font-mono tabular-nums">{formatElapsed(session.startedAt, now)}</span>
         )}
         {session.sandboxed && (
-          <span className="px-1 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">sandbox</span>
+          <span className="px-1 py-0.5 rounded bg-info/20 text-info border border-info/40">sandbox</span>
         )}
         {!interactive && (
           <span
@@ -189,14 +210,14 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
           <button
             onClick={handlePin}
             title={session.visible ? 'Unpin (headless)' : 'Pin (live)'}
-            className={`px-1.5 py-0.5 rounded ${session.visible ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-700/50 text-slate-400 hover:text-slate-200'}`}
+            className={`px-1.5 py-0.5 rounded ${session.visible ? 'bg-amber-500/20 text-amber-300' : 'bg-muted/50 text-muted-foreground hover:text-foreground'}`}
           >
             {session.visible ? '📌' : '📍'}
           </button>
           <button
             onClick={handleCopy}
             title="Copy output"
-            className="px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400 hover:text-slate-200"
+            className="px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground hover:text-foreground"
           >
             {copied ? '✓' : '⧉'}
           </button>

@@ -40,7 +40,7 @@ const severityStyles: Record<string, string> = {
   success: 'bg-green-500/15 text-green-700 border-green-500/40 dark:bg-green-900/40 dark:text-green-300 dark:border-green-600',
   warning: 'bg-yellow-500/15 text-yellow-700 border-yellow-500/40 dark:bg-yellow-900/40 dark:text-yellow-300 dark:border-yellow-600',
   critical: 'bg-red-500/15 text-red-700 border-red-500/40 dark:bg-red-900/40 dark:text-red-300 dark:border-red-600',
-  info: 'bg-sky-500/15 text-sky-700 border-sky-500/40 dark:bg-sky-900/40 dark:text-sky-300 dark:border-sky-600',
+  info: 'bg-info/15 text-info border-info/40 dark:bg-sky-900/40 dark:text-info dark:border-info',
   unknown: 'bg-muted text-muted-foreground border-border',
 }
 
