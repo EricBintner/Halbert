@@ -63,7 +63,7 @@ function EarlyAccessForm() {
       />
       <button
         type="submit"
-        className="px-5 py-3 font-bold uppercase tracking-wider bg-[var(--color-vector-lime)] text-[var(--color-ink-on-stroke)] cursor-pointer shrink-0"
+        className="px-5 py-3 font-bold uppercase tracking-wider bg-[var(--color-stroke)] text-[var(--color-ink-on-stroke)] cursor-pointer shrink-0"
       >
         Get access
       </button>

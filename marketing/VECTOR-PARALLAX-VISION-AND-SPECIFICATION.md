@@ -1,6 +1,6 @@
 # Halbert Marketing Site V7: Vector-Guided Parallax — System Specification
 
-**Document Version:** 2.1.0
+**Document Version:** 2.2.0
 **Date:** 2026-08-25
 **Author:** Eric Bintner (Art Direction & Creative Vision)
 **Location:** [`marketing/web-v7/`](file:///Volumes/4TB-BAD/Halbert/marketing/web-v7/)
@@ -134,9 +134,19 @@ In landscape, stops 01→04 are one continuous ride along a single edge (lane 2,
 
 ---
 
-## 7. Palette
+## 7. Palette (final)
 
-- Canvas: Deep Aegean Teal `#0F766E`; Stroke: Pop Chartreuse `#D4E157`; ink `#FFFFFF` on canvas, `#042F2E` on stroke. Alternate palettes in `themes.js` (Olivetti Vermilion & Bone, Swiss Cobalt & Signal Yellow) swap the same tokens.
+**Olivetti Vermilion & Bone**, chosen 2026-08-25 and baked into `shared-tokens/tokens.css`; the dev theme picker was removed.
+
+| Token | Value | Role |
+|---|---|---|
+| `--color-canvas` | `#F7F4EE` | bone — the canvas field |
+| `--color-stroke` | `#D34E24` | letterpress vermilion — the vector stroke / stroke field |
+| `--color-ink` | `#1C1917` | type on the bone field, and all fixed chrome |
+| `--color-ink-on-stroke` | `#FFF7ED` | type on the vermilion field |
+| `--color-ink-secondary` / `-tertiary` | `#44403C` / `#78716C` | secondary type on bone |
+
+The app-window plates (`content/ui.jsx`) use the design-spec paper values (`#F7F5F0` / `#FFFFFF`, ink `#1A1918`, accent `#D34E24`), so on the bone field they read as a lifted window and on vermilion as a bright one — the same accent unifies the two.
 
 ---
 
@@ -144,7 +154,5 @@ In landscape, stops 01→04 are one continuous ride along a single edge (lane 2,
 
 - Copy is real as of round 3 (headlines fixed by Eric; body/kickers/CTA written to the voice rules in `content/stops.jsx`). Plates in `content/ui.jsx` are static placeholders for the app's Proactive Events, Vitals, WhyBrain/WhyChip and Knowledge Base surfaces — to be replaced by animated library components.
 - "I know 16,000 manuals by heart" overstates man pages (5,603) and understates the corpus (24,643 docs); flagged, not changed.
-- Fixed chrome (folio bar, stop HUD, palette pill) uses `mix-blend-mode: difference` to stay legible on both fields; it reads oddly on some palettes.
 - The apex curve is now deliberate (lane 2); pin `scale` or raise `RIDE.lane` to flatten it.
-- The dev palette pill is oversized on phones.
 - Portrait slot content is the same JSX as landscape; stops may want portrait-specific copy lengths once real copy lands.

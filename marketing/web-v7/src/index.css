@@ -51,6 +51,6 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-vector-lime);
+  background: var(--color-stroke);
   border-radius: 3px;
 }

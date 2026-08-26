@@ -3,7 +3,7 @@ import { STOPS } from '../lib/storyboard';
 
 export function ScrollHUD({ currentStop, onSelectStop, scrollProgress }) {
   return (
-    <nav aria-label="Stop navigation" className="fixed right-6 top-1/2 -translate-y-1/2 z-30 font-mono select-none hidden sm:flex flex-col items-end space-y-3 mix-blend-difference text-white">
+    <nav aria-label="Stop navigation" className="fixed right-6 top-1/2 -translate-y-1/2 z-30 font-mono select-none hidden sm:flex flex-col items-end space-y-3 text-[var(--color-ink)]">
       {STOPS.map((stop, i) => {
         const isActive = currentStop === i;
         return (
@@ -20,8 +20,8 @@ export function ScrollHUD({ currentStop, onSelectStop, scrollProgress }) {
               {stop.name}
             </span>
             <span
-              className={`w-2.5 h-2.5 rounded-full border border-white transition-transform ${
-                isActive ? 'bg-white scale-125' : 'bg-transparent group-hover:scale-110'
+              className={`w-2.5 h-2.5 rounded-full border border-current transition-transform ${
+                isActive ? 'bg-current scale-125' : 'bg-transparent group-hover:scale-110'
               }`}
             />
           </button>

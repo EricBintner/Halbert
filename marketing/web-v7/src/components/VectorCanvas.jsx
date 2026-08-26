@@ -21,7 +21,7 @@ export function VectorCanvas({ camera, viewport }) {
       >
         <g
           fill="none"
-          stroke="var(--color-vector-lime)"
+          stroke="var(--color-stroke)"
           strokeWidth={MARK.strokeWidth}
           strokeLinecap="round"
           strokeLinejoin="round"

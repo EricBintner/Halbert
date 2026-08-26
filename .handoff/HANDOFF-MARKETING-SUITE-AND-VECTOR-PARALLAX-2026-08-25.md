@@ -11,19 +11,21 @@
 
 This document summarizes the user requests, design philosophy, technical architecture, and current state of the **7 standalone Halbert marketing explorations** built in `/Volumes/4TB-BAD/Halbert/marketing/`.
 
+> **Decision (2026-08-25):** Site 7 — the vector-guided parallax — is **the chosen direction**. Sites 1–6 are archived under `marketing/archive/` for reference. Site 7's palette is final: **Olivetti Vermilion & Bone** (`#D34E24` stroke on `#F7F4EE`), baked into `web-v7/shared-tokens/tokens.css`; the dev theme picker was removed.
+
 Each site lives in its own directory with its own dependencies, Vite dev server, design token ramp, typography strategy, and bespoke interactive components.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │                              THE 7 MARKETING EXPLORATIONS                              │
 │                                                                                        │
-│  [ SITE 1 : PORT 5173 ]  marketing/web/     1960s DDB Print Ad ("I know what's wrong") │
-│  [ SITE 2 : PORT 5174 ]  marketing/web-v2/  Swiss Technical Grid + Live Oscilloscope   │
-│  [ SITE 3 : PORT 5176 ]  marketing/web-v3/  Retro Serif Medium Blue & Fraunces Edition │
-│  [ SITE 4 : PORT 5177 ]  marketing/web-v4/  Minimalist Utility-First Studio Edition    │
-│  [ SITE 5 : PORT 5178 ]  marketing/web-v5/  1960s Retro Graphic Typography Web Edition │
-│  [ SITE 6 : PORT 5179 ]  marketing/web-v6/  Experimental Parallax & CMYK Bleed Edition │
-│  [ SITE 7 : PORT 5185 ]  marketing/web-v7/  Kinetic Vector-Guided 2600% Zoom Edition   │
+│  [ ARCHIVED ]  marketing/archive/web/     1960s DDB Print Ad ("I know what's wrong")   │
+│  [ ARCHIVED ]  marketing/archive/web-v2/  Swiss Technical Grid + Live Oscilloscope     │
+│  [ ARCHIVED ]  marketing/archive/web-v3/  Retro Serif Medium Blue & Fraunces Edition   │
+│  [ ARCHIVED ]  marketing/archive/web-v4/  Minimalist Utility-First Studio Edition      │
+│  [ ARCHIVED ]  marketing/archive/web-v5/  1960s Retro Graphic Typography Web Edition   │
+│  [ ARCHIVED ]  marketing/archive/web-v6/  Experimental Parallax & CMYK Bleed Edition   │
+│  [ CHOSEN  ]   marketing/web-v7/  PORT 5185  Vector-Guided Parallax · Vermilion & Bone │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -89,15 +91,10 @@ Full specification: `marketing/VECTOR-PARALLAX-VISION-AND-SPECIFICATION.md` (v2.
 
 ## 5. Live Ports Matrix
 
-| Site | Directory | Port | URL | Description |
-|---|---|---|---|---|
-| **Site 1** | `marketing/web/` | `5173` | `http://localhost:5173/` | 1960s DDB Print Ad Edition |
-| **Site 2** | `marketing/web-v2/` | `5174` | `http://localhost:5174/` | Swiss Grid + Oscilloscope |
-| **Site 3** | `marketing/web-v3/` | `5176` | `http://localhost:5176/` | Retro Serif Blue Editorial |
-| **Site 4** | `marketing/web-v4/` | `5177` | `http://localhost:5177/` | Minimalist Studio Edition |
-| **Site 5** | `marketing/web-v5/` | `5178` | `http://localhost:5178/` | 1960s Graphic Typography |
-| **Site 6** | `marketing/web-v6/` | `5179` | `http://localhost:5179/` | Full-Window Parallax & CMYK |
-| **Site 7** | `marketing/web-v7/` | `5185` | `http://localhost:5185/` | Vector-Guided Kinetic 2600% Zoom |
+| Site | Directory | Port | Status |
+|---|---|---|---|
+| **Site 7 (chosen)** | `marketing/web-v7/` | `5185` — `npx vite --port 5185 --strictPort` | Active. Vermilion & Bone, final palette. |
+| Sites 1–6 | `marketing/archive/web`, `web-v2` … `web-v6` | — | Archived 2026-08-25. Still buildable (`npm install && npm run dev` inside each) for reference. |
 
 ---
 
@@ -106,7 +103,7 @@ Full specification: `marketing/VECTOR-PARALLAX-VISION-AND-SPECIFICATION.md` (v2.
 1. **Site 7 polish (structure is done; these are deliberately deferred):**
    - Real copy per stop (all current copy is placeholder).
    - Mobile variants per layout kind (the geometric split holds on phones, but columns get tight).
-   - Chrome legibility: folio bar / HUD / palette pill currently rely on `mix-blend-mode: difference`.
+   - ~~Chrome legibility~~ — resolved by the final palette: chrome is plain ink (`--color-ink`), legible on both bone and vermilion; the palette pill is gone.
    - Optional: pin `scale` on the apex stop if a dead-straight horizontal line is preferred over the gentle R=224 curve.
    - Storyboard tuning is data-only — add/reorder stops in `src/lib/storyboard.js`; no engine changes needed.
 2. **Consolidation / Final Selection:**

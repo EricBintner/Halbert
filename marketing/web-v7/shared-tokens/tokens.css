@@ -1,26 +1,18 @@
 @theme {
-  /* ===== Surface Ramp (Vibrant Teal & Lime Field) ===== */
-  --color-canvas:            #0F766E;   /* Deep Aegean Teal / Cyan Canvas */
-  --color-surface:           #115E59;   /* Inked surface plate */
-  --color-surface-subtle:    #134E4A;   /* Recessed teal well */
-  --color-surface-muted:     rgba(255, 255, 255, 0.25);
+  /* ===== Final palette: Olivetti Vermilion & Bone ===== */
+  --color-canvas:            #F7F4EE;   /* Bone / warm archival linen */
+  --color-surface:           #FFFFFF;
+  --color-surface-subtle:    #EDE8DC;
+  --color-surface-muted:     rgba(28, 25, 23, 0.10);
 
-  /* ===== Pop Chartreuse Vector Stroke ===== */
-  --color-vector-lime:       #D4E157;   /* Pop Lime / Chartreuse */
-  --color-vector-light:      #E6EE9C;   /* Light Chartreuse Tint */
-  --color-vector-glow:       rgba(212, 225, 87, 0.35);
+  /* ===== The vector stroke ===== */
+  --color-stroke:            #D34E24;   /* Letterpress vermilion */
 
-  /* ===== Ink Hierarchy ===== */
-  --color-ink:               #FFFFFF;   /* Crisp White Display */
-  --color-ink-secondary:     #CCFBF1;   /* Soft Ice Aquamarine */
-  --color-ink-tertiary:      #99F6E4;   /* Pale Seafoam */
-  --color-ink-dark:          #042F2E;   /* Deepest Ink */
-  --color-ink-on-stroke:     #042F2E;   /* Ink used on top of the stroke colour */
-
-  /* ===== Strategic CMYK / Contrast Highlights ===== */
-  --color-cmyk-cyan:         #00F0FF;   /* Neon Cyan */
-  --color-cmyk-magenta:      #FF007F;   /* Neon Magenta */
-  --color-cmyk-yellow:       #FFE600;   /* Process Yellow */
+  /* ===== Ink ===== */
+  --color-ink:               #1C1917;   /* on the bone field */
+  --color-ink-secondary:     #44403C;
+  --color-ink-tertiary:      #78716C;
+  --color-ink-on-stroke:     #FFF7ED;   /* on the vermilion field */
 
   /* ===== Typography ===== */
   --font-display:            "Fraunces", "DM Serif Display", Georgia, serif;

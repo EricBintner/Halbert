@@ -5,7 +5,6 @@ import { STOP_CONTENT } from './content/stops';
 import { VectorCanvas } from './components/VectorCanvas';
 import { LayoutStage } from './components/LayoutStage';
 import { ScrollHUD } from './components/ScrollHUD';
-import { ThemePicker } from './components/ThemePicker';
 import { Reticle } from './components/Reticle';
 import { HalbertMark } from './components/HalbertMark';
 
@@ -79,7 +78,7 @@ export function App() {
       <LayoutStage camera={camera} stops={STOPS} content={STOP_CONTENT} viewport={viewport} />
 
       {/* Folio bar — chrome that never moves */}
-      <header className="fixed top-0 inset-x-0 z-30 flex items-center justify-between px-6 py-4 text-[11px] font-mono mix-blend-difference text-white pointer-events-none">
+      <header className="fixed top-0 inset-x-0 z-30 flex items-center justify-between px-6 py-4 text-[11px] font-mono text-[var(--color-ink)] pointer-events-none">
         <div className="flex items-center space-x-3">
           <HalbertMark size={20} color="currentColor" strokeWidth={36} />
           <span className="font-bold tracking-wider">HALBERT</span>
@@ -95,7 +94,6 @@ export function App() {
 
       <Reticle visible={reticle} camera={camera} />
 
-      <ThemePicker defaultTheme="chartreuse-teal" />
     </div>
   );
 }
