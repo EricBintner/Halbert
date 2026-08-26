@@ -6,6 +6,7 @@
     "arch_wiki": {
       "document_count": 2397,
       "license": "GNU FDL 1.3",
+      "license_spdx": "GFDL-1.3-or-later",
       "scraped_at": "2026-08-23",
       "description": "Arch Linux Wiki - comprehensive Linux documentation (hannah-eee dataset and curated extensions)",
       "paths": [
@@ -18,16 +19,18 @@
     "linux_man_pages": {
       "document_count": 4368,
       "license": "Various (GPL, BSD, MIT)",
+      "license_spdx": "LicenseRef-Mixed-Manpages",
       "scraped_at": "2026-08-23",
       "description": "Linux man pages - command reference documentation (backspaces stripped, fragments removed, deduped)",
       "paths": [
         "linux/man-pages/"
       ],
-      "mac_build": true
+      "mac_build": false
     },
     "tldr_pages": {
       "document_count": 7049,
       "license": "CC BY 4.0",
+      "license_spdx": "CC-BY-4.0",
       "scraped_at": "2026-08-23",
       "description": "TLDR simplified command summaries across Common, Linux, macOS, and BSD platforms",
       "paths": [
@@ -41,6 +44,7 @@
     "common_tools": {
       "document_count": 68,
       "license": "Various (permissive)",
+      "license_spdx": "LicenseRef-Mixed-Permissive",
       "scraped_at": "2026-08-23",
       "description": "Cross-platform core tools (git, devtools, shell, python, docker, containers, aws-cli)",
       "paths": [
@@ -57,6 +61,7 @@
     "linux_system_docs": {
       "document_count": 243,
       "license": "Various (permissive, CC BY-SA)",
+      "license_spdx": "LicenseRef-Mixed-Permissive-ShareAlike",
       "scraped_at": "2026-08-23",
       "description": "Linux system guides (systemd, networking, security, storage, backup, monitoring, kernel)",
       "paths": [
@@ -87,11 +92,12 @@
         "linux/3k-push/",
         "linux/user-sources/"
       ],
-      "mac_build": true
+      "mac_build": false
     },
     "vendor_and_distro_docs": {
       "document_count": 82,
       "license": "Various (permissive)",
+      "license_spdx": "LicenseRef-Mixed-Permissive",
       "scraped_at": "2026-08-23",
       "description": "Vendor and distro documentation (Docker, K8s, Helm, NVIDIA, ROCm, Ubuntu)",
       "paths": [
@@ -103,11 +109,12 @@
         "linux/ubuntu-docs/",
         "linux/ubuntu-server/"
       ],
-      "mac_build": true
+      "mac_build": false
     },
     "macos_homebrew": {
       "document_count": 8777,
       "license": "BSD-2-Clause",
+      "license_spdx": "BSD-2-Clause",
       "scraped_at": "2026-08-23",
       "description": "Homebrew package manager documentation - formulas, casks, and official docs",
       "paths": [
@@ -119,6 +126,7 @@
     "macos_man_pages": {
       "document_count": 5280,
       "license": "Various (BSD, APSL 2.0)",
+      "license_spdx": "APSL-2.0",
       "scraped_at": "2026-08-23",
       "description": "macOS man pages extracted from local system - command reference (deduped, clean)",
       "paths": [
@@ -129,19 +137,21 @@
     },
     "macos_support": {
       "document_count": 104,
-      "license": "CC BY-NC 4.0 (SS64), Halbert (synthetic guides)",
+      "license": "Halbert-authored (see documentation/legal/)",
+      "license_spdx": "LicenseRef-Halbert-Corpus-1.0",
       "scraped_at": "2026-08-23",
-      "description": "SS64 macOS command reference and synthetic macOS troubleshooting guides (APFS, Apple Silicon, notarization, MDM, recovery, user management, software update, Spotlight, diagnostics)",
+      "description": "Halbert-authored macOS command references (87 commands) and troubleshooting guides (APFS, Apple Silicon, notarization, MDM, recovery, user management, software update, Spotlight, diagnostics). Original content, no third-party text.",
       "paths": [
         "macos/support/"
       ],
       "mac_build": true,
       "linux_build": false,
-      "note": "SS64 content is CC BY-NC 4.0 - exclude from paid App Store builds. Synthetic guides are Halbert-authored."
+      "note": "SS64 (CC BY-NC 4.0) content was quarantined out of this path on 2026-08-25 (LEG-CRIT-01) into non-commercial/macos_ss64/. macos_command_guides.jsonl is the Halbert-authored replacement and provides 100% command coverage; regenerate it with scripts/generate_macos_command_guides.py."
     },
     "macos_ask_different": {
       "document_count": 269,
       "license": "CC BY-SA 4.0",
+      "license_spdx": "CC-BY-SA-4.0",
       "scraped_at": "2026-08-23",
       "description": "Ask Different (apple.stackexchange.com) high-voted Q&A with accepted answers - macOS troubleshooting, networking, security, hardware",
       "paths": [
@@ -154,6 +164,7 @@
     "macos_macports_guide": {
       "document_count": 10,
       "license": "BSD-like (MacPorts Project)",
+      "license_spdx": "MacPorts-BSD-like",
       "scraped_at": "2026-08-23",
       "description": "MacPorts Guide - package management, portfile development, and project guidelines",
       "paths": [
@@ -165,6 +176,7 @@
     "freebsd_handbook": {
       "document_count": 41,
       "license": "FreeBSD Documentation License",
+      "license_spdx": "BSD-Documentation",
       "scraped_at": "2026-08-23",
       "description": "FreeBSD Handbook - comprehensive BSD documentation covering networking, storage, security, and system administration.",
       "paths": [
@@ -177,6 +189,7 @@
     "freebsd_man_pages": {
       "document_count": 181,
       "license": "FreeBSD Documentation License",
+      "license_spdx": "BSD-Documentation",
       "scraped_at": "2026-08-23",
       "description": "FreeBSD man pages for BSD commands shared with macOS - user commands, system admin, file formats",
       "paths": [
@@ -185,26 +198,55 @@
       "mac_build": true,
       "linux_build": true,
       "attribution_required": true
+    },
+    "macos_ss64_noncommercial": {
+      "document_count": 87,
+      "license": "CC BY-NC 4.0 (SS64.com — Simon Sheppard)",
+      "license_spdx": "CC-BY-NC-4.0",
+      "scraped_at": "2026-08-23",
+      "description": "SS64.com macOS command reference. QUARANTINED: non-commercial licence, excluded from every paid channel. Replaced for shipping purposes by the Halbert-authored references in macos/support/macos_command_guides.jsonl.",
+      "paths": [
+        "non-commercial/macos_ss64/"
+      ],
+      "mac_build": false,
+      "linux_build": false,
+      "commercial_use": "prohibited",
+      "attribution_required": true,
+      "note": "Enforced by config/licensing.yml (record_quarantine: ss64-macos) and scripts/corpus_license_gate.py. Never add this path to a build target."
     }
   },
-  "total_documents": 28869,
+  "total_documents": 28956,
   "total_chunks": 0,
   "index_schema_version": "2.0",
   "remote_url": "",
   "check_updates_url": "",
   "notes": {
     "mac_build_exclusions": [
-      "All sources with mac_build: false are excluded from paid Mac App Store build",
-      "GNU FDL content (Arch Wiki) excluded due to copyleft licensing",
-      "See documentation/legal/ for full licensing audit and action plan"
+      "All sources with mac_build: false are excluded from macOS builds",
+      "GNU FDL content (Arch Wiki) is excluded from macOS builds: strong copyleft, and GFDL 1.3 §2 forbids the technical measures the Mac App Store applies",
+      "Linux-only sources (man pages, system docs, vendor docs) never reach a macOS build: macOS ships data/macos + data/bsd + data/common only",
+      "See documentation/legal/ for the full licensing audit and action plan"
     ],
     "attribution_requirements": [
       "Stack Exchange content requires CC BY-SA 4.0 attribution",
       "TLDR content requires CC BY 4.0 attribution",
-      "SS64 content requires CC BY-NC 4.0 attribution (non-commercial only)",
+      "SS64 content requires CC BY-NC 4.0 attribution and is non-commercial only",
       "FreeBSD Handbook requires FreeBSD Documentation License attribution",
-      "macOS man pages: BSD pages require BSD license attribution, Apple pages require APSL 2.0 attribution",
+      "macOS man pages: BSD pages require BSD attribution, Apple pages require APSL 2.0",
       "See documentation/legal/THIRD-PARTY-LICENSES.md in distribution"
+    ],
+    "commercial_exclusions": [
+      "CC BY-NC 4.0 content (non-commercial/macos_ss64/) is excluded from every commercial channel: macos-pro (LemonSqueezy) and macos-app-store",
+      "Halbert-authored replacements provide 100% coverage of the excluded commands",
+      "Enforced at build time by scripts/corpus_license_gate.py"
+    ],
+    "licensing_policy": [
+      "Machine-readable policy: config/licensing.yml",
+      "Engine: halbert_core/halbert_core/corpus/license_policy.py",
+      "Build gate: scripts/corpus_license_gate.py --channel <name> --bundle <dir>",
+      "Channels: oss-linux, oss-macos, macos-pro, macos-app-store, hf-dataset",
+      "Tests: halbert_core/tests/test_corpus_license_gate.py"
     ]
-  }
+  },
+  "shippable_documents": 28869
 }

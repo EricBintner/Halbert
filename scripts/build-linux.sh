@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 # =============================================================================
 # Halbert Linux Build Script
 # =============================================================================
@@ -49,6 +51,51 @@ done
 
 echo -e "${GREEN}=== Halbert Linux Build ===${NC}"
 echo "Project root: $PROJECT_ROOT"
+echo "Channel:      oss-linux"
+
+# =============================================================================
+# Step 0: Corpus licence gate (LEG-CRIT-01 / LEG-MAJ-05)
+# =============================================================================
+# The Linux build ships data/linux + data/common. Which paths inside those are
+# legally shippable is decided by config/licensing.yml, not by this script, and
+# the staged tree is audited before anything is packaged. The community Linux
+# build is GPL-3.0 and DRM-free, so it can carry copyleft documentation the
+# App Store build cannot — but never the non-commercial quarantine.
+echo -e "\n${YELLOW}[0/5] Staging corpus under the 'oss-linux' licence policy...${NC}"
+
+STAGE_DIR="$PROJECT_ROOT/build/corpus"
+rm -rf "$STAGE_DIR"
+mkdir -p "$STAGE_DIR"
+
+INCLUDED_PATHS=$(python3 "$SCRIPT_DIR/corpus_license_gate.py" --channel oss-linux --print-paths)
+if [[ -z "$INCLUDED_PATHS" ]]; then
+    echo -e "${RED}Error: the licence policy allows no corpus paths for oss-linux${NC}"
+    exit 1
+fi
+
+while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    src="$PROJECT_ROOT/data/$rel"
+    [[ -d "$src" ]] || continue
+    dest="$STAGE_DIR/$rel"
+    mkdir -p "$(dirname "${dest%/}")"
+    cp -R "${src%/}" "${dest%/}"
+done <<< "$INCLUDED_PATHS"
+
+cp "$PROJECT_ROOT/data/manifest.json" "$STAGE_DIR/manifest.json"
+
+if ! python3 "$SCRIPT_DIR/corpus_license_gate.py" --channel oss-linux --bundle "$STAGE_DIR" --no-color; then
+    echo -e "${RED}"
+    echo "==============================================================="
+    echo " LICENCE GATE FAILED — build aborted"
+    echo "==============================================================="
+    echo " The staged corpus contains content that cannot be distributed"
+    echo " through oss-linux. Nothing has been packaged."
+    echo " Policy: config/licensing.yml"
+    echo -e "${NC}"
+    exit 1
+fi
+echo -e "  ${GREEN}✓ Licence gate passed${NC}"
 
 # =============================================================================
 # Step 1: Check prerequisites
@@ -134,13 +181,9 @@ if [ "$SKIP_BACKEND" = false ]; then
         PYINSTALLER_OPTS="$PYINSTALLER_OPTS --onefile"
     fi
     
-    # Add data directories
-    if [ -d "$PROJECT_ROOT/data/linux" ]; then
-        PYINSTALLER_OPTS="$PYINSTALLER_OPTS --add-data $PROJECT_ROOT/data/linux:data/linux"
-    fi
-    if [ -d "$PROJECT_ROOT/data/common" ]; then
-        PYINSTALLER_OPTS="$PYINSTALLER_OPTS --add-data $PROJECT_ROOT/data/common:data/common"
-    fi
+    # Bundle the gated, staged corpus only — never $PROJECT_ROOT/data directly,
+    # which contains the non-commercial quarantine (LEG-CRIT-01).
+    PYINSTALLER_OPTS="$PYINSTALLER_OPTS --add-data $STAGE_DIR:data"
     
     # Hidden imports for packages that PyInstaller misses
     PYINSTALLER_OPTS="$PYINSTALLER_OPTS --hidden-import chromadb"

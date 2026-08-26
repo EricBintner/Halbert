@@ -125,6 +125,13 @@ data/linux/man-pages/
 # Keep manifest for reference (describes available datasets)
 !data/manifest.json
 
+# Licence-gated corpus slices MUST be versioned. The blanket *.jsonl rule above
+# silently kept these out of the repo, which left the SS64 quarantine committed
+# without its Halbert-authored replacement — the exact state LEG-CRIT-01 exists
+# to prevent. See documentation/legal/CORPUS-LICENSING-ARCHITECTURE.md.
+!data/macos/support/*.jsonl
+!data/non-commercial/**/*.jsonl
+
 # SourcePrep staging output (generated from JSONL, 87MB of markdown)
 data/staging/
 

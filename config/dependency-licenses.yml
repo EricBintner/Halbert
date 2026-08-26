@@ -1,0 +1,187 @@
+# =============================================================================
+# Halbert Third-Party Dependency Licence Register
+# =============================================================================
+# The licence of every third-party library Halbert links or bundles, recorded
+# so `scripts/check_appstore_deps.py` can assert that no strong-copyleft
+# dependency reaches the Mac App Store target.
+#
+# Why this matters (LEG-CRIT-03): the GPLv3 §7 exception the project grants for
+# App Store distribution covers *Halbert's own* code. It cannot grant an
+# exception on someone else's GPL library. A single statically-linked GPL
+# dependency in the App Store binary is an infringement no amount of
+# Halbert-side licensing fixes.
+#
+# Rules the checker applies to the `macos-app-store` target:
+#   - strong copyleft (GPL-2.0, GPL-3.0, AGPL, GFDL)  -> FAIL
+#   - weak copyleft   (LGPL, MPL-2.0, EPL)            -> FAIL unless the entry
+#                                                        is marked
+#                                                        `dynamic_only: true`
+#                                                        or excluded by a
+#                                                        platform marker
+#   - permissive      (MIT, BSD, Apache-2.0, ISC, …)  -> OK
+#   - unknown / unlisted dependency                    -> FAIL (classify it)
+#
+# Keep this in step with `documentation/legal/THIRD-PARTY-LICENSES.md`: this
+# file is the machine-readable half, that document is the human-readable notice
+# shipped with the binary.
+#
+# `spdx` uses SPDX identifiers; dual licences use the SPDX `OR` form.
+# =============================================================================
+
+version: 1
+
+# Licence classes the checker reasons about.
+copyleft_classes:
+  strong:
+    - GPL-2.0-only
+    - GPL-2.0-or-later
+    - GPL-3.0-only
+    - GPL-3.0-or-later
+    - AGPL-3.0-only
+    - AGPL-3.0-or-later
+    - GFDL-1.3-or-later
+    - SSPL-1.0
+  weak:
+    - LGPL-2.1-only
+    - LGPL-2.1-or-later
+    - LGPL-3.0-only
+    - LGPL-3.0-or-later
+    - MPL-2.0
+    - EPL-2.0
+    - CDDL-1.0
+
+# -----------------------------------------------------------------------------
+# Python — halbert_core/pyproject.toml
+# -----------------------------------------------------------------------------
+python:
+  pydantic: {spdx: MIT}
+  chromadb: {spdx: Apache-2.0}
+  sentence-transformers: {spdx: Apache-2.0}
+  rank-bm25: {spdx: Apache-2.0}
+  pyyaml: {spdx: MIT}
+  watchdog: {spdx: Apache-2.0}
+  jsonschema: {spdx: MIT}
+  numpy: {spdx: BSD-3-Clause}
+  apscheduler: {spdx: MIT}
+  sqlalchemy: {spdx: MIT}
+
+  systemd-python:
+    spdx: LGPL-2.1-or-later
+    platforms: [linux]
+    notes: >-
+      Weak copyleft, and the only copyleft dependency in the tree. Guarded in
+      pyproject.toml by `platform_system == 'Linux'` so pip never installs it on
+      macOS, and excluded explicitly by scripts/build-macos.sh
+      (--exclude-module systemd). The checker verifies that marker is still
+      present rather than trusting the convention.
+
+  # [dashboard]
+  fastapi: {spdx: MIT}
+  uvicorn: {spdx: BSD-3-Clause}
+  httpx: {spdx: BSD-3-Clause}
+  requests: {spdx: Apache-2.0}
+  psutil: {spdx: BSD-3-Clause}
+  aiofiles: {spdx: Apache-2.0}
+  huggingface-hub: {spdx: Apache-2.0}
+
+  # [cloud-apis] — optional, not bundled in a default build
+  anthropic: {spdx: MIT}
+  openai: {spdx: Apache-2.0}
+  google-generativeai: {spdx: Apache-2.0}
+
+  # [compression]
+  llmlingua: {spdx: MIT}
+
+  # [cognition] — first-party, not on PyPI
+  haloysius:
+    spdx: LicenseRef-Halbert-FirstParty
+    notes: "Sibling project by the same author; not third-party for licensing purposes."
+
+  # [dev] — build-time only, never shipped
+  pytest: {spdx: MIT, build_only: true}
+  pytest-asyncio: {spdx: Apache-2.0, build_only: true}
+  pyinstaller:
+    spdx: GPL-2.0-or-later
+    build_only: true
+    notes: >-
+      PyInstaller itself is GPL, but its bootloader carries a linking exception
+      that explicitly permits distributing frozen applications under any licence.
+      Build-time only — nothing of PyInstaller's own GPL code ends up in the
+      shipped binary beyond the exception-covered bootloader.
+
+  # Transitive dependencies pulled in by uvicorn[standard] and chromadb that are
+  # worth pinning down because they are compiled into the frozen binary.
+  uvloop: {spdx: MIT OR Apache-2.0}
+  httptools: {spdx: MIT}
+  websockets: {spdx: BSD-3-Clause}
+  watchfiles: {spdx: MIT}
+  python-dotenv: {spdx: BSD-3-Clause}
+  onnxruntime: {spdx: MIT}
+  tokenizers: {spdx: Apache-2.0}
+  torch: {spdx: BSD-3-Clause}
+
+# -----------------------------------------------------------------------------
+# Rust — halbert_core/halbert_core/dashboard/frontend/src-tauri/Cargo.toml
+# -----------------------------------------------------------------------------
+rust:
+  tauri: {spdx: Apache-2.0 OR MIT}
+  tauri-build: {spdx: Apache-2.0 OR MIT, build_only: true}
+  tauri-plugin-opener: {spdx: Apache-2.0 OR MIT}
+  tauri-plugin-shell: {spdx: Apache-2.0 OR MIT}
+  serde: {spdx: MIT OR Apache-2.0}
+  serde_json: {spdx: MIT OR Apache-2.0}
+  sysinfo: {spdx: MIT}
+  chrono: {spdx: MIT OR Apache-2.0}
+  image: {spdx: MIT OR Apache-2.0}
+
+# -----------------------------------------------------------------------------
+# npm — halbert_core/halbert_core/dashboard/frontend/package.json
+# -----------------------------------------------------------------------------
+npm:
+  "@monaco-editor/react": {spdx: MIT}
+  "@radix-ui/react-alert-dialog": {spdx: MIT}
+  "@radix-ui/react-dialog": {spdx: MIT}
+  "@radix-ui/react-dropdown-menu": {spdx: MIT}
+  "@radix-ui/react-label": {spdx: MIT}
+  "@radix-ui/react-progress": {spdx: MIT}
+  "@radix-ui/react-select": {spdx: MIT}
+  "@radix-ui/react-separator": {spdx: MIT}
+  "@radix-ui/react-slot": {spdx: MIT}
+  "@radix-ui/react-switch": {spdx: MIT}
+  "@radix-ui/react-tabs": {spdx: MIT}
+  "@radix-ui/react-toast": {spdx: MIT}
+  "@radix-ui/react-tooltip": {spdx: MIT}
+  "@tauri-apps/api": {spdx: Apache-2.0 OR MIT}
+  "@xterm/addon-fit": {spdx: MIT}
+  "@xterm/addon-web-links": {spdx: MIT}
+  "@xterm/xterm": {spdx: MIT}
+  class-variance-authority: {spdx: Apache-2.0}
+  clsx: {spdx: MIT}
+  html2canvas: {spdx: MIT}
+  lucide-react: {spdx: ISC}
+  react: {spdx: MIT}
+  react-dom: {spdx: MIT}
+  react-router-dom: {spdx: MIT}
+  recharts: {spdx: MIT}
+  tailwind-merge: {spdx: MIT}
+  tailwindcss-animate: {spdx: MIT}
+  xterm: {spdx: MIT}
+  xterm-addon-fit: {spdx: MIT}
+  xterm-addon-web-links: {spdx: MIT}
+
+  # devDependencies — build-time only, not shipped in the bundle
+  "@tauri-apps/cli": {spdx: Apache-2.0 OR MIT, build_only: true}
+  "@types/html2canvas": {spdx: MIT, build_only: true}
+  "@types/react": {spdx: MIT, build_only: true}
+  "@types/react-dom": {spdx: MIT, build_only: true}
+  "@typescript-eslint/eslint-plugin": {spdx: MIT, build_only: true}
+  "@typescript-eslint/parser": {spdx: MIT, build_only: true}
+  "@vitejs/plugin-react": {spdx: MIT, build_only: true}
+  autoprefixer: {spdx: MIT, build_only: true}
+  eslint: {spdx: MIT, build_only: true}
+  eslint-plugin-react-hooks: {spdx: MIT, build_only: true}
+  eslint-plugin-react-refresh: {spdx: MIT, build_only: true}
+  postcss: {spdx: MIT, build_only: true}
+  tailwindcss: {spdx: MIT, build_only: true}
+  typescript: {spdx: Apache-2.0, build_only: true}
+  vite: {spdx: MIT, build_only: true}

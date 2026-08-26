@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 #
 # macOS RAG Data Scraping Script
 # Phase 25: Build macOS knowledge base
@@ -84,9 +86,18 @@ python3 -m halbert_core.rag.scrapers.macos_support \
     --rate-limit ${RATE_LIMIT}
 
 if [ $? -eq 0 ]; then
+    # The SS64 slice of this scrape is CC BY-NC 4.0 and must not sit in the
+    # shippable macOS corpus (LEG-CRIT-01). Split it back out immediately —
+    # otherwise every scrape silently undoes the quarantine.
+    echo "  Quarantining non-commercial (CC BY-NC) records..."
+    python3 "$(dirname "$0")/quarantine_ss64.py" --data-dir "$(dirname "${DATA_DIR}")" || {
+        echo -e "${RED}✗ Quarantine step failed — do not build from this corpus${NC}"
+        exit 1
+    }
+
     COUNT=$(wc -l < "${DATA_DIR}/support/macos_support.jsonl" 2>/dev/null || echo 0)
     TOTAL_DOCS=$((TOTAL_DOCS + COUNT))
-    echo -e "${GREEN}✓ macOS Support: ${COUNT} documents${NC}"
+    echo -e "${GREEN}✓ macOS Support: ${COUNT} shippable documents (SS64 quarantined)${NC}"
 else
     echo -e "${YELLOW}⚠ macOS support scraping had errors${NC}"
 fi
@@ -135,7 +146,9 @@ mkdir -p "${DATA_DIR}/merged"
 
 # Append all source files
 for source_file in "${DATA_DIR}"/*/; do
-    for jsonl in "${source_file}"*.jsonl 2>/dev/null; do
+    # No redirection in a `for ... in` list — the [ -f ] test below already
+    # handles the case where the glob matches nothing.
+    for jsonl in "${source_file}"*.jsonl; do
         if [ -f "$jsonl" ]; then
             cat "$jsonl" >> "${MERGED_FILE}"
             echo "  Added: $(basename $jsonl)"

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Upload RAG corpus to HuggingFace as a versioned dataset.
 
@@ -138,7 +140,74 @@ def get_files_to_upload(data_dir: Path, include_arch_wiki: bool = True) -> list:
             for f in mpath.glob("*.jsonl"):
                 files.append((f, f"macos/{mdir}/{f.name}"))
     
+    _assert_no_noncommercial(files)
     return files
+
+
+# Record `source` values that are licensed for non-commercial use only and must
+# never appear in a public dataset release. Kept in step with
+# `record_quarantine:` in config/licensing.yml (LEG-CRIT-01).
+QUARANTINED_RECORD_SOURCES = {"ss64-macos"}
+NONCOMMERCIAL_LICENSE_TAGS = {"CC-BY-NC-4.0", "CC BY-NC 4.0"}
+
+
+def _assert_no_noncommercial(files: list) -> None:
+    """Refuse to publish non-commercial content in the general corpus release.
+
+    Two checks, because a path allowlist alone is not enough: `data/macos/support/`
+    once held CC BY-NC SS64 pages alongside Halbert-authored guides in a single
+    file. The non-commercial slice is published as its own dataset repo with its
+    own CC BY-NC 4.0 card, never bundled into this one.
+
+    Raises SystemExit rather than returning a flag: an upload is irreversible
+    once it reaches the Hub.
+    """
+    problems = []
+
+    for local_path, repo_path in files:
+        if "non-commercial" in Path(repo_path).parts:
+            problems.append(f"{repo_path}: quarantined non-commercial path")
+            continue
+        if local_path.suffix != ".jsonl":
+            continue
+        try:
+            with open(local_path, "r", encoding="utf-8") as fh:
+                for line_no, line in enumerate(fh, start=1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(record, dict):
+                        continue
+                    source = record.get("source", "")
+                    tag = record.get("license_spdx") or record.get("license") or ""
+                    if source in QUARANTINED_RECORD_SOURCES:
+                        problems.append(
+                            f"{repo_path}:{line_no}: record source '{source}' is "
+                            f"non-commercial (CC BY-NC 4.0)"
+                        )
+                        break
+                    if tag in NONCOMMERCIAL_LICENSE_TAGS:
+                        problems.append(
+                            f"{repo_path}:{line_no}: record carries licence tag '{tag}'"
+                        )
+                        break
+        except OSError as exc:
+            problems.append(f"{repo_path}: unreadable ({exc})")
+
+    if problems:
+        print("\nERROR: refusing to upload — non-commercial content selected:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        print(
+            "\nRun `python scripts/quarantine_ss64.py` and re-check with\n"
+            "`python scripts/corpus_license_gate.py --channel hf-dataset --bundle data`.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 def create_dataset_card(manifest: dict, repo_name: str) -> str:

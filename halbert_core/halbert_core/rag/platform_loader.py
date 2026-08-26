@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Platform-aware RAG data loader.
 
@@ -108,13 +110,18 @@ class PlatformDataLoader:
         
         Useful for ensuring wrong-platform data isn't accidentally loaded.
         
+        `non-commercial` is excluded on every platform: it holds CC BY-NC 4.0
+        content that may not enter a commercial build (LEG-CRIT-01). The
+        authoritative gate is scripts/corpus_license_gate.py at build time;
+        this is the runtime backstop for a dev running from a source checkout.
+        
         Returns:
             List of directory names to exclude
         """
         if is_macos():
-            return ['linux']
+            return ['linux', 'non-commercial']
         else:
-            return ['macos', 'bsd']
+            return ['macos', 'bsd', 'non-commercial']
     
     def list_available_sources(self) -> List[dict]:
         """

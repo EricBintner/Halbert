@@ -43,6 +43,21 @@ COPYLEFT_RANK = {"none": 0, "weak": 1, "strong": 2}
 # Record fields searched, in order, for a per-record SPDX tag.
 _RECORD_LICENSE_KEYS = ("license_spdx", "license")
 
+# Files a bundle may carry at the root of its `data/` tree. They describe the
+# corpus rather than being part of it, so they are exempt from the data-root
+# check — the manifest in particular must travel with the build so the app can
+# report versions and attributions for exactly what it shipped with.
+ROOT_METADATA_FILES = frozenset({
+    "manifest.json",
+    "README.md",
+    "LICENSE",
+    "LICENSE.md",
+    "LICENSE.txt",
+    "THIRD-PARTY-LICENSES.md",
+    "THIRD-PARTY-LICENSES.txt",
+    "ATTRIBUTION.md",
+})
+
 
 class LicenseViolation(Exception):
     """Raised when a corpus tree contains content a channel may not ship."""
@@ -249,6 +264,8 @@ class LicensePolicy:
             name: Channel.from_dict(name, data)
             for name, data in (policy.get("channels") or {}).items()
         }
+        self.aliases: Dict[str, str] = dict(policy.get("license_aliases") or {})
+        self.unverified_tags: set = set(policy.get("unverified_license_tags") or [])
         self.record_quarantine: Dict[str, Dict[str, Any]] = policy.get("record_quarantine") or {}
         self.coverage_contracts: List[Dict[str, Any]] = policy.get("coverage_contracts") or []
 
@@ -286,8 +303,25 @@ class LicensePolicy:
             known = ", ".join(sorted(self.channels))
             raise KeyError(f"Unknown distribution channel '{name}'. Known: {known}") from None
 
+    def resolve(self, spdx: str) -> str:
+        """Map a free-text corpus licence string onto a registry id.
+
+        Records written by the scrapers predate SPDX tagging and carry strings
+        like "FreeBSD Documentation License". Anything with no alias and no
+        registry entry is left as-is, so it surfaces as a violation rather than
+        being silently waved through.
+        """
+        spdx = (spdx or "").strip()
+        if spdx in self.licenses:
+            return spdx
+        return self.aliases.get(spdx, spdx)
+
     def terms(self, spdx: str) -> Optional[LicenseTerms]:
-        return self.licenses.get(spdx)
+        return self.licenses.get(self.resolve(spdx))
+
+    def is_unverified(self, spdx: str) -> bool:
+        """True if this tag is an upstream assumption awaiting verification."""
+        return (spdx or "").strip() in self.unverified_tags
 
     def source_for_path(self, path: str) -> Optional[str]:
         """Which manifest source owns this corpus path (longest prefix wins)."""
@@ -415,11 +449,14 @@ class LicensePolicy:
         channel_name: str,
         scan_records: bool = True,
         max_records_per_file: int = 0,
+        advisories: Optional[List[str]] = None,
     ) -> List[Violation]:
         """Audit a real corpus tree about to be packaged for `channel_name`.
 
         `root` is the directory that will become `data/` inside the bundle.
-        Returns every violation found (empty list == clean).
+        Returns every violation found (empty list == clean). Non-blocking
+        observations — an unverified upstream licence assumption, say — are
+        appended to `advisories` when one is supplied.
         """
         channel = self.channel(channel_name)
         root = Path(root)
@@ -436,6 +473,22 @@ class LicensePolicy:
                 continue
             rel = file_path.relative_to(root).as_posix()
             if rel.startswith(".") or "/." in rel:
+                continue
+
+            if "/" not in rel:
+                if rel in ROOT_METADATA_FILES:
+                    continue
+                violations.append(
+                    Violation(
+                        path=rel,
+                        kind="unexpected_root_file",
+                        detail=(
+                            "loose file at the root of the corpus tree — corpus content "
+                            "belongs under a data root, and only known metadata files "
+                            f"({', '.join(sorted(ROOT_METADATA_FILES))}) may sit here"
+                        ),
+                    )
+                )
                 continue
 
             top = rel.split("/", 1)[0]
@@ -486,7 +539,7 @@ class LicensePolicy:
 
             if scan_records and file_path.suffix == ".jsonl":
                 violations.extend(
-                    self._audit_records(file_path, rel, channel, max_records_per_file)
+                    self._audit_records(file_path, rel, channel, max_records_per_file, advisories)
                 )
 
         return violations
@@ -497,6 +550,7 @@ class LicensePolicy:
         rel: str,
         channel: Channel,
         max_records: int = 0,
+        advisories: Optional[List[str]] = None,
     ) -> List[Violation]:
         """Record-level scan: quarantined sources and per-record licence tags."""
         violations: List[Violation] = []
@@ -567,6 +621,14 @@ class LicensePolicy:
                                 line_no=line_no,
                             )
                         )
+                    elif advisories is not None and self.is_unverified(spdx):
+                        note = (
+                            f"{rel}: records carry the unverified licence tag "
+                            f"'{spdx}' (assumed {self.resolve(spdx)}) — confirm against "
+                            f"the upstream source (LEG-MIN-03)"
+                        )
+                        if note not in advisories:
+                            advisories.append(note)
 
         return violations
 

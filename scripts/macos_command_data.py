@@ -2020,4 +2020,1607 @@ COMMANDS = [
         "see_also": ["defaults", "osascript", "pbcopy", "launchctl"],
         "tags": ["gui", "launch-services", "files", "urls"],
     },
+    {
+        "command": "osascript",
+        "tagline": "run AppleScript and JavaScript for Automation from the shell",
+        "summary": (
+            "osascript executes AppleScript or JXA (JavaScript for Automation), which is "
+            "how the command line reaches into GUI applications — displaying dialogs, "
+            "driving Mail or Finder, or reading a running app's state. It is also the "
+            "standard way for a shell script to show a native notification or prompt for "
+            "input."
+        ),
+        "synopsis": [
+            "osascript [-l language] [-e statement ...] [file] [args]",
+            "osascript -e 'tell application \"Finder\" to ...'",
+        ],
+        "options": [
+            ("-e statement", "Run a single line of script (repeatable for multi-line)"),
+            ("-l AppleScript|JavaScript", "Choose the language; AppleScript is the default"),
+            ("-s o|h|e|s", "Output style: object, human-readable, error handling, recompilable"),
+            ("file.scpt / file.applescript", "Run a script from a file"),
+            ("(trailing args)", "Passed to the script's `on run argv` handler"),
+        ],
+        "examples": [
+            ("osascript -e 'display notification \"Build finished\" with title \"Halbert\"'", "Post a native notification from a script"),
+            ("osascript -e 'display dialog \"Continue?\" buttons {\"No\",\"Yes\"} default button \"Yes\"'", "Prompt the user with a native dialog"),
+            ("osascript -e 'tell application \"Finder\" to get POSIX path of (target of front window as alias)'", "Path of the frontmost Finder window"),
+            ("osascript -e 'set volume output volume 25'", "Set the system output volume"),
+            ("osascript -l JavaScript -e 'Application(\"Safari\").windows[0].currentTab.url()'", "Read the front Safari tab's URL with JXA"),
+            ("osascript -e 'tell application \"System Events\" to keystroke \"s\" using command down'", "Send a keystroke (requires Accessibility permission)"),
+            ("osascript -e 'tell app \"System Events\" to sleep'", "Put the Mac to sleep"),
+        ],
+        "notes": [
+            "Anything that drives another application needs an Automation permission grant, and `System Events` keystroke tricks additionally need Accessibility. The prompt appears once, for the parent app — usually Terminal or your IDE — and is then remembered in TCC.",
+            "In a LaunchDaemon (system context) there is no GUI session, so osascript cannot display dialogs. Use a LaunchAgent instead.",
+            "Multiple `-e` flags build a multi-line script; a heredoc into `osascript` is cleaner for anything longer.",
+            "`display dialog` returns the button and any text entered on stdout, so it can be captured in a shell variable.",
+        ],
+        "see_also": ["open", "defaults", "launchctl", "security"],
+        "tags": ["automation", "applescript", "gui", "scripting"],
+    },
+    {
+        "command": "passwd",
+        "tagline": "change a user's password",
+        "summary": (
+            "passwd changes the login password of an account. On macOS the password is "
+            "held in the directory services database, not /etc/shadow, and it is also the "
+            "key that unlocks the login keychain and — on a FileVault-enabled Mac — the "
+            "volume itself. Changing it by the wrong route leaves those out of sync."
+        ),
+        "synopsis": [
+            "passwd [user]",
+            "sudo passwd user",
+            "sysadminctl -resetPasswordFor user -newPassword pass",
+        ],
+        "options": [
+            ("(no argument)", "Change your own password; prompts for the old one first"),
+            ("user", "Change another user's password (requires root)"),
+            ("-i directory", "Specify the directory node (`file`, `NIS`, `opendirectory`)"),
+            ("-u user", "Specify the user for the chosen infrastructure"),
+        ],
+        "examples": [
+            ("passwd", "Change your own password interactively"),
+            ("sudo passwd alice", "Reset another user's password as an administrator"),
+            ("dscl . -authonly alice", "Verify a password without changing it"),
+            ("sudo sysadminctl -resetPasswordFor alice -newPassword '...' -adminUser admin -adminPassword '...'", "Reset a password non-interactively, the supported modern route"),
+        ],
+        "notes": [
+            "Resetting another user's password with sudo does *not* update their login keychain — the next login will prompt \"the system was unable to unlock your keychain\". They must enter the old password once, or the keychain must be reset.",
+            "On a FileVault Mac, the password is also a volume unlock credential. Use System Settings or `sysadminctl` so the FileVault key is updated too; a mismatched password can leave the account unable to unlock at boot.",
+            "Password policy (length, complexity) may be enforced by an MDM profile; `pwpolicy -getaccountpolicies` shows what is in force.",
+            "Passing a password on the command line exposes it in shell history and in `ps` output.",
+        ],
+        "see_also": ["dscl", "security", "id", "su"],
+        "tags": ["users", "passwords", "security", "keychain"],
+        "category": "security",
+    },
+    {
+        "command": "pbcopy",
+        "tagline": "copy standard input to the macOS clipboard",
+        "summary": (
+            "pbcopy reads standard input and places it on the pasteboard, making command "
+            "output pasteable into any application. It is one half of a pair with pbpaste "
+            "and is one of the most quietly useful macOS-only commands — the reason so many "
+            "macOS instructions end in `| pbcopy`."
+        ),
+        "synopsis": [
+            "command | pbcopy [-pboard general|ruler|find|font]",
+        ],
+        "options": [
+            ("-pboard name", "Target a specific pasteboard; `general` is the normal clipboard"),
+            ("-Prefer txt|rtf|ps", "Preferred flavour when the input could be interpreted several ways"),
+        ],
+        "examples": [
+            ("cat ~/.ssh/id_ed25519.pub | pbcopy", "Copy a public key ready to paste into a web form"),
+            ("pwd | pbcopy", "Copy the current path"),
+            ("git log -1 --format=%H | pbcopy", "Copy the latest commit hash"),
+            ("system_profiler SPHardwareDataType | pbcopy", "Copy hardware details for a support ticket"),
+            ("pbpaste | tr 'A-Z' 'a-z' | pbcopy", "Lowercase the clipboard in place"),
+            ("ioreg -l | grep -i serial | pbcopy", "Copy diagnostic output without selecting it by hand"),
+        ],
+        "notes": [
+            "pbcopy copies exactly what it receives, trailing newline included. `printf '%s' \"$x\" | pbcopy` avoids the stray newline when pasting into a password field.",
+            "It reads standard input only — `pbcopy file.txt` does nothing useful; use `pbcopy < file.txt`.",
+            "Over SSH, pbcopy runs on the *remote* Mac. To reach the local clipboard, pipe through ssh in the other direction or use your terminal's clipboard integration.",
+            "Copying a secret puts it on the pasteboard where any running app can read it; clear it afterwards with `: | pbcopy`.",
+        ],
+        "see_also": ["pbpaste", "open", "osascript"],
+        "tags": ["clipboard", "pasteboard", "io"],
+    },
+    {
+        "command": "pbpaste",
+        "tagline": "write the macOS clipboard contents to standard output",
+        "summary": (
+            "pbpaste prints whatever is on the pasteboard, letting shell commands consume "
+            "what you just copied from a GUI app. Combined with pbcopy it turns the "
+            "clipboard into an ordinary Unix pipe endpoint, which is the trick behind most "
+            "\"transform the clipboard\" one-liners."
+        ),
+        "synopsis": [
+            "pbpaste [-pboard general|ruler|find|font] [-Prefer txt|rtf|ps]",
+        ],
+        "options": [
+            ("-pboard name", "Read from a specific pasteboard"),
+            ("-Prefer txt|rtf|ps", "Preferred flavour when several are available"),
+        ],
+        "examples": [
+            ("pbpaste", "Print the clipboard"),
+            ("pbpaste > snippet.txt", "Save the clipboard to a file"),
+            ("pbpaste | wc -l", "Count the lines you just copied"),
+            ("pbpaste | jq .", "Pretty-print copied JSON"),
+            ("pbpaste | pbcopy", "Strip formatting — round-tripping through plain text"),
+            ("pbpaste -Prefer txt | grep -i error", "Search copied log output"),
+        ],
+        "notes": [
+            "By default pbpaste returns the plain-text flavour. Rich text copied from a word processor comes through as its text representation unless you ask for `-Prefer rtf`.",
+            "`pbpaste | pbcopy` is the quickest way to strip formatting from copied text before pasting into an editor.",
+            "Non-text clipboard contents (an image copied from Preview) produce nothing useful; check with `osascript -e 'clipboard info'`.",
+            "Over SSH, pbpaste reads the remote Mac's clipboard, not yours.",
+        ],
+        "see_also": ["pbcopy", "open", "osascript"],
+        "tags": ["clipboard", "pasteboard", "io"],
+    },
+    {
+        "command": "ping",
+        "tagline": "test reachability with ICMP echo requests",
+        "summary": (
+            "ping sends ICMP echo requests and reports which come back and how long they "
+            "took. It answers three questions at once: does the name resolve, is the host "
+            "reachable, and what is the latency and loss on the path. On macOS ping runs "
+            "forever unless you bound it with `-c`."
+        ),
+        "synopsis": [
+            "ping [-c count] [-i interval] [-t timeout] [-s size] [-S source] host",
+        ],
+        "options": [
+            ("-c N", "Stop after N packets"),
+            ("-i N", "Seconds between packets (sub-second intervals need root)"),
+            ("-t N", "Stop after N seconds"),
+            ("-s N", "Payload size in bytes — used for MTU testing"),
+            ("-D", "Set the Don't Fragment bit"),
+            ("-S addr", "Send from a specific source address"),
+            ("-n", "Numeric output only, no reverse lookups"),
+            ("-q", "Quiet — summary only"),
+        ],
+        "examples": [
+            ("ping -c 4 example.com", "Four packets and a summary"),
+            ("ping -c 3 $(netstat -rn | awk '/^default/{print $2; exit}')", "Ping the default gateway"),
+            ("ping -c 100 -i 0.2 -q 1.1.1.1", "Twenty-second loss test, summary only"),
+            ("ping -c 3 -s 1472 -D example.com", "Probe for an MTU problem — 1472 + 28 = 1500"),
+            ("ping -c 1 -t 2 host.local || echo unreachable", "Scriptable reachability check with a timeout"),
+        ],
+        "notes": [
+            "Many hosts and firewalls drop ICMP. \"No reply\" proves nothing on its own — test the actual service port with `nc -vz host port` before concluding the host is down.",
+            "Without `-c` or `-t`, ping runs until interrupted. Ctrl-C prints the loss and latency summary.",
+            "A ping to the gateway succeeding while a ping to 1.1.1.1 fails isolates the fault beyond your LAN; if the IP works but the name does not, it is DNS.",
+            "The `-D` flag with a tuned `-s` is the classic path-MTU test: the largest size that gets through, plus 28 bytes of header, is the path MTU.",
+        ],
+        "see_also": ["traceroute", "netstat", "dig", "ifconfig"],
+        "tags": ["network", "diagnostics", "icmp", "latency"],
+        "category": "networking",
+    },
+    {
+        "command": "pkgutil",
+        "tagline": "query and manage installer packages and receipts",
+        "summary": (
+            "pkgutil works with the receipts macOS keeps for every installed .pkg. It "
+            "answers what a package installed, where, and when — and can forget a receipt "
+            "so a stubborn installer will run again. It also expands and flattens package "
+            "archives, which is how you inspect what a package will do before running it."
+        ),
+        "synopsis": [
+            "pkgutil --pkgs [regex]",
+            "pkgutil --pkg-info id / --files id",
+            "sudo pkgutil --forget id",
+            "pkgutil --expand-full pkg dir / --flatten dir pkg",
+        ],
+        "options": [
+            ("--pkgs [regex]", "List installed package identifiers"),
+            ("--pkg-info id", "Version, install date and install location"),
+            ("--files id", "Every file the package installed, relative to its location"),
+            ("--file-info path", "Which package claims a given file"),
+            ("--forget id", "Remove the receipt (does not delete files)"),
+            ("--expand pkg dir / --expand-full pkg dir", "Unpack a package for inspection"),
+            ("--flatten dir pkg", "Repackage an expanded directory"),
+            ("--check-signature pkg", "Verify a package's signature"),
+            ("--verbose", "More detail in listings"),
+        ],
+        "examples": [
+            ("pkgutil --pkgs | grep -i vendor", "Find a vendor's installed packages"),
+            ("pkgutil --pkg-info com.example.tool", "Version and install date"),
+            ("pkgutil --files com.example.tool", "Every file the package placed on disk"),
+            ("pkgutil --files com.example.tool | sed 's|^|/|' | xargs -I{} sudo rm -f {}", "Manual uninstall, after reviewing the file list"),
+            ("sudo pkgutil --forget com.example.tool", "Forget the receipt so the installer will run again"),
+            ("pkgutil --check-signature ~/Downloads/Tool.pkg", "Verify who signed a package before installing"),
+            ("pkgutil --expand-full ~/Downloads/Tool.pkg /tmp/tool && ls /tmp/tool", "Inspect the scripts a package will run as root"),
+        ],
+        "notes": [
+            "`--forget` removes only the receipt. Files stay on disk; list them with `--files` first and remove them deliberately.",
+            "`--files` returns paths relative to the package's install location — prefix them with the value from `--pkg-info` before deleting anything.",
+            "`--expand-full` is the right first move for an unfamiliar .pkg: preinstall and postinstall scripts run as root, and this is how you read them beforehand.",
+            "Receipts live in /var/db/receipts. A package that \"is already installed\" but is clearly missing usually has a stale receipt there.",
+        ],
+        "see_also": ["installer", "brew", "codesign", "spctl"],
+        "tags": ["package-management", "receipts", "uninstall"],
+        "category": "package_management",
+    },
+    {
+        "command": "plutil",
+        "tagline": "inspect, validate and convert property list files",
+        "summary": (
+            "plutil reads and rewrites .plist files, which macOS uses for preferences, "
+            "launchd jobs, app metadata and much else. Most plists on disk are binary and "
+            "unreadable in a text editor; plutil converts them to XML or JSON, checks their "
+            "syntax before launchd rejects them, and can edit individual keys."
+        ),
+        "synopsis": [
+            "plutil -lint file.plist",
+            "plutil -p file.plist",
+            "plutil -convert xml1|binary1|json file.plist [-o out]",
+            "plutil -extract keypath raw|xml1|json file.plist",
+            "plutil -replace keypath -type value file.plist",
+        ],
+        "options": [
+            ("-lint", "Validate syntax — do this before loading any launchd plist"),
+            ("-p", "Print in a human-readable form (not valid plist output)"),
+            ("-convert fmt", "Convert to xml1, binary1, json or swift"),
+            ("-o path", "Write elsewhere instead of converting in place; `-` means stdout"),
+            ("-extract keypath fmt", "Pull one value out"),
+            ("-insert / -replace keypath -type value", "Add or change a key"),
+            ("-remove keypath", "Delete a key"),
+            ("-type", "Report the top-level type"),
+        ],
+        "examples": [
+            ("plutil -p /Applications/Safari.app/Contents/Info.plist | head -20", "Read a binary plist without converting it"),
+            ("plutil -lint ~/Library/LaunchAgents/com.example.agent.plist", "Catch a syntax error before launchd does"),
+            ("plutil -convert xml1 -o - settings.plist", "Print a binary plist as XML without modifying the file"),
+            ("plutil -extract CFBundleShortVersionString raw /Applications/Safari.app/Contents/Info.plist", "Read an app's version string"),
+            ("plutil -convert json -o - config.plist | jq .", "Convert to JSON and query with jq"),
+            ("plutil -replace RunAtLoad -bool true com.example.agent.plist", "Change one key in place"),
+        ],
+        "notes": [
+            "`plutil -p` output looks like JSON but is not — it is a display format. Use `-convert json` when a machine has to read it.",
+            "`plutil -lint` is the single best habit when writing launchd jobs: launchd's own error for a malformed plist is unhelpfully vague.",
+            "Editing a preferences plist directly can be overwritten by cfprefsd. Use `defaults write` for preference domains, plutil for standalone plists such as launchd jobs and Info.plist.",
+            "Converting in place with `-convert binary1` is safe and shrinks large plists; converting to `xml1` makes them diffable in version control.",
+        ],
+        "see_also": ["defaults", "launchctl", "pkgutil", "mdls"],
+        "tags": ["plist", "configuration", "xml", "json"],
+        "category": "system_admin",
+    },
+    {
+        "command": "pmset",
+        "tagline": "configure power management and inspect power state",
+        "summary": (
+            "pmset controls sleep, display sleep, wake schedules and hibernation, and "
+            "reports what is currently keeping the Mac awake. Settings are stored per power "
+            "source — battery, charger, UPS — so a change usually needs to say which one it "
+            "applies to. `pmset -g assertions` is the definitive answer to \"why won't this "
+            "Mac sleep?\"."
+        ),
+        "synopsis": [
+            "pmset -g [live|assertions|log|sched|batt|custom]",
+            "sudo pmset -a|-b|-c|-u setting value",
+            "sudo pmset repeat wakeorpoweron MTWRFSU HH:MM:SS",
+        ],
+        "options": [
+            ("-g", "Show current settings"),
+            ("-g assertions", "Show power assertions and which process holds each"),
+            ("-g log", "Sleep/wake history — why the Mac woke and what stopped it sleeping"),
+            ("-g batt", "Battery charge, state and time remaining"),
+            ("-g sched", "Scheduled wake and power events"),
+            ("-a / -b / -c / -u", "Apply to all sources / battery / charger / UPS"),
+            ("sleep N / displaysleep N", "Idle minutes before system or display sleep (0 disables)"),
+            ("disksleep N", "Idle minutes before disks spin down"),
+            ("standby 0|1 / hibernatemode N", "Standby and hibernation behaviour"),
+            ("womp 0|1", "Wake for network access (Wake on LAN)"),
+            ("powernap 0|1", "Allow Power Nap"),
+            ("schedule / repeat", "One-off or recurring wake and shutdown events"),
+        ],
+        "examples": [
+            ("pmset -g", "Current power settings for the active source"),
+            ("pmset -g assertions", "Which process is preventing sleep right now"),
+            ("pmset -g log | grep -i 'wake reason' | tail -20", "Why the Mac has been waking up"),
+            ("pmset -g batt", "Battery percentage and whether it is charging"),
+            ("sudo pmset -c displaysleep 30 sleep 0", "On mains: display off after 30 minutes, never sleep"),
+            ("sudo pmset -b sleep 10 displaysleep 5", "On battery: aggressive sleep"),
+            ("sudo pmset repeat wakeorpoweron MTWRF 08:30:00", "Wake every weekday morning"),
+            ("sudo pmset -a womp 1", "Enable Wake on LAN"),
+        ],
+        "notes": [
+            "`pmset -g assertions` names the process holding each assertion — that is how you find the app (often a browser or a backup agent) keeping the machine awake.",
+            "Settings are per power source. `pmset -a` changes all of them; `-b` and `-c` are usually what you want on a laptop.",
+            "`sleep 0` means never sleep, not sleep immediately.",
+            "Apple Silicon Macs ignore several Intel-era keys (hibernatemode, standbydelay); they appear in output but do nothing.",
+            "Scheduled wake events survive reboot and are visible in `pmset -g sched`; clear them with `sudo pmset repeat cancel`.",
+        ],
+        "see_also": ["caffeinate", "system_profiler", "log", "sysctl"],
+        "tags": ["power", "sleep", "battery", "energy"],
+        "category": "power_management",
+    },
+    {
+        "command": "ps",
+        "tagline": "report a snapshot of running processes",
+        "summary": (
+            "ps prints the processes running at the instant it is invoked. macOS ships BSD "
+            "ps, so the classic `ps aux` works but some GNU/procps options do not. It is "
+            "the tool for a scriptable snapshot; `top` is the tool for watching change over "
+            "time."
+        ),
+        "synopsis": [
+            "ps aux",
+            "ps -ef",
+            "ps -p pid -o pid,ppid,%cpu,%mem,command",
+        ],
+        "options": [
+            ("a", "Processes of all users"),
+            ("u", "User-oriented format with CPU and memory percentages"),
+            ("x", "Include processes without a controlling terminal"),
+            ("-e", "Every process (System V style)"),
+            ("-f", "Full format, including the parent PID"),
+            ("-p pid", "One process"),
+            ("-u user", "Processes of a given user"),
+            ("-o fields", "Choose output columns: pid, ppid, %cpu, %mem, rss, etime, user, command"),
+            ("-r / -m", "Sort by CPU usage / by memory usage"),
+            ("-w / -ww", "Wider output — do not truncate long command lines"),
+            ("ww eww pid", "Show a process's environment as well"),
+        ],
+        "examples": [
+            ("ps aux | head", "The standard snapshot"),
+            ("ps aux -r | head -10", "Ten heaviest CPU consumers"),
+            ("ps aux -m | head -10", "Ten heaviest memory consumers"),
+            ("ps -p 4321 -o pid,ppid,user,etime,command", "Details of one process, including how long it has run"),
+            ("ps -ef | grep -i [n]ode", "Find node processes without matching grep itself"),
+            ("ps -o command= -p $(pgrep -x Safari | head -1)", "Full command line of a running app"),
+            ("ps auxww | grep -v grep | grep helper", "Untruncated command lines when the interesting part is at the end"),
+        ],
+        "notes": [
+            "BSD-style flags (`aux`) take no dash; System V-style flags (`-ef`) do. Mixing them produces confusing errors.",
+            "Command lines are truncated to the terminal width unless you add `ww`.",
+            "`%CPU` in ps is an average over the process's lifetime, not an instantaneous reading — `top` is the right tool for current load.",
+            "`pgrep`/`pkill` avoid the grep-matches-itself problem entirely and accept `-f` to match the full command line.",
+        ],
+        "see_also": ["top", "kill", "launchctl", "log"],
+        "tags": ["process", "monitoring", "diagnostics"],
+        "category": "system_admin",
+    },
+    {
+        "command": "pwd",
+        "tagline": "print the working directory",
+        "summary": (
+            "pwd prints the directory you are currently in. On macOS the distinction "
+            "between its logical and physical forms matters more than on most systems, "
+            "because /tmp, /etc and /var are all symlinks into /private — so the same "
+            "location has two legitimate names."
+        ),
+        "synopsis": [
+            "pwd [-L|-P]",
+        ],
+        "options": [
+            ("-L", "Logical — the path as you navigated it, symlinks intact (default)"),
+            ("-P", "Physical — symlinks resolved to real paths"),
+        ],
+        "examples": [
+            ("pwd", "Current directory"),
+            ("cd /tmp && pwd -P", "Prints /private/tmp — the real location behind the symlink"),
+            ("echo \"$PWD\"", "The shell variable holding the same value, no subprocess needed"),
+            ("basename \"$PWD\"", "Just the current directory's name"),
+            ("cd \"$(dirname \"$(pwd -P)\")\"", "Move to the physical parent, avoiding symlink surprises"),
+        ],
+        "notes": [
+            "`pwd` is both a shell builtin and /bin/pwd. The builtin honours the shell's idea of the path; the binary always reports the physical one unless given -L.",
+            "Scripts that compare paths should normalise with `pwd -P`, or /tmp and /private/tmp will look like different directories.",
+            "$PWD is maintained by the shell and avoids forking a process — preferable inside loops.",
+            "If the current directory is deleted while you are in it, pwd fails; `cd .` will not recover, but `cd $HOME` will.",
+        ],
+        "see_also": ["cd", "ls", "find"],
+        "tags": ["shell", "navigation", "builtin"],
+    },
+    {
+        "command": "rm",
+        "tagline": "remove files and directories",
+        "summary": (
+            "rm deletes files. There is no Trash and no undo — the data is gone as soon as "
+            "the last link to it is removed and no process holds it open. The two habits "
+            "that prevent disasters: never type a wildcard next to a slash without reading "
+            "the line back, and prefer `-i` or a dry run with `ls` when the pattern is "
+            "generated rather than typed."
+        ),
+        "synopsis": [
+            "rm [-f|-i] [-dPRrvW] file ...",
+            "rm -rf directory",
+        ],
+        "options": [
+            ("-r / -R", "Recurse into directories"),
+            ("-f", "Force — no prompts, no error for missing files"),
+            ("-i", "Prompt before every removal"),
+            ("-I", "Prompt once before removing more than three files or recursing"),
+            ("-d", "Remove empty directories as well as files"),
+            ("-v", "Report each removal"),
+            ("-P", "Overwrite before unlinking (meaningless on SSDs)"),
+        ],
+        "examples": [
+            ("rm old.txt", "Delete one file"),
+            ("rm -i *.log", "Delete with a prompt for each"),
+            ("rm -rI build/", "Recursive delete with a single confirmation"),
+            ("ls ~/tmp/*.bak && rm ~/tmp/*.bak", "Look at what the glob matches before deleting it"),
+            ("find . -name '*.tmp' -print -delete", "Print and delete in one pass, so the log shows exactly what went"),
+            ("rm -- -weird-file", "Delete a file whose name starts with a dash"),
+        ],
+        "notes": [
+            "`rm -rf /` and its near misses (`rm -rf $VAR/` with VAR unset) are the classic catastrophes. Quote and test variables: `rm -rf \"${DIR:?}/\"` refuses to run if DIR is empty.",
+            "rm bypasses the Trash entirely. To move to the Trash instead, use Finder, or `osascript -e 'tell app \"Finder\" to delete POSIX file \"...\"'`.",
+            "SIP-protected paths refuse deletion even under sudo — that is by design, not a permissions bug.",
+            "`-P` overwriting is pointless on flash storage because of wear levelling; for real erasure, rely on FileVault and destroy the key.",
+            "Deleting a file that a process still has open frees no space until that process exits — `lsof +L1` finds these.",
+        ],
+        "see_also": ["rmdir", "mv", "find", "diskutil"],
+        "tags": ["files", "delete", "destructive"],
+    },
+    {
+        "command": "rmdir",
+        "tagline": "remove empty directories",
+        "summary": (
+            "rmdir removes a directory only if it is empty, which makes it the safe "
+            "counterpart to `rm -r`. Its refusal to delete anything containing files is a "
+            "feature: scripts that clean up their own scratch directories can use it "
+            "without risking data."
+        ),
+        "synopsis": [
+            "rmdir [-p] [-v] directory ...",
+        ],
+        "options": [
+            ("-p", "Also remove parent directories that become empty"),
+            ("-v", "Report each removal"),
+        ],
+        "examples": [
+            ("rmdir empty_dir", "Remove one empty directory"),
+            ("rmdir -p a/b/c", "Remove c, then b, then a, stopping at the first non-empty one"),
+            ("find . -type d -empty -delete", "Remove every empty directory in a tree, deepest first"),
+            ("rmdir -v build 2>/dev/null || echo 'not empty'", "Safe cleanup that reports rather than forcing"),
+        ],
+        "notes": [
+            "\"Directory not empty\" on a directory that looks empty usually means a hidden file — check with `ls -a`. A stray .DS_Store is the usual culprit.",
+            "rmdir is preferable to `rm -r` in scripts precisely because it fails loudly instead of deleting unexpected content.",
+            "`find . -type d -empty -delete` processes depth-first, so nested empty directories collapse in one pass.",
+        ],
+        "see_also": ["rm", "mkdir", "find", "ls"],
+        "tags": ["files", "directories", "cleanup"],
+    },
+    {
+        "command": "screencapture",
+        "tagline": "capture the screen to a file, the clipboard or a stream",
+        "summary": (
+            "screencapture is the command-line side of the screenshot system. It can grab "
+            "the whole screen, a window, or an interactive selection, with or without the "
+            "shadow and cursor, and it can send the result straight to the clipboard. It is "
+            "what scripted documentation and automated bug reports use."
+        ),
+        "synopsis": [
+            "screencapture [-cimwWxo] [-t format] [-T seconds] [-R x,y,w,h] [file]",
+            "screencapture -V seconds -v movie.mov",
+        ],
+        "options": [
+            ("(default)", "Capture the whole screen to the given file"),
+            ("-c", "Send the capture to the clipboard instead of a file"),
+            ("-i", "Interactive selection — drag a region, or press space for window mode"),
+            ("-w", "Window capture mode"),
+            ("-W", "Start interactive mode in window selection"),
+            ("-o", "In window mode, omit the drop shadow"),
+            ("-x", "Silent — no camera shutter sound"),
+            ("-T seconds", "Delay before capturing"),
+            ("-R x,y,w,h", "Capture an explicit rectangle"),
+            ("-t png|jpg|pdf|tiff", "Output format"),
+            ("-m", "Capture only the main display"),
+            ("-D n", "Capture display number n"),
+            ("-V seconds -v file.mov", "Record video for a duration"),
+            ("-l windowid", "Capture a specific window by id"),
+        ],
+        "examples": [
+            ("screencapture ~/Desktop/shot.png", "Capture the whole screen"),
+            ("screencapture -i ~/Desktop/region.png", "Drag out a region interactively"),
+            ("screencapture -c -i", "Interactive capture straight to the clipboard"),
+            ("screencapture -T 5 -x ~/Desktop/delayed.png", "Silent capture after a five-second delay"),
+            ("screencapture -R 0,0,1280,720 -t jpg ~/Desktop/corner.jpg", "Capture a fixed rectangle as JPEG"),
+            ("screencapture -w -o ~/Desktop/window.png", "Capture a window without its drop shadow"),
+            ("screencapture -V 10 -v ~/Desktop/clip.mov", "Record a ten-second screen movie"),
+        ],
+        "notes": [
+            "Screen Recording permission is required: the first run prompts, and until the calling app (Terminal, iTerm, your IDE) is approved in Privacy & Security, captures come out as an empty desktop image.",
+            "`defaults write com.apple.screencapture location ~/Screenshots && killall SystemUIServer` changes where interactive Cmd-Shift-3 screenshots land.",
+            "In `-i` mode, press space to switch to window selection, Escape to cancel — the exit status is non-zero when cancelled, which scripts should check.",
+            "Video recording (`-v`) has no audio option; use QuickTime or a dedicated tool if sound is needed.",
+        ],
+        "see_also": ["open", "osascript", "defaults", "pbcopy"],
+        "tags": ["screenshot", "capture", "gui", "media"],
+    },
+    {
+        "command": "scutil",
+        "tagline": "manage system configuration parameters",
+        "summary": (
+            "scutil is the interface to configd, the dynamic store that holds macOS's live "
+            "network and identity configuration. It is the authoritative source for the "
+            "machine's names, the active DNS resolver configuration, the current network "
+            "state and proxy settings — all of which are invisible to the classic Unix "
+            "files a Linux admin would reach for."
+        ),
+        "synopsis": [
+            "scutil --get ComputerName|LocalHostName|HostName",
+            "sudo scutil --set NAME value",
+            "scutil --dns | --proxy | --nwi",
+            "scutil (interactive: list, show, n.add)",
+        ],
+        "options": [
+            ("--get NAME", "Read ComputerName, LocalHostName or HostName"),
+            ("--set NAME value", "Set one of them persistently (needs sudo)"),
+            ("--dns", "Show the full resolver configuration, per interface and per domain"),
+            ("--proxy", "Show current proxy settings"),
+            ("--nwi", "Network information: which interfaces are usable, and their rank"),
+            ("--nc list|status|start|stop", "Manage VPN (network connection) services"),
+            ("-r host", "Reachability of a host or address"),
+            ("(interactive)", "`list`, `show key`, `watch` — browse the dynamic store live"),
+        ],
+        "examples": [
+            ("scutil --get ComputerName", "The Finder-visible machine name"),
+            ("scutil --dns | head -30", "Which resolvers are used for which domains — the real DNS configuration"),
+            ("scutil --nwi", "Which interface currently carries traffic and whether IPv4/IPv6 are usable"),
+            ("scutil --proxy", "Active proxy settings, including PAC file URL"),
+            ("scutil -r example.com", "Whether a host is reachable according to the system's own reachability API"),
+            ("sudo scutil --set ComputerName \"Studio Mac\"", "Rename the Mac"),
+            ("scutil --nc list", "List configured VPN services and their status"),
+            ("echo 'show State:/Network/Global/IPv4' | scutil", "Query the dynamic store non-interactively"),
+        ],
+        "notes": [
+            "/etc/resolv.conf on macOS is a generated compatibility file and is often incomplete. `scutil --dns` is the real resolver configuration, including per-domain resolvers pushed by VPNs.",
+            "When a VPN 'breaks DNS', `scutil --dns` shows the split-DNS scoping that is responsible.",
+            "The three names (ComputerName, LocalHostName, HostName) serve different subsystems — set all three when renaming a machine.",
+            "The interactive mode's `watch` command shows configuration changes live, which is the fastest way to see what happens when a network cable is plugged in.",
+        ],
+        "see_also": ["networksetup", "dscacheutil", "dig", "hostname"],
+        "tags": ["network", "configuration", "dns", "configd"],
+        "category": "networking",
+    },
+    {
+        "command": "security",
+        "tagline": "administer keychains, keys, certificates and trust settings",
+        "summary": (
+            "security is the command-line interface to the Keychain and the trust store. "
+            "It reads and writes passwords, imports and exports certificates and keys, "
+            "lists code-signing identities, and manages which roots the system trusts. It "
+            "is how CI scripts get at signing certificates, and how you audit what a "
+            "keychain contains."
+        ),
+        "synopsis": [
+            "security find-generic-password -s service [-w]",
+            "security add-generic-password -a account -s service -w password",
+            "security find-identity -v -p codesigning",
+            "security list-keychains | unlock-keychain | create-keychain",
+            "security import cert.p12 -k keychain -T /usr/bin/codesign",
+        ],
+        "options": [
+            ("find-generic-password -s name [-w]", "Find a password item; `-w` prints just the secret"),
+            ("find-internet-password -s host [-w]", "The same for website/server credentials"),
+            ("add-generic-password -a acct -s svc -w pw", "Store a password"),
+            ("delete-generic-password -s svc", "Remove one"),
+            ("find-identity -v -p codesigning", "List usable code-signing identities"),
+            ("find-certificate -a -c name -p", "Export matching certificates as PEM"),
+            ("import file -k keychain -T app", "Import a certificate or key, allowing an app to use it"),
+            ("list-keychains [-s ...]", "Show or set the keychain search list"),
+            ("unlock-keychain [-p pass] path", "Unlock a keychain (CI needs this)"),
+            ("create-keychain -p pass path", "Create a keychain"),
+            ("set-keychain-settings [-lut N]", "Lock settings — timeout, lock on sleep"),
+            ("add-trusted-cert -d -r trustRoot -k keychain cert.cer", "Trust a root certificate"),
+            ("cms -D -i file", "Decode a CMS/PKCS#7 signed message such as a provisioning profile"),
+        ],
+        "examples": [
+            ("security find-identity -v -p codesigning", "Which signing identities are available — the first check when codesign fails"),
+            ("security find-generic-password -s 'my-service' -w", "Print a stored password to stdout"),
+            ("security add-generic-password -a \"$USER\" -s deploy-token -w 'secret'", "Store a token in the login keychain"),
+            ("security find-certificate -a -c 'Developer ID' -p", "Export matching certificates as PEM"),
+            ("security unlock-keychain -p \"$KEYCHAIN_PASS\" ~/Library/Keychains/build.keychain-db", "Unlock a keychain in CI before signing"),
+            ("sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.cer", "Trust an internal CA system-wide"),
+            ("security dump-keychain | grep -i svce", "Enumerate the items in the default keychain"),
+        ],
+        "notes": [
+            "`security find-generic-password -w` prints a secret to stdout, where it lands in shell history and logs. In scripts, consume it directly rather than assigning it to an exported variable.",
+            "CI machines need an explicit `create-keychain` / `unlock-keychain` / `list-keychains -s` sequence: the default login keychain is locked when there is no GUI session.",
+            "`-T /usr/bin/codesign` on import grants that tool access without a UI prompt; without it, signing hangs waiting for an invisible dialog.",
+            "Trusting a root with `add-trusted-cert` at system scope affects every user and every application — the same power a MITM proxy needs.",
+            "The login keychain unlocks with the login password. Resetting a password with `sudo passwd` desynchronises them and the keychain stops unlocking.",
+        ],
+        "see_also": ["codesign", "spctl", "passwd", "curl"],
+        "tags": ["keychain", "certificates", "security", "code-signing"],
+        "category": "security",
+    },
+    {
+        "command": "sed",
+        "tagline": "stream editor for filtering and transforming text",
+        "summary": (
+            "sed applies editing commands to a stream of text — substitute, delete, insert, "
+            "print selected lines. macOS ships BSD sed, whose differences from GNU sed bite "
+            "constantly: `-i` requires an explicit backup suffix, `\\+` and `\\?` are not "
+            "supported without `-E`, and `\\n` in a replacement does not mean newline."
+        ),
+        "synopsis": [
+            "sed [-Ealn] [-i extension] 'command' [file ...]",
+            "sed -e 'cmd1' -e 'cmd2' file",
+            "sed -f script.sed file",
+        ],
+        "options": [
+            ("-i ''", "Edit in place with no backup — the empty argument is mandatory on macOS"),
+            ("-i .bak", "Edit in place, keeping file.bak"),
+            ("-E", "Extended regular expressions (+, ?, |, grouping without backslashes)"),
+            ("-n", "Suppress automatic printing; pair with `p`"),
+            ("-e cmd", "Add a command (repeatable)"),
+            ("-f file", "Read commands from a script file"),
+            ("-a", "With `w`, defer file creation until the write happens"),
+        ],
+        "examples": [
+            ("sed 's/old/new/' file.txt", "Replace the first match on each line"),
+            ("sed 's/old/new/g' file.txt", "Replace every match"),
+            ("sed -i '' 's/8080/9090/g' config.yml", "Edit in place on macOS — note the empty argument after -i"),
+            ("sed -i .bak 's/DEBUG/INFO/' app.conf", "Edit in place keeping app.conf.bak"),
+            ("sed -n '10,20p' large.log", "Print lines 10 to 20"),
+            ("sed '/^#/d;/^$/d' config.conf", "Strip comments and blank lines"),
+            ("sed -E 's/([0-9]{4})-([0-9]{2})-([0-9]{2})/\\3\\/\\2\\/\\1/' dates.txt", "Reorder date components with extended regex"),
+            ("sed -n '$=' file.txt", "Count lines"),
+        ],
+        "notes": [
+            "`sed -i 's/a/b/' file` fails on macOS with \"invalid command code\" — BSD sed reads the next argument as the backup suffix. Write `sed -i '' 's/a/b/' file`.",
+            "A portable script that must run on both macOS and Linux should write to a temporary file and move it, rather than trying to make `-i` behave the same in both.",
+            "Use a different delimiter when the pattern contains slashes: `sed 's|/usr/local|/opt/homebrew|g'`.",
+            "`brew install gnu-sed` provides `gsed` with GNU semantics if a script depends on them.",
+            "Multi-line operations are painful in BSD sed; reach for awk or perl instead.",
+        ],
+        "see_also": ["awk", "grep", "tr", "cut"],
+        "tags": ["text-processing", "regex", "editing"],
+    },
+    {
+        "command": "softwareupdate",
+        "tagline": "check for and install macOS software updates",
+        "summary": (
+            "softwareupdate is the command-line front end to Apple's update mechanism. It "
+            "lists available updates, installs them individually or all at once, and can "
+            "manage automatic-update settings. It is the tool MDM scripts and remote "
+            "administrators use, since it works over SSH where the GUI does not."
+        ),
+        "synopsis": [
+            "softwareupdate --list",
+            "sudo softwareupdate --install label [--restart]",
+            "sudo softwareupdate --install --all --agree-to-license",
+            "softwareupdate --install-rosetta --agree-to-license",
+        ],
+        "options": [
+            ("-l, --list", "List available updates"),
+            ("-i label, --install label", "Install a specific update by label"),
+            ("-i -a, --install --all", "Install everything available"),
+            ("-r, --recommended", "Only recommended updates"),
+            ("-R, --restart", "Restart automatically if an update requires it"),
+            ("--install-rosetta", "Install Rosetta 2 on Apple Silicon"),
+            ("--fetch-full-installer --full-installer-version X", "Download a full macOS installer"),
+            ("--background", "Start a background download"),
+            ("--ignore label", "Ignore an update (deprecated on recent macOS)"),
+            ("--agree-to-license", "Required for unattended installs"),
+            ("--verbose", "More detail"),
+        ],
+        "examples": [
+            ("softwareupdate --list", "See what is available"),
+            ("sudo softwareupdate -i -a -R --agree-to-license", "Install everything and restart if needed"),
+            ("sudo softwareupdate -i 'Safari17.0'", "Install one named update"),
+            ("softwareupdate --install-rosetta --agree-to-license", "Install Rosetta 2 non-interactively on Apple Silicon"),
+            ("sudo softwareupdate --fetch-full-installer --full-installer-version 14.6", "Download a full macOS installer to /Applications"),
+            ("defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled", "Check whether automatic update checking is on"),
+        ],
+        "notes": [
+            "Major macOS upgrades on Apple Silicon require an authenticated user with a Secure Token — a plain `sudo softwareupdate` over SSH will refuse. Pass `--user` and `--stdinpass`, or run it from a logged-in session.",
+            "Update labels change with every release; always take them from a fresh `--list` rather than hard-coding them.",
+            "`-R` restarts without warning anyone logged in. On a shared or production machine, schedule it.",
+            "Rosetta 2 installation is the one case where `--agree-to-license` is genuinely routine — it is how scripted setups avoid an interactive prompt on Apple Silicon.",
+        ],
+        "see_also": ["sw_vers", "installer", "pkgutil", "system_profiler"],
+        "tags": ["updates", "maintenance", "deployment"],
+        "category": "system_admin",
+    },
+    {
+        "command": "sort",
+        "tagline": "sort lines of text",
+        "summary": (
+            "sort orders lines, optionally by a chosen field and with numeric, "
+            "human-numeric or version-aware comparison. Paired with uniq it is the standard "
+            "way to count occurrences in log output. macOS ships BSD sort, which does "
+            "support `-h` and `-V` but whose locale handling differs from GNU."
+        ),
+        "synopsis": [
+            "sort [-bdfnrhuV] [-k field] [-t sep] [-o out] [file ...]",
+        ],
+        "options": [
+            ("-n", "Numeric sort"),
+            ("-h", "Human-numeric — understands 1K, 5M, 2G"),
+            ("-V", "Version sort — 1.10 after 1.9"),
+            ("-r", "Reverse order"),
+            ("-u", "Output only unique lines"),
+            ("-k N[,M]", "Sort by field N (through M)"),
+            ("-t sep", "Field separator"),
+            ("-f", "Case-insensitive"),
+            ("-b", "Ignore leading blanks"),
+            ("-o file", "Write to a file (safe to be the input file)"),
+            ("-c", "Check whether the input is already sorted"),
+            ("-m", "Merge already-sorted files"),
+        ],
+        "examples": [
+            ("sort names.txt", "Plain alphabetical sort"),
+            ("sort -u emails.txt", "Sorted and deduplicated"),
+            ("du -h ~/* | sort -h | tail", "Largest items, human sizes ordered correctly"),
+            ("sort -t: -k3 -n /etc/passwd", "Sort the password file by numeric UID"),
+            ("awk '{print $1}' access.log | sort | uniq -c | sort -rn | head", "Top client addresses in a log"),
+            ("sort -V versions.txt", "Order version strings correctly"),
+            ("sort -k2,2 -k1,1n data.txt", "Sort by the second field, then numerically by the first"),
+        ],
+        "notes": [
+            "`sort | uniq -c | sort -rn` is the canonical frequency count; uniq only collapses *adjacent* duplicates, so the first sort is mandatory.",
+            "Sort order depends on locale. `LC_ALL=C sort` gives byte order and is what scripts should use for reproducibility.",
+            "`-h` and `-V` exist in macOS sort — useful, because many portability guides assume they are GNU-only.",
+            "`sort -o file file` is safe; `sort file > file` truncates the file before reading it.",
+        ],
+        "see_also": ["uniq", "awk", "cut", "wc"],
+        "tags": ["text-processing", "sorting"],
+    },
+    {
+        "command": "spctl",
+        "tagline": "manage Gatekeeper assessment policy",
+        "summary": (
+            "spctl queries and configures Gatekeeper, the subsystem that decides whether "
+            "downloaded software may run. Its most useful mode is assessment: asking, "
+            "before you distribute an app, whether a clean Mac would let it open. That is "
+            "the check that catches missing notarization, which codesign alone cannot tell "
+            "you."
+        ),
+        "synopsis": [
+            "spctl -a -vv path",
+            "spctl --status",
+            "sudo spctl --master-disable | --master-enable",
+            "spctl --assess --type install package.pkg",
+        ],
+        "options": [
+            ("-a, --assess", "Assess whether Gatekeeper would allow this"),
+            ("-vv", "Verbose — prints the originating rule and the signing authority"),
+            ("--type execute|install|open", "Assessment type: app, installer package, or document"),
+            ("--status", "Report whether assessment is enabled"),
+            ("--master-disable / --master-enable", "Turn Gatekeeper off / on (needs sudo)"),
+            ("--add --label name path", "Add a rule allowing something specific"),
+            ("--list", "List assessment rules"),
+            ("--remove --label name", "Remove a rule"),
+        ],
+        "examples": [
+            ("spctl -a -vv /Applications/Foo.app", "Would Gatekeeper allow this app to open?"),
+            ("spctl --status", "Is Gatekeeper assessment enabled?"),
+            ("spctl -a -vv --type install ~/Downloads/Tool.pkg", "Assess an installer package"),
+            ("spctl -a -vv --type open --context context:primary-signature document.dmg", "Assess a disk image"),
+            ("xattr -d com.apple.quarantine ~/Downloads/tool", "Remove the quarantine flag from something you trust"),
+            ("sudo spctl --master-disable", "Restore the \"Anywhere\" option in Security settings — re-enable when done"),
+        ],
+        "notes": [
+            "\"rejected (the code is valid but does not seem to be an app)\" for a bare binary is expected — Gatekeeper assessment applies to bundles and packages, not loose executables.",
+            "\"source=Notarized Developer ID\" is the pass you want before shipping. \"source=Unnotarized Developer ID\" means it is signed but will be blocked on a user's Mac.",
+            "Gatekeeper only assesses files carrying the com.apple.quarantine extended attribute. Anything built locally is unquarantined and runs regardless.",
+            "`--master-disable` weakens the machine and, since Sequoia, the setting is more tightly controlled — prefer removing the quarantine attribute from a specific file.",
+        ],
+        "see_also": ["codesign", "xattr", "csrutil", "pkgutil"],
+        "tags": ["gatekeeper", "security", "notarization", "quarantine"],
+        "category": "security",
+    },
+    {
+        "command": "su",
+        "tagline": "switch to another user",
+        "summary": (
+            "su starts a shell as another user, prompting for that user's password. On "
+            "macOS the root account is disabled by default and has no password, so `su` "
+            "with no argument fails on a stock machine — sudo is the intended route to "
+            "elevated privileges."
+        ),
+        "synopsis": [
+            "su [-] [-m] [user] [-c command]",
+        ],
+        "options": [
+            ("-", "Simulate a full login: run login scripts, change directory to their home"),
+            ("-m", "Preserve the current environment"),
+            ("-c command", "Run one command as that user"),
+            ("(no user)", "Switch to root"),
+            ("-l", "Same as `-`"),
+        ],
+        "examples": [
+            ("su - alice", "Full login shell as alice"),
+            ("sudo su -", "Become root via sudo, which does not require a root password"),
+            ("sudo -u alice -i", "The preferred alternative — a login shell as alice, authorised by your own password"),
+            ("su -c 'whoami' alice", "Run one command as another user"),
+            ("sudo -l", "Check what your account is permitted to do before escalating"),
+        ],
+        "notes": [
+            "The root account is disabled on macOS by default. `su` with no user prompts for a root password that does not exist; use `sudo -i` instead.",
+            "`sudo -u user -i` is preferable to `su - user` in administration: it authenticates with *your* password and is logged, whereas su needs the target account's password.",
+            "Always use `su -` rather than bare `su` when you want the target user's environment — otherwise you keep your own PATH and variables, which causes confusing failures.",
+            "A GUI-related command run via su often fails because the session context (and TCC permissions) belong to the logged-in user, not the shell.",
+        ],
+        "see_also": ["sudo", "id", "passwd", "dscl"],
+        "tags": ["users", "privileges", "security"],
+        "category": "security",
+    },
+    {
+        "command": "sudo",
+        "tagline": "execute a command as another user, usually root",
+        "summary": (
+            "sudo runs one command with elevated privileges after authenticating with your "
+            "own password. On macOS, authority comes from membership of the `admin` group "
+            "rather than per-user sudoers entries. Since Sonoma, Touch ID can authenticate "
+            "sudo through a supported PAM configuration."
+        ),
+        "synopsis": [
+            "sudo command [args]",
+            "sudo -u user command",
+            "sudo -i | sudo -s",
+            "sudo -e file",
+        ],
+        "options": [
+            ("-u user", "Run as another user instead of root"),
+            ("-i", "Run a login shell as the target user"),
+            ("-s", "Run a shell, keeping most of the current environment"),
+            ("-E", "Preserve the environment (if policy allows)"),
+            ("-k", "Forget the cached credential immediately"),
+            ("-v", "Refresh the credential timestamp without running a command"),
+            ("-l", "List what you are permitted to run"),
+            ("-e file", "Edit a file safely as root (sudoedit)"),
+            ("-H", "Set HOME to the target user's home"),
+            ("-n", "Non-interactive — fail rather than prompt"),
+        ],
+        "examples": [
+            ("sudo systemsetup -getremotelogin", "Run a privileged query"),
+            ("sudo -l", "See what your account may run"),
+            ("sudo -u _www ls /Library/WebServer", "Act as a service account"),
+            ("sudo -e /etc/hosts", "Edit a system file safely — edits a copy, then installs it"),
+            ("sudo -k", "Drop cached credentials at the end of a sensitive script"),
+            ("sudo -v && long_script.sh", "Prime the credential so a long script does not stall on a prompt"),
+        ],
+        "notes": [
+            "Administrator rights come from the `admin` group: `id -Gn | grep -w admin`. There is normally no per-user sudoers entry to inspect.",
+            "Touch ID for sudo: add `auth sufficient pam_tid.so` to /etc/pam.d/sudo_local (Sonoma and later provide the file and it survives updates). Editing /etc/pam.d/sudo directly is overwritten by macOS updates.",
+            "Always edit sudoers with `sudo visudo` — a syntax error saved directly can lock you out of sudo entirely.",
+            "`sudo` does not grant TCC privacy permissions. A root shell still cannot read ~/Documents unless the terminal app has Full Disk Access.",
+            "sudo does not defeat SIP: /System stays read-only for root.",
+        ],
+        "see_also": ["su", "id", "csrutil", "security"],
+        "tags": ["privileges", "security", "administration"],
+        "category": "security",
+    },
+    {
+        "command": "sw_vers",
+        "tagline": "print macOS version information",
+        "summary": (
+            "sw_vers reports the operating system name, version and build. It is the "
+            "canonical scripted version check on macOS — more reliable than parsing "
+            "`uname -r`, which gives the Darwin kernel version rather than the marketing "
+            "release everybody talks about."
+        ),
+        "synopsis": [
+            "sw_vers [-productName|-productVersion|-buildVersion|-productVersionExtra]",
+        ],
+        "options": [
+            ("(no options)", "Print name, version and build"),
+            ("-productName", "\"macOS\""),
+            ("-productVersion", "The version number, e.g. 15.1"),
+            ("-buildVersion", "The build identifier, e.g. 24B83"),
+            ("-productVersionExtra", "Rapid Security Response suffix, e.g. (a)"),
+        ],
+        "examples": [
+            ("sw_vers", "Full version summary"),
+            ("sw_vers -productVersion", "Just the version, for scripts"),
+            ("[ \"$(sw_vers -productVersion | cut -d. -f1)\" -ge 14 ] && echo 'Sonoma or later'", "Gate a script on the major version"),
+            ("echo \"$(sw_vers -productVersion) ($(sw_vers -buildVersion))\"", "Version and build for a bug report"),
+            ("uname -r", "The Darwin kernel version — related but not the same thing"),
+        ],
+        "notes": [
+            "Darwin kernel versions and macOS releases are different numbering schemes; `sw_vers -productVersion` is what version checks should use.",
+            "On Big Sur and later, a binary built against an older SDK may see 10.16 instead of 11.x for compatibility. Running sw_vers directly from a shell is unaffected.",
+            "The build version identifies the exact release, including Rapid Security Responses, and is what Apple support asks for.",
+            "`system_profiler SPSoftwareDataType` gives the same information plus uptime, boot volume and kernel details.",
+        ],
+        "see_also": ["uname", "system_profiler", "softwareupdate", "sysctl"],
+        "tags": ["version", "system-info"],
+        "category": "system_admin",
+    },
+    {
+        "command": "sysctl",
+        "tagline": "read and write kernel state variables",
+        "summary": (
+            "sysctl exposes the kernel's tunable and informational variables — CPU model "
+            "and core count, memory size, network stack parameters, security feature flags. "
+            "Reading is unrestricted; writing needs root, and most writes do not persist "
+            "across a reboot. On Apple Silicon the hw.optional.arm.* keys are the reliable "
+            "way to detect CPU features."
+        ),
+        "synopsis": [
+            "sysctl name ...",
+            "sysctl -a",
+            "sudo sysctl -w name=value",
+        ],
+        "options": [
+            ("-a", "List every variable (very long)"),
+            ("-n", "Print only the value, not the name"),
+            ("-w name=value", "Set a variable (needs root)"),
+            ("-b", "Print the value in raw binary form"),
+            ("name", "Read one or more named variables"),
+        ],
+        "examples": [
+            ("sysctl -n machdep.cpu.brand_string", "CPU model name"),
+            ("sysctl -n hw.ncpu hw.physicalcpu hw.logicalcpu", "Core counts"),
+            ("sysctl -n hw.memsize | awk '{print $1/1024/1024/1024\" GB\"}'", "Installed RAM in gigabytes"),
+            ("sysctl -n hw.optional.arm64", "1 on Apple Silicon, absent or 0 on Intel"),
+            ("sysctl kern.boottime", "When the machine last booted"),
+            ("sysctl -a | grep -i vm.swapusage", "Current swap usage"),
+            ("sudo sysctl -w net.inet.ip.forwarding=1", "Enable IP forwarding until the next reboot"),
+        ],
+        "notes": [
+            "`sysctl -w` changes are lost at reboot. Persist them with a plist in /Library/LaunchDaemons that applies them at boot, or /etc/sysctl.conf where still honoured.",
+            "`sysctl -n hw.optional.arm64` returning 1 is the cleanest Apple Silicon test; `uname -m` reports `x86_64` when the shell itself is running under Rosetta.",
+            "SIP blocks many writes even for root — a \"Operation not permitted\" on a sysctl write usually means the variable is SIP-protected.",
+            "`sysctl -a` output is enormous; pipe through grep, and remember that variable names are hierarchical (hw., kern., net., vm., machdep., security.).",
+        ],
+        "see_also": ["uname", "system_profiler", "sw_vers", "lipo"],
+        "tags": ["kernel", "system-info", "tuning", "hardware"],
+        "category": "system_admin",
+    },
+    {
+        "command": "system_profiler",
+        "tagline": "report detailed system hardware and software configuration",
+        "summary": (
+            "system_profiler is the command-line version of System Information. It reports "
+            "everything from the serial number and memory configuration to attached USB "
+            "devices, installed applications, Wi-Fi environment and power adapter details. "
+            "Naming a data type is essential — the full report takes minutes and produces "
+            "megabytes."
+        ),
+        "synopsis": [
+            "system_profiler [-json|-xml] [-detailLevel mini|basic|full] [dataType ...]",
+            "system_profiler -listDataTypes",
+        ],
+        "options": [
+            ("-listDataTypes", "List every available data type"),
+            ("SPHardwareDataType", "Model, chip, cores, memory, serial number"),
+            ("SPSoftwareDataType", "macOS version, kernel, uptime, boot volume"),
+            ("SPStorageDataType", "Volumes, capacities, filesystems"),
+            ("SPUSBDataType", "USB device tree"),
+            ("SPDisplaysDataType", "GPUs and attached displays"),
+            ("SPPowerDataType", "Battery health, cycle count, adapter"),
+            ("SPNetworkDataType / SPAirPortDataType", "Network interfaces / Wi-Fi environment"),
+            ("SPApplicationsDataType", "Installed applications (slow)"),
+            ("SPInstallHistoryDataType", "What has been installed and when"),
+            ("-json / -xml", "Machine-readable output"),
+            ("-detailLevel mini", "Omit personal information — safe to share"),
+        ],
+        "examples": [
+            ("system_profiler SPHardwareDataType", "Model identifier, chip, memory and serial number"),
+            ("system_profiler SPSoftwareDataType", "OS version, kernel, uptime"),
+            ("system_profiler SPPowerDataType | grep -A3 'Health Information'", "Battery cycle count and condition"),
+            ("system_profiler -json SPStorageDataType | jq '.SPStorageDataType[].size_in_bytes'", "Machine-readable storage report"),
+            ("system_profiler SPUSBDataType | grep -B2 -A6 'Product ID'", "Identify an attached USB device"),
+            ("system_profiler -detailLevel mini SPHardwareDataType", "Hardware summary with the serial number withheld"),
+            ("system_profiler SPInstallHistoryDataType | head -40", "Recent install history when diagnosing a change"),
+        ],
+        "notes": [
+            "Always name a data type. A bare `system_profiler` collects everything and can take several minutes.",
+            "Reports include the serial number and hardware UUID; use `-detailLevel mini` before sharing output publicly.",
+            "`-json` output is stable enough to parse with jq, unlike the human-readable form.",
+            "SPAirPortDataType includes a scan of nearby networks with signal strengths — the quickest Wi-Fi survey without extra tools.",
+        ],
+        "see_also": ["sysctl", "sw_vers", "diskutil", "pmset"],
+        "tags": ["system-info", "hardware", "diagnostics", "inventory"],
+        "category": "hardware",
+    },
+    {
+        "command": "tail",
+        "tagline": "print the last lines of a file, optionally following it",
+        "summary": (
+            "tail shows the end of a file — by default ten lines — and with `-f` keeps "
+            "printing as the file grows. It is the reflex for watching a log. On macOS one "
+            "caveat dominates: most system logging no longer lands in text files, so "
+            "`tail -f /var/log/system.log` shows very little and `log stream` is what you "
+            "actually want."
+        ),
+        "synopsis": [
+            "tail [-n count | -c bytes] [-f|-F] [-r] [file ...]",
+        ],
+        "options": [
+            ("-n N", "Print the last N lines; `-n +N` starts at line N"),
+            ("-c N", "Print the last N bytes"),
+            ("-f", "Follow — keep printing as the file grows"),
+            ("-F", "Follow, and reopen the file if it is rotated or replaced"),
+            ("-r", "Print the file in reverse order"),
+            ("-q / -v", "Never / always print filename headers"),
+        ],
+        "examples": [
+            ("tail -n 50 /var/log/install.log", "Last fifty lines of the installer log"),
+            ("tail -f ~/Library/Logs/MyApp/app.log", "Watch an application log live"),
+            ("tail -F /var/log/nginx/error.log", "Follow across log rotation"),
+            ("tail -n +2 data.csv", "Skip the header row"),
+            ("tail -r log.txt | head -20", "Twenty most recent lines, newest first"),
+            ("log stream --predicate 'process == \"MyApp\"'", "The unified-logging equivalent of tail -f on macOS"),
+        ],
+        "notes": [
+            "`-f` follows a file descriptor and goes silent when the file is rotated; `-F` follows the *name* and reopens. On a rotating log, always use `-F`.",
+            "macOS system logs live in the unified log, not text files. `log stream` and `log show` replace tail for anything Apple writes.",
+            "`tail -f` on several files prefixes each block with a header, which makes multi-log watching workable without extra tools.",
+            "`less +F` gives the same live view but lets you stop, scroll back, and resume.",
+        ],
+        "see_also": ["head", "less", "log", "grep"],
+        "tags": ["text", "logs", "monitoring"],
+        "category": "logging",
+    },
+    {
+        "command": "tar",
+        "tagline": "create and extract archive files",
+        "summary": (
+            "tar bundles a directory tree into a single archive, optionally compressed. "
+            "macOS ships bsdtar (libarchive) presented as `tar`, which transparently reads "
+            "gzip, bzip2, xz and even zip archives without needing the matching flag. Its "
+            "main macOS wrinkle is the ._ AppleDouble files it creates to carry extended "
+            "attributes, which confuse recipients on other platforms."
+        ),
+        "synopsis": [
+            "tar -czf archive.tar.gz directory",
+            "tar -xzf archive.tar.gz [-C destination]",
+            "tar -tzf archive.tar.gz",
+        ],
+        "options": [
+            ("-c / -x / -t", "Create / extract / list"),
+            ("-f file", "Archive filename (`-` for stdin/stdout)"),
+            ("-z / -j / -J", "gzip / bzip2 / xz compression"),
+            ("-v", "Verbose — list files as they are processed"),
+            ("-C dir", "Change to a directory first"),
+            ("--exclude pattern", "Skip matching paths"),
+            ("--strip-components N", "Drop N leading path components on extraction"),
+            ("--disable-copyfile", "Do not write ._ AppleDouble files (macOS)"),
+            ("-p", "Preserve permissions on extraction"),
+        ],
+        "examples": [
+            ("tar -czf backup.tar.gz ~/Projects", "Create a gzip-compressed archive"),
+            ("tar -xzf backup.tar.gz -C /tmp/restore", "Extract into a specific directory"),
+            ("tar -tzf backup.tar.gz | head", "List an archive's contents before extracting"),
+            ("COPYFILE_DISABLE=1 tar -czf clean.tar.gz site/", "Create an archive without macOS ._ files"),
+            ("tar -czf logs.tar.gz --exclude='*.tmp' logs/", "Archive while skipping temporary files"),
+            ("tar -xzf release.tar.gz --strip-components=1", "Extract, dropping the archive's top-level directory"),
+            ("tar -cf - src | (cd /dest && tar -xf -)", "Copy a tree through a pipe, preserving structure"),
+        ],
+        "notes": [
+            "macOS tar writes ._filename AppleDouble entries to preserve extended attributes. Set `COPYFILE_DISABLE=1` or pass `--disable-copyfile` when the archive will be opened on Linux or Windows.",
+            "bsdtar auto-detects compression on extraction, so `tar -xf archive.tar.bz2` works without `-j`. Creation still needs the explicit flag.",
+            "Always list (`-t`) an untrusted archive before extracting: a maliciously crafted archive can contain absolute or `../` paths.",
+            "For macOS application bundles, `ditto -c -k` produces an archive Apple's tooling expects; tar is fine for source trees and data.",
+        ],
+        "see_also": ["ditto", "hdiutil", "cp", "xattr"],
+        "tags": ["archive", "compression", "backup", "files"],
+        "category": "backup",
+    },
+    {
+        "command": "tmutil",
+        "tagline": "control Time Machine backups",
+        "summary": (
+            "tmutil drives Time Machine from the command line: start and stop backups, add "
+            "and remove destinations, manage exclusions, list and delete snapshots, and "
+            "restore files. It is the only way to reach several features — notably local "
+            "snapshot management, which is what you need when APFS snapshots are quietly "
+            "consuming a disk."
+        ),
+        "synopsis": [
+            "tmutil status | startbackup [--block] | stopbackup",
+            "tmutil listbackups | latestbackup",
+            "sudo tmutil setdestination /Volumes/Backup",
+            "tmutil listlocalsnapshots / / sudo tmutil deletelocalsnapshots date",
+            "tmutil restore source destination",
+        ],
+        "options": [
+            ("status", "Current backup activity and progress"),
+            ("startbackup [--block] [--auto]", "Begin a backup; `--block` waits for completion"),
+            ("stopbackup", "Cancel a running backup"),
+            ("enable / disable", "Turn automatic backups on or off (needs sudo)"),
+            ("destinationinfo", "Show configured destinations"),
+            ("setdestination [-a] path", "Set (or add, with -a) a backup destination"),
+            ("addexclusion [-p] path", "Exclude a path — `-p` makes it a fixed-path exclusion"),
+            ("removeexclusion path / isexcluded path", "Remove or test an exclusion"),
+            ("listbackups / latestbackup", "Enumerate backups on the destination"),
+            ("listlocalsnapshots /", "List local APFS snapshots"),
+            ("deletelocalsnapshots date|all", "Delete local snapshots (needs sudo)"),
+            ("thinlocalsnapshots / urgency", "Reclaim local snapshot space"),
+            ("restore src dst", "Restore a file or directory from a backup"),
+            ("compare", "Compare the current state with a backup"),
+        ],
+        "examples": [
+            ("tmutil status", "Is a backup running, and how far along is it?"),
+            ("sudo tmutil startbackup --block", "Run a backup now and wait for it to finish"),
+            ("tmutil destinationinfo", "Which destinations are configured"),
+            ("tmutil listlocalsnapshots /", "Local snapshots consuming space on the boot volume"),
+            ("sudo tmutil thinlocalsnapshots / 21474836480 4", "Reclaim about 20 GB by thinning local snapshots"),
+            ("sudo tmutil deletelocalsnapshots 2026-08-20-120000", "Delete one specific local snapshot"),
+            ("sudo tmutil addexclusion -p ~/VMs", "Permanently exclude a directory from backups"),
+            ("tmutil isexcluded ~/Downloads", "Check whether a path is excluded"),
+        ],
+        "notes": [
+            "\"Disk full\" on a Mac with an apparently healthy Time Machine is frequently local APFS snapshots. `tmutil listlocalsnapshots /` then `thinlocalsnapshots` reclaims the space.",
+            "Local snapshots are taken hourly even without a backup destination attached, and are normally purged automatically when free space runs low.",
+            "Most tmutil verbs that change configuration need sudo, and some also need the terminal to have Full Disk Access under Privacy & Security.",
+            "`tmutil restore` preserves metadata and is safer than dragging files out of a backup in the Finder.",
+        ],
+        "see_also": ["diskutil", "df", "hdiutil", "log"],
+        "tags": ["backup", "time-machine", "snapshots", "storage"],
+        "category": "backup",
+    },
+    {
+        "command": "top",
+        "tagline": "display and update sorted process information",
+        "summary": (
+            "top shows processes ordered by resource usage and refreshes continuously. The "
+            "macOS version differs noticeably from Linux's: sorting is `-o`, the memory "
+            "columns reflect the compressed-memory system, and `-l` gives a fixed number of "
+            "samples suitable for scripts."
+        ),
+        "synopsis": [
+            "top [-o key] [-n count] [-s delay] [-l samples] [-pid pid] [-U user]",
+        ],
+        "options": [
+            ("-o key", "Sort by cpu, mem, vsize, pid, time, threads"),
+            ("-O key", "Secondary sort key"),
+            ("-n N", "Show only the top N processes"),
+            ("-s N", "Seconds between refreshes"),
+            ("-l N", "Take N samples then exit (`-l 1` for a one-shot snapshot)"),
+            ("-pid N", "Monitor one process"),
+            ("-U user", "Only this user's processes"),
+            ("-stats list", "Choose which columns to display"),
+            ("-R", "Do not traverse the process tree (faster)"),
+        ],
+        "examples": [
+            ("top -o cpu", "Interactive view sorted by CPU"),
+            ("top -o mem -n 10 -l 1", "One-shot snapshot of the ten biggest memory users"),
+            ("top -l 2 -s 1 | grep -E '^(CPU|PhysMem)'", "Sample CPU and memory summary lines for a script"),
+            ("top -pid $(pgrep -x Safari | head -1)", "Watch one process"),
+            ("top -U $(whoami) -o cpu", "Only your own processes"),
+        ],
+        "notes": [
+            "The first sample's CPU numbers are meaningless (there is no previous sample to compare with). Use `-l 2` and read the second sample in scripts.",
+            "macOS memory columns are not Linux's: MEM is resident size, COMPRESSED shows compressed memory. \"Memory pressure\" in the summary is a better health indicator than free memory, which macOS deliberately keeps low.",
+            "Interactive keys: `o` change sort, `q` quit, `?` help.",
+            "Activity Monitor is the same data with a GUI; `top -l 1` is the scriptable equivalent.",
+        ],
+        "see_also": ["ps", "kill", "sysctl", "log"],
+        "tags": ["process", "monitoring", "performance"],
+        "category": "system_admin",
+    },
+    {
+        "command": "touch",
+        "tagline": "create empty files or update timestamps",
+        "summary": (
+            "touch creates a file if it does not exist and updates its access and "
+            "modification times if it does. Beyond the obvious use of making an empty file, "
+            "it is how you set a reference timestamp for `find -newer` comparisons and how "
+            "you force build systems to consider a file changed."
+        ),
+        "synopsis": [
+            "touch [-acm] [-r reffile] [-t [[CC]YY]MMDDhhmm[.SS]] file ...",
+        ],
+        "options": [
+            ("-a / -m", "Change only the access time / only the modification time"),
+            ("-c", "Do not create the file if it does not exist"),
+            ("-r file", "Copy timestamps from a reference file"),
+            ("-t stamp", "Set an explicit time, e.g. 202608251200"),
+            ("-d datetime", "Set the time from an ISO 8601 string"),
+            ("-h", "Act on a symlink rather than its target"),
+        ],
+        "examples": [
+            ("touch newfile.txt", "Create an empty file"),
+            ("touch -r template.txt copy.txt", "Give one file another's timestamps"),
+            ("touch -t 202601011200 backdated.txt", "Set an explicit timestamp"),
+            ("touch marker && find . -newer marker", "Find everything modified since a moment you chose"),
+            ("touch -c existing.log", "Update the timestamp only if the file already exists"),
+            ("touch src/*.c && make", "Force a rebuild"),
+        ],
+        "notes": [
+            "touch cannot change the creation time (birthtime) on APFS; only access and modification. `SetFile -d` from the Xcode tools can, where it still works.",
+            "Creating a reference file and using `find -newer` is more reliable than `-mtime`, which counts in whole days.",
+            "`touch` on a file inside a TCC-protected folder from an unapproved terminal fails with \"Operation not permitted\" even for your own user.",
+            "`ls -lU` shows creation time on macOS, which is not what `touch` manipulates.",
+        ],
+        "see_also": ["find", "ls", "mkdir", "stat"],
+        "tags": ["files", "timestamps"],
+    },
+    {
+        "command": "tr",
+        "tagline": "translate or delete characters",
+        "summary": (
+            "tr maps one set of characters onto another, squeezes repeats, or deletes "
+            "characters entirely. It operates on standard input only, character by "
+            "character — it knows nothing about lines or words — which makes it the right "
+            "tool for case conversion, whitespace normalisation, and stripping stray "
+            "carriage returns from files that came from Windows."
+        ),
+        "synopsis": [
+            "tr [-Ccsu] string1 string2",
+            "tr -d string",
+            "tr -s string",
+        ],
+        "options": [
+            ("string1 string2", "Translate characters in the first set to the second"),
+            ("-d", "Delete characters in the set"),
+            ("-s", "Squeeze repeated characters into one"),
+            ("-c / -C", "Complement the set — act on everything *not* listed"),
+            ("-u", "Unbuffered output"),
+        ],
+        "examples": [
+            ("tr 'a-z' 'A-Z' < file.txt", "Uppercase a file"),
+            ("tr -d '\\r' < windows.txt > unix.txt", "Strip carriage returns from a CRLF file"),
+            ("tr -s ' ' < spaced.txt", "Collapse runs of spaces"),
+            ("echo 'a,b,c' | tr ',' '\\n'", "Split a comma-separated list onto separate lines"),
+            ("tr -cd '[:print:]\\n' < messy.txt", "Delete every non-printable character"),
+            ("LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24", "Generate a random alphanumeric string"),
+        ],
+        "notes": [
+            "tr reads standard input only. `tr 'a' 'b' file.txt` treats file.txt as a second set argument — use `< file.txt`.",
+            "Character classes need the full bracket form: `[:upper:]`, `[:digit:]`, `[:space:]`.",
+            "With a multibyte locale, byte-oriented operations can mangle UTF-8. Prefix with `LC_ALL=C` when you mean bytes.",
+            "`tr -d '\\r'` is the quickest CRLF fix; `file yourfile` confirms whether the line endings really are the problem.",
+        ],
+        "see_also": ["sed", "awk", "cut", "sort"],
+        "tags": ["text-processing", "characters", "encoding"],
+    },
+    {
+        "command": "traceroute",
+        "tagline": "trace the network path to a host",
+        "summary": (
+            "traceroute reveals each router between you and a destination by sending "
+            "packets with increasing TTLs. It answers \"where does the connection break "
+            "down?\" — whether the fault is on your LAN, at your ISP, or deep in the "
+            "internet. Asterisks in the output mean a hop declined to reply, which is "
+            "common and usually harmless."
+        ),
+        "synopsis": [
+            "traceroute [-I|-P proto] [-n] [-m maxttl] [-q nqueries] [-w wait] host",
+            "traceroute6 host",
+        ],
+        "options": [
+            ("-n", "Numeric output — skip reverse DNS, much faster"),
+            ("-I", "Use ICMP echo instead of UDP probes"),
+            ("-P TCP", "Use TCP probes — often the only kind that gets through a firewall"),
+            ("-p port", "Destination port"),
+            ("-m N", "Maximum hops (default 64)"),
+            ("-q N", "Probes per hop (default 3)"),
+            ("-w N", "Seconds to wait per probe"),
+            ("-a", "Show the AS number of each hop"),
+            ("-s addr", "Source address to send from"),
+        ],
+        "examples": [
+            ("traceroute -n example.com", "Fast numeric trace"),
+            ("traceroute -I -n 1.1.1.1", "Trace with ICMP probes, which more routers answer"),
+            ("sudo traceroute -P TCP -p 443 example.com", "Trace using TCP to port 443, past UDP-blocking firewalls"),
+            ("traceroute -n -m 15 example.com", "Limit the trace to fifteen hops"),
+            ("traceroute6 -n ipv6.example.com", "Trace an IPv6 path"),
+            ("traceroute -a -n example.com", "Show which networks (AS numbers) the path crosses"),
+        ],
+        "notes": [
+            "Asterisks mean a hop did not reply to the probe, not that the packet was dropped. Only sustained loss at every subsequent hop indicates a real break.",
+            "The first hop is your gateway. If it already times out or is wrong, the problem is local — check `netstat -rn`.",
+            "Latency rising at one hop and staying flat afterwards is normal (that router deprioritised your probe). Latency rising and staying high for all later hops is a real problem on that link.",
+            "TCP mode needs root but is far more informative on paths where UDP and ICMP are filtered.",
+        ],
+        "see_also": ["ping", "netstat", "dig", "ifconfig"],
+        "tags": ["network", "diagnostics", "routing", "latency"],
+        "category": "networking",
+    },
+    {
+        "command": "uname",
+        "tagline": "print system and kernel information",
+        "summary": (
+            "uname reports the kernel name, version and machine architecture. On macOS it "
+            "describes Darwin, not the marketing release — `uname -r` gives something like "
+            "24.1.0, not 15.1. For the macOS version use sw_vers; for architecture, be "
+            "aware that `uname -m` reports what the *process* is running as, so a Rosetta "
+            "shell says x86_64 on Apple Silicon."
+        ),
+        "synopsis": [
+            "uname [-amnprsv]",
+        ],
+        "options": [
+            ("-s", "Kernel name — \"Darwin\""),
+            ("-r", "Kernel release, e.g. 24.1.0"),
+            ("-v", "Kernel version string, including build date"),
+            ("-m", "Machine hardware name: arm64 or x86_64"),
+            ("-p", "Processor architecture"),
+            ("-n", "Network node hostname"),
+            ("-a", "Everything"),
+        ],
+        "examples": [
+            ("uname -a", "Full system summary"),
+            ("uname -m", "arm64 on Apple Silicon, x86_64 on Intel (or under Rosetta)"),
+            ("uname -r", "Darwin kernel release"),
+            ("[ \"$(uname -s)\" = \"Darwin\" ] && echo macOS", "Portable OS test in a shell script"),
+            ("sysctl -n hw.optional.arm64", "The reliable Apple Silicon test, unaffected by Rosetta"),
+            ("arch", "Which architecture the current process is running as"),
+        ],
+        "notes": [
+            "`uname -m` reflects the process, not the hardware. A shell launched under Rosetta reports x86_64 on an M-series Mac — `sysctl -n hw.optional.arm64` tells the truth.",
+            "Darwin kernel versions do not map linearly to macOS releases; do not derive one from the other. Use `sw_vers -productVersion`.",
+            "`uname -n` returns the hostname, which on macOS is whichever of the three scutil names is currently in effect.",
+            "In portable scripts, `uname -s` is the standard way to branch between Darwin and Linux.",
+        ],
+        "see_also": ["sw_vers", "sysctl", "system_profiler", "hostname"],
+        "tags": ["system-info", "kernel", "architecture"],
+        "category": "system_admin",
+    },
+    {
+        "command": "uniq",
+        "tagline": "report or filter repeated adjacent lines",
+        "summary": (
+            "uniq collapses or counts *adjacent* duplicate lines. That word does all the "
+            "work: uniq will not find duplicates scattered through a file, so it is almost "
+            "always preceded by sort. The `sort | uniq -c | sort -rn` idiom is the standard "
+            "way to rank anything by frequency."
+        ),
+        "synopsis": [
+            "uniq [-cdu] [-i] [-f fields] [-s chars] [input [output]]",
+        ],
+        "options": [
+            ("-c", "Prefix each line with the number of occurrences"),
+            ("-d", "Print only lines that are duplicated"),
+            ("-u", "Print only lines that appear exactly once"),
+            ("-i", "Case-insensitive comparison"),
+            ("-f N", "Ignore the first N fields when comparing"),
+            ("-s N", "Ignore the first N characters when comparing"),
+        ],
+        "examples": [
+            ("sort access.log | uniq -c | sort -rn | head", "Most frequent lines in a log"),
+            ("sort emails.txt | uniq -d", "Addresses that appear more than once"),
+            ("sort ids.txt | uniq -u", "Entries that appear exactly once"),
+            ("awk '{print $1}' access.log | sort | uniq -c | sort -rn | head -20", "Top twenty client addresses"),
+            ("cut -d, -f2 data.csv | sort -f | uniq -ci", "Case-insensitive frequency count of a CSV column"),
+        ],
+        "notes": [
+            "uniq only compares neighbouring lines. Without a preceding `sort`, scattered duplicates go unnoticed — the single most common mistake with this command.",
+            "`sort -u` is faster than `sort | uniq` when you only need deduplication and not counts.",
+            "`-f` and `-s` skip fields or characters before comparing, which lets you ignore a timestamp prefix and deduplicate on the message body.",
+            "The count from `-c` is right-aligned and padded, so pipe through `sort -rn` rather than `sort -r` to rank correctly.",
+        ],
+        "see_also": ["sort", "wc", "awk", "cut"],
+        "tags": ["text-processing", "deduplication", "counting"],
+    },
+    {
+        "command": "wc",
+        "tagline": "count lines, words, characters and bytes",
+        "summary": (
+            "wc counts. With no options it prints lines, words and bytes; with `-l` just "
+            "lines, which is its overwhelmingly most common use — how many matches did that "
+            "grep find, how many files does that find return, how big is this log."
+        ),
+        "synopsis": [
+            "wc [-clmw] [file ...]",
+        ],
+        "options": [
+            ("-l", "Count lines"),
+            ("-w", "Count words"),
+            ("-c", "Count bytes"),
+            ("-m", "Count characters (differs from -c for UTF-8)"),
+            ("-L", "Length of the longest line"),
+        ],
+        "examples": [
+            ("wc -l access.log", "How many lines in a log"),
+            ("grep -c error app.log", "Count matches directly — faster than piping grep into wc"),
+            ("find . -name '*.py' | wc -l", "How many Python files in a tree"),
+            ("ls -1 ~/Downloads | wc -l", "How many items in a directory"),
+            ("wc -l *.txt | tail -1", "Total lines across several files"),
+            ("cat file.txt | wc -l", "Note: piping loses the filename from the output"),
+        ],
+        "notes": [
+            "BSD wc pads its numbers with leading spaces. `wc -l < file` (redirect rather than argument) gives a clean number with no filename, which is what scripts want.",
+            "`grep -c` counts matching lines without a second process and is preferable to `grep ... | wc -l`.",
+            "A file whose last line has no trailing newline is counted as one line short — `wc -l` counts newline characters, not lines of text.",
+            "`-m` and `-c` differ for non-ASCII text; use `-m` when you mean characters.",
+        ],
+        "see_also": ["grep", "sort", "uniq", "find"],
+        "tags": ["text-processing", "counting"],
+    },
+    {
+        "command": "who",
+        "tagline": "show who is logged in",
+        "summary": (
+            "who lists login sessions with their terminal and login time. On macOS a "
+            "graphical login shows as `console`, while each Terminal tab and SSH session "
+            "gets its own ttys device — so a single user working locally with several tabs "
+            "legitimately appears many times."
+        ),
+        "synopsis": [
+            "who [-aHTu] [am i]",
+            "w",
+        ],
+        "options": [
+            ("(no options)", "User, terminal, login time and origin"),
+            ("-H", "Print column headings"),
+            ("-u", "Include idle time and process id"),
+            ("-T", "Show whether the terminal accepts messages"),
+            ("-a", "Everything available"),
+            ("am i", "Show only your own session"),
+            ("-b", "Time of the last system boot"),
+        ],
+        "examples": [
+            ("who", "Current login sessions"),
+            ("who -Hu", "Sessions with headings and idle times"),
+            ("who am i", "Your own session and where it came from"),
+            ("who -b", "When the system last booted"),
+            ("w", "Sessions plus load average and what each user is running"),
+            ("last | head -20", "Recent login history from the accounting file"),
+        ],
+        "notes": [
+            "`console` is the graphical login session; `ttys00N` entries are Terminal tabs and SSH sessions.",
+            "The origin field shows the remote host for SSH sessions, which makes `who` a quick check for unexpected remote logins.",
+            "Under sudo, `whoami` returns root but `who am i` still shows the original user — the distinction matters in scripts that need to know who invoked them.",
+            "`last` reads the wtmp accounting file for historical logins; `who` only shows current ones.",
+        ],
+        "see_also": ["whoami", "id", "w", "last"],
+        "tags": ["users", "sessions", "monitoring"],
+    },
+    {
+        "command": "whoami",
+        "tagline": "print the effective username",
+        "summary": (
+            "whoami prints the username of the effective user — who the shell is acting as "
+            "right now. Under sudo that is root, which is exactly what makes it useful as "
+            "a guard at the top of a script that must, or must not, be run with elevated "
+            "privileges."
+        ),
+        "synopsis": [
+            "whoami",
+        ],
+        "options": [
+            ("(no options)", "Print the effective username"),
+        ],
+        "examples": [
+            ("whoami", "Your effective username"),
+            ("sudo whoami", "Prints root — confirms sudo is working"),
+            ("[ \"$(whoami)\" = root ] || { echo 'run with sudo'; exit 1; }", "Require root in a script"),
+            ("[ \"$(id -u)\" -eq 0 ] && echo 'running as root'", "The more portable form of the same test"),
+            ("logname", "Who originally logged in, regardless of sudo"),
+        ],
+        "notes": [
+            "whoami reports the *effective* user. Under sudo it says root; `logname` or `$SUDO_USER` gives the person who invoked it.",
+            "`id -u` is the more portable root test in scripts — `whoami` does not exist on every Unix.",
+            "In a launchd daemon the effective user is whatever the plist's UserName specifies, which is root unless set otherwise.",
+            "$USER can be stale or spoofed in an inherited environment; whoami asks the system.",
+        ],
+        "see_also": ["who", "id", "sudo", "su"],
+        "tags": ["users", "identity", "scripting"],
+    },
+    {
+        "command": "xattr",
+        "tagline": "display and manipulate extended attributes",
+        "summary": (
+            "xattr reads, writes and deletes the extended attributes macOS attaches to "
+            "files — Finder tags, download provenance, and above all "
+            "`com.apple.quarantine`, the flag that makes Gatekeeper challenge a downloaded "
+            "application. Removing that attribute is the documented fix for \"cannot be "
+            "opened because the developer cannot be verified\", and should only be done for "
+            "software you actually trust."
+        ),
+        "synopsis": [
+            "xattr [-l] [-r] file ...",
+            "xattr -d attribute file",
+            "xattr -w attribute value file",
+            "xattr -c file",
+        ],
+        "options": [
+            ("(no options)", "List attribute names"),
+            ("-l", "List names and values"),
+            ("-p name", "Print one attribute's value"),
+            ("-w name value", "Write an attribute"),
+            ("-d name", "Delete an attribute"),
+            ("-c", "Clear all attributes"),
+            ("-r", "Recurse into directories"),
+            ("-s", "Act on symlinks themselves"),
+        ],
+        "examples": [
+            ("xattr ~/Downloads/tool.dmg", "Which extended attributes a downloaded file carries"),
+            ("xattr -l ~/Downloads/tool.dmg", "Attribute names and values, including the origin URL"),
+            ("xattr -d com.apple.quarantine ~/Downloads/Tool.app", "Clear the quarantine flag from software you trust"),
+            ("xattr -dr com.apple.quarantine ~/Downloads/Tool.app", "Clear it recursively from a bundle"),
+            ("xattr -c file.txt", "Remove every extended attribute"),
+            ("xattr -p com.apple.metadata:kMDItemWhereFroms file | xxd | head", "Inspect the binary plist recording where a file came from"),
+            ("ls -l@ ~/Downloads", "Spot which files have extended attributes at all"),
+        ],
+        "notes": [
+            "`com.apple.quarantine` is what triggers Gatekeeper. Removing it bypasses that check — do it only for software whose provenance you have verified yourself.",
+            "Attributes are lost when a file crosses a filesystem that cannot store them (FAT32, some network shares), and when archived with plain zip.",
+            "`ls -l@` marks files with extended attributes; `ls -le` shows ACLs. They are different mechanisms.",
+            "Some attributes are SIP-protected on system files and cannot be modified even as root.",
+        ],
+        "see_also": ["spctl", "codesign", "ls", "mdls"],
+        "tags": ["metadata", "quarantine", "gatekeeper", "files"],
+        "category": "security",
+    },
+    {
+        "command": "xcode-select",
+        "tagline": "manage the active developer directory and Command Line Tools",
+        "summary": (
+            "xcode-select decides which developer toolchain the command line uses: the "
+            "standalone Command Line Tools, or a full Xcode installation. Getting this "
+            "wrong is behind a large share of macOS build failures — missing headers, "
+            "\"xcrun: error: invalid active developer path\", and compilers that cannot find "
+            "an SDK."
+        ),
+        "synopsis": [
+            "xcode-select -p",
+            "xcode-select --install",
+            "sudo xcode-select -s /Applications/Xcode.app/Contents/Developer",
+            "sudo xcode-select -r",
+        ],
+        "options": [
+            ("-p, --print-path", "Print the active developer directory"),
+            ("--install", "Install the Command Line Tools"),
+            ("-s path, --switch path", "Set the active developer directory (needs sudo)"),
+            ("-r, --reset", "Reset to the default location"),
+            ("--version", "Print the xcode-select version"),
+        ],
+        "examples": [
+            ("xcode-select -p", "Which toolchain is active"),
+            ("xcode-select --install", "Install the Command Line Tools — needed before Homebrew or git"),
+            ("sudo xcode-select -s /Applications/Xcode.app/Contents/Developer", "Point the command line at full Xcode"),
+            ("sudo xcode-select -s /Library/Developer/CommandLineTools", "Point it back at the standalone tools"),
+            ("sudo xcode-select -r", "Reset to the default after a broken switch"),
+            ("xcrun --show-sdk-path", "Confirm the SDK the active toolchain resolves to"),
+        ],
+        "notes": [
+            "\"invalid active developer path\" after a macOS upgrade means the tools were removed. `xcode-select --install` fixes it; `sudo xcode-select -r` fixes a bad switch.",
+            "/Library/Developer/CommandLineTools is the standalone toolchain; a path inside Xcode.app is the full one. Simulators, Metal tooling and some SDKs only exist in the latter.",
+            "Homebrew requires the Command Line Tools and will refuse to build formulae from source without them.",
+            "Switching the active directory affects every tool that goes through xcrun — clang, git, make, swift.",
+        ],
+        "see_also": ["xcrun", "brew", "codesign", "sw_vers"],
+        "tags": ["development", "xcode", "toolchain"],
+        "category": "system_admin",
+    },
+    {
+        "command": "xcrun",
+        "tagline": "locate and run developer tools from the active toolchain",
+        "summary": (
+            "xcrun finds a developer tool in the active SDK and runs it. Rather than "
+            "hard-coding a path to clang or simctl, you ask xcrun, and it resolves the "
+            "right binary for the toolchain xcode-select has selected. It is also the front "
+            "end for notarization (`xcrun notarytool`) and simulator control (`xcrun "
+            "simctl`)."
+        ),
+        "synopsis": [
+            "xcrun [--sdk sdkname] tool [args]",
+            "xcrun --find tool",
+            "xcrun --show-sdk-path | --show-sdk-version",
+        ],
+        "options": [
+            ("--find tool", "Print the full path to a tool without running it"),
+            ("--run tool", "Run the tool (the default when a tool is named)"),
+            ("--sdk name", "Use a specific SDK: macosx, iphoneos, iphonesimulator"),
+            ("--show-sdk-path", "Path to the active SDK"),
+            ("--show-sdk-version", "Version of the active SDK"),
+            ("--toolchain name", "Use a named toolchain"),
+            ("-l, --log", "Log what xcrun actually executes"),
+        ],
+        "examples": [
+            ("xcrun --find clang", "Where clang actually lives in the active toolchain"),
+            ("xcrun --show-sdk-path", "The SDK path a compiler will use"),
+            ("xcrun clang -o hello hello.c", "Compile using the active toolchain"),
+            ("xcrun simctl list devices", "List iOS simulators"),
+            ("xcrun notarytool submit App.zip --keychain-profile AC_PASSWORD --wait", "Submit a build for notarization and wait for the result"),
+            ("xcrun stapler staple App.app", "Attach the notarization ticket to a bundle"),
+            ("xcrun --sdk iphoneos --show-sdk-version", "Version of a specific SDK"),
+        ],
+        "notes": [
+            "`xcrun: error: invalid active developer path` means the toolchain xcode-select points at is missing — reinstall with `xcode-select --install`.",
+            "notarytool replaced the retired altool; a keychain profile created with `xcrun notarytool store-credentials` avoids putting an app-specific password in scripts.",
+            "simctl and the iOS SDKs require full Xcode, not just the Command Line Tools.",
+            "`xcrun --find` is the reliable way for a build script to locate a tool without assuming a path that differs between Command Line Tools and Xcode installs.",
+        ],
+        "see_also": ["xcode-select", "codesign", "spctl", "lipo"],
+        "tags": ["development", "xcode", "notarization", "toolchain"],
+        "category": "system_admin",
+    },
 ]
