@@ -11,20 +11,17 @@ from halbert_core.agents.conversation_sqlite import SqliteConversationStore
 @pytest.fixture
 def store():
     s = SqliteConversationStore(":memory:")
-    # seed conversations
-    c1 = s.create("disk-conv", "u1")
-    c1.add_message("user", "my disk is filling up on /var")
-    c1.add_message("assistant", "run du -sh /var/log")
-    s.save(c1)
+    # seed conversations (append_message is the only message write path)
+    s.create("disk-conv", "u1")
+    s.append_message("disk-conv", "user", "my disk is filling up on /var")
+    s.append_message("disk-conv", "assistant", "run du -sh /var/log", origin="assistant")
 
-    c2 = s.create("network-conv", "u1")
-    c2.add_message("user", "the nginx firewall is blocking traffic")
-    c2.add_message("assistant", "check ufw status")
-    s.save(c2)
+    s.create("network-conv", "u1")
+    s.append_message("network-conv", "user", "the nginx firewall is blocking traffic")
+    s.append_message("network-conv", "assistant", "check ufw status", origin="assistant")
 
-    c3 = s.create("cpu-conv", "u1")
-    c3.add_message("user", "cpu load is very high")
-    s.save(c3)
+    s.create("cpu-conv", "u1")
+    s.append_message("cpu-conv", "user", "cpu load is very high")
     yield s
     s.close()
 

@@ -24,10 +24,9 @@ def store():
 
 class TestCRUD:
     def test_create_and_get(self, store):
-        conv = store.create("c1", user_id="u1")
-        conv.add_message("user", "hello there")
-        conv.add_message("assistant", "hi!")
-        store.save(conv)
+        store.create("c1", user_id="u1")
+        store.append_message("c1", "user", "hello there")
+        store.append_message("c1", "assistant", "hi!", origin="assistant")
 
         got = store.get("c1")
         assert got is not None
@@ -46,21 +45,19 @@ class TestCRUD:
         c2 = store.get_or_create("c2", "u2")
         assert c2.conversation_id == "c2"
 
-    def test_save_replaces_messages(self, store):
+    def test_save_never_touches_messages(self, store):
         conv = store.create("c3")
-        conv.add_message("user", "first")
-        store.save(conv)
-        # Re-save with different messages
+        store.append_message("c3", "user", "first")
+        # Re-saving with a different in-memory message list changes nothing on disk
         conv.messages = [Message(role="user", content="replaced")]
         store.save(conv)
         got = store.get("c3")
         assert len(got.messages) == 1
-        assert got.messages[0].content == "replaced"
+        assert got.messages[0].content == "first"
 
     def test_delete(self, store):
-        conv = store.create("c4")
-        conv.add_message("user", "x")
-        store.save(conv)
+        store.create("c4")
+        store.append_message("c4", "user", "x")
         assert store.delete("c4") is True
         assert store.get("c4") is None
 
@@ -80,9 +77,8 @@ class TestCRUD:
 class TestList:
     def test_list_returns_summaries(self, store):
         for i in range(3):
-            c = store.create(f"c{i}", user_id="u1")
-            c.add_message("user", f"msg {i}")
-            store.save(c)
+            store.create(f"c{i}", user_id="u1")
+            store.append_message(f"c{i}", "user", f"msg {i}")
         listed = store.list_conversations(user_id="u1")
         assert len(listed) == 3
         assert "conversation_id" in listed[0]
@@ -107,32 +103,30 @@ class TestList:
 
 class TestSearch:
     def test_search_finds_by_message_content(self, store):
-        c = store.create("s1")
-        c.add_message("user", "how do I configure the nginx firewall")
-        c.add_message("assistant", "you can use ufw to manage the firewall")
-        store.save(c)
+        store.create("s1")
+        store.append_message("s1", "user", "how do I configure the nginx firewall")
+        store.append_message("s1", "assistant", "you can use ufw to manage the firewall", origin="assistant")
         results = store.search("firewall")
         assert "s1" in results
 
     def test_search_finds_by_title(self, store):
         c = store.create("s2")
-        c.add_message("user", "disk usage report")  # sets title
+        c.title = "disk usage report"
         store.save(c)
         results = store.search("disk")
         assert "s2" in results
 
     def test_search_no_match(self, store):
-        c = store.create("s3")
-        c.add_message("user", "nothing relevant here")
-        store.save(c)
+        store.create("s3")
+        store.append_message("s3", "user", "nothing relevant here")
         assert store.search("zzzznonexistent") == []
 
     def test_search_empty_query(self, store):
         assert store.search("") == []
 
     def test_search_multiple_matches_distinct(self, store):
-        c1 = store.create("m1"); c1.add_message("user", "fix the network"); store.save(c1)
-        c2 = store.create("m2"); c2.add_message("user", "network is down"); store.save(c2)
+        store.create("m1"); store.append_message("m1", "user", "fix the network")
+        store.create("m2"); store.append_message("m2", "user", "network is down")
         results = store.search("network")
         assert set(results) >= {"m1", "m2"}
 
