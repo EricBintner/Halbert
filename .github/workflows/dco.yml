@@ -1,0 +1,32 @@
+name: DCO Check
+
+# Every commit in a pull request must carry a Developer Certificate of Origin
+# sign-off ("Signed-off-by: Name <email>"), added with `git commit -s`.
+# See documentation/contributing/CONTRIBUTING.md § Contributor Licensing.
+#
+# The same check runs locally via `scripts/check-dco.sh <base>..<head>`.
+
+on:
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    name: Signed-off-by on every commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request history
+        uses: actions/checkout@v4
+        with:
+          # Full history so the base..head range resolves for every PR size.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify DCO sign-off on each commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/check-dco.sh "${BASE_SHA}..${HEAD_SHA}"

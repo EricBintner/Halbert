@@ -281,9 +281,38 @@ Include:
 
 ---
 
-## License
+## Contributor Licensing & Intellectual Property Agreement
 
-By contributing, you agree that your contributions will be licensed under the GPL-3.0 license.
+Halbert Core is, and will always remain, Free and Open Source Software licensed under the **GNU General Public License v3.0 (or later)** (GPL-3.0-or-later).
+
+To enable the project maintainers to distribute Halbert across diverse platforms—including sandboxed marketplace environments such as the Apple Mac App Store and direct commercial releases (Halbert Pro)—all contributors agree to the licensing terms below.
+
+### 1. Developer Certificate of Origin (DCO) 1.1
+
+By contributing to this project, you certify that:
+
+a) The contribution was created in whole or in part by you and you have the right to submit it under the open source license indicated in the file; or
+b) The contribution is based upon previous work that, to the best of your knowledge, is covered under an appropriate open source license and you have the right under that license to submit that work with modifications, whether created in whole or in part by you, under the same open source license; or
+c) The contribution was provided directly to you by some other person who certified (a), (b) or (c) and you have not modified it; and
+d) You understand and agree that this project and the contribution are public and that a record of the contribution (including all personal information you submit with it, including your sign-off) is maintained indefinitely and may be redistributed consistent with this project or the open source license(s) involved.
+
+All pull requests require signed-off commits (`git commit -s` / `Signed-off-by: Full Name <email@example.com>`).
+
+### 2. Dual-Licensing & Commercial Permission Grant
+
+By submitting a Pull Request with a `Signed-off-by:` commit trailer, you grant the project maintainer (**Eric Bintner**) a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to:
+
+1. **Distribute via App Stores under GPLv3 Section 7 Exceptions**: Convey and distribute binaries of the work, including your contributions, through digital application stores (including the Apple Mac App Store) subject to the GPLv3 Section 7 Additional Permission set forth below.
+2. **Commercial Distribution**: Convey, package, and distribute binary and source distributions of Halbert (including Halbert Pro editions) under commercial, enterprise, or multi-seat licensing models.
+3. **Open Source Upstream Parity**: The project maintainers guarantee that all contributions accepted into the core repository will perpetually remain available in source form under the GNU General Public License v3.0 (or later).
+
+### 3. Apple Mac App Store GPLv3 Section 7 Exception Clause
+
+Distributions of Halbert conveyed through the Apple Mac App Store carry the following additional permission pursuant to Section 7 of the GNU General Public License Version 3:
+
+> **Additional Permission under GNU GPLv3 Section 7 (Apple Mac App Store Exception):**
+> 
+> *"As a special exception, the copyright holders of Halbert grant permission to convey the object code of this work through the Apple Mac App Store or other digital distribution platforms that impose usage rules, DRM, or application sandboxing, notwithstanding Sections 6 and 10 of the GNU GPLv3, provided that the complete corresponding source code for the GPLv3-covered components remains freely available under the terms of the GNU General Public License v3.0 (or later)."*
 
 ---
 

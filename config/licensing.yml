@@ -1,0 +1,293 @@
+# =============================================================================
+# Halbert Corpus & Distribution Licensing Policy
+# =============================================================================
+# Single source of truth for *machine-enforced* licensing decisions.
+#
+# Two halves:
+#   1. `licenses:`  — SPDX id -> machine-readable terms (what the licence lets
+#                     us do). Facts about the licence, not about Halbert.
+#   2. `channels:`  — distribution channel -> the terms a source must satisfy
+#                     to be shippable through that channel. Policy decisions.
+#
+# The engine that reads this file is
+# `halbert_core/halbert_core/rag/license_policy.py`; the build-time gate is
+# `scripts/corpus_license_gate.py`. Per-source licence tags live in
+# `data/manifest.json` (`license_spdx`), so this file never names datasets.
+#
+# LEG-CRIT-01 / LEG-CRIT-03 / LEG-MAJ-05 — see
+# documentation/legal/LEGAL-AND-LICENSING-TODO.md
+# =============================================================================
+
+version: 1
+
+# -----------------------------------------------------------------------------
+# License registry
+# -----------------------------------------------------------------------------
+# Fields:
+#   commercial_use   : allowed | prohibited
+#   copyleft         : none | weak | strong
+#                      weak   = share-alike on the work itself (CC BY-SA, LGPL)
+#                      strong = share-alike that reaches the combined/derived
+#                               distribution (GFDL, GPL)
+#   share_alike      : derivative works must carry the same licence
+#   attribution      : notice/credit must ship with the distribution
+#   drm_conflict     : the licence forbids "further restrictions" (GPLv3 §10,
+#                      GFDL "technical measures") and therefore conflicts with
+#                      Apple's Mac App Store DRM + FairPlay wrapper
+#   notes            : human context; not read by the engine
+licenses:
+  MIT:
+    name: "MIT License"
+    commercial_use: allowed
+    copyleft: none
+    share_alike: false
+    attribution: true
+    drm_conflict: false
+
+  Apache-2.0:
+    name: "Apache License 2.0"
+    commercial_use: allowed
+    copyleft: none
+    share_alike: false
+    attribution: true
+    drm_conflict: false
+
+  BSD-2-Clause:
+    name: "BSD 2-Clause \"Simplified\" License"
+    commercial_use: allowed
+    copyleft: none
+    share_alike: false
+    attribution: true
+    drm_conflict: false
+
+  BSD-3-Clause:
+    name: "BSD 3-Clause \"New\" License"
+    commercial_use: allowed
+    copyleft: none
+    share_alike: false
+    attribution: true
+    drm_conflict: false
+
+  APSL-2.0:
+    name: "Apple Public Source License 2.0"
+    commercial_use: allowed
+    copyleft: weak
+    share_alike: true
+    attribution: true
+    drm_conflict: false
+    notes: >-
+      File-level copyleft. Verbatim redistribution of Apple-authored man pages
+      is fine; modified pages must be published under APSL 2.0.
+
+  CC-BY-4.0:
+    name: "Creative Commons Attribution 4.0"
+    commercial_use: allowed
+    copyleft: none
+    share_alike: false
+    attribution: true
+    drm_conflict: false
+
+  CC-BY-SA-4.0:
+    name: "Creative Commons Attribution-ShareAlike 4.0"
+    commercial_use: allowed
+    copyleft: weak
+    share_alike: true
+    attribution: true
+    drm_conflict: false
+    notes: >-
+      Commercial use is permitted. Adapted material must be released under
+      CC BY-SA 4.0; §2.a.5.B forbids applying effective technological measures
+      to the licensed material itself, which is why adapted Stack Exchange text
+      is not shipped — only verbatim, attributed excerpts.
+
+  CC-BY-NC-4.0:
+    name: "Creative Commons Attribution-NonCommercial 4.0"
+    commercial_use: prohibited
+    copyleft: none
+    share_alike: false
+    attribution: true
+    drm_conflict: false
+    notes: >-
+      HARD BLOCK for every paid or paid-adjacent channel. "NonCommercial" is
+      judged on the purpose of the distribution, not on whether the individual
+      file is sold, so bundling it into a paid build infringes.
+
+  GFDL-1.3-or-later:
+    name: "GNU Free Documentation License 1.3 or later"
+    commercial_use: allowed
+    copyleft: strong
+    share_alike: true
+    attribution: true
+    drm_conflict: true
+    notes: >-
+      §2 forbids using "technical measures to obstruct or control the reading
+      or further copying" of the copies distributed. The Mac App Store's DRM
+      wrapper is exactly such a measure, so GFDL content cannot ship inside an
+      App Store bundle even though the licence itself allows commercial use.
+
+  BSD-Documentation:
+    name: "FreeBSD Documentation License"
+    commercial_use: allowed
+    copyleft: none
+    share_alike: false
+    attribution: true
+    drm_conflict: false
+
+  MacPorts-BSD-like:
+    name: "MacPorts Project documentation licence (BSD-like)"
+    commercial_use: allowed
+    copyleft: none
+    share_alike: false
+    attribution: true
+    drm_conflict: false
+
+  LicenseRef-Halbert-Corpus-1.0:
+    name: "Halbert-authored corpus content"
+    commercial_use: allowed
+    copyleft: none
+    share_alike: false
+    attribution: false
+    drm_conflict: false
+    notes: >-
+      Original content written for Halbert by the project. Copyright (C)
+      2024-2026 Eric Bintner and Halbert Contributors; distributed under the
+      same terms as the build it ships in.
+
+  LicenseRef-Mixed-Permissive:
+    name: "Mixed permissive upstream licences (MIT / BSD / Apache-2.0)"
+    commercial_use: allowed
+    copyleft: none
+    share_alike: false
+    attribution: true
+    drm_conflict: false
+    notes: >-
+      Aggregate tag for scraped vendor/system documentation whose individual
+      pages carry different permissive licences. Per-page provenance is kept in
+      each record's `url`. Retagged individually if a page is ever modified.
+
+  LicenseRef-Mixed-Manpages:
+    name: "Mixed man page licences (GPL / BSD / MIT)"
+    commercial_use: allowed
+    copyleft: strong
+    share_alike: true
+    attribution: true
+    drm_conflict: true
+    notes: >-
+      Linux man pages are a mixed bag; a meaningful slice is GPL-licensed, and
+      GPLv3 §10 forbids imposing further restrictions on recipients. Treated at
+      the worst case (strong copyleft + DRM conflict) so it can never enter an
+      App Store bundle by accident. Linux man pages are Linux-only regardless.
+
+# -----------------------------------------------------------------------------
+# Distribution channels
+# -----------------------------------------------------------------------------
+# Fields:
+#   description     : human summary
+#   commercial      : true if the channel is a paid/commercial distribution
+#   drm             : true if the channel wraps the payload in DRM or otherwise
+#                     restricts redistribution by the recipient
+#   data_roots      : top-level `data/` subdirectories this channel may ship.
+#                     A corpus path outside this list is excluded regardless of
+#                     its licence — this is the platform separation gate.
+#   require:
+#     commercial_use: licence terms every shipped source must satisfy
+#     max_copyleft  : none | weak | strong (strongest copyleft tolerated)
+#     allow_drm_conflict: may a source whose licence forbids DRM be shipped
+#   deny_paths      : belt-and-braces path prefixes that must never appear,
+#                     even if some future manifest edit says otherwise
+channels:
+  oss-linux:
+    description: "GPL-3.0 community Linux build (AppImage / deb / rpm / AUR / Flatpak)"
+    commercial: false
+    drm: false
+    data_roots: [linux, common]
+    require:
+      commercial_use: any
+      max_copyleft: strong
+      allow_drm_conflict: true
+    deny_paths:
+      - non-commercial/
+
+  oss-macos:
+    description: "GPL-3.0 community macOS build, self-distributed (no DRM, no store)"
+    commercial: false
+    drm: false
+    data_roots: [macos, bsd, common]
+    require:
+      commercial_use: any
+      max_copyleft: strong
+      allow_drm_conflict: true
+    deny_paths: []
+
+  macos-pro:
+    description: "Halbert Pro — paid macOS build sold through LemonSqueezy (unsandboxed, no DRM)"
+    commercial: true
+    drm: false
+    data_roots: [macos, bsd, common]
+    require:
+      commercial_use: allowed
+      max_copyleft: strong
+      allow_drm_conflict: true
+    deny_paths:
+      - non-commercial/
+
+  macos-app-store:
+    description: "Mac App Store companion client (sandboxed, Apple DRM/FairPlay wrapper)"
+    commercial: true
+    drm: true
+    data_roots: [macos, bsd, common]
+    require:
+      commercial_use: allowed
+      max_copyleft: weak
+      allow_drm_conflict: false
+    deny_paths:
+      - non-commercial/
+      - linux/arch-wiki/
+      - linux/arch-wiki-ext/
+      - linux/arch-wiki-full/
+      - linux/more-arch/
+      - linux/man-pages/
+
+  hf-dataset:
+    description: "Public HuggingFace corpus release (free redistribution, attribution cards)"
+    commercial: false
+    drm: false
+    data_roots: [linux, macos, bsd, common]
+    require:
+      commercial_use: any
+      max_copyleft: strong
+      allow_drm_conflict: true
+    deny_paths:
+      - non-commercial/
+    notes: >-
+      The non-commercial slice is published as its own dataset repo with an
+      explicit CC BY-NC 4.0 card, never inside the general corpus release.
+
+# -----------------------------------------------------------------------------
+# Record-level quarantine
+# -----------------------------------------------------------------------------
+# Some JSONL files historically mixed licences within a single file. The gate
+# scans records as well as paths: any record whose `source` field matches a
+# quarantined source, or whose resolved licence fails the channel policy, is a
+# violation even if its containing path is allowed.
+record_quarantine:
+  ss64-macos:
+    license_spdx: CC-BY-NC-4.0
+    canonical_path: non-commercial/macos_ss64/
+    replacement: macos/support/macos_command_guides.jsonl
+    notes: >-
+      SS64.com macOS command reference. CC BY-NC 4.0. Quarantined out of
+      data/macos/support/ on 2026-08-25 (LEG-CRIT-01); every command it covered
+      has a Halbert-authored replacement in `replacement`.
+
+# -----------------------------------------------------------------------------
+# Replacement coverage contracts
+# -----------------------------------------------------------------------------
+# Asserted by tests: for each contract, every `key` present in `quarantined`
+# must also be present in `replacement`, so that removing the quarantined
+# source from a commercial build costs the user no knowledge coverage.
+coverage_contracts:
+  - id: macos-command-reference
+    quarantined: non-commercial/macos_ss64/ss64_macos.jsonl
+    replacement: macos/support/macos_command_guides.jsonl
+    key: metadata.command
