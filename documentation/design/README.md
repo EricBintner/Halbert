@@ -23,6 +23,7 @@ This documentation serves two audiences:
 | [model-picker-independent-2026-08-26.md](model-picker-independent-2026-08-26.md) | Approved independent model picker design: 3-slot schema, single store module, and trimmed UI |
 | [UI-SPEC-REUSABLE-MODEL-PICKER-2026-08-26.md](UI-SPEC-REUSABLE-MODEL-PICKER-2026-08-26.md) | UI/UX specification: Reusable Local + BYOK model picker, dual-surface runtime controls, and /model command |
 | [SCRUTINY-AND-REVERSE-ENGINEERING-MODEL-PICKER-2026-08-26.md](SCRUTINY-AND-REVERSE-ENGINEERING-MODEL-PICKER-2026-08-26.md) | Deep scrutiny & reverse-engineering audit: BYOK authentication gaps, runtime payload mismatches, and multi-turn memory |
+| [TRIAGE-SCRUTINY-FEEDBACK-2026-08-26.md](TRIAGE-SCRUTINY-FEEDBACK-2026-08-26.md) | Triage response, user decisions, headless component architecture, and engineering handoff specifications |
 | [continuous-conversation-and-watched-terminals-2026-08-26.md](continuous-conversation-and-watched-terminals-2026-08-26.md) | Architectural specification for continuous conversation memory, watched PTY terminals, and sub-threads |
 | [future.md](future.md) | Potential future directions (not promises) |
 | [DESIGN-SYSTEM-SPEC.md](DESIGN-SYSTEM-SPEC.md) | Formalized Design System Specification: Daylight tokens, typography, surfaces, motion, and accessibility |
