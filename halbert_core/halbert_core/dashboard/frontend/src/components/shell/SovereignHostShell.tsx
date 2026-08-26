@@ -35,7 +35,7 @@ export function SovereignHostShell() {
       {/* Conversation spine */}
       <div
         ref={conversationRef}
-        className="flex-1 min-w-0 flex flex-col bg-zinc-950 border-r border-slate-800"
+        className="flex-1 min-w-0 flex flex-col bg-background border-r border-border"
       >
         <AgentChat className="h-full" />
       </div>
