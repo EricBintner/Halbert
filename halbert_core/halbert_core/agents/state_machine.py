@@ -8,6 +8,7 @@ Based on research5.md Part 6.
 from __future__ import annotations
 import asyncio
 import logging
+import re
 import time
 import uuid
 from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHECKING
@@ -37,8 +38,13 @@ class AgentStateMachine:
     Based on ReAct (research4.md Part 5) with CRAG evaluation (Part 11).
     
     States:
-        IDLE -> PLANNING -> SEARCHING/READING/EXECUTING -> OBSERVING -> PLANNING/RESPONDING
-        
+        IDLE -> PLANNING -> SEARCHING/READING/EXECUTING -> OBSERVING -> PLANNING/REFLECTING -> RESPONDING
+
+    Every turn that produces a response passes through REFLECTING (the
+    Haloysius cognition tick seam) except the failure exits (max-loops guard,
+    oscillation guard, ERROR give-up), which go straight to RESPONDING —
+    RESPONDING then ticks once itself so the tick fires exactly once per turn (B1).
+
     The loop continues until:
         - CRAG confidence >= threshold (CORRECT)
         - Max loops reached
@@ -50,7 +56,8 @@ class AgentStateMachine:
         AgentState.IDLE: [AgentState.PLANNING],
         AgentState.PLANNING: [
             AgentState.SEARCHING, AgentState.READING,
-            AgentState.EXECUTING, AgentState.RESPONDING, AgentState.ERROR
+            AgentState.EXECUTING, AgentState.REFLECTING,
+            AgentState.RESPONDING, AgentState.ERROR
         ],
         AgentState.SEARCHING: [AgentState.OBSERVING, AgentState.ERROR],
         AgentState.READING: [AgentState.OBSERVING, AgentState.ERROR],
@@ -229,6 +236,15 @@ class AgentStateMachine:
         try:
             # Main loop
             while self.current_state != AgentState.IDLE:
+                if self.current_state == AgentState.AWAITING_CONFIRMATION:
+                    # Blocking state: end this SSE stream and keep the session
+                    # in active_sessions so confirm_action() can resume it.
+                    # Checked BEFORE the max-loops / oscillation guards so a
+                    # pause on the final allowed loop is not overwritten to
+                    # RESPONDING.
+                    logger.info(f"Session {session_id} paused awaiting confirmation")
+                    break
+
                 # Safety checks
                 if self.ctx.loop_count >= self.ctx.max_loops:
                     logger.warning(f"Max loops ({self.ctx.max_loops}) reached")
@@ -239,8 +255,12 @@ class AgentStateMachine:
                         session_id, 
                         f"Max iterations ({self.ctx.max_loops}) reached, responding with available information"
                     )
-                    self.current_state = AgentState.RESPONDING
-                    continue
+                    # Fall through to the RESPONDING handler (mirrors the
+                    # oscillation guard). A `continue` here re-fired this guard
+                    # forever because loop_count never drops below max_loops.
+                    if self.current_state != AgentState.RESPONDING:
+                        self.ctx.state_history.append(AgentState.RESPONDING.value)
+                        self.current_state = AgentState.RESPONDING
                 
                 if self._detect_oscillation():
                     logger.warning("State oscillation detected")
@@ -267,8 +287,10 @@ class AgentStateMachine:
                             # RESPONDING, which would fail identically forever.
                             # End the session instead (non-recoverable error).
                             yield StreamEvent.error(session_id, str(e), recoverable=False)
-                            # User-facing status: terminal error (A2c)
-                            yield self._set_conversation_status(ConversationStatus.ERROR)
+                            # User-facing status: terminal error (A2c) —
+                            # unless the give-up path already made it terminal.
+                            if not self.ctx.conversation_status.is_terminal():
+                                yield self._set_conversation_status(ConversationStatus.ERROR)
                             self.current_state = AgentState.IDLE
                         else:
                             yield StreamEvent.error(session_id, str(e))
@@ -277,16 +299,21 @@ class AgentStateMachine:
                     logger.error(f"No handler for state: {self.current_state}")
                     self.current_state = AgentState.ERROR
             
-            # Session complete
-            yield StreamEvent.session_ended(
-                session_id,
-                self.ctx.elapsed_ms(),
-                self.ctx.loop_count
-            )
-            
+            # Session complete (a paused session is not ended: the
+            # tool_confirmation_required + conversation_status: blocked events
+            # already told the client to stop and wait for confirm_action()).
+            if self.current_state != AgentState.AWAITING_CONFIRMATION:
+                yield StreamEvent.session_ended(
+                    session_id,
+                    self.ctx.elapsed_ms(),
+                    self.ctx.loop_count
+                )
+
         finally:
-            # Cleanup
-            if session_id in self.active_sessions:
+            # Cleanup — but keep a paused (awaiting-confirmation) session so
+            # confirm_action() can find it.
+            if (session_id in self.active_sessions
+                    and self.current_state != AgentState.AWAITING_CONFIRMATION):
                 del self.active_sessions[session_id]
     
     async def confirm_action(
@@ -320,25 +347,33 @@ class AgentStateMachine:
             yield StreamEvent.error(session_id, "Action ID mismatch")
             return
         
-        if confirmed:
-            # Execute the confirmed action
-            self.ctx.pending_confirmation["confirmed"] = True
-            # Approval granted: resume working (A2c)
-            yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
-            yield await self._transition(AgentState.EXECUTING)
+        try:
+            if confirmed:
+                # Execute the confirmed action
+                self.ctx.pending_confirmation["confirmed"] = True
+                # Approval granted: resume working (A2c)
+                yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
+                yield await self._transition(AgentState.EXECUTING)
 
-            # Continue processing
-            async for event in self._handle_executing():
-                yield event
-        else:
-            # User rejected - go back to planning
-            self.ctx.pending_confirmation = None
-            self.ctx.add_observation("User rejected the action")
-            # Rejection resumes the conversation (the agent re-plans and still
-            # responds), so this is IN_PROGRESS, not a terminal CANCELLED.
-            # True cancellation is cancel_session() below. (A2c)
-            yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
-            yield await self._transition(AgentState.PLANNING)
+                # Continue processing
+                async for event in self._handle_executing():
+                    yield event
+            else:
+                # User rejected - go back to planning
+                self.ctx.pending_confirmation = None
+                self.ctx.add_observation("User rejected the action")
+                # Rejection resumes the conversation (the agent re-plans and still
+                # responds), so this is IN_PROGRESS, not a terminal CANCELLED.
+                # True cancellation is cancel_session() below. (A2c)
+                yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
+                yield await self._transition(AgentState.PLANNING)
+        finally:
+            # The paused session was kept in active_sessions only so this
+            # method could find it. Evict it now unless the machine paused
+            # again on another confirmation.
+            if (session_id in self.active_sessions
+                    and self.current_state != AgentState.AWAITING_CONFIRMATION):
+                del self.active_sessions[session_id]
     
     def cancel_session(self, session_id: str) -> bool:
         """Cancel an active session."""
@@ -614,15 +649,73 @@ class AgentStateMachine:
                 yield await self._transition(AgentState.EXECUTING)
         
         elif self.ctx.crag_action == CRAGAction.CORRECT:
-            yield await self._transition(AgentState.RESPONDING)
-        
+            yield await self._transition(AgentState.REFLECTING)
+
+        elif self.ctx.loop_count == 0 and self._intake_is_greeting():
+            # Greeting turns have nothing to retrieve: searching only pulls in
+            # unrelated host hits that leak into the reply. Still reflect so
+            # the cognitive tick runs.
+            logger.info("PLANNING: greeting intake, skipping SEARCHING")
+            yield await self._transition(AgentState.REFLECTING)
+
         elif self.ctx.loop_count == 0:
             # First iteration, try searching
             yield await self._transition(AgentState.SEARCHING)
-        
+
         else:
-            # Default: respond with what we have
-            yield await self._transition(AgentState.RESPONDING)
+            # Default: reflect (cognitive tick) then respond with what we have
+            yield await self._transition(AgentState.REFLECTING)
+    
+    # Word-count ceilings for the retrieval skip (see _intake_is_greeting).
+    _GREETING_MAX_WORDS = 5            # "hey halbert, good morning!"
+    _GREETING_QUESTION_MAX_WORDS = 6   # "hello, what can you do?"
+
+    _WORD_STRIP_RE = re.compile(r"[^\w\s'-]+")
+
+    def _intake_is_greeting(self) -> bool:
+        """True only when the message is a *pure* greeting turn that has
+        nothing to retrieve.
+
+        intake/signals.py's greeting regex is a prefix match ("hi ...",
+        "halbert, ..."), so is_greeting/intent=="greeting" is also true for
+        "Halbert, what does PermitRootLogin accept in sshd_config?". Skipping
+        retrieval on that flag alone would starve real questions. Rule:
+
+        * the intake flagged the message as a greeting, AND
+        * no troubleshooting / error signals (is_troubleshooting,
+          has_error_indicators) and no detected host domains, AND
+        * short: <= 5 words after stripping punctuation (computed from
+          ctx.user_query), or, when the intake also flags it as a question,
+          <= 6 words -- a capabilities question with no host context
+          ("hello, what can you do?") is fine to answer without retrieval.
+
+        Anything longer, or carrying host/troubleshooting context, still
+        goes through SEARCHING.
+        """
+        intake = self.ctx.intake
+        if intake is None:
+            return False
+        flagged = (
+            getattr(intake, "is_greeting", False) is True
+            or getattr(intake, "intent", None) == "greeting"
+        )
+        if not flagged:
+            return False
+        if getattr(intake, "is_troubleshooting", False) is True:
+            return False
+        if getattr(intake, "has_error_indicators", False) is True:
+            return False
+        domains = getattr(intake, "detected_domains", None)
+        if isinstance(domains, (list, tuple, set)) and domains:
+            return False
+
+        words = self._WORD_STRIP_RE.sub(" ", self.ctx.user_query or "").split()
+        limit = (
+            self._GREETING_QUESTION_MAX_WORDS
+            if getattr(intake, "is_question", False) is True
+            else self._GREETING_MAX_WORDS
+        )
+        return len(words) <= limit
     
     async def _handle_searching(self) -> AsyncIterator[StreamEvent]:
         """
@@ -653,10 +746,15 @@ class AgentStateMachine:
             try:
                 results = await task
                 for result in results:
+                    metadata = dict(result.get("metadata") or {})
+                    # Keep the retriever's similarity score: CRAG uses it as
+                    # the relevance signal when no embedding service is wired.
+                    if "score" not in metadata and result.get("score") is not None:
+                        metadata["score"] = result.get("score")
                     self.ctx.add_context(
                         source=source,
                         content=result.get("content", str(result)),
-                        metadata=result.get("metadata", {})
+                        metadata=metadata
                     )
                 
                 yield StreamEvent.context_loaded(
@@ -867,6 +965,55 @@ class AgentStateMachine:
             # Need more info, go back to planning
             yield await self._transition(AgentState.PLANNING)
     
+    async def _run_cognition_tick(self, assistant_response: str) -> AsyncIterator[StreamEvent]:
+        """Run the Haloysius cognitive tick at most once per turn (B1).
+
+        Called from REFLECTING (pre-response, with observations as the
+        stand-in reply) and again from RESPONDING (post-response, with the
+        real reply). ``ctx.cognition_ticked`` guarantees exactly one tick per
+        turn regardless of which states the loop visited. Non-fatal on error.
+
+        The tick (``advance_turn``) is synchronous and may do file/memory
+        work, so it runs in a worker thread to keep the event loop free.
+        """
+        if self.ctx.cognition_ticked:
+            return
+        if self.cognition_tick is None or self.ctx.persona_cognition is None:
+            logger.debug("No cognition_tick wired, skipping")
+            return
+        self.ctx.cognition_ticked = True
+        try:
+            # Populate cognition with system events before the tick
+            if self.event_mapper is not None:
+                self.event_mapper.populate_cognition(self.ctx.persona_cognition)
+
+            tick_result = await asyncio.to_thread(
+                self.cognition_tick,
+                cognition=self.ctx.persona_cognition,
+                user_message=self.ctx.user_query,
+                assistant_response=assistant_response,
+            )
+
+            # Emit thought event if a thought was generated
+            if tick_result and hasattr(tick_result, 'thought') and tick_result.thought:
+                thought_text = tick_result.thought.content if hasattr(tick_result.thought, 'content') else str(tick_result.thought)
+                logger.info(f"Cognitive tick generated thought: {thought_text[:80]}")
+                yield StreamEvent.thinking(self.ctx.session_id, thought_text)
+
+            # Check for worry intrusions that should color the response
+            if hasattr(self.ctx.persona_cognition, 'worries'):
+                intrusions = self.ctx.persona_cognition.worries.check_intrusions(
+                    self.ctx.user_query
+                )
+                for intrusion in intrusions:
+                    logger.info(f"Worry intrusion: {intrusion[:80]}")
+                    self.ctx.add_observation(f"[worry] {intrusion}")
+
+            logger.info("Cognitive tick complete")
+        except Exception as e:
+            logger.error(f"Cognitive tick error: {e}")
+            # Non-fatal: the turn continues
+
     async def _handle_reflecting(self) -> AsyncIterator[StreamEvent]:
         """
         REFLECTING state: Run the cognitive tick (Haloysius advance_turn).
@@ -880,48 +1027,12 @@ class AgentStateMachine:
         """
         logger.info(f"REFLECTING: cognitive tick for session {self.ctx.session_id}")
 
-        if self.cognition_tick is not None and self.ctx.persona_cognition is not None:
-            try:
-                # Populate cognition with system events before the tick
-                if self.event_mapper is not None:
-                    self.event_mapper.populate_cognition(self.ctx.persona_cognition)
-
-                # Build the assistant response from observations + context
-                assistant_response = "\n".join(self.ctx.observations[-3:])
-                if not assistant_response:
-                    assistant_response = "\n".join(self.ctx.response_chunks[-3:])
-
-                # Run the cognitive tick
-                tick_result = self.cognition_tick(
-                    cognition=self.ctx.persona_cognition,
-                    user_message=self.ctx.user_query,
-                    assistant_response=assistant_response,
-                )
-
-                # Emit thought event if a thought was generated
-                if tick_result and hasattr(tick_result, 'thought') and tick_result.thought:
-                    thought_text = tick_result.thought.content if hasattr(tick_result.thought, 'content') else str(tick_result.thought)
-                    logger.info(f"Cognitive tick generated thought: {thought_text[:80]}")
-                    yield StreamEvent.thinking(
-                        self.ctx.session_id,
-                        thought_text
-                    )
-
-                # Check for worry intrusions that should color the response
-                if hasattr(self.ctx.persona_cognition, 'worries'):
-                    intrusions = self.ctx.persona_cognition.worries.check_intrusions(
-                        self.ctx.user_query
-                    )
-                    for intrusion in intrusions:
-                        logger.info(f"Worry intrusion: {intrusion[:80]}")
-                        self.ctx.add_observation(f"[worry] {intrusion}")
-
-                logger.info("Cognitive tick complete")
-            except Exception as e:
-                logger.error(f"Cognitive tick error: {e}")
-                # Non-fatal: continue to responding
-        else:
-            logger.debug("No cognition_tick wired, skipping reflection")
+        # Build the assistant response from observations + context
+        assistant_response = "\n".join(self.ctx.observations[-3:])
+        if not assistant_response:
+            assistant_response = "\n".join(self.ctx.response_chunks[-3:])
+        async for event in self._run_cognition_tick(assistant_response):
+            yield event
 
         # C1d: if a somatic block is active for this turn, advance it to
         # reflection and emit the block event (SSE + ProactiveEventBus).
@@ -1013,6 +1124,13 @@ class AgentStateMachine:
         self.ctx.response_chunks.clear()
         self.ctx.response_chunks.append(clean_response)
 
+        # B1: the cognitive tick must run exactly once per turn. Turns that
+        # reach RESPONDING without passing REFLECTING (max-loop / oscillation
+        # guards, ERROR give-up) tick here, with the real reply — the closest
+        # match to advance_turn's assistant_response.
+        async for event in self._run_cognition_tick(clean_response):
+            yield event
+
         # Phase 4: Parse config-edit blocks from response (ported from chat.py)
         try:
             from ..tools.config_editor import parse_edit_blocks
@@ -1065,8 +1183,11 @@ class AgentStateMachine:
         complete_event = StreamEvent.response_complete(self.ctx.session_id)
         complete_event.data["content"] = clean_response
         yield complete_event
-        # User-facing status: success (A2c)
-        yield self._set_conversation_status(ConversationStatus.SUCCESS)
+        # User-facing status: success (A2c). The ERROR give-up path has
+        # already moved the status to the terminal ERROR before routing here;
+        # a terminal status cannot transition, so leave it as-is.
+        if not self.ctx.conversation_status.is_terminal():
+            yield self._set_conversation_status(ConversationStatus.SUCCESS)
         yield await self._transition(AgentState.IDLE)
     
     async def _handle_error(self) -> AsyncIterator[StreamEvent]:

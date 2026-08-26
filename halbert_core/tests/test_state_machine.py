@@ -474,3 +474,192 @@ class TestAgentFlow:
 
 
 # Run with: pytest tests/test_state_machine.py -v
+
+
+# -----------------------------------------------------------------------------
+# AWAITING_CONFIRMATION: pause instead of busy-looping
+# -----------------------------------------------------------------------------
+
+@pytest.fixture
+def mock_llm_high_risk_command():
+    """LLM that requests a HIGH-risk run_command (needs confirmation)."""
+    llm = AsyncMock()
+    tool_call = MagicMock()
+    tool_call.function.name = "run_command"
+    tool_call.function.arguments = {"command": "systemctl restart sshd"}
+    llm.chat = AsyncMock(return_value=MagicMock(
+        content="", tool_calls=[tool_call], plan=None
+    ))
+
+    async def _stream(messages, **kwargs):
+        yield "done"
+
+    llm.stream = _stream
+    return llm
+
+
+async def _pause_on_confirmation(agent):
+    events = []
+
+    async def consume():
+        async for e in agent.process("restart sshd", session_id="sess-pause"):
+            events.append(e)
+
+    await asyncio.wait_for(consume(), timeout=2)
+    return events
+
+
+class TestAwaitingConfirmation:
+
+    @pytest.mark.asyncio
+    async def test_awaiting_confirmation_pauses_without_spinning(
+        self, mock_llm_high_risk_command, tool_executor
+    ):
+        agent = AgentStateMachine(
+            llm_client=mock_llm_high_risk_command,
+            tool_executor=tool_executor,
+            max_loops=5,
+        )
+        events = await _pause_on_confirmation(agent)
+
+        types = [e.type for e in events]
+        assert "tool_confirmation_required" in types
+        assert any(
+            e.type == "conversation_status" and e.data["status"] == "blocked"
+            for e in events
+        )
+        assert "session_ended" not in types
+        assert agent.current_state == AgentState.AWAITING_CONFIRMATION
+        assert "sess-pause" in agent.active_sessions
+
+    @pytest.mark.asyncio
+    async def test_confirm_action_resumes_paused_session(
+        self, mock_llm_high_risk_command, tool_executor
+    ):
+        from halbert_core.tools.executor import ExecutionResult
+
+        agent = AgentStateMachine(
+            llm_client=mock_llm_high_risk_command,
+            tool_executor=tool_executor,
+            max_loops=5,
+        )
+        events = await _pause_on_confirmation(agent)
+        confirm = next(e for e in events if e.type == "tool_confirmation_required")
+        action_id = confirm.data["execution_id"]
+
+        # Don't actually run the command on the host: stub the confirmed execution.
+        agent.tools.execute = AsyncMock(
+            return_value=ExecutionResult(success=True, result="restarted")
+        )
+
+        resumed = []
+        async for e in agent.confirm_action("sess-pause", action_id, True):
+            resumed.append(e)
+
+        types = [e.type for e in resumed]
+        assert "tool_start" in types
+        assert "tool_complete" in types
+        assert any(
+            e.type == "conversation_status" and e.data["status"] == "in_progress"
+            for e in resumed
+        )
+        assert agent.tools.execute.await_args.kwargs["confirmed"] is True
+
+
+class TestPausedSessionEviction:
+    """5c: a paused AWAITING_CONFIRMATION session must be evicted from
+    active_sessions once confirm_action()/reject finishes (unless the machine
+    is again awaiting confirmation)."""
+
+    @pytest.mark.asyncio
+    async def test_confirm_action_evicts_session(
+        self, mock_llm_high_risk_command, tool_executor
+    ):
+        from halbert_core.tools.executor import ExecutionResult
+
+        agent = AgentStateMachine(
+            llm_client=mock_llm_high_risk_command,
+            tool_executor=tool_executor,
+            max_loops=5,
+        )
+        events = await _pause_on_confirmation(agent)
+        assert "sess-pause" in agent.active_sessions
+        confirm = next(e for e in events if e.type == "tool_confirmation_required")
+        agent.tools.execute = AsyncMock(
+            return_value=ExecutionResult(success=True, result="restarted")
+        )
+
+        async for _ in agent.confirm_action("sess-pause", confirm.data["execution_id"], True):
+            pass
+
+        assert agent.current_state != AgentState.AWAITING_CONFIRMATION
+        assert "sess-pause" not in agent.active_sessions
+
+    @pytest.mark.asyncio
+    async def test_reject_action_evicts_session(
+        self, mock_llm_high_risk_command, tool_executor
+    ):
+        agent = AgentStateMachine(
+            llm_client=mock_llm_high_risk_command,
+            tool_executor=tool_executor,
+            max_loops=5,
+        )
+        events = await _pause_on_confirmation(agent)
+        confirm = next(e for e in events if e.type == "tool_confirmation_required")
+
+        resumed = []
+        async for e in agent.confirm_action("sess-pause", confirm.data["execution_id"], False):
+            resumed.append(e)
+
+        assert any(e.type == "state_change" and e.data["state"] == "planning" for e in resumed)
+        assert "sess-pause" not in agent.active_sessions
+
+    @pytest.mark.asyncio
+    async def test_confirm_action_keeps_session_when_paused_again(
+        self, mock_llm_high_risk_command, tool_executor
+    ):
+        agent = AgentStateMachine(
+            llm_client=mock_llm_high_risk_command,
+            tool_executor=tool_executor,
+            max_loops=5,
+        )
+        events = await _pause_on_confirmation(agent)
+        confirm = next(e for e in events if e.type == "tool_confirmation_required")
+
+        async def _pause_again():
+            agent.current_state = AgentState.AWAITING_CONFIRMATION
+            yield StreamEvent.tool_confirmation_required(
+                "sess-pause", "exec-2", "run_command", "needs ok", "high"
+            )
+        agent._handle_executing = _pause_again
+
+        async for _ in agent.confirm_action("sess-pause", confirm.data["execution_id"], True):
+            pass
+
+        assert agent.current_state == AgentState.AWAITING_CONFIRMATION
+        assert "sess-pause" in agent.active_sessions
+
+
+class TestAwaitingConfirmationOnFinalLoop:
+    """Round 2 review: the AWAITING_CONFIRMATION break must run before the
+    max-loops guard, otherwise a pause on the final allowed loop is
+    overwritten to RESPONDING and the confirmation is lost."""
+
+    @pytest.mark.asyncio
+    async def test_pause_on_last_loop_is_not_overwritten(
+        self, mock_llm_high_risk_command, tool_executor
+    ):
+        agent = AgentStateMachine(
+            llm_client=mock_llm_high_risk_command,
+            tool_executor=tool_executor,
+            max_loops=1,
+        )
+        events = await _pause_on_confirmation(agent)
+
+        types = [e.type for e in events]
+        assert "tool_confirmation_required" in types
+        assert "response_complete" not in types
+        assert "session_ended" not in types
+        assert agent.current_state == AgentState.AWAITING_CONFIRMATION
+        assert agent.ctx.pending_confirmation is not None
+        assert "sess-pause" in agent.active_sessions

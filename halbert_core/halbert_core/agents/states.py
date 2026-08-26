@@ -179,6 +179,9 @@ class StateContext:
     # Phase D: Persona cognition (Haloysius cognitive state)
     persona_cognition: Optional[Any] = None  # PersonaCognition instance
     persona_id: str = "halbert"
+    # Set once the Haloysius cognitive tick has run for this turn, so the
+    # REFLECTING and RESPONDING seams never double-tick (B1).
+    cognition_ticked: bool = False
 
     # Phase 3: Intake pipeline result (message analysis before cognitive tick)
     intake: Optional[MessageIntake] = None
