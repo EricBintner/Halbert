@@ -39,6 +39,14 @@ class EmbeddingManager:
         
         logger.info(f"Initialized EmbeddingManager with {embedding_model}")
     
+    @staticmethod
+    def _embedding_dimension(model) -> Optional[int]:
+        """Model output dimension; prefers the non-deprecated accessor."""
+        getter = getattr(model, "get_embedding_dimension", None)
+        if getter is None:
+            getter = getattr(model, "get_sentence_embedding_dimension", None)
+        return getter() if getter is not None else None
+
     @property
     def embedder(self):
         """Lazy load sentence transformer model."""
@@ -51,7 +59,7 @@ class EmbeddingManager:
                     self.embedding_model_name,
                     cache_folder=str(self.cache_dir) if self.cache_dir else None
                 )
-                logger.info(f"Embedding model loaded: {self._embedder.get_sentence_embedding_dimension()}D")
+                logger.info(f"Embedding model loaded: {self._embedding_dimension(self._embedder)}D")
                 
             except ImportError:
                 logger.error("sentence-transformers not installed. Run: pip install sentence-transformers")

@@ -7,6 +7,7 @@ Based on research5.md Part 20.4.
 
 from __future__ import annotations
 import asyncio
+import inspect
 import logging
 import warnings
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
@@ -198,8 +199,8 @@ class MemoryServiceAdapter:
         
         if self._service is None:
             try:
-                from ..memory.store import get_memory_store
-                self._service = get_memory_store()
+                from ..memory.hybrid import get_hybrid_memory
+                self._service = get_hybrid_memory()
                 logger.info("Memory adapter initialized")
             except Exception as e:
                 logger.warning(f"Could not initialize memory service: {e}")
@@ -224,16 +225,19 @@ class MemoryServiceAdapter:
             return []
         
         try:
-            # Try different methods the memory service might have
-            if hasattr(self._service, 'search'):
-                results = self._service.search(query, limit=limit)
-            elif hasattr(self._service, 'recall'):
+            # Try different methods the memory service might have.
+            # HybridMemorySystem.recall is preferred (returns content/type/metadata dicts).
+            if hasattr(self._service, 'recall'):
                 results = self._service.recall(query, limit=limit)
+            elif hasattr(self._service, 'search'):
+                results = self._service.search(query, limit=limit)
             elif hasattr(self._service, 'get_relevant'):
                 results = self._service.get_relevant(query, limit=limit)
             else:
                 logger.warning("Memory service has no search method")
                 return []
+            if inspect.isawaitable(results):
+                results = await results
             
             memories = []
             for mem in results:
@@ -276,15 +280,24 @@ class MemoryServiceAdapter:
             return
         
         try:
-            if hasattr(self._service, 'store'):
-                self._service.store({
+            if hasattr(self._service, 'store_interaction'):
+                # HybridMemorySystem truncates/filters itself; pass the full response
+                res = self._service.store_interaction(
+                    query=query, response=response, session_id=session_id
+                )
+            elif hasattr(self._service, 'store'):
+                res = self._service.store({
                     'query': query,
                     'response': response[:500],  # Truncate long responses
                     'session_id': session_id,
                     'type': 'interaction'
                 })
             elif hasattr(self._service, 'add'):
-                self._service.add(f"Q: {query}\nA: {response[:500]}")
+                res = self._service.add(f"Q: {query}\nA: {response[:500]}")
+            else:
+                return
+            if inspect.isawaitable(res):
+                await res
         except Exception as e:
             logger.error(f"Memory store error: {e}")
 

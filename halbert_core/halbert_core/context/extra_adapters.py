@@ -18,6 +18,7 @@ to include these new sources.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import socket
 from typing import Any, Dict, List, Optional
@@ -113,9 +114,9 @@ class SelfKnowledgeAdapter:
             return
         if self._store is None:
             try:
-                from ..memory.store import get_memory_store
+                from ..knowledge.self_knowledge import get_self_knowledge
 
-                self._store = get_memory_store()
+                self._store = get_self_knowledge()
                 logger.info("SelfKnowledge adapter initialized")
             except Exception as e:
                 logger.warning(f"Could not initialize self-knowledge store: {e}")
@@ -129,14 +130,29 @@ class SelfKnowledgeAdapter:
 
         try:
             if hasattr(self._store, "search"):
-                results = self._store.search(query, limit=limit)
+                # SelfKnowledge.search(query, k=) uses ``k``; other stores use ``limit``
+                params = inspect.signature(self._store.search).parameters
+                kw = {"k": limit} if "k" in params and "limit" not in params else {"limit": limit}
+                results = self._store.search(query, **kw)
             elif hasattr(self._store, "recall"):
                 results = self._store.recall(query, limit=limit)
             else:
                 return []
+            if inspect.isawaitable(results):
+                results = await results
 
             items = []
             for r in results:
+                if not isinstance(r, dict) and hasattr(r, "content"):
+                    # KnowledgeEntry dataclass from knowledge.self_knowledge
+                    r = {
+                        "content": r.content,
+                        "type": getattr(getattr(r, "type", None), "value", "self_knowledge"),
+                        "metadata": {
+                            "subject": getattr(r, "subject", ""),
+                            **(getattr(r, "metadata", None) or {}),
+                        },
+                    }
                 if isinstance(r, dict):
                     items.append(
                         {

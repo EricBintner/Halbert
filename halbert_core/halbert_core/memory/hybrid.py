@@ -118,19 +118,22 @@ class HybridMemorySystem:
         
         if self.self_knowledge is None:
             try:
-                from .self_knowledge import get_self_knowledge
+                from ..knowledge.self_knowledge import get_self_knowledge
                 self.self_knowledge = get_self_knowledge()
                 logger.info("Connected to self-knowledge store")
             except Exception as e:
                 logger.warning(f"Self-knowledge not available: {e}")
         
         if self.embeddings is None:
+            # The RAG EmbeddingManager (sentence-transformers) is the only
+            # embedder in the codebase. It loads its model lazily, so wiring it
+            # here is cheap; the model is only pulled on the first embed call.
             try:
-                from ..model.embeddings import get_embedding_service
-                self.embeddings = get_embedding_service()
-                logger.info("Connected to embedding service")
+                from ..rag.embeddings import EmbeddingManager
+                self.embeddings = _EmbeddingManagerAdapter(EmbeddingManager())
+                logger.info("Connected to embedding service (rag.embeddings.EmbeddingManager)")
             except Exception as e:
-                logger.warning(f"Embedding service not available: {e}")
+                logger.debug(f"Embedding service not available: {e}")
         
         self._initialized = True
     
@@ -645,29 +648,84 @@ class HybridMemorySystem:
         return results
     
     async def _search_self_knowledge(self, query: str, limit: int) -> List[Dict]:
-        """Search self-knowledge store."""
+        """Search self-knowledge store.
+
+        ``SelfKnowledge.search(query, k)`` returns ``KnowledgeEntry`` dataclasses;
+        dict-shaped stores are still accepted for compatibility.
+        """
         results = []
         
         if hasattr(self.self_knowledge, 'search'):
-            sk_results = self.self_knowledge.search(query, limit=limit)
+            sk_results = self.self_knowledge.search(query, k=limit)
             for item in sk_results:
+                if isinstance(item, dict):
+                    results.append({
+                        "id": item.get("id", str(uuid.uuid4())),
+                        "content": item.get("content", str(item)),
+                        "type": "semantic",
+                        "relevance": item.get("score", 0.5),
+                        "importance": 0.6,
+                        "metadata": item
+                    })
+                    continue
+                # KnowledgeEntry (or duck-typed object with the same fields)
+                entry_meta = dict(getattr(item, "metadata", None) or {})
+                entry_meta.setdefault("subject", getattr(item, "subject", ""))
+                entry_type = getattr(item, "type", None)
+                if entry_type is not None:
+                    entry_meta.setdefault(
+                        "knowledge_type", getattr(entry_type, "value", str(entry_type))
+                    )
                 results.append({
-                    "id": item.get("id", str(uuid.uuid4())),
-                    "content": item.get("content", str(item)),
+                    "id": getattr(item, "id", None) or str(uuid.uuid4()),
+                    "content": getattr(item, "content", str(item)),
                     "type": "semantic",
-                    "relevance": item.get("score", 0.5),
+                    "relevance": 0.5,
                     "importance": 0.6,
-                    "metadata": item
+                    "metadata": entry_meta
                 })
         
         return results
     
     async def _store_self_knowledge(self, content: str, metadata: Dict):
-        """Store in self-knowledge."""
+        """Store in self-knowledge.
+
+        ``SelfKnowledge.add`` takes a ``KnowledgeEntry``; build one from the
+        memory content. Stores without a compatible ``add`` are skipped quietly.
+        """
+        metadata = dict(metadata or {})
         if hasattr(self.self_knowledge, 'store'):
             self.self_knowledge.store(content, metadata)
-        elif hasattr(self.self_knowledge, 'add'):
-            self.self_knowledge.add(content, metadata)
+            return
+        if not hasattr(self.self_knowledge, 'add'):
+            logger.debug("Self-knowledge store has no add(); skipping semantic store")
+            return
+        
+        try:
+            from ..knowledge.self_knowledge import KnowledgeEntry, KnowledgeType
+        except Exception as e:
+            logger.debug(f"KnowledgeEntry unavailable; skipping semantic store: {e}")
+            return
+        
+        raw_type = metadata.pop("knowledge_type", None) or metadata.pop("type", None)
+        try:
+            k_type = KnowledgeType(raw_type) if raw_type else KnowledgeType.OBSERVATION
+        except ValueError:
+            k_type = KnowledgeType.OBSERVATION
+        subject = metadata.pop("subject", None) or content[:60]
+        tags = metadata.pop("tags", None) or []
+        entry = KnowledgeEntry(
+            id=str(uuid.uuid4()),
+            type=k_type,
+            subject=subject,
+            content=content,
+            rationale=metadata.pop("rationale", None),
+            source=metadata.pop("source", "system"),
+            confidence=float(metadata.pop("confidence", 1.0)),
+            tags=list(tags),
+            metadata=metadata,
+        )
+        self.self_knowledge.add(entry)
     
     async def _store_graph(self, content: str, memory_type: MemoryType, metadata: Dict):
         """Store in knowledge graph."""
@@ -711,6 +769,17 @@ class HybridMemorySystem:
             del self.cache[oldest.id]
         
         self.cache[memory.id] = memory
+
+
+class _EmbeddingManagerAdapter:
+    """Adapt ``rag.embeddings.EmbeddingManager`` to the ``encode(text)`` shape
+    expected by ``HybridMemorySystem._get_embedding``."""
+
+    def __init__(self, manager):
+        self.manager = manager
+
+    def encode(self, text: str):
+        return self.manager.encode_queries([text])[0]
 
 
 # Global instance
