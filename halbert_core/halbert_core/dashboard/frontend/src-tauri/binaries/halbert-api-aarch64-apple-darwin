@@ -1,19 +1,32 @@
 #!/bin/bash
-# halbert-api — starts the Halbert dashboard backend for the Tauri shell.
-# Tauri launches this as an external process via externalBin; the frontend
-# connects to http://localhost:8000.
+# halbert-api — starts the Halbert dashboard backend (FastAPI/uvicorn) for the
+# Tauri shell. Tauri bundles this as an external binary (tauri.conf.json
+# bundle.externalBin) and launches it as a sidecar; the frontend talks to it
+# over HTTP on $HALBERT_PORT.
+#
+# Launches the ASGI app directly with uvicorn (same form as scripts/dev-*.sh);
+# `python -m halbert_core.dashboard` is not used because its __main__ imports a
+# `create_dashboard_app` symbol that app.py does not define.
+#
+# Environment:
+#   HALBERT_REPO_ROOT  Halbert checkout to run from. Defaults to walking up from
+#                      this script's location (src-tauri/binaries/ -> repo root).
+#   HALBERT_PORT       Port to listen on (default 8000, matches the vite proxy).
+#   HALBERT_HOST       Host to bind (default 127.0.0.1).
 set -euo pipefail
 
-# Find the venv python (prefer .venv at repo root, fall back to system)
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../../../../../.." && pwd)"
-PYTHON="$REPO_ROOT/.venv/bin/python"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${HALBERT_REPO_ROOT:-$(cd "$SCRIPT_DIR/../../../../../.." && pwd)}"
 
+# Prefer the repo's venv (has fastapi/uvicorn/haloysius); fall back to python3.
+PYTHON="$REPO_ROOT/.venv/bin/python"
 if [ ! -x "$PYTHON" ]; then
-    PYTHON="$(command -v python3 || command -v python)"
+    PYTHON="$(command -v python3)"
 fi
 
-# Default port (Tauri frontend expects this)
 export HALBERT_PORT="${HALBERT_PORT:-8000}"
+export HALBERT_HOST="${HALBERT_HOST:-127.0.0.1}"
 
-exec "$PYTHON" -m uvicorn halbert_core.dashboard.app:app --host 127.0.0.1 --port "${HALBERT_PORT}"
+cd "$REPO_ROOT"
+exec "$PYTHON" -m uvicorn halbert_core.dashboard.app:app \
+    --host "$HALBERT_HOST" --port "$HALBERT_PORT" "$@"
