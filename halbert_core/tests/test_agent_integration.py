@@ -444,3 +444,33 @@ class TestContextAssembly:
 
 
 # Run with: pytest tests/test_agent_integration.py -v
+
+
+# -----------------------------------------------------------------------------
+# get_agent() wiring
+# -----------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_agent_uses_sourceprep_for_searching(monkeypatch):
+    """The SEARCHING state's rag_service must be SourcePrep, not the
+    deprecated ChromaDB RAGServiceAdapter."""
+    from halbert_core.dashboard.routes import agent as agent_routes
+    from halbert_core.context.adapters import SourcePrepAdapter
+
+    monkeypatch.setattr(agent_routes, "_agent_instance", None)
+    monkeypatch.setattr(agent_routes, "_get_llm_client", lambda: MagicMock())
+    # Keep the heavyweight cognition wiring (background scans) out of the test.
+    monkeypatch.setattr(
+        "halbert_core.integrations.cognition_wiring.get_cognition_tick",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "halbert_core.integrations.cognition_wiring.get_event_mapper",
+        lambda: None,
+    )
+
+    agent = agent_routes.get_agent()
+    try:
+        assert isinstance(agent.rag, SourcePrepAdapter)
+    finally:
+        monkeypatch.setattr(agent_routes, "_agent_instance", None)

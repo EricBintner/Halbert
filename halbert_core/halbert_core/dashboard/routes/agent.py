@@ -89,7 +89,8 @@ def get_agent():
         from ...agents import AgentStateMachine
         from ...tools import ToolSafetyFramework, ToolExecutor
         from ...eval.crag import CRAGEvaluator
-        from ...context import create_wired_context_assembler, RAGServiceAdapter, MemoryServiceAdapter
+        from ...context import create_wired_context_assembler, MemoryServiceAdapter
+        from ...context.adapters import SourcePrepAdapter
         from ...prompts import AgentPromptBuilder, PromptBuilder, ContextInjector
 
         # Initialize components
@@ -99,8 +100,8 @@ def get_agent():
         # Create wired context assembler (connects to RAG, discovery, memory)
         context_assembler = create_wired_context_assembler()
 
-        # Create RAG and Memory services for searching handler
-        rag_service = RAGServiceAdapter()
+        # SEARCHING state retrieval: SourcePrep (RAGServiceAdapter is deprecated on the chat path)
+        rag_service = SourcePrepAdapter()
         memory_service = MemoryServiceAdapter()
 
         # Wire PromptBuilder + ContextInjector into AgentPromptBuilder
@@ -218,11 +219,11 @@ def _load_model_config():
     routing.complexity_threshold.
     """
     try:
-        from ...utils.platform import get_config_dir
+        from ...model.config_locator import find_models_config
         import yaml
 
-        config_path = get_config_dir() / "models.yml"
-        if config_path.exists():
+        config_path = find_models_config(include_repo=False)
+        if config_path is not None:
             with open(config_path, "r") as f:
                 return yaml.safe_load(f) or {}
         return {}

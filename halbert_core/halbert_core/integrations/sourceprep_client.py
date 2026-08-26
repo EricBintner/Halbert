@@ -20,13 +20,34 @@ Endpoints wrapped:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_PROJECT_ROOT = Path("~/.local/share/halbert/sourceprep")  # sourceprep_template.yml project.root
+
+
+def resolve_default_project_id() -> str:
+    """SOURCEPREP_PROJECT_ID env var, else <template root>/.sourceprep/project.json 'id', else ''."""
+    pid = os.environ.get("SOURCEPREP_PROJECT_ID", "").strip()
+    if pid:
+        return pid
+    root = Path(os.environ.get("SOURCEPREP_PROJECT_ROOT", str(_DEFAULT_PROJECT_ROOT))).expanduser()
+    marker = root / ".sourceprep" / "project.json"
+    try:
+        data = json.loads(marker.read_text())
+        pid = str(data.get("id", "")).strip()
+        if pid:
+            logger.info(f"SourcePrep project id resolved from {marker}: {pid}")
+        return pid
+    except (OSError, ValueError, AttributeError):
+        return ""
 
 
 class SourcePrepClient:
@@ -42,9 +63,7 @@ class SourcePrepClient:
             base_url
             or os.environ.get("SOURCEPREP_URL", "http://localhost:8400")
         ).rstrip("/")
-        self.project_id = project_id or os.environ.get(
-            "SOURCEPREP_PROJECT_ID", ""
-        )
+        self.project_id = project_id or resolve_default_project_id()
         self.timeout = timeout
 
     def _url(self, path: str, project_id: Optional[str] = None) -> str:

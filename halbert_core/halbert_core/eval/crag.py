@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional, Any, TYPE_CHECKING
 from enum import Enum
 import logging
+import re
 import time
 
 logger = logging.getLogger('halbert.eval.crag')
@@ -194,23 +195,44 @@ class CRAGEvaluator:
         Uses embeddings if available, otherwise keyword matching.
         """
         content = doc.get("content", "")
-        if not content:
+        if not isinstance(content, str) or not content:
             return 0.0
         
         # Truncate for efficiency
         content = content[:2000]
+        
+        # The retriever's own similarity score (SourcePrep cosine, carried in
+        # metadata by the SEARCHING state) is the strongest signal we have
+        # without an embedding service; keyword overlap can only lift it.
+        retriever_score = self._retriever_score(doc)
         
         if self.embeddings:
             try:
                 # Semantic similarity via embeddings
                 query_emb = await self.embeddings.embed(query)
                 doc_emb = await self.embeddings.embed(content)
-                return self._cosine_similarity(query_emb, doc_emb)
+                return max(retriever_score, self._cosine_similarity(query_emb, doc_emb))
             except Exception as e:
                 logger.warning(f"Embedding failed, falling back to keyword: {e}")
         
         # Fallback: keyword overlap
-        return self._keyword_similarity(query, content)
+        return max(retriever_score, self._keyword_similarity(query, content))
+    
+    @staticmethod
+    def _retriever_score(doc: Dict) -> float:
+        """Retriever similarity score from the doc or its metadata, clamped to 0-1."""
+        raw = doc.get("score")
+        if raw is None:
+            meta = doc.get("metadata")
+            if isinstance(meta, dict):
+                raw = meta.get("score", meta.get("relevance"))
+        try:
+            score = float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+        if score != score:  # NaN
+            return 0.0
+        return min(1.0, max(0.0, score))
     
     async def _assess_completeness(
         self,
@@ -270,19 +292,77 @@ Reply with just the number (e.g., "0.7")."""
             messages=[{"role": "user", "content": prompt}]
         )
         
-        # Parse response
         content = response.content if hasattr(response, 'content') else str(response)
-        try:
-            # Extract first number from response
-            import re
-            match = re.search(r'(\d+\.?\d*)', content.strip())
-            if match:
-                score = float(match.group(1))
-                return min(1.0, max(0.0, score))
-        except (ValueError, AttributeError):
-            pass
+        score = self._parse_completeness(content)
+        logger.debug(
+            "CRAG completeness raw reply (parsed=%.2f): %r",
+            score, str(content)[:200],
+        )
+        return score
+    
+    _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
+    _PERCENT_RE = re.compile(r'(\d{1,3}(?:\.\d+)?)\s*%')
+    # "0.8/1.0", "3 of 5", "0.5 out of 1.0" -> numerator / denominator
+    _FRACTION_RE = re.compile(
+        r'(\d+(?:\.\d+)?)\s*(?:/|\bout\s+of\b|\bof\b)\s*(\d+(?:\.\d+)?)',
+        re.IGNORECASE,
+    )
+    _NUMBER_RE = re.compile(r'(?<![\w.])(\d+(?:\.\d*)?|\.\d+)(?![\w])')
+    
+    @classmethod
+    def _parse_completeness(cls, content: Any) -> float:
+        """Extract a 0-1 completeness score from an LLM reply.
         
-        return 0.5  # Default if parsing fails
+        Models rarely reply with *just* the number: they wrap it in markdown,
+        prefix it with reasoning or a ``<think>`` block, write ``0.8/1.0`` or
+        ``80%``. The previous parser took the FIRST digit in the text, which
+        turned "1 of 3 topics ... 0.3" into 1.0 and "0.\n" into 0.0.
+        
+        Strategy: strip think blocks, then take the LAST candidate that is a
+        plausible score (percentage, fraction, or 0-1 float), since the final
+        number is the model's answer. Unparseable -> neutral 0.5.
+        """
+        if content is None:
+            return 0.5
+        text = str(content)
+        text = cls._THINK_RE.sub(' ', text)
+        # An unterminated <think> block: keep only what follows the tag.
+        if '<think>' in text.lower():
+            idx = text.lower().rfind('<think>')
+            text = text[idx + len('<think>'):]
+        text = text.strip()
+        if not text:
+            return 0.5
+        
+        candidates: List[tuple] = []  # (position, score)
+        
+        for m in cls._PERCENT_RE.finditer(text):
+            candidates.append((m.start(), float(m.group(1)) / 100.0))
+        
+        fraction_spans = []
+        for m in cls._FRACTION_RE.finditer(text):
+            num, den = float(m.group(1)), float(m.group(2))
+            if den > 0 and num <= den:
+                fraction_spans.append((m.start(), m.end()))
+                candidates.append((m.start(), num / den))
+        
+        for m in cls._NUMBER_RE.finditer(text):
+            if any(a <= m.start() < b for a, b in fraction_spans):
+                continue
+            if text[m.end():m.end() + 1] == '%':
+                continue
+            try:
+                value = float(m.group(1))
+            except ValueError:
+                continue
+            if 0.0 <= value <= 1.0:
+                candidates.append((m.start(), value))
+        
+        if not candidates:
+            return 0.5
+        candidates.sort(key=lambda c: c[0])
+        score = candidates[-1][1]
+        return min(1.0, max(0.0, score))
     
     def _heuristic_completeness(self, query: str, documents: List[Dict]) -> float:
         """Heuristic completeness based on coverage."""
@@ -290,14 +370,16 @@ Reply with just the number (e.g., "0.7")."""
             return 0.0
         
         # Extract query keywords
-        query_words = set(query.lower().split())
+        query_words = self._tokenize(query)
         query_words -= {'the', 'a', 'an', 'is', 'are', 'what', 'how', 'why', 'when', 'where', 'who'}
         
         if not query_words:
             return 0.5
         
         # Check keyword coverage across documents
-        all_content = " ".join(doc.get("content", "") for doc in documents).lower()
+        all_content = " ".join(
+            doc.get("content", "") for doc in documents if isinstance(doc.get("content"), str)
+        ).lower()
         
         covered = sum(1 for word in query_words if word in all_content)
         coverage = covered / len(query_words)
@@ -377,8 +459,8 @@ Reply with just the number (e.g., "0.7")."""
     
     def _keyword_similarity(self, query: str, content: str) -> float:
         """Simple keyword-based similarity."""
-        query_words = set(query.lower().split())
-        content_words = set(content.lower().split())
+        query_words = self._tokenize(query)
+        content_words = self._tokenize(content)
         
         # Remove common words
         stopwords = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
@@ -407,3 +489,20 @@ Reply with just the number (e.g., "0.7")."""
         
         overlap = len(query_words & content_words)
         return overlap / len(query_words)
+    
+    _TOKEN_RE = re.compile(r'[a-z0-9_]+')
+    
+    @classmethod
+    def _tokenize(cls, text: str) -> set:
+        """Lower-case word tokens split on punctuation as well as whitespace.
+        
+        Retrieved docs contain tokens like ``file:host/etc/ssh/sshd_config`` or
+        ``sshd_config.``; a whitespace-only split never matched them against
+        the query token ``sshd_config`` (round-1 relevance was exactly 0.0).
+        Both the whole whitespace token and its punctuation-split parts are
+        kept so exact matches keep working.
+        """
+        lowered = text.lower()
+        tokens = set(lowered.split())
+        tokens.update(cls._TOKEN_RE.findall(lowered))
+        return tokens
