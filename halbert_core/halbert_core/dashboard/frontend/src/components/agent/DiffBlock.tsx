@@ -45,7 +45,7 @@ export function DiffBlock({
           <span className="w-8 text-right pr-1 text-muted-foreground select-none text-[10px]">
             {i + 1}
           </span>
-          <span className="flex-1 bg-green-100 dark:bg-green-500/10 text-green-700 dark:text-green-300 px-1">
+          <span className="flex-1 bg-success-muted dark:bg-success/10 text-success dark:text-success px-1">
             + {line}
           </span>
         </div>
@@ -81,10 +81,10 @@ export function DiffBlock({
     }
     
     return diffLines.map((line, i) => {
-      const bgColor = line.type === 'add' ? 'bg-green-100 dark:bg-green-500/10' : 
-                      line.type === 'remove' ? 'bg-red-100 dark:bg-red-500/10' : '';
-      const textColor = line.type === 'add' ? 'text-green-700 dark:text-green-300' : 
-                        line.type === 'remove' ? 'text-red-700 dark:text-red-300' : 'text-muted-foreground';
+      const bgColor = line.type === 'add' ? 'bg-success-muted dark:bg-success/10' : 
+                      line.type === 'remove' ? 'bg-error-muted dark:bg-error/10' : '';
+      const textColor = line.type === 'add' ? 'text-success dark:text-success' : 
+                        line.type === 'remove' ? 'text-error dark:text-error' : 'text-muted-foreground';
       const prefix = line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' ';
       
       return (
@@ -102,8 +102,8 @@ export function DiffBlock({
   
   const statusColors = {
     pending: 'border-border',
-    applied: 'border-green-500/50 bg-green-50 dark:bg-green-500/5',
-    rejected: 'border-red-500/50 bg-red-50 dark:bg-red-500/5',
+    applied: 'border-success/50 bg-success-muted dark:bg-success/5',
+    rejected: 'border-error/50 bg-error-muted dark:bg-error/5',
   };
   
   return (
@@ -115,10 +115,10 @@ export function DiffBlock({
           <span className="text-[10px] text-foreground font-mono truncate max-w-[150px]">{filePath}</span>
           <div className="flex items-center gap-1 text-[10px]">
             {additions > 0 && (
-              <span className="text-green-600 dark:text-green-400">+{additions}</span>
+              <span className="text-success dark:text-success">+{additions}</span>
             )}
             {deletions > 0 && (
-              <span className="text-red-600 dark:text-red-400">-{deletions}</span>
+              <span className="text-error dark:text-error">-{deletions}</span>
             )}
           </div>
         </div>
@@ -135,7 +135,7 @@ export function DiffBlock({
               </button>
               <button
                 onClick={onApply}
-                className="flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-500/10 hover:bg-green-200 dark:hover:bg-green-500/20 rounded transition-colors"
+                className="flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-success dark:text-success bg-success-muted dark:bg-success/10 hover:bg-success-muted dark:hover:bg-success/20 rounded transition-colors"
               >
                 <Check className="h-2.5 w-2.5" />
                 Apply
@@ -143,7 +143,7 @@ export function DiffBlock({
             </>
           )}
           {status === 'applied' && (
-            <span className="flex items-center gap-0.5 text-[10px] text-green-600 dark:text-green-400">
+            <span className="flex items-center gap-0.5 text-[10px] text-success dark:text-success">
               <Check className="h-2.5 w-2.5" />
               Applied
             </span>
@@ -200,8 +200,8 @@ export function DiffSummary({ diffs, onApplyAll, onRejectAll }: DiffSummaryProps
           {diffs.length} file{diffs.length !== 1 ? 's' : ''} changed
         </span>
         <div className="flex items-center gap-1 text-[10px]">
-          <span className="text-green-600 dark:text-green-400">+{totalAdditions}</span>
-          <span className="text-red-600 dark:text-red-400">-{totalDeletions}</span>
+          <span className="text-success dark:text-success">+{totalAdditions}</span>
+          <span className="text-error dark:text-error">-{totalDeletions}</span>
         </div>
       </div>
       
@@ -214,7 +214,7 @@ export function DiffSummary({ diffs, onApplyAll, onRejectAll }: DiffSummaryProps
         </button>
         <button
           onClick={onApplyAll}
-          className="px-2 py-0.5 text-[10px] text-white bg-green-600 hover:bg-green-500 rounded transition-colors"
+          className="px-2 py-0.5 text-[10px] text-white bg-success hover:bg-success rounded transition-colors"
         >
           Apply All
         </button>

@@ -49,8 +49,8 @@ export function UsageBar({
   
   // Determine color based on thresholds
   const getIndicatorColor = () => {
-    if (clampedPercent >= criticalThreshold) return 'bg-red-500'
-    if (clampedPercent >= warningThreshold) return 'bg-yellow-500'
+    if (clampedPercent >= criticalThreshold) return 'bg-error'
+    if (clampedPercent >= warningThreshold) return 'bg-warning'
     return '' // Use default primary color
   }
   

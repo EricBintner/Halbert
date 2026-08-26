@@ -106,10 +106,10 @@ export function TaskPanel({
       return <Loader2 className="h-4 w-4 animate-spin text-info" />;
     }
     if (isSuccess) {
-      return <CheckCircle2 className="h-4 w-4 text-green-400" />;
+      return <CheckCircle2 className="h-4 w-4 text-success" />;
     }
     if (isError) {
-      return <XCircle className="h-4 w-4 text-red-400" />;
+      return <XCircle className="h-4 w-4 text-error" />;
     }
     return <Bot className="h-4 w-4 text-muted-foreground" />;
   };
@@ -166,7 +166,7 @@ export function TaskPanel({
                 <StateBadge state={state} showPulse={isStreaming} />
               )}
               {state === 'complete' && (
-                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-500/20 text-green-400 rounded">COMPLETE</span>
+                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-success/20 text-success rounded">COMPLETE</span>
               )}
               {state === 'cancelled' && (
                 <span className="px-1.5 py-0.5 text-[10px] font-medium bg-muted/20 text-muted-foreground rounded">CANCELLED</span>
@@ -244,7 +244,7 @@ export function TaskPanel({
 
             {/* Error display */}
             {error && (
-              <div className="flex items-start gap-2 p-2 bg-red-500/10 border border-red-500/30 rounded text-xs text-red-400">
+              <div className="flex items-start gap-2 p-2 bg-error/10 border border-error/30 rounded text-xs text-error">
                 <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                 <span>{error}</span>
               </div>

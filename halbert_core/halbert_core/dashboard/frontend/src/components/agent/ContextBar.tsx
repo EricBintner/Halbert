@@ -31,9 +31,9 @@ interface ContextPillProps {
 const TYPE_CONFIG: Record<ContextType, { icon: typeof FileText; color: string; bg: string }> = {
   file: { icon: FileText, color: 'text-info dark:text-info', bg: 'bg-blue-100 dark:bg-info/10 border-blue-200 dark:border-info/20' },
   search: { icon: Search, color: 'text-purple-600 dark:text-purple-400', bg: 'bg-purple-100 dark:bg-purple-500/10 border-purple-200 dark:border-purple-500/20' },
-  memory: { icon: Brain, color: 'text-pink-600 dark:text-pink-400', bg: 'bg-pink-100 dark:bg-pink-500/10 border-pink-200 dark:border-pink-500/20' },
-  web: { icon: Globe, color: 'text-green-600 dark:text-green-400', bg: 'bg-green-100 dark:bg-green-500/10 border-green-200 dark:border-green-500/20' },
-  directory: { icon: FolderOpen, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-100 dark:bg-orange-500/10 border-orange-200 dark:border-orange-500/20' },
+  memory: { icon: Brain, color: 'text-error dark:text-error', bg: 'bg-error-muted dark:bg-error/10 border-error-muted dark:border-error/20' },
+  web: { icon: Globe, color: 'text-success dark:text-success', bg: 'bg-success-muted dark:bg-success/10 border-success-muted dark:border-success/20' },
+  directory: { icon: FolderOpen, color: 'text-warning dark:text-warning', bg: 'bg-warning-muted dark:bg-warning/10 border-warning-muted dark:border-warning/20' },
 };
 
 export function ContextPill({ item, onRemove, onClick, isExpanded: _isExpanded }: ContextPillProps) {

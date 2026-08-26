@@ -156,7 +156,7 @@ export function DatasetManager() {
     switch (dataset.status) {
       case 'completed':
         return (
-          <Badge variant="outline" className="text-green-600 border-green-600">
+          <Badge variant="outline" className="text-success border-success">
             <CheckCircle className="h-3 w-3 mr-1" />
             Downloaded
           </Badge>
@@ -170,7 +170,7 @@ export function DatasetManager() {
         )
       case 'failed':
         return (
-          <Badge variant="outline" className="text-red-600 border-red-600">
+          <Badge variant="outline" className="text-error border-error">
             <XCircle className="h-3 w-3 mr-1" />
             Failed
           </Badge>

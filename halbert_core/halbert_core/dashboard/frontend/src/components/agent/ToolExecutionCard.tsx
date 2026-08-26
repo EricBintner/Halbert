@@ -26,9 +26,9 @@ const STATUS_CONFIG = {
   success: {
     icon: '✓',
     label: 'Success',
-    bgColor: 'bg-green-100 dark:bg-green-500/10',
-    borderColor: 'border-green-200 dark:border-green-500/30',
-    textColor: 'text-green-600 dark:text-green-400',
+    bgColor: 'bg-success-muted dark:bg-success/10',
+    borderColor: 'border-success-muted dark:border-success/30',
+    textColor: 'text-success dark:text-success',
   },
   error: {
     icon: '✗',

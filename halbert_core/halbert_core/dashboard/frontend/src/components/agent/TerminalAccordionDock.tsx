@@ -33,9 +33,9 @@ interface TerminalAccordionDockProps {
 }
 
 const STATUS_DOT: Record<string, string> = {
-  running: 'bg-emerald-400',
+  running: 'bg-success',
   done: 'bg-muted',
-  idle: 'bg-amber-400',
+  idle: 'bg-warning',
 };
 
 // An interactive login shell. /bin/sh -c runs it, so $SHELL is expanded by the
@@ -122,7 +122,7 @@ export function TerminalAccordionDock({
             </button>
           )}
           {launchError && (
-            <p className="text-[10px] text-rose-400 font-mono break-words">{launchError}</p>
+            <p className="text-[10px] text-error font-mono break-words">{launchError}</p>
           )}
         </div>
       ) : (

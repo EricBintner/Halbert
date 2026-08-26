@@ -25,8 +25,8 @@ const SOURCE_CONFIG: Record<ScanSource, { icon: typeof Search; label: string; co
   rag: { icon: Database, label: 'Documents', color: 'text-info dark:text-info', bgColor: 'bg-blue-100 dark:bg-info/10' },
   memory: { icon: Brain, label: 'Memory', color: 'text-purple-600 dark:text-purple-400', bgColor: 'bg-purple-100 dark:bg-purple-500/10' },
   discovery: { icon: Search, label: 'System', color: 'text-info dark:text-info', bgColor: 'bg-cyan-100 dark:bg-info/10' },
-  web: { icon: Globe, label: 'Web', color: 'text-green-600 dark:text-green-400', bgColor: 'bg-green-100 dark:bg-green-500/10' },
-  file: { icon: FileText, label: 'Files', color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-100 dark:bg-orange-500/10' },
+  web: { icon: Globe, label: 'Web', color: 'text-success dark:text-success', bgColor: 'bg-success-muted dark:bg-success/10' },
+  file: { icon: FileText, label: 'Files', color: 'text-warning dark:text-warning', bgColor: 'bg-warning-muted dark:bg-warning/10' },
 };
 
 export function ScanBlock({
@@ -52,12 +52,12 @@ export function ScanBlock({
     >
       <div className={cn(
         'flex items-center justify-center w-6 h-6 rounded-full transition-all duration-300',
-        isComplete ? 'bg-green-100 dark:bg-green-500/20' : config.bgColor
+        isComplete ? 'bg-success-muted dark:bg-success/20' : config.bgColor
       )}>
         {!isComplete ? (
           <Loader2 className={cn('h-3 w-3 animate-spin', config.color)} />
         ) : (
-          <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400" />
+          <CheckCircle2 className="h-3 w-3 text-success dark:text-success" />
         )}
       </div>
       
@@ -85,7 +85,7 @@ export function ScanBlock({
         <div className={cn(
           'text-[10px] font-medium px-1.5 py-0.5 rounded-full transition-all',
           resultsCount > 0 
-            ? 'bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-400' 
+            ? 'bg-success-muted dark:bg-success/20 text-success dark:text-success' 
             : 'bg-muted text-muted-foreground'
         )}>
           {resultsCount} found

@@ -24,7 +24,7 @@ const STATUS_ICONS: Record<PlanStep['status'], string> = {
 const STATUS_COLORS: Record<PlanStep['status'], string> = {
   pending: 'text-muted-foreground',
   in_progress: 'text-info dark:text-info',
-  completed: 'text-green-600 dark:text-green-400',
+  completed: 'text-success dark:text-success',
   failed: 'text-destructive',
 };
 

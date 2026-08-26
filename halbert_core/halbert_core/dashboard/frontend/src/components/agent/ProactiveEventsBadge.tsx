@@ -24,8 +24,8 @@ const SEVERITY_ICONS = {
 }
 
 const SEVERITY_COLORS = {
-  critical: 'text-red-400 bg-red-500/10 border-red-500/30',
-  warning: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30',
+  critical: 'text-error bg-error/10 border-error/30',
+  warning: 'text-warning bg-warning/10 border-warning/30',
   info: 'text-info bg-info/10 border-info/30',
 }
 
@@ -73,7 +73,7 @@ export function ProactiveEventsBadge() {
       >
         <Bell className="h-5 w-5 text-muted-foreground" />
         {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+          <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-error text-white text-[10px] font-bold flex items-center justify-center">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
@@ -89,15 +89,15 @@ export function ProactiveEventsBadge() {
           </div>
 
           {actionError && (
-            <div className="flex items-start gap-2 border-b border-red-500/30 bg-red-500/10 px-4 py-2">
-              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-red-400" />
-              <span className="flex-1 text-xs text-red-400 break-words">{actionError}</span>
+            <div className="flex items-start gap-2 border-b border-error/30 bg-error/10 px-4 py-2">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-error" />
+              <span className="flex-1 text-xs text-error break-words">{actionError}</span>
               <button
                 onClick={clearActionError}
-                className="p-0.5 hover:bg-red-500/20 rounded shrink-0"
+                className="p-0.5 hover:bg-error/20 rounded shrink-0"
                 title="Dismiss error"
               >
-                <X className="h-3 w-3 text-red-400" />
+                <X className="h-3 w-3 text-error" />
               </button>
             </div>
           )}

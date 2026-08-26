@@ -1688,7 +1688,7 @@ export function SidePanel() {
                     autoFocus
                   />
                   <button onClick={renameCurrentConversation} className="p-1 hover:bg-accent rounded">
-                    <Check className="h-3 w-3 text-green-500" />
+                    <Check className="h-3 w-3 text-success" />
                   </button>
                   <button onClick={() => setIsRenaming(false)} className="p-1 hover:bg-accent rounded">
                     <X className="h-3 w-3 text-muted-foreground" />
@@ -2030,7 +2030,7 @@ export function SidePanel() {
                         onClick={() => insertMention(m)}
                       >
                         {m.type === 'terminal' ? (
-                          <Terminal className="h-3 w-3 text-green-500" />
+                          <Terminal className="h-3 w-3 text-success" />
                         ) : (
                           <AtSign className="h-3 w-3 text-muted-foreground" />
                         )}
@@ -2047,8 +2047,8 @@ export function SidePanel() {
                           {terminalLines.slice(-5).map((line, i) => (
                             <div key={i} className={cn(
                               "truncate",
-                              line.type === 'input' && "text-green-400",
-                              line.type === 'error' && "text-red-400"
+                              line.type === 'input' && "text-success",
+                              line.type === 'error' && "text-error"
                             )}>
                               {line.content.slice(0, 80)}{line.content.length > 80 ? '...' : ''}
                             </div>
@@ -2112,7 +2112,7 @@ export function SidePanel() {
                 {messageQueue.length > 0 && (
                   <div className="mb-2 space-y-1">
                     {messageQueue.map((msg, idx) => (
-                      <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded text-xs">
+                      <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 bg-warning/10 border border-warning/20 rounded text-xs">
                         <span className="text-muted-foreground truncate">Queued: {msg}</span>
                         <button
                           onClick={() => setMessageQueue(prev => prev.filter((_, i) => i !== idx))}
@@ -2224,7 +2224,7 @@ export function SidePanel() {
                     autoFocus
                   />
                   <button onClick={renameAgentConversation} className="p-1 hover:bg-accent rounded">
-                    <Check className="h-3 w-3 text-green-500" />
+                    <Check className="h-3 w-3 text-success" />
                   </button>
                   <button onClick={() => setIsAgentRenaming(false)} className="p-1 hover:bg-accent rounded">
                     <X className="h-3 w-3 text-muted-foreground" />
@@ -2276,9 +2276,9 @@ export function SidePanel() {
                     key={line.id}
                     className={cn(
                       "whitespace-pre-wrap mb-1",
-                      line.type === 'input' && "text-green-400",
+                      line.type === 'input' && "text-success",
                       line.type === 'output' && "text-foreground",
-                      line.type === 'error' && "text-red-400"
+                      line.type === 'error' && "text-error"
                     )}
                   >
                     {line.content}
@@ -2290,7 +2290,7 @@ export function SidePanel() {
               {/* Terminal Input */}
               <div className="p-2 border-t border-border bg-background">
                 <div className="flex items-center gap-2">
-                  <span className="text-green-400 font-mono text-xs">$</span>
+                  <span className="text-success font-mono text-xs">$</span>
                   <input
                     ref={terminalInputRef}
                     type="text"

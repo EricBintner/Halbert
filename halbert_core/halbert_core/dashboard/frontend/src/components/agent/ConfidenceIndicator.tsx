@@ -16,8 +16,8 @@ interface ConfidenceIndicatorProps {
 }
 
 const CRAG_CONFIG: Record<CRAGAction, { label: string; color: string }> = {
-  CORRECT: { label: 'High confidence', color: 'text-green-600 dark:text-green-400' },
-  AMBIGUOUS: { label: 'Uncertain', color: 'text-yellow-600 dark:text-yellow-400' },
+  CORRECT: { label: 'High confidence', color: 'text-success dark:text-success' },
+  AMBIGUOUS: { label: 'Uncertain', color: 'text-warning dark:text-warning' },
   INCORRECT: { label: 'Low confidence', color: 'text-destructive' },
   PENDING: { label: 'Evaluating...', color: 'text-muted-foreground' },
 };
@@ -39,10 +39,10 @@ export function ConfidenceIndicator({
   
   // Calculate color based on confidence
   const getBarColor = () => {
-    if (confidence >= 0.7) return 'bg-green-500';
-    if (confidence >= 0.5) return 'bg-yellow-500';
-    if (confidence >= 0.3) return 'bg-orange-500';
-    return 'bg-red-500';
+    if (confidence >= 0.7) return 'bg-success';
+    if (confidence >= 0.5) return 'bg-warning';
+    if (confidence >= 0.3) return 'bg-warning';
+    return 'bg-error';
   };
 
   const percentage = Math.round(confidence * 100);

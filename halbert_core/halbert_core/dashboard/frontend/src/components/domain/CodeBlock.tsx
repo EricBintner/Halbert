@@ -196,7 +196,7 @@ export function CodeBlock({
         {/* Header */}
         <div className="flex items-center justify-between px-2 py-1 bg-muted border-b border-border/30">
           <div className="flex items-center gap-1.5">
-            <Terminal className="h-3 w-3 text-green-400" />
+            <Terminal className="h-3 w-3 text-success" />
             <span className="text-[10px] text-muted-foreground font-mono">{lang || 'bash'}</span>
           </div>
           <div className="flex items-center gap-1">
@@ -206,7 +206,7 @@ export function CodeBlock({
               title="Copy"
             >
               {copied ? (
-                <Check className="h-3 w-3 text-green-400" />
+                <Check className="h-3 w-3 text-success" />
               ) : (
                 <Copy className="h-3 w-3 text-muted-foreground" />
               )}
@@ -222,7 +222,7 @@ export function CodeBlock({
                   {isRunning ? (
                     <Loader2 className="h-3 w-3 text-info animate-spin" />
                   ) : (
-                    <Play className="h-3 w-3 text-green-400" />
+                    <Play className="h-3 w-3 text-success" />
                   )}
                 </button>
                 <button
@@ -244,7 +244,7 @@ export function CodeBlock({
         {/* Code content */}
         <pre className={`${compact ? 'p-2' : 'p-3'} text-[11px] font-mono overflow-x-auto max-w-full ${
           isShellCommand 
-            ? 'text-green-300'  // Runnable command
+            ? 'text-success'  // Runnable command
             : 'text-foreground'   // Output/display
         }`}>
           <code className="break-all">{code}</code>
@@ -255,18 +255,18 @@ export function CodeBlock({
       {safetyWarning && (
         <div className={`rounded-md border p-2 my-1 ${
           safetyWarning.tier === 'dangerous' 
-            ? 'border-red-500/50 bg-red-950/30' 
-            : 'border-yellow-500/50 bg-yellow-950/30'
+            ? 'border-error/50 bg-error/30' 
+            : 'border-warning/50 bg-warning/30'
         }`}>
           <div className="flex items-start gap-2">
             {safetyWarning.tier === 'dangerous' ? (
-              <ShieldAlert className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
+              <ShieldAlert className="h-4 w-4 text-error flex-shrink-0 mt-0.5" />
             ) : (
-              <AlertTriangle className="h-4 w-4 text-yellow-400 flex-shrink-0 mt-0.5" />
+              <AlertTriangle className="h-4 w-4 text-warning flex-shrink-0 mt-0.5" />
             )}
             <div className="flex-1 min-w-0">
               <p className={`text-[11px] font-medium ${
-                safetyWarning.tier === 'dangerous' ? 'text-red-300' : 'text-yellow-300'
+                safetyWarning.tier === 'dangerous' ? 'text-error' : 'text-warning'
               }`}>
                 {safetyWarning.tier === 'dangerous' ? '⚠️ Dangerous Command' : '⚡ Caution'}
               </p>
@@ -280,8 +280,8 @@ export function CodeBlock({
                   disabled={isRunning}
                   className={`px-2 py-1 text-[10px] rounded ${
                     safetyWarning.tier === 'dangerous'
-                      ? 'bg-red-600 hover:bg-red-700 text-white'
-                      : 'bg-yellow-600 hover:bg-yellow-700 text-white'
+                      ? 'bg-error hover:bg-error text-white'
+                      : 'bg-warning hover:bg-warning text-white'
                   }`}
                 >
                   {isRunning ? 'Running...' : 'Run Anyway'}
@@ -300,9 +300,9 @@ export function CodeBlock({
 
       {/* Output display */}
       {output && (
-        <div className={`rounded-md border ${isError ? 'border-red-500/30 bg-red-950/20' : 'border-border/50 bg-muted/50'}`}>
+        <div className={`rounded-md border ${isError ? 'border-error/30 bg-error/20' : 'border-border/50 bg-muted/50'}`}>
           <div className="flex items-center justify-between px-2 py-1 border-b border-border/30">
-            <span className={`text-[10px] font-mono ${isError ? 'text-red-400' : 'text-muted-foreground'}`}>
+            <span className={`text-[10px] font-mono ${isError ? 'text-error' : 'text-muted-foreground'}`}>
               {isError ? 'Error' : 'Output'}
             </span>
             <button

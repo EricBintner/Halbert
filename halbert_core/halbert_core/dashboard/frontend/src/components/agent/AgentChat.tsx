@@ -599,10 +599,10 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
                       <span className="flex-1 truncate text-left">{conv.title || 'Untitled'}</span>
                       <button
                         onClick={(e) => deleteConversation(conv.conversation_id, e)}
-                        className="p-1 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 rounded transition-all"
+                        className="p-1 opacity-0 group-hover:opacity-100 hover:bg-error/20 rounded transition-all"
                         title="Delete conversation"
                       >
-                        <Trash2 className="h-3 w-3 text-red-400" />
+                        <Trash2 className="h-3 w-3 text-error" />
                       </button>
                     </button>
                   ))}
@@ -750,10 +750,10 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
         
         {agentError && !isStreaming && (
           <div className="flex justify-center">
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2 flex items-center gap-2">
-              <span className="text-sm text-red-400">{agentError}</span>
-              <button onClick={handleReset} className="p-1 hover:bg-red-500/20 rounded">
-                <RotateCcw className="h-4 w-4 text-red-400" />
+            <div className="bg-error/10 border border-error/30 rounded-lg px-4 py-2 flex items-center gap-2">
+              <span className="text-sm text-error">{agentError}</span>
+              <button onClick={handleReset} className="p-1 hover:bg-error/20 rounded">
+                <RotateCcw className="h-4 w-4 text-error" />
               </button>
             </div>
           </div>
@@ -772,7 +772,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
               onClick={() => insertMention(m)}
             >
               {m.type === 'terminal' ? (
-                <Terminal className="h-3 w-3 text-green-500" />
+                <Terminal className="h-3 w-3 text-success" />
               ) : (
                 <AtSign className="h-3 w-3 text-muted-foreground" />
               )}
@@ -804,7 +804,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
                 />
                 <button
                   onClick={() => removeAttachedImage(img.id)}
-                  className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute -top-1 -right-1 h-4 w-4 bg-error text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                 >
                   <XIcon className="h-2.5 w-2.5" />
                 </button>
@@ -825,7 +825,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
         {messageQueue.length > 0 && (
           <div className="mb-2 space-y-1">
             {messageQueue.map((msg, idx) => (
-              <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded text-xs">
+              <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 bg-warning/10 border border-warning/20 rounded text-xs">
                 <span className="text-muted-foreground truncate">Queued: {msg}</span>
                 <button
                   onClick={() => setMessageQueue(prev => prev.filter((_, i) => i !== idx))}
@@ -865,7 +865,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
           </div>
           
           {isStreaming ? (
-            <button onClick={cancel} className="p-2 bg-red-600 hover:bg-red-500 rounded-lg transition-colors flex-shrink-0">
+            <button onClick={cancel} className="p-2 bg-error hover:bg-error rounded-lg transition-colors flex-shrink-0">
               <StopCircle className="h-5 w-5 text-white" />
             </button>
           ) : (

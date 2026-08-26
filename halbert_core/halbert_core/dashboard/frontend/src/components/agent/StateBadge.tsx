@@ -42,27 +42,27 @@ const STATE_CONFIG: Record<AgentState, { label: string; color: string; bgColor: 
   },
   executing: { 
     label: 'Executing', 
-    color: 'text-orange-600 dark:text-orange-400', 
-    bgColor: 'bg-orange-100 dark:bg-orange-500/20',
-    pulseColor: 'bg-orange-500'
+    color: 'text-warning dark:text-warning', 
+    bgColor: 'bg-warning-muted dark:bg-warning/20',
+    pulseColor: 'bg-warning'
   },
   observing: { 
     label: 'Observing', 
-    color: 'text-yellow-600 dark:text-yellow-400', 
-    bgColor: 'bg-yellow-100 dark:bg-yellow-500/20',
-    pulseColor: 'bg-yellow-500'
+    color: 'text-warning dark:text-warning', 
+    bgColor: 'bg-warning-muted dark:bg-warning/20',
+    pulseColor: 'bg-warning'
   },
   responding: { 
     label: 'Responding', 
-    color: 'text-green-600 dark:text-green-400', 
-    bgColor: 'bg-green-100 dark:bg-green-500/20',
-    pulseColor: 'bg-green-500'
+    color: 'text-success dark:text-success', 
+    bgColor: 'bg-success-muted dark:bg-success/20',
+    pulseColor: 'bg-success'
   },
   awaiting_confirmation: { 
     label: 'Awaiting', 
-    color: 'text-amber-600 dark:text-amber-400', 
-    bgColor: 'bg-amber-100 dark:bg-amber-500/20',
-    pulseColor: 'bg-amber-500'
+    color: 'text-warning dark:text-warning', 
+    bgColor: 'bg-warning-muted dark:bg-warning/20',
+    pulseColor: 'bg-warning'
   },
   error: { 
     label: 'Error', 

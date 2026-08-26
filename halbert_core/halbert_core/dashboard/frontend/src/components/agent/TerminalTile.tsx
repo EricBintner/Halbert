@@ -28,9 +28,9 @@ interface TerminalTileProps {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  running: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+  running: 'bg-success/20 text-success border-success/40',
   done: 'bg-muted/20 text-foreground border-border/40',
-  idle: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+  idle: 'bg-warning/20 text-warning border-warning/40',
 };
 
 function formatElapsed(startedAt: number, now: number): string {
@@ -210,7 +210,7 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
           <button
             onClick={handlePin}
             title={session.visible ? 'Unpin (headless)' : 'Pin (live)'}
-            className={`px-1.5 py-0.5 rounded ${session.visible ? 'bg-amber-500/20 text-amber-300' : 'bg-muted/50 text-muted-foreground hover:text-foreground'}`}
+            className={`px-1.5 py-0.5 rounded ${session.visible ? 'bg-warning/20 text-warning' : 'bg-muted/50 text-muted-foreground hover:text-foreground'}`}
           >
             {session.visible ? '📌' : '📍'}
           </button>
@@ -225,7 +225,7 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
             <button
               onClick={handleTerminate}
               title="Terminate"
-              className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/40"
+              className="px-1.5 py-0.5 rounded bg-error/20 text-error hover:bg-error/30 border border-error/40"
             >
               ⏹
             </button>

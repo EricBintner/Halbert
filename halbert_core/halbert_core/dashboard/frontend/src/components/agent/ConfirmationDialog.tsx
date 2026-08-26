@@ -16,11 +16,11 @@ interface ConfirmationDialogProps {
 }
 
 const RISK_CONFIG: Record<string, { color: string; bgColor: string; icon: string }> = {
-  safe: { color: 'text-green-400', bgColor: 'bg-green-500/20', icon: '✓' },
+  safe: { color: 'text-success', bgColor: 'bg-success/20', icon: '✓' },
   low: { color: 'text-info', bgColor: 'bg-info/20', icon: 'ℹ' },
-  medium: { color: 'text-yellow-400', bgColor: 'bg-yellow-500/20', icon: '⚠' },
-  high: { color: 'text-orange-400', bgColor: 'bg-orange-500/20', icon: '⚠' },
-  critical: { color: 'text-red-400', bgColor: 'bg-red-500/20', icon: '⛔' },
+  medium: { color: 'text-warning', bgColor: 'bg-warning/20', icon: '⚠' },
+  high: { color: 'text-warning', bgColor: 'bg-warning/20', icon: '⚠' },
+  critical: { color: 'text-error', bgColor: 'bg-error/20', icon: '⛔' },
 };
 
 export function ConfirmationDialog({ 
@@ -82,7 +82,7 @@ export function ConfirmationDialog({
               flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg
               focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-900 transition-colors
               ${confirmation.riskLevel === 'high' || confirmation.riskLevel === 'critical'
-                ? 'bg-orange-600 hover:bg-orange-500 focus:ring-orange-500'
+                ? 'bg-warning hover:bg-warning focus:ring-warning'
                 : 'bg-primary text-primary-foreground hover:bg-primary/90 focus:ring-ring'
               }
             `}

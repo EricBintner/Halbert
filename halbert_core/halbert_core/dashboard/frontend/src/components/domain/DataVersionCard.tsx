@@ -230,19 +230,19 @@ export function DataVersionCard() {
               {freshnessStats.sampled_documents > 0 && (
                 <>
                   <div 
-                    className="bg-green-500 transition-all"
+                    className="bg-success transition-all"
                     style={{ width: `${(freshnessStats.freshness_breakdown.fresh / freshnessStats.sampled_documents) * 100}%` }}
                   />
                   <div 
-                    className="bg-yellow-500 transition-all"
+                    className="bg-warning transition-all"
                     style={{ width: `${(freshnessStats.freshness_breakdown.aging / freshnessStats.sampled_documents) * 100}%` }}
                   />
                   <div 
-                    className="bg-orange-500 transition-all"
+                    className="bg-warning transition-all"
                     style={{ width: `${(freshnessStats.freshness_breakdown.stale / freshnessStats.sampled_documents) * 100}%` }}
                   />
                   <div 
-                    className="bg-red-500 transition-all"
+                    className="bg-error transition-all"
                     style={{ width: `${(freshnessStats.freshness_breakdown.outdated / freshnessStats.sampled_documents) * 100}%` }}
                   />
                   <div 
@@ -254,19 +254,19 @@ export function DataVersionCard() {
             </div>
             <div className="flex items-center gap-4 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full bg-green-500" />
+                <div className="w-2 h-2 rounded-full bg-success" />
                 Fresh ({freshnessStats.freshness_breakdown.fresh})
               </span>
               <span className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full bg-yellow-500" />
+                <div className="w-2 h-2 rounded-full bg-warning" />
                 Aging ({freshnessStats.freshness_breakdown.aging})
               </span>
               <span className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full bg-orange-500" />
+                <div className="w-2 h-2 rounded-full bg-warning" />
                 Stale ({freshnessStats.freshness_breakdown.stale})
               </span>
               <span className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full bg-red-500" />
+                <div className="w-2 h-2 rounded-full bg-error" />
                 Old ({freshnessStats.freshness_breakdown.outdated})
               </span>
             </div>

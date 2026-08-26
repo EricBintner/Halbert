@@ -37,9 +37,9 @@ export interface StatusBadgeProps {
 }
 
 const severityStyles: Record<string, string> = {
-  success: 'bg-green-500/15 text-green-700 border-green-500/40 dark:bg-green-900/40 dark:text-green-300 dark:border-green-600',
-  warning: 'bg-yellow-500/15 text-yellow-700 border-yellow-500/40 dark:bg-yellow-900/40 dark:text-yellow-300 dark:border-yellow-600',
-  critical: 'bg-red-500/15 text-red-700 border-red-500/40 dark:bg-red-900/40 dark:text-red-300 dark:border-red-600',
+  success: 'bg-success/15 text-success border-success/40 dark:bg-success/40 dark:text-success dark:border-success',
+  warning: 'bg-warning/15 text-warning border-warning/40 dark:bg-warning/40 dark:text-warning dark:border-warning',
+  critical: 'bg-error/15 text-error border-error/40 dark:bg-error/40 dark:text-error dark:border-error',
   info: 'bg-info/15 text-info border-info/40 dark:bg-sky-900/40 dark:text-info dark:border-info',
   unknown: 'bg-muted text-muted-foreground border-border',
 }

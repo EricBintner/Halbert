@@ -117,14 +117,14 @@ export function Dashboard() {
       {(criticalCount > 0 || warningCount > 0) && (
         <Card className={cn(
           "border-l-4",
-          criticalCount > 0 ? "border-l-red-500 bg-red-500/5" : "border-l-yellow-500 bg-yellow-500/5"
+          criticalCount > 0 ? "border-l-red-500 bg-error/5" : "border-l-yellow-500 bg-warning/5"
         )}>
           <CardContent className="p-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
               {criticalCount > 0 ? (
-                <AlertCircle className="h-5 w-5 text-red-500" />
+                <AlertCircle className="h-5 w-5 text-error" />
               ) : (
-                <AlertTriangle className="h-5 w-5 text-yellow-500" />
+                <AlertTriangle className="h-5 w-5 text-warning" />
               )}
               <div>
                 <p className="font-medium">
@@ -152,14 +152,14 @@ export function Dashboard() {
             <CardTitle className="text-sm font-medium">CPU Usage</CardTitle>
             <Cpu className={cn(
               "h-4 w-4",
-              (systemStatus?.cpu_percent || 0) > 80 ? "text-red-500" : "text-muted-foreground"
+              (systemStatus?.cpu_percent || 0) > 80 ? "text-error" : "text-muted-foreground"
             )} />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{systemStatus?.cpu_percent.toFixed(1)}%</div>
             <Progress 
               value={systemStatus?.cpu_percent || 0} 
-              className={cn("h-1 mt-2", (systemStatus?.cpu_percent || 0) > 80 && "[&>div]:bg-red-500")}
+              className={cn("h-1 mt-2", (systemStatus?.cpu_percent || 0) > 80 && "[&>div]:bg-error")}
             />
           </CardContent>
         </Card>
@@ -169,14 +169,14 @@ export function Dashboard() {
             <CardTitle className="text-sm font-medium">Memory</CardTitle>
             <MemoryStick className={cn(
               "h-4 w-4",
-              (systemStatus?.memory_percent || 0) > 85 ? "text-yellow-500" : "text-muted-foreground"
+              (systemStatus?.memory_percent || 0) > 85 ? "text-warning" : "text-muted-foreground"
             )} />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{systemStatus?.memory_percent.toFixed(1)}%</div>
             <Progress 
               value={systemStatus?.memory_percent || 0} 
-              className={cn("h-1 mt-2", (systemStatus?.memory_percent || 0) > 85 && "[&>div]:bg-yellow-500")}
+              className={cn("h-1 mt-2", (systemStatus?.memory_percent || 0) > 85 && "[&>div]:bg-warning")}
             />
             <p className="text-xs text-muted-foreground mt-1">
               {systemStatus?.memory_available_gb.toFixed(1)} GB free
@@ -202,7 +202,7 @@ export function Dashboard() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Discoveries</CardTitle>
-            <CheckCircle className="h-4 w-4 text-green-500" />
+            <CheckCircle className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats?.total || 0}</div>
@@ -220,7 +220,7 @@ export function Dashboard() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <Server className="h-8 w-8 text-blue-500 mb-2" />
+                  <Server className="h-8 w-8 text-muted-foreground mb-2" />
                   <h3 className="font-semibold">Services</h3>
                   <p className="text-sm text-muted-foreground">
                     {stats?.by_type?.service || 0} discovered
@@ -237,7 +237,7 @@ export function Dashboard() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <HardDrive className="h-8 w-8 text-purple-500 mb-2" />
+                  <HardDrive className="h-8 w-8 text-muted-foreground mb-2" />
                   <h3 className="font-semibold">Storage</h3>
                   <p className="text-sm text-muted-foreground">
                     {stats?.by_type?.storage || 0} disks & mounts
@@ -254,7 +254,7 @@ export function Dashboard() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <Archive className="h-8 w-8 text-green-500 mb-2" />
+                  <Archive className="h-8 w-8 text-muted-foreground mb-2" />
                   <h3 className="font-semibold">Backups</h3>
                   <p className="text-sm text-muted-foreground">
                     {stats?.by_type?.backup || 0} configurations
@@ -272,7 +272,7 @@ export function Dashboard() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-yellow-500" />
+              <AlertTriangle className="h-5 w-5 text-warning" />
               Issues Requiring Attention
             </CardTitle>
             <CardDescription>
@@ -288,9 +288,9 @@ export function Dashboard() {
                 >
                   <div className="flex items-center gap-3">
                     {issue.severity === 'critical' ? (
-                      <AlertCircle className="h-5 w-5 text-red-500" />
+                      <AlertCircle className="h-5 w-5 text-error" />
                     ) : (
-                      <AlertTriangle className="h-5 w-5 text-yellow-500" />
+                      <AlertTriangle className="h-5 w-5 text-warning" />
                     )}
                     <div>
                       <p className="font-medium">{issue.name}</p>
@@ -345,8 +345,8 @@ export function Dashboard() {
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-medium">{disk.mount_point}</span>
                   <span className={cn(
-                    disk.usage_percent > 90 && "text-red-500",
-                    disk.usage_percent > 80 && "text-yellow-500",
+                    disk.usage_percent > 90 && "text-error",
+                    disk.usage_percent > 80 && "text-warning",
                   )}>
                     {disk.usage_percent.toFixed(0)}%
                   </span>
@@ -355,8 +355,8 @@ export function Dashboard() {
                   value={disk.usage_percent} 
                   className={cn(
                     "h-2",
-                    disk.usage_percent > 90 && "[&>div]:bg-red-500",
-                    disk.usage_percent > 80 && disk.usage_percent <= 90 && "[&>div]:bg-yellow-500",
+                    disk.usage_percent > 90 && "[&>div]:bg-error",
+                    disk.usage_percent > 80 && disk.usage_percent <= 90 && "[&>div]:bg-warning",
                   )}
                 />
                 <p className="text-xs text-muted-foreground">

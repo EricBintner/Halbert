@@ -282,10 +282,10 @@ export function ChromaDBSettings() {
 
   const getDiskTypeIcon = (diskType: string) => {
     switch (diskType) {
-      case 'optane': return <Zap className="h-4 w-4 text-yellow-500" />
+      case 'optane': return <Zap className="h-4 w-4 text-warning" />
       case 'nvme': return <Zap className="h-4 w-4 text-info" />
-      case 'ssd': return <HardDrive className="h-4 w-4 text-green-500" />
-      case 'hdd': return <HardDrive className="h-4 w-4 text-orange-500" />
+      case 'ssd': return <HardDrive className="h-4 w-4 text-success" />
+      case 'hdd': return <HardDrive className="h-4 w-4 text-warning" />
       default: return <HardDrive className="h-4 w-4 text-muted-foreground" />
     }
   }
@@ -364,13 +364,13 @@ export function ChromaDBSettings() {
                 <Database className="h-5 w-5" />
                 Knowledge Base Storage
                 {metrics.status === 'healthy' && (
-                  <Badge variant="outline" className="ml-2 text-green-600 border-green-600">
+                  <Badge variant="outline" className="ml-2 text-success border-success">
                     <CheckCircle className="h-3 w-3 mr-1" />
                     Healthy
                   </Badge>
                 )}
                 {metrics.status === 'warning' && (
-                  <Badge variant="outline" className="ml-2 text-yellow-600 border-yellow-600">
+                  <Badge variant="outline" className="ml-2 text-warning border-warning">
                     <AlertTriangle className="h-3 w-3 mr-1" />
                     Warning
                   </Badge>
@@ -484,7 +484,7 @@ export function ChromaDBSettings() {
                   {/* Migration Complete */}
                   {migrationStatus.status === 'completed' && migrationStatus.verified && (
                     <div className="space-y-3 pt-2 border-t">
-                      <div className="flex items-center gap-2 text-sm text-green-600">
+                      <div className="flex items-center gap-2 text-sm text-success">
                         <Check className="h-4 w-4" />
                         Migration complete and verified!
                       </div>
@@ -532,9 +532,9 @@ export function ChromaDBSettings() {
 
           {/* Warnings */}
           {metrics.warnings.length > 0 && (
-            <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3 space-y-1">
+            <div className="bg-warning/10 border border-warning/20 rounded-md p-3 space-y-1">
               {metrics.warnings.map((warning, i) => (
-                <div key={i} className="flex items-center gap-2 text-sm text-yellow-700 dark:text-yellow-400">
+                <div key={i} className="flex items-center gap-2 text-sm text-warning dark:text-warning">
                   <AlertTriangle className="h-4 w-4 shrink-0" />
                   {warning}
                 </div>
@@ -613,9 +613,9 @@ export function ChromaDBSettings() {
 
       {/* Orphan Cleanup Card */}
       {hasOrphans && (
-        <Card className="border-yellow-500/50">
+        <Card className="border-warning/50">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-yellow-700 dark:text-yellow-400">
+            <CardTitle className="flex items-center gap-2 text-warning dark:text-warning">
               <Trash2 className="h-5 w-5" />
               Orphaned Data Detected
             </CardTitle>
@@ -671,11 +671,11 @@ export function ChromaDBSettings() {
                 }`}
               >
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-green-600 font-medium">Complete!</span>
+                  <span className="text-success font-medium">Complete!</span>
                   <span className="text-muted-foreground">100%</span>
                 </div>
-                <Progress value={100} className="[&>div]:bg-green-500" />
-                <div className="flex items-center gap-2 text-sm text-green-600">
+                <Progress value={100} className="[&>div]:bg-success" />
+                <div className="flex items-center gap-2 text-sm text-success">
                   <CheckCircle className="h-4 w-4" />
                   Freed {cleanupStatus.bytes_freed_human}
                 </div>
@@ -707,7 +707,7 @@ export function ChromaDBSettings() {
       {metrics.tips.length > 0 && (
         <div className="rounded-lg border bg-muted/30 p-4">
           <div className="flex items-center gap-2 mb-3">
-            <Lightbulb className="h-4 w-4 text-yellow-500" />
+            <Lightbulb className="h-4 w-4 text-warning" />
             <span className="font-medium text-sm">Performance Tips</span>
           </div>
           <ul className="space-y-2 text-sm text-muted-foreground">
