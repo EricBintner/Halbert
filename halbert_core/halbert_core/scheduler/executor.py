@@ -542,30 +542,17 @@ class AutonomousExecutor:
             self.scheduler_engine._persist_job(job)
     
     def _log_outcome(self, result: JobResult):
-        """Log job outcome to memory (Phase 3 M2 integration)."""
-        try:
-            # Import here to avoid circular dependency
-            from ..memory.writer import MemoryWriter
-            
-            writer = MemoryWriter()
-            
-            outcome_entry = {
-                'job_id': result.job_id,
-                'success': result.success,
-                'output': result.output,
-                'error': result.error,
-                'confidence': result.confidence,
-                'execution_time_s': result.execution_time_s,
-                'retry_count': result.retry_count,
-                'ts': datetime.now(timezone.utc).isoformat() + 'Z'
-            }
-            
-            writer.write_action_outcome(outcome_entry)
-            logger.info(f"Logged outcome for job {result.job_id}: success={result.success}")
-        
-        except Exception as e:
-            logger.error(f"Failed to log outcome for {result.job_id}: {e}")
-    
+        """Record a job outcome.
+
+        The file-backed MemoryWriter was removed (audit F1): it wrote entries that
+        MemoryRetrieval could never return. Job outcomes live in the scheduler's own
+        store; durable cross-session state belongs in the TemporalStateLedger.
+        """
+        logger.info(
+            f"Job {result.job_id} outcome: success={result.success} "
+            f"confidence={result.confidence} time={result.execution_time_s}s"
+        )
+
     def get_status(self) -> Dict[str, Any]:
         """Get executor status (Phase 3 M6: includes guardrail status)."""
         status = {

@@ -58,38 +58,6 @@ def test_full_persona_workflow():
         return False
 
 
-def test_memory_isolation():
-    """Test that persona memory is properly isolated."""
-    try:
-        from halbert_core.memory.retrieval import MemoryRetrieval
-        from halbert_core.persona import PersonaManager, Persona
-        
-        memory = MemoryRetrieval()
-        persona_mgr = PersonaManager()
-        
-        # Build context for IT Admin
-        persona_mgr.switch_to(Persona.IT_ADMIN, user="test")
-        it_admin_context = memory.build_context("test query", persona="it_admin")
-        
-        # Build context for Friend
-        persona_mgr.switch_to(Persona.FRIEND, user="test")
-        friend_context = memory.build_context("test query", persona="friend")
-        
-        # Both should include core memory
-        # Friend should have additional persona memory
-        print(f"✅ IT Admin context entries: {len(it_admin_context)}")
-        print(f"✅ Friend context entries: {len(friend_context)}")
-        print("✅ Memory isolation verified")
-        
-        return True
-    
-    except Exception as e:
-        print(f"❌ Memory isolation test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
 def test_context_detection():
     """Test context detection from running processes."""
     try:
@@ -197,7 +165,6 @@ def main():
     
     tests = [
         ("Full Persona Workflow", test_full_persona_workflow),
-        ("Memory Isolation", test_memory_isolation),
         ("Context Detection", test_context_detection),
         ("Memory Purge Safety", test_memory_purge_safety),
         ("State Persistence", test_state_persistence),

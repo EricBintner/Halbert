@@ -1,14 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
-Memory management for Halbert (Phase 3 M2)
+Memory for Halbert.
 
-Provides memory storage, retrieval, and context building for LLM.
-Phase 36: Adds HybridMemorySystem for unified memory interface.
+Conversation memory belongs to the thread store (``agents/conversation_sqlite.py``);
+identity and semantic memory belong to Haloysius ``memory_v2``; durable machine state
+belongs to the ``TemporalStateLedger`` (see ``integrations/state_trackers.py``). What
+remains here is the ChromaDB-backed HybridMemorySystem, which is eval- and browser-only
+(``documentation/design/the-being.md`` §9) and is deliberately not on the agent path.
+
+The file-backed MemoryWriter/MemoryRetrieval pair was removed 2026-08-26: the writer
+imposed no schema and the reader scored only on ``text``/``summary``, so nothing ever
+written could be read back. See
+``documentation/research/CONTINUITY-MECHANISM-AUDIT-2026-08-26.md`` finding F1.
 """
 
-from .retrieval import MemoryRetrieval
-from .writer import MemoryWriter
 from .hybrid import (
     HybridMemorySystem,
     Memory,
@@ -17,9 +23,6 @@ from .hybrid import (
 )
 
 __all__ = [
-    'MemoryRetrieval',
-    'MemoryWriter',
-    # Phase 36: Hybrid Memory
     'HybridMemorySystem',
     'Memory',
     'MemoryType',

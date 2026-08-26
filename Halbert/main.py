@@ -42,8 +42,6 @@ try:
     from halbert_core.halbert_core.scheduler.job import Job
     from halbert_core.halbert_core.model.loader import ModelManager, ModelConfig
     from halbert_core.halbert_core.model.prompt_manager import PromptManager, PromptMode
-    from halbert_core.halbert_core.memory.retrieval import MemoryRetrieval
-    from halbert_core.halbert_core.memory.writer import MemoryWriter
     from halbert_core.halbert_core.scheduler.executor import AutonomousExecutor
     from halbert_core.halbert_core.scheduler.autonomous_tasks import create_autonomous_task
     from halbert_core.halbert_core.approval.engine import ApprovalEngine, ApprovalRequest
@@ -75,8 +73,6 @@ except Exception:
     ModelConfig = None  # type: ignore
     PromptManager = None  # type: ignore
     PromptMode = None  # type: ignore
-    MemoryRetrieval = None  # type: ignore
-    MemoryWriter = None  # type: ignore
     AutonomousExecutor = None  # type: ignore
     create_autonomous_task = None  # type: ignore
     ApprovalEngine = None  # type: ignore
@@ -484,81 +480,6 @@ def cmd_prompt_init(args):
         print("Edit prompt files to customize (see README.md)")
     except Exception as e:
         print(f"Error initializing prompts: {e}")
-
-
-def cmd_memory_query(args):
-    """Query memory (Phase 3 M2)."""
-    if MemoryRetrieval is None:
-        print('memory not available')
-        return
-    
-    try:
-        mem = MemoryRetrieval()
-        results = mem.retrieve_from(args.subdir, args.query, k=args.limit or 5)
-        
-        import json as _json
-        print(f"Found {len(results)} results for query: {args.query}")
-        print("---")
-        
-        for i, result in enumerate(results, 1):
-            print(f"\n[{i}] Score: {result.get('_score', 0):.2f} | Source: {result.get('_source', 'unknown')}")
-            print(f"    {result.get('text', result.get('summary', 'No text'))[:200]}")
-        
-        if args.json:
-            print("\n--- Full JSON ---")
-            print(_json.dumps(results, indent=2))
-    
-    except Exception as e:
-        print(f"Error querying memory: {e}")
-
-
-def cmd_memory_stats(args):
-    """Show memory statistics (Phase 3 M2)."""
-    if MemoryRetrieval is None:
-        print('memory not available')
-        return
-    
-    try:
-        mem = MemoryRetrieval()
-        stats = mem.get_stats()
-        
-        import json as _json
-        print(_json.dumps(stats, indent=2))
-    
-    except Exception as e:
-        print(f"Error getting memory stats: {e}")
-
-
-def cmd_memory_write(args):
-    """Write test entry to memory (Phase 3 M2)."""
-    if MemoryWriter is None:
-        print('memory not available')
-        return
-    
-    try:
-        import json as _json
-        
-        writer = MemoryWriter()
-        
-        # Parse entry from JSON
-        entry = _json.loads(args.entry)
-        
-        # Write based on type
-        if args.subdir == 'core':
-            ok = writer.write_core_knowledge(entry)
-        elif args.subdir == 'runtime':
-            ok = writer.write_action_outcome(entry)
-        else:
-            print(f"Unknown subdir: {args.subdir}")
-            return
-        
-        if ok:
-            print(f"Entry written to {args.subdir}")
-        else:
-            print(f"Failed to write entry")
-    
-    except Exception as e:
-        print(f"Error writing memory: {e}")
 
 
 def cmd_executor_status(args):
@@ -1716,8 +1637,6 @@ def cmd_autonomous_run(args):
         # Initialize components
         model_mgr = None
         prompt_mgr = None
-        mem_retrieval = None
-        mem_writer = None
         
         # Try to initialize LLM (optional)
         if ModelManager is not None:
@@ -1731,12 +1650,6 @@ def cmd_autonomous_run(args):
         if PromptManager is not None:
             prompt_mgr = PromptManager()
         
-        if MemoryRetrieval is not None:
-            mem_retrieval = MemoryRetrieval()
-        
-        if MemoryWriter is not None:
-            mem_writer = MemoryWriter()
-        
         # Initialize approval engine
         approval_engine = None
         if ApprovalEngine is not None and not args.no_approval:
@@ -1747,8 +1660,8 @@ def cmd_autonomous_run(args):
             task_type=args.task_type,
             model_manager=model_mgr,
             prompt_manager=prompt_mgr,
-            memory_retrieval=mem_retrieval,
-            memory_writer=mem_writer,
+            memory_retrieval=None,
+            memory_writer=None,
             confidence_threshold=args.confidence or 0.7,
             approval_engine=approval_engine
         )
@@ -1926,22 +1839,6 @@ def main():
 
     p_prompt_init = sub.add_parser('prompt-init', help='Initialize default prompt configuration (Phase 3)')
     p_prompt_init.set_defaults(func=cmd_prompt_init)
-
-    # Phase 3: Memory management commands
-    p_mem_query = sub.add_parser('memory-query', help='Query memory (Phase 3)')
-    p_mem_query.add_argument('--subdir', required=True, help='Memory subdirectory (core, runtime, personas/friend)')
-    p_mem_query.add_argument('--query', required=True, help='Search query')
-    p_mem_query.add_argument('--limit', type=int, help='Max results (default: 5)')
-    p_mem_query.add_argument('--json', action='store_true', help='Output full JSON')
-    p_mem_query.set_defaults(func=cmd_memory_query)
-
-    p_mem_stats = sub.add_parser('memory-stats', help='Show memory statistics (Phase 3)')
-    p_mem_stats.set_defaults(func=cmd_memory_stats)
-
-    p_mem_write = sub.add_parser('memory-write', help='Write test entry to memory (Phase 3)')
-    p_mem_write.add_argument('--subdir', required=True, help='Memory subdirectory (core, runtime)')
-    p_mem_write.add_argument('--entry', required=True, help='JSON entry to write')
-    p_mem_write.set_defaults(func=cmd_memory_write)
 
     # Phase 3: Autonomous executor commands (M3)
     p_exec_status = sub.add_parser('executor-status', help='Show autonomous executor status (Phase 3 M3)')
