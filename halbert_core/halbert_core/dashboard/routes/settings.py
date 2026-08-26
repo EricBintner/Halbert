@@ -11,7 +11,7 @@ Provides REST API for:
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 import yaml
 import logging
@@ -39,41 +39,6 @@ _scan_lock = threading.Lock()
 
 
 # Pydantic models
-class SavedEndpoint(BaseModel):
-    """Saved LLM endpoint (without model - model is selected separately)."""
-    id: Optional[str] = None  # Auto-generated if not provided
-    name: str  # User-friendly name, e.g., "Local Ollama", "Work Server"
-    url: str  # e.g., "http://localhost:11434"
-    provider: str = "ollama"  # ollama, openai, anthropic
-    api_key: Optional[str] = None  # For API-key based providers
-
-
-class ModelEndpoint(BaseModel):
-    """LLM endpoint configuration (legacy, still used for assignments)."""
-    endpoint: str  # e.g., "http://localhost:11434"
-    provider: str = "ollama"  # ollama, llamacpp, mlx, openai
-    model: str  # model name as served by the endpoint
-    name: str = ""  # User-friendly name
-    api_key: Optional[str] = None  # For OpenAI-compatible
-
-
-class ModelAssignment(BaseModel):
-    """Assign a model to a role (guide/specialist/vision)."""
-    endpoint_id: str  # ID of the saved endpoint
-    model: str  # Model name from that endpoint
-
-
-class ModelConfigUpdate(BaseModel):
-    """Update model routing configuration."""
-    orchestrator: Optional[ModelEndpoint] = None
-    specialist: Optional[ModelEndpoint] = None
-    routing_strategy: Optional[str] = "auto"
-
-
-class ComputerNameUpdate(BaseModel):
-    """Update computer's display name."""
-    name: str
-
 
 
 @router.get("/model/loaded")
@@ -123,121 +88,83 @@ async def get_loaded_model_status() -> Dict[str, Any]:
         return {"loaded_models": [], "error": str(e)}
 
 
-@router.get("/model/status")
-async def get_model_status() -> Dict[str, Any]:
-    """
-    Get LLM connection status and model availability.
-    
-    Auto-configures Local Ollama if detected but not yet configured.
-    
-    Returns:
-        - ollama_connected: Whether Ollama server is reachable
-        - model_installed: Whether the configured model is installed
-        - model_name: The configured model name
-        - available_models: List of installed models
-        - auto_configured: True if we just auto-configured Ollama
-    """
-    import httpx
-    
-    # Get config
-    config_path = get_config_dir() / 'models.yml'
-    if config_path.exists():
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f) or {}
-    else:
-        config = {}
-    
-    orchestrator = config.get('orchestrator', {})
-    saved_endpoints = config.get('saved_endpoints', [])
-    providers = config.get('providers', {})
-    
-    # Determine endpoint to check - try multiple sources:
-    # 1. orchestrator.endpoint
-    # 2. providers.ollama.base_url  
-    # 3. first saved endpoint url
-    # 4. default localhost
-    endpoint = orchestrator.get('endpoint')
-    if not endpoint:
-        endpoint = providers.get('ollama', {}).get('base_url')
-    if not endpoint and saved_endpoints:
-        endpoint = saved_endpoints[0].get('url', 'http://localhost:11434')
-    if not endpoint:
-        endpoint = 'http://localhost:11434'
-    
-    model = orchestrator.get('model', '')
-    
-    # Check if this is a fresh install (no orchestrator configured and no saved endpoints)
-    is_fresh_install = not orchestrator.get('model') and len(saved_endpoints) == 0
-    
-    result = {
-        'ollama_connected': False,
-        'model_installed': False,
-        'model_name': model,
-        'endpoint': endpoint,
-        'available_models': [],
-        'auto_configured': False,
-        # Phase 72: Hardware tier detection for compression recommendations
-        'hardware_tier': 1,  # 1=24GB, 2=48GB+, 3=Apple Silicon
-        'total_vram_gb': None,
-        'compression_available': True,  # SemanticCompressor always works
-        'compression_backend': 'semantic',  # Updated below if Lingua available
-    }
-
-    # Phase 72: Detect hardware tier based on VRAM
+def _detect_hardware_tier() -> Tuple[int, Optional[float]]:
+    """(tier, total_vram_gb). Tier 1: <40GB CUDA, 2: >=40GB CUDA, 3: Apple Silicon."""
+    tier, total_vram = 1, None
     try:
         import torch
         if torch.cuda.is_available():
-            total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            result['total_vram_gb'] = round(total_vram, 1)
-            if total_vram >= 40:  # 48GB GPUs report ~45GB usable
-                result['hardware_tier'] = 2
-                result['compression_backend'] = 'lingua'
-            else:
-                result['hardware_tier'] = 1
-                result['compression_backend'] = 'semantic'
-        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            result['hardware_tier'] = 3
-            result['compression_backend'] = 'lingua'
+            total_vram = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            tier = 2 if total_vram >= 40 else 1
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            tier = 3
     except ImportError:
-        pass  # torch not available, keep defaults
-    
+        pass
+    return tier, (round(total_vram, 1) if total_vram else None)
+
+
+async def _ollama_models(client, url: str) -> Optional[List[Dict[str, Any]]]:
+    """Raw ``GET /api/tags`` entries, or None when the server does not answer."""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{endpoint}/api/tags")
-            if response.status_code == 200:
-                result['ollama_connected'] = True
-                data = response.json()
-                models = [m['name'] for m in data.get('models', [])]
-                result['available_models'] = models
-                
-                # Auto-create Local Ollama saved endpoint if fresh install
-                # (User still needs to select the model themselves)
-                if is_fresh_install and models:
-                    import uuid
-                    # Only create the saved endpoint, don't auto-set Guide model
-                    # Use 'url' field and include 'id' to match frontend SavedEndpoint interface
-                    config['saved_endpoints'] = [{
-                        'id': str(uuid.uuid4())[:8],
-                        'name': 'Local Ollama',
-                        'url': 'http://localhost:11434',
-                        'provider': 'ollama',
-                        'api_key': ''
-                    }]
-                    
-                    # Save the endpoint configuration
-                    config_path.parent.mkdir(parents=True, exist_ok=True)
-                    with open(config_path, 'w') as f:
-                        yaml.dump(config, f, default_flow_style=False)
-                    
-                    logger.info("Auto-created Local Ollama saved endpoint")
-                    result['auto_configured'] = True
-                
-                # Check if configured model is installed
-                result['model_installed'] = bool(model) and model in models
-                        
+        r = await client.get(f"{url.rstrip('/')}/api/tags")
+        if r.status_code == 200:
+            return list(r.json().get("models", []))
     except Exception as e:
-        logger.warning(f"Ollama connection check failed: {e}")
-    
+        logger.debug(f"Ollama tags check failed for {url}: {e}")
+    return None
+
+
+async def _openai_model_ids(client, url: str, api_key: str) -> Optional[List[str]]:
+    """Model ids from an OpenAI-style ``GET /v1/models``, or None when unreachable."""
+    base = url.rstrip("/")
+    base = base if base.endswith("/v1") else f"{base}/v1"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        r = await client.get(f"{base}/models", headers=headers)
+        if r.status_code == 200:
+            return [str(m.get("id", "")) for m in r.json().get("data", [])]
+    except Exception as e:
+        logger.debug(f"Model list check failed for {url}: {e}")
+    return None
+
+
+@router.get("/model/status")
+async def get_model_status() -> Dict[str, Any]:
+    """Read-only status for Settings -> AI Models' Quick-setup strip. Never writes config."""
+    import httpx
+    from ...model import llm_config as llm_store
+
+    chat = llm_store.resolve("chat_model")
+    tier, total_vram = _detect_hardware_tier()
+    result: Dict[str, Any] = {
+        "chat": {
+            "configured": chat is not None,
+            "model": chat.model if chat else "",
+            "endpoint_url": chat.url if chat else "",
+            "provider": chat.provider if chat else "",
+            "reachable": False,
+            "model_available": False,
+        },
+        "local_ollama": {"reachable": False, "url": llm_store.DEFAULT_OLLAMA_URL, "model_count": 0},
+        "hardware": {"tier": tier, "total_vram_gb": total_vram},
+    }
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        local = await _ollama_models(client, llm_store.DEFAULT_OLLAMA_URL)
+        if local is not None:
+            result["local_ollama"].update(reachable=True, model_count=len(local))
+        if chat is None:
+            return result
+        names: Optional[List[str]] = None
+        if chat.provider == "ollama":
+            if chat.url.rstrip("/") == llm_store.DEFAULT_OLLAMA_URL:
+                entries = local
+            else:
+                entries = await _ollama_models(client, chat.url)
+            names = [str(m.get("name", "")) for m in entries] if entries is not None else None
+        else:
+            names = await _openai_model_ids(client, chat.url, chat.api_key)
+        if names is not None:
+            result["chat"].update(reachable=True, model_available=chat.model in names)
     return result
 
 
@@ -249,93 +176,54 @@ async def apply_recommended_config() -> Dict[str, Any]:
     Sets the context-compression backend by hardware tier (Tier 1 <40GB CUDA:
     semantic; Tier 2 >=40GB CUDA: lingua; Tier 3 Apple Silicon: lingua).
 
-    For the guide model it never picks from a fixed list: it selects the
-    largest model ALREADY INSTALLED on the endpoint (from GET /api/tags) that
+    For the chat model it never picks from a fixed list: it selects the
+    largest model ALREADY INSTALLED on local Ollama (from GET /api/tags) that
     fits the detected budget. If nothing installed fits, it returns
     ``success: false`` and asks the user to pull a model of at most N billion
-    parameters.
+    parameters. Nothing is written in that case.
     """
     import httpx
+    from ...model import llm_config as llm_store
     from ...model.hardware_detector import HardwareDetector, pick_installed_model
 
-    config_path = get_config_dir() / 'models.yml'
-
-    # Load existing config
-    if config_path.exists():
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f) or {}
-    else:
-        config = {}
-
-    # Detect hardware tier (drives compression backend only)
-    tier = 1
-    total_vram = None
-    try:
-        import torch
-        if torch.cuda.is_available():
-            total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            tier = 2 if total_vram >= 40 else 1
-        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            tier = 3
-    except ImportError:
-        pass
-
+    tier, total_vram = _detect_hardware_tier()
     compression_backend = 'semantic' if tier == 1 else 'lingua'
 
     # Model size budget from detected hardware (parameter counts, no names)
     detector = HardwareDetector()
     budget = detector.recommend_budget(detector.detect())
 
-    # Pick the largest already-installed model that fits the budget
-    orchestrator = config.get('orchestrator') or {}
-    endpoint = orchestrator.get('endpoint') or 'http://localhost:11434'
-    installed: List[Dict[str, Any]] = []
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{endpoint}/api/tags")
-            if response.status_code == 200:
-                installed = response.json().get('models', [])
-    except Exception as e:
-        logger.warning(f"Could not list installed models at {endpoint}: {e}")
+    endpoint = llm_store.DEFAULT_OLLAMA_URL
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        installed = await _ollama_models(client, endpoint) or []
 
     chosen = pick_installed_model(installed, budget)
     if not chosen:
         return {
             'success': False,
             'hardware_tier': tier,
-            'total_vram_gb': round(total_vram, 1) if total_vram else None,
+            'total_vram_gb': total_vram,
             'budget': budget.to_dict(),
             'message': (
                 f"No installed model fits your hardware budget "
                 f"(~{budget.max_params_b_4bit}B parameters at 4-bit, "
                 f"{budget.memory_budget_gb:.0f}GB for weights). "
                 f"Pull a model of at most ~{budget.max_params_b_4bit}B parameters with "
-                f"'ollama pull <model>' and try again, or pick one in Settings → AI Models."
+                f"'ollama pull <model>' and try again, or pick one in Settings -> AI Models."
             ),
         }
 
     chat_model = chosen['name']
-
-    # Update orchestrator config
-    if 'orchestrator' not in config or config['orchestrator'] is None:
-        config['orchestrator'] = {}
-    config['orchestrator']['model'] = chat_model
-
-    # Update compression config
-    if 'compression' not in config or config['compression'] is None:
-        config['compression'] = {}
-    config['compression']['backend'] = compression_backend
-    config['compression']['enabled'] = True
-
-    # Save config
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_path, 'w') as f:
-        yaml.dump(config, f, default_flow_style=False)
+    endpoint_id = llm_store.ensure_ollama_endpoint(endpoint)
+    llm_store.set_slot("chat_model", chat_model, endpoint_id)
+    compression = dict(llm_store.load_file().get("compression") or {})
+    compression.update(backend=compression_backend, enabled=True)
+    llm_store.set_top_level("compression", compression)
 
     return {
         'success': True,
         'hardware_tier': tier,
-        'total_vram_gb': round(total_vram, 1) if total_vram else None,
+        'total_vram_gb': total_vram,
         'budget': budget.to_dict(),
         'applied': {
             'chat_model': chat_model,
@@ -352,53 +240,37 @@ async def apply_recommended_config() -> Dict[str, Any]:
 @router.post("/model/install")
 async def install_model(model_name: str) -> Dict[str, Any]:
     """
-    Install a model via Ollama pull.
-    
+    Install a model via Ollama pull and make it the chat model.
+
     This is a quick operation that starts the pull - Ollama handles
     the actual download in the background.
     """
     import httpx
-    
-    # Get endpoint from config
-    config_path = get_config_dir() / 'models.yml'
-    if config_path.exists():
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f) or {}
-    else:
-        config = {}
-    
-    endpoint = config.get('orchestrator', {}).get('endpoint', 'http://localhost:11434')
-    
+    from ...model import llm_config as llm_store
+
+    chat = llm_store.resolve("chat_model")
+    endpoint = chat.url if chat and chat.provider == "ollama" else llm_store.DEFAULT_OLLAMA_URL
+
     try:
         async with httpx.AsyncClient(timeout=300.0) as client:  # 5 min timeout for pull
             response = await client.post(
                 f"{endpoint}/api/pull",
                 json={"name": model_name, "stream": False}
             )
-            
+
             if response.status_code == 200:
-                # Update config to use this model
-                if 'orchestrator' not in config:
-                    config['orchestrator'] = {}
-                config['orchestrator']['model'] = model_name
-                config['orchestrator']['provider'] = 'ollama'
-                config['orchestrator']['always_loaded'] = True
-                
-                config_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(config_path, 'w') as f:
-                    yaml.dump(config, f, default_flow_style=False)
-                
+                endpoint_id = llm_store.ensure_ollama_endpoint(endpoint)
+                llm_store.set_slot("chat_model", model_name, endpoint_id)
                 logger.info(f"Model {model_name} installed successfully")
                 return {
                     'success': True,
                     'message': f'Model {model_name} installed successfully!',
                     'model': model_name
                 }
-            else:
-                return {
-                    'success': False,
-                    'message': f'Pull failed: HTTP {response.status_code}'
-                }
+            return {
+                'success': False,
+                'message': f'Pull failed: HTTP {response.status_code}'
+            }
     except httpx.TimeoutException:
         return {
             'success': False,
