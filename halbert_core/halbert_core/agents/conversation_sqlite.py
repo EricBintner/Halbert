@@ -141,6 +141,25 @@ def _fts_query(terms: Sequence[str]) -> str:
     return " OR ".join(f'"{t}"' for t in terms)
 
 
+def _term_hits(terms: Sequence[str], haystack: str) -> List[str]:
+    """Terms whose crude stem (drop the last letter past 4 chars) starts a word in ``haystack``."""
+    out: List[str] = []
+    for t in terms:
+        stem = t[:-1] if len(t) > 4 else t
+        if re.search(r"\b" + re.escape(stem), haystack):
+            out.append(t)
+    return out
+
+
+def _receipt_snippet(receipt: str, matched: Sequence[str]) -> str:
+    lines = [ln for ln in (receipt or "").splitlines() if ln.strip()]
+    for ln in lines:
+        low = ln.lower()
+        if any((t[:-1] if len(t) > 4 else t) in low for t in matched):
+            return ln[:200]
+    return lines[0][:200] if lines else ""
+
+
 def _loads(text: Any, default: Any) -> Any:
     if not text:
         return default
@@ -1092,6 +1111,126 @@ class SqliteConversationStore:
                     turn["terminal_block_ids"].append(tid)
             turn["diff_proposals"].extend(m["diff_proposals"])
         return list(turns.values())
+
+    # ------------------------------------------------------------------
+    # Receipts (FTS over receipts, not raw messages)
+    # ------------------------------------------------------------------
+
+    def upsert_receipt(self, thread_id: str, title: str, receipt: str) -> bool:
+        """Store a thread's receipt and replace its ``receipts_fts`` row."""
+        if self._conn is None:
+            return False
+        try:
+            with self._lock, self._conn:
+                cur = self._conn.execute(
+                    "UPDATE conversations SET receipt = ?, receipt_updated_at = ? WHERE id = ?",
+                    (receipt or "", time.time(), thread_id),
+                )
+                if cur.rowcount == 0:
+                    return False
+                if self._fts_ok:
+                    self._conn.execute(
+                        "DELETE FROM receipts_fts WHERE thread_id = ?", (thread_id,)
+                    )
+                    self._conn.execute(
+                        "INSERT INTO receipts_fts(thread_id, title, receipt) VALUES (?, ?, ?)",
+                        (thread_id, title or "", receipt or ""),
+                    )
+            return True
+        except Exception as e:
+            logger.warning(f"upsert_receipt {thread_id} failed: {e}")
+            return False
+
+    @staticmethod
+    def _receipt_hit(row: sqlite3.Row, terms: Sequence[str]) -> Dict[str, Any]:
+        haystack = f"{row['title'] or ''} {row['receipt'] or ''}".lower()
+        matched = _term_hits(terms, haystack)
+        # Two topical terms are enough for a full score; a single hit on a
+        # one-word query also scores 1.0. Unverifiable FTS hits keep 0.25.
+        score = min(1.0, len(matched) / max(1, min(len(terms), 3))) if matched else 0.25
+        return {
+            "thread_id": row["thread_id"],
+            "title": row["title"] or "",
+            "score": round(score, 3),
+            "match_terms": matched,
+            "snippet": _receipt_snippet(row["receipt"] or "", matched),
+            "last_active": row["last_active"],
+            "status": row["status"],
+        }
+
+    def search_receipts(
+        self, query: str, *, exclude_thread_id: Optional[str] = None, limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """Rank threads by receipt/title relevance to ``query``.
+
+        Query terms are quoted and OR-joined; the MATCH runs in its own try so
+        an FTS failure degrades to the title LIKE pass instead of aborting.
+        """
+        if self._conn is None or not query:
+            return []
+        terms = _fts_terms(query)
+        if not terms:
+            return []
+        hits: Dict[str, Dict[str, Any]] = {}
+        if self._fts_ok:
+            try:
+                with self._lock:
+                    rows = self._conn.execute(
+                        """SELECT r.thread_id, r.title, r.receipt,
+                                  c.last_active, c.status, c.created_at
+                           FROM receipts_fts r JOIN conversations c ON c.id = r.thread_id
+                           WHERE receipts_fts MATCH ? AND c.status != 'merged'
+                             AND c.ephemeral = 0 AND (? IS NULL OR r.thread_id != ?)
+                           ORDER BY bm25(receipts_fts) LIMIT ?""",
+                        (_fts_query(terms), exclude_thread_id, exclude_thread_id,
+                         max(limit * 4, 20)),
+                    ).fetchall()
+                for r in rows:
+                    hits[r["thread_id"]] = self._receipt_hit(r, terms)
+            except Exception as e:
+                logger.warning(f"receipt FTS search failed (LIKE fallback only): {e}")
+        try:
+            like_rows: List[sqlite3.Row] = []
+            with self._lock:
+                for term in terms[:6]:
+                    like_rows.extend(self._conn.execute(
+                        """SELECT id AS thread_id, title, receipt, last_active, status, created_at
+                           FROM conversations
+                           WHERE lower(title) LIKE ? AND status != 'merged' AND ephemeral = 0
+                             AND (? IS NULL OR id != ?)
+                           LIMIT ?""",
+                        (f"%{term}%", exclude_thread_id, exclude_thread_id, limit),
+                    ).fetchall())
+            for r in like_rows:
+                if r["thread_id"] not in hits:
+                    hits[r["thread_id"]] = self._receipt_hit(r, terms)
+        except Exception as e:
+            logger.warning(f"receipt title search failed: {e}")
+        ranked = sorted(
+            hits.values(), key=lambda h: (-h["score"], -(h["last_active"] or 0.0))
+        )
+        return ranked[:limit]
+
+    def search_snippets(self, thread_id: str, query: str, limit: int = 5) -> List[str]:
+        """FTS snippets of one thread's messages matching ``query`` (best first)."""
+        if self._conn is None or not self._fts_ok or not query:
+            return []
+        terms = _fts_terms(query)
+        if not terms:
+            return []
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    """SELECT snippet(messages_fts, 1, '', '', '…', 12) AS snip
+                       FROM messages_fts
+                       WHERE conversation_id = ? AND messages_fts MATCH ?
+                       ORDER BY bm25(messages_fts) LIMIT ?""",
+                    (thread_id, _fts_query(terms), int(limit)),
+                ).fetchall()
+            return [r["snip"] for r in rows if r["snip"]]
+        except Exception as e:
+            logger.warning(f"search_snippets {thread_id} failed: {e}")
+            return []
 
     # ------------------------------------------------------------------
     # session_somatic_blocks (C1 link)

@@ -732,3 +732,81 @@ class TestThreadReaders:
         assert store.mark_in_progress_interrupted() == 1
         assert [r["status"] for r in store.list_messages("t1")] == ["interrupted", "complete"]
         assert store.mark_in_progress_interrupted() == 0
+
+
+# ---------------------------------------------------------------------------
+# Receipts: upsert_receipt / search_receipts / search_snippets (A3)
+# ---------------------------------------------------------------------------
+
+class TestReceipts:
+    def _seed(self, store):
+        store.create_thread("samba", "Samba media share")
+        store.update_thread("samba", status="closed", last_active=100.0)
+        assert store.upsert_receipt("samba", "Samba media share",
+            "Title: Samba media share\nEntities: samba, share, /etc/samba/smb.conf\n"
+            "Started with: add a samba share for the media folder\nCommands: testparm (exit 0)") is True
+        store.create_thread("nas", "NAS disk swap")
+        store.update_thread("nas", status="paused", last_active=200.0)
+        assert store.upsert_receipt("nas", "NAS disk swap",
+            "Title: NAS disk swap\nEntities: zfs, nvme\nStarted with: swap the failing nvme in the zfs pool") is True
+
+    def test_search_receipts_scores_and_terms(self, store):
+        self._seed(store)
+        hits = store.search_receipts("the media share on samba")
+        assert [h["thread_id"] for h in hits] == ["samba"]
+        hit = hits[0]
+        assert hit["score"] == 1.0 and set(hit["match_terms"]) == {"media", "share", "samba"}
+        assert hit["status"] == "closed" and hit["last_active"] == 100.0 and hit["title"] == "Samba media share"
+        assert hit["snippet"] == "Title: Samba media share"
+
+    def test_partial_match_scores_by_terms(self, store):
+        self._seed(store)
+        hits = store.search_receipts("what's the zfs pool resilver doing?")
+        assert hits[0]["thread_id"] == "nas" and hits[0]["score"] == 0.667 and hits[0]["match_terms"] == ["zfs", "pool"]
+
+    def test_punctuation_queries_do_not_abort(self, store):
+        self._seed(store)
+        assert store.search_receipts("smb.conf")[0]["thread_id"] == "samba"
+        assert store.search_receipts("what's") == []
+        assert store.search_receipts("") == []
+
+    def test_exclude_and_limit(self, store):
+        self._seed(store)
+        assert [h["thread_id"] for h in store.search_receipts("samba zfs", exclude_thread_id="samba")] == ["nas"]
+        assert len(store.search_receipts("samba zfs", limit=1)) == 1
+        assert {h["thread_id"] for h in store.search_receipts("samba zfs")} == {"samba", "nas"}
+
+    def test_title_like_fallback_when_fts_row_missing(self, store):
+        self._seed(store)
+        store._conn.execute("DELETE FROM receipts_fts")
+        store._conn.commit()
+        hits = store.search_receipts("nas")
+        assert [h["thread_id"] for h in hits] == ["nas"] and hits[0]["match_terms"] == ["nas"]
+
+    def test_upsert_replaces_fts_row_and_updates_columns(self, store):
+        self._seed(store)
+        assert store.upsert_receipt("nas", "NAS disk swap", "Title: NAS disk swap\nEntities: btrfs") is True
+        assert store._conn.execute("SELECT COUNT(*) FROM receipts_fts WHERE thread_id = 'nas'").fetchone()[0] == 1
+        assert store.search_receipts("btrfs")[0]["thread_id"] == "nas"
+        assert store.search_receipts("nvme") == []
+        t = store.get_thread("nas")
+        assert t["receipt"].endswith("btrfs") and t["receipt_updated_at"] is not None
+
+    def test_upsert_unknown_thread_is_false(self, store):
+        assert store.upsert_receipt("nope", "x", "y") is False
+
+    def test_ephemeral_and_merged_excluded(self, store):
+        self._seed(store)
+        store.update_thread("samba", ephemeral=True)
+        assert store.search_receipts("samba") == []
+        store.update_thread("samba", ephemeral=False, status="merged")
+        assert store.search_receipts("samba") == []
+
+    def test_search_snippets(self, store):
+        store.create_thread("t", "T")
+        store.append_message("t", "user", "edit /etc/samba/smb.conf for the media share")
+        store.append_message("t", "assistant", "restarted smbd", origin="assistant")
+        snips = store.search_snippets("t", "smb.conf media")
+        assert len(snips) == 1 and "smb.conf" in snips[0]
+        assert store.search_snippets("t", "what's") == []
+        assert store.search_snippets("other", "media") == []
