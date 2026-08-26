@@ -598,15 +598,3 @@ class ModelRouter:
         self._specialist_config = {}
         
         logger.info("Specialist disabled, using orchestrator-only mode")
-    
-    def _save_config(self):
-        """Save configuration to file."""
-        try:
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(self.config_path, 'w') as f:
-                yaml.safe_dump(self.config, f, default_flow_style=False)
-            
-            logger.debug("Saved router configuration")
-        except Exception as e:
-            logger.error(f"Failed to save config: {e}")

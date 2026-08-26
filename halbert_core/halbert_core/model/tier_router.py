@@ -106,20 +106,54 @@ class TierRouterConfig:
     @classmethod
     def from_legacy_config(cls, legacy: Dict[str, Any]) -> 'TierRouterConfig':
         """
-        Convert legacy models.yml format to new TierRouterConfig.
-        
-        Supports backwards compatibility with existing configs.
+        Convert models.yml format to TierRouterConfig.
+
+        Reads the ``llm_config`` slots (chat_model/specialist_model/vision_model)
+        when present; falls back to the pre-migration orchestrator/specialist/
+        vision keys for files that haven't been normalised yet.
         """
         cfg = cls()
-        
-        # Extract orchestrator as guide
-        orch = legacy.get('orchestrator', {})
-        if orch.get('model'):
-            model_id = orch['model']
-            endpoint = orch.get('endpoint', 'http://localhost:11434')
-            provider = orch.get('provider', 'ollama')
-            
-            # Create model definition
+
+        # Prefer llm_config slots (the normalised schema)
+        llm = legacy.get('llm_config') or {}
+        endpoints = {e.get('id'): e for e in (llm.get('saved_endpoints') or [])}
+
+        def _resolve_slot(slot_name: str):
+            """Return (model_id, endpoint, provider) for an enabled slot, or None."""
+            s = llm.get(slot_name) or {}
+            if not s.get('enabled') or not s.get('model'):
+                return None
+            ep = endpoints.get(s.get('endpoint_id')) or {}
+            return (
+                s['model'],
+                ep.get('url', 'http://localhost:11434'),
+                ep.get('provider', 'ollama'),
+            )
+
+        chat = _resolve_slot('chat_model')
+        spec = _resolve_slot('specialist_model')
+        vision = _resolve_slot('vision_model')
+
+        # Fall back to legacy keys when llm_config slots are empty
+        if chat is None:
+            orch = legacy.get('orchestrator', {})
+            if orch.get('model'):
+                chat = (orch['model'], orch.get('endpoint', 'http://localhost:11434'),
+                        orch.get('provider', 'ollama'))
+        if spec is None:
+            legacy_spec = legacy.get('specialist', {})
+            if legacy_spec.get('enabled') and legacy_spec.get('model'):
+                spec = (legacy_spec['model'], legacy_spec.get('endpoint', 'http://localhost:11434'),
+                        legacy_spec.get('provider', 'ollama'))
+        if vision is None:
+            legacy_vision = legacy.get('vision', {})
+            if legacy_vision.get('model'):
+                vision = (legacy_vision['model'], legacy_vision.get('endpoint', 'http://localhost:11434'),
+                          legacy_vision.get('provider', 'ollama'))
+
+        # Build model definitions
+        if chat:
+            model_id, endpoint, provider = chat
             caps = ModelCapabilities.detect(model_id, provider)
             cfg.models['guide-model'] = ModelDefinition(
                 name='guide-model',
@@ -129,20 +163,13 @@ class TierRouterConfig:
                 capabilities=caps,
             )
             cfg.guide = TierConfig(primary='guide-model')
-            
-            # Register provider
             cfg.providers[f'{provider}-guide'] = {
                 'type': provider,
                 'endpoint': endpoint,
             }
-        
-        # Extract specialist
-        spec = legacy.get('specialist', {})
-        if spec.get('enabled') and spec.get('model'):
-            model_id = spec['model']
-            endpoint = spec.get('endpoint', 'http://localhost:11434')
-            provider = spec.get('provider', 'ollama')
-            
+
+        if spec:
+            model_id, endpoint, provider = spec
             caps = ModelCapabilities.detect(model_id, provider)
             cfg.models['specialist-model'] = ModelDefinition(
                 name='specialist-model',
@@ -155,19 +182,13 @@ class TierRouterConfig:
                 primary='specialist-model',
                 fallback=['guide-model'],
             )
-            
             cfg.providers[f'{provider}-specialist'] = {
                 'type': provider,
                 'endpoint': endpoint,
             }
-        
-        # Extract vision model
-        vision = legacy.get('vision', {})
-        if vision.get('model'):
-            model_id = vision['model']
-            endpoint = vision.get('endpoint', 'http://localhost:11434')
-            provider = vision.get('provider', 'ollama')
-            
+
+        if vision:
+            model_id, endpoint, provider = vision
             caps = ModelCapabilities.detect(model_id, provider)
             caps.vision = True  # Force vision capability
             cfg.models['vision-model'] = ModelDefinition(
@@ -181,12 +202,12 @@ class TierRouterConfig:
                 primary='vision-model',
                 fallback=['specialist-model'] if cfg.specialist.primary else [],
             )
-        
+
         # Routing settings
         routing = legacy.get('routing', {})
         cfg.complexity_threshold = routing.get('complexity_threshold', 0.5)
         cfg.force_specialist_tasks = routing.get('prefer_specialist_for', cfg.force_specialist_tasks)
-        
+
         return cfg
 
 
@@ -268,9 +289,13 @@ class TierRouter:
         if raw.get('version', 1) >= 2:
             return TierRouterConfig.from_yaml(raw)
         else:
-            # Legacy format
-            logger.debug("Converting legacy config format")
-            return TierRouterConfig.from_legacy_config(raw)
+            # Legacy or llm_config format — normalise through the store so
+            # migrated files (llm_config slots) and pre-migration files
+            # (orchestrator/specialist/vision) both work.
+            logger.debug("Converting config via llm_config normalisation")
+            from . import llm_config as llm_store
+            normalised = llm_store.normalise_file(raw)
+            return TierRouterConfig.from_legacy_config(normalised)
     
     def _get_provider(self, model: ModelDefinition) -> ModelProvider:
         """Get or create provider for a model."""
