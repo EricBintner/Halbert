@@ -349,10 +349,19 @@ class TestModelClientExtraction:
         assert isinstance(endpoint, str)
         assert endpoint.startswith("http")
 
-    def test_get_configured_model_returns_string(self):
-        """get_configured_model should return a model name string."""
-        from halbert_core.model.client import get_configured_model
-        model = get_configured_model()
+    def test_get_configured_model_returns_string(self, monkeypatch):
+        """get_configured_model should return a model name string.
+
+        Pinned to a fixture config: read against a real models.yml this
+        asserted the developer's machine was configured, and returned "" —
+        the documented "not configured" value — on one that wasn't.
+        """
+        from halbert_core.model import llm_config as store
+        from halbert_core.model import client
+        monkeypatch.setattr(store, "resolve", lambda slot: store.ResolvedModel(
+            model="guide-x", url="http://ep.test", provider="ollama"
+        ) if slot == "chat_model" else None)
+        model = client.get_configured_model()
         assert isinstance(model, str)
         assert len(model) > 0
 

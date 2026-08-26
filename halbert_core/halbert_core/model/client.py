@@ -13,20 +13,20 @@ Functions:
   get_configured_model()   — guide model name from models.yml
   get_specialist_model()   — specialist model tuple from models.yml
   get_vision_model()       — vision model tuple from models.yml
-  call_llm_chat()          — unified LLM call (Ollama or OpenAI-compatible)
+  api_key_for()            — API key for a saved endpoint URL
+  call_llm_chat()          — unified LLM call (Ollama, OpenAI-compatible, Anthropic)
   _score_query_complexity() — query complexity for guide vs specialist routing
   _estimate_tokens()       — rough token count
   _truncate_messages_for_context() — truncate message list to fit context
 
 Config schema:
-  Reads the unified LLMConfig schema (shared with SourcePrep) from the
-  'llm_config' key in models.yml. Falls back to the legacy
-  'orchestrator'/'specialist'/'vision' keys for backward compatibility.
-
-  Unified schema mapping:
-    guide (orchestrator)  → llm_config.small_model (or large_model if small disabled)
-    specialist            → llm_config.large_model
-    vision                → legacy 'vision' key (no unified equivalent yet)
+  All model resolution goes through model.llm_config (the single owner of
+  the 'llm_config' section of models.yml):
+    guide (chat)   → llm_config.chat_model
+    specialist     → llm_config.specialist_model
+    vision         → llm_config.vision_model
+  Legacy 'orchestrator'/'specialist'/'vision' keys are migrated by that
+  module on first load; nothing here reads them.
 """
 
 from __future__ import annotations
@@ -41,6 +41,40 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 import requests
 
 logger = logging.getLogger("halbert.model.client")
+
+
+class UnsupportedProviderError(RuntimeError):
+    """Raised when a saved endpoint's provider has no chat adapter.
+
+    The picker lets a user save an endpoint for any provider so they can list
+    and test its models, but only the providers below can actually carry a
+    chat turn. Raising here — rather than silently posting to the Ollama
+    route and 404-ing — is what stops "tests green in Settings, fails in
+    chat".
+    """
+
+    def __init__(self, provider: str):
+        self.provider = provider
+        super().__init__(
+            f"{provider} endpoints can list and test models but are not yet "
+            f"usable for chat"
+        )
+
+
+# Providers whose wire format is OpenAI's /v1/chat/completions.
+OPENAI_COMPATIBLE_PROVIDERS = frozenset({"openai", "openai-compatible", "lm-studio"})
+
+# Providers that can carry a chat turn. Anything saved under another provider
+# is listable and testable but rejected by call_llm_chat.
+CHAT_CAPABLE_PROVIDERS = frozenset(
+    {"ollama", "llamacpp", "mlx", "anthropic"} | OPENAI_COMPATIBLE_PROVIDERS
+)
+
+# Providers that contend for the local GPU and therefore need the advisory
+# lock. lm-studio serves models from the same VRAM Ollama does.
+LOCAL_GPU_PROVIDERS = frozenset({"ollama", "llamacpp", "mlx", "lm-studio"})
+
+_ANTHROPIC_VERSION = "2023-06-01"
 
 
 # ── Advisory lock for GPU contention ────────────────────────────
@@ -148,167 +182,76 @@ def llm_advisory_lock(timeout_s: float = _LOCK_TIMEOUT_S) -> Iterator[bool]:
             pass
 
 
-# ── Unified LLMConfig loader ────────────────────────────────────
+# ── Model resolution (single source: model.llm_config) ──────────
 
-
-def _load_models_config() -> Dict[str, Any]:
-    """Load the raw models.yml config dict."""
-    try:
-        from .config_locator import find_models_config
-        import yaml
-
-        config_path = find_models_config(include_repo=False)
-        if config_path is not None:
-            with open(config_path, "r") as f:
-                return yaml.safe_load(f) or {}
-    except Exception as e:
-        logger.debug(f"Could not load models.yml: {e}")
-    return {}
-
-
-def _resolve_endpoint(
-    llm_config: Dict[str, Any], endpoint_id: Optional[str]
-) -> Tuple[str, str]:
-    """Resolve an endpoint_id from saved_endpoints to (url, provider).
-
-    Returns ("http://localhost:11434", "ollama") as fallback.
-    """
-    if not endpoint_id:
-        return ("http://localhost:11434", "ollama")
-
-    endpoints = llm_config.get("saved_endpoints") or []
-    for ep in endpoints:
-        if ep.get("id") == endpoint_id:
-            return (ep.get("url", "http://localhost:11434"), ep.get("provider", "ollama"))
-
-    return ("http://localhost:11434", "ollama")
-
-
-def _get_slot_config(
-    config: Dict[str, Any], slot: str
-) -> Optional[Dict[str, Any]]:
-    """Get a model slot from the unified llm_config schema.
-
-    Args:
-        config: The raw models.yml dict.
-        slot: One of 'small_model', 'large_model', 'code_model', 'coordinator_model'.
-
-    Returns:
-        The slot dict if the slot is enabled and has a model, else None.
-    """
-    llm_config = config.get("llm_config") or {}
-    slot_cfg = llm_config.get(slot) or {}
-    if not slot_cfg.get("enabled", False):
-        return None
-    if not slot_cfg.get("model"):
-        return None
-    return slot_cfg
+from . import llm_config as _store
 
 
 def get_ollama_endpoint() -> str:
-    """Get the Ollama endpoint URL from config (guide model's endpoint).
-
-    Reads from the unified llm_config.small_model (or large_model) slot,
-    falling back to the legacy orchestrator key.
-    """
-    config = _load_models_config()
-
-    # Try unified schema: small_model first, then large_model
-    for slot in ("small_model", "large_model"):
-        slot_cfg = _get_slot_config(config, slot)
-        if slot_cfg:
-            llm_config = config.get("llm_config") or {}
-            url, _ = _resolve_endpoint(llm_config, slot_cfg.get("endpoint_id"))
-            return url
-
-    # Fall back to legacy orchestrator key
-    orch = config.get("orchestrator", {})
-    if orch.get("endpoint"):
-        return orch["endpoint"]
-
-    return "http://localhost:11434"
+    """URL of the chat model's endpoint (local Ollama when nothing is configured)."""
+    chat = _store.resolve("chat_model")
+    return chat.url if chat else _store.DEFAULT_OLLAMA_URL
 
 
 def get_configured_model() -> str:
-    """Get the configured guide model name from config.
+    """Chat model name, or "" when none is configured.
 
-    Reads from the unified llm_config.small_model (or large_model) slot,
-    falling back to the legacy orchestrator key.
-
-    Returns "" when no guide model is configured. Callers must treat an
-    empty value as "not configured" and surface a clear error (choose a
-    model in Settings -> AI Models) instead of posting model="".
+    Callers must treat "" as "not configured" and surface a clear error
+    (choose a model in Settings -> AI Models) instead of posting model="".
     """
-    config = _load_models_config()
-
-    # Try unified schema: small_model first, then large_model
-    for slot in ("small_model", "large_model"):
-        slot_cfg = _get_slot_config(config, slot)
-        if slot_cfg:
-            return slot_cfg["model"]
-
-    # Fall back to legacy orchestrator key
-    orch = config.get("orchestrator", {})
-    if orch.get("model"):
-        return orch["model"]
-
-    return ""
+    chat = _store.resolve("chat_model")
+    return chat.model if chat else ""
 
 
 def get_specialist_model() -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """Get the configured specialist/executor model name, endpoint, and provider.
-
-    Reads from the unified llm_config.large_model slot, falling back to
-    the legacy 'specialist' key.
-
-    Returns:
-        Tuple of (model_name, endpoint_url, provider) or (None, None, None)
-        if not enabled. Provider is 'ollama' or 'openai'.
-    """
-    config = _load_models_config()
-
-    # Try unified schema: large_model
-    slot_cfg = _get_slot_config(config, "large_model")
-    if slot_cfg:
-        llm_config = config.get("llm_config") or {}
-        url, provider = _resolve_endpoint(llm_config, slot_cfg.get("endpoint_id"))
-        model = slot_cfg["model"]
-        logger.info(f"Specialist (large_model) enabled: {model} at {url} (provider: {provider})")
-        return (model, url, provider)
-
-    # Fall back to legacy specialist key
-    specialist = config.get("specialist", {})
-    if not specialist.get("enabled", False):
-        logger.debug("Specialist not enabled in config")
+    """(model, endpoint_url, provider) for the specialist slot, or (None, None, None)."""
+    spec = _store.resolve("specialist_model")
+    if spec is None:
+        logger.debug("Specialist not configured")
         return (None, None, None)
-
-    model = specialist.get("model")
-    if not model:
-        logger.debug("Specialist enabled but no model configured")
-        return (None, None, None)
-    endpoint = specialist.get("endpoint", get_ollama_endpoint())
-    provider = specialist.get("provider", "ollama")
-    logger.info(f"Specialist enabled: {model} at {endpoint} (provider: {provider})")
-    return (model, endpoint, provider)
+    logger.info(f"Specialist enabled: {spec.model} at {spec.url} (provider: {spec.provider})")
+    return (spec.model, spec.url, spec.provider)
 
 
-def get_vision_model() -> Tuple[Optional[str], str]:
-    """Get the configured vision model name and endpoint.
+def get_vision_model() -> Tuple[Optional[str], str, str]:
+    """(model, endpoint_url, provider) for the vision slot; model is None when unset.
 
-    Reads from the legacy 'vision' key (no unified equivalent yet — the
-    unified LLMConfig schema doesn't have a dedicated vision slot).
-
-    Returns:
-        Tuple of (model_name, endpoint_url). model_name is None when no
-        vision model is configured; callers must fall back to the guide /
-        specialist model or report "no vision model configured".
+    Callers fall back to the chat model for images when model is None. The
+    provider is carried because a vision slot may point at a cloud endpoint,
+    and posting that to Ollama's /api/chat 404s.
     """
-    config = _load_models_config()
+    vis = _store.resolve("vision_model")
+    if vis is None:
+        chat = _store.resolve("chat_model")
+        fallback_url = chat.url if chat else _store.DEFAULT_OLLAMA_URL
+        fallback_provider = chat.provider if chat else "ollama"
+        return (None, fallback_url, fallback_provider)
+    logger.info(f"Vision enabled: {vis.model} at {vis.url} (provider: {vis.provider})")
+    return (vis.model, vis.url, vis.provider)
 
-    vision = config.get("vision", {})
-    model = vision.get("model") or None
-    endpoint = vision.get("endpoint", get_ollama_endpoint())
-    return (model, endpoint)
+
+# ── Endpoint helpers (one implementation, in the store) ──────────
+
+
+def api_key_for(url: str) -> str:
+    """API key for the first saved endpoint matching ``url``, else "".
+
+    Delegates to :func:`model.llm_config.api_key_for` so there is one
+    implementation. Lets ``call_llm_chat`` recover a key when a caller
+    passes only the URL — which is every one of the 30+ existing call
+    sites of the model getters.
+    """
+    return _store.api_key_for(url)
+
+
+def provider_for(url: str, default: str = "ollama") -> str:
+    """Provider of the first saved endpoint matching ``url``, else ``default``."""
+    return _store.provider_for(url, default)
+
+
+def resolve_endpoint_by_id(endpoint_id: str) -> Optional[Tuple[str, str, str]]:
+    """Public (url, provider, api_key) for a saved endpoint id, or None."""
+    return _store.resolve_endpoint_by_id(endpoint_id)
 
 
 def call_llm_chat(
@@ -320,6 +263,7 @@ def call_llm_chat(
     timeout: int = 180,
     options: dict = None,
     tools: list = None,
+    api_key: Optional[str] = None,
 ) -> dict:
     """Call LLM with correct API format based on provider.
 
@@ -327,19 +271,33 @@ def call_llm_chat(
         endpoint: Base URL (e.g., http://localhost:11434)
         model: Model name
         messages: List of message dicts with 'role' and 'content'
-        provider: 'ollama' or 'openai' (for OpenAI-compatible APIs)
+        provider: One of :data:`CHAT_CAPABLE_PROVIDERS`
         stream: Whether to stream response
         timeout: Request timeout in seconds
         options: Provider-specific options (temperature, max_tokens, etc.)
         tools: Optional OpenAI-style tool schemas
             (``[{"type": "function", "function": {...}}]``). Sent to the model
             when non-empty; models that reject them fall back to a plain call.
+        api_key: Bearer / x-api-key credential. When None it is looked up from
+            models.yml with :func:`api_key_for` so the 30+ callers that pass
+            only a URL still authenticate. Pass "" to force an unauthenticated
+            call.
 
     Returns:
         Dict with 'content' (response text), 'tool_calls' (normalised list,
         see :func:`_normalise_tool_calls`) and 'raw' (full response)
+
+    Raises:
+        UnsupportedProviderError: the provider has no chat adapter.
     """
     options = options or {}
+
+    if provider not in CHAT_CAPABLE_PROVIDERS:
+        raise UnsupportedProviderError(provider)
+
+    # None means "look it up"; "" means "deliberately unauthenticated".
+    if api_key is None:
+        api_key = api_key_for(endpoint)
 
     total_chars = sum(len(m.get("content", "")) for m in messages)
     logger.info(
@@ -348,19 +306,23 @@ def call_llm_chat(
 
     # Acquire advisory lock to prevent GPU contention with SourcePrep pipeline.
     # Cloud endpoints (openai, anthropic, google) don't need the lock — only
-    # local GPU-bound providers (ollama, llamacpp, mlx) do.
-    needs_lock = provider in ("ollama", "llamacpp", "mlx")
+    # local GPU-bound providers do. lm-studio serves from the same VRAM as
+    # Ollama, so it belongs in that set even though it speaks OpenAI's wire
+    # format.
+    needs_lock = provider in LOCAL_GPU_PROVIDERS
 
     if needs_lock:
         with llm_advisory_lock() as acquired:
             if not acquired:
                 logger.warning("GPU may be busy — LLM call proceeding without lock")
             return _call_with_tool_fallback(
-                endpoint, model, messages, provider, stream, timeout, options, tools
+                endpoint, model, messages, provider, stream, timeout, options,
+                tools, api_key,
             )
     else:
         return _call_with_tool_fallback(
-            endpoint, model, messages, provider, stream, timeout, options, tools
+            endpoint, model, messages, provider, stream, timeout, options,
+            tools, api_key,
         )
 
 
@@ -373,6 +335,7 @@ def _call_with_tool_fallback(
     timeout: int,
     options: dict,
     tools: list,
+    api_key: str = "",
 ) -> dict:
     """Call the model with tools, retrying once without them on rejection.
 
@@ -380,13 +343,21 @@ def _call_with_tool_fallback(
     ``tools`` payload for one of those with a 400 rather than ignoring it.
     Losing the whole turn over an unsupported capability is worse than
     answering without tools, so the retry drops them and logs it.
+
+    A 401/403 is deliberately *not* retried — a bad credential will fail the
+    same way without tools, and retrying doubles the latency of every
+    misconfigured key.
     """
     if not tools:
-        return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
+        return _do_llm_call(
+            endpoint, model, messages, provider, stream, timeout, options,
+            None, api_key,
+        )
 
     try:
         return _do_llm_call(
-            endpoint, model, messages, provider, stream, timeout, options, tools
+            endpoint, model, messages, provider, stream, timeout, options,
+            tools, api_key,
         )
     except requests.HTTPError as e:
         status = getattr(e.response, "status_code", None)
@@ -396,7 +367,10 @@ def _call_with_tool_fallback(
             f"Model {model} rejected tool schemas (HTTP {status}); "
             "retrying without tools"
         )
-        return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
+        return _do_llm_call(
+            endpoint, model, messages, provider, stream, timeout, options,
+            None, api_key,
+        )
 
 
 def _normalise_tool_calls(raw_calls: list) -> list:
@@ -431,6 +405,206 @@ def _normalise_tool_calls(raw_calls: list) -> list:
     return normalised
 
 
+def _api_url(endpoint: str, suffix: str) -> str:
+    """Join a base endpoint to an API suffix without doubling ``/v1``.
+
+    Users paste both ``https://api.example.com`` and
+    ``https://api.example.com/v1``; the second form used to produce
+    ``/v1/v1/chat/completions`` and a 404.
+    """
+    base = (endpoint or "").rstrip("/")
+    if base.endswith("/v1") and suffix.startswith("/v1/"):
+        suffix = suffix[3:]
+    return f"{base}{suffix}"
+
+
+def _call_openai_compatible(
+    endpoint: str,
+    model: str,
+    messages: list,
+    stream: bool,
+    timeout: int,
+    options: dict,
+    tools: Optional[list],
+    api_key: str,
+) -> dict:
+    """OpenAI /v1/chat/completions — also LM Studio and any compatible gateway."""
+    url = _api_url(endpoint, "/v1/chat/completions")
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+        "temperature": options.get("temperature", 0.7),
+        "max_tokens": options.get("num_predict", options.get("max_tokens", 2048)),
+    }
+    if tools:
+        payload["tools"] = tools
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    logger.info(
+        f"Calling OpenAI-compatible API: {url} model={model} "
+        f"(auth: {'yes' if api_key else 'no'})"
+    )
+    response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    message = data.get("choices", [{}])[0].get("message", {}) or {}
+    content = message.get("content") or ""
+    return {
+        "content": content.strip(),
+        "tool_calls": _normalise_tool_calls(message.get("tool_calls")),
+        "raw": data,
+    }
+
+
+def _anthropic_payload(
+    model: str, messages: list, options: dict, tools: Optional[list]
+) -> dict:
+    """Build an Anthropic Messages payload from OpenAI-shaped messages.
+
+    Anthropic takes the system prompt as a top-level field rather than a
+    message, rejects empty content, and names tool schemas ``input_schema``.
+    """
+    system_parts = []
+    api_messages = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content") or ""
+        if role == "system":
+            if content:
+                system_parts.append(content)
+            continue
+        if not content:
+            continue  # Anthropic 400s on an empty content block
+        api_messages.append({
+            "role": "assistant" if role == "assistant" else "user",
+            "content": content,
+        })
+
+    payload = {
+        "model": model,
+        # max_tokens is mandatory on the Messages API, unlike OpenAI's.
+        "max_tokens": options.get("num_predict", options.get("max_tokens", 2048)),
+        "messages": api_messages,
+        "temperature": options.get("temperature", 0.7),
+    }
+    if system_parts:
+        payload["system"] = "\n\n".join(system_parts)
+    if tools:
+        converted = [
+            {
+                "name": (t.get("function") or {}).get("name"),
+                "description": (t.get("function") or {}).get("description", ""),
+                "input_schema": (t.get("function") or {}).get("parameters", {}),
+            }
+            for t in tools
+            if t.get("type") == "function" and (t.get("function") or {}).get("name")
+        ]
+        if converted:
+            payload["tools"] = converted
+    return payload
+
+
+def _call_anthropic(
+    endpoint: str,
+    model: str,
+    messages: list,
+    timeout: int,
+    options: dict,
+    tools: Optional[list],
+    api_key: str,
+) -> dict:
+    """Anthropic Messages API.
+
+    Deliberately synchronous ``requests`` rather than delegating to
+    ``agents.llm_client.AnthropicClient``: that client is async/aiohttp, and
+    this function is called synchronously from inside an already-running event
+    loop, where awaiting it is impossible and ``asyncio.run`` raises. Keeping
+    one transport also means ``_call_with_tool_fallback``'s HTTPError retry
+    covers this branch unchanged.
+    """
+    if not api_key:
+        raise ValueError(
+            "No API key configured for this endpoint — add one in "
+            "Settings → AI Models"
+        )
+
+    url = _api_url(endpoint or "https://api.anthropic.com", "/v1/messages")
+    payload = _anthropic_payload(model, messages, options, tools)
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": _ANTHROPIC_VERSION,
+        "content-type": "application/json",
+    }
+
+    logger.info(f"Calling Anthropic Messages API: {url} model={model}")
+    response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+
+    content = ""
+    raw_calls = []
+    for block in data.get("content", []) or []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            content += block.get("text", "")
+        elif block.get("type") == "tool_use":
+            # Anthropic names the arguments "input"; _normalise_tool_calls
+            # expects "arguments".
+            raw_calls.append({
+                "id": block.get("id", ""),
+                "name": block.get("name", ""),
+                "arguments": block.get("input", {}),
+            })
+
+    return {
+        "content": content.strip(),
+        "tool_calls": _normalise_tool_calls(raw_calls),
+        "raw": data,
+    }
+
+
+def _call_ollama(
+    endpoint: str,
+    model: str,
+    messages: list,
+    stream: bool,
+    timeout: int,
+    options: dict,
+    tools: Optional[list],
+) -> dict:
+    """Ollama /api/chat — also the fallback for llamacpp and mlx."""
+    url = f"{(endpoint or '').rstrip('/')}/api/chat"
+    payload = {
+        "model": model,
+        "messages": messages,
+        # Ollama only returns tool_calls on a non-streamed response.
+        "stream": False if tools else stream,
+    }
+    if tools:
+        payload["tools"] = tools
+    if options:
+        payload["options"] = {
+            "num_predict": options.get("num_predict", options.get("max_tokens", 1024)),
+            "temperature": options.get("temperature", 0.7),
+        }
+    logger.info(f"Calling Ollama API: {url} model={model}")
+    response = requests.post(url, json=payload, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    message = data.get("message", {}) or {}
+    content = message.get("content") or ""
+    return {
+        "content": content.strip(),
+        "tool_calls": _normalise_tool_calls(message.get("tool_calls")),
+        "raw": data,
+    }
+
+
 def _do_llm_call(
     endpoint: str,
     model: str,
@@ -440,60 +614,23 @@ def _do_llm_call(
     timeout: int,
     options: dict,
     tools: list = None,
+    api_key: str = "",
 ) -> dict:
-    """Make the actual LLM API call (separated for lock wrapping)."""
-    if provider == "openai":
-        url = f"{endpoint}/v1/chat/completions"
-        payload = {
-            "model": model,
-            "messages": messages,
-            "stream": stream,
-            "temperature": options.get("temperature", 0.7),
-            "max_tokens": options.get(
-                "num_predict", options.get("max_tokens", 2048)
-            ),
-        }
-        if tools:
-            payload["tools"] = tools
-        logger.info(f"Calling OpenAI-compatible API: {url} model={model}")
-        response = requests.post(url, json=payload, timeout=timeout)
-        response.raise_for_status()
-        data = response.json()
-        message = data.get("choices", [{}])[0].get("message", {}) or {}
-        content = message.get("content") or ""
-        return {
-            "content": content.strip(),
-            "tool_calls": _normalise_tool_calls(message.get("tool_calls")),
-            "raw": data,
-        }
-    else:
-        url = f"{endpoint}/api/chat"
-        payload = {
-            "model": model,
-            "messages": messages,
-            # Ollama only returns tool_calls on a non-streamed response.
-            "stream": False if tools else stream,
-        }
-        if tools:
-            payload["tools"] = tools
-        if options:
-            payload["options"] = {
-                "num_predict": options.get(
-                    "num_predict", options.get("max_tokens", 1024)
-                ),
-                "temperature": options.get("temperature", 0.7),
-            }
-        logger.info(f"Calling Ollama API: {url} model={model}")
-        response = requests.post(url, json=payload, timeout=timeout)
-        response.raise_for_status()
-        data = response.json()
-        message = data.get("message", {}) or {}
-        content = message.get("content") or ""
-        return {
-            "content": content.strip(),
-            "tool_calls": _normalise_tool_calls(message.get("tool_calls")),
-            "raw": data,
-        }
+    """Dispatch to the provider's adapter (separated for lock wrapping).
+
+    Unknown providers fall through to the Ollama wire format, which is the
+    behaviour every local runtime has relied on. Providers with no adapter at
+    all are rejected earlier, in :func:`call_llm_chat`.
+    """
+    if provider in OPENAI_COMPATIBLE_PROVIDERS:
+        return _call_openai_compatible(
+            endpoint, model, messages, stream, timeout, options, tools, api_key
+        )
+    if provider == "anthropic":
+        return _call_anthropic(
+            endpoint, model, messages, timeout, options, tools, api_key
+        )
+    return _call_ollama(endpoint, model, messages, stream, timeout, options, tools)
 
 
 def _estimate_tokens(text: str) -> int:
