@@ -1,5 +1,9 @@
-<p align="left">
-  <img src="Halbert.png" alt="Halbert" width="120">
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/halbert-readme-banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/brand/halbert-readme-banner.svg">
+    <img alt="Halbert — You can call me AI." src="./assets/brand/halbert-readme-banner.svg" width="100%">
+  </picture>
 </p>
 
 # Halbert

@@ -10,6 +10,7 @@ import { StatusBadge } from '../primitives/StatusBadge'
 import { Input } from '../primitives/Input'
 import { Select } from '../primitives/Select'
 import { ParametricSlider } from '../primitives/ParametricSlider'
+import { HalbertMark } from '../primitives/HalbertMark'
 
 describe('Button', () => {
   it('does not fire while loading, and reports it as busy', async () => {
@@ -198,3 +199,40 @@ describe('ParametricSlider', () => {
     expect(input.style.getPropertyValue('--hb-slider-pct')).toBe('0%')
   })
 })
+
+describe('HalbertMark', () => {
+  it('renders with default size 48 and resolves auto density to medium', () => {
+    const { container } = render(<HalbertMark data-testid="mark" />)
+    const svg = container.querySelector('svg')
+    expect(svg).toBeInTheDocument()
+    expect(svg).toHaveAttribute('width', '48')
+    expect(svg).toHaveAttribute('height', '48')
+    expect(svg).toHaveClass('hb-mark--medium')
+  })
+
+  it('automatically scales density to small for icon sizes <= 24', () => {
+    const { container } = render(<HalbertMark size={16} />)
+    const svg = container.querySelector('svg')
+    expect(svg).toHaveClass('hb-mark--small')
+  })
+
+  it('automatically scales density to display for sizes > 64', () => {
+    const { container } = render(<HalbertMark size={128} />)
+    const svg = container.querySelector('svg')
+    expect(svg).toHaveClass('hb-mark--display')
+  })
+
+  it('respects explicit density override', () => {
+    const { container } = render(<HalbertMark size={128} density="small" />)
+    const svg = container.querySelector('svg')
+    expect(svg).toHaveClass('hb-mark--small')
+  })
+
+  it('renders badge variant with background tile', () => {
+    const { container } = render(<HalbertMark tone="badge" />)
+    const rect = container.querySelector('rect')
+    expect(rect).toBeInTheDocument()
+    expect(rect).toHaveAttribute('fill', 'var(--color-accent, #D34E24)')
+  })
+})
+

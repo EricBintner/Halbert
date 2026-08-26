@@ -38,6 +38,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfigEditor } from './ConfigEditor'
+import { HalbertMark } from '@/components/brand/HalbertMark'
 import { ModeSwitch } from './shell/ModeSwitch'
 import { HostShell } from './shell/HostShell'
 import { useDebug } from '@/contexts/DebugContext'
@@ -307,7 +308,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {/* Global top bar — present in both modes */}
       <header className="flex items-center gap-3 px-4 h-12 border-b bg-card shrink-0">
         <div className="flex items-center gap-2 shrink-0">
-          <img src="/Halbert.png" alt="Halbert" className="h-5 w-5" />
+          <HalbertMark size={20} density="medium" tone="accent" />
           <span className="text-sm font-semibold hidden sm:inline">Halbert</span>
         </div>
 

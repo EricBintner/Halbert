@@ -12,6 +12,12 @@ export { Select } from './primitives/Select'
 export type { SelectProps, SelectOption } from './primitives/Select'
 export { ParametricSlider } from './primitives/ParametricSlider'
 export type { ParametricSliderProps } from './primitives/ParametricSlider'
+export { HalbertMark } from './primitives/HalbertMark'
+export type {
+  HalbertMarkProps,
+  HalbertMarkDensity,
+  HalbertMarkTone,
+} from './primitives/HalbertMark'
 
 // Surfaces
 export { AppWindow } from './surfaces/AppWindow'

@@ -80,7 +80,7 @@ export function App() {
       {/* Folio bar — chrome that never moves */}
       <header className="fixed top-0 inset-x-0 z-30 flex items-center justify-between px-6 py-4 text-[11px] font-mono text-[var(--color-ink)] pointer-events-none">
         <div className="flex items-center space-x-3">
-          <HalbertMark size={20} color="currentColor" strokeWidth={36} />
+          <HalbertMark size={22} density="medium" color="currentColor" />
           <span className="font-bold tracking-wider">HALBERT</span>
         </div>
         <div className="hidden md:flex items-center space-x-4 opacity-80">
