@@ -739,7 +739,7 @@ const TIER_ROLE_CONFIG: Record<string, { label: string; color: string }> = {
   metadata: { label: 'Meta', color: 'bg-purple-500' },
   // Generic roles
   cache: { label: 'Cache', color: 'bg-cyan-500' },
-  data: { label: 'Data', color: 'bg-slate-500' },
+  data: { label: 'Data', color: 'bg-muted' },
   log: { label: 'Log', color: 'bg-amber-500' },
   spare: { label: 'Spare', color: 'bg-yellow-500' },
 }
@@ -833,7 +833,7 @@ function DiskItem({
             disk.data.smart_status === 'PASSED' && 'bg-green-500',
             disk.data.smart_status === 'FAILED' && 'bg-red-500',
             disk.data.smart_status === 'WARNING' && 'bg-yellow-500',
-            disk.data.smart_status === 'UNKNOWN' && 'bg-gray-400',
+            disk.data.smart_status === 'UNKNOWN' && 'bg-muted',
             disk.data.smart_status === 'NO_ACCESS' && 'bg-orange-400',
             disk.data.smart_status === 'N/A' && 'bg-blue-500',
           )}
@@ -1479,7 +1479,7 @@ function UnmountedVolumeCard({ volume }: { volume: StorageItem }) {
                 id={`command-${volume.id}`}
                 value={mountCommand}
                 onChange={(e) => setCustomCommand(e.target.value)}
-                className="w-full h-20 px-3 py-2 text-xs font-mono bg-zinc-900 text-zinc-100 rounded-md border border-muted-foreground/20 resize-none"
+                className="w-full h-20 px-3 py-2 text-xs font-mono bg-background text-foreground rounded-md border border-muted-foreground/20 resize-none"
                 placeholder="Custom mount command..."
               />
               <p className="text-xs text-muted-foreground/50">

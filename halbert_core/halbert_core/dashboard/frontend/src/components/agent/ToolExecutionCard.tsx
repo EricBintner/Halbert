@@ -19,9 +19,9 @@ const STATUS_CONFIG = {
   running: {
     icon: '⟳',
     label: 'Running',
-    bgColor: 'bg-blue-100 dark:bg-blue-500/10',
-    borderColor: 'border-blue-200 dark:border-blue-500/30',
-    textColor: 'text-blue-600 dark:text-blue-400',
+    bgColor: 'bg-blue-100 dark:bg-info/10',
+    borderColor: 'border-blue-200 dark:border-info/30',
+    textColor: 'text-info dark:text-info',
   },
   success: {
     icon: '✓',

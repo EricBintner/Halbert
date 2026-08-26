@@ -22,9 +22,9 @@ interface ScanBlockProps {
 }
 
 const SOURCE_CONFIG: Record<ScanSource, { icon: typeof Search; label: string; color: string; bgColor: string }> = {
-  rag: { icon: Database, label: 'Documents', color: 'text-blue-600 dark:text-blue-400', bgColor: 'bg-blue-100 dark:bg-blue-500/10' },
+  rag: { icon: Database, label: 'Documents', color: 'text-info dark:text-info', bgColor: 'bg-blue-100 dark:bg-info/10' },
   memory: { icon: Brain, label: 'Memory', color: 'text-purple-600 dark:text-purple-400', bgColor: 'bg-purple-100 dark:bg-purple-500/10' },
-  discovery: { icon: Search, label: 'System', color: 'text-cyan-600 dark:text-cyan-400', bgColor: 'bg-cyan-100 dark:bg-cyan-500/10' },
+  discovery: { icon: Search, label: 'System', color: 'text-info dark:text-info', bgColor: 'bg-cyan-100 dark:bg-info/10' },
   web: { icon: Globe, label: 'Web', color: 'text-green-600 dark:text-green-400', bgColor: 'bg-green-100 dark:bg-green-500/10' },
   file: { icon: FileText, label: 'Files', color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-100 dark:bg-orange-500/10' },
 };

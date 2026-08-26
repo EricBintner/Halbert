@@ -29,7 +29,7 @@ interface ContextPillProps {
 }
 
 const TYPE_CONFIG: Record<ContextType, { icon: typeof FileText; color: string; bg: string }> = {
-  file: { icon: FileText, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-100 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/20' },
+  file: { icon: FileText, color: 'text-info dark:text-info', bg: 'bg-blue-100 dark:bg-info/10 border-blue-200 dark:border-info/20' },
   search: { icon: Search, color: 'text-purple-600 dark:text-purple-400', bg: 'bg-purple-100 dark:bg-purple-500/10 border-purple-200 dark:border-purple-500/20' },
   memory: { icon: Brain, color: 'text-pink-600 dark:text-pink-400', bg: 'bg-pink-100 dark:bg-pink-500/10 border-pink-200 dark:border-pink-500/20' },
   web: { icon: Globe, color: 'text-green-600 dark:text-green-400', bg: 'bg-green-100 dark:bg-green-500/10 border-green-200 dark:border-green-500/20' },
@@ -130,25 +130,25 @@ export function ContextPreview({ item, onClose }: ContextPreviewProps) {
   
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="w-full max-w-2xl max-h-[80vh] bg-zinc-900 rounded-lg border border-zinc-700 shadow-xl overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700 bg-zinc-800">
+      <div className="w-full max-w-2xl max-h-[80vh] bg-background rounded-lg border border-border shadow-xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted">
           <div className="flex items-center gap-2">
             <Icon className={`h-4 w-4 ${config.color}`} />
-            <span className="text-sm text-zinc-200">{item.label}</span>
+            <span className="text-sm text-foreground">{item.label}</span>
             {item.path && (
-              <span className="text-xs text-zinc-500">{item.path}</span>
+              <span className="text-xs text-muted-foreground">{item.path}</span>
             )}
           </div>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-zinc-700 rounded"
+            className="p-1 hover:bg-muted rounded"
           >
-            <X className="h-4 w-4 text-zinc-400" />
+            <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
         
         <div className="p-4 overflow-auto max-h-[60vh]">
-          <pre className="text-xs text-zinc-300 whitespace-pre-wrap font-mono">
+          <pre className="text-xs text-foreground whitespace-pre-wrap font-mono">
             {item.preview || 'No preview available'}
           </pre>
         </div>

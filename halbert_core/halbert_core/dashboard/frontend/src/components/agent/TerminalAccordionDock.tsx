@@ -34,7 +34,7 @@ interface TerminalAccordionDockProps {
 
 const STATUS_DOT: Record<string, string> = {
   running: 'bg-emerald-400',
-  done: 'bg-zinc-500',
+  done: 'bg-muted',
   idle: 'bg-amber-400',
 };
 
@@ -48,10 +48,10 @@ function RowSummary({ session }: { session: TerminalSession }) {
   return (
     <div className="flex items-center gap-2 min-w-0 text-xs">
       <span className={`h-2 w-2 rounded-full shrink-0 ${dot}`} />
-      <span className="text-zinc-300 font-mono truncate flex-1" title={session.command}>
+      <span className="text-foreground font-mono truncate flex-1" title={session.command}>
         $ {session.command}
       </span>
-      <span className="text-zinc-500 font-mono shrink-0">pid {session.pid}{exitInfo}</span>
+      <span className="text-muted-foreground font-mono shrink-0">pid {session.pid}{exitInfo}</span>
     </div>
   );
 }
@@ -95,11 +95,11 @@ export function TerminalAccordionDock({
   const runningCount = sessions.filter((s) => s.status === 'running').length;
 
   return (
-    <div className="border-t border-zinc-800 bg-zinc-900/70">
+    <div className="border-t border-border bg-background/70">
       {/* Dock header */}
-      <div className="flex items-center justify-between px-3 py-1.5 text-xs text-zinc-300">
+      <div className="flex items-center justify-between px-3 py-1.5 text-xs text-foreground">
         <span className="font-semibold uppercase tracking-wide">{title}</span>
-        <span className="text-zinc-500 font-mono">
+        <span className="text-muted-foreground font-mono">
           {sessions.length === 0 ? 'idle' : `${runningCount}/${sessions.length} running`}
         </span>
       </div>
@@ -107,8 +107,8 @@ export function TerminalAccordionDock({
       {/* Idle: the nervous system is up, nothing is running on it yet. */}
       {sessions.length === 0 ? (
         <div className="px-3 pb-3 space-y-2">
-          <div className="flex items-center gap-2 text-[11px] text-zinc-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-zinc-600" />
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="h-1.5 w-1.5 rounded-full bg-muted" />
             <span>No terminals running. PTY bridge ready.</span>
           </div>
           {!hideLauncher && (
@@ -116,7 +116,7 @@ export function TerminalAccordionDock({
               type="button"
               onClick={launchShell}
               disabled={launching}
-              className="w-full rounded border border-dashed border-zinc-700 px-2 py-1.5 text-[11px] font-mono text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 disabled:opacity-50 transition-colors"
+              className="w-full rounded border border-dashed border-border px-2 py-1.5 text-[11px] font-mono text-foreground hover:border-border hover:text-foreground disabled:opacity-50 transition-colors"
             >
               {launching ? 'Opening shell…' : '+ New Terminal'}
             </button>
@@ -126,14 +126,14 @@ export function TerminalAccordionDock({
           )}
         </div>
       ) : (
-        <div className="divide-y divide-zinc-800/70">
+        <div className="divide-y divide-border/70">
           {sessions.map((s) => {
             const isOpen = expanded.has(s.id);
             return (
               <div key={s.id}>
                 {/* Collapsed header */}
-                <div className="flex items-center gap-1 px-3 py-1.5 hover:bg-zinc-800/50 cursor-pointer" onClick={() => toggle(s.id)}>
-                  <span className="text-zinc-400 text-[10px] w-3">{isOpen ? '▼' : '▶'}</span>
+                <div className="flex items-center gap-1 px-3 py-1.5 hover:bg-muted/50 cursor-pointer" onClick={() => toggle(s.id)}>
+                  <span className="text-muted-foreground text-[10px] w-3">{isOpen ? '▼' : '▶'}</span>
                   <div className="flex-1 min-w-0">
                     <RowSummary session={s} />
                   </div>
@@ -144,7 +144,7 @@ export function TerminalAccordionDock({
                         onJumpTo(s.id);
                       }}
                       title="Jump to origin in conversation"
-                      className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 hover:text-zinc-100 text-[10px] shrink-0"
+                      className="px-1.5 py-0.5 rounded bg-muted text-foreground hover:text-foreground text-[10px] shrink-0"
                     >
                       ⤴
                     </button>
@@ -159,7 +159,7 @@ export function TerminalAccordionDock({
                     {s.visible ? (
                       <TerminalTile session={s} onTerminated={onTerminated} />
                     ) : (
-                      <div className="rounded border border-zinc-800 bg-zinc-900 px-2 py-3 text-[11px] text-zinc-400">
+                      <div className="rounded border border-border bg-background px-2 py-3 text-[11px] text-muted-foreground">
                         Held headless — too many live terminals. Collapse another
                         to bring this one back on screen; its output is still
                         being buffered.

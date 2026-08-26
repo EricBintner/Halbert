@@ -283,7 +283,7 @@ export function ChromaDBSettings() {
   const getDiskTypeIcon = (diskType: string) => {
     switch (diskType) {
       case 'optane': return <Zap className="h-4 w-4 text-yellow-500" />
-      case 'nvme': return <Zap className="h-4 w-4 text-blue-500" />
+      case 'nvme': return <Zap className="h-4 w-4 text-info" />
       case 'ssd': return <HardDrive className="h-4 w-4 text-green-500" />
       case 'hdd': return <HardDrive className="h-4 w-4 text-orange-500" />
       default: return <HardDrive className="h-4 w-4 text-muted-foreground" />

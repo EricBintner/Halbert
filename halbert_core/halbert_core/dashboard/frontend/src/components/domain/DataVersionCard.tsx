@@ -173,11 +173,11 @@ export function DataVersionCard() {
 
         {/* Update Available Banner */}
         {versionInfo?.update_available && (
-          <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+          <div className="p-3 bg-info/10 border border-info/20 rounded-lg">
             <div className="flex items-start gap-3">
-              <Download className="h-5 w-5 text-blue-500 mt-0.5" />
+              <Download className="h-5 w-5 text-info mt-0.5" />
               <div className="flex-1">
-                <p className="font-medium text-blue-500">
+                <p className="font-medium text-info">
                   Version {versionInfo.latest_version} Available
                 </p>
                 {versionInfo.update_release_notes && (
@@ -189,7 +189,7 @@ export function DataVersionCard() {
                   <Button
                     variant="link"
                     size="sm"
-                    className="p-0 h-auto mt-2 text-blue-500"
+                    className="p-0 h-auto mt-2 text-info"
                     onClick={() => window.open(versionInfo.update_download_url, '_blank')}
                   >
                     Download Update

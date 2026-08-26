@@ -19,6 +19,12 @@ jobs:
       # both themes, and guards the two dark blocks against drifting apart.
       - name: Check contrast
         run: python3 scripts/check_contrast.py --verbose
+      # The dashboard's shadcn slots are generated from the same tokens.
+      - name: Check the shadcn theme is in sync
+        run: python3 scripts/gen_shadcn_theme.py --check
+      # Ratchet: existing literal-colour debt may sit, but it may not grow.
+      - name: Check no new literal palette classes
+        run: python3 scripts/check_literal_colors.py --check
 
   design-system:
     name: Design system (types + a11y contracts)

@@ -1830,7 +1830,7 @@ export function SidePanel() {
                       className={cn(
                         "max-w-[95%] rounded-lg px-3 py-2 text-sm",
                         message.role === 'user'
-                          ? "bg-zinc-900 text-zinc-100"
+                          ? "bg-background text-foreground"
                           : message.role === 'system'
                           ? "bg-destructive/10 text-destructive"
                           : "bg-muted"
@@ -2043,7 +2043,7 @@ export function SidePanel() {
                       </button>
                       {/* Phase 13c: Terminal preview on hover */}
                       {m.type === 'terminal' && terminalLines.length > 0 && (
-                        <div className="hidden group-hover:block px-3 py-2 bg-zinc-900 border-t border-zinc-700 text-[10px] font-mono text-zinc-300 max-h-24 overflow-y-auto">
+                        <div className="hidden group-hover:block px-3 py-2 bg-background border-t border-border text-[10px] font-mono text-foreground max-h-24 overflow-y-auto">
                           {terminalLines.slice(-5).map((line, i) => (
                             <div key={i} className={cn(
                               "truncate",
@@ -2062,7 +2062,7 @@ export function SidePanel() {
 
               {/* Config editing indicator */}
               {configContext && (
-                <div className="mx-3 mb-1 px-2 py-1 bg-sky-900/60 border border-sky-600 rounded text-[10px] text-sky-100 flex items-center gap-1">
+                <div className="mx-3 mb-1 px-2 py-1 bg-sky-900/60 border border-info rounded text-[10px] text-sky-100 flex items-center gap-1">
                   <Pencil className="h-3 w-3" />
                   <span>Editing: {configContext.filePath.split('/').pop()}</span>
                   <span className="text-sky-200 ml-1">• AI can apply edits directly</span>
@@ -2270,14 +2270,14 @@ export function SidePanel() {
           {mode === 'terminal' && (
             <>
               {/* Terminal Output */}
-              <div className="flex-1 overflow-y-auto p-3 bg-zinc-950 font-mono text-xs">
+              <div className="flex-1 overflow-y-auto p-3 bg-background font-mono text-xs">
                 {terminalLines.map((line) => (
                   <div
                     key={line.id}
                     className={cn(
                       "whitespace-pre-wrap mb-1",
                       line.type === 'input' && "text-green-400",
-                      line.type === 'output' && "text-zinc-300",
+                      line.type === 'output' && "text-foreground",
                       line.type === 'error' && "text-red-400"
                     )}
                   >
@@ -2288,7 +2288,7 @@ export function SidePanel() {
               </div>
 
               {/* Terminal Input */}
-              <div className="p-2 border-t border-zinc-800 bg-zinc-950">
+              <div className="p-2 border-t border-border bg-background">
                 <div className="flex items-center gap-2">
                   <span className="text-green-400 font-mono text-xs">$</span>
                   <input
@@ -2298,7 +2298,7 @@ export function SidePanel() {
                     onChange={(e) => setTerminalInput(e.target.value)}
                     onKeyDown={handleTerminalKeyDown}
                     placeholder="Enter command..."
-                    className="flex-1 bg-transparent text-zinc-100 font-mono text-xs focus:outline-none"
+                    className="flex-1 bg-transparent text-foreground font-mono text-xs focus:outline-none"
                     autoFocus={mode === 'terminal'}
                   />
                 </div>
