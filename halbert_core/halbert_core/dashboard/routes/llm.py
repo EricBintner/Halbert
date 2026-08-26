@@ -188,7 +188,7 @@ class LLMModelTestRequest(BaseModel):
 
 
 def _ollama_show_detail(url: str, name: str, timeout: float = 3.0) -> Optional[Dict[str, Any]]:
-    """Fetch context length and licence text from Ollama /api/show for a single model."""
+    """Fetch context length, licence text and capabilities from Ollama /api/show."""
     try:
         r = requests.post(
             f"{url}/api/show",
@@ -222,9 +222,31 @@ def _ollama_show_detail(url: str, name: str, timeout: float = 3.0) -> Optional[D
         lic = data.get("license")
         if isinstance(lic, list):
             lic = "\n\n".join(str(x) for x in lic)
-        return {"context_tokens": ctx, "context_window": ctx_label, "license": lic if isinstance(lic, str) else None}
+        return {
+            "context_tokens": ctx,
+            "context_window": ctx_label,
+            "license": lic if isinstance(lic, str) else None,
+            "capabilities": data.get("capabilities"),
+        }
     except Exception:
         return None
+
+
+def _add_capabilities(detail: Dict[str, Any], name: str, provider: str, runtime: Optional[Dict[str, Any]] = None) -> None:
+    """Set vision/tool_use/reasoning on a model_details entry (D-4).
+
+    Delegates to model.capabilities.ModelCapabilities.detect(), which layers
+    generic name tokens, provider-level defaults and (when given) runtime
+    metadata such as Ollama's own reported `capabilities` list. No cloud
+    model-name table is added here — see the module docstring in
+    tests/test_llm_proxy_capabilities.py for why.
+    """
+    from ...model.capabilities import ModelCapabilities
+
+    caps = ModelCapabilities.detect(name, provider, runtime=runtime)
+    detail["vision"] = caps.vision
+    detail["tool_use"] = caps.tool_use
+    detail["reasoning"] = caps.reasoning
 
 
 @router.post("/api/llm/proxy/models")
@@ -264,9 +286,10 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                         }
                         if family:
                             detail["family"] = family
+                        _add_capabilities(detail, name, "ollama")
                         model_details.append(detail)
 
-                # Fetch context_length via /api/show (batched, max 20)
+                # Fetch context_length + capabilities via /api/show (batched, max 20)
                 for md in model_details[:20]:
                     show = _ollama_show_detail(url, md["name"])
                     if not show:
@@ -276,6 +299,16 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                         md["context_window"] = show["context_window"]
                     if show.get("license"):
                         _annotate_license(md, license_text=show["license"])
+                    if show.get("capabilities"):
+                        # Live data from the model itself supersedes the
+                        # name-only guess above.
+                        _add_capabilities(
+                            md, md["name"], "ollama",
+                            runtime={
+                                "capabilities": show["capabilities"],
+                                "context_length": show.get("context_tokens"),
+                            },
+                        )
 
         elif req.provider in ("openai", "openai-compatible", "lm-studio", "anthropic"):
             headers = _cloud_auth_headers(req.provider, req.api_key)
@@ -307,6 +340,7 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                             detail["cost_tier"] = "OpenAI"
                         elif req.provider == "anthropic":
                             detail["cost_tier"] = "Anthropic"
+                        _add_capabilities(detail, name, req.provider)
                         model_details.append(detail)
 
         elif req.provider == "google":
@@ -341,6 +375,7 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                     "context_tokens": ctx,
                     "cost_tier": "Google Gemini",
                 }
+                _add_capabilities(detail, name, "google")
                 model_details.append(detail)
 
     except Exception as e:
