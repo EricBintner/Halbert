@@ -57,6 +57,14 @@ compression = [
   "huggingface-hub>=0.20",
 ]
 
+# Persona cognition layer (Haloysius). Not on PyPI — install from the sibling
+# checkout: `.venv/bin/pip install -e /Volumes/4TB-BAD/Haloysius`. Every
+# haloysius import in halbert_core/integrations is guarded, so the core runs
+# without it (cognition tick, app seam, and state trackers are simply skipped).
+cognition = [
+  "haloysius>=0.1.1",
+]
+
 dev = [
   "pytest>=7.4",
   "pytest-asyncio>=0.23",
