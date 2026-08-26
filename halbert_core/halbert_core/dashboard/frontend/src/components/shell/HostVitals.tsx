@@ -18,9 +18,9 @@ interface HostVitalsProps {
 const VITALS_POLL_MS = 5_000;
 
 function barColor(percent: number): string {
-  if (percent >= 90) return 'bg-rose-500';
-  if (percent >= 75) return 'bg-amber-500';
-  return 'bg-emerald-500';
+  if (percent >= 90) return 'bg-error';
+  if (percent >= 75) return 'bg-warning';
+  return 'bg-success';
 }
 
 function Meter({ label, percent, detail }: { label: string; percent: number; detail?: string }) {
@@ -28,10 +28,10 @@ function Meter({ label, percent, detail }: { label: string; percent: number; det
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between text-[10px]">
-        <span className="uppercase tracking-wide text-zinc-400">{label}</span>
-        <span className="font-mono text-zinc-300">{detail ?? `${clamped.toFixed(0)}%`}</span>
+        <span className="uppercase tracking-wide text-muted-foreground">{label}</span>
+        <span className="font-mono text-foreground">{detail ?? `${clamped.toFixed(0)}%`}</span>
       </div>
-      <div className="h-1 w-full rounded-full bg-zinc-800 overflow-hidden">
+      <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-500 ${barColor(clamped)}`}
           style={{ width: `${clamped}%` }}
@@ -46,7 +46,7 @@ export function HostVitals({ className = '' }: HostVitalsProps) {
 
   if (!identity) {
     return (
-      <div className={`px-3 py-3 text-[11px] text-zinc-400 ${className}`}>
+      <div className={`px-3 py-3 text-[11px] text-muted-foreground ${className}`}>
         {error ? `Vitals unavailable (${error})` : 'Reading vitals…'}
       </div>
     );
@@ -61,18 +61,18 @@ export function HostVitals({ className = '' }: HostVitalsProps) {
       <div className="flex items-center gap-2 min-w-0">
         <span
           className={`h-2 w-2 rounded-full shrink-0 ${
-            identity.all_healthy ? 'bg-emerald-400' : 'bg-amber-400'
+            identity.all_healthy ? 'bg-success' : 'bg-warning'
           }`}
         />
-        <span className="font-mono text-xs text-zinc-100 truncate" title={identity.hostname}>
+        <span className="font-mono text-xs text-foreground truncate" title={identity.hostname}>
           {identity.hostname}
         </span>
-        <span className="ml-auto text-[10px] font-mono text-zinc-400 shrink-0">
+        <span className="ml-auto text-[10px] font-mono text-muted-foreground shrink-0">
           up {uptime.human}
         </span>
       </div>
 
-      <div className="text-[10px] font-mono text-zinc-500 truncate" title={`${identity.os.pretty} · ${identity.os.kernel} · ${identity.os.arch}`}>
+      <div className="text-[10px] font-mono text-muted-foreground truncate" title={`${identity.os.pretty} · ${identity.os.kernel} · ${identity.os.arch}`}>
         {identity.os.pretty} · {identity.os.kernel}
       </div>
 
@@ -100,8 +100,8 @@ export function HostVitals({ className = '' }: HostVitalsProps) {
       {/* Storage pools */}
       <div className="space-y-1 pt-1">
         <div className="flex items-baseline justify-between text-[10px]">
-          <span className="uppercase tracking-wide text-zinc-400">Storage</span>
-          <span className="font-mono text-zinc-300">
+          <span className="uppercase tracking-wide text-muted-foreground">Storage</span>
+          <span className="font-mono text-foreground">
             {storage.healthy}/{storage.total} healthy
           </span>
         </div>
@@ -110,25 +110,25 @@ export function HostVitals({ className = '' }: HostVitalsProps) {
             <div key={pool.mount} className="flex items-center gap-2 text-[10px] font-mono">
               <span
                 className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                  pool.healthy ? 'bg-emerald-500/70' : 'bg-rose-500'
+                  pool.healthy ? 'bg-success/70' : 'bg-error'
                 }`}
               />
-              <span className="truncate text-zinc-300 flex-1" title={pool.mount}>
+              <span className="truncate text-foreground flex-1" title={pool.mount}>
                 {pool.mount}
               </span>
-              <span className={pool.healthy ? 'text-zinc-400' : 'text-rose-400'}>
+              <span className={pool.healthy ? 'text-muted-foreground' : 'text-error'}>
                 {pool.used_percent.toFixed(0)}%
               </span>
             </div>
           ))}
           {storage.pools.length > 5 && (
-            <div className="text-[10px] font-mono text-zinc-500">
+            <div className="text-[10px] font-mono text-muted-foreground">
               +{storage.pools.length - 5} more
             </div>
           )}
         </div>
         {strained.length > 0 && (
-          <p className="text-[10px] text-amber-400/80 pt-0.5">
+          <p className="text-[10px] text-warning pt-0.5">
             {strained.length === 1
               ? `${strained[0].mount} is running full.`
               : `${strained.length} pools are running full.`}
