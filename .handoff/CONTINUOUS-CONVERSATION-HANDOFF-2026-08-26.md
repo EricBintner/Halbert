@@ -3,7 +3,11 @@
 **Date:** 2026-08-26 (end of the Fable session)
 **Branch:** `feat/continuous-conversation` — worktree at
 `~/.config/superpowers/worktrees/Halbert/continuous-conversation` (created from `01ed50c`).
-**Read first:** this file → the spec → Plan A's header and amendments.
+**Read first:** this file → the spec → Plan A's header.
+
+**Update 2026-08-26, later the same day:** the amendments below are no longer a manual
+step — they are folded into the task text (Plan A is now 33 tasks) and the execution run
+has been launched. See "Where this actually stands" at the end of this file.
 
 ## What exists now
 
@@ -11,11 +15,11 @@
 |---|---|---|
 | Review of what was actually built (terminals, orchestrator) | `.handoff/TERMINAL-AND-ORCHESTRATOR-REVIEW-2026-08-26.md` + `-APPENDIX.md` (A: code + OSS audits), `-APPENDIX-B.md` (continuity patterns in Claude Code / Warp / Halbert's dormant modules), `-APPENDIX-C.md` (five critics vs design v0) | committed `01ed50c` |
 | **Design spec v1** (approved by the founder, folded through five adversarial reviews) | `documentation/design/continuous-conversation-and-watched-terminals-2026-08-26.md` | committed `01ed50c` |
-| **Plan A** — conversation floor + hidden threads (27 tasks, TDD, full code) | `.handoff/CONTINUOUS-CONVERSATION-PLAN-A-2026-08-26.md` | this commit; **not executed** |
+| **Plan A** — conversation floor + hidden threads (33 tasks, TDD, full code, amendments folded in) | `.handoff/CONTINUOUS-CONVERSATION-PLAN-A-2026-08-26.md` | amended `ab17736`; **executing** |
 | Plan A binding contracts (schema, signatures, events, tools, API, ordering) | `.handoff/plan-a-exec/plan-a-contracts.md` | this commit |
 | Plan A verifier verdict (dry-run applied to a scratch worktree: backend 1265 pass / 5 fail = 4 baseline + 1 fixture; frontend 88/88; tsc clean) | `.handoff/plan-a-exec/plan-a-verifier-verdict.md` | this commit |
-| Plan A tasks as JSON (for the execution workflow) | `.handoff/plan-a-exec/plan-a-tasks.json` | this commit |
-| Execution workflow (implementer → spec review → quality review per task, fix loops, hard stop on BLOCKED, final whole-branch review) | `.handoff/plan-a-exec/execute-plan-a.js` | this commit; **not run** |
+| Plan A tasks as JSON (33 entries; the workflow reads task text from per-task files split out of this) | `.handoff/plan-a-exec/plan-a-tasks.json` | regenerated `ab17736` |
+| Execution workflow (implementer → spec review → quality review per task, fix loops, hard stop on BLOCKED, final whole-branch review) | `.handoff/plan-a-exec/execute-plan-a.js` | reworked `6c90faa`; **launched** |
 | The planner / fixer workflow scripts that produced Plan A (for regeneration) | `.handoff/plan-a-exec/plan-a-writers.workflow.js`, `plan-a-fixers.workflow.js` | this commit |
 
 No application code has changed on this branch. Every change so far is documentation and
@@ -51,37 +55,32 @@ Option A — the prepared workflow (subagent-driven, sequential, reviewed):
 
 ```
 Workflow({
-  scriptPath: "<repo>/.handoff/plan-a-exec/execute-plan-a.js",
+  scriptPath: "<worktree>/.handoff/plan-a-exec/execute-plan-a.js",
   args: {
     worktree: "/Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation",
     planPath: ".handoff/CONTINUOUS-CONVERSATION-PLAN-A-2026-08-26.md",
+    taskDir: "<dir of one A1.md ... A20.md split from plan-a-tasks.json>",
     baseSha: "<git rev-parse HEAD in the worktree before starting>",
     startAt: 0,
-    context: "<paste the spec §3–§8 summary or the plan header>",
-    tasks: <contents of .handoff/plan-a-exec/plan-a-tasks.json>
+    mechanical: ["A1","A1b","A2","A3","A4","A7","A8","A10","A12c","A12d","A14","A15","A16","A19"],
+    context: "<the spec §3–§8 summary>",
+    tasks: [{id, title} for each of the 33 tasks]
   }
 })
 ```
 
+The task *text* is not passed through args — 630KB of markdown would have to sit in the
+launching context. Split `plan-a-tasks.json` into one `<id>.md` per task, point `taskDir`
+at that directory, and every agent reads its own task file. `mechanical` lists the task ids
+whose implementer and fixer agents run on the cheap model tier; reviewers always inherit
+the session model.
+
 It stops and returns `{stoppedAt, reason}` when an implementer reports BLOCKED /
 NEEDS_CONTEXT or a review cannot be resolved; fix the cause, then relaunch with
-`startAt: <index>` (or `resumeFromRunId`). Model choice: the script inherits the session
-model; for cost, run the mechanical tasks (A1–A5, A7, A8, A10, A14–A16, A19) on a cheaper
-model by adding `model: 'sonnet'` to those `agent()` calls, keep the state-machine/route
-tasks (A9a–c, A11, A12, A13, A17, A18) and all reviewers on the strongest model available.
+`startAt: <index>` (or `resumeFromRunId`).
 
 Option B — by hand with `superpowers:executing-plans` (batch with checkpoints). Each task
 already contains the failing test, the exact commands, the expected output, and the commit.
-
-While executing, apply the **Amendments before execution** section at the top of Plan A when
-you reach the named task (one blocking fixture fix in A10; the rest are count/anchor
-corrections and small spec-coverage additions: merge-back A6c, retract note A6d,
-`compact_boundaries` table, `scanner` keyword, budget bucket A8b, superseded-confirmation
-and waiting-status in A9a, `tools_supported` preamble variant, `thread_recalled.last_turn_id`
-+ chip click/expiry, redact endpoint A11b + "Forget this" A17b, alert live region). A
-fixer workflow (`plan-a-fixers.workflow.js`) was started to fold these into the task text
-directly; it had not returned when this handoff was written — if its output is found under
-the session's `tasks/` dir it can replace the parts, otherwise apply the amendments manually.
 
 Definition of done for Plan A (spec §14): `tests/test_thread_e2e.py` green ("second message
 sees the first", `new_thread` pauses, `tick()` closes with an indexed receipt, a later
@@ -154,3 +153,33 @@ Cycle; "reply here" on an old turn.
 `halbert-terminal-orchestrator-audit-2026-08-26.md`, `halbert-continuity-direction-2026-08-26.md`,
 `halbert-terminal-direction-2026-08-26.md` (the founder's decisions, the OSS repo locations and
 SourcePrep ids, and how to apply them).
+
+## Where this actually stands (2026-08-26, later the same day)
+
+The fixer workflow that was still running when the section above was written **had
+finished its Fix phase**: all three agents wrote their amended parts to that session's
+scratchpad (`plan_S_amended.md`, `plan_MD_amended.md`, `plan_F_amended.md`) and were
+stopped before returning them, so the assembler saw an empty result file, printed
+"fixers not finished", and committed the un-amended 27-task plan with the amendments left
+as a header section.
+
+Those amended parts were recovered and assembled. Plan A is now **33 tasks** with every
+verifier issue and coverage gap folded into the task text — there is no amendments section
+to apply while executing. The six added tasks:
+
+| Task | What it closes |
+|---|---|
+| A6c | `ThreadManager.merge_back` + the grace-window `resume_thread` merge (spec §5 "Merge") |
+| A6d | Retraction notes — hidden system rows the next turn's hint surfaces (spec §6) |
+| A8b | Conversation budget bucket for six raw turns + the receipt slot in the assembler (spec §7) |
+| A9d | `tools_supported` on the LLM clients; the no-tools continuity preamble variant (spec §7) |
+| A11b | `POST /api/agent/message/{id}/redact` + `store.redact_message` (spec §5 "Forget") |
+| A17b | The per-turn "Forget this" control in the timeline |
+
+Caveat carried in the plan header: those six were written *after* the sandbox dry-run, so
+unlike the other 27 their code has never been executed. Their stated expected outputs are
+targets, not measurements.
+
+Commits on the branch: `ab17736` (amended plan + regenerated task JSON), `6c90faa`
+(execution script reads task text from disk, cheap tier per task). The execution run was
+launched from `6c90faa` with `startAt: 0` and the mechanical list above.
