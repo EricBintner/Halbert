@@ -63,14 +63,10 @@ async def get_config():
     """Get current compression config from models.yml."""
     try:
         import yaml
-        from pathlib import Path
+        from ...model.config_locator import find_models_config
 
-        config_path = Path(__file__).resolve().parents[3] / "config" / "models.yml"
-        if not config_path.exists():
-            # Try alternate path
-            config_path = Path.cwd() / "config" / "models.yml"
-
-        if config_path.exists():
+        config_path = find_models_config()
+        if config_path is not None:
             with open(config_path) as f:
                 config = yaml.safe_load(f) or {}
             comp_config = config.get("compression", {})
@@ -95,17 +91,20 @@ async def update_config(req: ConfigUpdateRequest):
     """Update compression config in models.yml."""
     try:
         import yaml
-        from pathlib import Path
+        from ...model.config_locator import find_models_config, write_models_config
 
-        config_path = Path(__file__).resolve().parents[3] / "config" / "models.yml"
-        if not config_path.exists():
-            config_path = Path.cwd() / "config" / "models.yml"
-
-        if not config_path.exists():
-            raise HTTPException(status_code=404, detail="config/models.yml not found")
-
-        with open(config_path) as f:
-            config = yaml.safe_load(f) or {}
+        # Read from wherever config currently lives (the repo checkout and
+        # /etc are allowed here, purely to seed defaults), but NEVER write
+        # back to the git-tracked repo config/models.yml or to /etc: writes go
+        # to $HALBERT_MODELS_CONFIG or the user file (write_models_config()).
+        read_path = find_models_config()
+        write_path = write_models_config()
+        write_path.parent.mkdir(parents=True, exist_ok=True)
+        if read_path is not None:
+            with open(read_path) as f:
+                config = yaml.safe_load(f) or {}
+        else:
+            config = {}
 
         if "compression" not in config:
             config["compression"] = {}
@@ -113,7 +112,7 @@ async def update_config(req: ConfigUpdateRequest):
         updates = req.model_dump(exclude_none=True)
         config["compression"].update(updates)
 
-        with open(config_path, 'w') as f:
+        with open(write_path, 'w') as f:
             yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
 
         return {"status": "ok", "config": config["compression"]}

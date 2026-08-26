@@ -508,38 +508,6 @@ Respond in JSON format only:
 }}"""
 
 
-def get_configured_model() -> tuple[str, str]:
-    """
-    Get the configured guide/orchestrator model from models.yml.
-    
-    Returns:
-        (endpoint_url, model_name) tuple
-    """
-    try:
-        from pathlib import Path
-        import yaml
-        
-        # Try to find config
-        config_dir = Path.home() / '.config' / 'halbert'
-        config_path = config_dir / 'models.yml'
-        
-        if config_path.exists():
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f) or {}
-            
-            orchestrator = config.get('orchestrator', {})
-            endpoint = orchestrator.get('endpoint', 'http://localhost:11434')
-            model = orchestrator.get('model', 'llama3.1:8b-instruct')
-            return endpoint, model
-        
-        # Fallback defaults
-        return 'http://localhost:11434', 'llama3.1:8b-instruct'
-        
-    except Exception as e:
-        logger.warning(f"Failed to load model config: {e}")
-        return 'http://localhost:11434', 'llama3.1:8b-instruct'
-
-
 async def analyze_repo_with_llm(
     repo: TrendingRepo,
     user_stack: Dict[str, List[str]],
@@ -563,7 +531,8 @@ async def analyze_repo_with_llm(
         
         # Get configured model if not specified
         if llm_endpoint is None or model is None:
-            cfg_endpoint, cfg_model = get_configured_model()
+            from ..model.client import get_configured_model, get_ollama_endpoint
+            cfg_endpoint, cfg_model = get_ollama_endpoint(), get_configured_model()
             llm_endpoint = llm_endpoint or cfg_endpoint
             model = model or cfg_model
         
@@ -645,7 +614,8 @@ def analyze_repo_with_llm_sync(
         
         # Get configured model if not specified
         if llm_endpoint is None or model is None:
-            cfg_endpoint, cfg_model = get_configured_model()
+            from ..model.client import get_configured_model, get_ollama_endpoint
+            cfg_endpoint, cfg_model = get_ollama_endpoint(), get_configured_model()
             llm_endpoint = llm_endpoint or cfg_endpoint
             model = model or cfg_model
         

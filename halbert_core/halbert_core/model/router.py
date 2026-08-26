@@ -84,16 +84,8 @@ class ModelRouter:
             config_path: Path to models.yml configuration
         """
         if config_path is None:
-            # Try multiple locations for config (Phase 12e)
-            candidates = [
-                get_config_dir() / 'models.yml',  # ~/.config/halbert/models.yml
-                Path(__file__).parent.parent.parent.parent.parent / 'config' / 'models.yml',  # LinuxBrain/config/
-            ]
-            config_path = candidates[0]  # Default
-            for candidate in candidates:
-                if candidate.exists():
-                    config_path = candidate
-                    break
+            from .config_locator import find_models_config, user_models_config
+            config_path = find_models_config() or user_models_config()
         
         self.config_path = Path(config_path)
         self.config = self._load_config()

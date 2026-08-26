@@ -151,11 +151,11 @@ def llm_advisory_lock(timeout_s: float = _LOCK_TIMEOUT_S) -> Iterator[bool]:
 def _load_models_config() -> Dict[str, Any]:
     """Load the raw models.yml config dict."""
     try:
-        from ..utils.platform import get_config_dir
+        from .config_locator import find_models_config
         import yaml
 
-        config_path = get_config_dir() / "models.yml"
-        if config_path.exists():
+        config_path = find_models_config(include_repo=False)
+        if config_path is not None:
             with open(config_path, "r") as f:
                 return yaml.safe_load(f) or {}
     except Exception as e:

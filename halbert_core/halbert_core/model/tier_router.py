@@ -254,17 +254,13 @@ class TierRouter:
         if config_path and config_path.exists():
             return config_path
         
-        candidates = [
-            Path.home() / '.config' / 'halbert' / 'models.yml',
-            Path(__file__).parent.parent.parent.parent.parent / 'config' / 'models.yml',
-            Path('/etc/halbert/models.yml'),
-        ]
-        
-        for candidate in candidates:
-            if candidate.exists():
-                return candidate
-        
-        return candidates[0]  # Default location
+        from .config_locator import find_models_config, user_models_config
+        found = find_models_config()
+        if found is not None:
+            logger.info(f"TierRouter config: {found}")
+            return found
+        logger.warning("No models.yml found; TierRouter will have no models")
+        return user_models_config()  # default (non-existent) location
     
     def _load_raw_config(self) -> Dict[str, Any]:
         """Load raw YAML configuration."""
