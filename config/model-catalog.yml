@@ -12,6 +12,8 @@ orchestrators:
     model_id: "llama3.1:8b-instruct"
     provider: "ollama"
     description: "Llama 3.1 8B Instruct - Recommended orchestrator"
+    license: "Meta Llama 3.1 Community License"
+    attribution: "Built with Meta Llama 3.1"
     memory_mb: 8000
     context_length: 128000  # 128k context!
     capabilities: [chat, reasoning, technical, fast]
@@ -33,6 +35,8 @@ orchestrators:
     model_id: "llama3:8b-instruct"
     provider: "ollama"
     description: "Llama 3 8B Instruct - Alternative orchestrator"
+    license: "Meta Llama 3 Community License"
+    attribution: "Built with Meta Llama 3"
     memory_mb: 8000
     context_length: 8192
     capabilities: [chat, reasoning, technical, fast]
@@ -46,6 +50,8 @@ code_specialists:
     model_id: "qwen2.5-coder:14b"
     provider: "ollama"
     description: "Qwen 2.5 Coder 14B - Fast, efficient code specialist"
+    license: "Apache-2.0 / Qwen Community License"
+    attribution: "Qwen 2.5 Coder by Alibaba Cloud"
     memory_mb: 14000
     context_length: 32768
     capabilities: [code, chat, reasoning, fast]
@@ -72,6 +78,8 @@ code_specialists:
     model_id: "deepseek-coder:33b"
     provider: "ollama"
     description: "DeepSeek Coder 33B - High-quality code specialist"
+    license: "DeepSeek License Agreement"
+    attribution: "DeepSeek Coder by DeepSeek AI"
     memory_mb: 33000
     context_length: 16384
     capabilities: [code, reasoning, chat]
@@ -98,6 +106,8 @@ code_specialists:
     model_id: "codellama:34b-instruct"
     provider: "ollama"
     description: "CodeLlama 34B Instruct - Meta's code specialist"
+    license: "Llama 2 Community License"
+    attribution: "CodeLlama by Meta AI"
     memory_mb: 34000
     context_length: 16384
     capabilities: [code, chat, reasoning]

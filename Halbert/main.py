@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import argparse
 import os
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DOCS_ROOT = os.path.normpath(os.path.join(ROOT, '..', 'docs'))
+LEGAL_ROOT = os.path.normpath(os.path.join(ROOT, '..', 'documentation', 'legal'))
 
 # Allow importing the local core package without installation
 REPO_ROOT = os.path.normpath(os.path.join(ROOT, '..'))
@@ -91,10 +94,32 @@ def read_text(path):
 
 def cmd_info(args):
     print("Halbert — Local-First Multi-Agent OS Companion")
-    print("Phase 1 (Alpha): Observability Assistant")
-    print("Offline-first, confirm-by-default, auditable tools")
+    print("Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors")
+    print("License: GNU General Public License v3.0 (GPL-3.0)")
+    print("This is free software with ABSOLUTELY NO WARRANTY. Type 'halbert license' for details.")
+    print("Offline-first, confirm-by-default, auditable tools.")
     print()
-    print("See docs/Phase1 for Phase 1 planning and roadmap.")
+    print("Documentation: documentation/ (or docs/)")
+    print("Legal & Licensing: documentation/legal/")
+
+
+def cmd_license(args):
+    license_file = os.path.join(REPO_ROOT, 'LICENSE')
+    license_md = os.path.join(LEGAL_ROOT, 'LICENSE.md')
+    if getattr(args, 'full', False) and os.path.exists(license_file):
+        print(read_text(license_file))
+    elif os.path.exists(license_md):
+        print(read_text(license_md))
+        print("\nTo view the complete verbatim GPLv3 text, run: halbert license --full (or inspect LICENSE)")
+    elif os.path.exists(license_file):
+        print(read_text(license_file))
+    else:
+        print("Halbert is licensed under the GNU General Public License v3.0 (GPL-3.0).")
+        print("See https://www.gnu.org/licenses/gpl-3.0.html")
+    print("\n" + "=" * 60)
+    print("Third-Party RAG Knowledge & Software Components:")
+    print("For full upstream licenses, see: documentation/legal/THIRD-PARTY-LICENSES.md")
+    print("=" * 60)
 
 
 def cmd_roadmap(args):
@@ -1734,8 +1759,12 @@ def main():
     parser = argparse.ArgumentParser(description='Halbert CLI')
     sub = parser.add_subparsers(required=True)
 
-    p_info = sub.add_parser('info', help='Show product info')
+    p_info = sub.add_parser('info', help='Show product info and legal summary')
     p_info.set_defaults(func=cmd_info)
+
+    p_lic = sub.add_parser('license', help='Show software license and third-party notices')
+    p_lic.add_argument('--full', action='store_true', help='Show complete verbatim GNU GPLv3 license text')
+    p_lic.set_defaults(func=cmd_license)
 
     p_rm = sub.add_parser('roadmap', help='Show Phase 1 roadmap (docs/Phase1/ROADMAP.md)')
     p_rm.set_defaults(func=cmd_roadmap)

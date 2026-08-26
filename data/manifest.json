@@ -196,7 +196,7 @@
     "mac_build_exclusions": [
       "All sources with mac_build: false are excluded from paid Mac App Store build",
       "GNU FDL content (Arch Wiki) excluded due to copyleft licensing",
-      "See docs/Phase54_licensing-roundup/ for full licensing audit"
+      "See documentation/legal/ for full licensing audit and action plan"
     ],
     "attribution_requirements": [
       "Stack Exchange content requires CC BY-SA 4.0 attribution",
@@ -204,7 +204,7 @@
       "SS64 content requires CC BY-NC 4.0 attribution (non-commercial only)",
       "FreeBSD Handbook requires FreeBSD Documentation License attribution",
       "macOS man pages: BSD pages require BSD license attribution, Apple pages require APSL 2.0 attribution",
-      "See THIRD-PARTY-LICENSES.txt in distribution"
+      "See documentation/legal/THIRD-PARTY-LICENSES.md in distribution"
     ]
   }
 }
