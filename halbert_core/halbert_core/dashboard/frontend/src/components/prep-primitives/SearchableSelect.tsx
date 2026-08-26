@@ -109,7 +109,7 @@ export function SearchableSelect({
         onClick={() => !disabled && setOpen((o) => !o)}
         onKeyDown={onTriggerKey}
         className={cn(
-          'w-full flex items-center justify-between rounded-md border border-border bg-surface-raised text-text font-medium ring-offset-background transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+          'w-full flex items-center justify-between rounded-md border border-border bg-surface-raised text-text font-medium ring-offset-background transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
           sizeClass[size],
         )}
       >

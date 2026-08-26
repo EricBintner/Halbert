@@ -234,7 +234,7 @@ function EditableName({
         onKeyDown={handleKeyDown}
         className={cn(
           "bg-background border border-primary rounded px-1.5 py-0.5 text-sm font-medium",
-          "focus:outline-none focus:ring-1 focus:ring-primary",
+          "focus:outline-none focus:ring-1 focus-visible:ring-focus",
           "min-w-[120px]",
           className
         )}

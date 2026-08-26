@@ -378,7 +378,7 @@ export function Terminal() {
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
                   placeholder="Enter command... (type /help for AI commands)"
-                  className="w-full pl-7 pr-3 py-2 rounded-md border bg-card font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="w-full pl-7 pr-3 py-2 rounded-md border bg-card font-mono text-sm resize-none focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
                   rows={1}
                   disabled={isRunning}
                   style={{ minHeight: '40px' }}

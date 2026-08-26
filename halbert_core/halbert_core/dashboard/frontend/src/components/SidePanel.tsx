@@ -2137,7 +2137,7 @@ export function SidePanel() {
                       onKeyDown={handleChatKeyDown}
                       onPaste={handlePaste}
                       placeholder={isLoading ? "Type to queue next message..." : (configContext ? "Ask to modify this file..." : "Ask... (@ to mention, paste/drop images)")}
-                      className="w-full px-2 py-1.5 pr-7 rounded-md border bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary resize-none overflow-hidden min-h-[30px]"
+                      className="w-full px-2 py-1.5 pr-7 rounded-md border bg-background text-xs focus:outline-none focus:ring-1 focus-visible:ring-focus resize-none overflow-hidden min-h-[30px]"
                       rows={1}
                       style={{ maxHeight: '150px' }}
                     />

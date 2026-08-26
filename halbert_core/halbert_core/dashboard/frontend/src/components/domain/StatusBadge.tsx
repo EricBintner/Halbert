@@ -37,10 +37,10 @@ export interface StatusBadgeProps {
 }
 
 const severityStyles: Record<string, string> = {
-  success: 'bg-success/15 text-success border-success/40 dark:bg-success/40 dark:text-success dark:border-success',
-  warning: 'bg-warning/15 text-warning border-warning/40 dark:bg-warning/40 dark:text-warning dark:border-warning',
-  critical: 'bg-error/15 text-error border-error/40 dark:bg-error/40 dark:text-error dark:border-error',
-  info: 'bg-info/15 text-info border-info/40 dark:bg-sky-900/40 dark:text-info dark:border-info',
+  success: 'bg-success-muted text-success border-success/40',
+  warning: 'bg-warning-muted text-warning border-warning/40',
+  critical: 'bg-error-muted text-error border-error/40',
+  info: 'bg-info-muted text-info border-info/40',
   unknown: 'bg-muted text-muted-foreground border-border',
 }
 

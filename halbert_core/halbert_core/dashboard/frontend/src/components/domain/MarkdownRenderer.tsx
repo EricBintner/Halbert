@@ -128,7 +128,7 @@ export function MarkdownRenderer({
     // Handle ## headers (section headers)
     if (trimmed.startsWith('## ')) {
       return (
-        <h3 key={pIndex} className="font-semibold text-sm text-primary mt-4 mb-2 pb-1 border-b border-border first:mt-0">
+        <h3 key={pIndex} className="font-semibold text-sm text-foreground mt-4 mb-2 pb-1 border-b border-border first:mt-0">
           {trimmed.slice(3)}
         </h3>
       )

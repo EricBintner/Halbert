@@ -17,7 +17,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         <select
           className={cn(
             "flex w-full appearance-none rounded-md border border-input bg-background text-foreground ring-offset-background",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2",
             "disabled:cursor-not-allowed disabled:opacity-50",
             "pr-8", // Space for chevron
             variant === "sm" ? "h-8 px-2 text-xs" : "h-10 px-3 py-2 text-sm",

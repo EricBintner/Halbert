@@ -72,7 +72,7 @@ export function WhyBrain({
         className={cn(
           "inline-flex items-center justify-center rounded-md transition-colors",
           buttonSizeClasses[size],
-          "hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-focus",
           isDefined 
             ? "text-pink-500 hover:text-pink-400" 
             : "text-muted-foreground/60 hover:text-muted-foreground",

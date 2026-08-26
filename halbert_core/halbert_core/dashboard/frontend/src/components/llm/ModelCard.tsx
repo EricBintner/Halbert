@@ -392,7 +392,7 @@ export function ModelCard({
                       >
                         <input
                           type="checkbox"
-                          className="w-3 h-3 rounded border-border bg-surface text-primary focus:ring-primary cursor-pointer"
+                          className="w-3 h-3 rounded border-border bg-surface text-primary focus-visible:ring-focus cursor-pointer"
                           checked={showCloud}
                           onChange={(e) => handleToggleCloud(e.target.checked)}
                           disabled={disabled || loadingCloudModels}
@@ -485,7 +485,7 @@ export function ModelCard({
                   )}>
                     <input
                       type="checkbox"
-                      className="w-4 h-4 rounded border-border bg-surface text-primary focus:ring-primary focus:ring-offset-surface cursor-pointer disabled:cursor-not-allowed"
+                      className="w-4 h-4 rounded border-border bg-surface text-primary focus-visible:ring-focus focus:ring-offset-surface cursor-pointer disabled:cursor-not-allowed"
                       checked={!!alwaysOn}
                       onChange={(e) => onAlwaysOnChange!(e.target.checked)}
                       disabled={disabled}

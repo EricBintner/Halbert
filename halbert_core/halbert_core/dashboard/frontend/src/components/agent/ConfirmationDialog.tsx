@@ -72,7 +72,7 @@ export function ConfirmationDialog({
         <div className="flex gap-3 p-4 border-t border-border bg-muted/50">
           <button
             onClick={onReject}
-            className="flex-1 px-4 py-2 text-sm font-medium text-foreground bg-muted border border-border rounded-lg hover:bg-muted focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-900 focus:ring-ring transition-colors"
+            className="flex-1 px-4 py-2 text-sm font-medium text-foreground bg-muted border border-border rounded-lg hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus:ring-offset-zinc-900 focus-visible:ring-focus transition-colors"
           >
             Cancel
           </button>
@@ -80,10 +80,10 @@ export function ConfirmationDialog({
             onClick={onConfirm}
             className={`
               flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg
-              focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-900 transition-colors
+              focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus:ring-offset-zinc-900 transition-colors
               ${confirmation.riskLevel === 'high' || confirmation.riskLevel === 'critical'
                 ? 'bg-warning hover:bg-warning focus:ring-warning'
-                : 'bg-primary text-primary-foreground hover:bg-primary/90 focus:ring-ring'
+                : 'bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-focus'
               }
             `}
           >

@@ -390,7 +390,7 @@ export function AgentPanel({
                 }}
                 placeholder="Ask... (@ to mention)"
                 disabled={isStreaming}
-                className="flex-1 px-2 py-1.5 rounded-md border bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                className="flex-1 px-2 py-1.5 rounded-md border bg-background text-xs focus:outline-none focus:ring-1 focus-visible:ring-focus"
               />
               <button
                 type="submit"

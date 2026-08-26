@@ -205,7 +205,7 @@ function ComputeNodePanel({
                     <input
                       value={formName}
                       onChange={(e) => setFormName(e.target.value)}
-                      className="w-full bg-surface border border-border rounded px-2 py-1.5 text-xs text-text focus:outline-none focus:ring-1 focus:ring-primary"
+                      className="w-full bg-surface border border-border rounded px-2 py-1.5 text-xs text-text focus:outline-none focus:ring-1 focus-visible:ring-focus"
                     />
                   </div>
                   <div>
@@ -230,7 +230,7 @@ function ComputeNodePanel({
                       value={formGpuName}
                       onChange={(e) => setFormGpuName(e.target.value)}
                       placeholder="e.g. RTX 4090, M3 Max"
-                      className="w-full bg-surface border border-border rounded px-2 py-1.5 text-xs text-text focus:outline-none focus:ring-1 focus:ring-primary"
+                      className="w-full bg-surface border border-border rounded px-2 py-1.5 text-xs text-text focus:outline-none focus:ring-1 focus-visible:ring-focus"
                     />
                   </div>
                 </div>
@@ -297,7 +297,7 @@ function ComputeNodePanel({
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
                 placeholder="e.g. GPU Server 2"
-                className="w-full bg-surface border border-border rounded px-2 py-1.5 text-xs text-text focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full bg-surface border border-border rounded px-2 py-1.5 text-xs text-text focus:outline-none focus:ring-1 focus-visible:ring-focus"
               />
             </div>
             <div>
@@ -322,7 +322,7 @@ function ComputeNodePanel({
                 value={formGpuName}
                 onChange={(e) => setFormGpuName(e.target.value)}
                 placeholder="e.g. RTX 4090, M3 Max"
-                className="w-full bg-surface border border-border rounded px-2 py-1.5 text-xs text-text focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full bg-surface border border-border rounded px-2 py-1.5 text-xs text-text focus:outline-none focus:ring-1 focus-visible:ring-focus"
               />
             </div>
           </div>
@@ -1015,7 +1015,7 @@ export function AIModelsSettings({
                 )}>
                   <input
                     type="checkbox"
-                    className="w-3.5 h-3.5 rounded border-border bg-surface text-primary focus:ring-primary focus:ring-offset-surface cursor-pointer disabled:cursor-not-allowed"
+                    className="w-3.5 h-3.5 rounded border-border bg-surface text-primary focus-visible:ring-focus focus:ring-offset-surface cursor-pointer disabled:cursor-not-allowed"
                     checked={coordinatorInherits}
                     onChange={(e) => handleCoordinatorInheritChange(e.target.checked)}
                     disabled={!config.large_model.model}

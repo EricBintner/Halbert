@@ -70,7 +70,7 @@ export function AdvancedLLMSettings({ value, onChange }: Props): JSX.Element {
                   ),
                 })
               }
-              className="w-full bg-surface border border-border rounded px-2.5 py-1.5 text-xs text-text focus:outline-none focus:ring-1 focus:ring-primary"
+              className="w-full bg-surface border border-border rounded px-2.5 py-1.5 text-xs text-text focus:outline-none focus:ring-1 focus-visible:ring-focus"
             />
             <p className="text-[10px] text-text-muted leading-relaxed">
               Hard cap on <code className="font-mono">num_predict</code> when{' '}

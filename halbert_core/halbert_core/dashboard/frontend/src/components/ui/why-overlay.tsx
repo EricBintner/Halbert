@@ -154,7 +154,7 @@ export function WhyOverlay({
               className={cn(
                 "w-full min-h-[120px] p-3 rounded-lg border bg-background resize-none",
                 "placeholder:text-muted-foreground/50",
-                "focus:outline-none focus:ring-2 focus:ring-pink-400/50 focus:border-pink-400/50",
+                "focus:outline-none focus-visible:ring-2 focus:ring-pink-400/50 focus:border-pink-400/50",
                 "transition-all duration-200"
               )}
             />

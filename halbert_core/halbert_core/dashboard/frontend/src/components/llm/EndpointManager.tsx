@@ -373,7 +373,7 @@ export function EndpointManager({
                         placeholder="Display Name"
                         value={formName}
                         onChange={(e) => setFormName(e.target.value)}
-                        className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                        className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
                       />
                     </div>
                     <div>
@@ -393,7 +393,7 @@ export function EndpointManager({
                         placeholder={providerDefaultUrl(formProvider) || 'Endpoint URL'}
                         value={formUrl}
                         onChange={(e) => setFormUrl(e.target.value)}
-                        className="flex-1 bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                        className="flex-1 bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
                       />
                       {hasAutofill(formProvider) && formUrl !== providerDefaultUrl(formProvider) && (
                         <button
@@ -418,7 +418,7 @@ export function EndpointManager({
                             type="password"
                             value={formApiKey}
                             onChange={(e) => setFormApiKey(e.target.value)}
-                            className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                            className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
                           />
                           {formProvider === 'google' && (
                             <p className="text-[10px] text-amber-400/80 mt-1.5 flex items-center gap-1">
@@ -648,7 +648,7 @@ export function EndpointManager({
                 placeholder="e.g. Local Ollama"
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
-                className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               />
             </div>
             <div>
@@ -668,7 +668,7 @@ export function EndpointManager({
                 placeholder={providerDefaultUrl(formProvider) || 'e.g., http://localhost:11434'}
                 value={formUrl}
                 onChange={(e) => setFormUrl(e.target.value)}
-                className="flex-1 bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                className="flex-1 bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               />
               {hasAutofill(formProvider) && formUrl !== providerDefaultUrl(formProvider) && (
                 <button
@@ -693,7 +693,7 @@ export function EndpointManager({
                     type="password"
                     value={formApiKey}
                     onChange={(e) => setFormApiKey(e.target.value)}
-                    className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
                   />
                   {formProvider === 'google' && (
                     <p className="text-[10px] text-amber-400/80 mt-1.5 flex items-center gap-1">
