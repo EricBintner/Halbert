@@ -53,10 +53,13 @@ def test_repo_template_has_empty_model_slots():
     import yaml
 
     raw = yaml.safe_load((repo_root() / "config" / "models.yml").read_text())
-    for slot in ("orchestrator", "specialist", "vision"):
-        assert raw[slot]["model"] == ""
-    assert raw["specialist"]["endpoint"] == "http://localhost:11434"
-    assert raw["vision"]["endpoint"] == "http://localhost:11434"
+    llm = raw["llm_config"]
+    for slot in ("chat_model", "specialist_model", "vision_model"):
+        assert llm[slot]["model"] == ""
+        assert llm[slot]["enabled"] is False
+    for ep in llm["saved_endpoints"]:
+        assert ep["url"] == "http://localhost:11434"
+        assert ep["api_key"] == ""
 
 
 def test_legacy_config_skips_empty_model_slots(tmp_path):
