@@ -38,7 +38,7 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "storage": [
         "disk", "filesystem", "mount", "zfs", "btrfs", "bcachefs", "ext4",
         "nvme", "ssd", "raid", "partition", "volume", "drive", "storage",
-        "hdd", "space", "full", "lvm", "df", "zpool", "smart", "smartctl",
+        "hdd", "space", "full", "lvm", "df", "zpool", "smartctl", "smartd",
     ],
     "backup": [
         "backup", "restore", "rsync", "borg", "snapshot", "timeshift",
@@ -53,7 +53,7 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
         "network", "wifi", "ethernet", "dns", "firewall", "ip", "port",
         "internet", "connection", "ping", "ssh", "curl", "wget",
         "iptables", "nftables", "netstat", "ss", "samba", "smb", "nfs",
-        "cups", "wireguard", "vpn", "share", "scanner",
+        "cupsd", "printer", "wireguard", "vpn", "scanner",
     ],
     "security": [
         "ssh", "sudo", "permission", "firewall", "fail2ban", "root",
@@ -67,9 +67,20 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     ],
 }
 
+# Raw-regex alternatives per domain, tried before the escaped keyword list.
+# "share" alone is too ambiguous ("can you share that document?") to count as
+# a network signal — only count it when a networking word qualifies it
+# (review: Plan A / A4).
+_DOMAIN_EXTRA_PATTERNS: dict[str, list[str]] = {
+    "network": [r"(?:file|windows|smb|cifs|nfs|network)\s+share"],
+}
+
 # Pre-compile domain patterns for speed
 _DOMAIN_PATTERNS: dict[str, re.Pattern] = {
-    domain: re.compile(r"\b(" + "|".join(re.escape(k) for k in keywords) + r")\b", re.IGNORECASE)
+    domain: re.compile(
+        r"\b(" + "|".join(_DOMAIN_EXTRA_PATTERNS.get(domain, []) + [re.escape(k) for k in keywords]) + r")\b",
+        re.IGNORECASE,
+    )
     for domain, keywords in _DOMAIN_KEYWORDS.items()
 }
 
@@ -181,30 +192,56 @@ class MessageSignals:
 
 # ── Entities ─────────────────────────────────────────────────────
 
+def _scan(text: str) -> tuple[list[str], set[str], list[str]]:
+    """One pass over ``text``: (detected domains, canonical entities, file paths).
+
+    ``analyze_message`` and ``canonical_entities`` both need domain-keyword
+    and file-path matches; running each regex once here — instead of a
+    `search` pass for domains/paths plus a separate `finditer`/`findall` pass
+    for entities — keeps analyze_message within its <1ms budget (review:
+    Plan A / A4).
+    """
+    lower = text.lower()
+    entities: set[str] = set()
+    for tok in _ENTITY_TOKEN_RE.findall(lower):
+        alias = ENTITY_ALIASES.get(tok.strip("._-"))
+        if alias:
+            entities.add(alias)
+    for pattern, alias in _ALIAS_PHRASES:
+        if pattern.search(lower):
+            entities.add(alias)
+
+    domains: list[str] = []
+    for domain, pattern in _DOMAIN_PATTERNS.items():
+        matched = False
+        for m in pattern.finditer(text):
+            matched = True
+            raw = m.group(1).lower()
+            # A qualified multi-word alternative (e.g. "windows share")
+            # canonicalizes to its last word ("share"); single-word
+            # alternatives are unaffected.
+            kw = raw.split()[-1] if " " in raw else raw
+            if kw not in _GENERIC_KEYWORDS:
+                entities.add(ENTITY_ALIASES.get(kw, kw))
+        if matched:
+            domains.append(domain)
+
+    paths: list[str] = []
+    for path in _FILE_PATH_RE.findall(text):
+        path = path.rstrip(".,;:")
+        if len(path) > 1:
+            paths.append(path)
+            entities.add(path)
+
+    return domains, entities, paths
+
+
 def canonical_entities(text: str) -> set[str]:
     """Canonical entities of ``text``: alias hits, non-generic domain keywords, file paths."""
     if not text:
         return set()
-    lower = text.lower()
-    out: set[str] = set()
-    for tok in _ENTITY_TOKEN_RE.findall(lower):
-        alias = ENTITY_ALIASES.get(tok.strip("._-"))
-        if alias:
-            out.add(alias)
-    for pattern, alias in _ALIAS_PHRASES:
-        if pattern.search(lower):
-            out.add(alias)
-    for pattern in _DOMAIN_PATTERNS.values():
-        for m in pattern.finditer(text):
-            kw = m.group(1).lower()
-            if kw in _GENERIC_KEYWORDS:
-                continue
-            out.add(ENTITY_ALIASES.get(kw, kw))
-    for path in _FILE_PATH_RE.findall(text):
-        path = path.rstrip(".,;:")
-        if len(path) > 1:
-            out.add(path)
-    return out
+    _, entities, _ = _scan(text)
+    return entities
 
 
 # ── Analysis ─────────────────────────────────────────────────────
@@ -238,25 +275,27 @@ def analyze_message(message: str) -> MessageSignals:
     # ── Error indicators ─────────────────────────────────────────
     signals.has_error_indicators = any(ind in text_lower for ind in _ERROR_INDICATORS)
 
-    # ── Domains ──────────────────────────────────────────────────
-    signals.detected_domains = [
-        domain for domain, pattern in _DOMAIN_PATTERNS.items()
-        if pattern.search(text)
-    ]
+    # ── Domains + entities + file paths (one pass, see _scan) ─────
+    domains, entities, paths = _scan(text)
+    signals.detected_domains = domains
+    signals.entities = entities
+    signals.has_file_paths = bool(paths)
 
-    # ── Entities + thread cues ───────────────────────────────────
-    signals.entities = canonical_entities(text)
+    # ── Thread cues ───────────────────────────────────────────────
     signals.past_reference = bool(PAST_REF_RE.search(text))
     cue = ANAPHORA_RE.match(text)
     if cue:
         if cue.group("phrase"):
             signals.anaphora = True
-        elif cue.group("bare") and not signals.entities and not signals.detected_domains:
-            # bare "that"/"it" counts only when nothing else says what the message is about
+        elif cue.group("bare") and not signals.entities:
+            # bare "that"/"it" counts only when no entity was detected. Domain
+            # hits alone don't gate this: `entities` already excludes generic
+            # domain keywords ("failed", "running", "start", "status", ...),
+            # so gating on detected_domains too let those generic words
+            # silently suppress the cue (review: Plan A / A4) — "it failed
+            # again" has detected_domains=["service"] but no real entity, and
+            # is exactly the kind of vague follow-up this cue exists to catch.
             signals.anaphora = True
-
-    # ── File paths ───────────────────────────────────────────────
-    signals.has_file_paths = bool(_FILE_PATH_RE.search(text))
 
     # ── Code blocks ──────────────────────────────────────────────
     # Either triple-backtick fences or 4-space indented blocks
