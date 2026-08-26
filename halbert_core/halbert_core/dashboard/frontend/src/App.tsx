@@ -17,7 +17,6 @@ import { Backups } from './pages/Backups'
 import { Apps } from './pages/Apps'
 import { Approvals } from './pages/Approvals'
 import { Settings } from './pages/Settings'
-import { Agent } from './pages/Agent'
 import { Onboarding } from './components/Onboarding'
 import { DebugProvider } from './contexts/DebugContext'
 import { ScanProvider } from './contexts/ScanContext'
@@ -103,7 +102,6 @@ function App() {
                     <Route path="/apps" element={<Apps />} />
                     <Route path="/approvals" element={<Approvals />} />
                     <Route path="/settings" element={<Settings />} />
-                    <Route path="/agent" element={<Agent />} />
                   </Routes>
                 </Layout>
               </ShellModeProvider>

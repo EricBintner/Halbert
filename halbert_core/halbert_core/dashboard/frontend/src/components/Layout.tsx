@@ -35,7 +35,6 @@ import {
   Package,
   Loader2,
   ScanSearch,
-  Bot,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfigEditor } from './ConfigEditor'
@@ -49,7 +48,6 @@ import { apiUrl } from '@/lib/apiBase'
 const navigation = [
   // Overview
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Agent', href: '/agent', icon: Bot },
 
   // Essential System Health
   { name: 'Services', href: '/services', icon: Server },
