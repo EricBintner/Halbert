@@ -214,11 +214,11 @@ export function Network() {
   }, [interfaces])
 
   const getIcon = (item: NetworkItem) => {
-    if (item.data.type === 'WiFi') return <Wifi className="h-5 w-5 text-blue-500" />
-    if (item.data.type === 'Unknown') return <HelpCircle className="h-5 w-5 text-yellow-500" />
+    if (item.data.type === 'WiFi') return <Wifi className="h-5 w-5 text-info" />
+    if (item.data.type === 'Unknown') return <HelpCircle className="h-5 w-5 text-warning" />
     if (item.data.type?.toLowerCase().includes('vpn') || item.data.type?.toLowerCase().includes('tailscale')) 
       return <Shield className="h-5 w-5 text-purple-500" />
-    if (item.name.startsWith('firewall-')) return <Shield className="h-5 w-5 text-green-500" />
+    if (item.name.startsWith('firewall-')) return <Shield className="h-5 w-5 text-success" />
     if (item.name === 'listening-ports') return <Globe className="h-5 w-5 text-purple-500" />
     return <NetworkIcon className="h-5 w-5 text-muted-foreground" />
   }
@@ -426,11 +426,11 @@ export function Network() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Firewall</p>
-                <p className="text-2xl font-bold text-green-500">
+                <p className="text-2xl font-bold text-success">
                   {firewalls.some(f => f.data.active) ? 'Active' : 'Inactive'}
                 </p>
               </div>
-              <Shield className="h-8 w-8 text-green-500" />
+              <Shield className="h-8 w-8 text-success" />
             </div>
           </CardContent>
         </Card>
@@ -455,7 +455,7 @@ export function Network() {
               {/* Fused Header with Config Button */}
               <div className="flex items-center justify-between p-4 bg-muted/50 border-b">
                 <div className="flex items-center gap-2">
-                  <NetworkIcon className="h-5 w-5 text-blue-500" />
+                  <NetworkIcon className="h-5 w-5 text-info" />
                   <span className="font-semibold">
                     {group.items[0]?.data.info_kind === 'bridge' ? 'Network Bridge' : 'Network Bond'}
                   </span>
@@ -498,9 +498,9 @@ export function Network() {
                     <div className="flex items-center gap-3">
                       <Badge
                         className={cn(
-                          iface.severity === 'success' && 'bg-green-500',
-                          iface.severity === 'warning' && 'bg-yellow-500',
-                          iface.severity === 'info' && 'bg-blue-500',
+                          iface.severity === 'success' && 'bg-success',
+                          iface.severity === 'warning' && 'bg-warning',
+                          iface.severity === 'info' && 'bg-info',
                         )}
                       >
                         {iface.status}
@@ -556,9 +556,9 @@ export function Network() {
                   <div className="flex items-center gap-3">
                     <Badge
                       className={cn(
-                        iface.severity === 'success' && 'bg-green-500',
-                        iface.severity === 'warning' && 'bg-yellow-500',
-                        iface.severity === 'info' && 'bg-blue-500',
+                        iface.severity === 'success' && 'bg-success',
+                        iface.severity === 'warning' && 'bg-warning',
+                        iface.severity === 'info' && 'bg-info',
                       )}
                     >
                       {iface.status}
@@ -568,7 +568,7 @@ export function Network() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-8 w-8 p-0 text-yellow-500 hover:text-yellow-600"
+                        className="h-8 w-8 p-0 text-warning hover:text-warning"
                         title="Classify this interface"
                         onClick={(e) => startEditClassification(iface, e)}
                       >
@@ -612,8 +612,8 @@ export function Network() {
         </CardHeader>
         <CardContent>
           {firewalls.length === 0 ? (
-            <div className="flex items-center gap-3 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-              <AlertCircle className="h-5 w-5 text-yellow-500" />
+            <div className="flex items-center gap-3 p-4 rounded-lg bg-warning/10 border border-warning/20">
+              <AlertCircle className="h-5 w-5 text-warning" />
               <div>
                 <p className="font-medium">No firewall detected</p>
                 <p className="text-sm text-muted-foreground">
@@ -631,7 +631,7 @@ export function Network() {
                   <div className="flex items-center gap-4">
                     <Shield className={cn(
                       "h-8 w-8",
-                      fw.data.active ? "text-green-500" : "text-yellow-500"
+                      fw.data.active ? "text-success" : "text-warning"
                     )} />
                     <div>
                       <p className="font-medium">{fw.title}</p>
@@ -640,7 +640,7 @@ export function Network() {
                   </div>
                   <Badge
                     className={cn(
-                      fw.data.active ? 'bg-green-500' : 'bg-yellow-500',
+                      fw.data.active ? 'bg-success' : 'bg-warning',
                     )}
                   >
                     {fw.status}
@@ -676,8 +676,8 @@ export function Network() {
                       variant="outline" 
                       className={cn(
                         "font-mono text-sm",
-                        portInfo.port < 1024 && "border-blue-500 text-blue-600",
-                        portInfo.port >= 3000 && portInfo.port < 10000 && "border-green-500 text-green-600"
+                        portInfo.port < 1024 && "border-info text-info",
+                        portInfo.port >= 3000 && portInfo.port < 10000 && "border-success text-success"
                       )}
                     >
                       {portInfo.port}
@@ -729,9 +729,9 @@ export function Network() {
                 <div className="flex items-center gap-3 flex-shrink-0 text-sm">
                   <Badge
                     className={cn(
-                      selectedInterface.severity === 'success' && 'bg-green-500',
-                      selectedInterface.severity === 'warning' && 'bg-yellow-500',
-                      selectedInterface.severity === 'info' && 'bg-blue-500',
+                      selectedInterface.severity === 'success' && 'bg-success',
+                      selectedInterface.severity === 'warning' && 'bg-warning',
+                      selectedInterface.severity === 'info' && 'bg-info',
                     )}
                   >
                     {selectedInterface.status}
@@ -791,7 +791,7 @@ export function Network() {
                       >
                         {copied === `config-${selectedInterface.id}` ? (
                           <>
-                            <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" />
+                            <CheckCircle2 className="h-3 w-3 mr-1 text-success" />
                             Copied
                           </>
                         ) : (

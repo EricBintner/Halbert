@@ -84,26 +84,26 @@ type CategoryFilter = 'all' | 'audio' | 'network' | 'storage' | 'desktop' | 'sec
 
 const CATEGORY_CONFIG: Record<CategoryFilter, { label: string; icon: React.ReactNode; color: string }> = {
   all: { label: 'All Types', icon: <Server className="h-4 w-4" />, color: 'text-muted-foreground' },
-  audio: { label: 'Audio', icon: <Volume2 className="h-4 w-4" />, color: 'text-purple-500' },
-  network: { label: 'Network', icon: <Network className="h-4 w-4" />, color: 'text-blue-500' },
-  storage: { label: 'Storage', icon: <HardDrive className="h-4 w-4" />, color: 'text-orange-500' },
-  desktop: { label: 'Desktop', icon: <Monitor className="h-4 w-4" />, color: 'text-green-500' },
-  security: { label: 'Security', icon: <Shield className="h-4 w-4" />, color: 'text-red-500' },
-  print: { label: 'Print', icon: <Printer className="h-4 w-4" />, color: 'text-cyan-500' },
-  virtualization: { label: 'Virtual', icon: <Box className="h-4 w-4" />, color: 'text-indigo-500' },
-  database: { label: 'Database', icon: <Database className="h-4 w-4" />, color: 'text-yellow-500' },
-  web: { label: 'Web', icon: <Globe className="h-4 w-4" />, color: 'text-pink-500' },
-  packages: { label: 'Packages', icon: <Box className="h-4 w-4" />, color: 'text-emerald-500' },
-  power: { label: 'Power', icon: <Cog className="h-4 w-4" />, color: 'text-amber-500' },
+  audio: { label: 'Audio', icon: <Volume2 className="h-4 w-4" />, color: 'text-muted-foreground' },
+  network: { label: 'Network', icon: <Network className="h-4 w-4" />, color: 'text-muted-foreground' },
+  storage: { label: 'Storage', icon: <HardDrive className="h-4 w-4" />, color: 'text-muted-foreground' },
+  desktop: { label: 'Desktop', icon: <Monitor className="h-4 w-4" />, color: 'text-muted-foreground' },
+  security: { label: 'Security', icon: <Shield className="h-4 w-4" />, color: 'text-muted-foreground' },
+  print: { label: 'Print', icon: <Printer className="h-4 w-4" />, color: 'text-muted-foreground' },
+  virtualization: { label: 'Virtual', icon: <Box className="h-4 w-4" />, color: 'text-muted-foreground' },
+  database: { label: 'Database', icon: <Database className="h-4 w-4" />, color: 'text-muted-foreground' },
+  web: { label: 'Web', icon: <Globe className="h-4 w-4" />, color: 'text-muted-foreground' },
+  packages: { label: 'Packages', icon: <Box className="h-4 w-4" />, color: 'text-muted-foreground' },
+  power: { label: 'Power', icon: <Cog className="h-4 w-4" />, color: 'text-muted-foreground' },
   logging: { label: 'Logging', icon: <Server className="h-4 w-4" />, color: 'text-slate-500' },
-  time: { label: 'Time', icon: <Cog className="h-4 w-4" />, color: 'text-sky-500' },
+  time: { label: 'Time', icon: <Cog className="h-4 w-4" />, color: 'text-muted-foreground' },
   hardware: { label: 'Hardware', icon: <Cog className="h-4 w-4" />, color: 'text-zinc-500' },
-  session: { label: 'Session', icon: <Monitor className="h-4 w-4" />, color: 'text-violet-500' },
-  cloud: { label: 'Cloud', icon: <Globe className="h-4 w-4" />, color: 'text-sky-400' },
-  backup: { label: 'Backup', icon: <HardDrive className="h-4 w-4" />, color: 'text-teal-500' },
-  bluetooth: { label: 'Bluetooth', icon: <Network className="h-4 w-4" />, color: 'text-blue-400' },
-  messaging: { label: 'IPC', icon: <Server className="h-4 w-4" />, color: 'text-fuchsia-500' },
-  diagnostics: { label: 'Diag', icon: <AlertCircle className="h-4 w-4" />, color: 'text-rose-500' },
+  session: { label: 'Session', icon: <Monitor className="h-4 w-4" />, color: 'text-muted-foreground' },
+  cloud: { label: 'Cloud', icon: <Globe className="h-4 w-4" />, color: 'text-muted-foreground' },
+  backup: { label: 'Backup', icon: <HardDrive className="h-4 w-4" />, color: 'text-muted-foreground' },
+  bluetooth: { label: 'Bluetooth', icon: <Network className="h-4 w-4" />, color: 'text-muted-foreground' },
+  messaging: { label: 'IPC', icon: <Server className="h-4 w-4" />, color: 'text-muted-foreground' },
+  diagnostics: { label: 'Diag', icon: <AlertCircle className="h-4 w-4" />, color: 'text-muted-foreground' },
   other: { label: 'Other', icon: <Server className="h-4 w-4" />, color: 'text-muted-foreground' },
 }
 
@@ -407,9 +407,9 @@ export function Services() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Running</p>
-                <p className="text-2xl font-bold text-green-500">{stats.running}</p>
+                <p className="text-2xl font-bold text-success">{stats.running}</p>
               </div>
-              <CheckCircle className="h-8 w-8 text-green-500" />
+              <CheckCircle className="h-8 w-8 text-success" />
             </div>
           </CardContent>
         </Card>
@@ -418,9 +418,9 @@ export function Services() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Failed</p>
-                <p className="text-2xl font-bold text-red-500">{stats.failed}</p>
+                <p className="text-2xl font-bold text-error">{stats.failed}</p>
               </div>
-              <AlertCircle className="h-8 w-8 text-red-500" />
+              <AlertCircle className="h-8 w-8 text-error" />
             </div>
           </CardContent>
         </Card>
@@ -429,9 +429,9 @@ export function Services() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Docker</p>
-                <p className="text-2xl font-bold text-blue-500">{stats.docker}</p>
+                <p className="text-2xl font-bold text-info">{stats.docker}</p>
               </div>
-              <Container className="h-8 w-8 text-blue-500" />
+              <Container className="h-8 w-8 text-info" />
             </div>
           </CardContent>
         </Card>
@@ -519,7 +519,7 @@ export function Services() {
                       <div className="flex items-center gap-2">
                         <p className="font-medium">{service.name}</p>
                         {service.data.is_critical && (
-                          <Badge variant="outline" className="text-xs border-red-500 text-red-500">
+                          <Badge variant="outline" className="text-xs border-error text-error">
                             Critical
                           </Badge>
                         )}
@@ -547,9 +547,9 @@ export function Services() {
                       variant="outline"
                       className={cn(
                         'text-xs font-medium border min-w-[70px] justify-center',
-                        service.severity === 'critical' && 'bg-red-500/15 text-red-700 border-red-500/40 dark:bg-red-900/40 dark:text-red-300',
-                        service.severity === 'warning' && 'bg-yellow-500/15 text-yellow-700 border-yellow-500/40 dark:bg-yellow-900/40 dark:text-yellow-300',
-                        service.severity === 'success' && 'bg-green-500/15 text-green-700 border-green-500/40 dark:bg-green-900/40 dark:text-green-300',
+                        service.severity === 'critical' && 'bg-error/15 text-error border-error/40 dark:bg-error/40 dark:text-error',
+                        service.severity === 'warning' && 'bg-warning/15 text-warning border-warning/40 dark:bg-warning/40 dark:text-warning',
+                        service.severity === 'success' && 'bg-success/15 text-success border-success/40 dark:bg-success/40 dark:text-success',
                         service.severity === 'info' && service.status === 'Completed' && 'bg-violet-500/15 text-violet-700 border-violet-500/40 dark:bg-violet-900/40 dark:text-violet-300',
                         service.severity === 'info' && service.status !== 'Completed' && 'bg-muted text-muted-foreground border-border',
                       )}
@@ -564,7 +564,7 @@ export function Services() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7 rounded-r-none text-muted-foreground hover:text-amber-600 hover:bg-amber-500/10"
+                            className="h-7 w-7 rounded-r-none text-muted-foreground hover:text-warning hover:bg-warning/10"
                             onClick={(e) => handleAction(service, 'restart', e)}
                             title="Restart"
                           >
@@ -574,7 +574,7 @@ export function Services() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7 rounded-l-none text-muted-foreground hover:text-red-600 hover:bg-red-500/10"
+                            className="h-7 w-7 rounded-l-none text-muted-foreground hover:text-error hover:bg-error/10"
                             onClick={(e) => handleAction(service, 'stop', e)}
                             title="Stop"
                           >
@@ -585,7 +585,7 @@ export function Services() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-green-600 hover:bg-green-500/10"
+                          className="h-7 w-7 text-muted-foreground hover:text-success hover:bg-success/10"
                           onClick={(e) => handleAction(service, 'start', e)}
                           title="Start"
                         >
@@ -642,7 +642,7 @@ export function Services() {
                     <SheetTitle className="flex items-center gap-2">
                       {selectedService.name}
                       {selectedService.data.is_critical && (
-                        <AlertTriangle className="h-4 w-4 text-red-500" />
+                        <AlertTriangle className="h-4 w-4 text-error" />
                       )}
                     </SheetTitle>
                     <SheetDescription>{selectedService.description}</SheetDescription>
@@ -655,9 +655,9 @@ export function Services() {
                 <div className="flex items-center gap-3 flex-shrink-0 text-sm">
                   <Badge
                     className={cn(
-                      selectedService.severity === 'critical' && 'bg-red-500',
-                      selectedService.severity === 'warning' && 'bg-yellow-500',
-                      selectedService.severity === 'success' && 'bg-green-500',
+                      selectedService.severity === 'critical' && 'bg-error',
+                      selectedService.severity === 'warning' && 'bg-warning',
+                      selectedService.severity === 'success' && 'bg-success',
                       selectedService.severity === 'info' && selectedService.status === 'Completed' && 'bg-violet-500',
                       selectedService.severity === 'info' && selectedService.status !== 'Completed' && 'bg-slate-500',
                     )}
@@ -755,7 +755,7 @@ export function Services() {
                       </TabsContent>
                       
                       <TabsContent value="diagnosis" className="mt-2 flex-1 flex flex-col min-h-0 overflow-hidden data-[state=inactive]:hidden">
-                        <div className="p-3 rounded-lg bg-red-500/10 flex-1 overflow-y-auto min-h-0">
+                        <div className="p-3 rounded-lg bg-error/10 flex-1 overflow-y-auto min-h-0">
                           {isLoadingDiagnosis(selectedService.name) ? (
                             <div className="flex flex-col items-center gap-2 text-muted-foreground py-4">
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -826,7 +826,7 @@ export function Services() {
                   {actionResult && (
                     <div className={cn(
                       "text-sm mb-2 p-2 rounded",
-                      actionResult.success ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"
+                      actionResult.success ? "bg-success/10 text-success" : "bg-error/10 text-error"
                     )}>
                       {actionResult.message}
                     </div>

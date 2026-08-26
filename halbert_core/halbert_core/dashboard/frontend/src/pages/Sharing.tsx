@@ -248,14 +248,14 @@ export function Sharing() {
   const getIcon = (item: SharingItem) => {
     const type = item.data.share_type
     if (type === 'nfs-mount' || type === 'smb-mount') 
-      return <HardDrive className="h-5 w-5 text-blue-500" />
+      return <HardDrive className="h-5 w-5 text-info" />
     if (type === 'nfs-export' || type === 'smb-export') 
-      return <Share2 className="h-5 w-5 text-green-500" />
+      return <Share2 className="h-5 w-5 text-success" />
     if (type === 'tailscale-peer') 
       return <Globe className="h-5 w-5 text-purple-500" />
     if (type === 'wireguard-peer') 
-      return <Shield className="h-5 w-5 text-orange-500" />
-    return <Cloud className="h-5 w-5 text-cyan-500" />
+      return <Shield className="h-5 w-5 text-warning" />
+    return <Cloud className="h-5 w-5 text-info" />
   }
 
   if (loading) {
@@ -284,8 +284,8 @@ export function Sharing() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
-              <div className="p-3 bg-blue-500/10 rounded-lg">
-                <HardDrive className="h-6 w-6 text-blue-500" />
+              <div className="p-3 bg-info/10 rounded-lg">
+                <HardDrive className="h-6 w-6 text-info" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{mountCount}</p>
@@ -298,8 +298,8 @@ export function Sharing() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
-              <div className="p-3 bg-green-500/10 rounded-lg">
-                <Share2 className="h-6 w-6 text-green-500" />
+              <div className="p-3 bg-success/10 rounded-lg">
+                <Share2 className="h-6 w-6 text-success" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{exportCount}</p>
@@ -326,8 +326,8 @@ export function Sharing() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
-              <div className="p-3 bg-cyan-500/10 rounded-lg">
-                <Cloud className="h-6 w-6 text-cyan-500" />
+              <div className="p-3 bg-info/10 rounded-lg">
+                <Cloud className="h-6 w-6 text-info" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{cloudCount}</p>
@@ -367,8 +367,8 @@ export function Sharing() {
                   <div className="flex items-center gap-2">
                     <Badge
                       className={cn(
-                        item.data.connected && 'bg-green-500',
-                        !item.data.connected && 'bg-yellow-500',
+                        item.data.connected && 'bg-success',
+                        !item.data.connected && 'bg-warning',
                       )}
                     >
                       {item.status}
@@ -397,7 +397,7 @@ export function Sharing() {
                       }}
                     >
                       {copied === item.id ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <CheckCircle2 className="h-4 w-4 text-success" />
                       ) : (
                         <Copy className="h-4 w-4" />
                       )}
@@ -419,7 +419,7 @@ export function Sharing() {
               {/* Fused Header with Config Button and AI Actions */}
               <div className="flex items-center justify-between p-4 bg-muted/50 border-b">
                 <div className="flex items-center gap-2">
-                  <Share2 className="h-5 w-5 text-green-500" />
+                  <Share2 className="h-5 w-5 text-success" />
                   <span className="font-semibold">
                     {group.type === 'nfs' ? 'NFS Exports' : 'Samba Shares'}
                   </span>
@@ -465,8 +465,8 @@ export function Sharing() {
                     onClick={() => setSelectedItem(item)}
                   >
                     <div className="flex items-center gap-4">
-                      <div className="p-2 rounded-full bg-green-500/10">
-                        <FolderOpen className="h-4 w-4 text-green-500" />
+                      <div className="p-2 rounded-full bg-success/10">
+                        <FolderOpen className="h-4 w-4 text-success" />
                       </div>
                       <div>
                         <p className="font-medium">{item.data.share_name || item.title.replace('Share: ', '')}</p>
@@ -478,7 +478,7 @@ export function Sharing() {
                     </div>
                     <div className="flex items-center gap-2">
                       {item.data.guest_ok && (
-                        <Badge variant="outline" className="text-yellow-600 border-yellow-600">
+                        <Badge variant="outline" className="text-warning border-warning">
                           Guest OK
                         </Badge>
                       )}
@@ -489,7 +489,7 @@ export function Sharing() {
                       )}
                       <Badge
                         className={cn(
-                          item.data.active && 'bg-green-500',
+                          item.data.active && 'bg-success',
                           !item.data.active && 'bg-slate-500',
                         )}
                       >
@@ -550,8 +550,8 @@ export function Sharing() {
                   <div className="flex items-center gap-2">
                     <Badge
                       className={cn(
-                        item.data.active && 'bg-green-500',
-                        !item.data.active && 'bg-yellow-500',
+                        item.data.active && 'bg-success',
+                        !item.data.active && 'bg-warning',
                       )}
                     >
                       {item.status}
@@ -580,7 +580,7 @@ export function Sharing() {
                       }}
                     >
                       {copied === item.id ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <CheckCircle2 className="h-4 w-4 text-success" />
                       ) : (
                         <Copy className="h-4 w-4" />
                       )}
@@ -614,7 +614,7 @@ export function Sharing() {
                   <div className="flex items-center gap-4">
                     <div className={cn(
                       "p-2 rounded-full",
-                      item.data.online ? "bg-green-500/10" : "bg-slate-500/10"
+                      item.data.online ? "bg-success/10" : "bg-slate-500/10"
                     )}>
                       {item.data.os?.toLowerCase().includes('linux') ? (
                         <Server className="h-5 w-5" />
@@ -637,13 +637,13 @@ export function Sharing() {
                     )}
                     <div className="flex items-center gap-2">
                       {item.data.online ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <CheckCircle2 className="h-4 w-4 text-success" />
                       ) : (
                         <XCircle className="h-4 w-4 text-slate-400" />
                       )}
                       <span className={cn(
                         "text-sm",
-                        item.data.online ? "text-green-600" : "text-muted-foreground"
+                        item.data.online ? "text-success" : "text-muted-foreground"
                       )}>
                         {item.status}
                       </span>
@@ -672,7 +672,7 @@ export function Sharing() {
                       }}
                     >
                       {copied === item.id ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <CheckCircle2 className="h-4 w-4 text-success" />
                       ) : (
                         <Copy className="h-4 w-4" />
                       )}
@@ -698,7 +698,7 @@ export function Sharing() {
               {/* Fused Header with Config Button and AI Actions */}
               <div className="flex items-center justify-between p-4 bg-muted/50 border-b">
                 <div className="flex items-center gap-2">
-                  <Shield className="h-5 w-5 text-orange-500" />
+                  <Shield className="h-5 w-5 text-warning" />
                   <span className="font-semibold font-mono">{group.interfaceName}</span>
                   <Badge variant="outline" className="text-xs">
                     {group.peers.filter(p => p.data.online).length}/{group.peers.length} connected
@@ -742,11 +742,11 @@ export function Sharing() {
                     <div className="flex items-center gap-4">
                       <div className={cn(
                         "p-2 rounded-full",
-                        item.data.online ? "bg-green-500/10" : "bg-slate-500/10"
+                        item.data.online ? "bg-success/10" : "bg-slate-500/10"
                       )}>
                         <Shield className={cn(
                           "h-4 w-4",
-                          item.data.online ? "text-green-500" : "text-slate-500"
+                          item.data.online ? "text-success" : "text-slate-500"
                         )} />
                       </div>
                       <div>
@@ -762,7 +762,7 @@ export function Sharing() {
                       <Badge
                         className={cn(
                           "text-xs",
-                          item.data.online && 'bg-green-500',
+                          item.data.online && 'bg-success',
                           !item.data.online && 'bg-slate-500',
                         )}
                       >
@@ -825,8 +825,8 @@ export function Sharing() {
                   <div className="flex items-center gap-2">
                     <Badge
                       className={cn(
-                        item.data.connected && 'bg-green-500',
-                        !item.data.connected && 'bg-yellow-500',
+                        item.data.connected && 'bg-success',
+                        !item.data.connected && 'bg-warning',
                       )}
                     >
                       {item.status}
@@ -895,9 +895,9 @@ export function Sharing() {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Status</span>
                 <Badge className={cn(
-                  selectedItem.severity === 'success' && 'bg-green-500',
-                  selectedItem.severity === 'warning' && 'bg-yellow-500',
-                  selectedItem.severity === 'info' && 'bg-blue-500',
+                  selectedItem.severity === 'success' && 'bg-success',
+                  selectedItem.severity === 'warning' && 'bg-warning',
+                  selectedItem.severity === 'info' && 'bg-info',
                 )}>
                   {selectedItem.status}
                 </Badge>
@@ -978,7 +978,7 @@ export function Sharing() {
                   >
                     {copied === `config-${selectedItem.id}` ? (
                       <>
-                        <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" />
+                        <CheckCircle2 className="h-3 w-3 mr-1 text-success" />
                         Copied
                       </>
                     ) : (

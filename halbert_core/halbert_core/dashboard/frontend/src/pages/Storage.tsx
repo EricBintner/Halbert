@@ -689,7 +689,7 @@ function FilesystemUsageBar({ fs, showName = false }: { fs: FilesystemEntry; sho
       {/* Column 1: name + mount (only for multi-fs groups) */}
       {showName && (
         <div className="flex items-center gap-1.5">
-          <Folder className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+          <Folder className="h-3.5 w-3.5 text-info shrink-0" />
           <EditableName
             id={`fs-${fs.mountpoint}`}
             defaultName={shortName}
@@ -707,8 +707,8 @@ function FilesystemUsageBar({ fs, showName = false }: { fs: FilesystemEntry; sho
         value={fs.percent}
         className={cn(
           "h-2",
-          fs.severity === 'critical' && '[&>div]:bg-red-500',
-          fs.severity === 'warning' && '[&>div]:bg-yellow-500',
+          fs.severity === 'critical' && '[&>div]:bg-error',
+          fs.severity === 'warning' && '[&>div]:bg-warning',
         )}
       />
       {/* Column 3: Size info */}
@@ -719,10 +719,10 @@ function FilesystemUsageBar({ fs, showName = false }: { fs: FilesystemEntry; sho
       <Badge
         className={cn(
           "text-xs w-14 justify-center",
-          fs.severity === 'critical' && 'bg-red-500',
-          fs.severity === 'warning' && 'bg-yellow-500',
-          fs.severity === 'success' && 'bg-green-500',
-          !['critical', 'warning', 'success'].includes(fs.severity) && 'bg-blue-500',
+          fs.severity === 'critical' && 'bg-error',
+          fs.severity === 'warning' && 'bg-warning',
+          fs.severity === 'success' && 'bg-success',
+          !['critical', 'warning', 'success'].includes(fs.severity) && 'bg-info',
         )}
       >
         {fs.percent}%
@@ -734,14 +734,14 @@ function FilesystemUsageBar({ fs, showName = false }: { fs: FilesystemEntry; sho
 /** Tier role badge colors */
 const TIER_ROLE_CONFIG: Record<string, { label: string; color: string }> = {
   // bcachefs specific roles
-  foreground: { label: 'Write', color: 'bg-cyan-500' },
-  promote: { label: 'Read', color: 'bg-blue-500' },
-  metadata: { label: 'Meta', color: 'bg-purple-500' },
+  foreground: { label: 'Write', color: 'bg-muted-foreground' },
+  promote: { label: 'Read', color: 'bg-muted-foreground' },
+  metadata: { label: 'Meta', color: 'bg-muted-foreground' },
   // Generic roles
-  cache: { label: 'Cache', color: 'bg-cyan-500' },
+  cache: { label: 'Cache', color: 'bg-muted-foreground' },
   data: { label: 'Data', color: 'bg-muted' },
-  log: { label: 'Log', color: 'bg-amber-500' },
-  spare: { label: 'Spare', color: 'bg-yellow-500' },
+  log: { label: 'Log', color: 'bg-muted-foreground' },
+  spare: { label: 'Spare', color: 'bg-muted-foreground' },
 }
 
 /** Physical disk item shown when group is expanded */
@@ -782,7 +782,7 @@ function DiskItem({
   return (
     <div className={cn(
       "rounded-lg border bg-muted/30",
-      isRaid && "border-blue-500/30",
+      isRaid && "border-info/30",
       nested ? "py-1.5 px-2" : "pt-3 px-3 pb-4"
     )}>
       <div className="flex items-center justify-between gap-2">
@@ -790,7 +790,7 @@ function DiskItem({
           <HardDrive className={cn(
             "shrink-0",
             nested ? "h-3.5 w-3.5" : "h-5 w-5",
-            isRaid ? "text-blue-500" : "text-muted-foreground"
+            isRaid ? "text-info" : "text-muted-foreground"
           )} />
           <div className="min-w-0 flex-1">
             <p className={cn("font-medium truncate", nested ? "text-xs" : "text-sm")}>{disk.title}</p>
@@ -830,12 +830,12 @@ function DiskItem({
             nested 
               ? "text-[10px] px-1.5 py-1 min-w-[4.5rem]" 
               : "text-xs px-2 py-1",
-            disk.data.smart_status === 'PASSED' && 'bg-green-500',
-            disk.data.smart_status === 'FAILED' && 'bg-red-500',
-            disk.data.smart_status === 'WARNING' && 'bg-yellow-500',
+            disk.data.smart_status === 'PASSED' && 'bg-success',
+            disk.data.smart_status === 'FAILED' && 'bg-error',
+            disk.data.smart_status === 'WARNING' && 'bg-warning',
             disk.data.smart_status === 'UNKNOWN' && 'bg-muted',
-            disk.data.smart_status === 'NO_ACCESS' && 'bg-orange-400',
-            disk.data.smart_status === 'N/A' && 'bg-blue-500',
+            disk.data.smart_status === 'NO_ACCESS' && 'bg-warning',
+            disk.data.smart_status === 'N/A' && 'bg-info',
           )}
         >
           {isRaid ? raidBadgeText : (disk.data.smart_status || 'UNKNOWN')}
@@ -943,7 +943,7 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
         <div className="flex items-center justify-between">
           {/* Left: icon + name + warnings + mount point */}
           <div className="flex items-center gap-1.5 min-w-0">
-            <HardDrive className="h-4 w-4 text-blue-500 shrink-0" />
+            <HardDrive className="h-4 w-4 text-info shrink-0" />
             <EditableName
               id={group.id}
               defaultName={group.semanticName}
@@ -951,7 +951,7 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
               onRename={onRename}
             />
             {group.hasWarnings && (
-              <AlertCircle className="h-3.5 w-3.5 text-yellow-500 shrink-0" />
+              <AlertCircle className="h-3.5 w-3.5 text-warning shrink-0" />
             )}
             {isSingleFs && (
               <span className="text-muted-foreground text-sm ml-1 truncate">
@@ -1245,7 +1245,7 @@ function AllDevicesSection({ disks }: { disks: StorageItem[] }) {
           <Database className="h-5 w-5 text-muted-foreground" />
           <span>All Physical Devices</span>
           {warningCount > 0 && (
-            <Badge className="bg-yellow-500 text-xs">{warningCount} warning</Badge>
+            <Badge className="bg-warning text-xs">{warningCount} warning</Badge>
           )}
         </div>
       }
@@ -1471,7 +1471,7 @@ function UnmountedVolumeCard({ volume }: { volume: StorageItem }) {
                   className="h-6 px-2 text-xs gap-1"
                   onClick={copyToClipboard}
                 >
-                  {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+                  {copied ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
                   {copied ? 'Copied!' : 'Copy'}
                 </Button>
               </div>
@@ -1689,13 +1689,13 @@ export function Storage() {
               <span className="font-medium">{stats.totalDisks} Physical Disks</span>
             </div>
             <div className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-green-500" />
-              <span className="font-medium text-green-600">{stats.healthyDisks} Healthy</span>
+              <CheckCircle className="h-5 w-5 text-success" />
+              <span className="font-medium text-success">{stats.healthyDisks} Healthy</span>
             </div>
             {stats.criticalFs > 0 && (
               <div className="flex items-center gap-2">
-                <AlertCircle className="h-5 w-5 text-red-500" />
-                <span className="font-medium text-red-600">{stats.criticalFs} Critical</span>
+                <AlertCircle className="h-5 w-5 text-error" />
+                <span className="font-medium text-error">{stats.criticalFs} Critical</span>
               </div>
             )}
           </div>

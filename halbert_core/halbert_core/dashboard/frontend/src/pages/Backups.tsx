@@ -242,13 +242,13 @@ export function Backups() {
   const getToolIcon = (tool: string) => {
     switch (tool.toLowerCase()) {
       case 'timeshift':
-        return <Clock className="h-5 w-5 text-blue-500" />
+        return <Clock className="h-5 w-5 text-info" />
       case 'borg':
         return <Archive className="h-5 w-5 text-purple-500" />
       case 'restic':
-        return <HardDrive className="h-5 w-5 text-green-500" />
+        return <HardDrive className="h-5 w-5 text-success" />
       case 'rsync':
-        return <RefreshCw className="h-5 w-5 text-orange-500" />
+        return <RefreshCw className="h-5 w-5 text-warning" />
       case 'systemd':
         return <Settings className="h-5 w-5 text-gray-500" />
       default:
@@ -258,10 +258,10 @@ export function Backups() {
 
   const getStatusBadgeClass = (severity: string) => {
     switch (severity) {
-      case 'critical': return 'bg-red-500 hover:bg-red-600'
-      case 'warning': return 'bg-yellow-500 hover:bg-yellow-600'
-      case 'success': return 'bg-green-500 hover:bg-green-600'
-      case 'info': return 'bg-blue-500 hover:bg-blue-600'
+      case 'critical': return 'bg-error hover:bg-error'
+      case 'warning': return 'bg-warning hover:bg-warning'
+      case 'success': return 'bg-success hover:bg-success'
+      case 'info': return 'bg-info hover:bg-info'
       default: return 'bg-gray-500 hover:bg-gray-600'
     }
   }
@@ -338,9 +338,9 @@ export function Backups() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Healthy</p>
-                <p className="text-2xl font-bold text-green-500">{stats.healthy}</p>
+                <p className="text-2xl font-bold text-success">{stats.healthy}</p>
               </div>
-              <CheckCircle className="h-8 w-8 text-green-500" />
+              <CheckCircle className="h-8 w-8 text-success" />
             </div>
           </CardContent>
         </Card>
@@ -349,9 +349,9 @@ export function Backups() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Warnings</p>
-                <p className="text-2xl font-bold text-yellow-500">{stats.warning}</p>
+                <p className="text-2xl font-bold text-warning">{stats.warning}</p>
               </div>
-              <AlertTriangle className="h-8 w-8 text-yellow-500" />
+              <AlertTriangle className="h-8 w-8 text-warning" />
             </div>
           </CardContent>
         </Card>
@@ -360,9 +360,9 @@ export function Backups() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Failed</p>
-                <p className="text-2xl font-bold text-red-500">{stats.failed}</p>
+                <p className="text-2xl font-bold text-error">{stats.failed}</p>
               </div>
-              <AlertCircle className="h-8 w-8 text-red-500" />
+              <AlertCircle className="h-8 w-8 text-error" />
             </div>
           </CardContent>
         </Card>
@@ -599,9 +599,9 @@ export function Backups() {
                                         variant="outline"
                                         className={cn(
                                           "text-xs",
-                                          entry.status === 'success' && "border-green-500 text-green-600",
-                                          entry.status === 'warning' && "border-yellow-500 text-yellow-600",
-                                          entry.status === 'failed' && "border-red-500 text-red-600",
+                                          entry.status === 'success' && "border-success text-success",
+                                          entry.status === 'warning' && "border-warning text-warning",
+                                          entry.status === 'failed' && "border-error text-error",
                                         )}
                                       >
                                         {entry.status === 'success' && <CheckCircle className="h-3 w-3 mr-1" />}

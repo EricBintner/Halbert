@@ -61,10 +61,10 @@ export function Security() {
   })
 
   const getIcon = (item: SecurityItem) => {
-    if (item.name.includes('ssh')) return <Key className="h-5 w-5 text-blue-500" />
+    if (item.name.includes('ssh')) return <Key className="h-5 w-5 text-info" />
     if (item.name.includes('sudo')) return <Users className="h-5 w-5 text-purple-500" />
-    if (item.name.includes('fail2ban')) return <Shield className="h-5 w-5 text-green-500" />
-    if (item.name.includes('update')) return <RefreshCw className="h-5 w-5 text-orange-500" />
+    if (item.name.includes('fail2ban')) return <Shield className="h-5 w-5 text-success" />
+    if (item.name.includes('update')) return <RefreshCw className="h-5 w-5 text-warning" />
     return <Lock className="h-5 w-5 text-muted-foreground" />
   }
 
@@ -112,9 +112,9 @@ export function Security() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Secure</p>
-                <p className="text-2xl font-bold text-green-500">{stats.secure}</p>
+                <p className="text-2xl font-bold text-success">{stats.secure}</p>
               </div>
-              <CheckCircle className="h-8 w-8 text-green-500" />
+              <CheckCircle className="h-8 w-8 text-success" />
             </div>
           </CardContent>
         </Card>
@@ -123,9 +123,9 @@ export function Security() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Warnings</p>
-                <p className="text-2xl font-bold text-yellow-500">{stats.warnings}</p>
+                <p className="text-2xl font-bold text-warning">{stats.warnings}</p>
               </div>
-              <AlertTriangle className="h-8 w-8 text-yellow-500" />
+              <AlertTriangle className="h-8 w-8 text-warning" />
             </div>
           </CardContent>
         </Card>
@@ -134,9 +134,9 @@ export function Security() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Issues</p>
-                <p className="text-2xl font-bold text-red-500">{stats.issues}</p>
+                <p className="text-2xl font-bold text-error">{stats.issues}</p>
               </div>
-              <AlertTriangle className="h-8 w-8 text-red-500" />
+              <AlertTriangle className="h-8 w-8 text-error" />
             </div>
           </CardContent>
         </Card>
@@ -175,7 +175,7 @@ export function Security() {
                       {item.name === 'ssh-config' && Array.isArray(item.data.issues) && (
                         <div className="mt-2 space-y-1">
                           {(item.data.issues as string[]).map((issue: string, i: number) => (
-                            <div key={i} className="flex items-center gap-2 text-sm text-yellow-600">
+                            <div key={i} className="flex items-center gap-2 text-sm text-warning">
                               <AlertTriangle className="h-3 w-3" />
                               {issue}
                             </div>

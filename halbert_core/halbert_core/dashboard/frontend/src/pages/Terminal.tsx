@@ -341,7 +341,7 @@ export function Terminal() {
           <h1 className="text-2xl font-bold">Terminal</h1>
           <span className={cn(
             "text-xs px-2 py-0.5 rounded-full",
-            isConnected ? "bg-green-500/20 text-green-500" : "bg-red-500/20 text-red-500"
+            isConnected ? "bg-success/20 text-success" : "bg-error/20 text-error"
           )}>
             {isConnected ? '● Connected' : '○ Disconnected'}
           </span>

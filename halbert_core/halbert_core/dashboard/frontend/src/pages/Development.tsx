@@ -89,30 +89,6 @@ interface DevData {
 }
 
 // Language color classes for visual distinction without emojis
-const languageColors: Record<string, string> = {
-  python: 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400',
-  python3: 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400',
-  node: 'bg-green-500/20 text-green-600 dark:text-green-400',
-  nodejs: 'bg-green-500/20 text-green-600 dark:text-green-400',
-  rust: 'bg-orange-500/20 text-orange-600 dark:text-orange-400',
-  rustc: 'bg-orange-500/20 text-orange-600 dark:text-orange-400',
-  go: 'bg-cyan-500/20 text-cyan-600 dark:text-cyan-400',
-  java: 'bg-red-500/20 text-red-600 dark:text-red-400',
-  ruby: 'bg-red-500/20 text-red-600 dark:text-red-400',
-  php: 'bg-purple-500/20 text-purple-600 dark:text-purple-400',
-  perl: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
-  lua: 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400',
-  r: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
-  julia: 'bg-purple-500/20 text-purple-600 dark:text-purple-400',
-  elixir: 'bg-purple-500/20 text-purple-600 dark:text-purple-400',
-  clojure: 'bg-green-500/20 text-green-600 dark:text-green-400',
-  scala: 'bg-red-500/20 text-red-600 dark:text-red-400',
-  kotlin: 'bg-orange-500/20 text-orange-600 dark:text-orange-400',
-  swift: 'bg-orange-500/20 text-orange-600 dark:text-orange-400',
-  dotnet: 'bg-purple-500/20 text-purple-600 dark:text-purple-400',
-  deno: 'bg-gray-500/20 text-gray-600 dark:text-gray-400',
-  bun: 'bg-amber-500/20 text-amber-600 dark:text-amber-400',
-}
 
 const projectTypeIcons: Record<string, React.ReactNode> = {
   git: <GitBranch className="h-4 w-4" />,
@@ -204,8 +180,8 @@ export function Development() {
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-500/10 rounded-lg">
-                <Code2 className="h-5 w-5 text-blue-500" />
+              <div className="p-2 bg-info/10 rounded-lg">
+                <Code2 className="h-5 w-5 text-info" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{data.stats.total_languages}</p>
@@ -230,8 +206,8 @@ export function Development() {
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-green-500/10 rounded-lg">
-                <FolderGit2 className="h-5 w-5 text-green-500" />
+              <div className="p-2 bg-success/10 rounded-lg">
+                <FolderGit2 className="h-5 w-5 text-success" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{data.stats.total_projects}</p>
@@ -263,7 +239,7 @@ export function Development() {
                 >
                   <div className={cn(
                     "w-10 h-10 rounded-lg flex items-center justify-center font-bold text-sm",
-                    languageColors[lang.name.toLowerCase()] || 'bg-muted text-muted-foreground'
+                    'bg-muted text-muted-foreground'
                   )}>
                     {lang.name.slice(0, 2).toUpperCase()}
                   </div>
@@ -324,7 +300,7 @@ export function Development() {
                     <div className="flex items-center gap-3">
                       <div className={cn(
                         "w-10 h-10 rounded-lg flex items-center justify-center font-bold text-sm",
-                        languageColors[vm.type] || 'bg-muted text-muted-foreground'
+                        'bg-muted text-muted-foreground'
                       )}>
                         {vm.name.split('-')[0].slice(0, 2).toUpperCase()}
                       </div>
@@ -390,9 +366,9 @@ export function Development() {
                   <div className="flex items-center gap-3">
                     <div className={cn(
                       "w-8 h-8 rounded flex items-center justify-center text-xs font-bold",
-                      env.type === 'conda' ? 'bg-green-500/20 text-green-600' :
+                      env.type === 'conda' ? 'bg-success/20 text-success' :
                       env.type === 'poetry' ? 'bg-purple-500/20 text-purple-600' :
-                      'bg-yellow-500/20 text-yellow-600'
+                      'bg-warning/20 text-warning'
                     )}>
                       {env.type === 'conda' ? 'C' : env.type === 'poetry' ? 'P' : 'V'}
                     </div>
@@ -461,7 +437,7 @@ export function Development() {
                           </Badge>
                         )}
                         {project.git_status === 'dirty' && (
-                          <Badge variant="secondary" className="text-xs text-amber-600">
+                          <Badge variant="secondary" className="text-xs text-warning">
                             <AlertTriangle className="h-3 w-3 mr-1" />
                             Uncommitted
                           </Badge>

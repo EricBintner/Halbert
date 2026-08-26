@@ -74,11 +74,11 @@ export function Jobs() {
     <div className="space-y-6">
       {/* Safe Mode Banner */}
       {guardrails?.safe_mode_active && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 flex items-center justify-between">
+        <div className="bg-warning/10 border border-warning/30 rounded-lg p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <AlertTriangle className="h-5 w-5 text-amber-500" />
+            <AlertTriangle className="h-5 w-5 text-warning" />
             <div>
-              <p className="font-medium text-amber-600 dark:text-amber-400">Safe Mode Active</p>
+              <p className="font-medium text-warning dark:text-warning">Safe Mode Active</p>
               <p className="text-sm text-muted-foreground">Autonomous operations are paused</p>
             </div>
           </div>
@@ -105,7 +105,7 @@ export function Jobs() {
             <CardTitle className="text-2xl flex items-center gap-2">
               {schedulerStatus?.running ? (
                 <>
-                  <Activity className="h-5 w-5 text-green-500" />
+                  <Activity className="h-5 w-5 text-success" />
                   Running
                 </>
               ) : (
@@ -126,13 +126,13 @@ export function Jobs() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Completed</CardDescription>
-            <CardTitle className="text-2xl text-green-500">{schedulerStatus?.completed_jobs || 0}</CardTitle>
+            <CardTitle className="text-2xl text-success">{schedulerStatus?.completed_jobs || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Failed</CardDescription>
-            <CardTitle className="text-2xl text-red-500">{schedulerStatus?.failed_jobs || 0}</CardTitle>
+            <CardTitle className="text-2xl text-error">{schedulerStatus?.failed_jobs || 0}</CardTitle>
           </CardHeader>
         </Card>
       </div>

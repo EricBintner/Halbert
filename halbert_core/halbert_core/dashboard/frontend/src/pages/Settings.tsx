@@ -1216,8 +1216,8 @@ export function Settings() {
 
           {/* Legacy Connection Status Card — will be removed in Step 4 */}
           <Card className={modelStatus?.ollama_connected 
-            ? (modelStatus?.model_installed ? 'border-green-500' : 'border-yellow-500') 
-            : 'border-red-500'
+            ? (modelStatus?.model_installed ? 'border-success' : 'border-warning') 
+            : 'border-error'
           }>
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center justify-between">
@@ -1250,7 +1250,7 @@ export function Settings() {
                       Checking...
                     </Badge>
                   ) : modelStatus?.ollama_connected ? (
-                    <Badge className="bg-green-500">
+                    <Badge className="bg-success">
                       <Check className="h-3 w-3 mr-1" />
                       Connected
                     </Badge>
@@ -1275,12 +1275,12 @@ export function Settings() {
                     )}
                   </div>
                   {modelStatus?.model_installed ? (
-                    <Badge className="bg-green-500">
+                    <Badge className="bg-success">
                       <Check className="h-3 w-3 mr-1" />
                       Installed
                     </Badge>
                   ) : modelStatus?.ollama_connected && modelStatus?.model_name ? (
-                    <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
+                    <Badge variant="secondary" className="bg-warning-muted text-warning">
                       <X className="h-3 w-3 mr-1" />
                       Not Installed
                     </Badge>
@@ -1321,7 +1321,7 @@ export function Settings() {
                 {/* All good message */}
                 {modelStatus?.ollama_connected && modelStatus?.model_installed && (
                   <div className="pt-2 border-t">
-                    <p className="text-sm text-green-600 flex items-center gap-2">
+                    <p className="text-sm text-success flex items-center gap-2">
                       <Check className="h-4 w-4" />
                       Ready to chat! Your AI assistant is connected.
                     </p>
@@ -1660,13 +1660,13 @@ export function Settings() {
                     </div>
                     <div>
                       <p className="text-muted-foreground">Updates</p>
-                      <p className="font-medium text-xs text-green-600 dark:text-green-400">
+                      <p className="font-medium text-xs text-success dark:text-success">
                         Core docs updated with releases
                       </p>
                     </div>
                   </div>
                   {indexing && (
-                    <div className="mt-3 p-3 bg-blue-500/10 rounded text-sm text-blue-600 dark:text-blue-400">
+                    <div className="mt-3 p-3 bg-info/10 rounded text-sm text-info dark:text-info">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center">
                           <RefreshCw className="h-3 w-3 mr-2 animate-spin" />
@@ -1674,13 +1674,13 @@ export function Settings() {
                         </div>
                         <span className="text-xs">You can navigate away safely</span>
                       </div>
-                      <div className="w-full bg-blue-200 dark:bg-blue-900 rounded-full h-2.5 mb-1">
+                      <div className="w-full bg-info-muted dark:bg-info rounded-full h-2.5 mb-1">
                         <div 
-                          className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                          className="bg-info h-2.5 rounded-full transition-all duration-300"
                           style={{ width: `${indexProgress.percent}%` }}
                         ></div>
                       </div>
-                      <div className="flex justify-between text-xs text-blue-500 dark:text-blue-400">
+                      <div className="flex justify-between text-xs text-info dark:text-info">
                         <span>{indexProgress.currentSource ? `Processing: ${indexProgress.currentSource}` : 'Starting...'}</span>
                         <span>{indexProgress.percent}% ({indexProgress.completed}/{indexProgress.total} sources)</span>
                       </div>
@@ -1721,13 +1721,13 @@ export function Settings() {
                             {/* Custom docs below */}
                             {customDocs.length > 0 && (
                               <>
-                                <tr className="border-t-2 border-muted bg-blue-50/50 dark:bg-blue-900/20">
+                                <tr className="border-t-2 border-muted bg-info-muted/50 dark:bg-info/20">
                                   <td colSpan={2} className="p-2 text-xs font-medium text-muted-foreground">
                                     Custom Added ({customDocs.length})
                                   </td>
                                 </tr>
                                 {customDocs.map((doc, i) => (
-                                  <tr key={`custom-${i}`} className="border-t bg-blue-50/30 dark:bg-blue-900/10">
+                                  <tr key={`custom-${i}`} className="border-t bg-info-muted/30 dark:bg-info/10">
                                     <td className="p-2">
                                       <span className="font-medium">{doc.name}</span>
                                       {doc.url && (
@@ -1754,7 +1754,7 @@ export function Settings() {
                 {ragIndexes.length > 0 && (
                   <div className="border-t pt-4 space-y-3">
                     <div className="flex items-center gap-2">
-                      <Database className="h-4 w-4 text-blue-500" />
+                      <Database className="h-4 w-4 text-info" />
                       <span className="font-medium">Search Indexes</span>
                       <Badge variant="secondary" className="text-xs">{ragIndexes.length} indexes</Badge>
                     </div>
@@ -1762,7 +1762,7 @@ export function Settings() {
                       {ragIndexes.map((idx) => (
                         <div 
                           key={idx.name}
-                          className="flex items-center justify-between p-2 bg-blue-500/5 border border-blue-500/20 rounded-lg"
+                          className="flex items-center justify-between p-2 bg-info/5 border border-info/20 rounded-lg"
                         >
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
@@ -1787,7 +1787,7 @@ export function Settings() {
                   <div className="border-t pt-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Sparkles className="h-4 w-4 text-yellow-500" />
+                        <Sparkles className="h-4 w-4 text-warning" />
                         <span className="font-medium">Suggested Documentation</span>
                         <Badge variant="secondary" className="text-xs">{docSuggestions.length} found</Badge>
                       </div>
@@ -1800,7 +1800,7 @@ export function Settings() {
                       {docSuggestions.slice(0, 5).map((suggestion) => (
                         <div 
                           key={suggestion.doc_key}
-                          className="flex items-center justify-between p-2 bg-yellow-500/5 border border-yellow-500/20 rounded-lg"
+                          className="flex items-center justify-between p-2 bg-warning/5 border border-warning/20 rounded-lg"
                         >
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
@@ -1853,10 +1853,10 @@ export function Settings() {
                     className="font-medium flex items-center gap-2 hover:text-primary transition-colors w-full text-left"
                     onClick={() => setShowTrending(!showTrending)}
                   >
-                    <Zap className={`h-4 w-4 text-orange-500 transition-transform ${showTrending ? '' : '-rotate-90'}`} />
+                    <Zap className={`h-4 w-4 text-warning transition-transform ${showTrending ? '' : '-rotate-90'}`} />
                     <span>Trending on GitHub</span>
                     {trendingSuggestions.length > 0 && (
-                      <Badge variant="secondary" className="text-xs bg-orange-500/10 text-orange-600">
+                      <Badge variant="secondary" className="text-xs bg-warning/10 text-warning">
                         {trendingSuggestions.length} found
                       </Badge>
                     )}
@@ -1906,7 +1906,7 @@ export function Settings() {
                           {trendingSuggestions.slice(0, 5).map((repo) => (
                             <div 
                               key={repo.full_name}
-                              className="flex items-center justify-between p-2 bg-orange-500/5 border border-orange-500/20 rounded-lg"
+                              className="flex items-center justify-between p-2 bg-warning/5 border border-warning/20 rounded-lg"
                             >
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
@@ -1927,7 +1927,7 @@ export function Settings() {
                                 </p>
                                 {repo.stack_match.length > 0 && (
                                   <div className="flex items-center gap-1 mt-1">
-                                    <span className="text-xs text-orange-600">Related to:</span>
+                                    <span className="text-xs text-warning">Related to:</span>
                                     {repo.stack_match.slice(0, 3).map((match) => (
                                       <Badge key={match} variant="secondary" className="text-xs px-1 py-0">
                                         {match}
@@ -2257,7 +2257,7 @@ export function Settings() {
                           title={rule.enabled ? 'Disable rule' : 'Enable rule'}
                         >
                           {rule.enabled ? (
-                            <Check className="h-4 w-4 text-green-500" />
+                            <Check className="h-4 w-4 text-success" />
                           ) : (
                             <X className="h-4 w-4" />
                           )}
@@ -2482,12 +2482,12 @@ export function Settings() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-3 bg-muted/30 rounded-lg">
                     <p className="text-sm text-muted-foreground">Auto-Execute</p>
-                    <p className="text-2xl font-bold text-green-600">80%</p>
+                    <p className="text-2xl font-bold text-success">80%</p>
                     <p className="text-xs text-muted-foreground">Actions above this run automatically</p>
                   </div>
                   <div className="p-3 bg-muted/30 rounded-lg">
                     <p className="text-sm text-muted-foreground">Approval Required</p>
-                    <p className="text-2xl font-bold text-yellow-600">50-80%</p>
+                    <p className="text-2xl font-bold text-warning">50-80%</p>
                     <p className="text-xs text-muted-foreground">Actions in this range need approval</p>
                   </div>
                 </div>

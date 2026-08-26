@@ -276,8 +276,8 @@ export function Apps() {
 
   const getSourceIcon = (source: string) => {
     switch (source) {
-      case 'flatpak': return <Box className="h-5 w-5 text-blue-500" />
-      case 'snap': return <Layers className="h-5 w-5 text-orange-500" />
+      case 'flatpak': return <Box className="h-5 w-5 text-info" />
+      case 'snap': return <Layers className="h-5 w-5 text-warning" />
       case 'appimage': return <FileArchive className="h-5 w-5 text-purple-500" />
       default: return <Package className="h-5 w-5" />
     }
@@ -285,8 +285,8 @@ export function Apps() {
 
   const getSourceBadge = (source: string) => {
     switch (source) {
-      case 'flatpak': return <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-blue-500/10 text-blue-400 border-blue-500/30">Flatpak</Badge>
-      case 'snap': return <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-orange-500/10 text-orange-400 border-orange-500/30">Snap</Badge>
+      case 'flatpak': return <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-info/10 text-info border-info/30">Flatpak</Badge>
+      case 'snap': return <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-warning/10 text-warning border-warning/30">Snap</Badge>
       case 'appimage': return <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-purple-500/10 text-purple-400 border-purple-500/30">AppImage</Badge>
       default: return null
     }
@@ -338,9 +338,9 @@ export function Apps() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Updates</p>
-                <p className="text-2xl font-bold text-yellow-500">{stats.updates}</p>
+                <p className="text-2xl font-bold text-warning">{stats.updates}</p>
               </div>
-              <ArrowUpCircle className="h-8 w-8 text-yellow-500" />
+              <ArrowUpCircle className="h-8 w-8 text-warning" />
             </div>
           </CardContent>
         </Card>
@@ -352,7 +352,7 @@ export function Apps() {
                 <p className="text-sm text-muted-foreground">Flatpak</p>
                 <p className="text-2xl font-bold">{stats.flatpak}</p>
               </div>
-              <Box className="h-8 w-8 text-blue-500" />
+              <Box className="h-8 w-8 text-info" />
             </div>
           </CardContent>
         </Card>
@@ -364,7 +364,7 @@ export function Apps() {
                 <p className="text-sm text-muted-foreground">Snap</p>
                 <p className="text-2xl font-bold">{stats.snap}</p>
               </div>
-              <Layers className="h-8 w-8 text-orange-500" />
+              <Layers className="h-8 w-8 text-warning" />
             </div>
           </CardContent>
         </Card>
@@ -429,8 +429,8 @@ export function Apps() {
           }
           const colors = {
             all: 'text-muted-foreground',
-            flatpak: 'text-blue-500',
-            snap: 'text-orange-500',
+            flatpak: 'text-info',
+            snap: 'text-warning',
             appimage: 'text-purple-500',
           }
           
@@ -485,9 +485,9 @@ export function Apps() {
                       ) : null}
                       <div className={cn(
                         "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0",
-                        app.source === 'flatpak' && "bg-gradient-to-br from-blue-500/20 to-purple-500/20",
-                        app.source === 'snap' && "bg-gradient-to-br from-orange-500/20 to-red-500/20",
-                        app.source === 'appimage' && "bg-gradient-to-br from-purple-500/20 to-pink-500/20",
+                        app.source === 'flatpak' && "bg-gradient-to-br from-info/20 to-purple-500/20",
+                        app.source === 'snap' && "bg-gradient-to-br from-warning/20 to-error/20",
+                        app.source === 'appimage' && "bg-gradient-to-br from-purple-500/20 to-error/20",
                         app.icon && "hidden"
                       )}>
                         {getSourceIcon(app.source)}
@@ -499,7 +499,7 @@ export function Apps() {
                           <p className="font-medium">{app.displayName}</p>
                           {getSourceBadge(app.source)}
                           {app.hasUpdate && (
-                            <Badge className="text-[10px] px-1.5 py-0 bg-yellow-500/20 text-yellow-400 border-yellow-500/40">
+                            <Badge className="text-[10px] px-1.5 py-0 bg-warning/20 text-warning border-warning/40">
                               <ArrowUpCircle className="h-3 w-3 mr-1" />
                               Update
                             </Badge>
@@ -524,9 +524,9 @@ export function Apps() {
                         {app.sizeMb && ` • ${app.sizeMb} MB`}
                       </span>
                       {app.hasUpdate ? (
-                        <CheckCircle className="h-4 w-4 text-yellow-500" />
+                        <CheckCircle className="h-4 w-4 text-warning" />
                       ) : (
-                        <CheckCircle className="h-4 w-4 text-green-500" />
+                        <CheckCircle className="h-4 w-4 text-success" />
                       )}
                       <ChevronRight className={cn(
                         "h-4 w-4 text-muted-foreground transition-transform",
@@ -571,7 +571,7 @@ export function Apps() {
                             <Button
                               variant="default"
                               size="sm"
-                              className="bg-yellow-600 hover:bg-yellow-700"
+                              className="bg-warning hover:bg-warning"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 openChat({ 

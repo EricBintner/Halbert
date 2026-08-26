@@ -109,11 +109,11 @@ interface ContainerData {
 }
 
 const statusColors: Record<string, string> = {
-  running: 'bg-green-500',
+  running: 'bg-success',
   stopped: 'bg-gray-500',
-  paused: 'bg-amber-500',
-  restarting: 'bg-blue-500',
-  exited: 'bg-red-500',
+  paused: 'bg-warning',
+  restarting: 'bg-info',
+  exited: 'bg-error',
 }
 
 const statusIcons: Record<string, React.ReactNode> = {
@@ -288,8 +288,8 @@ export function Containers() {
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-green-500/10 rounded-lg">
-                <Play className="h-5 w-5 text-green-500" />
+              <div className="p-2 bg-success/10 rounded-lg">
+                <Play className="h-5 w-5 text-success" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{data.stats.running}</p>
@@ -314,8 +314,8 @@ export function Containers() {
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-500/10 rounded-lg">
-                <Box className="h-5 w-5 text-blue-500" />
+              <div className="p-2 bg-info/10 rounded-lg">
+                <Box className="h-5 w-5 text-info" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{data.stats.images}</p>
@@ -376,14 +376,14 @@ export function Containers() {
               {/* Fused Header with Config Button */}
               <div className="flex items-center justify-between p-4 bg-muted/50 border-b">
                 <div className="flex items-center gap-2">
-                  <Layers className="h-5 w-5 text-blue-500" />
+                  <Layers className="h-5 w-5 text-info" />
                   <span className="font-semibold">{project.name}</span>
                   <Badge 
                     variant="outline" 
                     className={cn(
                       "text-xs",
-                      project.running_count === project.total_count && "border-green-500 text-green-600",
-                      project.running_count > 0 && project.running_count < project.total_count && "border-yellow-500 text-yellow-600",
+                      project.running_count === project.total_count && "border-success text-success",
+                      project.running_count > 0 && project.running_count < project.total_count && "border-warning text-warning",
                       project.running_count === 0 && "border-gray-500 text-gray-600",
                     )}
                   >
@@ -411,10 +411,10 @@ export function Containers() {
                     <div className="flex items-center gap-4">
                       <div className={cn(
                         "p-2 rounded-full",
-                        service.running ? "bg-green-500/10" : "bg-gray-500/10"
+                        service.running ? "bg-success/10" : "bg-gray-500/10"
                       )}>
                         {service.running ? (
-                          <CheckCircle className="h-4 w-4 text-green-500" />
+                          <CheckCircle className="h-4 w-4 text-success" />
                         ) : (
                           <Square className="h-4 w-4 text-gray-500" />
                         )}
@@ -427,7 +427,7 @@ export function Containers() {
                     <div className="flex items-center gap-3">
                       <Badge className={cn(
                         "text-xs",
-                        service.running ? "bg-green-500" : "bg-gray-500"
+                        service.running ? "bg-success" : "bg-gray-500"
                       )}>
                         {service.status}
                       </Badge>
@@ -491,7 +491,7 @@ export function Containers() {
                     <div className="flex items-center gap-4">
                       <div className={cn(
                         "p-2 rounded-lg",
-                        container.status === 'running' ? "bg-green-500/10" : "bg-muted",
+                        container.status === 'running' ? "bg-success/10" : "bg-muted",
                       )}>
                         {statusIcons[container.status]}
                       </div>

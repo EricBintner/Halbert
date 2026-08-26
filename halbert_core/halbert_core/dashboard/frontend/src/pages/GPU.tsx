@@ -201,9 +201,9 @@ export function GPU() {
   const getDriverStatusBadge = (status: string) => {
     switch (status) {
       case 'optimal':
-        return <Badge className="bg-green-500"><CheckCircle className="h-3 w-3 mr-1" />Optimal</Badge>
+        return <Badge className="bg-success"><CheckCircle className="h-3 w-3 mr-1" />Optimal</Badge>
       case 'outdated':
-        return <Badge className="bg-amber-500"><AlertTriangle className="h-3 w-3 mr-1" />Outdated</Badge>
+        return <Badge className="bg-warning"><AlertTriangle className="h-3 w-3 mr-1" />Outdated</Badge>
       case 'missing':
         return <Badge variant="destructive"><AlertTriangle className="h-3 w-3 mr-1" />Missing</Badge>
       default:
@@ -259,12 +259,12 @@ export function GPU() {
 
       {/* Issues Alert */}
       {gpuData.issues.length > 0 && (
-        <Card className="border-amber-500/50 bg-amber-500/5">
+        <Card className="border-warning/50 bg-warning/5">
           <CardContent className="pt-6">
             <div className="flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-amber-500 mt-0.5" />
+              <AlertTriangle className="h-5 w-5 text-warning mt-0.5" />
               <div>
-                <h3 className="font-medium text-amber-600 dark:text-amber-400">Issues Detected</h3>
+                <h3 className="font-medium text-warning dark:text-warning">Issues Detected</h3>
                 <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
                   {gpuData.issues.map((issue, i) => (
                     <li key={i}>• {issue}</li>
@@ -289,9 +289,9 @@ export function GPU() {
                   <div className="flex items-center gap-3">
                     <div className={cn(
                       "w-10 h-10 rounded-lg flex items-center justify-center text-xl",
-                      vendor === 'nvidia' && "bg-green-500/10",
-                      vendor === 'amd' && "bg-red-500/10",
-                      vendor === 'intel' && "bg-blue-500/10",
+                      vendor === 'nvidia' && "bg-success/10",
+                      vendor === 'amd' && "bg-error/10",
+                      vendor === 'intel' && "bg-info/10",
                     )}>
                       {vendorIcons[vendor] || '🎮'}
                     </div>
@@ -419,8 +419,8 @@ export function GPU() {
                             </span>
                             <span className={cn(
                               "font-medium",
-                              gpu.temperature_c > 80 && "text-red-500",
-                              gpu.temperature_c > 70 && gpu.temperature_c <= 80 && "text-amber-500",
+                              gpu.temperature_c > 80 && "text-error",
+                              gpu.temperature_c > 70 && gpu.temperature_c <= 80 && "text-warning",
                             )}>
                               {gpu.temperature_c}°C
                             </span>
@@ -429,8 +429,8 @@ export function GPU() {
                             value={Math.min(100, (gpu.temperature_c / 100) * 100)} 
                             className={cn(
                               "h-2",
-                              gpu.temperature_c > 80 && "[&>div]:bg-red-500",
-                              gpu.temperature_c > 70 && gpu.temperature_c <= 80 && "[&>div]:bg-amber-500",
+                              gpu.temperature_c > 80 && "[&>div]:bg-error",
+                              gpu.temperature_c > 70 && gpu.temperature_c <= 80 && "[&>div]:bg-warning",
                             )}
                           />
                         </div>
@@ -513,7 +513,7 @@ export function GPU() {
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="flex items-center gap-2">
-                  <Sparkles className="h-5 w-5 text-blue-500" />
+                  <Sparkles className="h-5 w-5 text-info" />
                   AI GPU Advisor
                 </CardTitle>
                 <CardDescription>
@@ -523,9 +523,9 @@ export function GPU() {
               <div className="flex items-center gap-2">
                 {analysis && (
                   <Badge className={cn(
-                    analysis.health_score >= 80 && "bg-green-500",
-                    analysis.health_score >= 50 && analysis.health_score < 80 && "bg-amber-500",
-                    analysis.health_score < 50 && "bg-red-500",
+                    analysis.health_score >= 80 && "bg-success",
+                    analysis.health_score >= 50 && analysis.health_score < 80 && "bg-warning",
+                    analysis.health_score < 50 && "bg-error",
                   )}>
                     Health: {analysis.health_score}%
                   </Badge>
@@ -581,7 +581,7 @@ export function GPU() {
               <div className="space-y-6">
                 {/* Stale Analysis Banner */}
                 {analysisCache.is_stale && (
-                  <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-700 dark:text-amber-400">
+                  <div className="flex items-center gap-2 p-3 bg-warning/10 border border-warning/30 rounded-lg text-warning dark:text-warning">
                     <Clock className="h-4 w-4 flex-shrink-0" />
                     <span className="text-sm">
                       This analysis is {analysisCache.age_days ? `${analysisCache.age_days} days` : 'over a week'} old. 
@@ -608,7 +608,7 @@ export function GPU() {
                     {analysis.driver_assessment && (
                       <div className="p-4 border rounded-lg space-y-3">
                         <div className="flex items-center gap-2">
-                          <ArrowUpCircle className="h-4 w-4 text-blue-500" />
+                          <ArrowUpCircle className="h-4 w-4 text-info" />
                           <span className="font-medium text-sm">Driver Assessment</span>
                         </div>
                         <div className="space-y-2 text-sm">
@@ -637,7 +637,7 @@ export function GPU() {
                               analysis.driver_assessment.version_comparison === 'at_stable' ? "default" :
                               analysis.driver_assessment.action_recommended === 'none' ? "default" : "secondary"
                             } className={cn(
-                              analysis.driver_assessment.version_comparison === 'newer_than_stable' && "bg-blue-500/20 text-blue-600 border-blue-500/30"
+                              analysis.driver_assessment.version_comparison === 'newer_than_stable' && "bg-info/20 text-info border-info/30"
                             )}>
                               {analysis.driver_assessment.version_comparison === 'newer_than_stable' 
                                 ? "Ahead of stable (dev/beta)" 
@@ -654,8 +654,8 @@ export function GPU() {
                             <div className="flex items-center justify-between">
                               <span className="text-muted-foreground">Action:</span>
                               <Badge variant="outline" className={cn(
-                                analysis.driver_assessment.action_recommended === 'upgrade' && "text-amber-600",
-                                analysis.driver_assessment.action_recommended === 'consider_lts_downgrade' && "text-blue-600",
+                                analysis.driver_assessment.action_recommended === 'upgrade' && "text-warning",
+                                analysis.driver_assessment.action_recommended === 'consider_lts_downgrade' && "text-info",
                               )}>
                                 {analysis.driver_assessment.action_recommended === 'upgrade' 
                                   ? "Consider upgrading" 
@@ -676,9 +676,9 @@ export function GPU() {
                             <div className="flex items-center justify-between">
                               <span className="text-muted-foreground">Change risk:</span>
                               <Badge variant="outline" className={cn(
-                                (analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk) === 'safe' && "text-green-600",
-                                (analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk) === 'moderate' && "text-amber-600",
-                                (analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk) === 'high' && "text-red-600",
+                                (analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk) === 'safe' && "text-success",
+                                (analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk) === 'moderate' && "text-warning",
+                                (analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk) === 'high' && "text-error",
                               )}>
                                 {analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk}
                               </Badge>
@@ -690,7 +690,7 @@ export function GPU() {
                     {analysis.cuda_assessment && (
                       <div className="p-4 border rounded-lg space-y-3">
                         <div className="flex items-center gap-2">
-                          <Package className="h-4 w-4 text-green-500" />
+                          <Package className="h-4 w-4 text-success" />
                           <span className="font-medium text-sm">CUDA Assessment</span>
                         </div>
                         <div className="space-y-2 text-sm">
@@ -744,8 +744,8 @@ export function GPU() {
                           key={framework} 
                           variant="outline"
                           className={cn(
-                            status === 'compatible' && "border-green-500 text-green-600",
-                            status === 'needs_update' && "border-amber-500 text-amber-600",
+                            status === 'compatible' && "border-success text-success",
+                            status === 'needs_update' && "border-warning text-warning",
                             status === 'not_installed' && "border-gray-400 text-gray-500",
                           )}
                         >
@@ -758,8 +758,8 @@ export function GPU() {
 
                 {/* Warnings */}
                 {analysis.warnings && analysis.warnings.length > 0 && (
-                  <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2 text-amber-600">
+                  <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2 text-warning">
                       <AlertTriangle className="h-4 w-4" />
                       Warnings
                     </h4>
@@ -793,7 +793,7 @@ export function GPU() {
                 {analysis.recommendations && analysis.recommendations.length > 0 && (
                   <div>
                     <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 text-green-500" />
+                      <CheckCircle className="h-4 w-4 text-success" />
                       Recommendations
                     </h4>
                     <div className="space-y-3">
@@ -803,9 +803,9 @@ export function GPU() {
                             <div className="flex-1">
                               <div className="flex items-center gap-2 mb-1">
                                 <Badge variant="outline" className={cn(
-                                  rec.priority === 'high' && "border-red-500 text-red-600",
-                                  rec.priority === 'medium' && "border-amber-500 text-amber-600",
-                                  rec.priority === 'low' && "border-blue-500 text-blue-600",
+                                  rec.priority === 'high' && "border-error text-error",
+                                  rec.priority === 'medium' && "border-warning text-warning",
+                                  rec.priority === 'low' && "border-info text-info",
                                 )}>
                                   {rec.priority}
                                 </Badge>
@@ -847,7 +847,7 @@ export function GPU() {
                                 }}
                               >
                                 {copiedCommand === rec.command ? (
-                                  <Check className="h-4 w-4 text-green-500" />
+                                  <Check className="h-4 w-4 text-success" />
                                 ) : (
                                   <Copy className="h-4 w-4" />
                                 )}
@@ -874,7 +874,7 @@ export function GPU() {
                           href={source.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="block text-xs text-blue-500 hover:underline truncate"
+                          className="block text-xs text-info hover:underline truncate"
                         >
                           {source.title}
                         </a>

@@ -102,8 +102,8 @@ export function Approvals() {
 
       {/* Show blocked count if any */}
       {blockedByRules > 0 && (
-        <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 flex items-center gap-3">
-          <ShieldAlert className="h-5 w-5 text-green-600" />
+        <div className="bg-success/10 border border-success/30 rounded-lg p-3 flex items-center gap-3">
+          <ShieldAlert className="h-5 w-5 text-success" />
           <span className="text-sm">
             <strong>{blockedByRules}</strong> approval{blockedByRules > 1 ? 's' : ''} blocked by your AI Rules
           </span>
@@ -141,7 +141,7 @@ export function Approvals() {
                       </div>
                       <div className="flex items-center gap-2">
                         {request.risk_level === 'high' && <AlertTriangle className="h-4 w-4 text-destructive" />}
-                        {request.risk_level === 'medium' && <AlertTriangle className="h-4 w-4 text-yellow-500" />}
+                        {request.risk_level === 'medium' && <AlertTriangle className="h-4 w-4 text-warning" />}
                         <Badge
                           variant={
                             request.risk_level === 'high' ? 'destructive' :
@@ -156,11 +156,11 @@ export function Approvals() {
                   <CardContent className="space-y-4">
                     {/* Rule Conflict Warning */}
                     {request.rule_conflict && (
-                      <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                      <div className="bg-warning/10 border border-warning/30 rounded-lg p-3">
                         <div className="flex items-start gap-2">
-                          <ShieldAlert className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                          <ShieldAlert className="h-5 w-5 text-warning flex-shrink-0 mt-0.5" />
                           <div>
-                            <p className="font-medium text-amber-600 dark:text-amber-400">
+                            <p className="font-medium text-warning dark:text-warning">
                               Conflicts with AI Rule
                             </p>
                             <p className="text-sm text-muted-foreground mt-1">
@@ -238,9 +238,9 @@ export function Approvals() {
                     <div key={idx} className="flex items-center justify-between p-4">
                       <div className="flex items-center gap-3">
                         {item.approved ? (
-                          <CheckCircle className="h-4 w-4 text-green-500" />
+                          <CheckCircle className="h-4 w-4 text-success" />
                         ) : (
-                          <XCircle className="h-4 w-4 text-red-500" />
+                          <XCircle className="h-4 w-4 text-error" />
                         )}
                         <div>
                           <p className="font-medium">{item.request_id}</p>
@@ -286,9 +286,9 @@ export function Approvals() {
               <div className="space-y-2">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                   {decisionType === 'approve' ? (
-                    <CheckCircle className="h-5 w-5 text-green-500" />
+                    <CheckCircle className="h-5 w-5 text-success" />
                   ) : (
-                    <XCircle className="h-5 w-5 text-red-500" />
+                    <XCircle className="h-5 w-5 text-error" />
                   )}
                   {decisionType === 'approve' ? 'Approve Request' : 'Reject Request'}
                 </h3>
@@ -313,7 +313,7 @@ export function Approvals() {
               )}
 
               {/* Memory checkbox */}
-              <div className="flex items-start gap-3 rounded-md bg-pink-500/10 border border-pink-500/20 p-3">
+              <div className="flex items-start gap-3 rounded-md bg-error/10 border border-error/20 p-3">
                 <input
                   type="checkbox"
                   id="saveToMemory"
@@ -322,7 +322,7 @@ export function Approvals() {
                   className="mt-1 accent-pink-500"
                 />
                 <label htmlFor="saveToMemory" className="text-sm cursor-pointer">
-                  <span className="flex items-center gap-1.5 font-medium text-pink-600 dark:text-pink-400">
+                  <span className="flex items-center gap-1.5 font-medium text-error dark:text-error">
                     <Brain className="h-4 w-4" />
                     Remember this decision
                   </span>
