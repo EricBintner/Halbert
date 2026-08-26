@@ -142,3 +142,6 @@ data/staging/
 
 # Storybook static build
 storybook-static/
+
+# Vendored fonts, synced from shared-tokens/fonts by scripts/sync_fonts.py
+**/public/fonts/

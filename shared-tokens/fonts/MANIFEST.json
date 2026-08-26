@@ -1,0 +1,39 @@
+{
+  "families": [
+    {
+      "family": "Fraunces",
+      "spdx": "OFL-1.1",
+      "upstream_licence": "https://raw.githubusercontent.com/google/fonts/main/ofl/fraunces/OFL.txt",
+      "files": {
+        "fraunces-latin-ext-italic.woff2": "1e0d114a72921799",
+        "fraunces-latin-italic.woff2": "4af9c759c8059b53",
+        "fraunces-latin-ext-normal.woff2": "f120089b9440f3e3",
+        "fraunces-latin-normal.woff2": "48282a415ec22e31"
+      }
+    },
+    {
+      "family": "Space Grotesk",
+      "spdx": "OFL-1.1",
+      "upstream_licence": "https://raw.githubusercontent.com/google/fonts/main/ofl/spacegrotesk/OFL.txt",
+      "files": {
+        "space-grotesk-latin-ext-normal.woff2": "054c266fbb441ee0",
+        "space-grotesk-latin-normal.woff2": "a0d054c4af557de2"
+      }
+    },
+    {
+      "family": "JetBrains Mono",
+      "spdx": "OFL-1.1",
+      "upstream_licence": "https://raw.githubusercontent.com/google/fonts/main/ofl/jetbrainsmono/OFL.txt",
+      "files": {
+        "jetbrains-mono-latin-ext-italic.woff2": "3c6c272187a97d8e",
+        "jetbrains-mono-latin-italic.woff2": "e3918da535efc38e",
+        "jetbrains-mono-latin-ext-normal.woff2": "9c38cb2d0d2d93c1",
+        "jetbrains-mono-latin-normal.woff2": "2c32b9b3ee358c11"
+      }
+    }
+  ],
+  "subsets": [
+    "latin",
+    "latin-ext"
+  ]
+}
