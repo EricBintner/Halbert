@@ -148,13 +148,38 @@ class TestReceiptHardening:
         line = build_receipt(_thread(), msgs).splitlines()[6]
         assert line == "Commands: systemctl restart sshd (not run — superseded)"
 
-    def test_tail_bound_keeps_start_and_authoritative_turn_count(self):
-        msgs = [{
-            "message_id": 1, "role": "user", "origin": "human", "turn_id": "turn-1",
-            "timestamp": T0, "content": "initial concern about disk space",
-            "blocks": [], "diff_proposals": [],
+    def test_real_command_output_mentioning_superseded_is_not_misreported(self):
+        # A command that actually ran, whose real stdout/stderr happens to
+        # contain the word "superseded" (a common systemd/apt/dnf message),
+        # must still show its real exit code — not be misclassified as
+        # never having run just because "superseded" appears in its output.
+        msgs = _messages()
+        msgs[1]["blocks"] = [{
+            "tool": "run_command", "args": {"command": "systemctl restart sshd"},
+            "result": "Warning: unit file is superseded by a drop-in\n",
+            "exit": 0, "status": "success",
         }]
-        for i in range(2, 200):
+        line = build_receipt(_thread(), msgs).splitlines()[6]
+        assert line == "Commands: systemctl restart sshd (exit 0)"
+
+    def test_full_history_scanned_regardless_of_length(self):
+        # A long thread must not silently drop Commands/Files written from
+        # earlier messages, and "Started with" must find the true first
+        # human message even when the earliest stored row is not human
+        # (e.g. a migrated legacy thread whose row 0 is role "system").
+        msgs = [
+            {"message_id": 0, "role": "system", "origin": "system", "turn_id": None,
+             "timestamp": T0 - 1, "content": "session start", "blocks": [], "diff_proposals": []},
+            {"message_id": 1, "role": "user", "origin": "human", "turn_id": "turn-1",
+             "timestamp": T0, "content": "initial concern about disk space",
+             "blocks": [], "diff_proposals": []},
+            {"message_id": 2, "role": "assistant", "origin": "assistant", "turn_id": "turn-1",
+             "timestamp": T0 + 1, "content": "Checked usage.",
+             "blocks": [{"tool": "run_command", "args": {"command": "df -h"}, "exit": 0},
+                        {"tool": "write_file", "args": {"path": "/etc/cron.d/cleanup"}, "exit": 0}],
+             "diff_proposals": []},
+        ]
+        for i in range(3, 200):
             msgs.append({
                 "message_id": i,
                 "role": "assistant" if i % 2 == 0 else "user",
@@ -163,11 +188,28 @@ class TestReceiptHardening:
                 "content": f"message {i}.", "blocks": [], "diff_proposals": [],
             })
         thread = _thread(turn_count=99, title="Disk cleanup")
-        r = build_receipt(thread, msgs, tail=64)
-        # "Started with" still finds the true first human message even
-        # though it falls outside the scanned tail window.
+        r = build_receipt(thread, msgs)
+        # The true first human message, not the leading system row and not
+        # some row from deep in the recent tail.
         assert "Started with: initial concern about disk space" in r
-        # turn_count (the authoritative, incrementally-maintained counter)
-        # wins over counting turn_ids in the bounded window, which would
-        # otherwise undercount on a thread longer than `tail`.
+        # thread.turn_count (the authoritative, incrementally-maintained
+        # counter) wins over counting turn_ids in `messages`.
         assert "99 turns" in r
+        # Commands/Files written from message 2 (>190 messages back from
+        # the end) still show up — nothing is dropped by a recency cutoff.
+        assert "Commands: df -h (exit 0)" in r
+        assert "Files written: /etc/cron.d/cleanup" in r
+
+    def test_open_loop_survives_max_chars_truncation(self):
+        # Bloated-but-individually-capped fixed sections (12 long entities,
+        # 8 long commands) must not crowd "Open loop" out of the receipt —
+        # it is the line `receipt_one_liner` (the A5 recall hint) depends on.
+        msgs = _messages()
+        msgs[1]["blocks"] = [
+            {"tool": "run_command", "args": {"command": "c" * 80 + str(i)}, "exit": 0}
+            for i in range(8)
+        ]
+        long_entities = [("p" * 78 + str(i)) for i in range(20)]
+        r = build_receipt(_thread(entities_json=long_entities), msgs, max_chars=1500)
+        assert len(r) <= 1500
+        assert r.splitlines()[-1] == "Open loop: Next, verify guest access is off once the config reloads."

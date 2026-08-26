@@ -47,16 +47,18 @@ _TITLE_LINE_MAX = 200
 _DOMAIN_ITEM_MAX = 60
 _ENTITY_ITEM_MAX = 80
 _FILE_ITEM_MAX = 80
-# entities_json accumulates every turn (A6); cap it so the unbounded field
-# can't crowd the fixed max_chars budget and truncate "Open loop" — the
-# last, and most operationally important, section — out of the receipt.
+# entities_json accumulates every turn (A6); cap the item count so the
+# unbounded field can't grow without limit. This alone does not protect
+# "Open loop" when max_chars truncation kicks in — see the reserved-budget
+# truncation in `build_receipt` for that guarantee.
 _MAX_ENTITIES = 12
 _SUPERSEDED = "superseded"
-# Bound the per-turn refresh cost: a thread is designed never to end, so
-# scanning every stored message on every `end_turn`/redaction is O(n) per
-# call and O(n^2) over the thread's life. Only the first message (for
-# "Started with") and the most recent `tail` rows are examined.
-_DEFAULT_TAIL = 64
+# The sentinel `result` a superseded confirmation is recorded with (spec
+# §5's `_record_superseded_turn`), matched only by exact equality — never
+# by substring — so real command output that happens to mention the word
+# "superseded" (systemd/apt/dnf messages are common) can't be mistaken for
+# a command that never ran.
+_SUPERSEDED_RESULT = "not run — superseded"
 
 
 def _date(ts: Any) -> str:
@@ -95,12 +97,16 @@ def _exit_of(block: Dict[str, Any]) -> str:
 def _is_superseded(block: Dict[str, Any]) -> bool:
     """A confirmation staged then abandoned when its turn was superseded
     (spec §5): ``{tool, args, result: "not run — superseded", exit: None,
-    status: "superseded"}``. Checked on ``status`` first, falling back to
-    a string ``result`` in case a caller omits ``status``."""
+    status: "superseded"}``. Checked on ``status`` first; the ``result``
+    fallback (for a caller that omits ``status``) requires the field to
+    equal the sentinel exactly — a *substring* check would misclassify any
+    real command whose actual stdout/stderr happens to contain the word
+    "superseded" (e.g. ``systemctl`` "unit file is superseded by a
+    drop-in") as never having run, hiding its true exit code."""
     if str(block.get("status") or "").strip().lower() == _SUPERSEDED:
         return True
     result = block.get("result")
-    return isinstance(result, str) and _SUPERSEDED in result.lower()
+    return isinstance(result, str) and result.strip().lower() == _SUPERSEDED_RESULT
 
 
 def _command_suffix(block: Dict[str, Any]) -> str:
@@ -161,33 +167,33 @@ def build_receipt(
     messages: List[Dict[str, Any]],
     *,
     max_chars: int = 1500,
-    tail: int = _DEFAULT_TAIL,
 ) -> str:
     """Render the nine-line receipt for ``thread`` from its stored ``messages``.
 
     ``messages`` rows are ``SqliteConversationStore.list_messages`` dicts
     (role, content, timestamp, origin, turn_id, blocks, diff_proposals).
 
-    ``messages`` may be the thread's entire history. Only the first row
-    (needed for "Started with") and the most recent ``tail`` rows are
-    scanned — a per-turn refresh stays O(tail) rather than O(len(history))
-    on a conversation designed never to end.
+    ``messages`` is scanned in full: every caller already pays the cost of
+    loading and JSON-decoding the thread's rows before this is called (see
+    ``ThreadManager._refresh_receipt`` / the redaction route, both of which
+    pass ``store.list_messages(thread_id)`` with no limit), so a recency
+    window here would only save a cheap in-memory pass while silently
+    dropping "Commands"/"Files written" entries from earlier in the thread
+    and, whenever the earliest stored row isn't the first human message,
+    misreporting "Started with" too. If a caller wants a cheaper call, it
+    should bound what it fetches (``list_messages`` takes a ``limit``);
+    this function has no opinion on how much history it is given.
     """
-    if len(messages) > tail + 1:
-        window = [messages[0], *messages[-tail:]]
-    else:
-        window = messages
     title = _clip(thread.get("title") or "Untitled", _TITLE_LINE_MAX)
-    human = [m for m in window if m.get("role") == "user" and (m.get("origin") or "human") == "human"]
-    assistant = [m for m in window if m.get("role") == "assistant"]
-    stamps = [float(m["timestamp"]) for m in window if m.get("timestamp") is not None]
+    human = [m for m in messages if m.get("role") == "user" and (m.get("origin") or "human") == "human"]
+    assistant = [m for m in messages if m.get("role") == "assistant"]
+    stamps = [float(m["timestamp"]) for m in messages if m.get("timestamp") is not None]
     turn_keys = {
         m.get("turn_id") or f"m{m.get('message_id', i)}"
-        for i, m in enumerate(window) if m.get("role") == "user"
+        for i, m in enumerate(messages) if m.get("role") == "user"
     }
     # thread.turn_count is the authoritative counter maintained incrementally
-    # by the caller (A6); prefer it over counting turn_ids in `window`, which
-    # only sees a bounded slice of history once a thread outgrows `tail`.
+    # by the caller (A6); prefer it over counting turn_ids in `messages`.
     n_turns = int(thread.get("turn_count") or 0) or len(turn_keys)
     when = f"{_date(min(stamps))}..{_date(max(stamps))} · {n_turns} turns" if stamps else "unknown"
     domains = ", ".join(_clip(d, _DOMAIN_ITEM_MAX) for d in (thread.get("topic_domains") or [])) or "none"
@@ -198,7 +204,7 @@ def build_receipt(
     last_said = first_sentence(assistant[-1].get("content") or "", 200) if assistant else "none"
     blocks: List[Dict[str, Any]] = []
     diffs: List[Dict[str, Any]] = []
-    for m in window:
+    for m in messages:
         blocks.extend(m.get("blocks") or [])
         diffs.extend(m.get("diff_proposals") or [])
     commands = "; ".join(_command_lines(blocks)[-8:]) or "none"
@@ -216,9 +222,21 @@ def build_receipt(
         f"Open loop: {open_loop}",
     ]
     text = "\n".join(lines)
-    if len(text) > max_chars:
-        text = text[: max_chars - 1].rstrip() + "…"
-    return text
+    if len(text) <= max_chars:
+        return text
+    # Truncating the flat joined string can delete "Open loop" outright —
+    # the last, and most operationally important, line (it's what
+    # `receipt_one_liner`/the A5 recall hint surfaces). Reserve its full
+    # line and trim only the sections ahead of it to fit the remainder.
+    open_loop_line = lines[-1]
+    head = "\n".join(lines[:-1])
+    budget = max_chars - len(open_loop_line) - 1  # -1 for the joining "\n"
+    if budget > 0:
+        head = head[: budget - 1].rstrip() + "…"
+        return head + "\n" + open_loop_line
+    # Even the open-loop line alone doesn't fit in max_chars; fall back to
+    # a flat cut rather than producing something longer than max_chars.
+    return text[: max_chars - 1].rstrip() + "…"
 
 
 def receipt_one_liner(receipt: str) -> str:
