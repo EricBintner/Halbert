@@ -5,9 +5,10 @@
  *
  * Halbert is a dual-mode application (REVIEW-DESIGN-MECHANICS §2):
  *
- *   engaged  — the Sovereign Host surface. A conversation spine with the
- *              machine, a context stage holding vitals and the terminal dock.
- *              This is the default: it is what the product is.
+ *   engaged  — the machine itself: a conversation spine you talk to it
+ *              through, and a context stage holding its vitals and the
+ *              terminal dock. The default, because it is what the product is.
+ *              The mode switch labels this tab with the machine's own name.
  *   browsing  — the system administration hub. Every dashboard page, exactly
  *              as it has always been. Nothing was removed to make room for
  *              engaged mode; the two modes are one keystroke apart.

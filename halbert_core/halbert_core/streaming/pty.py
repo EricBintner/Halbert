@@ -3,7 +3,7 @@
 """Async PTY session (B1a).
 
 Real pseudo-terminal I/O via ``os.openpty()`` + ``aiofiles``. This is the
-hardest single component in the sovereign-host plan: raw master/slave fd
+hardest single component in the streaming-terminal plan: raw master/slave fd
 management, async reads from the master, stdin writes, SIGWINCH resize, and
 child reaping — with no ``subprocess`` anywhere.
 

@@ -4,7 +4,7 @@
  * Agent Page
  *
  * The conversation with the host, reachable from the browsing navigation.
- * It is the same canvas the Sovereign Host surface gives the whole window —
+ * It is the same canvas the engaged surface gives the whole window —
  * this page is the way in while you are browsing dashboard pages, so it also
  * offers the jump to the full surface.
  */
@@ -14,11 +14,15 @@ import { AgentChat } from '@/components/agent';
 import { MessageSquare, Maximize2, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useShellMode } from '@/contexts/ShellModeContext';
+import { useHostIdentity } from '@/hooks/useHostIdentity';
 import { useState } from 'react';
 
 export function Agent() {
   const [showHistory, setShowHistory] = useState(false);
   const { setMode } = useShellMode();
+  // Slow poll: this page only needs the machine's name for the button label.
+  const { identity } = useHostIdentity(60_000);
+  const hostName = identity?.display_name || 'Halbert';
 
   return (
     <div className="flex flex-col h-full">
@@ -42,10 +46,10 @@ export function Agent() {
               size="sm"
               onClick={() => setMode('engaged')}
               className="gap-2"
-              title="Open the full Sovereign Host surface (Cmd/Ctrl+B)"
+              title={`Open ${hostName} full screen (Cmd/Ctrl+B)`}
             >
               <Maximize2 className="h-4 w-4" />
-              Sovereign Host
+              {hostName}
             </Button>
           </div>
         }

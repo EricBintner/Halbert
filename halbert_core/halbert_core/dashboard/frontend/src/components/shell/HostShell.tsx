@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * SovereignHostShell — the engaged surface: you and the machine, side by side.
+ * HostShell — the engaged surface: you and the machine, side by side.
  *
  * Left: the continuous conversation spine (AgentChat promoted from a sidecar
  * panel to the primary canvas). Right: the context stage — live vitals and the
@@ -16,7 +16,7 @@ import { useCallback, useRef } from 'react';
 import { AgentChat } from '../agent/AgentChat';
 import { ContextStage } from './ContextStage';
 
-export function SovereignHostShell() {
+export function HostShell() {
   const conversationRef = useRef<HTMLDivElement>(null);
 
   /**
@@ -48,4 +48,4 @@ export function SovereignHostShell() {
   );
 }
 
-export default SovereignHostShell;
+export default HostShell;

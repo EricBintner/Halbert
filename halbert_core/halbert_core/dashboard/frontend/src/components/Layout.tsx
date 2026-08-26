@@ -5,7 +5,8 @@
  *
  * Halbert has two surfaces and this is where they meet:
  *
- *   engaged   the Sovereign Host canvas — conversation spine + context stage.
+ *   engaged   the host canvas — conversation spine + context stage. The mode
+ *             switch names it after the machine itself.
  *   browsing  the system administration hub — the full navigation rail, every
  *             dashboard page, and the side panel, unchanged.
  *
@@ -40,7 +41,7 @@ import { Button } from '@/components/ui/button'
 import { SidePanel } from './SidePanel'
 import { ConfigEditor } from './ConfigEditor'
 import { ModeSwitch } from './shell/ModeSwitch'
-import { SovereignHostShell } from './shell/SovereignHostShell'
+import { HostShell } from './shell/HostShell'
 import { useDebug } from '@/contexts/DebugContext'
 import { useShellMode } from '@/contexts/ShellModeContext'
 import { apiUrl } from '@/lib/apiBase'
@@ -285,7 +286,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           configEditor ? (
             <div className="h-full overflow-auto p-8">{configEditor}</div>
           ) : (
-            <SovereignHostShell />
+            <HostShell />
           )
         ) : (
           <div className="flex h-full overflow-hidden">

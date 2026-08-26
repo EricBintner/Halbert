@@ -2,9 +2,9 @@
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """GET /api/identity — the facts behind Halbert's first-person greeting.
 
-The Sovereign Host surface opens with the machine identifying itself, so this
-endpoint must answer from psutil/platform alone: no system scan, no profile on
-disk, no model loaded.
+The engaged surface opens with the machine identifying itself, so this endpoint
+must answer from psutil/platform alone: no system scan, no profile on disk, no
+model loaded. It identifies by the name chosen in onboarding, not the hostname.
 """
 
 from collections import namedtuple
@@ -84,6 +84,58 @@ class TestHumanizeUptime:
         assert system_routes._humanize_uptime(seconds) == expected
 
 
+class TestChosenName:
+    """Onboarding asks "What should I call this computer?" — that is the name."""
+
+    def test_the_onboarding_name_wins_over_the_hostname(self, monkeypatch):
+        monkeypatch.setattr(system_routes, "_chosen_name", lambda: "Macky-Mac")
+        assert system_routes._display_name("Erics-Mac-Studio.local") == "Macky-Mac"
+
+    def test_hostname_is_the_fallback_when_onboarding_never_ran(self, monkeypatch):
+        monkeypatch.setattr(system_routes, "_chosen_name", lambda: None)
+        assert system_routes._display_name("workstation") == "workstation"
+
+    def test_app_name_is_the_last_resort(self, monkeypatch):
+        monkeypatch.setattr(system_routes, "_chosen_name", lambda: None)
+        assert system_routes._display_name("") == "Halbert"
+
+    @pytest.mark.parametrize("hostname,expected", [
+        ("Erics-Mac-Studio.local", "Erics-Mac-Studio"),
+        ("box.lan", "box"),
+        ("nas.home", "nas"),
+        ("server.localdomain", "server"),
+        ("plain", "plain"),
+        ("has.dots.inside", "has.dots.inside"),
+    ])
+    def test_plumbing_suffixes_are_stripped_from_a_fallback_hostname(self, hostname, expected):
+        assert system_routes._short_hostname(hostname) == expected
+
+    def test_a_blank_or_whitespace_name_is_not_a_name(self, monkeypatch, tmp_path):
+        (tmp_path / "preferences.yml").write_text("ai_name: '   '\n")
+        monkeypatch.setattr(
+            "halbert_core.utils.platform.get_config_dir", lambda: tmp_path
+        )
+        assert system_routes._chosen_name() is None
+
+    def test_unreadable_preferences_are_not_fatal(self, monkeypatch, tmp_path):
+        (tmp_path / "preferences.yml").write_text("{{ not: valid: yaml")
+        monkeypatch.setattr(
+            "halbert_core.utils.platform.get_config_dir", lambda: tmp_path
+        )
+        assert system_routes._chosen_name() is None
+
+    async def test_identity_introduces_itself_by_the_chosen_name(self, monkeypatch):
+        monkeypatch.setattr(system_routes, "_chosen_name", lambda: "Macky-Mac")
+
+        identity = await system_routes.get_host_identity()
+
+        assert identity["display_name"] == "Macky-Mac"
+        assert identity["first_person"].startswith("I am Macky-Mac (")
+        # The hostname is still reported — as a fact, not as the identity.
+        assert identity["hostname"]
+        assert identity["hostname"] not in identity["first_person"]
+
+
 class TestCpuPercent:
 
     def test_first_sample_on_a_thread_is_not_the_meaningless_zero(self, monkeypatch):
@@ -143,7 +195,7 @@ class TestIdentityPayload:
         identity = await system_routes.get_host_identity()
         line = identity["first_person"]
 
-        assert line.startswith(f"I am {identity['hostname']}")
+        assert line.startswith(f"I am {identity['display_name']}")
         assert identity["os"]["kernel"] in line
         assert identity["uptime"]["human"] in line
 

@@ -3,6 +3,9 @@
 /**
  * HostVitals — the machine's own body readout, top of the context stage.
  *
+ * Headed by the name the machine was given, with the hostname kept below it
+ * as a technical fact alongside the OS and kernel.
+ *
  * Permanently mounted in engaged mode. It is not a widget the user summons;
  * it is the host's proprioception, always on screen, so "I am running hot" is
  * something you can see as well as be told.
@@ -64,16 +67,22 @@ export function HostVitals({ className = '' }: HostVitalsProps) {
             identity.all_healthy ? 'bg-success' : 'bg-warning'
           }`}
         />
-        <span className="font-mono text-xs text-foreground truncate" title={identity.hostname}>
-          {identity.hostname}
+        <span
+          className="font-mono text-xs text-foreground truncate"
+          title={`${identity.display_name} · ${identity.hostname}`}
+        >
+          {identity.display_name}
         </span>
         <span className="ml-auto text-[10px] font-mono text-muted-foreground shrink-0">
           up {uptime.human}
         </span>
       </div>
 
-      <div className="text-[10px] font-mono text-muted-foreground truncate" title={`${identity.os.pretty} · ${identity.os.kernel} · ${identity.os.arch}`}>
-        {identity.os.pretty} · {identity.os.kernel}
+      <div
+        className="text-[10px] font-mono text-muted-foreground truncate"
+        title={`${identity.hostname} · ${identity.os.pretty} · ${identity.os.kernel} · ${identity.os.arch}`}
+      >
+        {identity.hostname} · {identity.os.pretty} · {identity.os.kernel}
       </div>
 
       {/* Body readout */}

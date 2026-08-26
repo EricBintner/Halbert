@@ -5,7 +5,7 @@ System status API routes.
 """
 
 from fastapi import APIRouter, Depends
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import os
 import platform
 import socket
@@ -90,10 +90,10 @@ def get_cpu_temp() -> float | None:
 
 
 # -----------------------------------------------------------------------------
-# Host identity (Sovereign Host shell)
+# Host identity
 #
-# The Engaged surface opens with Halbert speaking as the machine — "I am
-# <hostname> …" — so it needs cheap, always-available facts about the host:
+# The engaged surface opens with the machine speaking as itself — "I am
+# <name> …" — so it needs cheap, always-available facts about the host:
 # no system scan, no profile on disk, no LLM call. Everything here comes from
 # psutil/platform and is safe to call on every app start.
 # -----------------------------------------------------------------------------
@@ -215,6 +215,54 @@ def _cpu_percent() -> float:
     return psutil.cpu_percent(interval=None)
 
 
+# Onboarding asks "What should I call this computer?" and stores the answer as
+# ``ai_name`` in preferences.yml. That answer is the machine's name — the
+# hostname is a technical fact about it, not what it is called. Everything
+# user-facing leads with the chosen name; ``hostname`` stays in the payload for
+# callers that need the real thing.
+_FALLBACK_NAME = "Halbert"
+
+# Suffixes a hostname picks up from mDNS/DHCP that nobody means as part of the
+# name. Only stripped when we are falling back to the hostname at all.
+_HOSTNAME_SUFFIXES = (".local", ".lan", ".home", ".localdomain")
+
+
+def _chosen_name() -> Optional[str]:
+    """The name the user picked in onboarding, or None if they never did.
+
+    Deliberately distinguishes "picked" from "fell back": the caller needs to
+    know whether it is holding a name or a hostname. Written by
+    ``POST /api/settings/computer-name`` and the onboarding step.
+    """
+    try:
+        from ...utils.platform import get_config_dir
+        import yaml
+
+        config_path = get_config_dir() / "preferences.yml"
+        if not config_path.exists():
+            return None
+        with open(config_path, "r", encoding="utf-8") as fh:
+            prefs = yaml.safe_load(fh) or {}
+        name = prefs.get("ai_name")
+        return str(name).strip() or None if name else None
+    except Exception:
+        # Preferences are a convenience here, never a hard dependency.
+        return None
+
+
+def _short_hostname(hostname: str) -> str:
+    """A hostname without the plumbing suffix, for use as a fallback name."""
+    for suffix in _HOSTNAME_SUFFIXES:
+        if hostname.endswith(suffix):
+            return hostname[: -len(suffix)]
+    return hostname
+
+
+def _display_name(hostname: str) -> str:
+    """What this machine should be called, in that order of preference."""
+    return _chosen_name() or _short_hostname(hostname) or _FALLBACK_NAME
+
+
 def _humanize_uptime(seconds: int) -> str:
     """'18 days', '4 hours', '9 minutes' — one unit, the largest that fits."""
     if seconds >= 86400:
@@ -231,11 +279,16 @@ def _humanize_uptime(seconds: int) -> str:
 async def get_host_identity() -> Dict[str, Any]:
     """Who this machine is, in the first person.
 
-    Powers the Sovereign Host greeting. Structured fields let the UI style
-    each fact; ``first_person`` is the same facts as one sentence for callers
-    (or personas) that just want the line.
+    Powers the engaged surface's opening line. Structured fields let the UI
+    style each fact; ``first_person`` is the same facts as one sentence for
+    callers (or personas) that just want the line.
+
+    ``display_name`` is what the machine is called — the name chosen in
+    onboarding. ``hostname`` is the DNS/system name, kept as a fact rather
+    than presented as an identity.
     """
     hostname = socket.gethostname()
+    display_name = _display_name(hostname)
     os_info = _os_release()
     kernel = platform.release()
 
@@ -267,11 +320,12 @@ async def get_host_identity() -> Dict[str, Any]:
         )
 
     first_person = (
-        f"I am {hostname} ({os_info['pretty']}, {platform.system()} {kernel}). "
+        f"I am {display_name} ({os_info['pretty']}, {platform.system()} {kernel}). "
         f"Uptime is {_humanize_uptime(uptime_seconds)}. {health_clause}"
     )
 
     return {
+        "display_name": display_name,
         "hostname": hostname,
         "os": {
             "name": os_info["name"],

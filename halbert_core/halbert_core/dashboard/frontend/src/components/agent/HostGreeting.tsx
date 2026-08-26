@@ -5,9 +5,12 @@
  *
  * This replaces the generic "AI assistant" landing card. The thesis of the
  * project is that Halbert *is* the host, so the first thing on screen is the
- * host identifying itself from live telemetry — hostname, OS, kernel, uptime,
- * cores, storage health — not a cartoon offering to answer questions about
- * Linux.
+ * machine identifying itself from live telemetry — OS, kernel, uptime, cores,
+ * storage health — not a cartoon offering to answer questions about Linux.
+ *
+ * It introduces itself by the name the user gave it in onboarding, not by its
+ * hostname. Reporting "I am Erics-Mac-Studio.local" when the user named the
+ * machine "Macky-Mac" is the machine failing to know itself.
  *
  * Starter prompts are derived from what the machine actually looks like right
  * now (a full pool, a hot CPU), so they read as the host noticing its own
@@ -97,7 +100,7 @@ export function HostGreeting({ onPrompt, className = '' }: HostGreetingProps) {
       <p className="text-lg leading-relaxed text-foreground">
         {identity ? (
           <>
-            I am <span className="font-mono text-foreground">{identity.hostname}</span>{' '}
+            I am <span className="font-mono text-foreground">{identity.display_name}</span>{' '}
             <span className="text-muted-foreground">
               ({identity.os.pretty}, {identity.os.platform} {identity.os.kernel})
             </span>

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * ContextStage — the right half of the Sovereign Host surface.
+ * ContextStage — the right half of the engaged surface.
  *
  * Holds what the conversation is about rather than the conversation itself:
  * the host's live vitals at the top, the terminal accordion dock below it, and

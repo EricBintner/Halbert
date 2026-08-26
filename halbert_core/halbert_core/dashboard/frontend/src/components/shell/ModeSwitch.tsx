@@ -3,25 +3,46 @@
 /**
  * ModeSwitch — one click between Halbert's two surfaces.
  *
- * Engaged is the machine you talk to; Browsing is the dashboard you inspect.
- * Both are always one keystroke away (Cmd/Ctrl+B), which is the point: the
- * dashboard was never removed, it stopped being the only thing on screen.
+ * The first tab is named after the machine itself, using the name chosen in
+ * onboarding ("What should I call this computer?"). That is the product's
+ * whole thesis in a label: you are not switching to a feature, you are
+ * switching to the computer. The second tab is the dashboard, which was never
+ * removed — it simply stopped being the only thing on screen.
+ *
+ * Both are always one keystroke away (Cmd/Ctrl+B).
  */
 
 import { MessageSquare, LayoutDashboard } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useShellMode, type ShellMode } from '@/contexts/ShellModeContext';
+import { useShellMode } from '@/contexts/ShellModeContext';
+import { useHostIdentity } from '@/hooks/useHostIdentity';
 
-const MODES: Array<{ mode: ShellMode; label: string; icon: typeof MessageSquare }> = [
-  { mode: 'engaged', label: 'Sovereign Host', icon: MessageSquare },
-  { mode: 'browsing', label: 'Dashboard', icon: LayoutDashboard },
-];
+// The switch only needs the machine's name, which effectively never changes.
+// Asking for a slow refresh keeps browsing mode — where the vitals panel is
+// unmounted — from polling identity every few seconds.
+const NAME_POLL_MS = 60_000;
+
+// Long enough for "Erics-Mac-Studio", short enough not to crowd the top bar.
+// Overflow is ellipsised by CSS and the full name stays in the tooltip.
+const MAX_LABEL_CH = 22;
 
 export function ModeSwitch() {
   const { mode, setMode } = useShellMode();
-  const shortcut = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform)
-    ? '⌘B'
-    : 'Ctrl+B';
+  const { identity } = useHostIdentity(NAME_POLL_MS);
+
+  const shortcut =
+    typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform)
+      ? '⌘B'
+      : 'Ctrl+B';
+
+  // Before identity resolves the tab still has to say something; the app name
+  // is the same fallback the backend uses when onboarding never ran.
+  const hostLabel = identity?.display_name || 'Halbert';
+
+  const modes = [
+    { mode: 'engaged' as const, label: hostLabel, icon: MessageSquare },
+    { mode: 'browsing' as const, label: 'Dashboard', icon: LayoutDashboard },
+  ];
 
   return (
     <div
@@ -29,7 +50,7 @@ export function ModeSwitch() {
       role="tablist"
       aria-label="Shell mode"
     >
-      {MODES.map(({ mode: m, label, icon: Icon }) => (
+      {modes.map(({ mode: m, label, icon: Icon }) => (
         <button
           key={m}
           type="button"
@@ -44,8 +65,13 @@ export function ModeSwitch() {
               : 'text-muted-foreground hover:text-foreground',
           )}
         >
-          <Icon className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">{label}</span>
+          <Icon className="h-3.5 w-3.5 shrink-0" />
+          <span
+            className="hidden sm:inline truncate"
+            style={{ maxWidth: `${MAX_LABEL_CH}ch` }}
+          >
+            {label}
+          </span>
         </button>
       ))}
       <span className="hidden lg:inline px-1.5 text-[10px] font-mono text-muted-foreground/70">
