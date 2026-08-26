@@ -130,7 +130,10 @@ class DetectorRunner:
                             f"Finding {finding_id} suppressed by gate: {reason}"
                         )
 
-                    # F3: evaluate living reflexes against this finding
+                    # F3: evaluate living reflexes against this finding.
+                    # Reflex events inherit the gate decision — a reflex derived
+                    # from a suppressed finding must not leak past quiet hours,
+                    # the proactivity dial, or safe mode.
                     if self.reflex_matcher is not None:
                         for reflex in self.reflex_matcher.match(
                             title=finding.title,
@@ -140,6 +143,12 @@ class DetectorRunner:
                         ):
                             reflex_event = self._reflex_event(reflex, finding, finding_id)
                             try:
+                                notify, reason = self.gate.should_notify(reflex_event)
+                                if not notify:
+                                    logger.info(
+                                        f"Reflex '{reflex.name}' suppressed by gate: {reason}"
+                                    )
+                                    continue
                                 await get_event_bus().publish(reflex_event)
                                 published_events.append(reflex_event)
                             except Exception as e:

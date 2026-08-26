@@ -451,8 +451,14 @@ class TierRouter:
             )
 
         # Explicit overrides still apply even when cascade routing is enabled.
+        # The disabled path must stay byte-identical to the pre-C2b heuristic,
+        # so it uses the original _score_complexity scorer, not the shared
+        # cascade estimator (which scores differently by design).
         if prefer_specialist or (task_type and task_type in self.config.force_specialist_tasks):
-            complexity = self.cascade_router.estimate_complexity(query)
+            if self.cascade_router.is_enabled():
+                complexity = self.cascade_router.estimate_complexity(query)
+            else:
+                complexity = self._score_complexity(query)
             return self.select_model(
                 tier=ModelTier.SPECIALIST,
                 require_reasoning=self._should_use_reasoning(query, complexity),
@@ -462,7 +468,7 @@ class TierRouter:
         # Cost-cascade router (C2b): when enabled, delegate model selection to
         # MetaHarnessRouter, which blends tier priors with recorded outcomes.
         # When disabled (default), behavior is byte-identical to the old
-        # heuristic path below (now using the shared estimate_complexity).
+        # heuristic path below (restored original scorer).
         if self.cascade_router.is_enabled():
             model = self.cascade_router.route(query)
             if model is not None:
@@ -473,7 +479,7 @@ class TierRouter:
                     capabilities=model.capabilities,
                 )
 
-        complexity = self.cascade_router.estimate_complexity(query)
+        complexity = self._score_complexity(query)
         # Determine tier
         if complexity >= self.config.complexity_threshold:
             tier = ModelTier.SPECIALIST
@@ -488,6 +494,51 @@ class TierRouter:
             require_reasoning=require_reasoning,
             complexity_score=complexity,
         )
+
+    def _score_complexity(self, query: str) -> float:
+        """Score query complexity (0.0 to 1.0).
+
+        Original heuristic path scorer — kept because the cascade-disabled
+        (default) routing path must stay byte-identical to pre-C2b behavior.
+        MetaHarnessRouter has its own estimate_complexity() for the enabled path.
+        """
+        score = 0.0
+        query_lower = query.lower()
+        words = query.split()
+
+        # Length
+        if len(words) > 50:
+            score += 0.2
+        elif len(words) > 20:
+            score += 0.1
+
+        # Code indicators
+        if any(kw in query_lower for kw in [
+            'write', 'create', 'script', 'code', 'implement',
+            'debug', 'fix', 'error', 'optimize'
+        ]):
+            score += 0.3
+
+        # Multi-step indicators
+        if any(kw in query_lower for kw in [
+            'step by step', 'first', 'then', 'compare', 'analyze'
+        ]):
+            score += 0.2
+
+        # Complex sysadmin
+        if any(kw in query_lower for kw in [
+            'troubleshoot', 'diagnose', 'investigate', 'security',
+            'performance', 'configure', 'architecture'
+        ]):
+            score += 0.2
+
+        # Simple query reduction
+        if any(kw in query_lower for kw in [
+            'what is', 'show me', 'list', 'status'
+        ]) and len(words) < 15:
+            score -= 0.2
+
+        return max(0.0, min(1.0, score))
 
     def _should_use_reasoning(self, query: str, complexity: float) -> bool:
         """Determine if reasoning model would be beneficial."""

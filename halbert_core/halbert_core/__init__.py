@@ -1,3 +1,5 @@
-"""Halbert core package (Phase 1 runtime skeleton).
-See docs/Phase1 for specifications.
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+"""Halbert core package.
+See documentation/ for specifications.
 """
