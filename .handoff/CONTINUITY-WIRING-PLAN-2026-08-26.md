@@ -862,6 +862,13 @@ already supersedes automatically.)*
 
 ---
 
+> **SUPERSEDED (2026-08-26, same day).** Founder direction D1 — *Haloysius has no
+> cross-session understanding; continuity is built in Halbert* — cancels Task 9 (the
+> Haloysius semantic recall tier) and moves the state ledger into Halbert's own store.
+> Plan A has also progressed through A2, so the remaining work is re-planned against what
+> it actually built. **Read `HANDOFF-CONTINUITY-AFTER-PLAN-A-2026-08-26.md` instead of
+> Phases 3–4 below.** They are retained for the rationale only.
+
 ## Phase 3 — Connect what is installed
 
 Blocked on Plan A A1–A13. Specified as scope and acceptance criteria; the files do not exist
