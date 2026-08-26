@@ -179,22 +179,59 @@ Skip `ephemeral` threads and `origin=terminal` content.
 Ordered by leverage. Every one of these is wiring, deleting, or a small table — there is no
 large build left in this programme.
 
+> **R1 and R5 are DONE** (commits `f00a9d6`, `a18b59d`) — both were buildable without
+> Plan A because it touches `agents/`, `dashboard/`, `intake/`, `model/`, `prompts/` and
+> `tools/`, and neither of these does. R1 landed as a new `halbert_core.continuity` package
+> rather than inside the Plan A store; folding the table into the thread database is now a
+> constructor argument (`StateStore(conn=...)`), which §2 already designed for. R5's result
+> changes R4 — see the measurement note below.
+
 | | Task | Depends on | Size |
 |---|---|---|---|
-| **R1** | Port the state ledger into the Plan A store (§2) | Plan A merged | small |
+| ~~**R1**~~ | ~~Port the state ledger~~ **DONE** — `continuity/state_store.py`, trackers swapped off Haloysius, `thread_id` gained | — | — |
 | **R2** | N1 + N2 + N3 (§4) | R1 for N3 | small |
 | **R3** | Cut the Haloysius episodic line from the spec and the plan (D1.2) | founder sign-off | deletion |
 | **R4** | Scope as a property of the query — `domains` argument on receipt search, defaulting to the open thread's domains; `scope_crossed` telemetry; never a user-visible refusal | Plan A A3 | small |
-| **R5** | Cumulative eval harness — recall precision at N=10/100/500, no LLM in the loop | Plan A A3 | medium |
+| ~~**R5**~~ | ~~Cumulative eval harness~~ **DONE** — `continuity/{corpus,recall_eval}.py`, floors pinned | — | — |
 | **R6** | Real `messages[]` at `state_machine.py:669,1280,1294` | Plan A A9 | medium |
 | **R7** | Abstain-and-probe (D2) — prefer `current_state()` over a command; probe rather than assert | R1, founder answer to Q1 | medium |
 | **R8** | Consolidation at idle — cross-thread abstraction into durable preference facts, scheduled into low-load windows | R5 (measure first) | medium |
 | **R9** | Fence `HybridMemorySystem` off the agent path with a test so it cannot drift back | Plan A A9a | small |
 
-**R5 before R8 is deliberate.** Consolidation is the one place we would be adding capability
-rather than connecting it, and ECHO's result is the caution: strong retrieval metrics with
-worse end-to-end answers than a simpler baseline. Measure precision under load first, then
-decide whether consolidation earns its cost.
+**R5 before R8 was deliberate, and it already paid.** Measured on the reference FTS5 index
+over Plan-A-shaped receipts, seed 1:
+
+```
+     N |   hit@1 |   hit@5 |    MRR | candidates | cross-domain
+-------+---------+---------+--------+------------+-------------
+    10 |   1.000 |   1.000 |  1.000 |       10.0 |       0.800
+    50 |   0.980 |   1.000 |  0.990 |       25.0 |       0.444
+   100 |   0.980 |   1.000 |  0.990 |       25.0 |       0.204
+   250 |   0.796 |   1.000 |  0.892 |       25.0 |       0.015
+   500 |   0.630 |   0.996 |  0.791 |       25.0 |       0.003
+```
+
+Two findings, both of which change the plan:
+
+1. **Strong-match recall does not survive scale; weak-match does.** hit@1 falls from 1.000
+   to 0.630 by 500 threads while hit@5 holds at 0.996. Spec §6 injects the top hit as
+   `retrieved_context[0]` deterministically, with no model call — at 500 threads that pulls
+   the wrong conversation more than a third of the time, silently. The `recall_thread`
+   weak-match path, which offers candidates for the model to choose between, is barely
+   affected. **Recommendation: raise the strong-match bar as the store grows** — require the
+   top hit to beat the runner-up by a margin, not merely to exist — and fall through to
+   weak-match otherwise. Cheap, deterministic, and it converts a silent wrong answer into a
+   question.
+
+2. **A domain hard-filter cannot fix precision at scale.** Cross-domain rate falls from 0.800
+   to 0.003 as the store grows: the competitors crowding the top-5 are overwhelmingly
+   *same-domain*. This revises design-strategies §4.1 — scope-as-a-property-of-the-query is
+   still right for preventing *bleed*, but it is not a precision mechanism. At 10 threads it
+   removes most of the noise; at 500 it removes almost none. **R4 keeps its bleed rationale
+   and loses its precision rationale.**
+
+The harness is the control: when Plan A's real receipt search lands, run it against the same
+corpus and compare. Floors (`hit@1 >= 0.95/0.90/0.55` at N=10/100/500) fail CI on regression.
 
 ---
 
