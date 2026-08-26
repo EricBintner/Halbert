@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Set
 
 # ── Pattern definitions ──────────────────────────────────────────
 
@@ -38,7 +38,7 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "storage": [
         "disk", "filesystem", "mount", "zfs", "btrfs", "bcachefs", "ext4",
         "nvme", "ssd", "raid", "partition", "volume", "drive", "storage",
-        "hdd", "space", "full", "lvm", "df",
+        "hdd", "space", "full", "lvm", "df", "zpool", "smart", "smartctl",
     ],
     "backup": [
         "backup", "restore", "rsync", "borg", "snapshot", "timeshift",
@@ -47,12 +47,13 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "service": [
         "service", "systemd", "daemon", "process", "restart", "start",
         "stop", "status", "running", "failed", "enabled", "nginx",
-        "apache", "docker", "container", "journalctl",
+        "apache", "docker", "container", "journalctl", "cron", "crontab",
     ],
     "network": [
         "network", "wifi", "ethernet", "dns", "firewall", "ip", "port",
         "internet", "connection", "ping", "ssh", "curl", "wget",
-        "iptables", "nftables", "netstat", "ss",
+        "iptables", "nftables", "netstat", "ss", "samba", "smb", "nfs",
+        "cups", "wireguard", "vpn", "share", "scanner",
     ],
     "security": [
         "ssh", "sudo", "permission", "firewall", "fail2ban", "root",
@@ -74,6 +75,61 @@ _DOMAIN_PATTERNS: dict[str, re.Pattern] = {
 
 _FILE_PATH_RE = re.compile(
     r"(?:~/|/)[a-zA-Z0-9._~\-/]+|\.\./[a-zA-Z0-9._~\-/]+|\./[a-zA-Z0-9._~\-/]+"
+)
+
+# ── Entity canonicalisation (spec §6 alias table) ────────────────
+
+#: Surface form -> canonical entity. Applied at index and query time.
+ENTITY_ALIASES: dict[str, str] = {
+    "smb": "samba",
+    "cifs": "samba",
+    "smbd": "samba",
+    "nmbd": "samba",
+    "file share": "samba",
+    "windows share": "samba",
+    "exports": "nfs",
+    "wg": "wireguard",
+    "vpn": "wireguard",
+    "certbot": "tls",
+    "letsencrypt": "tls",
+    "acme": "tls",
+    "zpool": "zfs",
+    "smb.conf": "samba",
+}
+
+_ALIAS_PHRASES = [
+    (re.compile(r"\b" + re.escape(k) + r"\b"), v)
+    for k, v in ENTITY_ALIASES.items() if " " in k
+]
+_ENTITY_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._\-]*")
+
+# Domain keywords too generic to count as entities for overlap scoring.
+_GENERIC_KEYWORDS = frozenset({
+    "etc", "df", "ss", "ip", "port", "full", "space", "status", "running", "start",
+    "stop", "restart", "failed", "enabled", "process", "key", "root", "env", "conf",
+    "config", "configure", "configuration", "settings", "json", "yaml", "toml", "ini",
+    "environment", "profile", "drive", "volume", "storage", "service", "daemon",
+    "network", "internet", "connection", "security", "permission", "password",
+    "audit", "auth", "tar", "recovery", "archive",
+})
+
+# ── Thread cues (spec §4.2) ──────────────────────────────────────
+
+PAST_REF_RE = re.compile(
+    r"\b(we (discussed|did|set ?up|talked about|configured)"
+    r"|last (week|month|time|tuesday|monday|wednesday|thursday|friday|saturday|sunday)"
+    r"|remember when|back when|earlier|the other day"
+    r"|(a )?(few )?(weeks?|days?|months?) ago|as we did|like (we did|before))\b",
+    re.IGNORECASE,
+)
+
+ANAPHORA_RE = re.compile(
+    r"^\s*(?:so|ok|okay|and|well)?,?\s*"
+    r"(?P<phrase>did (?:that|it) work|any luck|is (?:that|it) (?:done|working|fixed)"
+    r"|still (?:broken|failing|not working)|what happened with (?:that|it)"
+    r"|how did (?:that|it) go)\b"
+    r"|^\s*(?P<bare>that|it)\b",
+    re.IGNORECASE,
 )
 
 _CODE_BLOCK_FENCE_RE = re.compile(r"```")
@@ -117,6 +173,38 @@ class MessageSignals:
     has_code_blocks: bool = False
     has_file_paths: bool = False
     has_images: bool = False
+    # Thread cues (spec §4.2 / §6)
+    entities: Set[str] = field(default_factory=set)
+    past_reference: bool = False
+    anaphora: bool = False
+
+
+# ── Entities ─────────────────────────────────────────────────────
+
+def canonical_entities(text: str) -> set[str]:
+    """Canonical entities of ``text``: alias hits, non-generic domain keywords, file paths."""
+    if not text:
+        return set()
+    lower = text.lower()
+    out: set[str] = set()
+    for tok in _ENTITY_TOKEN_RE.findall(lower):
+        alias = ENTITY_ALIASES.get(tok.strip("._-"))
+        if alias:
+            out.add(alias)
+    for pattern, alias in _ALIAS_PHRASES:
+        if pattern.search(lower):
+            out.add(alias)
+    for pattern in _DOMAIN_PATTERNS.values():
+        for m in pattern.finditer(text):
+            kw = m.group(1).lower()
+            if kw in _GENERIC_KEYWORDS:
+                continue
+            out.add(ENTITY_ALIASES.get(kw, kw))
+    for path in _FILE_PATH_RE.findall(text):
+        path = path.rstrip(".,;:")
+        if len(path) > 1:
+            out.add(path)
+    return out
 
 
 # ── Analysis ─────────────────────────────────────────────────────
@@ -155,6 +243,17 @@ def analyze_message(message: str) -> MessageSignals:
         domain for domain, pattern in _DOMAIN_PATTERNS.items()
         if pattern.search(text)
     ]
+
+    # ── Entities + thread cues ───────────────────────────────────
+    signals.entities = canonical_entities(text)
+    signals.past_reference = bool(PAST_REF_RE.search(text))
+    cue = ANAPHORA_RE.match(text)
+    if cue:
+        if cue.group("phrase"):
+            signals.anaphora = True
+        elif cue.group("bare") and not signals.entities and not signals.detected_domains:
+            # bare "that"/"it" counts only when nothing else says what the message is about
+            signals.anaphora = True
 
     # ── File paths ───────────────────────────────────────────────
     signals.has_file_paths = bool(_FILE_PATH_RE.search(text))

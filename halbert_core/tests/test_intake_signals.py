@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from halbert_core.intake.signals import MessageSignals, analyze_message
+from halbert_core.intake.signals import (
+    ENTITY_ALIASES, MessageSignals, analyze_message, canonical_entities,
+)
 
 
 # ── Acceptance cases from the implementation plan ────────────────
@@ -228,3 +230,68 @@ class TestPerformance:
         elapsed = time.perf_counter() - start
         per_call_ms = (elapsed / 1000) * 1000
         assert per_call_ms < 1.0, f"analyze_message took {per_call_ms:.3f}ms per call"
+
+
+
+# ── Entities + thread cues (Plan A, A4) ──────────────────────────
+
+class TestCanonicalEntities:
+    def test_cifs_maps_to_samba(self):
+        ents = canonical_entities("the cifs mount is broken")
+        assert "samba" in ents and "cifs" not in ents and "mount" in ents
+
+    def test_phrase_alias(self):
+        ents = canonical_entities("set up a windows share for the scanner")
+        assert {"samba", "share", "scanner"} <= ents
+
+    def test_smb_conf_token_and_path(self):
+        assert {"samba", "/etc/samba/smb.conf"} <= canonical_entities("edit /etc/samba/smb.conf please.")
+        assert "samba" in canonical_entities("look in smb.conf.")
+
+    def test_generic_keywords_excluded(self):
+        assert canonical_entities("check the status of the service") == set()
+
+    def test_vpn_maps_to_wireguard(self):
+        assert canonical_entities("is the vpn up?") == {"wireguard"}
+
+    def test_empty(self):
+        assert canonical_entities("") == set()
+
+    def test_alias_table_shape(self):
+        assert ENTITY_ALIASES["zpool"] == "zfs" and ENTITY_ALIASES["letsencrypt"] == "tls"
+
+
+class TestThreadCues:
+    def test_past_reference(self):
+        assert analyze_message("same as we did for the media share last week").past_reference is True
+        assert analyze_message("remember when the pool degraded?").past_reference is True
+        assert analyze_message("add a share").past_reference is False
+
+    def test_anaphora_phrases(self):
+        assert analyze_message("so, did that work?").anaphora is True
+        assert analyze_message("any luck?").anaphora is True
+        assert analyze_message("ok is it working now?").anaphora is True
+
+    def test_bare_it_without_signals(self):
+        assert analyze_message("it still fails").anaphora is True
+        assert analyze_message("that again please").anaphora is True
+
+    def test_bare_it_with_entity_is_not_anaphora(self):
+        assert analyze_message("it is the samba share again").anaphora is False
+        assert analyze_message("it won't mount the disk").anaphora is False
+
+    def test_signals_carry_entities(self):
+        s = analyze_message("mount the cifs share")
+        assert {"samba", "share", "mount"} <= s.entities and "network" in s.detected_domains
+
+    def test_new_domain_keywords(self):
+        assert "network" in analyze_message("restart samba").detected_domains
+        assert "storage" in analyze_message("zpool status").detected_domains
+        assert "service" in analyze_message("edit the crontab").detected_domains
+        assert "network" in analyze_message("is the vpn up").detected_domains
+        s = analyze_message("the scanner is offline")
+        assert "network" in s.detected_domains and "scanner" in s.entities
+
+    def test_defaults(self):
+        s = MessageSignals()
+        assert s.entities == set() and s.past_reference is False and s.anaphora is False
