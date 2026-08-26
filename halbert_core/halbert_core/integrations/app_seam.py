@@ -62,15 +62,23 @@ class HalbertGovernancePolicy:
 
 
 class HalbertModelBackend:
-    """ModelBackend adapter wrapping Halbert's LLM client.
+    """ModelBackend adapter wrapping Halbert's LLM routing.
 
-    Bridges Haloysius's ModelBackend protocol to Halbert's existing
-    LLM infrastructure. Currently a placeholder — the actual LLM
-    routing (Ollama, specialist models) will be wired here once
-    the LLMClientAdapter circular dependency is resolved (Phase C).
+    Bridges Haloysius's ModelBackend protocol to Halbert's TierRouter
+    (``model/tier_router.py``): non-streaming ``chat()`` calls are flattened
+    to a prompt and routed through ``TierRouter.generate()`` so they get
+    tier selection, health-based fallback, rate-limit retry, and outcome
+    recording. A raw Ollama ``/api/chat`` call remains as the safety net
+    and is used when:
 
-    For now, this returns None from raw_provider() and delegates
-    chat() to a simple Ollama call.
+    - the router can't be built or has no models configured (no models.yml),
+    - the router raises during generation,
+    - ``stream=True`` (TierRouter has no streaming API), or
+    - the caller pins an explicit ``model=`` kwarg (the router picks models
+      itself, so a pinned model id goes straight to Ollama).
+
+    TierRouter is imported lazily inside ``_get_tier_router`` so this module
+    stays importable regardless of model-package import order.
     """
 
     def __init__(self, ollama_url: Optional[str] = None, model: Optional[str] = None):
@@ -78,6 +86,57 @@ class HalbertModelBackend:
             "OLLAMA_URL", "http://localhost:11434"
         )
         self.model = model or os.environ.get("HALBERT_MODEL", "llama3.2")
+        self._tier_router: Any = None
+        self._tier_router_unavailable = False
+
+    # -- TierRouter access -------------------------------------------------
+
+    def _get_tier_router(self) -> Any:
+        """Return a cached TierRouter, or None if it can't route anything.
+
+        Construction is attempted once; a router with an empty model table
+        (models.yml not found) is treated as unavailable so ``chat()`` doesn't
+        raise ``ModelNotFoundError`` on every call.
+        """
+        if self._tier_router is not None or self._tier_router_unavailable:
+            return self._tier_router
+        try:
+            from ..model.tier_router import TierRouter  # lazy: import-order safety
+
+            router = TierRouter()
+            models = getattr(getattr(router, "config", None), "models", None)
+            if not models:
+                logger.warning(
+                    "TierRouter has no models configured (models.yml not found?) — "
+                    "HalbertModelBackend will use raw Ollama"
+                )
+                self._tier_router_unavailable = True
+                return None
+            self._tier_router = router
+        except Exception as e:
+            logger.warning(
+                f"TierRouter unavailable ({e}) — HalbertModelBackend will use raw Ollama"
+            )
+            self._tier_router_unavailable = True
+        return self._tier_router
+
+    @staticmethod
+    def _messages_to_prompt(messages: list) -> str:
+        """Flatten a chat message list into a single prompt for TierRouter.generate()."""
+        parts = []
+        for m in messages:
+            role = (m.get("role") or "user").lower()
+            content = m.get("content") or ""
+            if role == "system":
+                parts.append(f"[System]\n{content}")
+            elif role == "assistant":
+                parts.append(f"Assistant: {content}")
+            else:
+                parts.append(f"User: {content}")
+        parts.append("Assistant:")
+        return "\n\n".join(parts)
+
+    # -- ModelBackend protocol ---------------------------------------------
 
     def is_available(self) -> bool:
         try:
@@ -97,58 +156,99 @@ class HalbertModelBackend:
         max_tokens: int = 2048,
         **kwargs: Any,
     ) -> Any:
+        pinned_model = kwargs.pop("model", None)
+
+        if not stream and pinned_model is None:
+            router = self._get_tier_router()
+            if router is not None:
+                try:
+                    response, _selection = router.generate(
+                        prompt=self._messages_to_prompt(messages),
+                        prefer_specialist=kwargs.pop("prefer_specialist", False),
+                        task_type=kwargs.pop("task_type", None),
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        **kwargs,
+                    )
+                    return getattr(response, "text", "") or ""
+                except Exception as e:
+                    logger.warning(
+                        f"TierRouter generation failed ({e}); falling back to raw Ollama"
+                    )
+
+        return self._chat_ollama(
+            messages,
+            model=pinned_model or self.model,
+            stream=stream,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    def _chat_ollama(
+        self,
+        messages: list,
+        *,
+        model: str,
+        stream: bool,
+        temperature: float,
+        max_tokens: int,
+    ) -> Any:
+        """Safety-net path: direct Ollama /api/chat call (streaming or not)."""
         import requests
 
-        model = kwargs.get("model", self.model)
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": stream,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
 
         if stream:
             resp = requests.post(
                 f"{self.ollama_url}/api/chat",
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "stream": True,
-                    "options": {
-                        "temperature": temperature,
-                        "num_predict": max_tokens,
-                    },
-                },
+                json=payload,
                 stream=True,
                 timeout=120.0,
             )
             resp.raise_for_status()
 
             def _stream():
+                import json
+
                 for line in resp.iter_lines():
                     if line:
-                        import json
-
                         data = json.loads(line)
                         chunk = data.get("message", {}).get("content", "")
                         if chunk:
                             yield chunk
 
             return _stream()
-        else:
-            resp = requests.post(
-                f"{self.ollama_url}/api/chat",
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "stream": False,
-                    "options": {
-                        "temperature": temperature,
-                        "num_predict": max_tokens,
-                    },
-                },
-                timeout=120.0,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("message", {}).get("content", "")
+
+        resp = requests.post(
+            f"{self.ollama_url}/api/chat",
+            json=payload,
+            timeout=120.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("message", {}).get("content", "")
 
     def raw_provider(self) -> Any:
-        return None
+        """Return the TierRouter's guide-tier provider, or None if unrouted."""
+        router = self._get_tier_router()
+        if router is None:
+            return None
+        try:
+            from ..model.capabilities import ModelTier
+
+            selection = router.select_model(ModelTier.GUIDE)
+            return router._get_provider(selection.model)
+        except Exception as e:
+            logger.debug(f"raw_provider: no guide provider available ({e})")
+            return None
 
 
 class HalbertAppSeam:
