@@ -150,16 +150,44 @@ class SqliteConversationStore:
     def _add_missing_columns(cur: sqlite3.Cursor, table: str, columns: List[Tuple[str, str]]) -> None:
         existing = {row[1] for row in cur.execute(f"PRAGMA table_info({table})").fetchall()}
         for name, decl in columns:
-            if name not in existing:
+            if name in existing:
+                continue
+            try:
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+            except sqlite3.OperationalError as e:
+                # A concurrent opener may have added this column between our
+                # PRAGMA table_info read and this ALTER (belt-and-suspenders:
+                # _ensure_schema also serializes openers with BEGIN IMMEDIATE,
+                # but this keeps a single column race from aborting every
+                # column after it — see A1 review finding 1).
+                if "duplicate column name" in str(e):
+                    continue
+                raise
 
     def _ensure_schema(self) -> None:
-        try:
-            with self._lock:
-                cur = self._conn.cursor()
+        with self._lock:
+            cur = self._conn.cursor()
+            try:
                 # PRAGMAs first: they must run outside any transaction.
                 cur.execute("PRAGMA journal_mode=WAL")
                 cur.execute("PRAGMA busy_timeout=5000")
+            except Exception as e:
+                logger.warning(f"SqliteConversationStore schema failed (pragmas): {e}")
+                return
+            # Serialize schema creation/migration across concurrent openers of
+            # the same database file. BEGIN IMMEDIATE claims the write lock
+            # up front (busy_timeout above governs how long a racing opener
+            # waits here) instead of letting every opener's PRAGMA table_info
+            # + ALTER TABLE sequence race one another: the loser used to see
+            # a schema missing the exact columns another opener was mid-way
+            # through adding, raise, and abort the rest of its own migration
+            # (A1 review finding 1).
+            try:
+                cur.execute("BEGIN IMMEDIATE")
+            except Exception as e:
+                logger.warning(f"SqliteConversationStore schema failed (lock): {e}")
+                return
+            try:
                 cur.execute(
                     """CREATE TABLE IF NOT EXISTS conversations (
                         id         TEXT PRIMARY KEY,
@@ -265,8 +293,51 @@ class SqliteConversationStore:
                         "INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,)
                     )
                 self._conn.commit()
-        except Exception as e:
-            logger.warning(f"SqliteConversationStore schema failed: {e}")
+            except Exception as e:
+                self._conn.rollback()
+                logger.warning(f"SqliteConversationStore schema failed: {e}")
+
+    @property
+    def healthy(self) -> bool:
+        """``False`` while degraded: no connection, or FTS5 unavailable so
+        ``search`` falls back to title-only ``LIKE`` matching. A route can
+        poll this to emit ``thread_store_error`` once instead of finding out
+        only when a search silently comes back thin."""
+        return self._conn is not None and self._fts_ok
+
+    def _fts_recover(self) -> bool:
+        """Return whether FTS5 is currently usable, retrying table creation
+        when it previously was not.
+
+        ``_fts_ok`` is not a permanent kill switch: a transient failure at
+        connect time (a migration race, a momentarily-unavailable extension)
+        should not disable search for the rest of the process's life, so
+        every caller that used to gate on ``self._fts_ok`` directly now calls
+        this instead (A1 review finding 3). Safe to call from inside an
+        already-open write transaction (e.g. from ``append_message``): it
+        issues bare ``CREATE VIRTUAL TABLE IF NOT EXISTS`` statements with no
+        ``with self._conn:`` of its own, so it never commits a transaction
+        out from under its caller.
+        """
+        if self._fts_ok or self._conn is None:
+            return self._fts_ok
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
+                    "conversation_id UNINDEXED, content, "
+                    "tokenize='porter unicode61')"
+                )
+                self._conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS receipts_fts USING fts5("
+                    "thread_id UNINDEXED, title, receipt, "
+                    "tokenize='porter unicode61')"
+                )
+            self._fts_ok = True
+            logger.info("FTS5 recovered; search is no longer degraded to title-only")
+        except sqlite3.OperationalError as e:
+            logger.warning(f"FTS5 still unavailable, staying in LIKE-only fallback: {e}")
+        return self._fts_ok
 
     # ------------------------------------------------------------------
     # Legacy CRUD (Conversation dataclass shape)
@@ -332,7 +403,7 @@ class SqliteConversationStore:
                        ON CONFLICT(id) DO UPDATE SET
                          user_id    = excluded.user_id,
                          title      = excluded.title,
-                         updated_at = excluded.updated_at,
+                         updated_at = MAX(conversations.updated_at, excluded.updated_at),
                          metadata   = excluded.metadata""",
                     (cid, conversation.user_id, conversation.title,
                      conversation.created_at, conversation.updated_at, meta),
@@ -411,7 +482,7 @@ class SqliteConversationStore:
             return []
         results: List[str] = []
         terms = _fts_terms(query, drop_stopwords=False)
-        if self._fts_ok and terms:
+        if self._fts_recover() and terms:
             try:
                 with self._lock:
                     rows = self._conn.execute(
@@ -464,7 +535,11 @@ class SqliteConversationStore:
         """Insert one message row + its FTS row in a single transaction.
 
         Returns the new row id, or ``None`` (after a WARNING) when the write
-        failed; nothing is left behind on failure.
+        failed; nothing is left behind on failure. ``None`` is also returned,
+        with no row written, when ``thread_id`` does not name an existing
+        conversation (there is no FK, so a typo'd/deleted/merged thread id
+        would otherwise write a message no ``get``/``search``/``list_threads``
+        call can ever surface again — A1 review finding 4).
         """
         if self._conn is None:
             return None
@@ -480,6 +555,10 @@ class SqliteConversationStore:
         ts = float(timestamp) if timestamp is not None else time.time()
         try:
             with self._lock, self._conn:
+                if self._conn.execute(
+                    "SELECT 1 FROM conversations WHERE id = ?", (thread_id,)
+                ).fetchone() is None:
+                    raise ValueError(f"no such thread_id {thread_id!r}")
                 cur = self._conn.execute(
                     """INSERT INTO messages
                        (conversation_id, role, content, timestamp, metadata, turn_id,
@@ -492,7 +571,7 @@ class SqliteConversationStore:
                      json.dumps(diff_proposals or []), 1 if visible_in_timeline else 0),
                 )
                 message_id = int(cur.lastrowid)
-                if self._fts_ok:
+                if self._fts_recover():
                     self._conn.execute(
                         "INSERT INTO messages_fts(rowid, conversation_id, content) "
                         "VALUES (?, ?, ?)",
@@ -538,7 +617,7 @@ class SqliteConversationStore:
                 )
                 if cur.rowcount == 0:
                     return False
-                if reindex and self._fts_ok:
+                if reindex and self._fts_recover():
                     row = self._conn.execute(
                         "SELECT conversation_id, content FROM messages WHERE id = ?",
                         (message_id,),
