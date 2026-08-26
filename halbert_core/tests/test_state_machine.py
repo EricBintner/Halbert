@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Unit tests for the Agent State Machine
 
@@ -498,6 +500,35 @@ def mock_llm_high_risk_command():
     return llm
 
 
+@pytest.fixture
+def mock_llm_high_risk_once():
+    """LLM that asks for a HIGH-risk run_command once, then answers normally.
+
+    ``mock_llm_high_risk_command`` re-proposes the same tool on every PLANNING
+    pass, so a resumed turn pauses again forever and never shows what happens
+    after a confirmation is dealt with. This one lets the turn finish.
+    """
+    llm = AsyncMock()
+    tool_call = MagicMock()
+    tool_call.function.name = "run_command"
+    tool_call.function.arguments = {"command": "systemctl restart sshd"}
+    calls = {"n": 0}
+
+    async def _chat(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return MagicMock(content="", tool_calls=[tool_call], plan=None)
+        return MagicMock(content="All set.", tool_calls=[], plan=None)
+
+    llm.chat = AsyncMock(side_effect=_chat)
+
+    async def _stream(messages, **kwargs):
+        yield "All set."
+
+    llm.stream = _stream
+    return llm
+
+
 async def _pause_on_confirmation(agent):
     events = []
 
@@ -563,7 +594,63 @@ class TestAwaitingConfirmation:
             e.type == "conversation_status" and e.data["status"] == "in_progress"
             for e in resumed
         )
-        assert agent.tools.execute.await_args.kwargs["confirmed"] is True
+        # First execution after the approval is the confirmed one. (The turn
+        # now keeps running afterwards, so await_args holds a later call.)
+        assert agent.tools.execute.await_args_list[0].kwargs["confirmed"] is True
+
+    @pytest.mark.asyncio
+    async def test_confirm_action_runs_the_turn_to_completion(
+        self, mock_llm_high_risk_once, tool_executor
+    ):
+        """Approving an action must still produce an answer.
+
+        confirm_action() used to run only _handle_executing(): the tool ran,
+        then the machine stopped at OBSERVING and the client waited forever.
+        """
+        from halbert_core.tools.executor import ExecutionResult
+
+        agent = AgentStateMachine(
+            llm_client=mock_llm_high_risk_once,
+            tool_executor=tool_executor,
+            max_loops=5,
+        )
+        events = await _pause_on_confirmation(agent)
+        confirm = next(e for e in events if e.type == "tool_confirmation_required")
+        agent.tools.execute = AsyncMock(
+            return_value=ExecutionResult(success=True, result="restarted")
+        )
+
+        resumed = []
+        async for e in agent.confirm_action("sess-pause", confirm.data["execution_id"], True):
+            resumed.append(e)
+
+        types = [e.type for e in resumed]
+        assert "tool_complete" in types
+        assert "response_complete" in types
+        assert "session_ended" in types
+        assert agent.current_state == AgentState.IDLE
+
+    @pytest.mark.asyncio
+    async def test_reject_action_runs_the_turn_to_completion(
+        self, mock_llm_high_risk_once, tool_executor
+    ):
+        """Rejecting an action must also produce an answer, not silence."""
+        agent = AgentStateMachine(
+            llm_client=mock_llm_high_risk_once,
+            tool_executor=tool_executor,
+            max_loops=5,
+        )
+        events = await _pause_on_confirmation(agent)
+        confirm = next(e for e in events if e.type == "tool_confirmation_required")
+
+        resumed = []
+        async for e in agent.confirm_action("sess-pause", confirm.data["execution_id"], False):
+            resumed.append(e)
+
+        types = [e.type for e in resumed]
+        assert "response_complete" in types
+        assert "session_ended" in types
+        assert agent.current_state == AgentState.IDLE
 
 
 class TestPausedSessionEviction:
@@ -597,10 +684,12 @@ class TestPausedSessionEviction:
 
     @pytest.mark.asyncio
     async def test_reject_action_evicts_session(
-        self, mock_llm_high_risk_command, tool_executor
+        self, mock_llm_high_risk_once, tool_executor
     ):
+        # The "once" LLM re-plans without re-proposing the tool, so the
+        # rejected turn actually finishes and the session can be evicted.
         agent = AgentStateMachine(
-            llm_client=mock_llm_high_risk_command,
+            llm_client=mock_llm_high_risk_once,
             tool_executor=tool_executor,
             max_loops=5,
         )
@@ -663,3 +752,34 @@ class TestAwaitingConfirmationOnFinalLoop:
         assert agent.current_state == AgentState.AWAITING_CONFIRMATION
         assert agent.ctx.pending_confirmation is not None
         assert "sess-pause" in agent.active_sessions
+
+
+class TestRejectionIsRecorded:
+    """A rejection has to tell the next PLANNING pass what was refused, and
+    settle the call so an identical re-proposal is caught."""
+
+    @pytest.mark.asyncio
+    async def test_rejected_call_is_settled_and_named(
+        self, mock_llm_high_risk_once, tool_executor
+    ):
+        agent = AgentStateMachine(
+            llm_client=mock_llm_high_risk_once,
+            tool_executor=tool_executor,
+            max_loops=5,
+        )
+        events = await _pause_on_confirmation(agent)
+        confirm = next(e for e in events if e.type == "tool_confirmation_required")
+        action_id = confirm.data["execution_id"]
+
+        ctx = agent.active_sessions["sess-pause"]
+        async for _ in agent.confirm_action("sess-pause", action_id, False):
+            pass
+
+        rejected = ctx.tool_calls[-1]
+        assert rejected.status == "error"
+        assert rejected.error == "rejected by user"
+        assert agent._already_called(rejected.name, rejected.args)
+
+        joined = "\n".join(ctx.observations)
+        assert "refused" in joined
+        assert "systemctl restart sshd" in joined

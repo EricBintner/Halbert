@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Model Client — shared LLM routing and calling logic.
 
@@ -29,6 +31,7 @@ Config schema:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -307,6 +310,7 @@ def call_llm_chat(
     stream: bool = False,
     timeout: int = 180,
     options: dict = None,
+    tools: list = None,
 ) -> dict:
     """Call LLM with correct API format based on provider.
 
@@ -318,9 +322,13 @@ def call_llm_chat(
         stream: Whether to stream response
         timeout: Request timeout in seconds
         options: Provider-specific options (temperature, max_tokens, etc.)
+        tools: Optional OpenAI-style tool schemas
+            (``[{"type": "function", "function": {...}}]``). Sent to the model
+            when non-empty; models that reject them fall back to a plain call.
 
     Returns:
-        Dict with 'content' (response text) and 'raw' (full response)
+        Dict with 'content' (response text), 'tool_calls' (normalised list,
+        see :func:`_normalise_tool_calls`) and 'raw' (full response)
     """
     options = options or {}
 
@@ -338,9 +346,80 @@ def call_llm_chat(
         with llm_advisory_lock() as acquired:
             if not acquired:
                 logger.warning("GPU may be busy — LLM call proceeding without lock")
-            return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
+            return _call_with_tool_fallback(
+                endpoint, model, messages, provider, stream, timeout, options, tools
+            )
     else:
+        return _call_with_tool_fallback(
+            endpoint, model, messages, provider, stream, timeout, options, tools
+        )
+
+
+def _call_with_tool_fallback(
+    endpoint: str,
+    model: str,
+    messages: list,
+    provider: str,
+    stream: bool,
+    timeout: int,
+    options: dict,
+    tools: list,
+) -> dict:
+    """Call the model with tools, retrying once without them on rejection.
+
+    Plenty of local models have no tool-calling support; Ollama answers a
+    ``tools`` payload for one of those with a 400 rather than ignoring it.
+    Losing the whole turn over an unsupported capability is worse than
+    answering without tools, so the retry drops them and logs it.
+    """
+    if not tools:
         return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
+
+    try:
+        return _do_llm_call(
+            endpoint, model, messages, provider, stream, timeout, options, tools
+        )
+    except requests.HTTPError as e:
+        status = getattr(e.response, "status_code", None)
+        if status not in (400, 404, 422, 501):
+            raise
+        logger.warning(
+            f"Model {model} rejected tool schemas (HTTP {status}); "
+            "retrying without tools"
+        )
+        return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
+
+
+def _normalise_tool_calls(raw_calls: list) -> list:
+    """Flatten provider tool-call shapes into ``{id, name, arguments}`` dicts.
+
+    Ollama returns ``arguments`` already decoded; OpenAI-compatible APIs send
+    a JSON string. Both arrive here; callers downstream expect a dict, since
+    that is what the tool executor takes.
+    """
+    normalised = []
+    for i, call in enumerate(raw_calls or []):
+        if not isinstance(call, dict):
+            continue
+        fn = call.get("function") or {}
+        name = fn.get("name") or call.get("name")
+        if not name:
+            continue
+        args = fn.get("arguments", call.get("arguments", {}))
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args.strip() else {}
+            except (ValueError, TypeError):
+                logger.warning(f"Tool call {name} had unparseable arguments: {args!r}")
+                args = {}
+        if not isinstance(args, dict):
+            args = {}
+        normalised.append({
+            "id": call.get("id") or f"call_{i}",
+            "name": name,
+            "arguments": args,
+        })
+    return normalised
 
 
 def _do_llm_call(
@@ -351,6 +430,7 @@ def _do_llm_call(
     stream: bool,
     timeout: int,
     options: dict,
+    tools: list = None,
 ) -> dict:
     """Make the actual LLM API call (separated for lock wrapping)."""
     if provider == "openai":
@@ -364,21 +444,29 @@ def _do_llm_call(
                 "num_predict", options.get("max_tokens", 2048)
             ),
         }
+        if tools:
+            payload["tools"] = tools
         logger.info(f"Calling OpenAI-compatible API: {url} model={model}")
         response = requests.post(url, json=payload, timeout=timeout)
         response.raise_for_status()
         data = response.json()
-        content = (
-            data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        )
-        return {"content": content.strip(), "raw": data}
+        message = data.get("choices", [{}])[0].get("message", {}) or {}
+        content = message.get("content") or ""
+        return {
+            "content": content.strip(),
+            "tool_calls": _normalise_tool_calls(message.get("tool_calls")),
+            "raw": data,
+        }
     else:
         url = f"{endpoint}/api/chat"
         payload = {
             "model": model,
             "messages": messages,
-            "stream": stream,
+            # Ollama only returns tool_calls on a non-streamed response.
+            "stream": False if tools else stream,
         }
+        if tools:
+            payload["tools"] = tools
         if options:
             payload["options"] = {
                 "num_predict": options.get(
@@ -390,8 +478,13 @@ def _do_llm_call(
         response = requests.post(url, json=payload, timeout=timeout)
         response.raise_for_status()
         data = response.json()
-        content = data.get("message", {}).get("content", "")
-        return {"content": content.strip(), "raw": data}
+        message = data.get("message", {}) or {}
+        content = message.get("content") or ""
+        return {
+            "content": content.strip(),
+            "tool_calls": _normalise_tool_calls(message.get("tool_calls")),
+            "raw": data,
+        }
 
 
 def _estimate_tokens(text: str) -> int:

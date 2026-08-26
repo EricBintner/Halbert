@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Agent State Machine
 
@@ -29,6 +31,23 @@ _SUBAGENT_TERMINAL = {"completed", "failed", "cancelled"}
 
 def _subagent_terminal(status: str) -> bool:
     return status in _SUBAGENT_TERMINAL
+
+
+# Tool output is dropped into the observation list, which the context assembler
+# budgets and may truncate again. This cap just stops one `cat` of a big file
+# from crowding out everything else before that budgeting happens.
+_TOOL_RESULT_CHARS = 2000
+
+
+def _format_tool_observation(name: str, args: Any, result: Any) -> str:
+    """Render an executed tool call as an observation the model can use."""
+    text = "" if result is None else str(result)
+    if len(text) > _TOOL_RESULT_CHARS:
+        text = text[:_TOOL_RESULT_CHARS] + f"\n… [truncated, {len(str(result))} chars total]"
+    call = f"{name}({args})" if args else name
+    if not text.strip():
+        return f"Executed {call}: succeeded with no output"
+    return f"Executed {call}:\n{text}"
 
 
 class AgentStateMachine:
@@ -234,88 +253,104 @@ class AgentStateMachine:
         yield await self._transition(AgentState.PLANNING)
         
         try:
-            # Main loop
-            while self.current_state != AgentState.IDLE:
-                if self.current_state == AgentState.AWAITING_CONFIRMATION:
-                    # Blocking state: end this SSE stream and keep the session
-                    # in active_sessions so confirm_action() can resume it.
-                    # Checked BEFORE the max-loops / oscillation guards so a
-                    # pause on the final allowed loop is not overwritten to
-                    # RESPONDING.
-                    logger.info(f"Session {session_id} paused awaiting confirmation")
-                    break
-
-                # Safety checks
-                if self.ctx.loop_count >= self.ctx.max_loops:
-                    logger.warning(f"Max loops ({self.ctx.max_loops}) reached")
-                    yield StreamEvent.loop_warning(
-                        session_id, self.ctx.loop_count, self.ctx.max_loops
-                    )
-                    yield StreamEvent.error(
-                        session_id, 
-                        f"Max iterations ({self.ctx.max_loops}) reached, responding with available information"
-                    )
-                    # Fall through to the RESPONDING handler (mirrors the
-                    # oscillation guard). A `continue` here re-fired this guard
-                    # forever because loop_count never drops below max_loops.
-                    if self.current_state != AgentState.RESPONDING:
-                        self.ctx.state_history.append(AgentState.RESPONDING.value)
-                        self.current_state = AgentState.RESPONDING
-                
-                if self._detect_oscillation():
-                    logger.warning("State oscillation detected")
-                    yield StreamEvent.error(session_id, "State oscillation detected, forcing response")
-                    # Clear state history to break out of oscillation detection loop
-                    self.ctx.state_history.clear()
-                    self.ctx.state_history.append(AgentState.RESPONDING.value)
-                    self.current_state = AgentState.RESPONDING
-                    # Don't continue - let it execute the RESPONDING handler
-                
-                # Execute handler for current state
-                handler = self._get_handler()
-                if handler:
-                    try:
-                        async for event in handler():
-                            yield event
-                    except Exception as e:
-                        logger.error(f"Handler error in {self.current_state}: {e}")
-                        self.ctx.error = str(e)
-                        if self.current_state == AgentState.RESPONDING:
-                            # Terminal guard: a failure while producing the final
-                            # response cannot be recovered by retrying — the
-                            # ERROR handler's give-up path transitions back to
-                            # RESPONDING, which would fail identically forever.
-                            # End the session instead (non-recoverable error).
-                            yield StreamEvent.error(session_id, str(e), recoverable=False)
-                            # User-facing status: terminal error (A2c) —
-                            # unless the give-up path already made it terminal.
-                            if not self.ctx.conversation_status.is_terminal():
-                                yield self._set_conversation_status(ConversationStatus.ERROR)
-                            self.current_state = AgentState.IDLE
-                        else:
-                            yield StreamEvent.error(session_id, str(e))
-                            self.current_state = AgentState.ERROR
-                else:
-                    logger.error(f"No handler for state: {self.current_state}")
-                    self.current_state = AgentState.ERROR
-            
-            # Session complete (a paused session is not ended: the
-            # tool_confirmation_required + conversation_status: blocked events
-            # already told the client to stop and wait for confirm_action()).
-            if self.current_state != AgentState.AWAITING_CONFIRMATION:
-                yield StreamEvent.session_ended(
-                    session_id,
-                    self.ctx.elapsed_ms(),
-                    self.ctx.loop_count
-                )
-
+            async for event in self._drive():
+                yield event
         finally:
             # Cleanup — but keep a paused (awaiting-confirmation) session so
             # confirm_action() can find it.
             if (session_id in self.active_sessions
                     and self.current_state != AgentState.AWAITING_CONFIRMATION):
                 del self.active_sessions[session_id]
-    
+
+    async def _drive(self) -> AsyncIterator[StreamEvent]:
+        """Run the state machine from ``self.current_state`` until it settles.
+
+        The single loop shared by ``process()`` and ``confirm_action()``: a
+        resumed turn has to reach RESPONDING the same way a fresh one does,
+        otherwise confirming an action executes the tool and then goes quiet
+        (no observation, no answer, no ``session_ended``).
+
+        Ends on IDLE (turn finished) or on AWAITING_CONFIRMATION (turn paused,
+        session deliberately left in ``active_sessions``). Caller owns session
+        eviction.
+        """
+        session_id = self.ctx.session_id
+
+        while self.current_state != AgentState.IDLE:
+            if self.current_state == AgentState.AWAITING_CONFIRMATION:
+                # Blocking state: end this SSE stream and keep the session
+                # in active_sessions so confirm_action() can resume it.
+                # Checked BEFORE the max-loops / oscillation guards so a
+                # pause on the final allowed loop is not overwritten to
+                # RESPONDING.
+                logger.info(f"Session {session_id} paused awaiting confirmation")
+                break
+
+            # Safety checks
+            if self.ctx.loop_count >= self.ctx.max_loops:
+                logger.warning(f"Max loops ({self.ctx.max_loops}) reached")
+                yield StreamEvent.loop_warning(
+                    session_id, self.ctx.loop_count, self.ctx.max_loops
+                )
+                yield StreamEvent.error(
+                    session_id,
+                    f"Max iterations ({self.ctx.max_loops}) reached, responding with available information"
+                )
+                # Fall through to the RESPONDING handler (mirrors the
+                # oscillation guard). A `continue` here re-fired this guard
+                # forever because loop_count never drops below max_loops.
+                if self.current_state != AgentState.RESPONDING:
+                    self.ctx.state_history.append(AgentState.RESPONDING.value)
+                    self.current_state = AgentState.RESPONDING
+
+            if self._detect_oscillation():
+                logger.warning("State oscillation detected")
+                yield StreamEvent.error(session_id, "State oscillation detected, forcing response")
+                # Clear state history to break out of oscillation detection loop
+                self.ctx.state_history.clear()
+                self.ctx.state_history.append(AgentState.RESPONDING.value)
+                self.current_state = AgentState.RESPONDING
+                # Don't continue - let it execute the RESPONDING handler
+
+            # Execute handler for current state
+            handler = self._get_handler()
+            if handler:
+                try:
+                    async for event in handler():
+                        yield event
+                except Exception as e:
+                    logger.error(f"Handler error in {self.current_state}: {e}")
+                    self.ctx.error = str(e)
+                    if self.current_state == AgentState.RESPONDING:
+                        # Terminal guard: a failure while producing the final
+                        # response cannot be recovered by retrying — the
+                        # ERROR handler's give-up path transitions back to
+                        # RESPONDING, which would fail identically forever.
+                        # End the session instead (non-recoverable error).
+                        yield StreamEvent.error(session_id, str(e), recoverable=False)
+                        # User-facing status: terminal error (A2c) —
+                        # unless the give-up path already made it terminal.
+                        if not self.ctx.conversation_status.is_terminal():
+                            yield self._set_conversation_status(ConversationStatus.ERROR)
+                        self.current_state = AgentState.IDLE
+                    else:
+                        yield StreamEvent.error(session_id, str(e))
+                        self.current_state = AgentState.ERROR
+            else:
+                logger.error(f"No handler for state: {self.current_state}")
+                self.current_state = AgentState.ERROR
+
+        # Session complete (a paused session is not ended: the
+        # tool_confirmation_required + conversation_status: blocked events
+        # already told the client to stop and wait for confirm_action()).
+        if self.current_state != AgentState.AWAITING_CONFIRMATION:
+            yield StreamEvent.session_ended(
+                session_id,
+                self.ctx.elapsed_ms(),
+                self.ctx.loop_count
+            )
+
+
     async def confirm_action(
         self,
         session_id: str,
@@ -324,12 +359,18 @@ class AgentStateMachine:
     ) -> AsyncIterator[StreamEvent]:
         """
         Handle user confirmation for high-risk actions.
-        
+
+        Resumes the paused turn and runs it to completion: an approved action
+        executes and the machine keeps going (OBSERVING → … → RESPONDING), a
+        rejected one re-plans and still answers. Either way the caller sees a
+        ``response_complete`` and ``session_ended``, exactly as on an
+        unblocked turn.
+
         Args:
             session_id: Session ID
             action_id: Action execution ID
             confirmed: Whether user confirmed the action
-            
+
         Yields:
             StreamEvent objects
         """
@@ -354,19 +395,37 @@ class AgentStateMachine:
                 # Approval granted: resume working (A2c)
                 yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
                 yield await self._transition(AgentState.EXECUTING)
-
-                # Continue processing
-                async for event in self._handle_executing():
-                    yield event
             else:
                 # User rejected - go back to planning
                 self.ctx.pending_confirmation = None
-                self.ctx.add_observation("User rejected the action")
+                # Settle the rejected call and name it in the observation.
+                # A bare "User rejected the action" told the next PLANNING pass
+                # nothing about *what* was refused, and left the call at
+                # status="pending" so _already_called() could not stop the model
+                # proposing the identical command again.
+                rejected = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
+                if rejected is not None and rejected.id == action_id:
+                    rejected.status = "error"
+                    rejected.error = "rejected by user"
+                    self.ctx.add_observation(
+                        f"The user refused to run {rejected.name}({rejected.args}). "
+                        "Do not propose it again; answer without it or suggest "
+                        "a different approach."
+                    )
+                else:
+                    self.ctx.add_observation("User rejected the action")
                 # Rejection resumes the conversation (the agent re-plans and still
                 # responds), so this is IN_PROGRESS, not a terminal CANCELLED.
                 # True cancellation is cancel_session() below. (A2c)
                 yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
                 yield await self._transition(AgentState.PLANNING)
+
+            # Resume the turn. Running only _handle_executing() here stopped
+            # the machine dead at OBSERVING: the tool ran but the user never
+            # got an answer, and the stream never closed. _drive() is the same
+            # loop process() uses, so a resumed turn finishes like any other.
+            async for event in self._drive():
+                yield event
         finally:
             # The paused session was kept in active_sessions only so this
             # method could find it. Evict it now unless the machine paused
@@ -632,15 +691,30 @@ class AgentStateMachine:
         # Route based on tool calls or CRAG result
         if hasattr(response, 'tool_calls') and response.tool_calls:
             tool_call = response.tool_calls[0]
+            tool_name = tool_call.function.name
+            tool_args = tool_call.function.arguments
+
+            if self._already_called(tool_name, tool_args):
+                # Same tool, same arguments, already run this turn. Re-running
+                # it cannot teach the model anything new — it just burns a loop
+                # (and repeats the side effect, for tools that have one) until
+                # max_loops ends the turn. Answer with what we have instead.
+                logger.info(f"PLANNING: {tool_name} already ran this turn, not repeating")
+                self.ctx.add_observation(
+                    f"{tool_name} was already run this turn with the same "
+                    "arguments; its result is above."
+                )
+                yield await self._transition(AgentState.REFLECTING)
+                return
+
             tc = ToolCall(
                 id=str(uuid.uuid4())[:8],
-                name=tool_call.function.name,
-                args=tool_call.function.arguments
+                name=tool_name,
+                args=tool_args
             )
             self.ctx.add_tool_call(tc)
-            
+
             # Route based on tool type
-            tool_name = tool_call.function.name
             if tool_name in ["search", "search_discoveries", "recall_memory", "web_search"]:
                 yield await self._transition(AgentState.SEARCHING)
             elif tool_name in ["read_file", "read_config", "cat"]:
@@ -666,6 +740,20 @@ class AgentStateMachine:
             # Default: reflect (cognitive tick) then respond with what we have
             yield await self._transition(AgentState.REFLECTING)
     
+    def _already_called(self, name: str, args: Any) -> bool:
+        """Has this exact tool call already finished this turn?
+
+        Only settled calls count: a call still pending (the one being routed)
+        must not match itself, and a genuine retry of a *different* invocation
+        is unaffected because the arguments differ.
+        """
+        return any(
+            tc.name == name
+            and tc.args == args
+            and tc.status in ("success", "error")
+            for tc in self.ctx.tool_calls
+        )
+
     # Word-count ceilings for the retrieval skip (see _intake_is_greeting).
     _GREETING_MAX_WORDS = 5            # "hey halbert, good morning!"
     _GREETING_QUESTION_MAX_WORDS = 6   # "hello, what can you do?"
@@ -911,7 +999,14 @@ class AgentStateMachine:
             if result.success:
                 tool_call.status = "success"
                 tool_call.result = result.result
-                self.ctx.add_observation(f"Executed {tool_name}: success")
+                # The observation has to carry the *output*, not just "success".
+                # Observations are the only channel by which a tool result
+                # reaches the next PLANNING pass; recording bare success left
+                # the model blind to what it had just learnt, so it re-issued
+                # the same call until max_loops cut the turn off.
+                self.ctx.add_observation(
+                    _format_tool_observation(tool_name, tool_args, result.result)
+                )
             else:
                 tool_call.status = "error"
                 tool_call.error = result.error

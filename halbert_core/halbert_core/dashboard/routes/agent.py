@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Agent API Routes
 
@@ -266,9 +268,18 @@ class LLMClientAdapter:
     async def chat(self, messages, tools=None, intake_result=None, images=None):
         """Call LLM with messages, routing to specialist for complex queries.
 
+        Tool schemas are forwarded to the model and any tool calls come back on
+        ``LLMResponse.tool_calls``. That is what makes EXECUTING / READING /
+        AWAITING_CONFIRMATION reachable: PLANNING routes on ``tool_calls``, so
+        while this adapter dropped ``tools`` on the floor those three states
+        could never be entered from the API, and the approval flow with them.
+
+        The vision path deliberately does not forward tools — vision models
+        here are captioners, and mixing the two loses the image.
+
         Args:
             messages: LLM message list.
-            tools: Optional tool definitions.
+            tools: Optional OpenAI-style tool schemas.
             intake_result: Optional Phase 3 MessageIntake for model routing.
             images: Optional list of base64-encoded images for vision model.
         """
@@ -350,10 +361,13 @@ class LLMClientAdapter:
                 provider=provider,
                 stream=False,
                 timeout=300,
-                options={"num_predict": 2048, "temperature": 0.7}
+                options={"num_predict": 2048, "temperature": 0.7},
+                tools=tools,
             )
-            content = result.get("content", "")
-            return LLMResponse(content=content)
+            return LLMResponse(
+                content=result.get("content", ""),
+                tool_calls=_as_tool_calls(result.get("tool_calls")),
+            )
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             # Fallback to guide model
@@ -367,9 +381,13 @@ class LLMClientAdapter:
                     messages=llm_messages,
                     provider="ollama",
                     stream=False,
-                    timeout=180
+                    timeout=180,
+                    tools=tools,
                 )
-                return LLMResponse(content=result.get("content", ""))
+                return LLMResponse(
+                    content=result.get("content", ""),
+                    tool_calls=_as_tool_calls(result.get("tool_calls")),
+                )
             raise
     
     async def stream(self, messages, intake_result=None, images=None):
@@ -559,6 +577,45 @@ class LLMResponse:
         self.content = content
         self.tool_calls = tool_calls
         self.plan = plan
+
+
+class _ToolCallFunction:
+    """The ``.function`` half of a tool call (name + decoded arguments)."""
+    __slots__ = ("name", "arguments")
+
+    def __init__(self, name: str, arguments: dict):
+        self.name = name
+        self.arguments = arguments
+
+
+class AdaptedToolCall:
+    """A tool call in the shape the state machine reads.
+
+    PLANNING accesses ``tool_call.function.name`` / ``.function.arguments``
+    (the OpenAI SDK object shape), so the flat dicts the model client
+    normalises to are wrapped rather than passed through.
+    """
+    __slots__ = ("id", "function")
+
+    def __init__(self, call_id: str, name: str, arguments: dict):
+        self.id = call_id
+        self.function = _ToolCallFunction(name, arguments)
+
+
+def _as_tool_calls(raw_calls):
+    """Wrap normalised ``{id, name, arguments}`` dicts as AdaptedToolCall.
+
+    Returns None (not []) when there are none: PLANNING tests truthiness, and
+    None keeps "no tool calls" distinguishable from "tools were never asked
+    for" in logs.
+    """
+    if not raw_calls:
+        return None
+    return [
+        AdaptedToolCall(c.get("id") or f"call_{i}", c["name"], c.get("arguments") or {})
+        for i, c in enumerate(raw_calls)
+        if c.get("name")
+    ] or None
 
 
 class MockLLMClient:
