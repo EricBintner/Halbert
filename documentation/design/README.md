@@ -19,7 +19,9 @@ This documentation serves two audiences:
 | [philosophy.md](philosophy.md) | Core design principles: self-identifying LLM, grounded intelligence, safe autonomy |
 | [macos-strategy.md](macos-strategy.md) | macOS tiering strategy (LemonSqueezy Pro vs. App Store Free), config physiology, and universal multi-session architecture |
 | [research-summary.md](research-summary.md) | Condensed research findings that informed the design |
-| [unified-model-picker.md](unified-model-picker.md) | Strategy for unifying Halbert and SourcePrep's model picker into a shared layer — extract-first, vendor-then-refine approach |
+| [unified-model-picker.md](unified-model-picker.md) | Strategy for unifying Halbert and SourcePrep's model picker into a shared layer (superseded by independent design) |
+| [model-picker-independent-2026-08-26.md](model-picker-independent-2026-08-26.md) | Approved independent model picker design: 3-slot schema, single store module, and trimmed UI |
+| [continuous-conversation-and-watched-terminals-2026-08-26.md](continuous-conversation-and-watched-terminals-2026-08-26.md) | Architectural specification for continuous conversation memory, watched PTY terminals, and sub-threads |
 | [future.md](future.md) | Potential future directions (not promises) |
 | [DESIGN-SYSTEM-SPEC.md](DESIGN-SYSTEM-SPEC.md) | Formalized Design System Specification: Daylight tokens, typography, surfaces, motion, and accessibility |
 | [COMPONENT-ARCHITECTURE.md](COMPONENT-ARCHITECTURE.md) | Component Catalog & Architecture: Atoms, Molecules, Organisms, and existing dashboard component migration |
