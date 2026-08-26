@@ -263,6 +263,20 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     if frontend_dist.exists():
         app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
 
+        # The self-hosted brand typefaces. This mount is load-bearing: the SPA
+        # route table below is explicit rather than a catch-all, so without it
+        # /fonts/fonts.css 404s and the whole triad silently falls back to
+        # system faces in the packaged app — which is the one place a CDN is
+        # not available to paper over it.
+        fonts_dir = frontend_dist / "fonts"
+        if fonts_dir.exists():
+            app.mount("/fonts", StaticFiles(directory=fonts_dir), name="fonts")
+        else:
+            logger.warning(
+                "frontend/dist/fonts is missing - run scripts/sync_fonts.py before "
+                "building the frontend, or the app will render without its typefaces"
+            )
+
         @app.get("/Halbert.png")
         async def serve_logo():
             """Serve brand logo."""
