@@ -35,7 +35,7 @@ def _resp(status=200, headers=None):
 
 def _probe(body, fire):
     """Run the route with a stubbed per-request timing function."""
-    with patch.object(compute, "load_llm_config",
+    with patch.object(compute.llm_store, "load",
                       return_value={"saved_endpoints": [ENDPOINT]}), \
          patch.object(compute, "_fire", side_effect=fire):
         return compute.endpoint_probe(compute.EndpointProbeRequest(**body))
@@ -100,7 +100,7 @@ class TestFindSaturation:
 class TestEndpointProbeRoute:
 
     def test_unknown_endpoint_id_is_an_error_not_a_crash(self):
-        with patch.object(compute, "load_llm_config", return_value={"saved_endpoints": []}):
+        with patch.object(compute.llm_store, "load", return_value={"saved_endpoints": []}):
             result = compute.endpoint_probe(
                 compute.EndpointProbeRequest(endpoint_id="nope", burst_size=4)
             )
@@ -109,7 +109,7 @@ class TestEndpointProbeRoute:
 
     def test_unsafe_url_is_refused(self):
         bad = dict(ENDPOINT, url="file:///etc/passwd")
-        with patch.object(compute, "load_llm_config",
+        with patch.object(compute.llm_store, "load",
                           return_value={"saved_endpoints": [bad]}):
             result = compute.endpoint_probe(
                 compute.EndpointProbeRequest(endpoint_id="ep-1", burst_size=4)

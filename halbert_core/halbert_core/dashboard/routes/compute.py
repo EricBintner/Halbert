@@ -33,7 +33,8 @@ import requests
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from .llm import is_safe_url, load_llm_config
+from .llm import is_safe_url
+from ...model import llm_config as llm_store
 
 logger = logging.getLogger("halbert.dashboard.routes.compute")
 
@@ -64,7 +65,7 @@ class EndpointProbeRequest(BaseModel):
 
 def _find_endpoint(endpoint_id: str) -> Optional[Dict[str, Any]]:
     """Look up a saved endpoint in models.yml by id."""
-    config = load_llm_config()
+    config = llm_store.load()
     for ep in config.get("saved_endpoints") or []:
         if isinstance(ep, dict) and ep.get("id") == endpoint_id:
             return ep
