@@ -88,54 +88,19 @@ To bridge `marketing/web-v7` (built with Tailwind CSS v4 and `@theme`) and `halb
 
 ### 3.1 Color & Surface Hierarchy
 
-```css
-/* shared-tokens/tokens.css */
-:root {
-  /* ===== Surfaces: The Archival Paper Scale ===== */
-  --color-canvas:            #F7F4EE;   /* Base page & window field (Bone) */
-  --color-surface:           #FFFFFF;   /* Elevated cards, active plates, dialogs */
-  --color-surface-subtle:    #EDE8DC;   /* Recessed telemetry trays, terminal interior */
-  --color-surface-muted:     #E5E0D5;   /* Inactive segment pills, disabled tracks */
-  --color-line:              rgba(28, 25, 23, 0.12); /* Crisp 1px instrument hairlines */
-  --color-line-subtle:       rgba(28, 25, 23, 0.06);
-
-  /* ===== The Signature Stroke ===== */
-  --color-accent:            #D34E24;   /* Olivetti Letterpress Vermilion */
-  --color-accent-hover:      #B83E18;   /* WCAG AA high-contrast hover */
-  --color-accent-active:     #9C3212;   /* Pressed tactile state */
-  --color-accent-tint:       #FDF2EE;   /* 8% wash for active row selections */
-
-  /* ===== Ink Hierarchy (Warm Charcoal & Graphite) ===== */
-  --color-ink:               #1C1917;   /* Primary headings, agent voice (16:1 contrast) */
-  --color-ink-secondary:     #44403C;   /* Secondary prose, metadata, timestamps (6.2:1) */
-  --color-ink-tertiary:      #78716C;   /* Captions, shortcut badges, inactive tabs */
-  --color-ink-ghost:         #A8A29E;   /* Placeholders, disabled icons */
-  --color-ink-on-accent:     #FFF7ED;   /* High-legibility text on Vermilion buttons */
-
-  /* ===== Diagnostic & Telemetry Semantics ===== */
-  --color-status-nominal:    #2D7A56;   /* Eames Botanical Green */
-  --color-status-nominal-bg: #EEF6F2;
-  --color-status-warning:    #C4781C;   /* Braun Amber Ochre */
-  --color-status-warning-bg: #FDF8F0;
-  --color-status-critical:   #C83E2D;   /* Terracotta Crimson */
-  --color-status-critical-bg:#FDF2F0;
-  --color-status-telemetry:  #386C8A;   /* Blueprint Slate Teal */
-  --color-status-telemetry-bg:#F0F6F9;
-
-  /* ===== Typography Stacks ===== */
-  --font-display:            "Fraunces", "DM Serif Display", Georgia, serif;
-  --font-sans:               "Space Grotesk", "Plus Jakarta Sans", -apple-system, sans-serif;
-  --font-mono:               "JetBrains Mono", "SF Mono", Consolas, monospace;
-
-  /* ===== Elevation & Radii ===== */
-  --radius-sm:               4px;       /* Tags, code pills, mini buttons */
-  --radius-md:               6px;       /* Form inputs, buttons, menu items */
-  --radius-lg:               8px;       /* AppWindow, cards, terminal tiles */
-  --radius-full:             9999px;    /* Status pills, indicator dots */
-  --shadow-plate:            0 12px 32px -16px rgba(28, 25, 23, 0.35);
-  --shadow-subtle:           0 2px 8px -2px rgba(28, 25, 23, 0.08);
-}
-```
+> [!IMPORTANT]
+> **The palette that was inlined here has moved.** The canonical dictionary is
+> [`/shared-tokens/tokens.css`](file:///Volumes/4TB-BAD/Halbert/shared-tokens/tokens.css),
+> verified in both themes by `python3 scripts/check_contrast.py`, with the rules
+> governing it in
+> [BRAND-GUIDELINES-AND-AESTHETIC.md](file:///Volumes/4TB-BAD/Halbert/documentation/design/BRAND-GUIDELINES-AND-AESTHETIC.md).
+>
+> The version inlined in this section was one of **three divergent palettes** in
+> the repo, and several of its values did not pass the accessibility gate this
+> same document specifies in §7 — the warning ochre measured 3.16:1, and white
+> on the accent measured 4.30:1 against a stated 4.5:1 CTA floor. Reproducing
+> values in a plan is how that drift happened, so the table is not restored
+> here. See the Corrections Log in the brand guidelines for the full list.
 
 ---
 
@@ -230,7 +195,7 @@ To execute this transition without stalling ongoing feature development, work is
   - Codify the Olivetti Vermilion & Bone aesthetic principles.
   - Define rules of color restraint (Vermilion usage caps, dark mode charcoal guidelines).
   - Standardize Halbert's conversational microcopy (first-person computational embodiment).
-* **Deliverable:** `documentation/design/BRAND-GUIDELINES-AND-VOICE.md`.
+* **Deliverable:** `documentation/design/BRAND-GUIDELINES-AND-AESTHETIC.md`. **DONE — 2026-08-26.**
 
 ### Track 2: Universal CSS Token Standardization
 * **Goal:** Extract and formalize `shared-tokens/tokens.css` into a complete, zero-dependency token file.
@@ -238,7 +203,7 @@ To execute this transition without stalling ongoing feature development, work is
   - Expand surfaces, ink scales, telemetry tones, spacing, and radii.
   - Verify WCAG AA / AAA contrast across all surface and ink combinations.
   - Create the Tailwind v3 mapping (`tailwind.config.js`) for the desktop app and Tailwind v4 mapping (`@theme`) for marketing.
-* **Deliverable:** `shared-tokens/tokens.css` and `halbert_core/.../tailwind.config.js` update.
+* **Deliverable:** `shared-tokens/tokens.css` and `halbert_core/.../tailwind.config.js` update. **DONE — 2026-08-26.**
 
 ### Track 3: Component Extraction & Primitive Library
 * **Goal:** Extract prototypes from `marketing/web-v7/src/content/ui.jsx` into clean, production-ready React components with TypeScript types.

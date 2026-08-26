@@ -12,23 +12,25 @@ import React from 'react';
  */
 
 const PAPER = {
-  bg: '#F7F5F0',
-  surface: '#FFFFFF',
-  subtle: '#EFECE4',
-  ink: '#1A1918',
-  ink2: '#5E5B56',
-  ink3: '#8C877D',
-  line: 'rgba(26,25,24,0.12)',
-  accent: '#D34E24',
-  accentTint: '#FDF2EE',
+  bg: 'var(--color-canvas)',
+  surface: 'var(--color-surface)',
+  subtle: 'var(--color-surface-subtle)',
+  ink: 'var(--color-ink)',
+  ink2: 'var(--color-ink-secondary)',
+  ink3: 'var(--color-ink-tertiary)',
+  line: 'var(--color-line)',
+  accent: 'var(--color-accent)',
+  accentStrong: 'var(--color-accent-strong)',
+  accentTint: 'var(--color-accent-tint)',
+  inkOnAccent: 'var(--color-ink-on-accent)',
 };
 
 const TONES = {
-  success: { fg: '#2D7A56', bg: '#EEF6F2' },
-  warning: { fg: '#C4781C', bg: '#FDF8F0' },
-  critical: { fg: '#C83E2D', bg: '#FDF2F0' },
-  info: { fg: '#386C8A', bg: '#F0F6F9' },
-  neutral: { fg: '#5E5B56', bg: '#EFECE4' },
+  success:  { fg: 'var(--color-status-nominal)',   bg: 'var(--color-status-nominal-bg)',   line: 'var(--color-status-nominal-line)' },
+  warning:  { fg: 'var(--color-status-warning)',   bg: 'var(--color-status-warning-bg)',   line: 'var(--color-status-warning-line)' },
+  critical: { fg: 'var(--color-status-critical)',  bg: 'var(--color-status-critical-bg)',  line: 'var(--color-status-critical-line)' },
+  info:     { fg: 'var(--color-status-telemetry)', bg: 'var(--color-status-telemetry-bg)', line: 'var(--color-status-telemetry-line)' },
+  neutral:  { fg: 'var(--color-ink-secondary)',    bg: 'var(--color-surface-subtle)',      line: 'var(--color-line)' },
 };
 
 /** Tinted outline status pill (mirrors StatusBadge in the app). */
@@ -37,7 +39,7 @@ export function Pill({ tone = 'neutral', children }) {
   return (
     <span
       className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-mono font-semibold tracking-wide uppercase whitespace-nowrap"
-      style={{ color: t.fg, backgroundColor: t.bg, borderColor: `${t.fg}55` }}
+      style={{ color: t.fg, backgroundColor: t.bg, borderColor: t.line }}
     >
       {children}
     </span>
@@ -47,7 +49,7 @@ export function Pill({ tone = 'neutral', children }) {
 export function Btn({ variant = 'outline', children }) {
   const styles =
     variant === 'primary'
-      ? { backgroundColor: PAPER.accent, color: '#fff', borderColor: PAPER.accent }
+      ? { backgroundColor: PAPER.accentStrong, color: PAPER.inkOnAccent, borderColor: PAPER.accentStrong }
       : { backgroundColor: 'transparent', color: PAPER.ink, borderColor: PAPER.line };
   return (
     <span className="inline-flex items-center rounded-md border px-2.5 py-1 text-[11px] font-semibold" style={styles}>
@@ -61,7 +63,7 @@ export function AppWindow({ title, meta, children, footer, className = '' }) {
   return (
     <div
       className={`mt-6 w-full max-w-md rounded-lg border overflow-hidden text-left font-sans ${className}`}
-      style={{ backgroundColor: PAPER.surface, borderColor: PAPER.line, color: PAPER.ink, boxShadow: '0 12px 32px -16px rgba(0,0,0,0.35)' }}
+      style={{ backgroundColor: PAPER.surface, borderColor: PAPER.line, color: PAPER.ink, boxShadow: 'var(--shadow-plate)' }}
     >
       <div
         className="flex items-center justify-between px-3 py-2 text-[12px] font-medium"
@@ -112,7 +114,7 @@ export function EventRow({ severity = 'info', title, body, actions = true, phone
     <div className={`gap-2.5 py-2.5 ${phone ? 'flex' : 'hidden sm:flex'}`} style={{ borderTop: `1px solid ${PAPER.line}` }}>
       <span
         className="shrink-0 w-6 h-6 rounded-md border flex items-center justify-center text-[10px]"
-        style={{ color: t.fg, backgroundColor: t.bg, borderColor: `${t.fg}55` }}
+        style={{ color: t.fg, backgroundColor: t.bg, borderColor: t.line }}
         aria-hidden="true"
       >
         {SEVERITY_GLYPH[severity] ?? 'ℹ'}
@@ -197,7 +199,7 @@ export function RationalePlate() {
         <Pill tone="success">Applied · Jul 14</Pill>
       </div>
       <div className="mt-3 rounded-md p-2.5 text-[12px] leading-snug" style={{ backgroundColor: PAPER.accentTint, color: PAPER.ink }}>
-        <div className="text-[10px] font-mono uppercase tracking-wider mb-1" style={{ color: PAPER.accent }}>
+        <div className="text-[10px] font-mono uppercase tracking-wider mb-1" style={{ color: PAPER.accentStrong }}>
           Your rationale
         </div>
         “The auth log was filling with scan attempts on 22. Moved it. It's been quiet since.”

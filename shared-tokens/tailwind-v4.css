@@ -1,0 +1,74 @@
+/*
+ * Halbert — Tailwind CSS v4 adapter
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+ *
+ * Import this INSTEAD of tokens.css from a Tailwind v4 project. It pulls in
+ * the canonical dictionary and then registers the parts of it that Tailwind
+ * needs to generate utility classes (`font-display`, `text-ink`, `bg-canvas`).
+ *
+ * `@theme inline` is load-bearing. It tells Tailwind to emit the *reference*
+ * into the utility — `.font-display { font-family: var(--font-display) }` —
+ * rather than copying the value and re-declaring the variable on :root. That
+ * is what lets a single token in tokens.css drive both the utility class and
+ * the light/dark swap: the utility points at the variable, and the variable
+ * is whatever the active theme block has set it to.
+ *
+ * Without `inline`, Tailwind would re-declare each token on :root with its
+ * light value, and dark mode would silently stop working.
+ */
+
+@import "./tokens.css";
+
+@theme inline {
+  /* Typography — `font-display`, `font-sans`, `font-mono` */
+  --font-display: var(--hb-font-display);
+  --font-sans:    var(--hb-font-sans);
+  --font-mono:    var(--hb-font-mono);
+
+  /* Surfaces — `bg-canvas`, `bg-surface`, `bg-surface-subtle`, … */
+  --color-canvas: var(--hb-canvas);
+  --color-surface: var(--hb-surface);
+  --color-surface-subtle: var(--hb-surface-subtle);
+  --color-surface-muted: var(--hb-surface-muted);
+
+  /* Ink — `text-ink`, `text-ink-secondary`, … */
+  --color-ink: var(--hb-ink);
+  --color-ink-secondary: var(--hb-ink-secondary);
+  --color-ink-tertiary: var(--hb-ink-tertiary);
+  --color-ink-ghost: var(--hb-ink-ghost);
+  --color-ink-on-accent: var(--hb-ink-on-accent);
+
+  /* The stroke — `bg-accent`, `text-accent-strong`, `ring-focus-ring`, … */
+  --color-accent: var(--hb-accent);
+  --color-accent-strong: var(--hb-accent-strong);
+  --color-accent-hover: var(--hb-accent-hover);
+  --color-accent-active: var(--hb-accent-active);
+  --color-accent-tint: var(--hb-accent-tint);
+  --color-focus-ring: var(--hb-focus-ring);
+
+  /* Telemetry — `text-status-nominal`, `bg-status-critical-bg`, … */
+  --color-status-nominal: var(--hb-status-nominal);
+  --color-status-nominal-bg: var(--hb-status-nominal-bg);
+  --color-status-nominal-line: var(--hb-status-nominal-line);
+  --color-status-warning: var(--hb-status-warning);
+  --color-status-warning-bg: var(--hb-status-warning-bg);
+  --color-status-warning-line: var(--hb-status-warning-line);
+  --color-status-critical: var(--hb-status-critical);
+  --color-status-critical-bg: var(--hb-status-critical-bg);
+  --color-status-critical-line: var(--hb-status-critical-line);
+  --color-status-telemetry: var(--hb-status-telemetry);
+  --color-status-telemetry-bg: var(--hb-status-telemetry-bg);
+  --color-status-telemetry-line: var(--hb-status-telemetry-line);
+
+  /* Structure — `border-line`, `rounded-lg`, `shadow-plate` */
+  --color-line: var(--hb-line);
+  --color-line-subtle: var(--hb-line-subtle);
+  --color-line-strong: var(--hb-line-strong);
+  --radius-sm: var(--hb-radius-sm);
+  --radius-md: var(--hb-radius-md);
+  --radius-lg: var(--hb-radius-lg);
+  --shadow-subtle:  var(--hb-shadow-subtle);
+  --shadow-plate:   var(--hb-shadow-plate);
+  --shadow-popover: var(--hb-shadow-popover);
+}

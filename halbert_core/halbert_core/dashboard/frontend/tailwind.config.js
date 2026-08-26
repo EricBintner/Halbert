@@ -20,8 +20,70 @@ module.exports = {
         sans: ['Karla', 'system-ui', 'sans-serif'],
         heading: ['Karla', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'Menlo', 'monospace'],
+        /* The brand triad. `sans`/`heading` stay on Karla until Track 5
+         * migrates the shell, so type does not shift under the current UI. */
+        display: ['Fraunces', 'DM Serif Display', 'Georgia', 'serif'],
+        grotesk: ['Space Grotesk', 'Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+      },
+      boxShadow: {
+        plate: "var(--shadow-plate)",
+        subtle: "var(--shadow-subtle)",
+        popover: "var(--shadow-popover)",
+      },
+      transitionTimingFunction: {
+        shutter: "var(--ease-shutter)",
+        switch: "var(--ease-switch)",
+      },
+      transitionDuration: {
+        instant: "var(--duration-instant)",
+        switch: "var(--duration-switch)",
+        shutter: "var(--duration-shutter)",
       },
       colors: {
+        /* ---- Halbert / Olivetti Vermilion & Bone -------------------------
+         * Backed by /shared-tokens/tokens.css. These are plain CSS colour
+         * values, not the `hsl(var(--x))` triplets shadcn uses, so they are
+         * kept in their own namespaces (canvas/ink/accent/status) and do not
+         * collide with the slots below. Use `bg-canvas`, `text-ink-secondary`,
+         * `border-hairline`, `text-status-warning`, `ring-focus`.
+         * ---------------------------------------------------------------- */
+        canvas: {
+          DEFAULT: "var(--color-canvas)",
+          surface: "var(--color-surface)",
+          subtle: "var(--color-surface-subtle)",
+          muted: "var(--color-surface-muted)",
+        },
+        ink: {
+          DEFAULT: "var(--color-ink)",
+          secondary: "var(--color-ink-secondary)",
+          tertiary: "var(--color-ink-tertiary)",
+          ghost: "var(--color-ink-ghost)",
+          "on-accent": "var(--color-ink-on-accent)",
+        },
+        vermilion: {
+          DEFAULT: "var(--color-accent)",
+          strong: "var(--color-accent-strong)",
+          hover: "var(--color-accent-hover)",
+          active: "var(--color-accent-active)",
+          tint: "var(--color-accent-tint)",
+        },
+        status: {
+          nominal: "var(--color-status-nominal)",
+          "nominal-bg": "var(--color-status-nominal-bg)",
+          warning: "var(--color-status-warning)",
+          "warning-bg": "var(--color-status-warning-bg)",
+          critical: "var(--color-status-critical)",
+          "critical-bg": "var(--color-status-critical-bg)",
+          telemetry: "var(--color-status-telemetry)",
+          "telemetry-bg": "var(--color-status-telemetry-bg)",
+        },
+        hairline: {
+          DEFAULT: "var(--color-line)",
+          subtle: "var(--color-line-subtle)",
+          strong: "var(--color-line-strong)",
+        },
+        focus: "var(--color-focus-ring)",
+
         border: "hsl(var(--border))",
         "border-subtle": "hsl(var(--border-subtle))",
         input: "hsl(var(--input))",
