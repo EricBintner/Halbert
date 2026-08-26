@@ -43,6 +43,18 @@ The token system uses a **three-tier hierarchy**:
 
 ## 3. Color & Surface Taxonomy
 
+> [!WARNING]
+> **§3's colour tables are superseded (2026-08-26).** The values below are the
+> original 2026-08-23 ramp; the canonical dictionary is now
+> [`/shared-tokens/tokens.css`](file:///Volumes/4TB-BAD/Halbert/shared-tokens/tokens.css).
+> Several figures here are also stale — `--color-ink-secondary` is listed at
+> 6.20:1, but the current ramp measures 9.36:1 — and the warning ochre and the
+> accent-as-button-fill both fail WCAG AA as specified. Run
+> `python3 scripts/check_contrast.py` for live numbers, and see
+> [BRAND-GUIDELINES-AND-AESTHETIC.md §9](file:///Volumes/4TB-BAD/Halbert/documentation/design/BRAND-GUIDELINES-AND-AESTHETIC.md)
+> for what changed and why. The *structure* of this section — the three-tier
+> model, the surface ramp concept, the pillars — remains correct.
+
 ### 3.1 Surface Ramp (The Daylight Palette)
 
 Halbert rejects sterile `#FFFFFF` canvases and dark hacker terminals. The background is a **warm archival paper** (`#F7F5F0`), layered with crisp elevated cards and recessed data trays:

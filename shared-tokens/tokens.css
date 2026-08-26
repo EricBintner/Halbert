@@ -1,0 +1,363 @@
+/*
+ * Halbert — Universal Design Token Dictionary
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+ *
+ * THE SINGLE SOURCE OF TRUTH for the Olivetti Vermilion & Bone identity.
+ *
+ * Zero dependencies. Plain CSS custom properties. Consumed by:
+ *   - marketing/web-v7          (Tailwind v4, via ./tailwind-v4.css)
+ *   - halbert_core/.../frontend (Tailwind v3, via tailwind.config.js)
+ *
+ * Every colour pair here is verified by `scripts/check_contrast.py`, the
+ * executable form of the Accessibility Gate in
+ * documentation/design/BRAND-GUIDELINES-AND-AESTHETIC.md §7.
+ * Change a value, run the script. It will tell you what broke.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THERE ARE TWO NAMES FOR EVERY COLOUR
+ * ---------------------------------------------------------------------------
+ * `--hb-*`     the THEMED tier. These are the values that swap between light
+ *              and dark. Only the theme blocks touch them.
+ * `--color-*`  the PUBLIC API. Permanent aliases of the themed tier, declared
+ *              exactly once and never redeclared.
+ *
+ * The split is not ceremony. Tailwind v4's `@theme` re-emits every key it is
+ * given, so an adapter written as `--color-canvas: var(--color-canvas)` emits
+ * a self-referential declaration — invalid at computed-value time per the CSS
+ * spec, and "working" only because load order happens to override it. Pointing
+ * the adapter at `--hb-canvas` instead removes the cycle outright, so the
+ * utilities and the public alias resolve to the same value regardless of the
+ * order the stylesheets land in.
+ *
+ * ---------------------------------------------------------------------------
+ * THE SURFACE LICENCE  (read this before using a token)
+ * ---------------------------------------------------------------------------
+ * Contrast is a property of a PAIR, not of a colour, so each token declares
+ * the grounds it is licensed to be read on:
+ *
+ *   INK           canvas · surface · surface-subtle. Ink is the universal text
+ *                 colour and must clear its floor on all three.
+ *   CHROMATIC     canvas · surface · its own tint. The stroke and the status
+ *                 tones are accents, not body text; a vermilion caption is
+ *                 never set on a recessed tray.
+ *   MUTED         surface-muted is a DISABLED ground. WCAG 1.4.3 exempts
+ *                 disabled controls, so nothing readable belongs there.
+ *
+ * Two tokens sit below the text floor by design. They are not text colours:
+ *   --color-ink-ghost   disabled controls and decorative rules only
+ *   --color-accent      the identity stroke: rules, dots, bars, marks, and
+ *                       display type >= 24px/700. Anything smaller, or any
+ *                       button fill, uses --color-accent-strong.
+ */
+
+:root {
+  /* ======================================================================
+   * TIER 1 — PRIMITIVES
+   * Raw values. Never reference these from a component; use the public tier.
+   * ==================================================================== */
+
+  /* Bone — warm unbleached archival linen */
+  --bone-50:   #FFFFFF;
+  --bone-100:  #F7F4EE;
+  --bone-200:  #EDE8DC;
+  --bone-300:  #E5E0D5;
+
+  /* Graphite — warm charcoal, never pitch black */
+  --graphite-975: #131211;
+  --graphite-950: #1A1816;
+  --graphite-900: #1C1917;
+  --graphite-850: #2E2B29;
+  --graphite-800: #232120;
+  --graphite-700: #44403C;
+  --graphite-600: #6B645F;
+  --graphite-500: #877F7A;
+  --graphite-450: #787169;
+  --graphite-400: #9A9288;
+  --graphite-300: #C4BDB1;
+  --graphite-200: #F2EEE6;
+
+  /* Vermilion — the Olivetti letterpress stroke */
+  --vermilion-50:  #FDF2EE;
+  --vermilion-300: #F58455;
+  --vermilion-400: #EF7448;
+  --vermilion-500: #E8683C;
+  --vermilion-600: #D34E24;
+  --vermilion-700: #C4451D;
+  --vermilion-800: #B83E18;
+  --vermilion-900: #9C3212;
+
+  /* Mid-century diagnostic pigments. The -500s are the dark-theme lifts. */
+  --botanical-600:  #2D7A56;  --botanical-500:  #38996C;  --botanical-50:  #EEF6F2;
+  --ochre-700:      #955B15;  --ochre-600:      #C2761B;  --ochre-50:      #FDF8F0;
+  --terracotta-600: #C83E2D;  --terracotta-500: #D96455;  --terracotta-50: #FDF2F0;
+  --blueprint-600:  #386C8A;  --blueprint-500:  #4B8FB6;  --blueprint-50:  #F0F6F9;
+
+  /* Recessed dark chips. A translucent wash over `surface` in dark mode lands
+   * LIGHTER than canvas and drops its tone under 4.5:1, so a dark chip is an
+   * opaque one: the tone at 12% over the deepest ground. */
+  --chip-nominal:   #17221C;
+  --chip-warning:   #281E12;
+  --chip-critical:  #2B1C19;
+  --chip-telemetry: #1A2125;
+  --chip-accent:    #2D1C16;
+
+  /* ======================================================================
+   * TIER 2a — THEMED SEMANTICS (light / daylight)
+   * The only tier the theme blocks below rewrite.
+   * ==================================================================== */
+  color-scheme: light;
+
+  --hb-canvas:         var(--bone-100);  /* base page & window field */
+  --hb-surface:        var(--bone-50);   /* elevated plates, dialogs */
+  --hb-surface-subtle: var(--bone-200);  /* recessed telemetry trays */
+  --hb-surface-muted:  var(--bone-300);  /* DISABLED grounds only    */
+
+  --hb-line:         rgba(28, 25, 23, 0.12);
+  --hb-line-subtle:  rgba(28, 25, 23, 0.06);
+  --hb-line-strong:  rgba(28, 25, 23, 0.20);
+
+  /* Ratios are the MINIMUM across canvas / surface / surface-subtle. */
+  --hb-ink:           var(--graphite-900); /* 14.30:1  AAA  body, headings   */
+  --hb-ink-secondary: var(--graphite-700); /*  8.40:1  AAA  prose, metadata  */
+  --hb-ink-tertiary:  var(--graphite-600); /*  4.75:1  AA   captions, labels */
+  --hb-ink-ghost:     var(--graphite-500); /*  3.21:1  UI   NOT for text     */
+  --hb-ink-on-accent: var(--bone-50);      /* text on an accent fill         */
+
+  --hb-accent:        var(--vermilion-600); /* identity: non-text + >=24px/700 */
+  --hb-accent-strong: var(--vermilion-700); /* fills + small accent text (AA)  */
+  --hb-accent-hover:  var(--vermilion-800);
+  --hb-accent-active: var(--vermilion-900);
+  --hb-accent-tint:   var(--vermilion-50);
+
+  /* WCAG 1.4.11 / 2.4.13: the focus ring is the one boundary that must be
+   * perceivable on its own. 4.59:1 against every text surface. */
+  --hb-focus-ring:    var(--vermilion-800);
+
+  --hb-status-nominal:      var(--botanical-600);
+  --hb-status-nominal-bg:   var(--botanical-50);
+  --hb-status-warning:      var(--ochre-700);
+  --hb-status-warning-bg:   var(--ochre-50);
+  --hb-status-critical:     var(--terracotta-600);
+  --hb-status-critical-bg:  var(--terracotta-50);
+  --hb-status-telemetry:    var(--blueprint-600);
+  --hb-status-telemetry-bg: var(--blueprint-50);
+
+  /* Pill borders. Previously spelled `${fg}55` by string concatenation in
+   * ui.jsx; named here so a hairline is a token and not a substring trick. */
+  --hb-status-nominal-line:   rgba(45, 122, 86, 0.33);
+  --hb-status-warning-line:   rgba(149, 91, 21, 0.33);
+  --hb-status-critical-line:  rgba(200, 62, 45, 0.33);
+  --hb-status-telemetry-line: rgba(56, 108, 138, 0.33);
+
+  --hb-shadow-subtle:  0 2px 8px -2px rgba(28, 25, 23, 0.08);
+  --hb-shadow-plate:   0 12px 32px -16px rgba(28, 25, 23, 0.35);
+  --hb-shadow-popover: 0 12px 32px -4px rgba(28, 25, 23, 0.12);
+
+  /* ======================================================================
+   * TIER 2b — PUBLIC API
+   * Declared once. Never redeclared by a theme. This is what you use.
+   * ==================================================================== */
+
+  --color-canvas:         var(--hb-canvas);
+  --color-surface:        var(--hb-surface);
+  --color-surface-subtle: var(--hb-surface-subtle);
+  --color-surface-muted:  var(--hb-surface-muted);
+
+  --color-line:        var(--hb-line);
+  --color-line-subtle: var(--hb-line-subtle);
+  --color-line-strong: var(--hb-line-strong);
+
+  --color-ink:           var(--hb-ink);
+  --color-ink-secondary: var(--hb-ink-secondary);
+  --color-ink-tertiary:  var(--hb-ink-tertiary);
+  --color-ink-ghost:     var(--hb-ink-ghost);
+  --color-ink-on-accent: var(--hb-ink-on-accent);
+
+  --color-accent:        var(--hb-accent);
+  --color-accent-strong: var(--hb-accent-strong);
+  --color-accent-hover:  var(--hb-accent-hover);
+  --color-accent-active: var(--hb-accent-active);
+  --color-accent-tint:   var(--hb-accent-tint);
+  --color-focus-ring:    var(--hb-focus-ring);
+
+  --color-status-nominal:      var(--hb-status-nominal);
+  --color-status-nominal-bg:   var(--hb-status-nominal-bg);
+  --color-status-nominal-line: var(--hb-status-nominal-line);
+  --color-status-warning:      var(--hb-status-warning);
+  --color-status-warning-bg:   var(--hb-status-warning-bg);
+  --color-status-warning-line: var(--hb-status-warning-line);
+  --color-status-critical:      var(--hb-status-critical);
+  --color-status-critical-bg:   var(--hb-status-critical-bg);
+  --color-status-critical-line: var(--hb-status-critical-line);
+  --color-status-telemetry:      var(--hb-status-telemetry);
+  --color-status-telemetry-bg:   var(--hb-status-telemetry-bg);
+  --color-status-telemetry-line: var(--hb-status-telemetry-line);
+
+  --shadow-subtle:  var(--hb-shadow-subtle);
+  --shadow-plate:   var(--hb-shadow-plate);
+  --shadow-popover: var(--hb-shadow-popover);
+
+  /* ======================================================================
+   * TIER 2c — THEME-INVARIANT SEMANTICS
+   * ==================================================================== */
+
+  /* Typography: the strict triad. Invariant across themes, but still split
+   * into --hb-* / public so the Tailwind adapter has one uniform rule: it
+   * always points at --hb-*, and never at a name it is itself emitting. */
+  --hb-font-display: "Fraunces", "DM Serif Display", Georgia, serif;
+  --hb-font-sans:    "Space Grotesk", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --hb-font-mono:    "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  --font-display: var(--hb-font-display);
+  --font-sans:    var(--hb-font-sans);
+  --font-mono:    var(--hb-font-mono);
+
+  --tracking-display: -0.035em;  /* Fraunces headings         */
+  --tracking-label:    0.08em;   /* uppercase mono micro-labels */
+
+  /* 4px spatial grid */
+  --space-1: 4px;   --space-2: 8px;   --space-3: 12px;  --space-4: 16px;
+  --space-5: 20px;  --space-6: 24px;  --space-8: 32px;  --space-12: 48px;
+
+  /* Radii */
+  --hb-radius-sm:   4px;    /* tags, code pills            */
+  --hb-radius-md:   6px;    /* inputs, buttons, menu items */
+  --hb-radius-lg:   8px;    /* AppWindow, cards, tiles     */
+  --hb-radius-full: 9999px; /* status pills, dots          */
+
+  --radius-sm:   var(--hb-radius-sm);
+  --radius-md:   var(--hb-radius-md);
+  --radius-lg:   var(--hb-radius-lg);
+  --radius-full: var(--hb-radius-full);
+
+  --focus-ring-width:  2px;
+  --focus-ring-offset: 2px;
+
+  /* Motion: physical switches and optical shutters.
+   * Motion Restraint Gate — nothing over 250ms, nothing that overshoots. */
+  --ease-shutter: cubic-bezier(0.2, 0.0, 0.0, 1.0);  /* opening, entering */
+  --ease-switch:  cubic-bezier(0.4, 0.0, 0.2, 1.0);  /* toggles, presses  */
+  --duration-instant: 80ms;
+  --duration-switch:  140ms;
+  --duration-shutter: 220ms;
+}
+
+/* ========================================================================
+ * DARK / AFTER HOURS
+ *
+ * Not an inversion: the paper is put away and the instrument is lit from
+ * within. The ground is warm charcoal, never #000.
+ *
+ * Two things genuinely flip rather than darken:
+ *   - The vermilion LIFTS. #D34E24 reaches only 3.73:1 on charcoal, so the
+ *     stroke opens to #E8683C and the press state brightens instead of dims.
+ *   - Text on an accent fill flips from bone to the dark ground: white on
+ *     lifted vermilion is 3.24:1 and fails.
+ *
+ * NOTE: the media-query block below is a deliberate duplicate of this one —
+ * plain CSS cannot share a declaration list across two selectors. They are
+ * checked for drift automatically by scripts/check_contrast.py.
+ * ====================================================================== */
+
+:root[data-theme="dark"],
+:root.dark {
+  color-scheme: dark;
+
+  --hb-canvas:         var(--graphite-950);
+  --hb-surface:        var(--graphite-800);
+  --hb-surface-subtle: var(--graphite-975);
+  --hb-surface-muted:  var(--graphite-850);
+
+  --hb-line:         rgba(242, 238, 230, 0.14);
+  --hb-line-subtle:  rgba(242, 238, 230, 0.07);
+  --hb-line-strong:  rgba(242, 238, 230, 0.24);
+
+  --hb-ink:           var(--graphite-200); /* 13.85:1  AAA */
+  --hb-ink-secondary: var(--graphite-300); /*  8.60:1  AAA */
+  --hb-ink-tertiary:  var(--graphite-400); /*  5.22:1  AA  */
+  --hb-ink-ghost:     var(--graphite-450); /*  3.33:1  UI  */
+  --hb-ink-on-accent: var(--graphite-950);
+
+  --hb-accent:        var(--vermilion-500);
+  --hb-accent-strong: var(--vermilion-500);
+  --hb-accent-hover:  var(--vermilion-400);
+  --hb-accent-active: var(--vermilion-300);
+  --hb-accent-tint:   var(--chip-accent);
+  --hb-focus-ring:    var(--vermilion-400);
+
+  --hb-status-nominal:      var(--botanical-500);
+  --hb-status-nominal-bg:   var(--chip-nominal);
+  --hb-status-warning:      var(--ochre-600);
+  --hb-status-warning-bg:   var(--chip-warning);
+  --hb-status-critical:     var(--terracotta-500);
+  --hb-status-critical-bg:  var(--chip-critical);
+  --hb-status-telemetry:    var(--blueprint-500);
+  --hb-status-telemetry-bg: var(--chip-telemetry);
+
+  --hb-status-nominal-line:   rgba(56, 153, 108, 0.40);
+  --hb-status-warning-line:   rgba(194, 118, 27, 0.40);
+  --hb-status-critical-line:  rgba(217, 100, 85, 0.40);
+  --hb-status-telemetry-line: rgba(75, 143, 182, 0.40);
+
+  --hb-shadow-subtle:  0 2px 8px -2px rgba(0, 0, 0, 0.50);
+  --hb-shadow-plate:   0 12px 32px -16px rgba(0, 0, 0, 0.75);
+  --hb-shadow-popover: 0 12px 32px -4px rgba(0, 0, 0, 0.60);
+}
+
+/* Honour the OS preference only when the app has made no explicit choice.
+ * Halbert ships light-first: the daylight field is the identity. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not(.light) {
+    color-scheme: dark;
+
+    --hb-canvas:         var(--graphite-950);
+    --hb-surface:        var(--graphite-800);
+    --hb-surface-subtle: var(--graphite-975);
+    --hb-surface-muted:  var(--graphite-850);
+
+    --hb-line:         rgba(242, 238, 230, 0.14);
+    --hb-line-subtle:  rgba(242, 238, 230, 0.07);
+    --hb-line-strong:  rgba(242, 238, 230, 0.24);
+
+    --hb-ink:           var(--graphite-200);
+    --hb-ink-secondary: var(--graphite-300);
+    --hb-ink-tertiary:  var(--graphite-400);
+    --hb-ink-ghost:     var(--graphite-450);
+    --hb-ink-on-accent: var(--graphite-950);
+
+    --hb-accent:        var(--vermilion-500);
+    --hb-accent-strong: var(--vermilion-500);
+    --hb-accent-hover:  var(--vermilion-400);
+    --hb-accent-active: var(--vermilion-300);
+    --hb-accent-tint:   var(--chip-accent);
+    --hb-focus-ring:    var(--vermilion-400);
+
+    --hb-status-nominal:      var(--botanical-500);
+    --hb-status-nominal-bg:   var(--chip-nominal);
+    --hb-status-warning:      var(--ochre-600);
+    --hb-status-warning-bg:   var(--chip-warning);
+    --hb-status-critical:     var(--terracotta-500);
+    --hb-status-critical-bg:  var(--chip-critical);
+    --hb-status-telemetry:    var(--blueprint-500);
+    --hb-status-telemetry-bg: var(--chip-telemetry);
+
+    --hb-status-nominal-line:   rgba(56, 153, 108, 0.40);
+    --hb-status-warning-line:   rgba(194, 118, 27, 0.40);
+    --hb-status-critical-line:  rgba(217, 100, 85, 0.40);
+    --hb-status-telemetry-line: rgba(75, 143, 182, 0.40);
+
+    --hb-shadow-subtle:  0 2px 8px -2px rgba(0, 0, 0, 0.50);
+    --hb-shadow-plate:   0 12px 32px -16px rgba(0, 0, 0, 0.75);
+    --hb-shadow-popover: 0 12px 32px -4px rgba(0, 0, 0, 0.60);
+  }
+}
+
+/* Motion Restraint Gate — honoured globally, not per component. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 0ms;
+    --duration-switch:  0ms;
+    --duration-shutter: 0ms;
+  }
+}

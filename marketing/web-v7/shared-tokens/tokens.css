@@ -1,21 +1,21 @@
-@theme {
-  /* ===== Final palette: Olivetti Vermilion & Bone ===== */
-  --color-canvas:            #F7F4EE;   /* Bone / warm archival linen */
-  --color-surface:           #FFFFFF;
-  --color-surface-subtle:    #EDE8DC;
-  --color-surface-muted:     rgba(28, 25, 23, 0.10);
+/*
+ * Halbert marketing (web-v7) — token entry point
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+ *
+ * This file is NOT the source of truth. The canonical dictionary lives at
+ * /shared-tokens/tokens.css and is verified by scripts/check_contrast.py.
+ * This shim exists so the site keeps a stable local import path while the
+ * values come from one place. Do not add palette values here.
+ */
 
-  /* ===== The vector stroke ===== */
-  --color-stroke:            #D34E24;   /* Letterpress vermilion */
+@import "../../../shared-tokens/tailwind-v4.css";
 
-  /* ===== Ink ===== */
-  --color-ink:               #1C1917;   /* on the bone field */
-  --color-ink-secondary:     #44403C;
-  --color-ink-tertiary:      #78716C;
-  --color-ink-on-stroke:     #FFF7ED;   /* on the vermilion field */
-
-  /* ===== Typography ===== */
-  --font-display:            "Fraunces", "DM Serif Display", Georgia, serif;
-  --font-sans:               "Space Grotesk", "Plus Jakarta Sans", sans-serif;
-  --font-mono:               "JetBrains Mono", monospace;
+/*
+ * Site-local synonyms for the vector-parallax system, where the accent is
+ * literally an SVG stroke. These are aliases, never independent values.
+ */
+:root {
+  --color-stroke:         var(--color-accent);
+  --color-ink-on-stroke:  var(--color-ink-on-accent);
 }

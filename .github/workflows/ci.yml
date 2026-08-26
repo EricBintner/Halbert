@@ -6,6 +6,20 @@ on:
   pull_request:
 
 jobs:
+  design-tokens:
+    name: Design tokens (WCAG gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # Pure stdlib — no install step needed. Verifies every licensed
+      # colour pair in shared-tokens/tokens.css against its WCAG floor in
+      # both themes, and guards the two dark blocks against drifting apart.
+      - name: Check contrast
+        run: python3 scripts/check_contrast.py --verbose
+
   test:
     runs-on: ubuntu-latest
     steps:
