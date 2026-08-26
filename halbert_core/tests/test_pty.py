@@ -140,3 +140,51 @@ async def test_double_kill_is_safe():
     session.kill()
     session.kill()  # must not raise
     assert not session.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_kill_wakes_in_flight_read_chunk():
+    """kill() mid-iteration must terminate a consumer suspended at queue.get().
+
+    Regression: kill() removed the reader but never pushed the EOF sentinel,
+    so an SSE/WS consumer awaiting chunks froze forever.
+    """
+    session = PTYSession("exec sleep 30")
+    await session.spawn()
+    await asyncio.sleep(0.2)  # let the child start producing-silently
+
+    chunks = []
+
+    async def consume():
+        async for chunk in session.read_chunk():
+            chunks.append(chunk)
+
+    # Must complete within a couple of seconds even though sleep 30 is silent
+    task = asyncio.ensure_future(consume())
+    await asyncio.sleep(0.2)  # consumer is now suspended at queue.get()
+    session.kill()
+    await asyncio.wait_for(task, timeout=3.0)
+    assert not session.is_alive()
+    session.kill()  # still idempotent after the consumer finished
+
+    # Second kill with a fresh consumer attached also terminates promptly
+    # (fd already closed path)
+    async def consume_again():
+        async for _chunk in session.read_chunk():
+            pass
+
+    await asyncio.wait_for(consume_again(), timeout=3.0)
+
+
+@pytest.mark.asyncio
+async def test_child_has_controlling_terminal():
+    """The child must be able to open /dev/tty (controlling terminal).
+
+    Regression: child did setsid()+dup2 but never TIOCSCTTY, so /dev/tty
+    (sudo password prompts, job control) failed with ENXIO.
+    """
+    session = PTYSession("exec 3</dev/tty && echo ctty-ok")
+    await session.spawn()
+    output = await _collect_until(session, lambda o: b"ctty-ok" in o, timeout=5.0)
+    assert b"ctty-ok" in output
+    session.kill()

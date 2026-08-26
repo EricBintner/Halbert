@@ -181,3 +181,48 @@ async def test_real_spawn_and_kill():
     assert b"hi" in b"".join(chunks)
     assert m.kill(sid) is True
     assert m.count == 0
+
+# ---------------------------------------------------------------------------
+# Dashboard app lifecycle wiring (regression: the reaper must actually be
+# started/stopped by the FastAPI app — previously start_reaper, stop_reaper
+# and shutdown had zero production call sites, so dead PTY sessions were
+# never reaped and live sessions survived app shutdown).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dashboard_app_startup_starts_reaper_and_shutdown_stops_it():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from halbert_core.dashboard import app as dashboard_app
+    from halbert_core.streaming import session_manager as session_manager_module
+
+    manager = MagicMock()
+    manager.shutdown = AsyncMock()
+
+    class _DummyThread:
+        """Swallow the delayed background-service starters in startup_event."""
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+    app = dashboard_app.create_app()
+
+    with patch.object(
+        session_manager_module, "get_terminal_manager", return_value=manager
+    ), patch("threading.Thread", _DummyThread), patch.object(
+        dashboard_app, "_find_config_registry", return_value=None
+    ), patch("halbert_core.knowledge.get_self_knowledge") as mock_sk, patch(
+        "halbert_core.ingestion.service.get_ingestion_service"
+    ):
+        # Truthy existing identity -> bootstrap_identity() is not invoked
+        mock_sk.return_value.get_identity.return_value = {"name": "halbert"}
+
+        for handler in app.router.on_startup:
+            await handler()
+        manager.start_reaper.assert_called_once_with()
+
+        for handler in app.router.on_shutdown:
+            await handler()
+        manager.shutdown.assert_awaited_once_with()

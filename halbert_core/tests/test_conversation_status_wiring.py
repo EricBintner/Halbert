@@ -166,3 +166,70 @@ async def test_terminal_error_on_responding_failure():
     statuses = [e.data.get("status") for e in conv_events]
     assert "error" in statuses
     assert agent.ctx.conversation_status.current() == ConversationStatus.ERROR
+
+
+@pytest.mark.asyncio
+async def test_error_give_up_path_emits_no_invalid_transition_error():
+    """Regression: the ERROR give-up path (3 recovery attempts) sets the
+    conversation status to terminal ERROR, then routes to RESPONDING.
+    RESPONDING must NOT attempt the forbidden ERROR -> SUCCESS transition —
+    doing so raised ValueError inside ConversationStatusMachine, which the
+    run loop converted into a non-recoverable StreamEvent.error leaking the
+    internal text "Invalid conversation status transition" to SSE
+    consumers, right after a successful-looking response_complete.
+    """
+    class _PlanningFailsLLM:
+        """chat() (used by PLANNING) always raises; stream() (used by the
+        give-up RESPONDING pass) works fine."""
+        async def chat(self, messages, tools=None, **kwargs):
+            raise RuntimeError("planning exploded")
+
+        async def stream(self, messages, **kwargs):
+            yield "Sorry, "
+            yield "something went wrong."
+
+    agent = AgentStateMachine(
+        llm_client=_PlanningFailsLLM(),
+        tool_executor=ToolExecutor(safety=ToolSafetyFramework()),
+        context_assembler=ContextAssembler(
+            rag_service=_MockRAG(), memory_service=_MockMemory(),
+            discovery_service=_MockDiscovery(), token_counter=TokenCounter(),
+        ),
+        prompt_builder=AgentPromptBuilder(),
+        max_loops=5,
+    )
+    events = []
+    async for event in agent.process("hello"):
+        events.append(event)
+
+    # The give-up path emitted exactly one terminal conversation_status
+    # error event (no duplicate).
+    conv_error_events = [
+        e for e in events
+        if e.type == "conversation_status" and e.data.get("status") == "error"
+    ]
+    assert len(conv_error_events) == 1
+    assert agent.ctx.conversation_status.current() == ConversationStatus.ERROR
+
+    # No StreamEvent.error leaks the internal ValueError text.
+    error_events = [e for e in events if e.type == "error"]
+    assert not any(
+        "Invalid conversation status transition" in e.data.get("message", "")
+        for e in error_events
+    )
+
+    # No non-recoverable error event at all: the give-up path ends the turn
+    # through a normal RESPONDING pass, not a crash.
+    assert not any(
+        e.data.get("recoverable") is False for e in error_events
+    )
+
+    # The conversation_status error precedes response_complete, and no
+    # error event follows response_complete (no complete-then-crash).
+    conv_err_idx = events.index(conv_error_events[0])
+    complete_idx = next(
+        i for i, e in enumerate(events) if e.type == "response_complete"
+    )
+    assert conv_err_idx < complete_idx
+    assert not any(e.type == "error" for e in events[complete_idx + 1:])
+    assert any(e.type == "session_ended" for e in events)
