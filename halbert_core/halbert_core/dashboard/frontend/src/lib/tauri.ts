@@ -8,10 +8,10 @@
  * Reconstructed 2026-08-22 (original src/lib/ was never committed).
  */
 
-const API_BASE = ''
+import { apiBase } from './apiBase'
 
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${apiBase()}${path}`, {
     headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
     ...options,
   })

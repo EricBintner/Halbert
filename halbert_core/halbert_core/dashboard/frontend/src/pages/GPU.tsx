@@ -36,6 +36,7 @@ import {
   Clock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { apiUrl } from '@/lib/apiBase'
 import { SystemItemActions, PageHeader } from '@/components/domain'
 import { Select } from '@/components/ui/select'
 import { WhyBrain } from '@/components/ui/why-brain'
@@ -141,7 +142,7 @@ export function GPU() {
 
   const loadCachedAnalysis = async () => {
     try {
-      const res = await fetch('/api/gpu/analysis-cache')
+      const res = await fetch(apiUrl('/api/gpu/analysis-cache'))
       if (res.ok) {
         const data = await res.json()
         if (data.cached && data.analysis) {
@@ -160,7 +161,7 @@ export function GPU() {
 
   const loadGPUData = async () => {
     try {
-      const response = await fetch('/api/gpu/info')
+      const response = await fetch(apiUrl('/api/gpu/info'))
       if (!response.ok) throw new Error('Failed to load GPU info')
       const data = await response.json()
       setGpuData(data)
@@ -306,7 +307,7 @@ export function GPU() {
                         const newRole = e.target.value
                         const pciIdSafe = gpu.pci_id.replace(/:/g, '-')
                         try {
-                          const res = await fetch(`/api/gpu/role/${pciIdSafe}?role=${newRole}`, { method: 'PUT' })
+                          const res = await fetch(apiUrl(`/api/gpu/role/${pciIdSafe}?role=${newRole}`), { method: 'PUT' })
                           if (res.ok) {
                             loadGPUData() // Refresh to show new role
                           }
@@ -531,7 +532,7 @@ export function GPU() {
                   onClick={async () => {
                     setAnalyzing(true)
                     try {
-                      const res = await fetch('/api/gpu/analyze', { method: 'POST' })
+                      const res = await fetch(apiUrl('/api/gpu/analyze'), { method: 'POST' })
                       if (res.ok) {
                         const data = await res.json()
                         setAnalysis(data)

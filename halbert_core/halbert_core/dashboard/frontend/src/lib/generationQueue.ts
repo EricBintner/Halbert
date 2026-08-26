@@ -9,6 +9,8 @@
  * Reconstructed 2026-08-22 (original src/lib/ was never committed).
  */
 
+import { apiUrl } from './apiBase'
+
 export type GenerationKind = 'explanation' | 'diagnosis'
 
 const DIAGNOSIS_CACHE_TTL_MS = 5 * 60 * 1000
@@ -88,7 +90,7 @@ class GenerationQueue {
           ? `/api/services/${encodeURIComponent(item.name)}/explain`
           : `/api/services/${encodeURIComponent(item.name)}/diagnose`
 
-      const res = await fetch(endpoint, { method: 'POST' })
+      const res = await fetch(apiUrl(endpoint), { method: 'POST' })
       if (res.ok) {
         const data = await res.json()
         const text: string = item.kind === 'explanation' ? data.explanation : data.diagnosis

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Activity, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/prep-primitives/Button';
 import { cn } from '@/lib/utils';
+import { apiBase } from '@/lib/apiBase';
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ export function ProbeButton(props: ProbeButtonProps) {
   const [error, setError] = useState<string | null>(null);
   const [durationMs, setDurationMs] = useState<number>(initialDurationMs ?? 0);
 
-  const root = (baseUrl ?? '').replace(/\/$/, '');
+  const root = (baseUrl ?? apiBase()).replace(/\/$/, '');
 
   const handleProbe = async () => {
     setState('probing');

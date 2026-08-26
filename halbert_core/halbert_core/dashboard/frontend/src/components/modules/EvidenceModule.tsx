@@ -10,6 +10,7 @@
 import { useState, useEffect } from 'react'
 import { BookOpen, Loader2, Search } from 'lucide-react'
 import { ModuleLoadError } from './ModuleLoadError'
+import { apiUrl } from '@/lib/apiBase'
 
 interface EvidenceModuleProps {
   source?: string
@@ -42,7 +43,7 @@ export default function EvidenceModule({ source, cursor, query }: EvidenceModule
     if (cursor) params.set('cursor', cursor)
     if (searchQuery) params.set('query', searchQuery)
 
-    fetch(`/api/modules/evidence/data?${params}`)
+    fetch(apiUrl(`/api/modules/evidence/data?${params}`))
       .then(async r => {
         const data = await r.json().catch(() => null)
         if (!r.ok) {

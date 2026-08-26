@@ -13,6 +13,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import { apiUrl } from '@/lib/apiBase'
 
 // Module-level flag to prevent concurrent deep scans (survives re-renders)
 let globalScanInProgress = false
@@ -86,7 +87,7 @@ export function ScanProvider({ children }: ScanProviderProps) {
     console.log('[Scan] Starting deep scan...')
     
     try {
-      const res = await fetch('/api/settings/system-profile/scan', { method: 'POST' })
+      const res = await fetch(apiUrl('/api/settings/system-profile/scan'), { method: 'POST' })
       const data = await res.json()
       
       if (data.status === 'complete') {
@@ -116,7 +117,7 @@ export function ScanProvider({ children }: ScanProviderProps) {
     console.log('[Scan] Starting system scan...')
     
     try {
-      const res = await fetch('/api/settings/system-profile/quick-scan', { method: 'POST' })
+      const res = await fetch(apiUrl('/api/settings/system-profile/quick-scan'), { method: 'POST' })
       const data = await res.json()
       
       if (data.status === 'complete') {
@@ -142,7 +143,7 @@ export function ScanProvider({ children }: ScanProviderProps) {
     console.log(`[Scan] Starting ${category} scan...`)
     
     try {
-      const res = await fetch(`/api/settings/system-profile/scan-category/${category}`, { 
+      const res = await fetch(apiUrl(`/api/settings/system-profile/scan-category/${category}`), { 
         method: 'POST' 
       })
       const data = await res.json()

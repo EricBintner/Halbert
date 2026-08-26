@@ -11,6 +11,7 @@
 import { useState, useEffect } from 'react'
 import { FileText, Loader2 } from 'lucide-react'
 import { ModuleLoadError } from './ModuleLoadError'
+import { apiUrl } from '@/lib/apiBase'
 
 interface ConfigDiffModuleProps {
   path?: string
@@ -36,7 +37,7 @@ export default function ConfigDiffModule({ path, findingId }: ConfigDiffModulePr
 
     let cancelled = false
 
-    fetch(`/api/modules/config-diff/data?path=${encodeURIComponent(path)}${findingId ? `&finding_id=${findingId}` : ''}`)
+    fetch(apiUrl(`/api/modules/config-diff/data?path=${encodeURIComponent(path)}${findingId ? `&finding_id=${findingId}` : ''}`))
       .then(async r => {
         const data = await r.json().catch(() => null)
         if (!r.ok) {

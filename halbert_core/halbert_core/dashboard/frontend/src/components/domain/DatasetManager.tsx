@@ -16,8 +16,9 @@ import {
   ExternalLink,
   Pause
 } from 'lucide-react'
+import { apiUrl } from '@/lib/apiBase'
 
-const API_BASE = '/api'
+const API_BASE = apiUrl('/api')
 
 interface Dataset {
   id: string

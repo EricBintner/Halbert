@@ -7,6 +7,7 @@ import type {
   AssignmentMode,
 } from '@/types/llm'
 import { stripModeFields } from '@/components/llm/llmConfigHelpers'
+import { apiUrl } from '@/lib/apiBase'
 
 interface UseLLMConfigOptions {
   onDirty?: () => void
@@ -38,7 +39,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
   const persistEndpointsWithWarnings = useCallback(
     async (saved_endpoints: SavedEndpoint[]): Promise<void> => {
       try {
-        const r = await fetch('/global/config', {
+        const r = await fetch(apiUrl('/global/config'), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ llm_config: { saved_endpoints } as unknown as LLMConfig }),
@@ -134,7 +135,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
   }, [persistEndpointsWithWarnings])
 
   const handleTestEndpoint = useCallback(async (endpoint: SavedEndpoint) => {
-    const r = await fetch('/api/llm/proxy/test', {
+    const r = await fetch(apiUrl('/api/llm/proxy/test'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: endpoint.provider, url: endpoint.url, api_key: endpoint.api_key }),
@@ -153,7 +154,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
     if (!ep) return []
     setLoadingModels((prev) => ({ ...prev, [endpointId]: true }))
     try {
-      const r = await fetch('/api/llm/proxy/models', {
+      const r = await fetch(apiUrl('/api/llm/proxy/models'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: ep.provider, url: ep.url, api_key: ep.api_key, slot }),
@@ -186,7 +187,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
     if (endpointId in cloudModels) return cloudModels[endpointId]
     setLoadingCloudModels((prev) => ({ ...prev, [endpointId]: true }))
     try {
-      const r = await fetch('/api/llm/proxy/cloud-models', {
+      const r = await fetch(apiUrl('/api/llm/proxy/cloud-models'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: ep.provider, url: ep.url, api_key: ep.api_key }),
@@ -229,7 +230,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
     setTestingSlot(slotType)
     try {
       const slotKey = slotType === 'small' ? 'small_model' : slotType === 'large' ? 'large_model' : slotType === 'code' ? 'code_model' : slotType === 'coordinator' ? 'coordinator_model' : undefined
-      const r = await fetch('/api/llm/proxy/test-model', {
+      const r = await fetch(apiUrl('/api/llm/proxy/test-model'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: ep.provider, url: ep.url, api_key: ep.api_key, model, kind, slot: slotKey }),
@@ -246,7 +247,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
 
   const fetchLLMSlotsStatus = useCallback(async () => {
     try {
-      const r = await fetch('/llm/slots/status')
+      const r = await fetch(apiUrl('/llm/slots/status'))
       if (!r.ok) return
       const json = await r.json()
       const data = json?.data ?? json
@@ -259,7 +260,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
   const handleDownloadModel = useCallback(async (slot: 'embedding') => {
     try {
       if (slot === 'embedding') {
-        await fetch('/embedding/download', { method: 'POST' })
+        await fetch(apiUrl('/embedding/download'), { method: 'POST' })
       }
     } catch (err) {
       console.error(`Failed to trigger ${slot} download:`, err)
@@ -285,7 +286,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(async () => {
       try {
-        const r = await fetch('/global/config', {
+        const r = await fetch(apiUrl('/global/config'), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ llm_config: llmConfig }),
@@ -316,7 +317,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
       saveTimerRef.current = null
     }
     try {
-      await fetch('/global/config', {
+      await fetch(apiUrl('/global/config'), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ llm_config: llmConfig }),
@@ -330,7 +331,7 @@ export function useLLMConfig({ onDirty, onSwapModel, onWarnings }: UseLLMConfigO
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch('/global/config')
+        const r = await fetch(apiUrl('/global/config'))
         if (!r.ok) return
         const json = await r.json()
         const data = json?.data ?? json

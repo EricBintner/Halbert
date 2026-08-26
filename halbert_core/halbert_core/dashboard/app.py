@@ -299,6 +299,13 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     @app.on_event("startup")
     async def startup_event():
         """Start background services on app startup."""
+        # Sidecar mode (Tauri sets HALBERT_PARENT_PID): stop when the shell dies.
+        try:
+            from .parent_watchdog import start_parent_watchdog
+            start_parent_watchdog()
+        except Exception as e:
+            logger.warning(f"Parent watchdog not started: {e}")
+
         # Reset indexing state to prevent stuck state from hot-reload
         try:
             from .routes.settings import _reset_indexing_state

@@ -27,8 +27,9 @@ import {
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { apiUrl } from '@/lib/apiBase'
 
-const API_BASE = '/api'
+const API_BASE = apiUrl('/api')
 
 interface CollectionInfo {
   name: string

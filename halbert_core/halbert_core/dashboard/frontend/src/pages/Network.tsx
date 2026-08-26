@@ -40,6 +40,7 @@ import {
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { apiUrl } from '@/lib/apiBase'
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { openChat } from '@/components/SendToChat'
 import { SystemItemActions } from '@/components/domain'
@@ -237,7 +238,7 @@ export function Network() {
       const ifaceName = editingInterface.data.interface || editingInterface.name.replace('iface-', '')
       const context = `MAC: ${editingInterface.data.mac || 'unknown'}, State: ${editingInterface.data.operstate || 'unknown'}`
       
-      const res = await fetch(`/api/discoveries/learned/identify?name=${encodeURIComponent(ifaceName)}&context=${encodeURIComponent(context)}`, {
+      const res = await fetch(apiUrl(`/api/discoveries/learned/identify?name=${encodeURIComponent(ifaceName)}&context=${encodeURIComponent(context)}`), {
         method: 'POST'
       })
       const data = await res.json()
@@ -263,7 +264,7 @@ export function Network() {
     try {
       const ifaceName = editingInterface.data.interface || editingInterface.name.replace('iface-', '')
       
-      await fetch('/api/discoveries/learned/classify', {
+      await fetch(apiUrl('/api/discoveries/learned/classify'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

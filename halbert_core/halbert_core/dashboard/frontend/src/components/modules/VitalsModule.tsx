@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Activity, Cpu, MemoryStick, HardDrive, Wifi, Loader2 } from 'lucide-react'
 import { ModuleLoadError } from './ModuleLoadError'
+import { apiUrl } from '@/lib/apiBase'
 
 interface VitalsModuleProps {
   timeframe?: string
@@ -27,7 +28,7 @@ export default function VitalsModule({ timeframe = '1h' }: VitalsModuleProps) {
 
   useEffect(() => {
     const fetchVitals = () => {
-      fetch(`/api/modules/vitals/data?timeframe=${encodeURIComponent(timeframe)}`)
+      fetch(apiUrl(`/api/modules/vitals/data?timeframe=${encodeURIComponent(timeframe)}`))
         .then(async r => {
           const data = await r.json().catch(() => null)
           if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`)

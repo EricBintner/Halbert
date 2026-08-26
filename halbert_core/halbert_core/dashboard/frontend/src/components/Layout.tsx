@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button'
 import { SidePanel } from './SidePanel'
 import { ConfigEditor } from './ConfigEditor'
 import { useDebug } from '@/contexts/DebugContext'
+import { apiUrl } from '@/lib/apiBase'
 
 const navigation = [
   // Overview
@@ -92,7 +93,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     const checkStatus = async () => {
       // Check indexing status
       try {
-        const res = await fetch('/api/settings/docs/stats')
+        const res = await fetch(apiUrl('/api/settings/docs/stats'))
         const data = await res.json()
         const status = data.indexing
         
@@ -113,7 +114,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       
       // Check system scan status
       try {
-        const res = await fetch('/api/settings/system-profile/scan/status')
+        const res = await fetch(apiUrl('/api/settings/system-profile/scan/status'))
         const data = await res.json()
         
         if (data.is_running) {

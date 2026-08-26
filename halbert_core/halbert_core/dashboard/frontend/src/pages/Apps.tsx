@@ -30,6 +30,7 @@ import {
   Cog,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { apiUrl } from '@/lib/apiBase'
 import { PageHeader } from '@/components/domain'
 import { useScanPage } from '@/hooks'
 import { openChat } from '@/components/SendToChat'
@@ -470,7 +471,7 @@ export function Apps() {
                       {/* App Icon */}
                       {app.icon ? (
                         <img 
-                          src={`/api/discoveries/icon?path=${encodeURIComponent(app.icon)}`}
+                          src={apiUrl(`/api/discoveries/icon?path=${encodeURIComponent(app.icon)}`)}
                           alt={app.name}
                           className="w-10 h-10 rounded-lg flex-shrink-0 object-contain bg-white/5"
                           onError={(e) => {

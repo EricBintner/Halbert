@@ -10,13 +10,37 @@
 #
 # Environment:
 #   HALBERT_REPO_ROOT  Halbert checkout to run from. Defaults to walking up from
-#                      this script's location (src-tauri/binaries/ -> repo root).
+#                      this script until halbert_core/pyproject.toml is found,
+#                      then ~/.local/share/halbert/repo.
 #   HALBERT_PORT       Port to listen on (default 8000, matches the vite proxy).
 #   HALBERT_HOST       Host to bind (default 127.0.0.1).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${HALBERT_REPO_ROOT:-$(cd "$SCRIPT_DIR/../../../../../.." && pwd)}"
+
+find_repo_root() {
+    # Walk up from $1 until a directory containing halbert_core/pyproject.toml.
+    local d="$1"
+    while [ "$d" != "/" ]; do
+        if [ -f "$d/halbert_core/pyproject.toml" ]; then
+            printf '%s\n' "$d"; return 0
+        fi
+        d="$(dirname "$d")"
+    done
+    return 1
+}
+
+if [ -n "${HALBERT_REPO_ROOT:-}" ]; then
+    REPO_ROOT="$HALBERT_REPO_ROOT"
+elif REPO_ROOT="$(find_repo_root "$SCRIPT_DIR")"; then
+    :
+elif [ -f "$HOME/.local/share/halbert/repo/halbert_core/pyproject.toml" ]; then
+    # Documented install location for packaged builds without a checkout nearby.
+    REPO_ROOT="$HOME/.local/share/halbert/repo"
+else
+    echo "halbert-api: cannot locate Halbert repo root; set HALBERT_REPO_ROOT" >&2
+    exit 1
+fi
 
 # Prefer the repo's venv (has fastapi/uvicorn/haloysius); fall back to python3.
 PYTHON="$REPO_ROOT/.venv/bin/python"
@@ -27,6 +51,8 @@ fi
 export HALBERT_PORT="${HALBERT_PORT:-8000}"
 export HALBERT_HOST="${HALBERT_HOST:-127.0.0.1}"
 
+# `exec` is load-bearing for shutdown: the Tauri shell kills the pid it
+# spawned, and with exec that pid *is* uvicorn.
 cd "$REPO_ROOT"
 exec "$PYTHON" -m uvicorn halbert_core.dashboard.app:app \
     --host "$HALBERT_HOST" --port "$HALBERT_PORT" "$@"

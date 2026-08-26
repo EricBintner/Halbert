@@ -13,6 +13,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { apiUrl } from '@/lib/apiBase';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -56,7 +57,7 @@ export function useBeingEvents(): UseBeingEventsResult {
       eventSourceRef.current.close();
     }
 
-    const es = new EventSource('/api/being/events');
+    const es = new EventSource(apiUrl('/api/being/events'));
     eventSourceRef.current = es;
 
     es.onmessage = (e) => {
@@ -97,7 +98,7 @@ export function useBeingEvents(): UseBeingEventsResult {
       setActionError(null);
       setPendingActions((prev) => new Set(prev).add(event.id));
       try {
-        const url = `/api/being/events/${encodeURIComponent(targetId)}/${action}${query ? `?${query}` : ''}`;
+        const url = apiUrl(`/api/being/events/${encodeURIComponent(targetId)}/${action}${query ? `?${query}` : ''}`);
         const resp = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

@@ -46,6 +46,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { WhyBrain } from '@/components/ui/why-brain'
+import { apiUrl } from '@/lib/apiBase'
 
 interface ContainerInfo {
   id: string
@@ -136,7 +137,7 @@ export function Containers() {
 
   const loadContainers = async () => {
     try {
-      const response = await fetch('/api/containers/info')
+      const response = await fetch(apiUrl('/api/containers/info'))
       if (!response.ok) throw new Error('Failed to load container info')
       const result = await response.json()
       setData(result)
@@ -179,7 +180,7 @@ export function Containers() {
   const handleContainerAction = async (containerId: string, action: 'start' | 'stop' | 'restart' | 'remove') => {
     setActionLoading(containerId)
     try {
-      const response = await fetch(`/api/containers/${containerId}/${action}`, {
+      const response = await fetch(apiUrl(`/api/containers/${containerId}/${action}`), {
         method: 'POST',
       })
       if (!response.ok) throw new Error(`Failed to ${action} container`)
@@ -197,7 +198,7 @@ export function Containers() {
     setContainerLogs('')
     
     try {
-      const response = await fetch(`/api/containers/${container.id}/logs?tail=100`)
+      const response = await fetch(apiUrl(`/api/containers/${container.id}/logs?tail=100`))
       if (!response.ok) throw new Error('Failed to fetch logs')
       const result = await response.json()
       setContainerLogs(result.logs || 'No logs available')

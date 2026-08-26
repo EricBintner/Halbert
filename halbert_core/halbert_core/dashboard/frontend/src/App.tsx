@@ -21,6 +21,7 @@ import { DebugProvider } from './contexts/DebugContext'
 import { ScanProvider } from './contexts/ScanContext'
 import { PageContextProvider } from './contexts/PageContext'
 import { AgentSessionProvider } from './contexts/AgentSessionContext'
+import { apiUrl } from '@/lib/apiBase'
 
 function App() {
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -32,7 +33,7 @@ function App() {
     const initializeApp = async () => {
       try {
         // Check if onboarding is complete
-        const statusRes = await fetch('/api/settings/onboarding/status')
+        const statusRes = await fetch(apiUrl('/api/settings/onboarding/status'))
         const status = await statusRes.json()
         
         if (!status.onboarding_complete) {
@@ -42,7 +43,7 @@ function App() {
           // Run full scan on startup to refresh all system data (only once)
           startupScanTriggered.current = true
           console.log('Running full scan on startup...')
-          fetch('/api/settings/system-profile/scan', { method: 'POST' })
+          fetch(apiUrl('/api/settings/system-profile/scan'), { method: 'POST' })
             .then(res => res.json())
             .then(data => {
               console.log('Full scan complete:', data.summary?.split('\n')[0])

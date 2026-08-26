@@ -6,6 +6,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { apiUrl } from '@/lib/apiBase';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -178,7 +179,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       
       // Cancel backend request if streaming
       if (sessionIdRef.current && isStreaming) {
-        fetch(`/api/agent/cancel/${sessionIdRef.current}`, { method: 'POST' })
+        fetch(apiUrl(`/api/agent/cancel/${sessionIdRef.current}`), { method: 'POST' })
           .catch(() => {}); // Ignore errors on cleanup
       }
     };
@@ -503,7 +504,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       }
     } catch {}
     
-    fetch('/api/agent/message', {
+    fetch(apiUrl('/api/agent/message'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -581,7 +582,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     setSession(prev => prev ? { ...prev, pendingConfirmation: null } : null);
 
     // Create new SSE connection for confirmation
-    const url = `/api/agent/confirm/${sessionIdRef.current}`;
+    const url = apiUrl(`/api/agent/confirm/${sessionIdRef.current}`);
     
     fetch(url, {
       method: 'POST',
@@ -633,7 +634,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     setIsStreaming(false);
     
     if (sessionIdRef.current) {
-      fetch(`/api/agent/cancel/${sessionIdRef.current}`, { method: 'POST' })
+      fetch(apiUrl(`/api/agent/cancel/${sessionIdRef.current}`), { method: 'POST' })
         .catch(err => console.error('Cancel error:', err));
     }
   }, []);
@@ -660,7 +661,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     } : null);
     
     // Send to backend
-    fetch(`/api/agent/diff/${sessionIdRef.current}/${diffId}/apply`, { method: 'POST' })
+    fetch(apiUrl(`/api/agent/diff/${sessionIdRef.current}/${diffId}/apply`), { method: 'POST' })
       .catch(err => console.error('Apply diff error:', err));
   }, []);
 
@@ -676,7 +677,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     } : null);
     
     // Send to backend
-    fetch(`/api/agent/diff/${sessionIdRef.current}/${diffId}/reject`, { method: 'POST' })
+    fetch(apiUrl(`/api/agent/diff/${sessionIdRef.current}/${diffId}/reject`), { method: 'POST' })
       .catch(err => console.error('Reject diff error:', err));
   }, []);
 

@@ -25,6 +25,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { apiUrl } from '@/lib/apiBase'
 
 interface CommandHistory {
   command: string
@@ -205,7 +206,7 @@ export function Terminal() {
     xtermRef.current?.writeln(`\x1b[1;34m$\x1b[0m ${cmd}`)
 
     try {
-      const response = await fetch('/api/terminal/exec', {
+      const response = await fetch(apiUrl('/api/terminal/exec'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: cmd }),

@@ -1,6 +1,99 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::Serialize;
 use sysinfo::System;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use tauri::{Manager, RunEvent};
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri_plugin_shell::ShellExt;
+
+/// Managed state: the running backend sidecar (None once killed).
+struct Backend(Mutex<Option<CommandChild>>);
+
+const DEFAULT_PORT: u16 = 8000;
+const HOST: &str = "127.0.0.1";
+
+fn backend_port() -> u16 {
+    std::env::var("HALBERT_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_PORT)
+}
+
+fn api_base() -> String {
+    format!("http://{}:{}", HOST, backend_port())
+}
+
+/// Repo root for the sidecar. Precedence: HALBERT_REPO_ROOT env, then (dev builds only)
+/// walk up from CARGO_MANIFEST_DIR until a dir containing halbert_core/pyproject.toml.
+fn repo_root() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("HALBERT_REPO_ROOT") {
+        return Some(PathBuf::from(p));
+    }
+    #[cfg(debug_assertions)]
+    {
+        let mut dir: Option<&std::path::Path> = Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
+        while let Some(d) = dir {
+            if d.join("halbert_core").join("pyproject.toml").is_file() {
+                return Some(d.to_path_buf());
+            }
+            dir = d.parent();
+        }
+    }
+    None
+}
+
+#[tauri::command]
+fn get_api_base() -> String {
+    api_base()
+}
+
+fn spawn_backend(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let mut cmd = app
+        .shell()
+        .sidecar("halbert-api")
+        .map_err(|e| tauri::Error::Anyhow(e.into()))?
+        .env("HALBERT_HOST", HOST)
+        .env("HALBERT_PORT", backend_port().to_string())
+        // The backend's parent watchdog (dashboard/parent_watchdog.py) exits
+        // uvicorn when this pid disappears, covering force-quit and crashes
+        // where kill_backend() never runs.
+        .env("HALBERT_PARENT_PID", std::process::id().to_string());
+    if let Some(root) = repo_root() {
+        cmd = cmd.env("HALBERT_REPO_ROOT", &root).current_dir(&root);
+    }
+    let (mut rx, child) = cmd.spawn().map_err(|e| tauri::Error::Anyhow(e.into()))?;
+    println!("[Halbert] backend sidecar pid {} on {}", child.pid(), api_base());
+    app.manage(Backend(Mutex::new(Some(child))));
+    // MUST drain: the plugin uses a bounded channel(1) with blocking sends; an
+    // un-polled receiver would stall uvicorn's stdout pipe.
+    tauri::async_runtime::spawn(async move {
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => {
+                    eprintln!("[halbert-api] {}", String::from_utf8_lossy(&b).trim_end());
+                }
+                CommandEvent::Error(e) => eprintln!("[halbert-api] error: {e}"),
+                CommandEvent::Terminated(p) => {
+                    eprintln!("[halbert-api] exited code={:?} signal={:?}", p.code, p.signal);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+    Ok(())
+}
+
+fn kill_backend(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<Backend>() {
+        if let Some(child) = state.0.lock().unwrap().take() {
+            if let Err(e) = child.kill() {
+                eprintln!("[Halbert] failed to kill backend: {e}");
+            }
+        }
+    }
+}
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -109,7 +202,6 @@ fn get_system_metrics() -> SystemMetrics {
         
         // Use total_space as a simple hash for deduplication
         // If duplicate, prefer shorter mount point (e.g., "/" over "/btrfs/root")
-        let key = (total, available); // Use size combo as unique identifier
         let hash_key = ((total >> 32) ^ (total & 0xFFFFFFFF)) as u64;
         
         if let Some(existing) = disk_map.get(&hash_key) {
@@ -342,9 +434,20 @@ fn get_documents() -> Vec<Document> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Injected before any page script runs so the frontend (src/lib/apiBase.ts)
+    // knows the backend origin inside the tauri://localhost webview.
+    let init_script = format!(
+        "window.__HALBERT_API_BASE__ = {};",
+        serde_json::to_string(&api_base()).unwrap()
+    );
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("halbert-env")
+                .js_init_script(init_script)
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             greet,
             get_system_info,
@@ -354,13 +457,15 @@ pub fn run() {
             reject_request,
             get_active_jobs,
             get_memory_stats,
-            get_documents
+            get_documents,
+            get_api_base
         ])
         .setup(|app| {
+            spawn_backend(app.handle())?;
+
             // Set window icon for Linux taskbar
             #[cfg(target_os = "linux")]
             {
-                use tauri::Manager;
                 use image::ImageReader;
                 use std::io::Cursor;
                 
@@ -398,6 +503,30 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // ExitRequested fires for window-close / app.exit(); Exit is the
+            // final event on every quit path (Cmd-Q, AppleScript `quit`, …).
+            // kill_backend() takes the child out of state, so running it on
+            // both is idempotent.
+            match event {
+                RunEvent::ExitRequested { .. } | RunEvent::Exit => kill_backend(app),
+                _ => {}
+            }
+        });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn repo_root_found_in_dev() {
+        let root = super::repo_root().expect("repo root not found");
+        assert!(root.join("halbert_core").join("pyproject.toml").is_file());
+    }
+
+    #[test]
+    fn api_base_uses_default_port() {
+        assert!(super::api_base().starts_with("http://127.0.0.1:"));
+    }
 }

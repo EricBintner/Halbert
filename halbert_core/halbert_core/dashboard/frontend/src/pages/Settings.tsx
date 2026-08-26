@@ -46,8 +46,10 @@ import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { PageHeader, ChromaDBSettings, DatasetManager, DataVersionCard } from '@/components/domain'
 import { CompressionSettings } from '@/components/CompressionSettings'
 import { UnifiedLLMSettings } from '@/components/llm'
+import { LegalNoticesModal } from '@/components/legal'
+import { apiUrl } from '@/lib/apiBase'
 
-const API_BASE = '/api'
+const API_BASE = apiUrl('/api')
 
 interface AlertRule {
   id: string
@@ -506,6 +508,9 @@ export function Settings() {
   
   // Component Library viewer state
   const [showComponentLibrary, setShowComponentLibrary] = useState(false)
+
+  // Legal notices modal state (LEG-MOD-01)
+  const [showLegalNotices, setShowLegalNotices] = useState(false)
   
   // System Profile state
   const [systemProfile, setSystemProfile] = useState<{
@@ -2612,6 +2617,18 @@ export function Settings() {
                   View Component Library
                 </Button>
               </div>
+
+              <div className="space-y-2">
+                <h4 className="font-medium">Legal & Third-Party Notices</h4>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Licenses and attributions for Halbert, its RAG corpus sources,
+                  software dependencies, and bundled foundation models.
+                </p>
+                <Button variant="outline" onClick={() => setShowLegalNotices(true)}>
+                  <Shield className="h-4 w-4 mr-2" />
+                  View Legal Notices
+                </Button>
+              </div>
               
               <div className="space-y-2">
                 <h4 className="font-medium">Links</h4>
@@ -2639,6 +2656,9 @@ export function Settings() {
       {showComponentLibrary && (
         <ComponentLibraryViewer onClose={() => setShowComponentLibrary(false)} />
       )}
+
+      {/* Legal Notices Modal (LEG-MOD-01) */}
+      <LegalNoticesModal open={showLegalNotices} onOpenChange={setShowLegalNotices} />
       
       {/* Toast Notifications */}
       <Toast 

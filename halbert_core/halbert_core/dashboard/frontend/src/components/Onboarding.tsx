@@ -28,6 +28,7 @@ import {
   Briefcase,
   Brain
 } from 'lucide-react'
+import { apiUrl } from '@/lib/apiBase'
 
 interface OnboardingProps {
   open: boolean
@@ -80,7 +81,7 @@ export function Onboarding({ open, onComplete }: OnboardingProps) {
   // Fetch suggested name on mount
   useEffect(() => {
     if (open && step === 'welcome') {
-      fetch('/api/settings/onboarding/status')
+      fetch(apiUrl('/api/settings/onboarding/status'))
         .then(res => res.json())
         .then(data => {
           setSuggestedName(data.suggested_name || 'My Computer')
@@ -116,7 +117,7 @@ export function Onboarding({ open, onComplete }: OnboardingProps) {
     
     try {
       // Complete onboarding with settings AND run scan in one call
-      const response = await fetch('/api/settings/onboarding/complete', {
+      const response = await fetch(apiUrl('/api/settings/onboarding/complete'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -7,10 +7,10 @@
  * FastAPI route definitions.
  */
 
-const API_BASE = ''
+import { apiBase, apiUrl } from './apiBase'
 
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${apiBase()}${path}`, {
     headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
     ...options,
   })
@@ -201,7 +201,7 @@ export const api = {
 
     let res: Response
     try {
-      res = await fetch(`${API_BASE}/api/agent/message`, {
+      res = await fetch(apiUrl('/api/agent/message'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

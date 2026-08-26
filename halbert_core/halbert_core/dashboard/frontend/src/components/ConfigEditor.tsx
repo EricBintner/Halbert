@@ -19,12 +19,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
+import { apiUrl } from '@/lib/apiBase';
 
 // Lazy load Monaco to reduce initial bundle size
 const Editor = lazy(() => import('@monaco-editor/react'));
 const DiffEditor = lazy(() => import('@monaco-editor/react').then(m => ({ default: m.DiffEditor })));
 
-const API_BASE = '/api';
+const API_BASE = apiUrl('/api');
 
 interface Backup {
   id: string;

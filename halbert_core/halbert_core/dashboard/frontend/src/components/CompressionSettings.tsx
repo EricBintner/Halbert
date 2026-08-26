@@ -24,8 +24,9 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { apiUrl } from '@/lib/apiBase'
 
-const API_BASE = '/api'
+const API_BASE = apiUrl('/api')
 
 interface CompressionStatus {
   available: boolean

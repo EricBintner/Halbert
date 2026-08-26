@@ -10,8 +10,9 @@ import {
   ExternalLink,
   Info
 } from 'lucide-react'
+import { apiUrl } from '@/lib/apiBase'
 
-const API_BASE = '/api'
+const API_BASE = apiUrl('/api')
 
 interface DataVersionInfo {
   version: string

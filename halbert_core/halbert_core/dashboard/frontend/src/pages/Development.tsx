@@ -24,6 +24,7 @@ import {
   Box,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { apiUrl } from '@/lib/apiBase'
 import { PageHeader } from '@/components/domain'
 
 interface LanguageInfo {
@@ -128,7 +129,7 @@ export function Development() {
 
   const loadDevData = async () => {
     try {
-      const response = await fetch('/api/development/info')
+      const response = await fetch(apiUrl('/api/development/info'))
       if (!response.ok) throw new Error('Failed to load development info')
       const result = await response.json()
       setData(result)

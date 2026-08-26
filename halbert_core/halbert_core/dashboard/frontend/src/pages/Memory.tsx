@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { PageHeader } from '@/components/domain'
+import { apiUrl } from '@/lib/apiBase'
 
 interface Collection {
   name: string
@@ -50,7 +51,7 @@ export function Memory() {
   const loadCollections = async () => {
     try {
       setLoading(true)
-      const res = await fetch('/api/memory/collections')
+      const res = await fetch(apiUrl('/api/memory/collections'))
       const data = await res.json()
       if (data.status === 'ok') {
         setCollections(data.collections)
@@ -67,7 +68,7 @@ export function Memory() {
       setLoadingEntries(true)
       setSelectedCollection(collection)
       setSelectedEntries(new Set())
-      const res = await fetch(`/api/memory/collections/${encodeURIComponent(collection)}/entries?limit=100`)
+      const res = await fetch(apiUrl(`/api/memory/collections/${encodeURIComponent(collection)}/entries?limit=100`))
       const data = await res.json()
       if (data.status === 'ok') {
         setEntries(data.entries)
@@ -82,7 +83,7 @@ export function Memory() {
   const searchMemory = async () => {
     if (!searchQuery.trim()) return
     try {
-      const res = await fetch('/api/memory/query', {
+      const res = await fetch(apiUrl('/api/memory/query'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -103,7 +104,7 @@ export function Memory() {
   const deleteSelected = async () => {
     if (!selectedCollection || selectedEntries.size === 0) return
     try {
-      const res = await fetch(`/api/memory/collections/${encodeURIComponent(selectedCollection)}/delete`, {
+      const res = await fetch(apiUrl(`/api/memory/collections/${encodeURIComponent(selectedCollection)}/delete`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entry_ids: Array.from(selectedEntries) })
@@ -122,7 +123,7 @@ export function Memory() {
 
   const clearCollection = async (collection: string) => {
     try {
-      const res = await fetch(`/api/memory/collections/${encodeURIComponent(collection)}/clear`, {
+      const res = await fetch(apiUrl(`/api/memory/collections/${encodeURIComponent(collection)}/clear`), {
         method: 'POST'
       })
       const data = await res.json()

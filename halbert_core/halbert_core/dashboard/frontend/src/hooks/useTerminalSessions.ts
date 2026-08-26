@@ -14,6 +14,7 @@
  */
 
 import { useSyncExternalStore, useCallback } from 'react';
+import { apiUrl, wsUrl as backendWsUrl } from '@/lib/apiBase';
 
 export type TerminalSessionStatus = 'running' | 'done' | 'idle';
 
@@ -40,9 +41,7 @@ const MAX_VISIBLE = 3;
 const SCROLLBACK_MAX_CHARS = 1_000_000; // ~1 MiB of chars
 
 function wsUrl(id: string): string {
-  const proto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = typeof window !== 'undefined' ? window.location.host : '';
-  return `${proto}//${host}/ws/terminal/${id}`;
+  return backendWsUrl(`/ws/terminal/${id}`);
 }
 
 class TerminalSessionStore {
@@ -76,7 +75,7 @@ class TerminalSessionStore {
     if (opts.cwd) body.cwd = opts.cwd;
     if (opts.writablePaths) body.writable_paths = opts.writablePaths;
 
-    const resp = await fetch('/api/terminal/sessions', {
+    const resp = await fetch(apiUrl('/api/terminal/sessions'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -163,7 +162,7 @@ class TerminalSessionStore {
 
   async kill(id: string): Promise<void> {
     try {
-      await fetch(`/api/terminal/sessions/${id}`, { method: 'DELETE' });
+      await fetch(apiUrl(`/api/terminal/sessions/${id}`), { method: 'DELETE' });
     } catch {
       // ignore — close the socket regardless
     }

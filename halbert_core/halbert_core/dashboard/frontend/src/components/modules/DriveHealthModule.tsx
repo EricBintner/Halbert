@@ -7,6 +7,7 @@
 import { useState, useEffect } from 'react'
 import { HardDrive, Loader2 } from 'lucide-react'
 import { ModuleLoadError } from './ModuleLoadError'
+import { apiUrl } from '@/lib/apiBase'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`
@@ -19,7 +20,7 @@ export default function DriveHealthModule() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/modules/drive-health/data')
+    fetch(apiUrl('/api/modules/drive-health/data'))
       .then(async r => {
         const data = await r.json().catch(() => null)
         if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`)

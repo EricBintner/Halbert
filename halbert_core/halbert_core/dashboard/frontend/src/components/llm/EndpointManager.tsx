@@ -7,6 +7,40 @@ import { Select } from '@/components/prep-primitives/Select';
 import { InfoTooltip } from '@/components/prep-primitives/InfoTooltip';
 import { PlanDropdown, type PlanLimitsTable } from './PlanDropdown';
 import { ProbeButton } from './ProbeButton';
+import { CloudDisclosureModal } from '@/components/legal';
+import { apiUrl } from '@/lib/apiBase';
+
+// ── LEG-MOD-02: Cloud provider disclosure helpers ──────────────────
+// A provider triggers the data-flow disclosure modal when it is a known
+// cloud provider (OpenAI, Anthropic, Google, Azure) or an Ollama endpoint
+// pointing at ollama.com (Ollama Cloud). Local Ollama / LM Studio do not.
+const _CLOUD_PROVIDERS = new Set(['openai', 'anthropic', 'google', 'azure-openai', 'openai-compatible']);
+
+function _isCloudProviderForDisclosure(provider: LLMProvider, url: string): boolean {
+  const p = String(provider).toLowerCase();
+  if (_CLOUD_PROVIDERS.has(p)) return true;
+  // Ollama Cloud: ollama.com host
+  if (p === 'ollama') {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      if (host === 'ollama.com' || host.endsWith('.ollama.com')) return true;
+    } catch { /* invalid url — treat as local */ }
+  }
+  return false;
+}
+
+function _providerDisplayName(provider: LLMProvider): string {
+  const p = String(provider);
+  const map: Record<string, string> = {
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    google: 'Google',
+    'azure-openai': 'Azure OpenAI',
+    'openai-compatible': 'OpenAI-compatible',
+    ollama: 'Ollama Cloud',
+  };
+  return map[p] ?? p;
+}
 
 export interface EndpointManagerProps {
   endpoints: SavedEndpoint[];
@@ -119,11 +153,17 @@ export function EndpointManager({
   // Dropdown selection (e.g. "max", "tier_3", "auto", "custom").
   const [formPlanTier, setFormPlanTier] = useState<string | undefined>(undefined);
 
+  // LEG-MOD-02: Cloud API data-flow disclosure consent state.
+  // When the user adds/saves a cloud-type endpoint, we intercept and show
+  // the CloudDisclosureModal first. The pending action is replayed on accept.
+  const [showCloudDisclosure, setShowCloudDisclosure] = useState(false);
+  const [pendingCloudAction, setPendingCloudAction] = useState<(() => void) | null>(null);
+  const [pendingCloudProvider, setPendingCloudProvider] = useState<string>('');
   // Fetch plan-limits table once on mount; PlanDropdown
   // renders only after this resolves (cloud providers).
   const [planLimits, setPlanLimits] = useState<PlanLimitsTable | null>(null);
   useEffect(() => {
-    fetch('/llm/plan-limits')
+    fetch(apiUrl('/llm/plan-limits'))
       .then((r) => r.json())
       .then((body) => {
         const data = body?.data ?? body;
@@ -149,16 +189,26 @@ export function EndpointManager({
 
   const handleAdd = () => {
     if (!formName.trim() || !formUrl.trim()) return;
-    onAdd({
-      name: formName.trim(),
-      provider: formProvider,
-      url: formUrl.trim(),
-      api_key: formApiKey.trim() || undefined,
-      local_concurrency: formLocalConcurrency,
-      cloud_concurrency: formCloudConcurrency,
-      plan_tier: formPlanTier,
-    });
-    resetForm();
+    const doAdd = () => {
+      onAdd({
+        name: formName.trim(),
+        provider: formProvider,
+        url: formUrl.trim(),
+        api_key: formApiKey.trim() || undefined,
+        local_concurrency: formLocalConcurrency,
+        cloud_concurrency: formCloudConcurrency,
+        plan_tier: formPlanTier,
+      });
+      resetForm();
+    };
+    // LEG-MOD-02: gate cloud providers behind the disclosure consent modal.
+    if (_isCloudProviderForDisclosure(formProvider, formUrl)) {
+      setPendingCloudProvider(_providerDisplayName(formProvider));
+      setPendingCloudAction(() => doAdd);
+      setShowCloudDisclosure(true);
+    } else {
+      doAdd();
+    }
   };
 
   const handleEdit = (ep: SavedEndpoint) => {
@@ -175,17 +225,27 @@ export function EndpointManager({
 
   const handleSaveEdit = () => {
     if (!editingId || !formName.trim() || !formUrl.trim()) return;
-    onEdit({
-      id: editingId,
-      name: formName.trim(),
-      provider: formProvider,
-      url: formUrl.trim(),
-      api_key: formApiKey.trim() || undefined,
-      local_concurrency: formLocalConcurrency,
-      cloud_concurrency: formCloudConcurrency,
-      plan_tier: formPlanTier,
-    });
-    resetForm();
+    const doSave = () => {
+      onEdit({
+        id: editingId,
+        name: formName.trim(),
+        provider: formProvider,
+        url: formUrl.trim(),
+        api_key: formApiKey.trim() || undefined,
+        local_concurrency: formLocalConcurrency,
+        cloud_concurrency: formCloudConcurrency,
+        plan_tier: formPlanTier,
+      });
+      resetForm();
+    };
+    // LEG-MOD-02: gate cloud providers behind the disclosure consent modal.
+    if (_isCloudProviderForDisclosure(formProvider, formUrl)) {
+      setPendingCloudProvider(_providerDisplayName(formProvider));
+      setPendingCloudAction(() => doSave);
+      setShowCloudDisclosure(true);
+    } else {
+      doSave();
+    }
   };
 
   const handleTest = async (ep: SavedEndpoint) => {
@@ -742,5 +802,22 @@ export function EndpointManager({
         </div>
       )}
     </div>
+
+      {/* LEG-MOD-02: Cloud API data-flow disclosure consent modal */}
+      <CloudDisclosureModal
+        open={showCloudDisclosure}
+        onOpenChange={(o) => {
+          setShowCloudDisclosure(o);
+          if (!o) setPendingCloudAction(null);
+        }}
+        providerName={pendingCloudProvider}
+        onAccept={() => {
+          if (pendingCloudAction) pendingCloudAction();
+          setPendingCloudAction(null);
+        }}
+        onDecline={() => {
+          setPendingCloudAction(null);
+        }}
+      />
   );
 }
