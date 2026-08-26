@@ -48,15 +48,19 @@ class InjectionFinding:
 _PATTERNS = [
     # --- Blocked: never execute ---
     (r"rm\s+-rf\s+/(\s|$|\*)", "Recursive forced delete of root", InjectionSeverity.BLOCKED),
+    # rm with any combination of -r/-R/-f flags, split or joined, targeting / or /*
+    (r"\brm\s+(?:-\w*[rfRF]\w*\s+)+/\*?(?=\s|$)", "Recursive/forced delete of root (flags reordered or split)", InjectionSeverity.BLOCKED),
     (r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;:", "Fork bomb", InjectionSeverity.BLOCKED),
     (r"mkfs\.", "Filesystem format — erases all data on target", InjectionSeverity.BLOCKED),
     (r">\s*/dev/(sd|nvme|disk)", "Direct write to raw disk device", InjectionSeverity.BLOCKED),
+    # dd writing to a block device, regardless of operand order
+    (r"\bdd\b[^|;&]*?\bof=/dev/(?:sd|nvme|disk)", "Direct write to raw disk device via dd of=", InjectionSeverity.BLOCKED),
     (r"zpool\s+destroy", "ZFS pool destruction — irreversible data loss", InjectionSeverity.BLOCKED),
     # --- Dangerous: require explicit confirmation ---
     (r"dd\s+if=", "Direct disk read/write — can destroy data", InjectionSeverity.DANGEROUS),
     (r"chmod\s+-R\s+777\s+/", "Recursive world-writable on root filesystem", InjectionSeverity.DANGEROUS),
-    (r"curl\s+[^|]*\|\s*(bash|sh|zsh)\b", "Piping a remote script into a shell", InjectionSeverity.DANGEROUS),
-    (r"wget\s+[^|]*\|\s*(bash|sh|zsh)\b", "Piping a remote script into a shell", InjectionSeverity.DANGEROUS),
+    (r"curl\s+[^|]*\|\s*(?:bash|sh|zsh|csh|python[0-9.]*|perl|ruby|node)\b", "Piping a remote script into a shell or interpreter", InjectionSeverity.DANGEROUS),
+    (r"wget\s+[^|]*\|\s*(?:bash|sh|zsh|csh|python[0-9.]*|perl|ruby|node)\b", "Piping a remote script into a shell or interpreter", InjectionSeverity.DANGEROUS),
     (r"\beval\s+", "eval executes arbitrary code from a string", InjectionSeverity.DANGEROUS),
     (r"\blvremove\b", "LVM logical volume removal", InjectionSeverity.DANGEROUS),
     (r"\bip\s+link\s+delete", "Network interface deletion", InjectionSeverity.DANGEROUS),

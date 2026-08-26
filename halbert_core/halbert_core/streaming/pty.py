@@ -67,6 +67,10 @@ class PTYSession:
         self._exited = False
         self._exit_code: Optional[int] = None
 
+        # Queues of in-flight read_chunk() generators, so kill() can push the
+        # EOF sentinel and wake consumers suspended at ``queue.get()``.
+        self._read_queues: set = set()
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -116,6 +120,15 @@ class PTYSession:
                 os.dup2(self._slave_fd, 0)
                 os.dup2(self._slave_fd, 1)
                 os.dup2(self._slave_fd, 2)
+                # Acquire the PTY as controlling terminal: dup2 of a
+                # parent-opened fd never triggers the session-leader ctty
+                # acquisition path, and without a ctty /dev/tty (sudo
+                # passwords, job control) is broken.
+                if hasattr(termios, "TIOCSCTTY"):
+                    try:
+                        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+                    except OSError:
+                        pass
                 if self._master_fd is not None:
                     os.close(self._master_fd)
                 if self._slave_fd is not None:
@@ -153,6 +166,7 @@ class PTYSession:
             return
         loop = asyncio.get_event_loop()
         queue: "asyncio.Queue[Optional[bytes]]" = asyncio.Queue()
+        self._read_queues.add(queue)
         eof = False
 
         def _on_readable() -> None:
@@ -183,7 +197,12 @@ class PTYSession:
             # safe and fast. This runs only on the natural-completion path.
             self._reap(blocking=True)
         finally:
-            loop.remove_reader(self._master_fd)
+            self._read_queues.discard(queue)
+            # None after a concurrent kill() already removed the reader and
+            # closed the fd — remove_reader would fail (and could target a
+            # reused fd number), so skip it in that case.
+            if self._master_fd is not None:
+                loop.remove_reader(self._master_fd)
             # Cleanup/abandon path (aclose while still running): never block.
             self._reap(blocking=False)
 
@@ -212,6 +231,14 @@ class PTYSession:
                 asyncio.get_running_loop().remove_reader(self._master_fd)
             except (RuntimeError, ValueError):
                 # No running loop (e.g. cleanup after loop close) — nothing to remove
+                pass
+        # Wake any in-flight read_chunk() consumer suspended at queue.get():
+        # with the reader removed the EOF sentinel would otherwise never
+        # arrive, leaving the consumer task frozen forever.
+        for q in list(self._read_queues):
+            try:
+                q.put_nowait(None)
+            except Exception:
                 pass
         if was_alive and self._pid is not None:
             try:

@@ -159,6 +159,21 @@ def check_command_safety(command: str) -> tuple[SafetyTier, str, str]:
         if blocked in cmd_lower:
             return SafetyTier.BLOCKED, f"This command is blocked: {blocked}", ""
 
+    # Delegate to the injection gate: it covers order/form variants the
+    # substring lists below miss (dd of=<device>, split rm flags, pipes
+    # into interpreters). BLOCKED findings always win.
+    findings = check_injection(command)
+    if findings:
+        worst = worst_severity(findings)
+        if worst is InjectionSeverity.BLOCKED:
+            reason = next(f.reason for f in findings
+                          if f.severity is InjectionSeverity.BLOCKED)
+            return SafetyTier.BLOCKED, f"Blocked by injection check: {reason}", ""
+        if worst is InjectionSeverity.DANGEROUS:
+            reason = next(f.reason for f in findings
+                          if f.severity is InjectionSeverity.DANGEROUS)
+            return SafetyTier.DANGEROUS, reason, ""
+
     # Check dangerous patterns
     for pattern, reason in DANGEROUS_PATTERNS:
         if pattern in cmd_lower:
