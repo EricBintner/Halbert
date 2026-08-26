@@ -36,6 +36,22 @@ version: 1
 #                      Apple's Mac App Store DRM + FairPlay wrapper
 #   notes            : human context; not read by the engine
 licenses:
+  OFL-1.1:
+    name: "SIL Open Font License 1.1"
+    commercial_use: allowed
+    copyleft: weak
+    share_alike: true
+    attribution: true
+    drm_conflict: false
+    notes: >-
+      Applies only to the bundled typefaces (THIRD-PARTY-LICENSES.md §3.6).
+      Clause 5 keeps the Font Software itself under OFL and forbids
+      relicensing it, but does not reach the application that renders it, so
+      the distribution is an aggregate rather than a derived work. Clause 1
+      forbids selling the fonts on their own, which Halbert does not do.
+      Clause 3 constrains renaming only where a Reserved Font Name is
+      declared; none of the three families declares one.
+
   MIT:
     name: "MIT License"
     commercial_use: allowed

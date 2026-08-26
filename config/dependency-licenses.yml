@@ -190,3 +190,23 @@ npm:
   "@testing-library/react": {spdx: MIT, build_only: true}
   "@testing-library/jest-dom": {spdx: MIT, build_only: true}
   "@testing-library/user-event": {spdx: MIT, build_only: true}
+
+# -----------------------------------------------------------------------------
+# Bundled assets
+# -----------------------------------------------------------------------------
+# Not a package-manager dependency: these files are committed to the repo and
+# copied into every build, so they reach the App Store target without passing
+# through any ecosystem manifest the checker already reads. Recorded here so a
+# font added later cannot slip past the gate.
+#
+# Source of truth for the file list: shared-tokens/fonts/MANIFEST.json
+bundled:
+  Fraunces:
+    spdx: OFL-1.1
+    path: shared-tokens/fonts/
+  "Space Grotesk":
+    spdx: OFL-1.1
+    path: shared-tokens/fonts/
+  "JetBrains Mono":
+    spdx: OFL-1.1
+    path: shared-tokens/fonts/

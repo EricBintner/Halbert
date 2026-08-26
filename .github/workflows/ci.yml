@@ -25,6 +25,12 @@ jobs:
       # Ratchet: existing literal-colour debt may sit, but it may not grow.
       - name: Check no new literal palette classes
         run: python3 scripts/check_literal_colors.py --check
+      # The typefaces are redistributed, so their integrity is a licence
+      # matter as well as a rendering one.
+      - name: Check vendored fonts match their manifest
+        run: python3 scripts/vendor_fonts.py --verify
+      - name: Check each app's font copy is in sync
+        run: python3 scripts/sync_fonts.py --check
 
   design-system:
     name: Design system (types + a11y contracts)

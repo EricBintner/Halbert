@@ -22,6 +22,10 @@ dashboard "About / Legal Notices" panel.
 
 See [`LICENSE.md`](./LICENSE.md) for the project license summary and rationale.
 
+**Exceptions.** Two sets of files in this repository are *not* under the project
+licence, and the distribution is an aggregate: the shadcn/ui-derived source
+files in §3.5 (MIT), and the bundled typefaces in §3.6 (SIL OFL 1.1).
+
 ---
 
 ## 2. RAG Knowledge Corpus — Data Sources
@@ -302,6 +306,52 @@ MIT License text retained for the shadcn/ui-derived files:
 
 Supporting libraries used by those files: `class-variance-authority`
 (Apache-2.0), `clsx` (MIT), `tailwind-merge` (MIT), `@radix-ui/*` (MIT).
+
+---
+
+### 3.6 Bundled Typefaces
+
+The three brand typefaces are **redistributed inside this repository and inside
+every shipped build** (web bundle, Tauri desktop bundle), at
+`shared-tokens/fonts/`. They were previously fetched from the Google Fonts CDN
+at runtime, which for a local-first product was both a privacy posture problem
+and a hard failure in an offline desktop app.
+
+| Family | Upstream licence | License | Files |
+| :--- | :--- | :--- | :--- |
+| Fraunces | [fraunces](https://raw.githubusercontent.com/google/fonts/main/ofl/fraunces/OFL.txt) | SIL OFL 1.1 | 4 |
+| Space Grotesk | [spacegrotesk](https://raw.githubusercontent.com/google/fonts/main/ofl/spacegrotesk/OFL.txt) | SIL OFL 1.1 | 2 |
+| JetBrains Mono | [jetbrainsmono](https://raw.githubusercontent.com/google/fonts/main/ofl/jetbrainsmono/OFL.txt) | SIL OFL 1.1 | 4 |
+
+**These files are Modified Versions, not Original Versions.** They are produced
+by the Google Fonts API, which subsets the glyph set to Latin and builds WOFF2
+from the upstream sources. OFL-1.1 FAQ 2.2.1's note about format conversion is
+conditioned on the font data being unchanged, and subsetting changes it — so no
+claim of an unmodified Original Version is made here.
+
+None of the three families declares a **Reserved Font Name** in its copyright
+statement, which is what OFL-1.1 clause 3 constrains. The Modified Versions
+therefore keep their original family names, which is what clause 3 permits when
+no RFN is reserved.
+
+Obligations discharged:
+
+- The full licence text and each family's verbatim upstream copyright notice
+  ship at `shared-tokens/fonts/OFL-1.1.txt`, and are copied into every build,
+  satisfying clause 2 ("must be distributed entirely under this license... a
+  copy of this license... included in... any distribution").
+- The fonts are not sold on their own (clause 1), and no component is named
+  in a way that suggests endorsement.
+- Clause 5 keeps the Font Software itself under OFL-1.1. It does not reach the
+  application that displays it, so Halbert's own GPL-3.0-or-later is unaffected;
+  the distribution is an aggregate.
+
+`JetBrains` is a registered trademark of JetBrains s.r.o. The OFL grants no
+trademark rights; the font is shipped under its own name unmodified in that
+respect, which is ordinary use and not a trademark claim.
+
+Regenerate with `python3 scripts/vendor_fonts.py`; verify with
+`python3 scripts/vendor_fonts.py --verify` and `python3 scripts/sync_fonts.py --check`.
 
 ---
 
