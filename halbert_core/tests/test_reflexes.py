@@ -238,3 +238,28 @@ async def test_reflex_below_threshold_does_not_fire(store, bus):
     events = await runner.run_all()
     # finding is warning < critical threshold -> no reflex event
     assert not any(e.type == "reflex_fired" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_reflex_events_respect_gate(store, bus):
+    """Regression: reflex events must pass through the ProactiveGate.
+
+    Pre-fix, a finding suppressed by the gate (quiet hours / safe mode /
+    proactivity dial) still had its reflex events published unconditionally —
+    including reflex_escalate forced to critical.
+    """
+    class _DenyAllGate:
+        def should_notify(self, event):
+            return False, "quiet hours"
+
+    reflexes = [Reflex(id="r1", name="esc", pattern="disk", threshold="warning",
+                       action="escalate")]
+    runner = DetectorRunner(
+        finding_store=store, proposal_store=_FakeProposalStore(),
+        being_config=BeingConfig(),
+        guardrails=SimpleNamespace(safe_mode_active=False),
+        gate=_DenyAllGate(), reflex_matcher=ReflexMatcher(reflexes),
+    )
+    runner.detectors = [_FakeDetector([_make_finding()])]
+    events = await runner.run_all()
+    assert events == []

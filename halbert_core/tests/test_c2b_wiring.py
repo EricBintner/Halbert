@@ -124,3 +124,30 @@ def test_route_request_vision_for_images():
     r.route_request("describe this", has_images=True)
     assert called["tier"] is ModelTier.VISION
     assert called["vision"] is True
+
+
+def test_disabled_path_uses_original_score_complexity():
+    """Regression (review finding): the cascade-disabled (default) path must be
+    byte-identical to the pre-C2b heuristic — complexity_score must come from
+    the restored _score_complexity, which scores differently than
+    MetaHarnessRouter.estimate_complexity for realistic queries."""
+    r = _router()
+    assert r.cascade_router.is_enabled() is False
+    called = {}
+
+    def fake_select(tier, require_reasoning=False, complexity_score=None,
+                    require_vision=False):
+        called["complexity"] = complexity_score
+        return ModelSelection(model=_models()["guide-m"], reason="heuristic")
+
+    r.select_model = fake_select
+    # Scorers diverge on this query: estimate_complexity -> 0.08,
+    # _score_complexity -> 0.30. Equality with the old scorer asserts parity.
+    query = "write a script to fix the error"
+    r.route_request(query)
+    assert called["complexity"] == r._score_complexity(query)
+
+    # Same parity requirement on the prefer_specialist override when disabled
+    called.clear()
+    r.route_request(query, prefer_specialist=True)
+    assert called["complexity"] == r._score_complexity(query)
