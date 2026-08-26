@@ -229,7 +229,14 @@ To execute this transition without stalling ongoing feature development, work is
     * **Mode 2: Browsing:** Full 17-tab System Dashboard.
   - Connect the `TerminalAccordionDock` to live backend PTY session streams.
   - Replace the generic cartoon robot on `/agent` with the embodied host status header.
-* **Deliverable:** Live desktop app rendering the Olivetti Vermilion & Bone sovereign host interface.
+* **Deliverable:** Live desktop app rendering the Olivetti Vermilion & Bone sovereign host interface. **DONE — 2026-08-26.**
+* **Note on what was already built:** by the time this track was picked up, the
+  sovereign-host workstream had already landed the dual-mode switcher
+  (`ShellModeContext`, `ModeSwitch`, `Layout` branching on `isEngaged`), the
+  `TerminalAccordionDock` wired to live PTY sessions via `useTerminalSessions`,
+  and the embodied `/agent` surface. The remaining work was therefore the
+  repaint, which is recorded in
+  [BRAND-GUIDELINES-AND-AESTHETIC.md §10](file:///Volumes/4TB-BAD/Halbert/documentation/design/BRAND-GUIDELINES-AND-AESTHETIC.md).
 
 ---
 
