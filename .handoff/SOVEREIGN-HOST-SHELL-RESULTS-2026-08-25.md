@@ -7,6 +7,61 @@
 
 ---
 
+## Where this landed in history
+
+This work is on `main` inside commit **`8c67d37`**, whose subject reads
+*"feat(legal): establish legal, licensing, compliance, and website terms"* and
+says nothing about a shell. That is not a mistake in the work — it is a
+mistake in the packaging: a concurrent session ran a whole-index `git add`
+while this change sat unstaged in the shared tree, swept it in, amended, and
+pushed. Of that commit's 625 files, 27 are this change; the other 598 are the
+legal/licensing pass (430 of them SPDX headers alone).
+
+History was deliberately left as-is rather than rewritten, because `8c67d37`
+was already on `origin/main` and other sessions were live against it. If you
+are looking for this feature's diff, it is these 27 paths inside `8c67d37`:
+
+```
+halbert_core/halbert_core/streaming/terminal_bridge.py          (new)
+halbert_core/halbert_core/tools/executor.py
+halbert_core/halbert_core/agents/state_machine.py
+halbert_core/halbert_core/agents/events.py
+halbert_core/halbert_core/dashboard/routes/system.py
+halbert_core/tests/test_terminal_stream_bridge.py               (new)
+halbert_core/tests/test_host_identity_route.py                  (new)
+
+dashboard/frontend/src/App.tsx
+dashboard/frontend/src/components/Layout.tsx
+dashboard/frontend/src/components/shell/SovereignHostShell.tsx  (new)
+dashboard/frontend/src/components/shell/ContextStage.tsx        (new)
+dashboard/frontend/src/components/shell/HostVitals.tsx          (new)
+dashboard/frontend/src/components/shell/ModeSwitch.tsx          (new)
+dashboard/frontend/src/contexts/ShellModeContext.tsx            (new)
+dashboard/frontend/src/components/agent/HostGreeting.tsx        (new)
+dashboard/frontend/src/components/agent/InlineTerminals.tsx     (new)
+dashboard/frontend/src/components/agent/TerminalAccordionDock.tsx
+dashboard/frontend/src/components/agent/TerminalTile.tsx
+dashboard/frontend/src/components/agent/AgentChat.tsx
+dashboard/frontend/src/components/agent/AgentPanel.tsx
+dashboard/frontend/src/hooks/useTerminalSessions.ts
+dashboard/frontend/src/hooks/useTerminalSessions.test.ts        (new)
+dashboard/frontend/src/hooks/useAgentStream.ts
+dashboard/frontend/src/hooks/useAgentStream.terminal.test.ts    (new)
+dashboard/frontend/src/hooks/useHostIdentity.ts                 (new)
+dashboard/frontend/src/pages/Agent.tsx
+.handoff/SOVEREIGN-HOST-SHELL-RESULTS-2026-08-25.md             (this file)
+```
+
+To read just this change:
+`git show 8c67d37 -- halbert_core/halbert_core/streaming/terminal_bridge.py …`
+
+**Process note, since this is the second time it has bitten this repo:** the
+wrap-up review already recorded that whole-index commits on a shared `main`
+sweep other sessions' work. It happened again here. Sessions sharing this tree
+should commit by pathspec (`git commit -- <paths>`) or work in a worktree.
+
+---
+
 ## The short version
 
 The engine was real; the shell never mounted it. `Layout.tsx` now has two

@@ -17,10 +17,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   in `halbert model-list-all`, `/api/llm/proxy/models`, and the model picker UI.
 - SPDX licence headers on all first-party source files, enforced by
   `scripts/add_spdx_headers.py --check`; DCO sign-off check for pull requests.
+- Sovereign Host surface: the app opens on a two-column conversational shell
+  (conversation spine plus a context stage carrying live host vitals and the
+  terminal accordion dock). The full dashboard and every existing system page
+  remain one click or `Cmd`/`Ctrl`+`B` away, unchanged.
+- Live terminals in the conversation: commands Halbert runs stream into the UI
+  while they run, over new `terminal_spawn` / `terminal_output` /
+  `terminal_complete` SSE events bridged by
+  `halbert_core.streaming.terminal_bridge`. The accordion dock now shows an
+  idle state with a shell launcher instead of rendering nothing.
+- `GET /api/identity`: hostname, OS, kernel, uptime, cores, memory and storage
+  pool health from psutil/platform alone, powering Halbert's first-person
+  greeting ("I am <hostname> …") in place of the generic assistant card.
 
 ### Changed
 - Licence declared as `GPL-3.0-or-later` consistently across source headers,
   `pyproject.toml`, `Cargo.toml`, `package.json`, and `tauri.conf.json`.
+- `run_command` drains stdout and stderr incrementally rather than buffering
+  through `communicate()`, so its output can be streamed while the command
+  runs. What the model receives is unchanged.
 
 ---
 
