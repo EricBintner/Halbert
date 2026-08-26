@@ -1,0 +1,51 @@
+===============================================================================
+                    CODEINDEX BUILD IN PROGRESS — DO NOT START
+===============================================================================
+
+A staged CodeIndex embedding build is RUNNING RIGHT NOW.
+
+  Process:  scripts/staged_knowledge_embed.py --stage 2
+  PID:      66131  (check with: ps -p 66131)
+  Started:  2026-08-25 ~20:00
+  Status:   IN PROGRESS — DO NOT INTERRUPT
+
+This build has been restarted 3 times by different AI sessions, wasting 26+
+hours of compute and only reaching 5% completion. Each restart loses all
+progress because the embedding pipeline starts over.
+
+===============================================================================
+                          WHAT NOT TO DO
+===============================================================================
+
+1. DO NOT run `scripts/staged_knowledge_embed.py` — it's already running
+2. DO NOT call `POST /projects/{id}/build` on the SourcePrep daemon
+3. DO NOT restart the SourcePrep daemon (PID 44108)
+4. DO NOT kill PID 66131 or PID 44108
+5. DO NOT run any other embedding or indexing command
+
+===============================================================================
+                          WHAT YOU CAN DO
+===============================================================================
+
+Check progress (read-only, safe):
+  ps -p 66131 -o pid,stat,%cpu,etime,command
+  curl -s "http://localhost:8400/projects/735a592e-a2da-499b-a614-854a5fc461f5/status"
+
+When the build is DONE (process no longer running, daemon shows building=False):
+  - Verify the index has thousands of chunks (not 98)
+  - Run scoped retrieval queries to test
+  - Remove this lockfile
+
+===============================================================================
+                          WHY THIS HAPPENED
+===============================================================================
+
+The staged_knowledge_embed.py script writes directly to the SourcePrep index
+files. The SourcePrep daemon's POST /build endpoint starts a SEPARATE build
+inside the daemon process. These two builds compete for the same index files
+and neither completes because they keep overwriting each other's lock files.
+
+The fix: ONLY use staged_knowledge_embed.py. NEVER call POST /build on the
+daemon while a staged build is running.
+
+===============================================================================

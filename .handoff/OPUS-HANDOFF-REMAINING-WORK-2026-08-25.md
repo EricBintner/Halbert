@@ -11,6 +11,9 @@
 - [HANDOFF-STAGED-CODEINDEX-BUILD-2026-08-25.md](./HANDOFF-STAGED-CODEINDEX-BUILD-2026-08-25.md) — CodeIndex build plan
 - [STRATEGY-V2-SCRUTINY.md](../documentation/sovereign-host-vision/STRATEGY-V2-SCRUTINY.md) — what was built
 
+> **STOP: Read [CODEINDEX-BUILD-LOCK.txt](./CODEINDEX-BUILD-LOCK.txt) before touching anything related to SourcePrep, embeddings, or CodeIndex.**
+> A staged embedding build is IN PROGRESS (PID 66131, `staged_knowledge_embed.py --stage 2`). It has been restarted 3 times by AI sessions, wasting 26+ hours and only reaching 5%. DO NOT start any build, DO NOT call POST /build on the daemon, DO NOT restart the daemon, DO NOT kill the running process.
+
 ---
 
 ## Context
@@ -23,20 +26,55 @@ The sovereign host v2.0 plan is complete — all 25 tasks committed and pushed, 
 
 ---
 
-## Task O1: Run the full CodeIndex build (macOS + common only)
+## Task O1: Full CodeIndex build — IN PROGRESS, DO NOT START
 
 **Tier:** opus
 **Effort:** xhigh (long compute, needs babysitting)
 **Lines:** 0 (data build, not code)
-**When:** After F1 + F2 (fable track installs Haloysius and smoke-tests the embedder)
+**Status:** RUNNING NOW — `staged_knowledge_embed.py --stage 2` (PID 66131)
 
-**Problem:** The SourcePrep CodeIndex for the standalone halbert project has only 98 chunks (KnowledgeIndex fallback). 245 knowledge markdown files (87MB) are staged but not embedded. Without the CodeIndex, RAG retrieval returns LLM summaries instead of raw man page content, and scope filtering can't be validated.
+This build has been restarted 3 times by different AI sessions, wasting 26+ hours and only reaching 5% completion. Each restart loses all progress.
 
-**This task is macOS-only.** Skip stages 2 (linux) and 3 (bsd). This is a Mac dev machine — `knowledge_macos` + `knowledge_common` + `host` is the highest-value slice.
+**DO NOT:**
+- Run `staged_knowledge_embed.py` — it's already running
+- Call `POST /projects/{id}/build` on the SourcePrep daemon — this starts a DUPLICATE build inside the daemon that competes with the staged script for the same index files
+- Restart the SourcePrep daemon (PID 44108)
+- Kill PID 66131 or PID 44108
 
-**Steps:**
-1. Verify F2 smoke test completed successfully. Check the throughput report — if embedding was <1 file/min, stop and reassess before starting the full build.
-2. Run stage 1 (host + macos + common, ~53M):
+**Read [CODEINDEX-BUILD-LOCK.txt](./CODEINDEX-BUILD-LOCK.txt) for full details.**
+
+**To check progress (read-only, safe):**
+```bash
+ps -p 66131 -o pid,stat,%cpu,etime,command
+curl -s "http://localhost:8400/projects/735a592e-a2da-499b-a614-854a5fc461f5/status"
+```
+
+**When the build is DONE** (process gone, `building=False`):
+1. Verify the index has thousands of chunks (not 98):
+   ```bash
+   curl -s "http://localhost:8400/projects/735a592e-a2da-499b-a614-854a5fc461f5/status" \
+     | python3 -c "import json,sys; d=json.load(sys.stdin)['data']; print('chunks:', d['index']['total_chunks'], 'source:', d['index']['source'])"
+   ```
+2. Run scoped queries (see acceptance queries below)
+3. Remove `CODEINDEX-BUILD-LOCK.txt`
+4. Proceed to O4 (retrieval quality validation)
+
+**Acceptance queries (run after build completes):**
+```bash
+# Scoped query — should return macOS man page content
+curl -s -X POST "http://localhost:8400/projects/735a592e-a2da-499b-a614-854a5fc461f5/context" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "what does PermitRootLogin accept", "scope": "knowledge_macos", "structured": true}' \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); chunks=d.get('chunks',[]); print(f'chunks: {len(chunks)}'); [print(f'  {c[\"source_path\"]}: {c[\"text\"][:100]}...') for c in chunks[:3]]"
+
+# Host-scoped query
+curl -s -X POST "http://localhost:8400/projects/735a592e-a2da-499b-a614-854a5fc461f5/context" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "my sshd config", "scope": "host", "structured": true}' \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); chunks=d.get('chunks',[]); print(f'chunks: {len(chunks)}'); [print(f'  {c[\"source_path\"]}: {c[\"text\"][:100]}...') for c in chunks[:3]]"
+```
+
+**Do NOT run stages 2 (linux) or 3 (bsd)** — Linux-specific work is deferred.
    ```bash
    SP=/Volumes/4TB-BAD/HumanAI/CoDRAG/.venv/bin/python
    cd /Volumes/4TB-BAD/Halbert
@@ -68,12 +106,6 @@ The sovereign host v2.0 plan is complete — all 25 tasks committed and pushed, 
      | python3 -c "import json,sys; d=json.load(sys.stdin); chunks=d.get('chunks',[]); print(f'chunks: {len(chunks)}'); [print(f'  {c[\"source_path\"]}: {c[\"text\"][:100]}...') for c in chunks[:3]]"
    ```
 6. Verify scope filtering works — a `knowledge_macos` scoped query should NOT return Linux man pages, and vice versa.
-7. **Do NOT run stages 2 or 3** (linux, bsd) — Linux-specific work is deferred.
-
-**Do not:**
-- Modify the staged_knowledge_embed.py script unless it has a bug
-- Restart the SourcePrep daemon during the build
-- Run stages 2 and 3
 
 **Commit:** None — this is a data build.
 

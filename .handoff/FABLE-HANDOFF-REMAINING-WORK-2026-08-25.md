@@ -10,6 +10,9 @@
 - [HANDOFF-STAGED-CODEINDEX-BUILD-2026-08-25.md](./HANDOFF-STAGED-CODEINDEX-BUILD-2026-08-25.md) — CodeIndex build plan
 - [STRATEGY-V2-SCRUTINY.md](../documentation/sovereign-host-vision/STRATEGY-V2-SCRUTINY.md) — what was built
 
+> **STOP: Read [CODEINDEX-BUILD-LOCK.txt](./CODEINDEX-BUILD-LOCK.txt) before touching anything related to SourcePrep, embeddings, or CodeIndex.**
+> A staged embedding build is IN PROGRESS. It has been restarted 3 times by AI sessions, wasting 26+ hours. DO NOT start any build, DO NOT call POST /build on the daemon, DO NOT restart the daemon. The running process (staged_knowledge_embed.py --stage 2, PID 66131) must be left alone.
+
 ---
 
 ## Context
@@ -70,10 +73,26 @@ The sovereign host v2.0 plan is complete — all 25 tasks committed and pushed, 
 
 ---
 
-## Task F2: Run CodeIndex smoke test (common only)
+## Task F2: CodeIndex smoke test — ALREADY DONE, DO NOT RE-RUN
 
-**Effort:** med
-**Lines:** 0
+**Status:** COMPLETE. Smoke test ran successfully (20 files, 4150 chunks, all reused from KnowledgeIndex).
+A full staged build (`staged_knowledge_embed.py --stage 2`, PID 66131) is NOW RUNNING and has been repeatedly killed and restarted by AI sessions, wasting 26+ hours.
+
+**DO NOT:**
+- Run `staged_knowledge_embed.py` — it's already running
+- Call `POST /projects/{id}/build` on the SourcePrep daemon — this starts a DUPLICATE build that competes with the staged script
+- Restart the SourcePrep daemon
+- Kill PID 66131 or PID 44108
+
+**Read [CODEINDEX-BUILD-LOCK.txt](./CODEINDEX-BUILD-LOCK.txt) for full details.**
+
+To check progress (read-only, safe):
+```bash
+ps -p 66131 -o pid,stat,%cpu,etime,command
+curl -s "http://localhost:8400/projects/735a592e-a2da-499b-a614-854a5fc461f5/status"
+```
+
+When the build finishes (process gone, `building=False`), verify the index has thousands of chunks and run scoped queries. Until then, hands off.
 **When:** After F1
 
 **Problem:** The SourcePrep CodeIndex for the standalone halbert project has only 98 chunks (KnowledgeIndex fallback — LLM summaries, not raw content). 245 knowledge markdown files (87MB) are staged but not embedded. The staged embed script exists but has never been run.
