@@ -4,7 +4,6 @@
     "halbert_core/halbert_core/dashboard/frontend/src/components/CompressionSettings.tsx": 16,
     "halbert_core/halbert_core/dashboard/frontend/src/components/ConfigEditor.tsx": 16,
     "halbert_core/halbert_core/dashboard/frontend/src/components/Onboarding.tsx": 7,
-    "halbert_core/halbert_core/dashboard/frontend/src/components/SidePanel.tsx": 3,
     "halbert_core/halbert_core/dashboard/frontend/src/components/agent/ContextBar.tsx": 8,
     "halbert_core/halbert_core/dashboard/frontend/src/components/agent/ScanBlock.tsx": 6,
     "halbert_core/halbert_core/dashboard/frontend/src/components/agent/StateBadge.tsx": 7,
@@ -19,7 +18,7 @@
     "halbert_core/halbert_core/dashboard/frontend/src/components/modules/VitalsModule.tsx": 2,
     "halbert_core/halbert_core/dashboard/frontend/src/components/prep-primitives/Button.tsx": 4,
     "halbert_core/halbert_core/dashboard/frontend/src/components/prep-primitives/Toggle.tsx": 1,
-    "halbert_core/halbert_core/dashboard/frontend/src/components/ui/activity-indicators.tsx": 16,
+    "halbert_core/halbert_core/dashboard/frontend/src/components/ui/activity-indicators.tsx": 7,
     "halbert_core/halbert_core/dashboard/frontend/src/components/ui/badge.tsx": 2,
     "halbert_core/halbert_core/dashboard/frontend/src/components/ui/confirm-dialog.tsx": 7,
     "halbert_core/halbert_core/dashboard/frontend/src/components/ui/model-reasoning.tsx": 13,
@@ -37,5 +36,5 @@
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Services.tsx": 10,
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Sharing.tsx": 13
   },
-  "total": 280
+  "total": 268
 }
