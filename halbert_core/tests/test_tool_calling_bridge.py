@@ -199,6 +199,24 @@ fastapi = pytest.importorskip("fastapi")
 
 class TestLLMClientAdapterTools:
 
+    @pytest.fixture(autouse=True)
+    def _configured_guide(self, monkeypatch):
+        """Give the adapter a guide model.
+
+        Without this the tests read the developer's real models.yml; on a
+        machine that has none, model resolution raises HTTPException(400)
+        before call_llm_chat is ever reached and every assertion here is
+        unreachable.
+        """
+        import halbert_core.model.client as client
+        monkeypatch.setattr(client, "get_configured_model", lambda: "guide-x")
+        monkeypatch.setattr(client, "get_ollama_endpoint", lambda: "http://ep.test")
+        monkeypatch.setattr(client, "get_specialist_model", lambda: (None, None, None))
+        monkeypatch.setattr(client, "get_vision_model",
+                            lambda: (None, "http://ep.test", "ollama"))
+        monkeypatch.setattr(client, "provider_for",
+                            lambda url, default="ollama": "ollama")
+
     @pytest.fixture
     def adapter(self):
         from halbert_core.dashboard.routes.agent import LLMClientAdapter

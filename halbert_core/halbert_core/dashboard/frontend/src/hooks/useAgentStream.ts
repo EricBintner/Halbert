@@ -128,6 +128,25 @@ export interface StreamEvent {
 // Hook
 // -----------------------------------------------------------------------------
 
+/**
+ * Which model should answer this turn.
+ *
+ * Sent per message rather than held on the server, because one agent instance
+ * is shared by every session — a selection stored server-side would leak
+ * between conversations.
+ *
+ * `tier: 'auto'` is the absence of a pin, not a third mode; it is dropped
+ * from the request body.
+ */
+export interface ModelSelection {
+  /** Exact model name. Bypasses the complexity router entirely. */
+  model?: string;
+  /** Force a tier without naming a model. */
+  tier?: 'guide' | 'specialist' | 'vision' | 'auto';
+  /** Saved-endpoint id the model came from; disambiguates identical names. */
+  endpointId?: string;
+}
+
 export interface UseAgentStreamOptions {
   onStateChange?: (state: AgentState, previousState: AgentState | null) => void;
   onToolStart?: (tool: string, args: Record<string, unknown>) => void;
@@ -144,7 +163,7 @@ export interface UseAgentStreamReturn {
   thinking: string;
   provenance: ProvenanceRef[];
   moduleInvocations: ModuleInvocation[];
-  sendMessage: (message: string, sessionId?: string) => void;
+  sendMessage: (message: string, sessionId?: string, selection?: ModelSelection) => void;
   confirmAction: (actionId: string, confirmed: boolean) => void;
   applyDiff: (diffId: string) => void;
   rejectDiff: (diffId: string) => void;
@@ -510,7 +529,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     });
   }, [options]);
 
-  const sendMessage = useCallback((message: string, sessionId?: string) => {
+  const sendMessage = useCallback((message: string, sessionId?: string, selection?: ModelSelection) => {
     // Close existing connection
     eventSourceRef.current?.close();
     
@@ -588,6 +607,13 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
         session_id: sid,
         max_tokens: maxTokens,
         temperature: temperature,
+        // Omitted entirely when the user has not pinned anything, so the
+        // backend keeps its automatic routing.
+        ...(selection?.model ? { model: selection.model } : {}),
+        ...(selection?.tier && selection.tier !== 'auto'
+          ? { tier: selection.tier }
+          : {}),
+        ...(selection?.endpointId ? { endpoint_id: selection.endpointId } : {}),
       }),
       signal: controller.signal
     }).then(async (response) => {
