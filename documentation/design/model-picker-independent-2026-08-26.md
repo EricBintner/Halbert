@@ -338,7 +338,12 @@ chat message answers.
 - Working tree: `AIAnalysisPanel.tsx`, `Apps.tsx`, `scripts/corpus_quality_gate.py`,
   `data/quality_gate_report*.json`, `.handoff/HANDOFF-SCOPE-FILTER-REVIEW-*` belong to a
   concurrent session — never staged by this work. All commits use explicit pathspecs.
-  The in-progress hunks in the six LLM files are replaced by this work.
+- Baseline: the partial frontend work (Vision card inside the vendored
+  `AIModelsSettings`, always-visible `UnifiedLLMSettings`) was swept into `main` by a
+  concurrent session's commits `2cf9f01` / `0ebb2db`; do not revert it — this design
+  deletes those files. The matching backend hunks (`vision_model` default in
+  `routes/llm.py`, `vision_model` read in `model/client.py`) are still uncommitted and are
+  superseded by the store module; overwrite, don't preserve.
 - Copy rule for every string added: no AI model names, no "SourcePrep".
 
 ## 11. Follow-ups (explicitly not in this pass)
