@@ -382,10 +382,35 @@ Flagged rather than decided:
    files. All 50 that clashed outright are fixed; the rest are saturated status
    colours that read off-brand but stay legible, and
    `scripts/check_literal_colors.py` ratchets them so the count cannot grow.
-2. **`Fraunces` and `Space Grotesk` are still not loaded in the desktop app**,
-   which sets Karla. The triad is registered as `font-display` / `font-grotesk`,
-   so type can be adopted deliberately rather than shifting under the repaint.
-   The colour identity has landed; the typographic one has not.
-3. **Web fonts are not self-hosted.** For a local-first, sovereign-host product,
-   pulling faces from a CDN at runtime is a posture inconsistency worth
-   resolving before launch.
+2. ~~**`Fraunces` and `Space Grotesk` are not loaded in the desktop app.**~~
+   **Resolved 2026-08-26** — Karla is gone and the triad is live. Fraunces
+   ships with its optical-size axis intact and `font-optical-sizing: auto`, so
+   headings redraw for the size they are rendered at; pinning one cut would
+   have been visibly wrong at the 24–30px the app actually uses (measured: 11%
+   narrower stems and thinned serifs at the 144pt cut).
+3. ~~**Web fonts are not self-hosted.**~~ **Resolved 2026-08-26** — all three
+   families are vendored under `/shared-tokens/fonts`, served by the product,
+   and recorded as OFL-1.1 Modified Versions in
+   [THIRD-PARTY-LICENSES.md §3.6](file:///Volumes/4TB-BAD/Halbert/documentation/legal/THIRD-PARTY-LICENSES.md).
+   Nothing fetches a font at runtime any more, which the packaged desktop app
+   needed regardless of posture.
+
+### Still open
+
+- **Micro-labels are not yet on the mono pillar.** §4 requires the small
+  uppercase captions to be mono, `--tracking-label`, and tertiary ink. The
+  Tailwind keys now exist, but roughly 18 label sites in the dashboard still
+  use the sans face. Headline telemetry and the probe percentiles were
+  converted; the long tail was not.
+- **760 literal Tailwind palette classes** still bypass the theme across 58
+  files, tracked and ratcheted by `scripts/check_literal_colors.py`. All the
+  ones that clashed outright are fixed; the remainder read off-brand rather
+  than broken.
+- **Space Grotesk ships no italic cut.** The nine italic sites in the dashboard
+  render a browser-synthesised oblique. Acceptable, but it is a real fidelity
+  loss and worth knowing before anyone files it as a bug.
+- **`tauri.conf.json` still declares `"license": "GPL-3.0-or-later"`.** For the
+  `.deb`/`.rpm` targets that field lands in package metadata, and the bundle now
+  also contains OFL-1.1 files. Whether to write `GPL-3.0-or-later AND OFL-1.1`
+  there is a founder call, not a mechanical one — `tests/test_legal_metadata.py`
+  asserts the current value.
