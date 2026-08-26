@@ -81,10 +81,11 @@ class IntakePipeline:
             complexity_router: the ComplexityRouter instance.
             budget_fn: callable that takes a model name and returns a ContextBudget.
                 Typically `get_context_budget` from intake.budget.
-            model_config: dict with keys:
-                - orchestrator.model: the guide model name
-                - specialist.model: the specialist model name
-                - specialist.enabled: bool
+            model_config: the whole models.yml dict (post-migration, from
+                model.llm_config.load_file()). Reads:
+                - llm_config.chat_model.model
+                - llm_config.specialist_model.{enabled,model}
+                - llm_config.vision_model.{enabled,model}
                 - routing.complexity_threshold: int (default 3)
         """
         self._router = complexity_router
@@ -103,9 +104,13 @@ class IntakePipeline:
         complexity = self._router.assess(message, signals)
 
         # ── Stage 3: Model selection + budget ─────────────────────
+        llm = self._model_config.get("llm_config") or {}
+        chat = llm.get("chat_model") or {}
+        specialist = llm.get("specialist_model") or {}
+        vision = llm.get("vision_model") or {}
         threshold = self._model_config.get("routing", {}).get("complexity_threshold", 3)
-        specialist_enabled = self._model_config.get("specialist", {}).get("enabled", False)
-        vision_model_name = self._model_config.get("vision", {}).get("model", "")
+        specialist_enabled = bool(specialist.get("enabled")) and bool(specialist.get("model"))
+        vision_model_name = vision.get("model", "") if vision.get("enabled") else ""
 
         if signals.has_images and vision_model_name:
             # Vision takes priority — image content requires a multimodal model
@@ -113,10 +118,10 @@ class IntakePipeline:
             model_name = vision_model_name
         elif complexity.score >= threshold and specialist_enabled:
             recommended_model_name = "specialist"
-            model_name = self._model_config.get("specialist", {}).get("model", "")
+            model_name = specialist.get("model", "")
         else:
             recommended_model_name = "guide"
-            model_name = self._model_config.get("orchestrator", {}).get("model", "")
+            model_name = chat.get("model", "")
 
         budget = self._budget_fn(model_name)
 

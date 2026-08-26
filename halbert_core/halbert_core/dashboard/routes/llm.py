@@ -1,29 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
-Halbert LLM Router — unified model picker backend.
-
-Provides the API endpoints consumed by the vendored @prep/ui AIModelsSettings
-component. The config is stored in models.yml using the unified LLMConfig
-schema (shared with SourcePrep).
+Halbert LLM Router — model picker backend.
 
 Endpoints:
-  Global Config:
-    - GET  /global/config          — read the full UI config (llm_config key)
-    - PUT  /global/config          — merge-update global config
+  Config:
+    - GET  /llm/config             — Halbert's llm_config + chat-capable provider list
+    - PUT  /llm/config             — merge-update (whole slots)
 
-  LLM Proxy (model fetching & testing):
+  LLM Proxy (model listing & testing, all providers):
     - POST /api/llm/proxy/models       — list models from an endpoint
     - POST /api/llm/proxy/test         — test endpoint connectivity
     - POST /api/llm/proxy/test-model   — test a specific model
-    - GET  /llm/plan-limits            — plan limits table (stub)
-
-  Embedding:
-    - GET  /embedding/status       — embedding model status
-    - POST /embedding/download     — download HF embedding model
-
-  LLM Status:
-    - GET  /llm/slots/status       — per-slot connectivity (stub)
+    - GET  /api/llm/discover           — probe local Ollama / LM Studio
 """
 
 from __future__ import annotations
@@ -31,17 +20,14 @@ from __future__ import annotations
 import ipaddress
 import logging
 import socket
-import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 import requests
-import yaml
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-
-from ...utils.platform import get_config_dir
 
 logger = logging.getLogger("halbert.dashboard")
 
@@ -75,6 +61,32 @@ def _annotate_license(detail: Dict[str, Any], license_text: Optional[str] = None
 # ── SSRF Protection ──────────────────────────────────────────────
 
 _ALLOWED_LOCAL_PORTS = {11434, 1234, 1235}  # Ollama, LM Studio
+
+_ANTHROPIC_VERSION = "2023-06-01"
+
+
+def _cloud_auth_headers(provider: str, api_key: Optional[str]) -> Dict[str, str]:
+    """Auth headers for a cloud provider's list/test calls.
+
+    Anthropic authenticates with ``x-api-key`` and requires a version header;
+    sending it a Bearer token — as every branch in this file used to — is a
+    guaranteed 401, which is what made "Test Key" fail for Anthropic while
+    reporting only an opaque HTTP status.
+    """
+    if not api_key:
+        return {}
+    if provider == "anthropic":
+        return {
+            "x-api-key": api_key,
+            "anthropic-version": _ANTHROPIC_VERSION,
+        }
+    return {"Authorization": f"Bearer {api_key}"}
+
+
+def _openai_style_base(url: str) -> str:
+    """``{url}/v1`` unless the user already pasted a /v1 suffix."""
+    base = (url or "").rstrip("/")
+    return base if "v1" in base else f"{base}/v1"
 
 
 def is_safe_url(url: str, provider: str) -> bool:
@@ -112,139 +124,46 @@ def is_safe_url(url: str, provider: str) -> bool:
         return False
 
 
-# ── ConfigStore (YAML-based) ─────────────────────────────────────
+# ── Config (single owner: halbert_core.model.llm_config) ─────────
+
+from ...model import llm_config as llm_store
 
 
-def _config_path() -> "Any":
-    """Path to models.yml — the unified LLM config store."""
-    return get_config_dir() / "models.yml"
+class LLMConfigUpdate(BaseModel):
+    llm_config: Dict[str, Any]
 
 
-def _default_llm_config() -> Dict[str, Any]:
-    """Default LLMConfig schema (matches @prep/ui types)."""
+def _config_payload() -> Dict[str, Any]:
+    from ...model.client import CHAT_CAPABLE_PROVIDERS
     return {
-        "assignment_mode": "structured",
-        "embedding": {
-            "source": "endpoint",
-        },
-        "small_model": {"enabled": False},
-        "large_model": {"enabled": False},
-        "code_model": {"enabled": False},
-        "coordinator_model": {"enabled": False, "inherit_from_large": True},
-        "advanced": {
-            "enforce_cloud_token_safety": True,
-            "max_thinking_budget": 24576,
-            # On-demand Ollama Cloud tags probed by /api/llm/proxy/cloud-models.
-            # Halbert ships no built-in list; users add tags here.
-            "ollama_cloud_candidates": [],
-        },
-        "saved_endpoints": [],
+        "llm_config": llm_store.load(),
+        "chat_capable_providers": sorted(CHAT_CAPABLE_PROVIDERS),
     }
 
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    """Recursively merge override into base (in-place on base)."""
-    for key, val in override.items():
-        if (
-            key in base
-            and isinstance(base[key], dict)
-            and isinstance(val, dict)
-        ):
-            _deep_merge(base[key], val)
-        else:
-            base[key] = val
-    return base
+@router.get("/llm/config")
+def get_llm_config() -> Dict[str, Any]:
+    """Halbert's model configuration. On a fresh install, adds Local Ollama when it answers."""
+    llm_store.ensure_local_ollama_endpoint()
+    return {"data": _config_payload()}
 
 
-def load_llm_config() -> Dict[str, Any]:
-    """Load the LLM config from models.yml, merged with defaults."""
-    cfg = _default_llm_config()
-    path = _config_path()
-    if path.exists():
-        try:
-            with open(path, "r") as f:
-                data = yaml.safe_load(f) or {}
-            # The llm_config may be stored at top level or under 'llm_config' key
-            llm_data = data.get("llm_config", data)
-            if isinstance(llm_data, dict):
-                _deep_merge(cfg, llm_data)
-        except Exception as e:
-            logger.warning("Failed to load models.yml: %s", e)
-    return cfg
-
-
-def save_llm_config(llm_cfg: Dict[str, Any]) -> None:
-    """Save the LLM config to models.yml.
-
-    Preserves any non-LLM keys (orchestrator, specialist, routing, etc.)
-    that Halbert's legacy settings.py wrote to the same file.
-    """
-    path = _config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Load existing file to preserve non-LLM keys
-    existing: Dict[str, Any] = {}
-    if path.exists():
-        try:
-            with open(path, "r") as f:
-                existing = yaml.safe_load(f) or {}
-        except Exception:
-            existing = {}
-
-    existing["llm_config"] = llm_cfg
-    with open(path, "w") as f:
-        yaml.dump(existing, f, default_flow_style=False)
-
-
-def load_full_ui_config() -> Dict[str, Any]:
-    """Load the full UI config (for GET /global/config compatibility).
-
-    Returns the entire models.yml content plus a computed llm_config key.
-    """
-    path = _config_path()
-    cfg: Dict[str, Any] = {}
-    if path.exists():
-        try:
-            with open(path, "r") as f:
-                cfg = yaml.safe_load(f) or {}
-        except Exception:
-            cfg = {}
-
-    # Ensure llm_config is present and merged with defaults
-    if "llm_config" not in cfg or not isinstance(cfg["llm_config"], dict):
-        cfg["llm_config"] = _default_llm_config()
-    else:
-        merged = _default_llm_config()
-        _deep_merge(merged, cfg["llm_config"])
-        cfg["llm_config"] = merged
-
-    return cfg
-
-
-def save_full_ui_config(updates: Dict[str, Any]) -> List[str]:
-    """Merge-update the full UI config (for PUT /global/config).
-
-    Returns a list of warnings (currently always empty — no plan-tier
-    validation in Halbert).
-    """
-    path = _config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    current = load_full_ui_config()
-
-    # Deep merge the incoming updates
-    _deep_merge(current, updates)
-
-    # If llm_config was in the update, ensure it has defaults
-    if "llm_config" in current and isinstance(current["llm_config"], dict):
-        merged = _default_llm_config()
-        _deep_merge(merged, current["llm_config"])
-        current["llm_config"] = merged
-
-    with open(path, "w") as f:
-        yaml.dump(current, f, default_flow_style=False)
-
-    return []
+@router.put("/llm/config")
+def update_llm_config(body: LLMConfigUpdate):
+    """Deep-merge a partial llm_config (callers send whole slots) and return the saved result."""
+    try:
+        llm_store.update(body.llm_config)
+    except llm_store.SlotProviderError as e:
+        return JSONResponse(
+            status_code=422,
+            content={"error": {
+                "code": "PROVIDER_NOT_CHAT_CAPABLE",
+                "slot": e.slot,
+                "provider": e.provider,
+                "message": str(e),
+            }},
+        )
+    return {"data": _config_payload()}
 
 
 # ── Pydantic Request Models ──────────────────────────────────────
@@ -262,32 +181,7 @@ class LLMModelTestRequest(BaseModel):
     url: str
     model: str
     api_key: Optional[str] = None
-    kind: str = "completion"
     slot: Optional[str] = None
-
-
-# ── Global Config Endpoints ──────────────────────────────────────
-
-
-@router.get("/global/config")
-def get_global_config() -> Dict[str, Any]:
-    """Get global UI configuration (includes llm_config)."""
-    return {"data": load_full_ui_config()}
-
-
-@router.put("/global/config")
-async def update_global_config(req: Request) -> Dict[str, Any]:
-    """Update global UI configuration (merge update)."""
-    try:
-        data = await req.json()
-    except Exception:
-        return {"error": {"code": "INVALID_JSON", "message": "Invalid JSON body"}}
-
-    if not isinstance(data, dict):
-        return {"error": {"code": "VALIDATION_ERROR", "message": "Config must be a JSON object"}}
-
-    warnings = save_full_ui_config(data)
-    return {"data": load_full_ui_config(), "warnings": warnings}
 
 
 # ── LLM Proxy Endpoints ──────────────────────────────────────────
@@ -384,13 +278,8 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                         _annotate_license(md, license_text=show["license"])
 
         elif req.provider in ("openai", "openai-compatible", "lm-studio", "anthropic"):
-            headers = {}
-            if req.api_key:
-                headers["Authorization"] = f"Bearer {req.api_key}"
-
-            target = f"{url}/models"
-            if "v1" not in url and req.provider != "anthropic":
-                target = f"{url}/v1/models"
+            headers = _cloud_auth_headers(req.provider, req.api_key)
+            target = f"{_openai_style_base(url)}/models"
 
             r = requests.get(target, headers=headers, timeout=5)
             if r.status_code == 200:
@@ -464,101 +353,6 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
     return {"data": {"models": models, "model_details": model_details}}
 
 
-# ── Ollama Cloud model discovery ─────────────────────────────────
-
-def _ollama_cloud_candidates() -> tuple[str, ...]:
-    """Candidate Ollama Cloud model tags to probe via /api/show.
-
-    Read at request time from the user's llm config
-    (``advanced.ollama_cloud_candidates``); Halbert ships no built-in
-    list, so the default is empty. Each candidate costs one /api/show
-    call, so keep the configured list bounded. Inaccessible candidates
-    are pruned by /api/show.
-    """
-    raw = load_llm_config().get("advanced", {}).get("ollama_cloud_candidates", [])
-    if not isinstance(raw, (list, tuple)):
-        return ()
-    seen: set = set()
-    out: List[str] = []
-    for item in raw:
-        tag = str(item).strip() if item is not None else ""
-        if tag and tag not in seen:
-            seen.add(tag)
-            out.append(tag)
-    return tuple(out)
-
-
-# In-memory probe cache keyed by (url, candidate_tuple) with a 5-min TTL.
-_cloud_probe_cache: Dict[tuple, tuple] = {}
-_CLOUD_PROBE_TTL_SEC = 300.0
-
-
-@router.post("/api/llm/proxy/cloud-models")
-def proxy_cloud_models(req: LLMProxyRequest) -> Dict[str, Any]:
-    """List on-demand Ollama Cloud models not in /api/tags.
-
-    Candidates come from ``advanced.ollama_cloud_candidates`` in the
-    user's llm config (empty by default). Probes each candidate via
-    /api/show (concurrent, max 8 in flight), returns only those Ollama
-    actually serves, minus any already in /api/tags. Non-Ollama
-    providers return empty.
-    """
-    url = req.url.rstrip("/")
-    if not is_safe_url(url, req.provider):
-        return {"data": {"cloud_models": [], "cloud_model_details": [], "error": "Invalid or unsafe URL"}}
-
-    if req.provider != "ollama":
-        return {"data": {"cloud_models": [], "cloud_model_details": []}}
-
-    all_candidates = _ollama_cloud_candidates()
-    if not all_candidates:
-        return {"data": {"cloud_models": [], "cloud_model_details": []}}
-
-    cache_key = (url, all_candidates)
-    now = time.monotonic()
-    cached = _cloud_probe_cache.get(cache_key)
-    if cached and (now - cached[0]) < _CLOUD_PROBE_TTL_SEC:
-        return {"data": cached[1]}
-
-    # Subscribed set from /api/tags — dedupe so we don't surface models
-    # the picker already shows.
-    subscribed: set = set()
-    try:
-        tags_r = requests.get(f"{url}/api/tags", timeout=5)
-        if tags_r.status_code == 200:
-            for m in tags_r.json().get("models", []):
-                if isinstance(m, dict) and m.get("name"):
-                    subscribed.add(str(m["name"]))
-    except Exception:
-        pass
-
-    candidates = [c for c in all_candidates if c not in subscribed]
-
-    cloud_models: List[str] = []
-    cloud_model_details: List[Dict[str, Any]] = []
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        shows = list(pool.map(lambda name: _ollama_show_detail(url, name), candidates))
-
-    for name, show in zip(candidates, shows):
-        if not show:
-            continue
-        cloud_models.append(name)
-        detail: Dict[str, Any] = {
-            "name": name,
-            "cost_tier": "Cloud (on-demand)",
-            "on_demand_cloud": True,
-        }
-        if show.get("context_tokens", 0) > 0:
-            detail["context_tokens"] = show["context_tokens"]
-            detail["context_window"] = show["context_window"]
-        cloud_model_details.append(detail)
-
-    payload = {"cloud_models": cloud_models, "cloud_model_details": cloud_model_details}
-    _cloud_probe_cache[cache_key] = (now, payload)
-    return {"data": payload}
-
-
 @router.post("/api/llm/proxy/test")
 def proxy_test(req: LLMProxyRequest) -> Dict[str, Any]:
     """Test endpoint connectivity."""
@@ -599,13 +393,8 @@ def proxy_test(req: LLMProxyRequest) -> Dict[str, Any]:
                 message = f"HTTP {r.status_code}: {r.text[:100]}"
 
         else:
-            headers = {}
-            if req.api_key:
-                headers["Authorization"] = f"Bearer {req.api_key}"
-
-            target = f"{url}/models"
-            if "v1" not in url and req.provider != "anthropic":
-                target = f"{url}/v1/models"
+            headers = _cloud_auth_headers(req.provider, req.api_key)
+            target = f"{_openai_style_base(url)}/models"
 
             r = requests.get(target, headers=headers, timeout=5)
             if r.status_code == 200:
@@ -635,23 +424,7 @@ def proxy_test_model(req: LLMModelTestRequest) -> Dict[str, Any]:
 
     try:
         if req.provider == "ollama":
-            if req.kind == "embedding":
-                try:
-                    r = requests.post(
-                        f"{url}/api/embeddings",
-                        json={"model": req.model, "prompt": "Test embedding"},
-                        timeout=120,
-                    )
-                    if r.status_code == 200:
-                        success = True
-                        message = "Model responded successfully"
-                        model_status_str = "ready"
-                    else:
-                        message = f"HTTP {r.status_code}: {r.text[:100]}"
-                except requests.Timeout:
-                    message = f"Model '{req.model}' timed out (may still be loading)"
-                    model_status_str = "loading"
-            else:
+            if True:
                 # Check if model is loaded
                 try:
                     ps = requests.get(f"{url}/api/ps", timeout=5)
@@ -721,21 +494,33 @@ def proxy_test_model(req: LLMModelTestRequest) -> Dict[str, Any]:
             except requests.Timeout:
                 message = f"Model '{req.model}' timed out"
 
-        elif req.provider in ("openai", "openai-compatible", "lm-studio"):
-            headers = {}
-            if req.api_key:
-                headers["Authorization"] = f"Bearer {req.api_key}"
-
-            base = url if "v1" in url else f"{url}/v1"
-
-            if req.kind == "embedding":
-                r = requests.post(
-                    f"{base}/embeddings",
-                    headers=headers,
-                    json={"model": req.model, "input": "Test"},
-                    timeout=30,
-                )
+        elif req.provider == "anthropic":
+            # Previously unhandled: an anthropic test-model request matched no
+            # branch and fell through to `success: false` with an empty message.
+            headers = _cloud_auth_headers(req.provider, req.api_key)
+            headers["content-type"] = "application/json"
+            r = requests.post(
+                f"{_openai_style_base(url)}/messages",
+                headers=headers,
+                json={
+                    "model": req.model,
+                    "max_tokens": 5,
+                    "messages": [{"role": "user", "content": "Hi"}],
+                },
+                timeout=30,
+            )
+            if r.status_code == 200:
+                success = True
+                message = "Model responded successfully"
+                model_status_str = "ready"
             else:
+                message = f"HTTP {r.status_code}: {r.text[:100]}"
+
+        elif req.provider in ("openai", "openai-compatible", "lm-studio"):
+            headers = _cloud_auth_headers(req.provider, req.api_key)
+            base = _openai_style_base(url)
+
+            if True:
                 r = requests.post(
                     f"{base}/chat/completions",
                     headers=headers,
@@ -767,50 +552,99 @@ def proxy_test_model(req: LLMModelTestRequest) -> Dict[str, Any]:
     }}
 
 
-# ── Plan Limits (stub — Halbert doesn't have concurrency_limits.json) ──
+# ── Local engine discovery (E-4) ─────────────────────────────────────────
+#
+# The frontend cannot probe localhost itself: served from
+# http://localhost:8000 in a browser, a fetch to :11434 is cross-origin and
+# fails whenever OLLAMA_ORIGINS is restricted. Probing from the server's own
+# loopback interface sidesteps CORS entirely and works identically in the
+# Tauri shell and the browser dashboard.
+
+# Connect and read budgets. `requests` applies a scalar timeout to BOTH
+# phases, so the tuple form is what actually bounds a probe. The connect
+# budget is the one that matters for "is anything listening" — a closed port
+# refuses immediately, so a slow connect means nothing is there. The read
+# budget is looser because a *running* daemon with many models can take
+# longer than half a second to enumerate them, and reporting a live engine as
+# offline is the worse failure.
+_DISCOVER_TIMEOUT = (0.5, 2.0)
+
+# Ports are fixed on purpose: no user-supplied host reaches this route, so
+# is_safe_url's early-return for local providers cannot be turned into an
+# SSRF primitive here.
+OLLAMA_DISCOVERY_URL = "http://localhost:11434"
+LM_STUDIO_DISCOVERY_URL = "http://localhost:1234"
 
 
-@router.get("/llm/plan-limits")
-def get_plan_limits() -> Dict[str, Any]:
-    """Plan limits table — stub for Halbert (no cloud concurrency management)."""
-    return {"data": {"version": 1, "providers": {}}}
+def _probe_ollama(url: str = OLLAMA_DISCOVERY_URL) -> Dict[str, Any]:
+    """Probe a local Ollama daemon. Never raises."""
+    result: Dict[str, Any] = {
+        "running": False, "url": url, "version": None, "models": [],
+    }
+    try:
+        r = requests.get(f"{url}/api/version", timeout=_DISCOVER_TIMEOUT)
+        if r.status_code != 200:
+            return result
+        result["running"] = True
+        result["version"] = (r.json() or {}).get("version")
+    except Exception as e:
+        logger.debug(f"Ollama discovery probe failed: {e}")
+        return result
+
+    try:
+        r = requests.get(f"{url}/api/tags", timeout=_DISCOVER_TIMEOUT)
+        if r.status_code == 200:
+            result["models"] = [
+                m["name"] for m in (r.json() or {}).get("models", [])
+                if isinstance(m, dict) and m.get("name")
+            ]
+    except Exception as e:
+        # Reachable but slow to enumerate: still running, just no list.
+        logger.debug(f"Ollama tag listing failed: {e}")
+
+    return result
 
 
-# ── Embedding Status ─────────────────────────────────────────────
+def _probe_lm_studio(url: str = LM_STUDIO_DISCOVERY_URL) -> Dict[str, Any]:
+    """Probe a local LM Studio server. Never raises.
+
+    LM Studio has no version endpoint, so the model list doubles as the
+    liveness check.
+    """
+    result: Dict[str, Any] = {"running": False, "url": url, "models": []}
+    try:
+        r = requests.get(f"{url}/v1/models", timeout=_DISCOVER_TIMEOUT)
+        if r.status_code != 200:
+            return result
+        result["running"] = True
+        result["models"] = [
+            m["id"] for m in (r.json() or {}).get("data", [])
+            if isinstance(m, dict) and m.get("id")
+        ]
+    except Exception as e:
+        logger.debug(f"LM Studio discovery probe failed: {e}")
+    return result
 
 
-@router.get("/embedding/status")
-def embedding_status() -> Dict[str, Any]:
-    """Embedding model status."""
-    cfg = load_llm_config()
-    emb = cfg.get("embedding", {})
-    return {"data": {
-        "source": emb.get("source", "endpoint"),
-        "endpoint_id": emb.get("endpoint_id"),
-        "model": emb.get("model"),
-        "hf_repo_id": emb.get("hf_repo_id"),
-        "hf_downloaded": emb.get("hf_downloaded", False),
-        "hf_download_progress": emb.get("hf_download_progress"),
-    }}
+@router.get("/api/llm/discover")
+def discover_local_engines() -> Dict[str, Any]:
+    """Probe the standard local inference ports.
 
+    The two probes run concurrently, so a dead port never adds its timeout to
+    a live one's latency. Deliberately read-only: it reports what is running
+    and does not register an endpoint in models.yml, because two
+    saved_endpoints lists exist in that file and auto-writing to the wrong one
+    creates the duplicates this redesign is removing.
+    """
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ollama_future = pool.submit(_probe_ollama)
+        lm_studio_future = pool.submit(_probe_lm_studio)
+        ollama = ollama_future.result()
+        lm_studio = lm_studio_future.result()
 
-@router.post("/embedding/download")
-def embedding_download() -> Dict[str, Any]:
-    """Download HF embedding model — stub (Halbert uses endpoint-based embeddings)."""
-    return {"data": {"status": "not_implemented", "message": "Use endpoint-based embeddings in Halbert."}}
-
-
-# ── LLM Slots Status (stub — Halbert has no pipeline scheduler) ──
-
-
-@router.get("/llm/slots/status")
-def get_llm_slots_status() -> Dict[str, Any]:
-    """Per-slot connectivity status — stub for Halbert."""
-    cfg = load_llm_config()
-    return {"data": {
-        "assignment_mode": cfg.get("assignment_mode", "structured"),
-        "embedding": {"status": "unknown"},
-        "small_model": {"status": "unknown"},
-        "large_model": {"status": "unknown"},
-        "code_model": {"status": "unknown"},
-    }}
+    logger.info(
+        f"Local engine discovery: ollama={ollama['running']} "
+        f"({len(ollama['models'])} models), "
+        f"lm_studio={lm_studio['running']} ({len(lm_studio['models'])} models)"
+    )
+    return {"data": {"ollama": ollama, "lm_studio": lm_studio}}

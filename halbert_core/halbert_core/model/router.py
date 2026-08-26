@@ -103,6 +103,8 @@ class ModelRouter:
         # Track active models
         self.orchestrator_id: Optional[str] = None
         self.specialist_id: Optional[str] = None
+        self._orchestrator_config: Dict[str, Any] = {}
+        self._specialist_config: Dict[str, Any] = {}
         
         # Initialize context handoff engine (Phase 5 M2)
         handoff_strategy = self.config.get("handoff", {}).get("strategy", "summarized")
@@ -126,39 +128,30 @@ class ModelRouter:
         })
     
     def _load_config(self) -> Dict[str, Any]:
-        """Load router configuration from file."""
+        """Load router configuration (llm_config migrated + normalised; see model.llm_config)."""
+        from . import llm_config as llm_store
+        raw: Dict[str, Any] = {}
         if self.config_path.exists():
             try:
                 with open(self.config_path, 'r') as f:
-                    config = yaml.safe_load(f)
+                    raw = yaml.safe_load(f) or {}
                 logger.info(f"Loaded router config from {self.config_path}")
-                return config
             except Exception as e:
                 logger.warning(f"Failed to load config: {e}. Using defaults.")
-        
-        # Default configuration
-        return {
-            "orchestrator": {
-                "model": None,  # no built-in default; configure in models.yml
-                "provider": "ollama",
-                "always_loaded": True
-            },
-            "specialist": {
-                "enabled": False,
-                "model": None,
-                "provider": "ollama",
-                "load_strategy": "on_demand"
-            },
-            "routing": {
-                "strategy": "auto",
-                "prefer_specialist_for": ["code_generation", "code_analysis"]
-            },
-            "handoff": {
-                "strategy": "summarized",
-                "max_context_tokens": 4096,
-                "include_rag": True
+                raw = {}
+        if not raw:
+            raw = {
+                "routing": {
+                    "strategy": "auto",
+                    "prefer_specialist_for": ["code_generation", "code_analysis"]
+                },
+                "handoff": {
+                    "strategy": "summarized",
+                    "max_context_tokens": 4096,
+                    "include_rag": True
+                }
             }
-        }
+        return llm_store.normalise_file(raw)
     
     def _init_providers(self):
         """
@@ -195,22 +188,18 @@ class ModelRouter:
             logger.debug(f"MLX provider not available: {e}")
     
     def _load_configured_models(self):
-        """Load models specified in configuration."""
-        # Load orchestrator/guide config
-        orch_config = self.config.get("orchestrator", {})
-        if orch_config.get("model"):
-            self.orchestrator_id = orch_config["model"]
-            # Store the full config including endpoint
-            self._orchestrator_config = orch_config
-            logger.info(f"Orchestrator configured: {self.orchestrator_id} at {orch_config.get('endpoint', 'default')}")
-        
-        # Load specialist config (if enabled)
-        spec_config = self.config.get("specialist", {})
-        if spec_config.get("enabled") and spec_config.get("model"):
-            self.specialist_id = spec_config["model"]
-            # Store the full config including endpoint
-            self._specialist_config = spec_config
-            logger.info(f"Specialist configured: {self.specialist_id} at {spec_config.get('endpoint', 'default')}")
+        """Resolve the chat and specialist slots from llm_config."""
+        from . import llm_config as llm_store
+        chat = llm_store.resolve_from(self.config, "chat_model")
+        if chat:
+            self.orchestrator_id = chat.model
+            self._orchestrator_config = {"model": chat.model, "provider": chat.provider, "endpoint": chat.url}
+            logger.info(f"Orchestrator configured: {self.orchestrator_id} at {chat.url}")
+        spec = llm_store.resolve_from(self.config, "specialist_model")
+        if spec:
+            self.specialist_id = spec.model
+            self._specialist_config = {"model": spec.model, "provider": spec.provider, "endpoint": spec.url}
+            logger.info(f"Specialist configured: {self.specialist_id} at {spec.url}")
     
     def generate(
         self,
@@ -472,8 +461,8 @@ class ModelRouter:
             Tuple of (model_id, provider_name, endpoint_url)
         """
         strategy = self.config.get("routing", {}).get("strategy", "auto")
-        orch_config = self.config.get("orchestrator", {})
-        spec_config = self.config.get("specialist", {})
+        orch_config = self._orchestrator_config
+        spec_config = self._specialist_config
         
         # Force orchestrator-only mode
         if strategy == "orchestrator_only":
@@ -484,7 +473,7 @@ class ModelRouter:
             )
         
         # Check if specialist is available and should be used
-        specialist_available = spec_config.get("enabled") and self.specialist_id
+        specialist_available = bool(self.specialist_id)
         
         if specialist_available:
             # Tasks that benefit from specialist
@@ -541,13 +530,13 @@ class ModelRouter:
             "orchestrator": {
                 "model_id": self.orchestrator_id,
                 "loaded": self._is_model_loaded(self.orchestrator_id),
-                "provider": self.config.get("orchestrator", {}).get("provider")
+                "provider": self._orchestrator_config.get("provider")
             },
             "specialist": {
                 "model_id": self.specialist_id,
                 "loaded": self._is_model_loaded(self.specialist_id),
-                "provider": self.config.get("specialist", {}).get("provider"),
-                "enabled": self.config.get("specialist", {}).get("enabled", False)
+                "provider": self._specialist_config.get("provider"),
+                "enabled": bool(self.specialist_id)
             },
             "providers": {
                 name: provider.health_check()
@@ -578,18 +567,21 @@ class ModelRouter:
         if self.specialist_id and provider_name in self.providers:
             old_provider = self.providers[provider_name]
             old_provider.unload_model(self.specialist_id)
-        
-        # Update config
+
+        # Update via the store
+        from . import llm_config as llm_store
+        cfg = llm_store.load()
+        ep_id = ""
+        for ep in cfg["saved_endpoints"]:
+            if ep.get("provider") == provider_name:
+                ep_id = ep["id"]
+                break
+        llm_store.set_slot("specialist_model", model_id, ep_id)
         self.specialist_id = model_id
-        self.config["specialist"]["model"] = model_id
-        self.config["specialist"]["provider"] = provider_name
-        self.config["specialist"]["enabled"] = True
-        
-        # Save config
-        self._save_config()
-        
+        self._specialist_config = {"model": model_id, "provider": provider_name, "endpoint": ""}
+
         logger.info(f"Specialist changed to: {model_id}")
-    
+
     def disable_specialist(self):
         """Disable specialist model (orchestrator-only mode)."""
         # Unload specialist
@@ -597,20 +589,12 @@ class ModelRouter:
             for provider in self.providers.values():
                 if provider.is_loaded(self.specialist_id):
                     provider.unload_model(self.specialist_id)
-        
-        self.config["specialist"]["enabled"] = False
-        self._save_config()
+
+        from . import llm_config as llm_store
+        cfg = llm_store.load()
+        slot = cfg.get("specialist_model") or {}
+        llm_store.update({"specialist_model": {"enabled": False, "endpoint_id": slot.get("endpoint_id", ""), "model": slot.get("model", "")}})
+        self.specialist_id = None
+        self._specialist_config = {}
         
         logger.info("Specialist disabled, using orchestrator-only mode")
-    
-    def _save_config(self):
-        """Save configuration to file."""
-        try:
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(self.config_path, 'w') as f:
-                yaml.safe_dump(self.config, f, default_flow_style=False)
-            
-            logger.debug("Saved router configuration")
-        except Exception as e:
-            logger.error(f"Failed to save config: {e}")
