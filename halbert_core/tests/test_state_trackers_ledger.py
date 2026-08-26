@@ -14,16 +14,16 @@ from halbert_core.integrations.state_trackers import (
 
 @pytest.fixture
 def ledger(tmp_path):
-    """A real TemporalStateLedger on a temp db — never the shared default."""
-    from haloysius.memory_v2 import get_state_ledger
+    """Halbert's own StateStore on a temp db (handoff R1)."""
+    from halbert_core.continuity import StateStore
 
-    led = get_state_ledger(str(tmp_path / "ledger.db"))
+    led = StateStore(db_path=str(tmp_path / "state.db"))
     yield led
     led.close()
 
 
-def _current(ledger, persona_id="halbert"):
-    return {(t.subject, t.predicate): t.object for t in ledger.get_current(persona_id)}
+def _current(ledger):
+    return {(t.subject, t.predicate): t.object for t in ledger.current_state()}
 
 
 class TestDiskHealthTracker:
@@ -36,10 +36,10 @@ class TestDiskHealthTracker:
         t = DiskHealthTracker(ledger=ledger)
         t.update_health("/dev/sda1", "healthy")
         t.update_health("/dev/sda1", "failing")
-        cur = ledger.get_current("halbert")
+        cur = ledger.current_state()
         assert len(cur) == 1
         assert cur[0].object == "failing"
-        hist = ledger.get_history("halbert", "disk:/dev/sda1", "disk_health")
+        hist = ledger.state_history("disk:/dev/sda1", "disk_health")
         assert [h.object for h in hist] == ["healthy", "failing"]
         assert hist[0].valid_to is not None   # old value closed out
         assert hist[1].valid_to is None       # new value is live
@@ -47,7 +47,7 @@ class TestDiskHealthTracker:
     def test_source_carries_provenance(self, ledger):
         t = DiskHealthTracker(ledger=ledger)
         t.update_health("/dev/sda1", "healthy")
-        assert ledger.get_current("halbert")[0].source == "state_tracker:disk_health"
+        assert ledger.current_state()[0].source == "state_tracker:disk_health"
 
     def test_no_ledger_is_a_silent_noop(self):
         t = DiskHealthTracker()          # ledger=None
@@ -55,7 +55,7 @@ class TestDiskHealthTracker:
 
     def test_a_broken_ledger_never_propagates(self, caplog):
         class Boom:
-            def record(self, *a, **k):
+            def record_state(self, *a, **k):
                 raise RuntimeError("db gone")
 
         t = DiskHealthTracker(ledger=Boom())
@@ -68,7 +68,7 @@ class TestServiceStatusTracker:
         t = ServiceStatusTracker(ledger=ledger)
         t.update_status("nginx", "running")
         t.update_status("nginx", "stopped")
-        cur = ledger.get_current("halbert")
+        cur = ledger.current_state()
         assert len(cur) == 1 and cur[0].object == "stopped"
         assert cur[0].subject == "service:nginx"
         assert cur[0].source == "state_tracker:service_status"
@@ -97,7 +97,7 @@ class TestSystemResourceTracker:
         t = SystemResourceTracker(ledger=ledger)
         t.update_resources(cpu=10.0, mem=20.0, load=0.5)
         t.update_resources(cpu=90.0, mem=80.0, load=4.0)
-        assert len(ledger.get_current("halbert")) == 3
+        assert len(ledger.current_state()) == 3
         assert _current(ledger)[("system", "cpu_load")] == "90%"
 
 
@@ -108,7 +108,7 @@ class TestAdminPresenceTracker:
         assert _current(ledger)[("user", "admin_presence")] == "present"
         t.clear_admin()
         assert _current(ledger)[("user", "admin_presence")] == "absent"
-        assert len(ledger.get_current("halbert")) == 1
+        assert len(ledger.current_state()) == 1
 
     def test_update_from_turn_marks_present(self, ledger):
         t = AdminPresenceTracker(ledger=ledger)
@@ -122,7 +122,7 @@ class TestRegistration:
 
         p = str(default_ledger_path())
         assert "halbert" in p and p.endswith("state_ledger.db")
-        assert "haloysius/state_ledger" not in p   # not the shared human-persona db
+        assert "haloysius" not in p   # Halbert-owned per founder direction D1
 
     def test_register_wires_a_live_ledger(self, tmp_path, monkeypatch):
         import halbert_core.integrations.state_trackers as st
@@ -135,7 +135,7 @@ class TestRegistration:
             assert t._ledger is not None
 
         trackers["service_status"].update_status("nginx", "running")
-        cur = trackers["service_status"]._ledger.get_current("halbert")
+        cur = trackers["service_status"]._ledger.current_state()
         assert [(t.subject, t.object) for t in cur] == [("service:nginx", "running")]
 
     def test_explicit_ledger_wins(self, ledger):

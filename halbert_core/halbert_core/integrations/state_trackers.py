@@ -20,18 +20,21 @@ logger = logging.getLogger("halbert.integrations.state_trackers")
 DEFAULT_PERSONA_ID = "halbert"
 
 
-def _record(ledger, persona_id: str, subject: str, predicate: str,
-            obj: str, source: str) -> None:
+def _record(ledger, subject: str, predicate: str, obj: str, source: str,
+            thread_id=None) -> None:
     """Write one state triple, never raising.
 
-    ``TemporalStateLedger.record`` closes the previous triple for the same
-    (persona_id, subject, predicate) automatically, so callers get supersession
-    and a valid-time history for free.
+    ``StateStore.record_state`` closes the previous triple for the same
+    (subject, predicate) automatically, so callers get supersession and a
+    valid-time history for free.
+
+    StateStore already fails soft; the guard here is defence in depth, because
+    trackers sit on the hot path and ``ledger`` may be any duck-typed object.
     """
     if ledger is None:
         return
     try:
-        ledger.record(persona_id, subject, predicate, obj, source)
+        ledger.record_state(subject, predicate, obj, source, thread_id=thread_id)
     except Exception as e:
         logger.warning(f"Failed to record {subject}/{predicate}: {e}")
 
@@ -39,22 +42,24 @@ def _record(ledger, persona_id: str, subject: str, predicate: str,
 def default_ledger_path():
     """Halbert's own state-ledger db.
 
-    Deliberately not the shared Haloysius default, which carries other
-    personas' state; Halbert's machine-state audit trail is its own file.
+    Standalone today; once Plan A merges this table folds into the thread
+    database and ``StateStore(conn=...)`` takes over — no data move.
     """
-    from pathlib import Path
+    from ..continuity.state_store import default_state_db_path
 
-    p = Path.home() / ".local" / "share" / "halbert" / "state_ledger.db"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+    return default_state_db_path()
 
 
 def _default_ledger():
-    """Open the Halbert state ledger, or return None if unavailable."""
-    try:
-        from haloysius.memory_v2 import get_state_ledger
+    """Open Halbert's machine-state ledger, or return None if unavailable.
 
-        return get_state_ledger(str(default_ledger_path()))
+    Halbert-owned per founder direction D1: Haloysius has no cross-session
+    understanding, so the ledger is not a Haloysius component.
+    """
+    try:
+        from ..continuity.state_store import StateStore
+
+        return StateStore(db_path=str(default_ledger_path()))
     except Exception as e:
         logger.warning(f"State ledger unavailable, trackers will not record: {e}")
         return None
@@ -92,8 +97,8 @@ class DiskHealthTracker:
 
     def sync_to_ledger(self) -> None:
         for device, status in self._disk_states.items():
-            _record(self._ledger, self._persona_id, f"disk:{device}",
-                    "disk_health", status, "state_tracker:disk_health")
+            _record(self._ledger, f"disk:{device}", "disk_health", status,
+                    "state_tracker:disk_health")
 
 
 class ServiceStatusTracker:
@@ -122,8 +127,8 @@ class ServiceStatusTracker:
 
     def sync_to_ledger(self) -> None:
         for service, status in self._service_states.items():
-            _record(self._ledger, self._persona_id, f"service:{service}",
-                    "service_status", status, "state_tracker:service_status")
+            _record(self._ledger, f"service:{service}", "service_status", status,
+                    "state_tracker:service_status")
 
 
 class SystemResourceTracker:
@@ -156,12 +161,9 @@ class SystemResourceTracker:
 
     def sync_to_ledger(self) -> None:
         src = "state_tracker:system_resources"
-        _record(self._ledger, self._persona_id, "system", "cpu_load",
-                f"{self._cpu_percent:.0f}%", src)
-        _record(self._ledger, self._persona_id, "system", "memory_usage",
-                f"{self._mem_percent:.0f}%", src)
-        _record(self._ledger, self._persona_id, "system", "load_average",
-                f"{self._load_avg:.2f}", src)
+        _record(self._ledger, "system", "cpu_load", f"{self._cpu_percent:.0f}%", src)
+        _record(self._ledger, "system", "memory_usage", f"{self._mem_percent:.0f}%", src)
+        _record(self._ledger, "system", "load_average", f"{self._load_avg:.2f}", src)
 
 
 class AdminPresenceTracker:
@@ -198,7 +200,7 @@ class AdminPresenceTracker:
         self.sync_to_ledger()
 
     def sync_to_ledger(self) -> None:
-        _record(self._ledger, self._persona_id, "user", "admin_presence",
+        _record(self._ledger, "user", "admin_presence",
                 "present" if self._admin_present else "absent",
                 "state_tracker:admin_presence")
 
