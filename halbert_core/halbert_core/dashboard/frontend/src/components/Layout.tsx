@@ -38,7 +38,6 @@ import {
   Bot,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { SidePanel } from './SidePanel'
 import { ConfigEditor } from './ConfigEditor'
 import { ModeSwitch } from './shell/ModeSwitch'
 import { HostShell } from './shell/HostShell'
@@ -108,7 +107,7 @@ function ProgressPill({ icon, label, percent, detail, tone }: ProgressPillProps)
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
-  const { isDebugMode, setDebugMode, chatMetrics, logs, clearLogs } = useDebug()
+  const { isDebugMode, setDebugMode, logs, clearLogs } = useDebug()
   const { isEngaged, setMode } = useShellMode()
 
   // Global config editor state (triggered from chat "Edit Config" button)
@@ -388,8 +387,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </main>
             </div>
 
-            {/* Side Panel - Chat/Terminal, always visible while browsing */}
-            <SidePanel />
           </div>
         )}
       </div>
@@ -402,11 +399,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <div className="text-success font-bold flex items-center gap-1">
               <Bug className="h-3 w-3" /> Debug Mode
             </div>
-            <div className="space-y-1 text-foreground">
-              <div><span className="text-success">Requests:</span> {chatMetrics.totalRequests}</div>
-              <div><span className="text-success">Tokens:</span> ~{chatMetrics.totalTokensEstimate}</div>
-              <div><span className="text-success">Avg:</span> {chatMetrics.averageResponseTime > 0 ? `${chatMetrics.averageResponseTime.toFixed(0)}ms` : '-'}</div>
-              <div><span className="text-success">Last:</span> {chatMetrics.lastResponseTime && chatMetrics.lastRequestTime ? `${(chatMetrics.lastResponseTime - chatMetrics.lastRequestTime).toFixed(0)}ms` : '-'}</div>
+            <div className="space-y-1 text-muted-foreground">
+              {/* Chat metrics were written only by the removed drawer. Rather
+                * than render four readouts that can only ever say 0 and '-',
+                * say so — a dead sensor reports that it is dead. */}
+              <div>[chat metrics unwired]</div>
             </div>
           </div>
           {/* Right: Logs */}

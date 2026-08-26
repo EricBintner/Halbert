@@ -9,45 +9,13 @@
  * - Type: "Diff" - Side-by-side diff view (placeholder)
  */
 
-import { Search, FileText, GitCompare, Loader2 } from 'lucide-react'
+import { FileText, GitCompare, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-// Scanning indicator - "I am looking"
-interface ScanIndicatorProps {
-  query: string
-  fileCount?: number
-  isActive?: boolean
-  className?: string
-}
-
-export function ScanIndicator({ 
-  query, 
-  fileCount, 
-  isActive = true,
-  className 
-}: ScanIndicatorProps) {
-  return (
-    <div className={cn(
-      "inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs",
-      "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
-      isActive && "animate-pulse",
-      className
-    )}>
-      {isActive ? (
-        <Loader2 className="h-3 w-3 animate-spin" />
-      ) : (
-        <Search className="h-3 w-3" />
-      )}
-      <span>
-        {isActive ? 'Scanning' : 'Scanned'} {fileCount ? `${fileCount} files` : ''} for "{query}"
-      </span>
-    </div>
-  )
-}
-
-// Context pill - "I have loaded this file"
+// Context pill - "I have read this"
 interface ContextPillProps {
   filename: string
+  /** Inclusive [start, end] line range. */
   lines?: [number, number]
   onClick?: () => void
   className?: string
@@ -66,8 +34,8 @@ export function ContextPill({
       onClick={onClick}
       className={cn(
         "inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs",
-        "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20",
-        "hover:bg-blue-500/20 transition-colors cursor-pointer",
+        "bg-info-muted text-info border border-info/20",
+        "hover:bg-info/20 transition-colors cursor-pointer",
         className
       )}
       title={filename}
@@ -166,7 +134,6 @@ export function LoadingIndicator({
 }
 
 export default {
-  ScanIndicator,
   ContextPill,
   DiffIndicator,
   LoadingIndicator,

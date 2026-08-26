@@ -17,7 +17,7 @@
  * - className: Additional CSS classes
  */
 
-import { MessageSquare, MessageSquarePlus, Search } from 'lucide-react'
+import { MessageSquare, MessageSquarePlus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -77,55 +77,6 @@ export function openChat(event: OpenChatEvent) {
 }
 
 // Event types for agent integration
-export interface OpenAgentEvent {
-  title?: string
-  context?: string
-  itemId?: string
-  prefillMessage?: string
-  data?: Record<string, unknown>
-}
-
-/**
- * Dispatch event to open Agent with context
- * Use this when you want the AI to analyze/act on something
- */
-export function openAgent(event: OpenAgentEvent) {
-  // Set focused item for PageContext
-  if (event.itemId) {
-    window.dispatchEvent(new CustomEvent('halbert:set-focused-item', { 
-      detail: {
-        id: event.itemId,
-        name: event.title,
-        title: event.title,
-        type: 'agent',
-        description: event.context,
-        data: event.data,
-      }
-    }))
-  }
-  
-  window.dispatchEvent(new CustomEvent('halbert:open-agent', { detail: event }))
-}
-
-/**
- * Open chat for deep research with specialist model
- */
-export function researchInChat(
-  title: string,
-  type: string,
-  context: string,
-  question?: string
-) {
-  openChat({
-    title,
-    type,
-    context,
-    newConversation: true,
-    useSpecialist: true,
-    prefillMessage: question || `Tell me more about this ${type}`,
-  })
-}
-
 export function SendToChat({
   context,
   title,
@@ -218,45 +169,6 @@ export function SendToChat({
       <Icon className="h-3 w-3" />
       {label || 'Ask AI'}
     </button>
-  )
-}
-
-/**
- * Research button - always opens new chat with specialist model
- */
-export function ResearchButton({
-  context,
-  title,
-  type,
-  question,
-  className,
-  size = 'sm',
-  variant = 'outline',
-  label = 'Research This',
-}: {
-  context: string
-  title: string
-  type: string
-  question?: string
-  className?: string
-  size?: 'sm' | 'default' | 'lg' | 'icon'
-  variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link'
-  label?: string
-}) {
-  const handleClick = () => {
-    researchInChat(title, type, context, question)
-  }
-  
-  return (
-    <Button
-      variant={variant}
-      size={size}
-      onClick={handleClick}
-      className={cn("gap-2", className)}
-    >
-      <Search className="h-4 w-4" />
-      {label}
-    </Button>
   )
 }
 

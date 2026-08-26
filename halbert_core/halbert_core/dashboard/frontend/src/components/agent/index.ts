@@ -11,7 +11,6 @@ export { StateBadge } from './StateBadge';
 export { PlanChecklist } from './PlanChecklist';
 export { ToolExecutionCard } from './ToolExecutionCard';
 export { ConfirmationDialog } from './ConfirmationDialog';
-export { AgentPanel, type AgentMessage } from './AgentPanel';
 export { ThinkingPanel } from './ThinkingPanel';
 export { ConfidenceIndicator, CircularConfidence } from './ConfidenceIndicator';
 // Cascade-style components
