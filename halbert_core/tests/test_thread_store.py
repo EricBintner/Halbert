@@ -675,6 +675,56 @@ class TestThreadReaders:
         turns = store.list_turns()
         assert turns[0]["turn_id"] == f"m{mid}" and turns[0]["user"]["content"] == "legacy row"
 
+    def test_before_turn_id_includes_turn_whose_lowest_row_is_hidden(self, store):
+        """Round-3 A1b review, finding 1: ``_turn_first_id`` used to ignore
+        ``visible_in_timeline`` while ``_TURN_KEYS_SQL`` (which computes the
+        turn ordering ``before_turn_id``/``around_turn_id`` page against)
+        does not. When a turn's lowest-id row is hidden, the old anchor sat
+        earlier than that turn's real timeline position and excluded
+        genuinely-preceding turns from the page -- an empty page then reads
+        as "nothing older", which would make an A11-style "load earlier"
+        stop paging and permanently hide the excluded turn."""
+        store.create_thread("t1", "T")
+        # Turn A's lowest-id row (id 1) is hidden; its lowest *visible* row
+        # is id 3. Turn B (id 2, visible) sits between them.
+        store.append_message("t1", "system", "hidden-a", origin="system",
+                             turn_id="A", visible_in_timeline=False, timestamp=1.0)
+        store.append_message("t1", "user", "b", turn_id="B", timestamp=2.0)
+        store.append_message("t1", "user", "a-visible", turn_id="A", timestamp=3.0)
+        assert [t["turn_id"] for t in store.list_turns()] == ["B", "A"]
+        assert [t["turn_id"] for t in store.list_turns(before_turn_id="A")] == ["B"]
+
+    def test_list_turns_is_global_across_threads(self, store):
+        """``list_turns`` is deliberately *not* scoped to one thread -- a
+        page interleaves turns from every thread into a single timeline
+        (contracts doc puts ``thread_id`` on each turn precisely because a
+        page can span threads). Every other ``list_turns`` test in this
+        file uses a single thread, so this is the only guard against a
+        future "scope the timeline to a thread" refactor silently breaking
+        the one-conversation model with an otherwise-green suite."""
+        store.create_thread("t1", "T1")
+        store.create_thread("t2", "T2")
+        store.append_message("t1", "user", "hello from t1", turn_id="x1", timestamp=1.0)
+        store.append_message("t1", "assistant", "reply1", origin="assistant", turn_id="x1", timestamp=2.0)
+        store.append_message("t2", "user", "hello from t2", turn_id="x2", timestamp=3.0)
+        store.append_message("t2", "assistant", "reply2", origin="assistant", turn_id="x2", timestamp=4.0)
+        turns = store.list_turns(limit=50)
+        assert [(t["turn_id"], t["thread_id"]) for t in turns] == [("x1", "t1"), ("x2", "t2")]
+
+    def test_list_turns_around_anchor_always_present_at_limit_one(self, store):
+        """A11's jump-to-turn depends on the anchor turn always being part
+        of its own ``around_turn_id`` page, even at the tightest possible
+        page size and even anchored right at either edge of the timeline."""
+        store.create_thread("t1", "T")
+        for i in range(5):
+            tid = f"turn-{i}"
+            store.append_message("t1", "user", f"q{i}", turn_id=tid, timestamp=float(i * 10))
+            store.append_message("t1", "assistant", f"a{i}", origin="assistant", turn_id=tid,
+                                 timestamp=float(i * 10 + 1))
+        assert [t["turn_id"] for t in store.list_turns(around_turn_id="turn-0", limit=1)] == ["turn-0"]
+        assert [t["turn_id"] for t in store.list_turns(around_turn_id="turn-4", limit=1)] == ["turn-4"]
+        assert [t["turn_id"] for t in store.list_turns(around_turn_id="turn-2", limit=1)] == ["turn-2"]
+
     def test_mark_in_progress_interrupted(self, store):
         store.create_thread("t1", "T")
         store.append_message("t1", "user", "a", status="in_progress")

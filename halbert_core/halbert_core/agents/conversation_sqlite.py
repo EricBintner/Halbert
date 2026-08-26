@@ -91,6 +91,20 @@ _TURN_KEYS_SQL = (
     f"SELECT {_TURN_KEY} AS turn_key, MIN(id) AS first_id "
     "FROM messages WHERE visible_in_timeline = 1 GROUP BY turn_key"
 )
+# PERF NOTE (A1b round-3 review, finding 2): this expression can't be served
+# by `idx_messages_turn`, so every `list_turns` call does a full GROUP BY
+# scan of the whole `messages` table -- and does it three times over (this
+# query, `_turn_first_id`, and the final `visible_in_timeline` fetch by key),
+# all inside the same `self._lock` RLock `append_message` needs. That is
+# O(total messages) on the hot read path of a conversation designed never to
+# end, and it blocks concurrent writes for the whole page. Measured on this
+# branch: ~20ms/40k messages, ~120-190ms/200k messages. This matches the
+# design specified in the Plan A task text, so it is not a deviation -- but
+# it should not be assumed to stay flat as the corpus grows. Before A11 (or
+# any other paging consumer) leans on this at scale, either bound the GROUP
+# BY to an id window (turns have bounded row counts, so
+# `id > anchor - limit * K` is safe) or backfill `turn_id` on legacy rows so
+# a plain indexed column can be grouped instead.
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -956,8 +970,15 @@ class SqliteConversationStore:
             return []
 
     def _turn_first_id(self, turn_id: str) -> Optional[int]:
+        """First *visible* row id for a turn key -- must agree with
+        ``_TURN_KEYS_SQL`` (also visible-only) or an anchor computed here
+        can sit earlier than a turn's real timeline position when its
+        lowest-id row happens to be hidden, silently excluding turns that
+        genuinely precede it from a ``before_turn_id``/``around_turn_id``
+        page (A1b round-3 review, finding 1)."""
         row = self._conn.execute(
-            f"SELECT MIN(id) FROM messages WHERE {_TURN_KEY} = ?", (turn_id,)
+            f"SELECT MIN(id) FROM messages WHERE {_TURN_KEY} = ? AND visible_in_timeline = 1",
+            (turn_id,),
         ).fetchone()
         return int(row[0]) if row and row[0] is not None else None
 
