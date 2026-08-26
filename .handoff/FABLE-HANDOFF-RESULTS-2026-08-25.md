@@ -69,3 +69,87 @@ verification), suite **780 → 912 passed**, boot smoke 5/5 throughout.
 - Tauri: fixed port 8000 (override `HALBERT_PORT`); unsigned bundle; the .app still needs a checkout + .venv (`HALBERT_REPO_ROOT` for out-of-tree installs); Cmd-Q itself was not exercised headlessly (watchdog covers it regardless); no vitest for the frontend (tsc + static guard only).
 - Haloysius-side: whether its core should consume the seam registry (or the seam be documented as consumer-side only) — needs an owner decision; nothing in Haloysius was changed.
 - Another session's licensing work (`documentation/legal/`, `routes/legal.py`, `components/legal/`, `.github/`, `Halbert/main.py`, `config/model-catalog.yml`, `CONTRIBUTING.md`) was left uncommitted and untouched.
+
+---
+
+## Wrap-up round (2026-08-25, later still) — "wrap up what's left"
+
+Took the six code items off the "still open" list above. Test counts:
+Python **991 → 1063 passed**, plus 17 new frontend tests and 7 Rust tests.
+The 4 `test_dashboard_main.py` failures present throughout are **not from this
+round** — see "Not touched" below.
+
+| Item | Outcome |
+|---|---|
+| `confirm_action()` never responded | Fixed. The `process()` main loop is now `_drive()`, shared by both entry points, so a confirmed *or* rejected action runs the turn to completion instead of stopping dead after `_handle_executing`. |
+| Tool calling unreachable from the API | Fixed end-to-end. `call_llm_chat(tools=…)` sends schemas and returns normalised tool calls for both Ollama and OpenAI shapes; `LLMClientAdapter` wraps them in the `.function.name/.arguments` shape PLANNING reads. EXECUTING / READING / AWAITING_CONFIRMATION are now reachable. |
+| `/compute/endpoint-probe` had no backend | Added `dashboard/routes/compute.py`. Probes in doubling waves (1,2,4,8,…), prefers a provider's rate-limit header over the latency staircase, and only ever calls the provider's **model-listing** endpoint — no tokens, no side effects. |
+| Generic "AI assistant" persona | Fixed. All three voices now open with the machine identity (matching `prompts/human-identity.txt`) and substitute the host's **real** OS instead of hardcoding Linux. RESPONDING's fallback prompt carries the same identity. |
+| Tauri fixed port 8000 | Fixed. Port resolved once per process via `OnceLock`: `HALBERT_PORT` wins outright, otherwise scan 8000–8100 for a free port. Caching matters — the injected script, `get_api_base` and the sidecar env must agree. |
+| No frontend tests | Added vitest + jsdom + testing-library. `npm test` / `npm run test:watch`. 17 tests over `apiBase` and `ProbeButton`. |
+
+### Two defects the tool bridge exposed (also fixed)
+- **Identical tool calls repeated until max_loops.** The first live turn ran
+  `uptime` **four times**. Cause: EXECUTING recorded only
+  `"Executed run_command: success"` — observations are the sole channel by
+  which a tool result reaches the next PLANNING pass, so the model never saw
+  the output. Now the observation carries the (truncated) result, and PLANNING
+  refuses to re-issue a tool call whose name **and** arguments already settled
+  this turn. Same query afterwards: **1** execution.
+- **Rejections were anonymous.** `"User rejected the action"` never said what
+  was refused and left the call at `status="pending"`, so the repeat guard
+  could not catch a re-proposal. The rejected call is now settled and named.
+
+### Live verification (server on :8021, real `kimi-k2.7-code:cloud`)
+- Tool round-trip against the real model: returned
+  `run_command(command="uptime")`, normalised correctly.
+- Agent turn "how long has this machine been up?":
+  `planning → executing → observing → planning → reflecting → responding → idle`,
+  **1** tool execution, 0 errors, answer quotes the real `uptime` output.
+- Approval pause: `apt-get install htop` → HIGH risk →
+  `tool_confirmation_required` + `conversation_status: blocked`, no
+  `session_ended`, session held in `active_sessions`.
+- Approval **reject** → turn resumed and finished: agent ran three *distinct*
+  probes (`which apt-get` / `which brew` / `which htop`), then answered that
+  apt-get isn't available on macOS and to use `brew install htop`. Both the
+  resume fix and the repeat guard behaving correctly in one turn.
+- `/compute/endpoint-probe` against the real local Ollama endpoint: 15/15
+  successes, p50 36ms, no saturation (correct for a local listing endpoint).
+  Unknown id → structured error; `burst_size: 500` → 422.
+
+### Housekeeping forced by the new dependencies
+- The five new npm devDeps are registered in `config/dependency-licenses.yml`
+  (all MIT, `build_only: true`) — the app-store licence gate caught them.
+- `test_frontend_no_relative_urls.py` now skips `*.test.ts(x)`: `apiBase`'s own
+  tests must assert on the URL shapes the guard forbids in shipped code.
+- `/compute` added to the vite dev proxy.
+
+### Still open after this round
+- **CRAG completeness / SourcePrep bodies** — unchanged and still blocked: a
+  `--stage 2` embed build was running throughout (PID 66131). Untouched by
+  request. Re-check after it finishes and the daemon restarts.
+- **O5 memory persistence** — needs longer sessions; not re-tested here.
+- **Somatic blocks (C1d)** have no producer in production — product decision.
+- **Haloysius seam ownership** — still needs an owner decision; nothing in
+  Haloysius changed.
+- **Tauri packaging** — bundle is still unsigned and the `.app` still needs a
+  checkout + `.venv` (`HALBERT_REPO_ROOT` for out-of-tree installs). The fixed
+  *port* is fixed; the packaging story is not.
+- **`routes/approvals.py` is still a separate subsystem** from the agent's
+  tool-confirmation flow. The agent path now works end to end via
+  `POST /api/agent/confirm/{session_id}`; whether the findings/proposals
+  approval queue should share it is a design decision, not a wiring gap.
+- Risk classification has false positives: `uname -a && sw_vers || true` was
+  scored HIGH for "File redirection/overwrite" (the `||`). Noticed while
+  testing the approval flow, not investigated.
+
+### Not touched (another session's live work)
+- `test_dashboard_main.py` 4 failures, present before and after this round:
+  `from halbert_core import __version__` fails when cwd is the repo root, because
+  the outer `halbert_core/` directory shadows the inner package as a namespace
+  package. Both `dashboard/__main__.py` and its test are uncommitted and being
+  edited concurrently, so this is theirs to finish — but it is a live
+  regression of B5's fix, worth flagging.
+- All licensing/legal work (`config/licensing.yml`, `data/non-commercial/`,
+  `halbert_core/corpus/`, SPDX header sweep, `.github/`) and all
+  `marketing/web-v7/` changes were left alone.
