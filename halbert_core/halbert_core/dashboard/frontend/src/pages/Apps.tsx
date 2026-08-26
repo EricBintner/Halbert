@@ -732,9 +732,6 @@ ${apps.slice(0, 20).map(a => `- ${a.displayName} (${a.source})${a.hasUpdate ? ' 
 ${apps.length > 20 ? `... and ${apps.length - 20} more apps` : ''}`
         }}
         researchQuestion="Analyze my installed applications for potential compatibility issues. Check for: 1) Flatpak apps that may have permission issues or sandbox limitations, 2) Classic snaps that run unconfined (security risk), 3) Outdated apps that may have known vulnerabilities, 4) Any conflicts between similar apps from different sources."
-        gradientFrom="from-violet-50/70"
-        gradientTo="to-fuchsia-50/70"
-        iconColor="text-violet-700 dark:text-violet-300"
       />
     </div>
   )

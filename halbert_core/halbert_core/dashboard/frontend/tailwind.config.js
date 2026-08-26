@@ -152,10 +152,18 @@ module.exports = {
           muted: "hsl(var(--info-muted))",
         },
       },
+      /* Point at the canonical radii instead of shadcn's derived --radius.
+       * That variable was defined in the hand-written theme block this config
+       * long predates; when the block became generated it stopped being
+       * emitted, and `var(--radius)` with no fallback is invalid at
+       * computed-value time — so every Card, Button, Input, Badge, Dialog and
+       * Tab silently rendered with square corners while bare `rounded` and
+       * `rounded-full` kept rounding. The token tier has no such gap. */
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        sm: "var(--hb-radius-sm)",
+        md: "var(--hb-radius-md)",
+        lg: "var(--hb-radius-lg)",
+        full: "var(--hb-radius-full)",
       },
       keyframes: {
         "accordion-down": {

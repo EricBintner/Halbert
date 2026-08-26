@@ -170,6 +170,49 @@ def render(light: dict[str, str], dark: dict[str, str]) -> tuple[str, list[str]]
     return body, failures
 
 
+TAILWIND_CONFIG = (
+    REPO_ROOT / "halbert_core/halbert_core/dashboard/frontend/tailwind.config.js"
+)
+
+# Custom properties the config may reference that this script does not emit and
+# tokens.css does not own: Tailwind/shadcn runtime vars and Radix measurements.
+EXTERNAL_VARS = {
+    "--tw-shadow", "--tw-ring-shadow", "--tw-inset-shadow",
+    "--tw-ring-offset-shadow", "--tw-inset-ring-shadow",
+    "--radix-accordion-content-height",
+    "--sidepanel-width",
+}
+
+
+def check_dangling_vars() -> list[str]:
+    """Every var() the Tailwind config reads must actually be defined.
+
+    This exists because of a real regression: shadcn's `--radius` lived in the
+    hand-written theme block that this script replaced, so it stopped being
+    emitted. `var(--radius)` with no fallback is invalid at computed-value
+    time, which meant every rounded-lg/md/sm surface in the app — Cards,
+    Buttons, Inputs, Badges, Dialogs, Tabs — silently rendered SQUARE, while
+    bare `rounded` and `rounded-full` kept rounding. Nothing failed; it just
+    looked unfinished.
+    """
+    if not TAILWIND_CONFIG.exists():
+        return []
+    source = TAILWIND_CONFIG.read_text(encoding="utf-8")
+    # Strip comments first: this file documents the very bug this guard exists
+    # for, and prose mentioning `var(--radius)` is not a reference to it.
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    source = re.sub(r"^\s*//.*$", "", source, flags=re.M)
+    referenced = set(re.findall(r"var\((--[\w-]+)", source))
+    tokens_css = TOKENS_CSS.read_text(encoding="utf-8")
+    defined = set(re.findall(r"(--[\w-]+)\s*:", tokens_css)) | {f"--{slot}" for slot in SLOTS}
+    dangling = sorted(referenced - defined - EXTERNAL_VARS)
+    return [
+        f"tailwind.config.js reads {name}, which nothing defines — "
+        f"utilities using it compute to an invalid value and silently fall back"
+        for name in dangling
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="fail if index.css is out of date")
@@ -177,9 +220,10 @@ def main() -> int:
 
     light, dark = parse_blocks(TOKENS_CSS.read_text(encoding="utf-8"))
     block, failures = render(light, dark)
+    failures += check_dangling_vars()
 
     if failures:
-        print("Refusing to generate — derived slots fail their contrast floor:")
+        print("Refusing to generate — the theme is not sound:")
         for failure in failures:
             print(f"  - {failure}")
         return 1

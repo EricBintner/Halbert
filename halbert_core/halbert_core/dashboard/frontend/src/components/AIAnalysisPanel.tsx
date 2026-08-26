@@ -43,11 +43,7 @@ interface AIAnalysisPanelProps {
   buildContext?: () => string
   /** Optional custom research question */
   researchQuestion?: string
-  /** Gradient colors for the panel (from-X to-Y) */
-  gradientFrom?: string
-  gradientTo?: string
   /** Icon color class */
-  iconColor?: string
 }
 
 export function AIAnalysisPanel({
@@ -56,9 +52,6 @@ export function AIAnalysisPanel({
   canAnalyze = true,
   buildContext,
   researchQuestion,
-  gradientFrom = 'from-sky-50/70',
-  gradientTo = 'to-purple-50/70',
-  iconColor = 'text-sky-700 dark:text-sky-300',
 }: AIAnalysisPanelProps) {
   const [analysis, setAnalysis] = useState<AIAnalysis | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
@@ -89,26 +82,26 @@ export function AIAnalysisPanel({
   const defaultQuestion = `Give me a detailed analysis of my ${type} configuration, including potential risks and improvement suggestions.`
 
   return (
-    <Card className={cn(
-      "border-sky-300 bg-gradient-to-r dark:border-sky-700 dark:from-sky-950/30 dark:to-purple-950/30",
-      gradientFrom,
-      gradientTo
-    )}>
+    // A sky-to-purple gradient is the "AI feature" cliché the brand rejects
+    // outright, and this panel renders on six pages, so it was the single most
+    // off-brand thing in the product. It is a proposal grounded in retrieval,
+    // which is what the telemetry pigment means.
+    <Card className="border-status-telemetry/30 bg-status-telemetry-bg">
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3 flex-1">
-            <div className="p-2 rounded-lg bg-sky-100 dark:bg-sky-900/60">
-              <Sparkles className={cn("h-5 w-5", iconColor)} />
+            <div className="p-2 rounded-md bg-surface">
+              <Sparkles className="h-5 w-5 text-status-telemetry" />
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-sky-800 dark:text-sky-100 flex items-center gap-2">
+              <h3 className="font-semibold text-foreground flex items-center gap-2">
                 AI {title} Analysis
                 {analysis && (
                   <Badge variant="outline" className={cn(
                     "ml-2",
-                    analysis.health_score >= 80 ? "border-green-500 text-green-600" :
-                    analysis.health_score >= 50 ? "border-yellow-500 text-yellow-600" :
-                    "border-red-500 text-red-600"
+                    analysis.health_score >= 80 ? "border-success/50 text-success" :
+                    analysis.health_score >= 50 ? "border-warning/50 text-warning" :
+                    "border-error/50 text-error"
                   )}>
                     Health: {analysis.health_score}%
                   </Badge>
@@ -120,11 +113,11 @@ export function AIAnalysisPanel({
                   
                   {/* Critical Issues */}
                   {analysis.critical_issues && analysis.critical_issues.length > 0 && (
-                    <div className="p-2 rounded bg-red-100 dark:bg-red-900/30 border border-red-200 dark:border-red-800">
-                      <p className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">⚠️ Critical Issues:</p>
+                    <div className="p-2 rounded-md bg-error-muted border border-error/30">
+                      <p className="text-xs font-semibold text-error mb-1">⚠️ Critical Issues:</p>
                       <ul className="space-y-1">
                         {analysis.critical_issues.map((issue, i) => (
-                          <li key={i} className="text-sm text-red-600 dark:text-red-400 flex items-start gap-2">
+                          <li key={i} className="text-sm text-error flex items-start gap-2">
                             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                             {issue}
                           </li>
@@ -140,7 +133,7 @@ export function AIAnalysisPanel({
                       <ul className="space-y-1">
                         {analysis.recommendations.map((rec, i) => (
                           <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                            <Info className="h-4 w-4 shrink-0 mt-0.5 text-blue-500" />
+                            <Info className="h-4 w-4 shrink-0 mt-0.5 text-status-telemetry" />
                             {rec}
                           </li>
                         ))}
