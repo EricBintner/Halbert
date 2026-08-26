@@ -301,7 +301,7 @@ The platform layer abstracts OS-specific operations (journald, systemd, /proc, e
 | Purpose | Entry Point |
 |---------|-------------|
 | CLI usage | `python Halbert/main.py [command]` |
-| Dashboard | `python -m halbert_core.dashboard.app` |
+| Dashboard | `python -m halbert_core.dashboard` (or `python -m uvicorn halbert_core.dashboard.app:app`) |
 | Ingestion | `python Halbert/main.py ingest-journald` |
 | Tests | `pytest tests/` |
 

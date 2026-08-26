@@ -188,11 +188,32 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         version="0.1.1"
     )
     
-    # CORS for local development
+    # CORS for local development and the Tauri desktop webview.
+    # allow_credentials=True forbids the "*" wildcard, so origins are explicit;
+    # HALBERT_CORS_ORIGINS (comma-separated) adds more.
     if enable_cors:
+        import os
+        default_origins = [
+            "http://localhost:5173", "http://localhost:3000",   # Vite, CRA
+            "tauri://localhost", "http://tauri.localhost",       # Tauri v2 webview
+        ]
+        extra = []
+        for raw in os.environ.get("HALBERT_CORS_ORIGINS", "").split(","):
+            origin = raw.strip()
+            if not origin:
+                continue
+            if "*" in origin:
+                # A wildcard with allow_credentials=True would let any site
+                # make credentialed requests; never honour it.
+                logger.warning(
+                    "HALBERT_CORS_ORIGINS: ignoring wildcard entry %r (explicit origins only)",
+                    origin,
+                )
+                continue
+            extra.append(origin)
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=["http://localhost:5173", "http://localhost:3000"],  # Vite, CRA
+            allow_origins=default_origins + extra,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],

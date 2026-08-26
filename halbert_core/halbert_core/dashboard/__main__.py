@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Halbert Dashboard Entry Point
 
@@ -5,13 +7,14 @@ Run the dashboard server with:
     python -m halbert_core.dashboard
 
 Options:
-    --port PORT     Port to run on (default: 8000)
-    --host HOST     Host to bind to (default: 127.0.0.1)
+    --port PORT     Port to run on (default: $HALBERT_PORT or 8000)
+    --host HOST     Host to bind to (default: $HALBERT_HOST or 127.0.0.1)
     --reload        Enable auto-reload for development
 """
 
 import argparse
 import logging
+import os
 import socket
 import sys
 
@@ -97,8 +100,10 @@ Examples:
     python -m halbert_core.dashboard --reload
         """
     )
-    parser.add_argument('--port', type=int, default=8000, help='Port to run on (default: 8000)')
-    parser.add_argument('--host', type=str, default='127.0.0.1', help='Host to bind to (default: 127.0.0.1)')
+    parser.add_argument('--port', type=int, default=int(os.environ.get('HALBERT_PORT', 8000)),
+                        help='Port to run on (default: $HALBERT_PORT or 8000)')
+    parser.add_argument('--host', type=str, default=os.environ.get('HALBERT_HOST', '127.0.0.1'),
+                        help='Host to bind to (default: $HALBERT_HOST or 127.0.0.1)')
     parser.add_argument('--reload', action='store_true', help='Enable auto-reload for development')
     parser.add_argument('--no-ollama-check', action='store_true', help='Skip Ollama availability check')
     parser.add_argument('--find-port', action='store_true', help='Automatically find available port')
@@ -127,24 +132,28 @@ Examples:
     
     # Import and create app
     try:
-        from .app import create_dashboard_app
+        from .app import create_app
     except ImportError:
-        from halbert_core.dashboard.app import create_dashboard_app
+        from halbert_core.dashboard.app import create_app
     
-    app = create_dashboard_app()
+    app = create_app(enable_cors=True)
     
     # Start server
     logger.info(f"Starting Halbert Dashboard on http://{args.host}:{port}")
     
     try:
         import uvicorn
-        uvicorn.run(
-            app,
-            host=args.host,
-            port=port,
-            reload=args.reload,
-            log_level="info"
-        )
+        if args.reload:
+            # uvicorn requires an import string (not an app object) for reload
+            uvicorn.run(
+                "halbert_core.dashboard.app:app",
+                host=args.host,
+                port=port,
+                reload=True,
+                log_level="info"
+            )
+        else:
+            uvicorn.run(app, host=args.host, port=port, log_level="info")
     except ImportError:
         logger.error("uvicorn not installed. Install with: pip install uvicorn[standard]")
         sys.exit(1)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import threading
 import time
 from dataclasses import dataclass, field
@@ -16,6 +17,20 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def journald_available() -> bool:
+    """True if this host can be followed via journald (Linux with journalctl, or python-systemd)."""
+    from ..utils import platform as _platform
+
+    if not _platform.is_linux():
+        return False
+    try:
+        from systemd import journal  # noqa: F401
+        return True
+    except Exception:
+        pass
+    return shutil.which("journalctl") is not None
 
 
 @dataclass
@@ -124,6 +139,9 @@ redaction:
             jcfg = (cfg.get("sources") or {}).get("journald") or {}
             if not jcfg.get("enabled", True):
                 logger.info("Journald ingestion disabled in config")
+                return
+            if not journald_available():
+                logger.debug("journald ingestion skipped: not a Linux host with journalctl/python-systemd")
                 return
             
             from collections import defaultdict, deque
@@ -266,13 +284,16 @@ redaction:
         self.stats.running = True
         self.stats.started_at = datetime.now()
         
-        # Start journald thread
-        self._journald_thread = threading.Thread(
-            target=self._run_journald,
-            name="ingestion-journald",
-            daemon=True
-        )
-        self._journald_thread.start()
+        # Start journald thread (Linux with journalctl/python-systemd only)
+        if journald_available():
+            self._journald_thread = threading.Thread(
+                target=self._run_journald,
+                name="ingestion-journald",
+                daemon=True
+            )
+            self._journald_thread.start()
+        else:
+            logger.debug("journald ingestion skipped: not a Linux host with journalctl/python-systemd")
         
         # Start hwmon thread
         self._hwmon_thread = threading.Thread(
