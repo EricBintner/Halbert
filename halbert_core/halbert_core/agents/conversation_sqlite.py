@@ -167,13 +167,31 @@ class SqliteConversationStore:
     def _ensure_schema(self) -> None:
         with self._lock:
             cur = self._conn.cursor()
+            # busy_timeout first: it must be in effect before anything below
+            # (the WAL pragma, then BEGIN IMMEDIATE) can hit SQLITE_BUSY.
             try:
-                # PRAGMAs first: they must run outside any transaction.
-                cur.execute("PRAGMA journal_mode=WAL")
                 cur.execute("PRAGMA busy_timeout=5000")
             except Exception as e:
-                logger.warning(f"SqliteConversationStore schema failed (pragmas): {e}")
+                logger.warning(f"SqliteConversationStore schema failed (busy_timeout pragma): {e}")
+                self._conn = None
                 return
+            # A journal-mode change requires SQLite to grab an exclusive lock,
+            # and — unlike BEGIN IMMEDIATE below — that lock request does NOT
+            # go through the busy handler: SQLite returns SQLITE_BUSY
+            # immediately if any other connection currently holds the write
+            # lock, busy_timeout or no busy_timeout. Treating that as fatal
+            # used to abort the migration before a single CREATE/ALTER TABLE
+            # ran while leaving ``self._conn`` set, so the instance silently
+            # lost every future write for the rest of its life (A1 review
+            # finding 1). WAL is a nice-to-have, not required for
+            # correctness, so tolerate the failure and keep going in the
+            # connection's default rollback-journal mode — BEGIN IMMEDIATE
+            # right below still waits out busy_timeout for the migration
+            # itself.
+            try:
+                cur.execute("PRAGMA journal_mode=WAL")
+            except Exception as e:
+                logger.warning(f"PRAGMA journal_mode=WAL failed, continuing without WAL: {e}")
             # Serialize schema creation/migration across concurrent openers of
             # the same database file. BEGIN IMMEDIATE claims the write lock
             # up front (busy_timeout above governs how long a racing opener
@@ -186,6 +204,7 @@ class SqliteConversationStore:
                 cur.execute("BEGIN IMMEDIATE")
             except Exception as e:
                 logger.warning(f"SqliteConversationStore schema failed (lock): {e}")
+                self._conn = None
                 return
             try:
                 cur.execute(
@@ -259,6 +278,11 @@ class SqliteConversationStore:
                 )
                 row = cur.execute("SELECT MAX(version) FROM schema_version").fetchone()
                 version = int(row[0]) if row and row[0] is not None else 0
+                # Tracked locally and only committed to ``self._fts_ok`` once the
+                # whole migration (including the schema_version bump below and
+                # the final commit) has actually succeeded — see the comment on
+                # the outer ``except`` for why (A1 review finding 2).
+                fts_ready = False
                 try:
                     if version < 2:
                         # v2: porter stemming + rowid == messages.id (for snippets).
@@ -272,30 +296,57 @@ class SqliteConversationStore:
                             "INSERT INTO messages_fts(rowid, conversation_id, content) "
                             "SELECT id, conversation_id, content FROM messages"
                         )
+                        fts_ready = True
                     else:
                         cur.execute(
                             "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
                             "conversation_id UNINDEXED, content, "
                             "tokenize='porter unicode61')"
                         )
+                        # Backfill: an already-versioned DB whose messages_fts
+                        # table was just (re)created by ``IF NOT EXISTS`` (e.g.
+                        # a runtime without FTS5 wrote unindexed rows, and this
+                        # runtime has it) would otherwise report ``healthy``
+                        # over a permanently empty index (A1 review finding 2).
+                        cur.execute(
+                            "INSERT INTO messages_fts(rowid, conversation_id, content) "
+                            "SELECT id, conversation_id, content FROM messages "
+                            "WHERE id NOT IN (SELECT rowid FROM messages_fts)"
+                        )
+                        fts_ready = True
                     cur.execute(
                         "CREATE VIRTUAL TABLE IF NOT EXISTS receipts_fts USING fts5("
                         "thread_id UNINDEXED, title, receipt, "
                         "tokenize='porter unicode61')"
                     )
-                    self._fts_ok = True
                 except sqlite3.OperationalError as e:
                     logger.warning(f"FTS5 unavailable, falling back to LIKE: {e}")
-                    self._fts_ok = False
+                    fts_ready = False
                 if version < SCHEMA_VERSION:
                     cur.execute("DELETE FROM schema_version")
                     cur.execute(
                         "INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,)
                     )
                 self._conn.commit()
+                # Only now, after a successful commit, does the flag reflect
+                # reality. Setting it earlier (as before) meant a later
+                # statement raising would roll back the just-created FTS
+                # tables while the flag stayed True, and ``_fts_recover()``
+                # short-circuits on a True flag, so it would never have
+                # re-verified (A1 review finding 2, the mirror of finding 3's
+                # False-latch bug).
+                self._fts_ok = fts_ready
             except Exception as e:
                 self._conn.rollback()
                 logger.warning(f"SqliteConversationStore schema failed: {e}")
+                self._fts_ok = False
+                # A half-applied migration (e.g. the messages table missing
+                # thread columns) must not look like a healthy, usable store:
+                # every subsequent method already treats ``self._conn is None``
+                # as "fail loudly/return the documented empty result" instead
+                # of quietly writing against a schema that doesn't match what
+                # the rest of this class assumes (A1 review finding 1).
+                self._conn = None
 
     @property
     def healthy(self) -> bool:
@@ -314,25 +365,40 @@ class SqliteConversationStore:
         should not disable search for the rest of the process's life, so
         every caller that used to gate on ``self._fts_ok`` directly now calls
         this instead (A1 review finding 3). Safe to call from inside an
-        already-open write transaction (e.g. from ``append_message``): it
-        issues bare ``CREATE VIRTUAL TABLE IF NOT EXISTS`` statements with no
-        ``with self._conn:`` of its own, so it never commits a transaction
-        out from under its caller.
+        already-open write transaction (e.g. from ``append_message``): when
+        one is already open (``self._conn.in_transaction``) it leaves the
+        commit/rollback to that caller's own ``with self._conn:`` block;
+        otherwise (a standalone call, e.g. from ``search``) it commits its
+        own work itself so nothing is left dangling uncommitted.
+
+        Recovery also backfills: any ``messages`` row not yet present in
+        ``messages_fts`` is indexed, so a table that was just (re)created
+        by ``CREATE VIRTUAL TABLE IF NOT EXISTS`` does not report healthy
+        over what would otherwise stay a permanently empty index for rows
+        written before recovery (A1 review finding 2).
         """
         if self._fts_ok or self._conn is None:
             return self._fts_ok
         try:
             with self._lock:
+                nested = self._conn.in_transaction
                 self._conn.execute(
                     "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
                     "conversation_id UNINDEXED, content, "
                     "tokenize='porter unicode61')"
                 )
                 self._conn.execute(
+                    "INSERT INTO messages_fts(rowid, conversation_id, content) "
+                    "SELECT id, conversation_id, content FROM messages "
+                    "WHERE id NOT IN (SELECT rowid FROM messages_fts)"
+                )
+                self._conn.execute(
                     "CREATE VIRTUAL TABLE IF NOT EXISTS receipts_fts USING fts5("
                     "thread_id UNINDEXED, title, receipt, "
                     "tokenize='porter unicode61')"
                 )
+                if not nested:
+                    self._conn.commit()
             self._fts_ok = True
             logger.info("FTS5 recovered; search is no longer degraded to title-only")
         except sqlite3.OperationalError as e:
@@ -572,13 +638,29 @@ class SqliteConversationStore:
                 )
                 message_id = int(cur.lastrowid)
                 if self._fts_recover():
+                    # OR REPLACE: ``_fts_recover()`` may itself have just
+                    # backfilled this exact row (it runs its NOT-IN-fts
+                    # backfill against ``messages`` as it stands right now,
+                    # which already includes the row inserted immediately
+                    # above) -- a plain INSERT would then collide on rowid
+                    # with what recovery already wrote (same content either
+                    # way, so replacing is a no-op in substance).
                     self._conn.execute(
-                        "INSERT INTO messages_fts(rowid, conversation_id, content) "
+                        "INSERT OR REPLACE INTO messages_fts(rowid, conversation_id, content) "
                         "VALUES (?, ?, ?)",
                         (message_id, thread_id, text),
                     )
+                # MAX(...): agrees with save()'s ON CONFLICT clause (A1 review
+                # finding 3) so the two write paths can't rewind each other.
+                # migrate_json_conversations_to_sqlite backfills with an
+                # explicit, often much older, ``timestamp=`` — an
+                # unconditional assignment here would otherwise drop a
+                # thread's recency below whatever it already was, corrupting
+                # ``ORDER BY updated_at DESC`` in list_conversations/list_threads
+                # (A1 review finding 3).
                 self._conn.execute(
-                    "UPDATE conversations SET updated_at = ? WHERE id = ?", (ts, thread_id)
+                    "UPDATE conversations SET updated_at = MAX(updated_at, ?) WHERE id = ?",
+                    (ts, thread_id),
                 )
             return message_id
         except Exception as e:
@@ -612,6 +694,19 @@ class SqliteConversationStore:
         reindex = "content" in fields or "thread_id" in fields
         try:
             with self._lock, self._conn:
+                if "thread_id" in fields:
+                    # Same orphaning bug append_message's existence check
+                    # closed (A1 review finding 4), left open on this sibling
+                    # write path: with no FK on conversation_id, moving a
+                    # message to a thread id that doesn't exist would silently
+                    # make it invisible to every reader (get/search/list) for
+                    # good, and thread_id moves are exactly what merge/split
+                    # tasks later in Plan A use this method for.
+                    new_thread_id = fields["thread_id"]
+                    if self._conn.execute(
+                        "SELECT 1 FROM conversations WHERE id = ?", (new_thread_id,)
+                    ).fetchone() is None:
+                        raise ValueError(f"no such thread_id {new_thread_id!r}")
                 cur = self._conn.execute(
                     f"UPDATE messages SET {', '.join(sets)} WHERE id = ?", params
                 )

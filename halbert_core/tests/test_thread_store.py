@@ -6,6 +6,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 
 import pytest
 
@@ -28,6 +29,70 @@ class TestConnection:
         s = SqliteConversationStore(str(tmp_path / "t.db"))
         assert s._conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert s._conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+        s.close()
+
+    def test_migration_survives_a_held_write_lock_during_journal_mode_pragma(self, tmp_path):
+        """A1 review round 2, finding 1: ``PRAGMA journal_mode=WAL`` claims an
+        exclusive lock WITHOUT going through the busy handler -- SQLite
+        returns SQLITE_BUSY immediately if another connection already holds
+        the write lock, busy_timeout or no busy_timeout. The previous fix
+        ran that pragma before ``BEGIN IMMEDIATE`` and treated any pragma
+        failure as fatal, ``return``-ing before a single CREATE/ALTER TABLE
+        ran while leaving ``self._conn`` set -- so the instance was silently
+        and permanently unable to write (every ``append_message`` would fail
+        with "table messages has no column named turn_id", logged only at
+        WARNING and reported as ``None``).
+
+        This deterministically reproduces the held lock (no thread race
+        needed): a legacy-shaped DB, a second connection that grabs the
+        write lock with ``BEGIN IMMEDIATE`` and holds it past when the store
+        constructor's journal_mode pragma will run, then releases it while
+        the constructor is blocked waiting on ``BEGIN IMMEDIATE`` under
+        ``busy_timeout``. The migration must still complete correctly, and
+        ``self._conn`` must not survive as a half-migrated store.
+        """
+        path = tmp_path / "legacy.db"
+        raw = sqlite3.connect(str(path))
+        raw.execute(
+            "CREATE TABLE conversations (id TEXT PRIMARY KEY, user_id TEXT, title TEXT, "
+            "created_at REAL NOT NULL, updated_at REAL NOT NULL, metadata TEXT NOT NULL DEFAULT '{}')"
+        )
+        raw.execute(
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id TEXT NOT NULL, "
+            "role TEXT NOT NULL, content TEXT NOT NULL, timestamp REAL NOT NULL, "
+            "metadata TEXT NOT NULL DEFAULT '{}')"
+        )
+        raw.execute("INSERT INTO conversations (id, title, created_at, updated_at) VALUES ('old', 'Old chat', 1.0, 1.0)")
+        raw.commit()
+        raw.close()
+
+        holder = sqlite3.connect(str(path))
+        holder.execute("BEGIN IMMEDIATE")
+
+        result = {}
+
+        def build():
+            start = time.time()
+            result["store"] = SqliteConversationStore(str(path))
+            result["elapsed"] = time.time() - start
+
+        t = threading.Thread(target=build)
+        t.start()
+        time.sleep(0.5)  # give the constructor time to hit the held lock
+        holder.rollback()
+        holder.close()
+        t.join(timeout=10)
+
+        s = result["store"]
+        assert s._conn is not None, "migration must have completed, not aborted with conn left half-migrated"
+        # It really did wait on busy_timeout rather than skipping the lock
+        # entirely (i.e. this test is actually exercising the held-lock path).
+        assert result["elapsed"] >= 0.4
+        mcols = {r[1] for r in s._conn.execute("PRAGMA table_info(messages)")}
+        assert {"turn_id", "session_id", "origin", "status", "blocks_json",
+                "terminal_block_ids", "diff_proposals_json", "visible_in_timeline"} <= mcols
+        assert s.healthy is True
+        assert s.append_message("old", "user", "post-migration write") is not None
         s.close()
 
 
@@ -191,6 +256,44 @@ class TestAppend:
         store.create("t1")
         assert store.append_message("t1", "user", "hi") is not None
 
+    def test_append_with_older_timestamp_does_not_rewind_updated_at(self, store):
+        """A1 review round 2, finding 3: ``save()``'s ON CONFLICT clause was
+        fixed to ``MAX(conversations.updated_at, excluded.updated_at)``, but
+        ``append_message`` still ended with an unconditional
+        ``UPDATE conversations SET updated_at = ?``. Appending with an
+        explicitly older ``timestamp=`` -- exactly what
+        ``migrate_json_conversations_to_sqlite`` does when it backfills a
+        thread's messages one at a time after ``save()`` has already set the
+        thread's true (newer) ``updated_at`` -- used to drop the thread's
+        recency below its current value, corrupting the
+        ``ORDER BY updated_at DESC`` in ``list_conversations``/``list_threads``.
+        """
+        store.create("t1")
+        current = store._conn.execute(
+            "SELECT updated_at FROM conversations WHERE id = 't1'"
+        ).fetchone()[0]
+        much_newer = current + 10_000.0
+        store._conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = 't1'", (much_newer,)
+        )
+        store._conn.commit()
+
+        store.append_message("t1", "user", "backfilled with an old timestamp", timestamp=1.0)
+
+        after = store._conn.execute(
+            "SELECT updated_at FROM conversations WHERE id = 't1'"
+        ).fetchone()[0]
+        assert after == much_newer  # not rewound to 1.0
+
+    def test_append_with_newer_timestamp_still_advances_updated_at(self, store):
+        store.create("t1")
+        far_future = time.time() + 10_000.0
+        store.append_message("t1", "user", "advances updated_at forward", timestamp=far_future)
+        after = store._conn.execute(
+            "SELECT updated_at FROM conversations WHERE id = 't1'"
+        ).fetchone()[0]
+        assert after == far_future
+
 
 class TestUpdateMessage:
     def test_update_status_and_lists(self, store):
@@ -224,6 +327,34 @@ class TestUpdateMessage:
         mid = store.append_message("t1", "user", "x")
         assert store.update_message(mid, role="assistant") is False
         assert store.update_message(999, status="complete") is False
+
+    def test_update_thread_id_to_unknown_thread_is_rejected(self, store, caplog):
+        """A1 review round 2, finding 4: the existence check
+        ``append_message`` gained for finding 4 in round 1 was never added
+        to this sibling write path. With no FK on ``conversation_id``,
+        ``update_message(mid, thread_id="ghost")`` used to succeed, moving
+        the row (and its FTS entry) to a thread id that does not exist --
+        making the message invisible to every reader (``get``, ``search``,
+        a future ``list_threads``) forever. ``thread_id`` moves are exactly
+        how later Plan A merge/split tasks use this method, so this matters
+        more than an isolated data-integrity nicety.
+        """
+        store.create("t1")
+        mid = store.append_message("t1", "user", "moving to nowhere")
+        with caplog.at_level(logging.WARNING, logger="halbert.agents.conversation_sqlite"):
+            assert store.update_message(mid, thread_id="ghost") is False
+        assert any("update_message" in r.message for r in caplog.records)
+        row = store._conn.execute(
+            "SELECT conversation_id FROM messages WHERE id = ?", (mid,)
+        ).fetchone()
+        assert row["conversation_id"] == "t1"  # not moved
+        assert store._conn.execute(
+            "SELECT conversation_id FROM messages_fts WHERE rowid = ?", (mid,)
+        ).fetchone()[0] == "t1"  # FTS entry not moved either
+        assert store.search("nowhere") == ["t1"]
+        # the store is still usable afterwards for a real move
+        store.create("t2")
+        assert store.update_message(mid, thread_id="t2") is True
 
 
 class TestSave:
@@ -317,6 +448,75 @@ class TestFtsHealth:
             "SELECT rowid FROM messages_fts WHERE messages_fts MATCH '\"recovered\"'"
         ).fetchone()[0] == mid
         assert store.search("recovered") == ["t1"]
+
+    def test_recovery_backfills_messages_written_while_genuinely_degraded(self, store, monkeypatch):
+        """A1 review round 2, finding 2: both the ``version >= 2`` branch of
+        ``_ensure_schema`` and ``_fts_recover()`` created ``messages_fts``
+        with ``CREATE VIRTUAL TABLE IF NOT EXISTS`` and immediately reported
+        ``healthy``/``_fts_ok = True`` with no backfill -- so a runtime
+        without FTS5 could accumulate unindexed messages, and a later
+        runtime with FTS5 would create an empty index and report healthy
+        forever while those older messages stayed permanently unsearchable.
+
+        This appends one message while FTS is healthy (indexed the normal
+        way), then genuinely degrades (stubbing ``_fts_recover`` to keep
+        failing, like ``test_degraded_fts_appends_succeed_but_search_falls_back_to_title``
+        above) and appends a second message that is written but NOT
+        indexed. Recovery must then backfill -- not just the newly appended
+        row, but the fact that recovery actually walks ``messages`` rather
+        than trusting an already-populated-looking index -- so both
+        messages become searchable again.
+        """
+        store.create("t1")
+        indexed_before_degradation = store.append_message("t1", "user", "alpha unique searchable phrase")
+        assert store.search("alpha") == ["t1"]
+
+        monkeypatch.setattr(store, "_fts_recover", lambda: False)
+        store._fts_ok = False
+        written_while_degraded = store.append_message("t1", "user", "beta unique searchable phrase")
+        assert written_while_degraded is not None
+        assert store.search("beta") == []  # confirms it was genuinely NOT indexed
+
+        monkeypatch.undo()  # restore the real _fts_recover
+        assert store.healthy is False  # still latched False until something recovers it
+
+        assert store._fts_recover() is True
+        assert store.healthy is True
+        assert store.search("alpha") == ["t1"]
+        assert store.search("beta") == ["t1"]
+        for mid in (indexed_before_degradation, written_while_degraded):
+            assert store._conn.execute(
+                "SELECT COUNT(*) FROM messages_fts WHERE rowid = ?", (mid,)
+            ).fetchone()[0] == 1
+
+    def test_reopen_backfills_messages_missing_from_an_already_versioned_fts_index(self, tmp_path):
+        """The mirror of the above for the ``_ensure_schema`` path directly
+        (rather than ``_fts_recover()``): a DB already stamped at
+        ``SCHEMA_VERSION`` whose ``messages_fts`` table exists but is
+        missing rows for messages that were written by a runtime without
+        FTS5. Simply reopening the store (which runs
+        ``CREATE VIRTUAL TABLE IF NOT EXISTS`` down the ``version >= 2``
+        branch, since the table already exists) must backfill those rows,
+        not just leave the store reporting healthy over a thin index.
+        """
+        path = tmp_path / "thin_index.db"
+        s = SqliteConversationStore(str(path))
+        s.create("t1")
+        indexed = s.append_message("t1", "user", "gamma unique searchable phrase")
+        # Simulate a message that a runtime without FTS5 would have written:
+        # present in messages, absent from messages_fts, schema_version
+        # already at SCHEMA_VERSION.
+        unindexed = s.append_message("t1", "user", "delta unique searchable phrase")
+        s._conn.execute("DELETE FROM messages_fts WHERE rowid = ?", (unindexed,))
+        s._conn.commit()
+        assert s.search("delta") == []
+        s.close()
+
+        s2 = SqliteConversationStore(str(path))
+        assert s2.healthy is True
+        assert s2.search("gamma") == ["t1"]
+        assert s2.search("delta") == ["t1"]
+        s2.close()
 
 
 class TestDeleteCleansFts:
