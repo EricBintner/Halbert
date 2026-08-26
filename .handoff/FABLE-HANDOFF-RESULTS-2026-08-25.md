@@ -33,3 +33,39 @@ Every premise in the handoff was re-verified before acting; several were wrong
 ## Concurrency notes
 - Another session had created `src-tauri/binaries/halbert-api-{aarch64,x86_64}-apple-darwin` at 20:00:50 and was testing on port 8000 (`/private/tmp/halbert-api-test2.log`, system-Python uvicorn, cwd = `binaries/`). My first write at 20:04 overwrote those files. The committed version is the verified one.
 - Another session committed `1043b40 docs(handoff): remaining work handoffs for fable and opus tracks` during this run.
+
+---
+
+## Fix round (2026-08-25, later the same day) — "do all this"
+
+All bugs B1–B9 above were fixed, plus the deeper causes found on the way. Three
+workflow rounds (investigate → implement → adversarial review + live server
+verification), suite **780 → 912 passed**, boot smoke 5/5 throughout.
+
+| Commit | What |
+|---|---|
+| `bb8de0f` fix(model) | single models.yml locator (`model/config_locator.py`); TierRouter finds the user config (1 model, kimi) instead of 0; compression route reads/writes the user file; trending discovery uses the configured model |
+| `4d5a7a5` fix(agents) | cognition tick fires on every turn (PLANNING→REFLECTING + guarded safety-net in RESPONDING); pure greetings skip SEARCHING; AWAITING_CONFIRMATION pauses instead of busy-looping; max-loops guard no longer infinite-loops; ERROR give-up no longer raises error→success |
+| `93a2edd` fix(retrieval) | SourcePrep project id resolved from `~/.local/share/halbert/sourceprep/.sourceprep/project.json` (was never set → every retrieval returned []); SEARCHING uses SourcePrepAdapter; CRAG scoring fixed (tokenisation, retriever score, robust LLM-reply parsing) |
+| `dffe05d` fix(memory) | context memory adapters pointed at modules that exist (`memory.store` never existed); hybrid memory's self-knowledge + embeddings wiring fixed (two more nonexistent-module imports) |
+| `d1e6555` fix(integrations) | seam ModelBackend follows the agent's config; `HALBERT_LLM_THOUGHTS=1` opt-in LLM thought generator; lazy haloysius import; `format_context` removed; honest docstrings |
+| `07b6869` fix(dashboard) | `python -m halbert_core.dashboard` works; journald skipped off-Linux; Tauri CORS origins |
+| `095acf7` feat(tauri) | sidecar spawn/kill + parent-pid watchdog; frontend API base for tauri://; **Halbert.app + DMG built** and launch/quit-tested |
+
+### Live verification (server on :8012 / built .app on :8014)
+- Greeting turn: `planning → reflecting → responding → idle`, no retrieval, one `thinking` event, no host files in the answer.
+- Question turn (PermitRootLogin): `planning → searching → observing → planning → reflecting → responding → idle`, 5 SourcePrep hits (host scope), CRAG relevance 0.42 / confidence 0.37 (was 0.00/0.20), correct answer.
+- No `Could not initialize memory service`, `Self-knowledge search failed`, `Embedding service not available`, `Journald ingestion error`, or tracebacks. `Cognitive tick complete` once per turn.
+- Built app: sidecar starts, webview polls `/api/settings/metrics|docs/stats|scan/status` through the injected API base with CORS OK; backend exits within 3s of the shell dying (kill -9 and SIGTERM tested).
+
+### Still open (need product decisions or your running build)
+- **CRAG completeness is honestly 0.0**: SourcePrep currently returns catalogue summaries (File/Role/Summary) for sshd_config, not file bodies, so the LLM says the docs cannot answer. Expect this to change once stage 1 finishes and the daemon is restarted (O1/O4).
+- **O5 memory persistence**: tick runs, template thoughts are generated ("This place…") but none reached the promotion threshold in test turns; `~/.local/share/haloysius/personas/halbert/memories.json` not created yet. Re-check after longer sessions / with `HALBERT_LLM_THOUGHTS=1`.
+- `confirm_action()` runs only `_handle_executing` and evicts the session — a confirmed action never produces a RESPONDING/response_complete (pre-existing).
+- `LLMClientAdapter.chat` ignores `tools`, so EXECUTING/READING/AWAITING_CONFIRMATION are unreachable from the API; the chat approval flow and `routes/approvals.py` are not bridged.
+- Somatic blocks (C1d) have no producer in production.
+- Greeting persona answers as a generic "AI assistant" (prompt/persona content, not wiring).
+- `ProbeButton` calls `/compute/endpoint-probe`, which no backend route serves.
+- Tauri: fixed port 8000 (override `HALBERT_PORT`); unsigned bundle; the .app still needs a checkout + .venv (`HALBERT_REPO_ROOT` for out-of-tree installs); Cmd-Q itself was not exercised headlessly (watchdog covers it regardless); no vitest for the frontend (tsc + static guard only).
+- Haloysius-side: whether its core should consume the seam registry (or the seam be documented as consumer-side only) — needs an owner decision; nothing in Haloysius was changed.
+- Another session's licensing work (`documentation/legal/`, `routes/legal.py`, `components/legal/`, `.github/`, `Halbert/main.py`, `config/model-catalog.yml`, `CONTRIBUTING.md`) was left uncommitted and untouched.
