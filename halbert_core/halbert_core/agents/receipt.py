@@ -36,6 +36,28 @@ _TITLE_VERBS = (
 )
 _TITLE_MAX = 60
 
+# Every interpolated field is capped and run through `_clip`, which flattens
+# embedded whitespace (including newlines) before truncating. Without this,
+# a multi-line title, domain, entity, or file path — any of which may be
+# model-authored (diff proposals) or come straight off disk with only
+# `.strip()` (A18's JSON migration) — could inject a forged labelled line
+# (e.g. a bogus "Open loop: ...") into the middle of the nine-line receipt,
+# which is then quoted verbatim into the prompt and the recall hint.
+_TITLE_LINE_MAX = 200
+_DOMAIN_ITEM_MAX = 60
+_ENTITY_ITEM_MAX = 80
+_FILE_ITEM_MAX = 80
+# entities_json accumulates every turn (A6); cap it so the unbounded field
+# can't crowd the fixed max_chars budget and truncate "Open loop" — the
+# last, and most operationally important, section — out of the receipt.
+_MAX_ENTITIES = 12
+_SUPERSEDED = "superseded"
+# Bound the per-turn refresh cost: a thread is designed never to end, so
+# scanning every stored message on every `end_turn`/redaction is O(n) per
+# call and O(n^2) over the thread's life. Only the first message (for
+# "Started with") and the most recent `tail` rows are examined.
+_DEFAULT_TAIL = 64
+
 
 def _date(ts: Any) -> str:
     try:
@@ -70,6 +92,23 @@ def _exit_of(block: Dict[str, Any]) -> str:
     return str(code) if code is not None else "?"
 
 
+def _is_superseded(block: Dict[str, Any]) -> bool:
+    """A confirmation staged then abandoned when its turn was superseded
+    (spec §5): ``{tool, args, result: "not run — superseded", exit: None,
+    status: "superseded"}``. Checked on ``status`` first, falling back to
+    a string ``result`` in case a caller omits ``status``."""
+    if str(block.get("status") or "").strip().lower() == _SUPERSEDED:
+        return True
+    result = block.get("result")
+    return isinstance(result, str) and _SUPERSEDED in result.lower()
+
+
+def _command_suffix(block: Dict[str, Any]) -> str:
+    if _is_superseded(block):
+        return "(not run — superseded)"
+    return f"(exit {_exit_of(block)})"
+
+
 def _tool_name(block: Dict[str, Any]) -> str:
     return str(block.get("tool") or block.get("name") or "")
 
@@ -89,7 +128,7 @@ def _command_lines(blocks: Sequence[Dict[str, Any]]) -> List[str]:
         cmd = _args_of(block).get("command")
         if not cmd:
             continue
-        lines.append(f"{_clip(cmd, 80)} (exit {_exit_of(block)})")
+        lines.append(f"{_clip(cmd, 80)} {_command_suffix(block)}")
     return lines
 
 
@@ -117,33 +156,53 @@ def _open_loop(text: str) -> str:
     return "none recorded"
 
 
-def build_receipt(thread: Dict[str, Any], messages: List[Dict[str, Any]], *, max_chars: int = 1500) -> str:
+def build_receipt(
+    thread: Dict[str, Any],
+    messages: List[Dict[str, Any]],
+    *,
+    max_chars: int = 1500,
+    tail: int = _DEFAULT_TAIL,
+) -> str:
     """Render the nine-line receipt for ``thread`` from its stored ``messages``.
 
     ``messages`` rows are ``SqliteConversationStore.list_messages`` dicts
     (role, content, timestamp, origin, turn_id, blocks, diff_proposals).
+
+    ``messages`` may be the thread's entire history. Only the first row
+    (needed for "Started with") and the most recent ``tail`` rows are
+    scanned — a per-turn refresh stays O(tail) rather than O(len(history))
+    on a conversation designed never to end.
     """
-    title = thread.get("title") or "Untitled"
-    human = [m for m in messages if m.get("role") == "user" and (m.get("origin") or "human") == "human"]
-    assistant = [m for m in messages if m.get("role") == "assistant"]
-    stamps = [float(m["timestamp"]) for m in messages if m.get("timestamp") is not None]
+    if len(messages) > tail + 1:
+        window = [messages[0], *messages[-tail:]]
+    else:
+        window = messages
+    title = _clip(thread.get("title") or "Untitled", _TITLE_LINE_MAX)
+    human = [m for m in window if m.get("role") == "user" and (m.get("origin") or "human") == "human"]
+    assistant = [m for m in window if m.get("role") == "assistant"]
+    stamps = [float(m["timestamp"]) for m in window if m.get("timestamp") is not None]
     turn_keys = {
         m.get("turn_id") or f"m{m.get('message_id', i)}"
-        for i, m in enumerate(messages) if m.get("role") == "user"
+        for i, m in enumerate(window) if m.get("role") == "user"
     }
-    n_turns = len(turn_keys) or int(thread.get("turn_count") or 0)
+    # thread.turn_count is the authoritative counter maintained incrementally
+    # by the caller (A6); prefer it over counting turn_ids in `window`, which
+    # only sees a bounded slice of history once a thread outgrows `tail`.
+    n_turns = int(thread.get("turn_count") or 0) or len(turn_keys)
     when = f"{_date(min(stamps))}..{_date(max(stamps))} · {n_turns} turns" if stamps else "unknown"
-    domains = ", ".join(thread.get("topic_domains") or []) or "none"
-    entities = ", ".join(thread.get("entities_json") or []) or "none"
+    domains = ", ".join(_clip(d, _DOMAIN_ITEM_MAX) for d in (thread.get("topic_domains") or [])) or "none"
+    entities = ", ".join(
+        _clip(e, _ENTITY_ITEM_MAX) for e in (thread.get("entities_json") or [])[:_MAX_ENTITIES]
+    ) or "none"
     started = _clip(human[0].get("content"), 160) if human else "none"
     last_said = first_sentence(assistant[-1].get("content") or "", 200) if assistant else "none"
     blocks: List[Dict[str, Any]] = []
     diffs: List[Dict[str, Any]] = []
-    for m in messages:
+    for m in window:
         blocks.extend(m.get("blocks") or [])
         diffs.extend(m.get("diff_proposals") or [])
     commands = "; ".join(_command_lines(blocks)[-8:]) or "none"
-    files = "; ".join(_file_lines(blocks, diffs)[-8:]) or "none"
+    files = "; ".join(_clip(p, _FILE_ITEM_MAX) for p in _file_lines(blocks, diffs)[-8:]) or "none"
     open_loop = _open_loop(assistant[-1].get("content") or "") if assistant else "none recorded"
     lines = [
         f"Title: {title}",
