@@ -17,14 +17,21 @@ from halbert_core.intake.pipeline import IntakePipeline, MessageIntake
 # ── Fixtures ─────────────────────────────────────────────────────
 
 MODEL_CONFIG = {
-    "orchestrator": {"model": "example-guide:14b-instruct-q4_0"},
-    "specialist": {"model": "example-specialist:32b", "enabled": True},
+    "llm_config": {
+        "saved_endpoints": [{"id": "ep", "name": "Local", "provider": "ollama", "url": "http://localhost:11434"}],
+        "chat_model": {"enabled": True, "endpoint_id": "ep", "model": "example-guide:14b-instruct-q4_0"},
+        "specialist_model": {"enabled": True, "endpoint_id": "ep", "model": "example-specialist:32b"},
+        "vision_model": {"enabled": False, "endpoint_id": "", "model": ""},
+    },
     "routing": {"complexity_threshold": 3},
 }
 
 MODEL_CONFIG_WITH_VISION = {
     **MODEL_CONFIG,
-    "vision": {"model": "example-vision:8b"},
+    "llm_config": {
+        **MODEL_CONFIG["llm_config"],
+        "vision_model": {"enabled": True, "endpoint_id": "ep", "model": "example-vision:8b"},
+    },
 }
 
 
@@ -237,3 +244,11 @@ class TestVisionRouting:
         result = pipeline.analyze("why is nginx failing?")
         assert result.has_images is False
         assert result.recommended_model != "vision"
+
+    def test_disabled_specialist_routes_to_guide(self):
+        """A specialist slot with a model but enabled=False must not be used."""
+        cfg = {**MODEL_CONFIG, "llm_config": {**MODEL_CONFIG["llm_config"],
+               "specialist_model": {"enabled": False, "endpoint_id": "ep", "model": "example-specialist:32b"}}}
+        pipeline = IntakePipeline(make_router(score=5), get_context_budget, cfg)
+        result = pipeline.analyze("complex diagnostic query about nginx configuration")
+        assert result.recommended_model == "guide"

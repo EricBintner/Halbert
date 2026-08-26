@@ -10,7 +10,7 @@ Based on research5.md Part 7.
 from __future__ import annotations
 import logging
 import asyncio
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, NamedTuple, Optional
 
 try:
     from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
@@ -45,6 +45,10 @@ class SendMessageRequest(BaseModel):
     # Performance tweaks - sent from frontend Settings > AI > Performance Tweaks
     max_tokens: Optional[int] = Field(8192, description="Max tokens for LLM response")
     temperature: Optional[float] = Field(0.7, description="LLM temperature (0.0-1.0)")
+    # In-chat model picker: the pill and the /model command send these.
+    model: Optional[str] = Field(None, description="Exact model pinned for this turn; bypasses the complexity router")
+    tier: Optional[str] = Field(None, description="'guide' | 'specialist' | 'vision' | 'auto'")
+    endpoint_id: Optional[str] = Field(None, description="Saved-endpoint id the pinned model came from; removes ambiguity when the same model name exists on two endpoints")
 
 
 class ConfirmActionRequest(BaseModel):
@@ -214,21 +218,10 @@ def _get_llm_client():
 
 
 def _load_model_config():
-    """Load model config from models.yml for the intake pipeline.
-
-    Returns a dict with keys matching the IntakePipeline's expected
-    model_config shape: orchestrator.model, specialist.model/enabled,
-    routing.complexity_threshold.
-    """
+    """Whole models.yml (post-migration) for the intake pipeline — see model.llm_config."""
     try:
-        from ...model.config_locator import find_models_config
-        import yaml
-
-        config_path = find_models_config(include_repo=False)
-        if config_path is not None:
-            with open(config_path, "r") as f:
-                return yaml.safe_load(f) or {}
-        return {}
+        from ...model import llm_config as llm_store
+        return llm_store.load_file()
     except Exception as e:
         logger.warning(f"Could not load model config: {e}")
         return {}
@@ -240,20 +233,136 @@ def _make_llm_caller():
     The returned callable has signature:
         caller(endpoint, model, messages, options) -> dict
     """
-    from ...model.client import call_llm_chat
+    from ...model.client import call_llm_chat, provider_for
 
     def caller(endpoint, model, messages, options):
+        # The router knows only a URL. Hardcoding "ollama" here posted every
+        # cloud endpoint to {url}/api/chat.
         return call_llm_chat(
             endpoint=endpoint,
             model=model,
             messages=messages,
-            provider="ollama",
+            provider=provider_for(endpoint),
             stream=False,
             timeout=30,
             options=options,
         )
 
     return caller
+
+
+_NO_MODEL_MSG = "No model configured — choose one in Settings → AI Models (models.yml)"
+
+
+class TurnModel(NamedTuple):
+    """The concrete model chosen for one turn, plus why."""
+    model: str
+    endpoint: str
+    provider: str
+    tier: str            # "guide" | "specialist" | "vision"
+    pinned: bool         # user pinned it; the complexity router was bypassed
+    escalated: bool      # the router chose specialist on its own
+    reason: str          # human-readable, for the handoff banner and logs
+
+
+def _resolve_turn_model(
+    prompt: str,
+    intake_result=None,
+    images=None,
+    model_override: Optional[str] = None,
+    tier_override: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
+) -> TurnModel:
+    """Pick the model for this turn.
+
+    Precedence: an explicit model pin beats a tier pin, which beats automatic
+    routing. A pin bypasses the complexity router entirely — that is the whole
+    point of Locked Mode: a user who pins a local model must never discover
+    afterwards that a cloud specialist answered and billed them.
+
+    Resolution is done per call from models.yml rather than cached on the
+    adapter, because one adapter instance is shared by every concurrent
+    request.
+    """
+    from ...model.client import (
+        get_configured_model, get_ollama_endpoint, get_specialist_model,
+        get_vision_model, provider_for, resolve_endpoint_by_id,
+        score_query_complexity,
+    )
+
+    guide_model = get_configured_model()
+    guide_endpoint = get_ollama_endpoint()
+    guide_provider = provider_for(guide_endpoint)
+
+    # ── 1. Explicit model pin ────────────────────────────────────────────
+    if model_override:
+        # An id from the picker is exact; without one, match the pinned name
+        # against a configured slot, then fall back to the guide endpoint —
+        # which is right for the common case of another model on the same
+        # local runtime.
+        resolved = resolve_endpoint_by_id(endpoint_id) if endpoint_id else None
+        if resolved:
+            url, provider, _ = resolved
+        else:
+            spec_model, spec_endpoint, spec_provider = get_specialist_model()
+            vis_model, vis_endpoint, vis_provider = get_vision_model()
+            if spec_model == model_override:
+                url, provider = spec_endpoint, spec_provider or "ollama"
+            elif vis_model == model_override:
+                url, provider = vis_endpoint, vis_provider or "ollama"
+            else:
+                url, provider = guide_endpoint, guide_provider
+        return TurnModel(
+            model=model_override, endpoint=url, provider=provider,
+            tier="guide", pinned=True, escalated=False,
+            reason=f"Pinned to {model_override}",
+        )
+
+    # ── 2. Tier pin ──────────────────────────────────────────────────────
+    if tier_override in ("guide", "specialist", "vision"):
+        if tier_override == "specialist":
+            model, url, provider = get_specialist_model()
+            if model:
+                return TurnModel(model, url, provider or "ollama", "specialist",
+                                 True, False, "Pinned to the specialist tier")
+            logger.info("Specialist tier pinned but not configured; using guide")
+        elif tier_override == "vision":
+            model, url, provider = get_vision_model()
+            if model:
+                return TurnModel(model, url, provider or "ollama", "vision",
+                                 True, False, "Pinned to the vision tier")
+            logger.info("Vision tier pinned but not configured; using guide")
+        if not guide_model:
+            raise HTTPException(400, _NO_MODEL_MSG)
+        return TurnModel(guide_model, guide_endpoint, guide_provider, "guide",
+                         True, False, "Pinned to the guide tier")
+
+    # ── 3. Automatic routing (unchanged behaviour) ───────────────────────
+    if images or (intake_result is not None
+                  and intake_result.recommended_model == "vision"):
+        model, url, provider = get_vision_model()
+        if model:
+            return TurnModel(model, url, provider or "ollama", "vision",
+                             False, False, "Image attached")
+
+    if not guide_model:
+        raise HTTPException(400, _NO_MODEL_MSG)
+
+    spec_model, spec_endpoint, spec_provider = get_specialist_model()
+    if spec_model:
+        if intake_result is not None:
+            use_specialist = intake_result.recommended_model == "specialist"
+            reason = f"Intake routing: {intake_result.recommended_model}"
+        else:
+            score = score_query_complexity(prompt)
+            use_specialist = score >= 0.5
+            reason = f"Complexity score {score:.2f} (threshold 0.50)"
+        if use_specialist:
+            return TurnModel(spec_model, spec_endpoint, spec_provider or "ollama",
+                             "specialist", False, True, reason)
+
+    return TurnModel(guide_model, guide_endpoint, guide_provider, "guide",
+                     False, False, "Routine query")
 
 
 class LLMClientAdapter:
@@ -265,7 +374,8 @@ class LLMClientAdapter:
         self.max_tokens = 8192
         self.temperature = 0.7
     
-    async def chat(self, messages, tools=None, intake_result=None, images=None):
+    async def chat(self, messages, tools=None, intake_result=None, images=None,
+                   model_override=None, tier_override=None, endpoint_id=None):
         """Call LLM with messages, routing to specialist for complex queries.
 
         Tool schemas are forwarded to the model and any tool calls come back on
@@ -282,70 +392,63 @@ class LLMClientAdapter:
             tools: Optional OpenAI-style tool schemas.
             intake_result: Optional Phase 3 MessageIntake for model routing.
             images: Optional list of base64-encoded images for vision model.
+            model_override: Exact model pinned for this turn; bypasses routing.
+            tier_override: "guide" | "specialist" | "vision" for this turn.
+            endpoint_id: Saved-endpoint id the pinned model came from.
+
+        Every override is a parameter, never instance state: one adapter is
+        shared by all concurrent requests, so anything stored on ``self``
+        leaks across sessions.
         """
-        from ...model.client import (
-            get_specialist_model, get_configured_model, get_ollama_endpoint,
-            score_query_complexity, call_llm_chat, get_vision_model
-        )
+        from ...model.client import call_llm_chat, get_configured_model, \
+            get_ollama_endpoint, provider_for
 
         # Get the prompt from messages
         prompt = messages[-1].get("content", "") if messages else ""
         system = messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
 
-        # Phase 4: Vision model routing when images are present or intake recommends it
-        use_vision = bool(images) or (intake_result is not None and intake_result.recommended_model == "vision")
-        if use_vision:
-            vision_model, vision_endpoint = get_vision_model()
-            if vision_model:
-                logger.info(f"Agent using vision model: {vision_model}")
-                # Add images to the last user message
-                llm_messages = []
-                if system:
-                    llm_messages.append({"role": "system", "content": system})
-                for msg in messages:
-                    if msg.get("role") != "system":
-                        m = dict(msg)
-                        if msg.get("role") == "user" and images:
-                            m["images"] = images
-                        llm_messages.append(m)
-                try:
-                    result = call_llm_chat(
-                        endpoint=vision_endpoint,
-                        model=vision_model,
-                        messages=llm_messages,
-                        provider="ollama",
-                        stream=False,
-                        timeout=300,
-                        options={"num_predict": 2048, "temperature": 0.7},
-                    )
-                    return LLMResponse(content=result.get("content", ""))
-                except Exception as e:
-                    logger.error(f"Vision model call failed: {e}, falling back to text")
+        turn = _resolve_turn_model(
+            prompt, intake_result, images, model_override, tier_override,
+            endpoint_id,
+        )
+        logger.info(
+            f"Agent turn model: {turn.model} @ {turn.endpoint} "
+            f"(tier={turn.tier}, provider={turn.provider}, "
+            f"pinned={turn.pinned}) — {turn.reason}"
+        )
 
-        # Route based on complexity
-        model = get_configured_model()
-        if not model:
-            raise HTTPException(400, "No model configured — choose one in Settings → AI Models (models.yml)")
-        endpoint = get_ollama_endpoint()
-        provider = "ollama"
+        if turn.tier == "vision":
+            # Add images to the last user message
+            llm_messages = []
+            if system:
+                llm_messages.append({"role": "system", "content": system})
+            for msg in messages:
+                if msg.get("role") != "system":
+                    m = dict(msg)
+                    if msg.get("role") == "user" and images:
+                        m["images"] = images
+                    llm_messages.append(m)
+            try:
+                result = call_llm_chat(
+                    endpoint=turn.endpoint,
+                    model=turn.model,
+                    messages=llm_messages,
+                    provider=turn.provider,
+                    stream=False,
+                    timeout=300,
+                    options={"num_predict": 2048, "temperature": 0.7},
+                )
+                return LLMResponse(content=result.get("content", ""))
+            except Exception as e:
+                logger.error(f"Vision model call failed: {e}, falling back to text")
+                # Re-resolve without the vision path so the turn still answers.
+                turn = _resolve_turn_model(
+                    prompt, intake_result, None, model_override, tier_override,
+                    endpoint_id,
+                )
 
-        specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
-        if specialist_model:
-            if intake_result is not None:
-                # Phase 3: Use intake's recommended_model
-                use_specialist = intake_result.recommended_model == "specialist"
-                logger.info(f"Agent using intake routing: {intake_result.recommended_model}")
-            else:
-                # Fallback: legacy complexity scoring
-                complexity_score = score_query_complexity(prompt)
-                use_specialist = complexity_score >= 0.5
-                logger.info(f"Agent using legacy routing (complexity: {complexity_score:.2f})")
+        model, endpoint, provider = turn.model, turn.endpoint, turn.provider
 
-            if use_specialist:
-                model = specialist_model
-                endpoint = specialist_endpoint
-                provider = specialist_provider or "ollama"
-        
         # Build messages for LLM
         llm_messages = []
         if system:
@@ -372,18 +475,21 @@ class LLMClientAdapter:
             )
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
-            # Fallback to guide model
-            if specialist_model and model == specialist_model:
-                logger.info("Falling back to guide model")
-                guide_model = get_configured_model()
-                if not guide_model:
-                    raise HTTPException(400, "No model configured — choose one in Settings → AI Models (models.yml)")
-                guide_endpoint = get_ollama_endpoint()
+            # Never strand the turn: if a specialist or a pinned model is
+            # unreachable, answer with the guide and let the UI say so. Only
+            # skip this when the guide is what already failed.
+            guide_model = get_configured_model()
+            guide_endpoint = get_ollama_endpoint()
+            if guide_model and model != guide_model:
+                logger.warning(
+                    f"Model '{model}' unavailable ({e}); falling back to "
+                    f"guide model '{guide_model}' for this turn"
+                )
                 result = call_llm_chat(
                     endpoint=guide_endpoint,
                     model=guide_model,
                     messages=llm_messages,
-                    provider="ollama",
+                    provider=provider_for(guide_endpoint),
                     stream=False,
                     timeout=180,
                     tools=tools,
@@ -394,94 +500,121 @@ class LLMClientAdapter:
                 )
             raise
     
-    async def stream(self, messages, intake_result=None, images=None):
+    async def stream(self, messages, intake_result=None, images=None,
+                     model_override=None, tier_override=None, endpoint_id=None):
         """Stream response from LLM with true incremental streaming.
-        
+
+        This — not chat() — is the production response path: the state machine
+        prefers stream() whenever the client exposes it. Anything the user must
+        see honoured (a pinned model, a credential) has to be handled here, not
+        only in chat().
+
         Uses aiohttp for async streaming. Filters out <think> blocks in real-time.
         Uses self.max_tokens and self.temperature from instance (set per-request).
         """
         import aiohttp
         import re
         from ...model.client import (
-            get_specialist_model, get_configured_model, get_ollama_endpoint,
-            score_query_complexity, get_vision_model
+            OPENAI_COMPATIBLE_PROVIDERS, _api_url, api_key_for,
         )
-        
+
         # Use instance variables for performance tweaks
         max_tokens = self.max_tokens
         temperature = self.temperature
         logger.info(f"LLM streaming with max_tokens={max_tokens}, temperature={temperature}")
-        
+
         # Get the prompt from messages
         prompt = messages[-1].get("content", "") if messages else ""
 
-        # Phase 4: Vision model routing when images are present or intake recommends it
-        use_vision = bool(images) or (intake_result is not None and intake_result.recommended_model == "vision")
-        if use_vision:
-            vision_model, vision_endpoint = get_vision_model()
-            if vision_model:
-                logger.info(f"Agent stream using vision model: {vision_model}")
-                model = vision_model
-                endpoint = vision_endpoint
-                provider = "ollama"
-                # Add images to the last user message
-                if images:
-                    for msg in messages:
-                        if msg.get("role") == "user":
-                            msg["images"] = images
-                            break
+        turn = _resolve_turn_model(
+            prompt, intake_result, images, model_override, tier_override,
+            endpoint_id,
+        )
+        model, endpoint, provider = turn.model, turn.endpoint, turn.provider
+        logger.info(
+            f"Agent stream model: {model} @ {endpoint} (tier={turn.tier}, "
+            f"provider={provider}, pinned={turn.pinned}) — {turn.reason}"
+        )
 
-        # Route based on complexity (skipped if vision model already selected)
-        if not use_vision or not vision_model:
-            model = get_configured_model()
-            if not model:
-                raise HTTPException(400, "No model configured — choose one in Settings → AI Models (models.yml)")
-            endpoint = get_ollama_endpoint()
-            provider = "ollama"
-        
-        specialist_model, specialist_endpoint, specialist_provider = get_specialist_model()
-        if specialist_model:
-            if intake_result is not None:
-                use_specialist = intake_result.recommended_model == "specialist"
-                logger.info(f"Agent stream using intake routing: {intake_result.recommended_model}")
-            else:
-                complexity_score = score_query_complexity(prompt)
-                use_specialist = complexity_score >= 0.5
-                logger.info(f"Agent stream using legacy routing (complexity: {complexity_score:.2f})")
+        if turn.tier == "vision" and images:
+            # Add images to the last user message
+            for msg in messages:
+                if msg.get("role") == "user":
+                    msg["images"] = images
+                    break
 
-            if use_specialist:
-                model = specialist_model
-                endpoint = specialist_endpoint
-                provider = specialist_provider or "ollama"
-        
         # State for filtering <think> blocks
         in_think_block = False
         buffer = ""
         
         try:
+            # The streaming path builds its own requests rather than going
+            # through call_llm_chat, so it needs the same auth and provider
+            # coverage — without it a BYOK endpoint authenticates for the
+            # planning call and then 401s on the answer the user actually sees.
+            api_key = api_key_for(endpoint)
+            headers = {}
+            if provider in OPENAI_COMPATIBLE_PROVIDERS:
+                wire = "openai"
+                url = _api_url(endpoint, "/v1/chat/completions")
+                payload = {
+                    "model": model,
+                    "messages": messages,
+                    "stream": True,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+            elif provider == "anthropic":
+                wire = "anthropic"
+                if not api_key:
+                    yield "Error: no API key configured for this endpoint — add one in Settings → AI Models"
+                    return
+                url = _api_url(endpoint or "https://api.anthropic.com", "/v1/messages")
+                system_parts = [
+                    m.get("content", "") for m in messages
+                    if m.get("role") == "system" and m.get("content")
+                ]
+                payload = {
+                    "model": model,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                    "stream": True,
+                    "messages": [
+                        {
+                            "role": "assistant" if m.get("role") == "assistant" else "user",
+                            "content": m.get("content") or "",
+                        }
+                        for m in messages
+                        if m.get("role") != "system" and m.get("content")
+                    ],
+                }
+                if system_parts:
+                    payload["system"] = "\n\n".join(system_parts)
+                headers = {
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                }
+            else:
+                wire = "ollama"
+                url = f"{(endpoint or '').rstrip('/')}/api/chat"
+                payload = {
+                    "model": model,
+                    "messages": messages,
+                    "stream": True,
+                    "options": {"num_predict": max_tokens, "temperature": temperature}
+                }
+
             timeout = aiohttp.ClientTimeout(total=600)  # 10 minute timeout
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                if provider == "openai":
-                    url = f"{endpoint}/v1/chat/completions"
-                    payload = {
-                        "model": model,
-                        "messages": messages,
-                        "stream": True,
-                        "temperature": temperature,
-                        "max_tokens": max_tokens,
-                    }
-                else:
-                    url = f"{endpoint}/api/chat"
-                    payload = {
-                        "model": model,
-                        "messages": messages,
-                        "stream": True,
-                        "options": {"num_predict": max_tokens, "temperature": temperature}
-                    }
-                
-                logger.info(f"Streaming from {url} model={model}")
-                
-                async with session.post(url, json=payload) as resp:
+                logger.info(
+                    f"Streaming from {url} model={model} "
+                    f"(wire: {wire}, auth: {'yes' if api_key else 'no'})"
+                )
+
+                async with session.post(url, json=payload, headers=headers) as resp:
                     if resp.status != 200:
                         error_text = await resp.text()
                         logger.error(f"LLM API error: {resp.status} - {error_text}")
@@ -498,7 +631,7 @@ class LLMClientAdapter:
                         
                         # Parse SSE or JSON response
                         content = ""
-                        if provider == "openai":
+                        if wire == "openai":
                             # OpenAI SSE format: data: {...}
                             if line_text.startswith("data: "):
                                 data_str = line_text[6:]
@@ -511,6 +644,26 @@ class LLMClientAdapter:
                                     content = delta.get("content", "")
                                 except:
                                     continue
+                        elif wire == "anthropic":
+                            # Anthropic SSE: named events plus a data: line. The
+                            # text lives on content_block_delta.delta.text.
+                            if not line_text.startswith("data: "):
+                                continue
+                            try:
+                                import json
+                                data = json.loads(line_text[6:])
+                            except Exception:
+                                continue
+                            event_type = data.get("type")
+                            if event_type == "content_block_delta":
+                                content = (data.get("delta") or {}).get("text", "")
+                            elif event_type == "message_stop":
+                                break
+                            elif event_type == "error":
+                                msg = (data.get("error") or {}).get("message", "unknown")
+                                logger.error(f"Anthropic stream error: {msg}")
+                                yield f"Error: {msg}"
+                                return
                         else:
                             # Ollama JSON format
                             try:
@@ -625,12 +778,16 @@ def _as_tool_calls(raw_calls):
 
 
 class MockLLMClient:
-    """Mock LLM client for testing."""
-    
-    async def chat(self, messages, tools=None):
+    """Mock LLM client for testing.
+
+    Accepts **kwargs so new per-request routing parameters on the real adapter
+    do not TypeError here.
+    """
+
+    async def chat(self, messages, tools=None, **kwargs):
         return LLMResponse(content="I'm a mock response for testing.")
-    
-    async def stream(self, messages):
+
+    async def stream(self, messages, **kwargs):
         yield "I'm a mock response for testing."
 
 
@@ -668,6 +825,16 @@ if FASTAPI_AVAILABLE:
                 # Clear cancellation flag for new request
                 agent.cancelled[session_id] = False
         
+        # In-chat picker selection for this turn. "auto" means "no pin" — it is
+        # the absence of an override, not a third mode.
+        tier_override = request.tier if request.tier in ("guide", "specialist", "vision") else None
+        model_override = request.model or None
+        if model_override or tier_override:
+            logger.info(
+                f"Turn override from picker: model={model_override!r} "
+                f"tier={tier_override!r} endpoint_id={request.endpoint_id!r}"
+            )
+
         # Set performance tweaks from request (from frontend Settings > AI > Performance Tweaks)
         if hasattr(agent.llm, 'max_tokens'):
             agent.llm.max_tokens = request.max_tokens or 8192
@@ -687,6 +854,8 @@ if FASTAPI_AVAILABLE:
                     query=request.message,
                     session_id=session_id,
                     images=request.images,
+                    model_override=model_override,
+                    tier_override=tier_override,
                 ):
                     # Check if cancelled mid-stream
                     if session_id and agent.cancelled.get(session_id):
@@ -834,7 +1003,9 @@ if FASTAPI_AVAILABLE:
 
         result = pipeline.analyze(request.message)
         specialist_enabled = bool(
-            _load_model_config().get("specialist", {}).get("enabled", False)
+            (_load_model_config().get("llm_config") or {})
+            .get("specialist_model", {})
+            .get("enabled", False)
         )
         return {
             "recommended_model": result.recommended_model,
