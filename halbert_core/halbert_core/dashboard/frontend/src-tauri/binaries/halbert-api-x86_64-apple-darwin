@@ -4,8 +4,14 @@
 # connects to http://localhost:8000.
 set -euo pipefail
 
-# On Linux, prefer system python3 (deployment won't have the same venv path)
-PYTHON="$(command -v python3 || command -v python)"
+# Find the venv python (prefer .venv at repo root, fall back to system)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../../../../.." && pwd)"
+PYTHON="$REPO_ROOT/.venv/bin/python"
+
+if [ ! -x "$PYTHON" ]; then
+    PYTHON="$(command -v python3 || command -v python)"
+fi
 
 # Default port (Tauri frontend expects this)
 export HALBERT_PORT="${HALBERT_PORT:-8000}"
