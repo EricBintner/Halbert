@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Async PTY session (B1a).
 
 Real pseudo-terminal I/O via ``os.openpty()`` + ``aiofiles``. This is the
@@ -66,6 +68,11 @@ class PTYSession:
         self._buffer = bytearray()
         self._exited = False
         self._exit_code: Optional[int] = None
+
+        # Monotonic timestamp of the last stdout chunk. The session manager's
+        # idle reaper treats recent output as activity, so a session streaming
+        # output with no stdin (watching a long build) is not reaped mid-stream.
+        self.last_output_at: float = 0.0
 
         # Queues of in-flight read_chunk() generators, so kill() can push the
         # EOF sentinel and wake consumers suspended at ``queue.get()``.
@@ -184,6 +191,7 @@ class PTYSession:
                 queue.put_nowait(None)
             else:
                 self._append_buffer(data)
+                self.last_output_at = time.monotonic()
                 queue.put_nowait(data)
 
         loop.add_reader(self._master_fd, _on_readable)

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Tests for TerminalSessionManager (B1b)."""
 
 import asyncio
@@ -123,6 +125,24 @@ def test_reaper_removes_dead_sessions():
     m._reap_once()
     assert "sess-0" not in m._sessions
     assert "sess-1" in m._sessions
+
+
+def test_reaper_counts_stdout_as_activity():
+    """Regression: a session streaming output with no stdin must not be reaped.
+
+    PTYSession stamps last_output_at on every output chunk; the reaper's idle
+    clock must consider it, or watching a 60s+ build kills the session
+    mid-stream.
+    """
+    m = _manager_with_fake_sessions(2, max_sessions=2, ttl=5)
+    # Both sessions: no stdin/touch activity for 100s...
+    m._last_activity["sess-0"] = time.monotonic() - 100
+    m._last_activity["sess-1"] = time.monotonic() - 100
+    # ...but sess-1 produced stdout a moment ago
+    m._sessions["sess-1"].last_output_at = time.monotonic()
+    m._reap_once()
+    assert "sess-0" not in m._sessions  # truly idle -> reaped
+    assert "sess-1" in m._sessions      # streaming -> kept
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Terminal session manager (B1b).
 
 Singleton that owns all live ``PTYSession`` instances, enforces a concurrent
@@ -149,6 +151,10 @@ class TerminalSessionManager:
             if session is None:
                 continue
             last = self._last_activity.get(sid, now)
+            # Stdout counts as activity too: PTYSession stamps last_output_at
+            # on every chunk, so a session streaming output with no stdin
+            # (watching a long build) is never reaped mid-stream.
+            last = max(last, getattr(session, "last_output_at", 0.0) or 0.0)
             idle = now - last
             if not session.is_alive():
                 # Dead session: clean up
