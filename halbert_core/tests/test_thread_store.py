@@ -564,3 +564,98 @@ class TestSearchPunctuation:
         assert store.search("smb.conf") == ["t1"]
         assert store.search("what's") == []
         assert store.search("what's in smb.conf") == ["t1"]
+
+
+# ---------------------------------------------------------------------------
+# Thread + turn readers (A1b)
+# ---------------------------------------------------------------------------
+
+class TestThreadReaders:
+    def test_create_get_update_thread(self, store):
+        assert store.create_thread("t1", "Samba share") is True
+        assert store.create_thread("t1", "dup") is False
+        t = store.get_thread("t1")
+        assert (t["thread_id"], t["id"], t["title"], t["status"], t["title_source"]) == ("t1", "t1", "Samba share", "open", "provisional")
+        assert t["topic_domains"] == [] and t["entities_json"] == [] and t["recalled_json"] == [] and t["metadata"] == {}
+        assert t["turn_count"] == 0 and t["message_count"] == 0
+        assert store.update_thread("t1", status="paused", paused_at=10.0, topic_domains=["network"],
+                                   entities_json=["samba"], stale=True, metadata={"k": 1}) is True
+        t = store.get_thread("t1")
+        assert (t["status"], t["paused_at"], t["topic_domains"], t["entities_json"], t["stale"], t["metadata"]) == ("paused", 10.0, ["network"], ["samba"], 1, {"k": 1})
+        assert store.update_thread("t1", paused_at=None) is True and store.get_thread("t1")["paused_at"] is None
+        assert store.update_thread("t1", bogus=1) is False
+        assert store.update_thread("missing", status="open") is False
+        assert store.get_thread("nope") is None
+
+    def test_list_threads_and_current_open(self, store):
+        for tid in ("a", "b", "c"):
+            store.create_thread(tid, tid.upper())
+        store.update_thread("a", status="closed", last_active=100.0)
+        store.update_thread("b", status="paused", last_active=200.0)
+        store.update_thread("c", status="open", last_active=300.0)
+        assert [t["thread_id"] for t in store.list_threads()] == ["c", "b", "a"]
+        assert [t["thread_id"] for t in store.list_threads(status="paused")] == ["b"]
+        assert [t["thread_id"] for t in store.list_threads(status=["paused", "closed"])] == ["b", "a"]
+        assert [t["thread_id"] for t in store.list_threads(limit=1)] == ["c"]
+        assert store.current_open_thread()["thread_id"] == "c"
+        store.update_thread("c", status="closed")
+        assert store.current_open_thread() is None
+
+    def test_recent_messages_filters_origin_and_orders(self, store):
+        store.create_thread("t1", "T")
+        for i in range(14):
+            role = "user" if i % 2 == 0 else "assistant"
+            store.append_message("t1", role, f"m{i}", origin="human" if role == "user" else "assistant")
+        store.append_message("t1", "system", "from terminal", origin="terminal")
+        rows = store.recent_messages("t1", limit=12)
+        assert len(rows) == 12 and rows[0]["content"] == "m2" and rows[-1]["content"] == "m13"
+        assert all(r["origin"] in ("human", "assistant") for r in rows)
+        assert set(rows[0]) == {"role", "content", "timestamp", "origin"}
+        assert store.recent_messages("nope") == []
+
+    def test_list_messages_full_rows(self, store):
+        store.create_thread("t1", "T")
+        mid = store.append_message("t1", "assistant", "done", origin="assistant", turn_id="u1",
+                                   blocks=[{"tool": "run_command", "args": {"command": "ls"}, "exit": 0}])
+        rows = store.list_messages("t1")
+        assert rows[0]["message_id"] == mid and rows[0]["thread_id"] == "t1"
+        assert rows[0]["blocks"][0]["tool"] == "run_command" and rows[0]["turn_id"] == "u1"
+        assert rows[0]["visible_in_timeline"] is True
+        assert store.list_messages("t1", limit=0) == []
+
+    def test_list_turns_groups_and_pages(self, store):
+        store.create_thread("t1", "T")
+        for i in range(5):
+            store.append_message("t1", "user", f"q{i}", turn_id=f"turn-{i}", session_id=f"s{i}", timestamp=float(i * 10))
+            store.append_message("t1", "assistant", f"a{i}", origin="assistant", turn_id=f"turn-{i}", session_id=f"s{i}",
+                                 timestamp=float(i * 10 + 1),
+                                 blocks=[{"tool": "run_command", "args": {"command": f"cmd{i}"}, "exit": 0}],
+                                 terminal_block_ids=[f"term-{i}"], diff_proposals=[{"id": f"d{i}"}])
+        store.append_message("t1", "system", "hidden", origin="system", turn_id="turn-4", visible_in_timeline=False)
+        turns = store.list_turns(limit=50)
+        assert [t["turn_id"] for t in turns] == [f"turn-{i}" for i in range(5)]
+        last = turns[-1]
+        assert last["user"]["content"] == "q4" and last["user"]["status"] == "complete"
+        assert last["assistant"]["content"] == "a4"
+        assert last["blocks"][0]["args"]["command"] == "cmd4" and last["terminal_block_ids"] == ["term-4"]
+        assert last["diff_proposals"] == [{"id": "d4"}]
+        assert last["timestamp"] == 40.0 and last["origin"] == "human" and last["thread_id"] == "t1"
+        assert [t["turn_id"] for t in store.list_turns(limit=2)] == ["turn-3", "turn-4"]
+        assert [t["turn_id"] for t in store.list_turns(before_turn_id="turn-3", limit=2)] == ["turn-1", "turn-2"]
+        assert [t["turn_id"] for t in store.list_turns(around_turn_id="turn-2", limit=3)] == ["turn-1", "turn-2", "turn-3"]
+        assert store.list_turns(before_turn_id="nope") == []
+        assert store.list_turns(before_turn_id="turn-0") == []
+
+    def test_list_turns_rows_without_turn_id(self, store):
+        store.create_thread("t1", "T")
+        mid = store.append_message("t1", "user", "legacy row")
+        turns = store.list_turns()
+        assert turns[0]["turn_id"] == f"m{mid}" and turns[0]["user"]["content"] == "legacy row"
+
+    def test_mark_in_progress_interrupted(self, store):
+        store.create_thread("t1", "T")
+        store.append_message("t1", "user", "a", status="in_progress")
+        store.append_message("t1", "user", "b", status="complete")
+        assert store.mark_in_progress_interrupted() == 1
+        assert [r["status"] for r in store.list_messages("t1")] == ["interrupted", "complete"]
+        assert store.mark_in_progress_interrupted() == 0

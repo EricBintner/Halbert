@@ -75,6 +75,23 @@ _MESSAGE_UPDATABLE = {
 }
 _MESSAGE_JSON_COLUMNS = {"blocks_json", "terminal_block_ids", "diff_proposals_json", "metadata"}
 
+_THREAD_JSON_LISTS = ("topic_domains", "entities_json", "recalled_json")
+_THREAD_FLAGS = ("stale", "ephemeral", "unread")
+_THREAD_UPDATABLE = {"title", "updated_at", "user_id", "metadata"} | {
+    name for name, _ in _THREAD_COLUMNS
+}
+
+_THREAD_SELECT = """SELECT c.*,
+    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count,
+    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user') AS turn_count
+    FROM conversations c"""
+
+_TURN_KEY = "COALESCE(turn_id, 'm' || id)"
+_TURN_KEYS_SQL = (
+    f"SELECT {_TURN_KEY} AS turn_key, MIN(id) AS first_id "
+    "FROM messages WHERE visible_in_timeline = 1 GROUP BY turn_key"
+)
+
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 # Dropped from receipt queries so a score reflects topical words only.
@@ -743,6 +760,304 @@ class SqliteConversationStore:
         except Exception as e:
             logger.warning(f"mark_in_progress_interrupted failed: {e}")
             return 0
+
+    # ------------------------------------------------------------------
+    # Threads
+    # ------------------------------------------------------------------
+
+    def create_thread(
+        self,
+        thread_id: str,
+        title: str,
+        *,
+        status: str = "open",
+        title_source: str = "provisional",
+        created_at: Optional[float] = None,
+        parent_thread_id: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> bool:
+        """Insert a new thread row. False when the id exists or the write fails."""
+        if self._conn is None:
+            return False
+        ts = float(created_at) if created_at is not None else time.time()
+        try:
+            with self._lock, self._conn:
+                self._conn.execute(
+                    """INSERT INTO conversations
+                       (id, user_id, title, created_at, updated_at, metadata,
+                        status, title_source, parent_thread_id)
+                       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)""",
+                    (thread_id, title, ts, ts, json.dumps(metadata or {}),
+                     status, title_source, parent_thread_id),
+                )
+            return True
+        except sqlite3.IntegrityError:
+            logger.warning(f"create_thread: thread {thread_id} already exists")
+            return False
+        except Exception as e:
+            logger.warning(f"create_thread failed: {e}")
+            return False
+
+    def update_thread(self, thread_id: str, **fields: Any) -> bool:
+        """Update thread columns. Lists/dicts are JSON-encoded; flags coerced to 0/1."""
+        if self._conn is None or not fields:
+            return False
+        sets: List[str] = []
+        params: List[Any] = []
+        for key, value in fields.items():
+            if key not in _THREAD_UPDATABLE:
+                logger.warning(f"update_thread: unknown field {key!r}")
+                return False
+            if key in _THREAD_JSON_LISTS:
+                value = json.dumps(list(value or []))
+            elif key == "metadata":
+                value = json.dumps(value or {})
+            elif key in _THREAD_FLAGS:
+                value = 1 if value else 0
+            sets.append(f"{key} = ?")
+            params.append(value)
+        params.append(thread_id)
+        try:
+            with self._lock, self._conn:
+                cur = self._conn.execute(
+                    f"UPDATE conversations SET {', '.join(sets)} WHERE id = ?", params
+                )
+                return cur.rowcount > 0
+        except Exception as e:
+            logger.warning(f"update_thread {thread_id} failed: {e}")
+            return False
+
+    @staticmethod
+    def _row_to_thread(row: sqlite3.Row) -> Dict[str, Any]:
+        d = dict(row)
+        out: Dict[str, Any] = {"thread_id": d["id"]}
+        out.update(d)
+        for key in _THREAD_JSON_LISTS:
+            out[key] = _loads(d.get(key), [])
+        out["metadata"] = _loads(d.get("metadata"), {})
+        return out
+
+    def get_thread(self, thread_id: str) -> Optional[Dict[str, Any]]:
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    _THREAD_SELECT + " WHERE c.id = ?", (thread_id,)
+                ).fetchone()
+            return self._row_to_thread(row) if row is not None else None
+        except Exception as e:
+            logger.warning(f"get_thread {thread_id} failed: {e}")
+            return None
+
+    def list_threads(
+        self, status: Optional[Any] = None, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Threads newest-activity-first, optionally filtered by status(es)."""
+        if self._conn is None:
+            return []
+        statuses: List[str] = []
+        if isinstance(status, str):
+            statuses = [status]
+        elif status:
+            statuses = [str(s) for s in status]
+        where = ""
+        params: List[Any] = []
+        if statuses:
+            where = " WHERE c.status IN (" + ",".join("?" * len(statuses)) + ")"
+            params.extend(statuses)
+        params.append(limit)
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    _THREAD_SELECT + where
+                    + " ORDER BY COALESCE(c.last_active, c.updated_at) DESC, c.created_at DESC"
+                    + " LIMIT ?",
+                    params,
+                ).fetchall()
+            return [self._row_to_thread(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"list_threads failed: {e}")
+            return []
+
+    def current_open_thread(self) -> Optional[Dict[str, Any]]:
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    _THREAD_SELECT
+                    + " WHERE c.status = 'open' ORDER BY c.updated_at DESC LIMIT 1"
+                ).fetchone()
+            return self._row_to_thread(row) if row is not None else None
+        except Exception as e:
+            logger.warning(f"current_open_thread failed: {e}")
+            return None
+
+    # ------------------------------------------------------------------
+    # Message readers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_message(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "message_id": row["id"],
+            "thread_id": row["conversation_id"],
+            "role": row["role"],
+            "content": row["content"],
+            "timestamp": row["timestamp"],
+            "origin": row["origin"],
+            "status": row["status"],
+            "turn_id": row["turn_id"],
+            "session_id": row["session_id"],
+            "blocks": _loads(row["blocks_json"], []),
+            "terminal_block_ids": _loads(row["terminal_block_ids"], []),
+            "diff_proposals": _loads(row["diff_proposals_json"], []),
+            "metadata": _loads(row["metadata"], {}),
+            "visible_in_timeline": bool(row["visible_in_timeline"]),
+        }
+
+    def list_messages(self, thread_id: str, *, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Every row of a thread, oldest-first, with decoded JSON columns."""
+        if self._conn is None:
+            return []
+        sql = "SELECT * FROM messages WHERE conversation_id = ? ORDER BY id ASC"
+        params: List[Any] = [thread_id]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        try:
+            with self._lock:
+                rows = self._conn.execute(sql, params).fetchall()
+            return [self._row_to_message(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"list_messages {thread_id} failed: {e}")
+            return []
+
+    def recent_messages(self, thread_id: str, limit: int = 12) -> List[Dict[str, Any]]:
+        """Last ``limit`` human/assistant rows of a thread, oldest-first."""
+        if self._conn is None:
+            return []
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    """SELECT role, content, timestamp, origin FROM messages
+                       WHERE conversation_id = ? AND origin IN ('human', 'assistant')
+                       ORDER BY id DESC LIMIT ?""",
+                    (thread_id, int(limit)),
+                ).fetchall()
+            return [
+                {"role": r["role"], "content": r["content"],
+                 "timestamp": r["timestamp"], "origin": r["origin"]}
+                for r in reversed(rows)
+            ]
+        except Exception as e:
+            logger.warning(f"recent_messages {thread_id} failed: {e}")
+            return []
+
+    def _turn_first_id(self, turn_id: str) -> Optional[int]:
+        row = self._conn.execute(
+            f"SELECT MIN(id) FROM messages WHERE {_TURN_KEY} = ?", (turn_id,)
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+
+    def list_turns(
+        self,
+        *,
+        before_turn_id: Optional[str] = None,
+        around_turn_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Timeline page: visible rows grouped by turn, newest-last.
+
+        ``before_turn_id`` pages backwards (turns strictly older); ``around_turn_id``
+        centres a page on a turn. Callers ask for ``limit + 1`` to learn ``has_more``.
+        """
+        if self._conn is None or limit <= 0:
+            return []
+        try:
+            with self._lock:
+                if before_turn_id is not None:
+                    anchor = self._turn_first_id(before_turn_id)
+                    if anchor is None:
+                        return []
+                    rows = self._conn.execute(
+                        f"SELECT turn_key FROM ({_TURN_KEYS_SQL}) WHERE first_id < ? "
+                        "ORDER BY first_id DESC LIMIT ?",
+                        (anchor, limit),
+                    ).fetchall()
+                    keys = [r["turn_key"] for r in rows][::-1]
+                elif around_turn_id is not None:
+                    anchor = self._turn_first_id(around_turn_id)
+                    if anchor is None:
+                        return []
+                    half = limit // 2
+                    before = self._conn.execute(
+                        f"SELECT turn_key FROM ({_TURN_KEYS_SQL}) WHERE first_id < ? "
+                        "ORDER BY first_id DESC LIMIT ?",
+                        (anchor, half),
+                    ).fetchall()
+                    after = self._conn.execute(
+                        f"SELECT turn_key FROM ({_TURN_KEYS_SQL}) WHERE first_id >= ? "
+                        "ORDER BY first_id ASC LIMIT ?",
+                        (anchor, limit - half),
+                    ).fetchall()
+                    keys = [r["turn_key"] for r in before][::-1] + [r["turn_key"] for r in after]
+                else:
+                    rows = self._conn.execute(
+                        f"SELECT turn_key FROM ({_TURN_KEYS_SQL}) "
+                        "ORDER BY first_id DESC LIMIT ?",
+                        (limit,),
+                    ).fetchall()
+                    keys = [r["turn_key"] for r in rows][::-1]
+                if not keys:
+                    return []
+                placeholders = ",".join("?" * len(keys))
+                msgs = self._conn.execute(
+                    f"SELECT * FROM messages WHERE visible_in_timeline = 1 "
+                    f"AND {_TURN_KEY} IN ({placeholders}) ORDER BY id ASC",
+                    keys,
+                ).fetchall()
+            return self._group_turns(msgs)
+        except Exception as e:
+            logger.warning(f"list_turns failed: {e}")
+            return []
+
+    def _group_turns(self, rows: List[sqlite3.Row]) -> List[Dict[str, Any]]:
+        turns: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            m = self._row_to_message(row)
+            key = m["turn_id"] or f"m{m['message_id']}"
+            turn = turns.get(key)
+            if turn is None:
+                turn = turns[key] = {
+                    "turn_id": key,
+                    "thread_id": m["thread_id"],
+                    "timestamp": m["timestamp"],
+                    "user": None,
+                    "assistant": None,
+                    "blocks": [],
+                    "terminal_block_ids": [],
+                    "diff_proposals": [],
+                    "origin": m["origin"],
+                }
+            slot = {
+                "message_id": m["message_id"],
+                "content": m["content"],
+                "timestamp": m["timestamp"],
+                "status": m["status"],
+            }
+            if m["role"] == "user":
+                if turn["user"] is None:
+                    turn["user"] = slot
+            elif turn["assistant"] is None:
+                turn["assistant"] = slot
+            turn["blocks"].extend(m["blocks"])
+            for tid in m["terminal_block_ids"]:
+                if tid not in turn["terminal_block_ids"]:
+                    turn["terminal_block_ids"].append(tid)
+            turn["diff_proposals"].extend(m["diff_proposals"])
+        return list(turns.values())
 
     # ------------------------------------------------------------------
     # session_somatic_blocks (C1 link)
