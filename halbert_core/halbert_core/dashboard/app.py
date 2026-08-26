@@ -226,7 +226,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -253,6 +253,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(being.router, prefix="/api", tags=["being"])  # Phase 7: Proactive channel
     app.include_router(modules.router, prefix="/api", tags=["modules"])  # Phase 8: Module registry
     app.include_router(llm.router, tags=["llm"])  # Unified LLM model picker
+    app.include_router(legal.router, tags=["legal"])  # LEG-MOD-01/02: Legal notices & cloud disclosure
     
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"

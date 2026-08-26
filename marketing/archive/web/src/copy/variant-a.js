@@ -87,6 +87,7 @@ export const copyVariantA = {
     subscribePrompt: 'To receive dispatch notes and preview builds:',
     subscribeButton: 'Submit',
     legal: 'No cloud tracking. 100% XDG Base Directory compliant. All telemetry stays on your host.',
+    trademark: 'Halbert is not affiliated with or endorsed by Apple, Microsoft, Canonical, Red Hat, the Linux Foundation, Meta, OpenAI, Anthropic, Google, or any other trademark holder referenced on this site. All trademarks are the property of their respective owners.',
     copyright: '© 2026 Halbert Project. All rights reserved.',
   },
 };

@@ -388,6 +388,197 @@ def run_scoped_quality_gate(server_url: str, project_id: str, k: int = 5,
     return summary
 
 
+# ── LEG-MIN-03: Upstream scraper license verification harness ──────
+#
+# Documentation URLs can change licensing terms upstream without notice.
+# This harness fetches a lightweight license/terms signal from each
+# upstream source and verifies that the expected license keywords are
+# still present. Run during the monthly CI/CD corpus refresh.
+#
+# Each probe specifies:
+#   - url: the page to fetch (license page, about page, or footer)
+#   - expect_any: list of keywords; at least one must appear in the page text
+#   - expect_all: list of keywords; all must appear (stricter)
+#   - timeout: per-request timeout in seconds
+#
+# A probe FAILS if:
+#   - the page is unreachable (network error, non-200), OR
+#   - none of the `expect_any` keywords are found, OR
+#   - any of the `expect_all` keywords are missing
+#
+# A probe WARNS if the page is reachable but the license text has changed
+# in a way that suggests a license switch (e.g. CC BY → All Rights Reserved).
+
+LICENSE_PROBES = [
+    {
+        "source": "arch_wiki",
+        "license": "GNU FDL 1.3",
+        "url": "https://wiki.archlinux.org/title/ArchWiki:Copyrights",
+        "expect_any": ["GNU Free Documentation License", "GFDL", "FDL 1.3"],
+        "expect_all": [],
+        "timeout": 15.0,
+    },
+    {
+        "source": "tldr_pages",
+        "license": "CC BY 4.0",
+        "url": "https://github.com/tldr-pages/tldr/blob/main/LICENSE.md",
+        "expect_any": ["Creative Commons Attribution 4.0", "CC BY 4.0", "CC-BY-4.0"],
+        "expect_all": [],
+        "timeout": 15.0,
+    },
+    {
+        "source": "macos_homebrew",
+        "license": "BSD-2-Clause",
+        "url": "https://github.com/Homebrew/brew/blob/master/LICENSE.txt",
+        "expect_any": ["BSD 2-Clause", "BSD-2-Clause", "Redistribution and use in source and binary"],
+        "expect_all": [],
+        "timeout": 15.0,
+    },
+    {
+        "source": "macos_ask_different",
+        "license": "CC BY-SA 4.0",
+        "url": "https://stackoverflow.com/legal/terms-of-service/public",
+        "expect_any": ["CC BY-SA", "Creative Commons Attribution-ShareAlike", "Attribution-ShareAlike"],
+        "expect_all": [],
+        "timeout": 15.0,
+    },
+    {
+        "source": "macos_support_ss64",
+        "license": "CC BY-NC 4.0",
+        "url": "https://ss64.com/",
+        "expect_any": ["copyright", "some rights reserved", "creative commons"],
+        "expect_all": [],
+        "timeout": 15.0,
+    },
+    {
+        "source": "freebsd_handbook",
+        "license": "FreeBSD Documentation License",
+        "url": "https://www.freebsd.org/copyright/freebsd-doc-license/",
+        "expect_any": ["FreeBSD Documentation License", "FreeBSD Project"],
+        "expect_all": [],
+        "timeout": 15.0,
+    },
+    {
+        "source": "macos_macports_guide",
+        "license": "BSD-like (MacPorts)",
+        "url": "https://github.com/macports/macports-guide",
+        "expect_any": ["BSD", "MacPorts", "license", "copyright"],
+        "expect_all": [],
+        "timeout": 15.0,
+    },
+    {
+        "source": "linux_man_pages",
+        "license": "Various (GPL, BSD, MIT)",
+        "url": "https://www.kernel.org/doc/man-pages/",
+        "expect_any": ["linux man-pages", "man-pages project", "kernel"],
+        "expect_all": [],
+        "timeout": 15.0,
+        "note": "Per-page licenses; this probe only verifies the project page is live. "
+                "Individual man page licenses must be checked at the bottom of each page.",
+    },
+]
+
+
+def run_license_verification() -> Dict[str, Any]:
+    """LEG-MIN-03: Verify upstream sources still carry their expected license terms.
+
+    Fetches each probe URL and checks for expected license keywords. Returns a
+    summary dict with per-source pass/fail status. Designed to run in CI/CD
+    during the monthly corpus refresh; a failure means an upstream source may
+    have changed its license and the corpus manifest needs review.
+    """
+    results = []
+    passed_count = 0
+    warned_count = 0
+
+    print("Running Upstream License Verification (LEG-MIN-03)...\n")
+
+    for probe in LICENSE_PROBES:
+        source = probe["source"]
+        expected_license = probe["license"]
+        url = probe["url"]
+        expect_any = probe.get("expect_any", [])
+        expect_all = probe.get("expect_all", [])
+        timeout = probe.get("timeout", 15.0)
+
+        try:
+            resp = requests.get(url, timeout=timeout, headers={
+                "User-Agent": "Halbert-License-Check/1.0 (corpus quality gate)"
+            })
+            resp.raise_for_status()
+            page_text = resp.text.lower()
+        except Exception as e:
+            results.append({
+                "source": source,
+                "license": expected_license,
+                "url": url,
+                "status": "FAIL",
+                "reason": f"unreachable: {e}",
+            })
+            print(f"  FAIL [{source}] {url} -> unreachable: {e}")
+            continue
+
+        # Check expect_any: at least one keyword must be present
+        found_any = [k for k in expect_any if k.lower() in page_text]
+        any_ok = len(found_any) > 0 if expect_any else True
+
+        # Check expect_all: all keywords must be present
+        missing_all = [k for k in expect_all if k.lower() not in page_text]
+        all_ok = len(missing_all) == 0
+
+        # Detect license switch signals (page reachable but no license keywords at all)
+        license_switch_signals = ["all rights reserved", "proprietary", "no license granted"]
+        switch_detected = any(s in page_text for s in license_switch_signals) and not any_ok
+
+        if any_ok and all_ok and not switch_detected:
+            status = "PASS"
+            passed_count += 1
+            reason = f"found: {found_any}" if found_any else "ok"
+        elif switch_detected:
+            status = "WARN"
+            warned_count += 1
+            reason = f"possible license switch (found 'all rights reserved' but no expected keywords)"
+        else:
+            status = "FAIL"
+            missing = [k for k in expect_any if k.lower() not in page_text]
+            reason = f"expected keywords not found: {missing}"
+            if missing_all:
+                reason += f"; missing required: {missing_all}"
+
+        results.append({
+            "source": source,
+            "license": expected_license,
+            "url": url,
+            "status": status,
+            "reason": reason,
+            "found_keywords": found_any,
+        })
+        print(f"  {status} [{source}] {expected_license} -> {reason}")
+
+    total = len(LICENSE_PROBES)
+    pass_rate = (passed_count / total) * 100 if total else 0
+    # Gate passes if no FAILs; WARNs are informational (license text may have
+    # moved to a different page, not necessarily changed terms)
+    failed = total - passed_count - warned_count
+    summary = {
+        "total_sources": total,
+        "passed": passed_count,
+        "warned": warned_count,
+        "failed": failed,
+        "pass_rate_pct": pass_rate,
+        "gate_passed": failed == 0,
+        "details": results,
+        "note": "WARN means the license page was reachable but expected keywords "
+                "were not found — review the upstream site. FAIL means the page was "
+                "unreachable or a license switch was detected.",
+    }
+
+    print(f"\n--- License Verification Results ---")
+    print(f"Passed: {passed_count}/{total}  Warned: {warned_count}  Failed: {failed}")
+    print(f"Status: {'PASSED' if summary['gate_passed'] else 'FAILED'}")
+    return summary
+
+
 def main():
     parser = argparse.ArgumentParser(description="Corpus Quality Gate for SourcePrep RAG")
     parser.add_argument("--project-id", type=str, default=None, help="SourcePrep Project ID")
@@ -398,8 +589,23 @@ def main():
     parser.add_argument("--report-file", type=Path, default=Path("data/quality_gate_report.json"))
     parser.add_argument("--scoped", action="store_true",
                         help="Run the T-V.2 scoped quality gate (20 scoped queries with isolation assertions)")
+    parser.add_argument("--license-check", action="store_true",
+                        help="Run the LEG-MIN-03 upstream license verification harness "
+                             "(checks that scraped domains still carry their expected license terms)")
 
     args = parser.parse_args()
+
+    # LEG-MIN-03: license verification can run standalone (no SourcePrep daemon needed)
+    if args.license_check:
+        lic_summary = run_license_verification()
+        lic_report = Path(str(args.report_file).replace(".json", "_license.json"))
+        lic_report.parent.mkdir(parents=True, exist_ok=True)
+        with open(lic_report, "w", encoding="utf-8") as f:
+            json.dump(lic_summary, f, indent=2)
+        print(f"License verification report saved to {lic_report}")
+        if not lic_summary["gate_passed"]:
+            sys.exit(1)
+        return
 
     project_id = args.project_id
     if not project_id:

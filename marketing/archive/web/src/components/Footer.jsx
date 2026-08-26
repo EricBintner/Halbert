@@ -12,6 +12,7 @@ export function Footer({ copy }) {
     subscribePrompt: 'To receive dispatch notes and preview builds:',
     subscribeButton: 'Submit',
     legal: 'No cloud tracking. 100% XDG Base Directory compliant. All telemetry stays on your host.',
+    trademark: 'Halbert is not affiliated with or endorsed by Apple, Microsoft, Canonical, Red Hat, the Linux Foundation, Meta, OpenAI, Anthropic, Google, or any other trademark holder referenced on this site. All trademarks are the property of their respective owners.',
     copyright: '© 2026 Halbert Project. All rights reserved.',
   };
 
@@ -78,19 +79,26 @@ export function Footer({ copy }) {
         </div>
 
         {/* Bottom Rule & Copyright */}
-        <div className="pt-8 border-t border-[var(--color-ink)]/20 flex flex-col sm:flex-row justify-between items-baseline gap-4 text-xs text-[var(--color-ink-tertiary)]">
-          <div className="flex space-x-6">
-            <a href="https://github.com/EricBintner/Halbert" target="_blank" rel="noreferrer" className="text-[var(--color-ink)] font-bold hover:text-[var(--color-accent)] underline">
-              GitHub
-            </a>
-            <a href="#how-it-works" className="text-[var(--color-ink)] font-bold hover:text-[var(--color-accent)] underline">
-              Spreads
-            </a>
-            <a href="#the-being" className="text-[var(--color-ink)] font-bold hover:text-[var(--color-accent)] underline">
-              The Being
-            </a>
+        <div className="pt-8 border-t border-[var(--color-ink)]/20 flex flex-col gap-6 text-xs text-[var(--color-ink-tertiary)]">
+          <div className="flex flex-col sm:flex-row justify-between items-baseline gap-4">
+            <div className="flex space-x-6">
+              <a href="https://github.com/EricBintner/Halbert" target="_blank" rel="noreferrer" className="text-[var(--color-ink)] font-bold hover:text-[var(--color-accent)] underline">
+                GitHub
+              </a>
+              <a href="#how-it-works" className="text-[var(--color-ink)] font-bold hover:text-[var(--color-accent)] underline">
+                Spreads
+              </a>
+              <a href="#the-being" className="text-[var(--color-ink)] font-bold hover:text-[var(--color-accent)] underline">
+                The Being
+              </a>
+            </div>
+            <div>{colophon.copyright}</div>
           </div>
-          <div>{colophon.copyright}</div>
+          {colophon.trademark && (
+            <p className="max-w-[var(--content-max-width)] leading-relaxed text-[var(--color-ink-tertiary)]/80">
+              {colophon.trademark}
+            </p>
+          )}
         </div>
       </div>
     </footer>

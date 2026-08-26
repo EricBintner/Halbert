@@ -142,101 +142,66 @@ def get_files_to_upload(data_dir: Path, include_arch_wiki: bool = True) -> list:
 
 
 def create_dataset_card(manifest: dict, repo_name: str) -> str:
-    """Create a README.md dataset card for HuggingFace."""
+    """Create a README.md dataset card for HuggingFace.
+
+    Generates a license-compliant card with:
+      - proper `license:` YAML tags derived from the manifest sources
+      - per-source attribution table with upstream URLs and license links
+      - origin URL and author acknowledgments
+      - commercial-use exclusion notes for copyleft / non-commercial sources
+
+    The card targets the dataset named by `repo_name`. The dataset's bucket
+    (linux / macos / eval) is inferred from the repo slug.
+    """
+    bucket = _infer_bucket(repo_name)
+    bucket_sources = _filter_sources_by_bucket(manifest, bucket)
+
+    license_tags = _license_yaml_tags(bucket_sources)
+    total_docs = sum(s.get("document_count", 0) for s in bucket_sources.values())
+    size_cat = _size_category(total_docs)
+
+    sources_table = _sources_attribution_table(bucket_sources)
+
     return f"""---
-license: other
-license_name: mixed
-license_link: LICENSE
+{license_tags}
 task_categories:
   - text-generation
   - question-answering
 language:
   - en
 tags:
-  - linux
   - system-administration
   - documentation
   - rag
   - knowledge-base
+  - {bucket}
 size_categories:
-  - 10K<n<100K
+  - {size_cat}
 ---
 
-# Halbert Linux RAG Corpus
+# Halbert {bucket.title()} RAG Corpus
 
-A curated knowledge base for Linux system administration, designed for RAG (Retrieval-Augmented Generation) applications.
+A curated knowledge base for {bucket} system administration, designed for
+RAG (Retrieval-Augmented Generation) applications. Part of the Halbert
+project's published corpus alongside `halbert-rag-linux`,
+`halbert-rag-macos`, and `halbert-rag-eval`.
 
 ## Version
 
 - **Version**: {manifest.get('version', 'unknown')}
 - **Release Date**: {manifest.get('release_date', 'unknown')}
-- **Total Documents**: {manifest.get('total_documents', 0):,}
+- **Documents in this dataset**: {total_docs:,}
+- **Total corpus documents**: {manifest.get('total_documents', 0):,}
 
 ## Contents
 
-| Source | Documents | License | Description |
-|--------|-----------|---------|-------------|
-"""
-    # Add source table rows
-    card = create_dataset_card.__doc__  # Placeholder, we'll build it properly
-    
-    sources_table = ""
-    for source_name, source_info in manifest.get("sources", {}).items():
-        doc_count = source_info.get("document_count", 0)
-        license_type = source_info.get("license", "Unknown")
-        description = source_info.get("description", "")
-        sources_table += f"| {source_name} | {doc_count:,} | {license_type} | {description} |\n"
-    
-    return f"""---
-license: other
-license_name: mixed
-license_link: LICENSE
-task_categories:
-  - text-generation
-  - question-answering
-language:
-  - en
-tags:
-  - linux
-  - system-administration
-  - documentation
-  - rag
-  - knowledge-base
-size_categories:
-  - 10K<n<100K
----
-
-# Halbert Linux RAG Corpus
-
-A curated knowledge base for Linux system administration, designed for RAG (Retrieval-Augmented Generation) applications.
-
-## Version
-
-- **Version**: {manifest.get('version', 'unknown')}
-- **Release Date**: {manifest.get('release_date', 'unknown')}
-- **Total Documents**: {manifest.get('total_documents', 0):,}
-
-## Contents
-
-| Source | Documents | License | Description |
-|--------|-----------|---------|-------------|
+| Source | Documents | License | Upstream | Attribution required |
+|--------|-----------|---------|----------|----------------------|
 {sources_table}
-
-## Usage
-
-```python
-from datasets import load_dataset
-
-# Load the full dataset
-dataset = load_dataset("{repo_name}")
-
-# Or load specific files
-dataset = load_dataset("{repo_name}", data_files="linux/merged/*.jsonl")
-```
 
 ## Document Format
 
-Each document is a JSON object with:
+Each document is a JSON object with the unified Halbert schema:
 
 ```json
 {{
@@ -245,39 +210,186 @@ Each document is a JSON object with:
   "content": "Full document content...",
   "source": "source_name",
   "url": "https://original.source/url",
-  "scraped_at": "2025-12-01T00:00:00",
+  "scraped_at": "2026-08-23T00:00:00",
   "metadata": {{
     "category": "system_admin",
-    "tags": ["systemd", "services"]
+    "tags": ["systemd", "services"],
+    "author": "upstream author display name (where applicable)"
   }}
 }}
 ```
 
+The `url` field preserves the origin URL for every record so downstream
+users can satisfy attribution requirements by linking back to the source.
+The `metadata.author` field is populated for Stack Exchange content and
+other sources where per-record authorship is required by the upstream
+license.
+
 ## Licensing
 
-This dataset contains content under various licenses:
+This dataset is **mixed-license**. Each record's source carries the
+license listed in the table above. The dataset as a whole is distributed
+under the terms of its most restrictive included license.
 
-- **GNU FDL 1.3**: Arch Wiki content (arch-wiki-full, arch-wiki-ext)
-- **CC BY 4.0**: TLDR pages
-- **CC BY-SA 4.0**: Stack Exchange content (requires attribution)
-- **Apache 2.0**: Various vendor documentation
-- **BSD/MIT**: Man pages and utilities documentation
+**Commercial use notes:**
 
-**For commercial use**: Exclude GNU FDL content. See `manifest.json` for `mac_build: false` sources.
+- **GNU FDL 1.3** content (Arch Wiki) is copyleft and excluded from
+  Halbert's macOS commercial builds. See `manifest.json` `mac_build: false`.
+- **CC BY-NC 4.0** content (SS64) is non-commercial only and **must not**
+  be included in any commercial redistribution. See the
+  `data/non-commercial/` quarantine in the Halbert repo.
+- **CC BY-SA 4.0** content (Ask Different, Linux system docs slice)
+  requires attribution **and** share-alike of any derivative.
+- All other included licenses are permissive (BSD, MIT, Apache 2.0,
+  CC BY 4.0, FreeBSD Documentation License) and require attribution.
+
+See `THIRD-PARTY-LICENSES.md` in the Halbert repository for the full
+per-source license texts and attribution statements.
 
 ## Attribution
 
-When using Stack Exchange content, attribution is required per CC BY-SA 4.0.
+When redistributing this dataset or any derivative, you must:
+
+1. Preserve the `url` and `metadata.author` fields on every record.
+2. Include the per-source attribution statements from
+   `THIRD-PARTY-LICENSES.md`.
+3. For CC BY-SA 4.0 content, link to the original question, link to the
+   author profile, and list the author display name (per Stack Exchange's
+   CC BY-SA 4.0 attribution policy).
+4. For CC BY-NC 4.0 content, do not use the content for any commercial
+   purpose.
 
 ## Updates
 
-Check `manifest.json` for version info. The Halbert app can check for updates automatically.
+Check `manifest.json` for version info. The Halbert app checks for updates
+automatically via the `check_updates_url` field. Update cadence: monthly.
 
 ## Related
 
-- [Halbert](https://github.com/EricBintworksGit/LinuxBrain) - The AI assistant that uses this corpus
-- [Documentation](https://github.com/EricBintworksGit/LinuxBrain/tree/main/docs)
+- [Halbert](https://github.com/EricBintner/Halbert) - The AI assistant that uses this corpus
+- [Legal hub](https://github.com/EricBintner/Halbert/tree/main/documentation/legal) - Licenses, privacy, trademarks, disclaimer
+- [RAG data sources reference](https://github.com/EricBintner/Halbert/blob/main/documentation/RAG-DATA-SOURCES-2026-08-24.md)
 """
+
+
+# ── Dataset card helpers ─────────────────────────────────────────────
+
+# Map manifest source names to (bucket, upstream URL, license SPDX-ish tag,
+# attribution-required flag). Used by the card generator.
+SOURCE_REGISTRY = {
+    "arch_wiki":            ("linux",  "https://wiki.archlinux.org/",                       "GNU FDL 1.3",                True),
+    "linux_man_pages":      ("linux",  "https://www.kernel.org/doc/man-pages/",             "Various (GPL, BSD, MIT)",    True),
+    "tldr_pages":           ("common", "https://tldr.sh/",                                  "CC BY 4.0",                  True),
+    "common_tools":         ("common", "https://github.com/ (per-project)",                 "Various (permissive)",       True),
+    "linux_system_docs":    ("linux",  "https://www.freedesktop.org/ (per-project)",        "Various (permissive, CC BY-SA)", True),
+    "vendor_and_distro_docs": ("linux","https://www.docker.com/ , https://kubernetes.io/",  "Various (permissive)",       True),
+    "macos_homebrew":       ("macos",  "https://docs.brew.sh/",                             "BSD-2-Clause",               True),
+    "macos_man_pages":      ("macos",  "macOS system /usr/share/man/",                      "Various (BSD, APSL 2.0)",    True),
+    "macos_support":        ("macos",  "https://ss64.com/mac/",                             "CC BY-NC 4.0 (SS64), Halbert (synthetic)", True),
+    "macos_ask_different":  ("macos",  "https://apple.stackexchange.com/",                  "CC BY-SA 4.0",               True),
+    "macos_macports_guide": ("macos",  "https://guide.macports.org/",                       "BSD-like (MacPorts)",        True),
+    "freebsd_handbook":     ("bsd",    "https://docs.freebsd.org/en/books/handbook/",       "FreeBSD Documentation License", True),
+    "freebsd_man_pages":    ("bsd",    "https://www.freebsd.org/cgi/man.cgi",               "FreeBSD Documentation License", True),
+}
+
+# Buckets included in each published dataset.
+BUCKET_MEMBERSHIP = {
+    "linux":  {"linux", "common"},
+    "macos":  {"macos", "bsd"},
+    "eval":   set(),  # eval is a separate small dataset, no corpus sources
+}
+
+
+def _infer_bucket(repo_name: str) -> str:
+    """Infer the dataset bucket from the repo slug."""
+    slug = repo_name.lower()
+    if "eval" in slug:
+        return "eval"
+    if "macos" in slug or "mac" in slug:
+        return "macos"
+    return "linux"
+
+
+def _filter_sources_by_bucket(manifest: dict, bucket: str) -> dict:
+    """Return only the manifest sources that belong to the given dataset bucket."""
+    if bucket == "eval":
+        return {}
+    members = BUCKET_MEMBERSHIP.get(bucket, set())
+    out = {}
+    for name, info in manifest.get("sources", {}).items():
+        reg = SOURCE_REGISTRY.get(name)
+        src_bucket = reg[0] if reg else "common"
+        if src_bucket in members:
+            out[name] = info
+    return out
+
+
+def _license_yaml_tags(bucket_sources: dict) -> str:
+    """Build the `license:` YAML block for the dataset card.
+
+    HuggingFace supports a list of license identifiers. We emit the most
+    restrictive applicable tag plus a `license_name`/`license_link` pair for
+    the mixed-license case.
+    """
+    # Collect SPDX-ish tags present in this bucket
+    tags = set()
+    for name in bucket_sources:
+        reg = SOURCE_REGISTRY.get(name)
+        if not reg:
+            continue
+        lic = reg[2]
+        if "GNU FDL" in lic:
+            tags.add("GFDL-1.3-no-invariants-only")
+        if "CC BY-NC" in lic:
+            tags.add("CC-BY-NC-4.0")
+        if "CC BY-SA" in lic:
+            tags.add("CC-BY-SA-4.0")
+        if "CC BY 4.0" in lic:
+            tags.add("CC-BY-4.0")
+        if "BSD-2" in lic:
+            tags.add("BSD-2-Clause")
+        if "BSD-3" in lic:
+            tags.add("BSD-3-Clause")
+        if "APSL" in lic:
+            tags.add("APSL-2.0")
+        if "Apache" in lic:
+            tags.add("Apache-2.0")
+        if "MIT" in lic:
+            tags.add("MIT")
+        if "FreeBSD Documentation" in lic:
+            tags.add("other")
+    if not tags:
+        tags.add("other")
+    # 'other' covers the FreeBSD Documentation License and "Various" buckets
+    lines = ["license:"]
+    for t in sorted(tags):
+        lines.append(f"  - {t}")
+    lines.append("license_name: mixed (see THIRD-PARTY-LICENSES.md)")
+    lines.append("license_link: https://github.com/EricBintner/Halbert/blob/main/documentation/legal/THIRD-PARTY-LICENSES.md")
+    return "\n".join(lines)
+
+
+def _size_category(total_docs: int) -> str:
+    if total_docs < 1000:
+        return "n<1K"
+    if total_docs < 10000:
+        return "1K<n<10K"
+    if total_docs < 100000:
+        return "10K<n<100K"
+    return "100K<n<1M"
+
+
+def _sources_attribution_table(bucket_sources: dict) -> str:
+    """Render the per-source attribution markdown table rows."""
+    rows = []
+    for name, info in bucket_sources.items():
+        reg = SOURCE_REGISTRY.get(name)
+        upstream = reg[1] if reg else ""
+        lic = info.get("license", "Unknown") if reg is None else reg[2]
+        attr = "Yes" if (reg and reg[3]) else "Per-source"
+        docs = info.get("document_count", 0)
+        rows.append(f"| {name} | {docs:,} | {lic} | {upstream} | {attr} |")
+    return "\n".join(rows) if rows else "| (eval dataset — no corpus sources) | - | - | - | - |"
 
 
 def upload_to_huggingface(

@@ -307,6 +307,7 @@ export function EndpointManager({
   };
 
   return (
+    <>
     <div className={cn('prep-card rounded-lg border border-border bg-surface p-6', className)}>
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -819,5 +820,6 @@ export function EndpointManager({
           setPendingCloudAction(null);
         }}
       />
+    </>
   );
 }

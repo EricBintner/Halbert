@@ -87,6 +87,7 @@ export const copyVariantB = {
     subscribePrompt: 'Join the subscriber list for preview builds:',
     subscribeButton: 'Submit',
     legal: 'Local-first. Zero cloud telemetry. All data remains on the physical host.',
+    trademark: 'Halbert is not affiliated with or endorsed by Apple, Microsoft, Canonical, Red Hat, the Linux Foundation, Meta, OpenAI, Anthropic, Google, or any other trademark holder referenced on this site. All trademarks are the property of their respective owners.',
     copyright: '© 2026 Halbert Project.',
   },
 };
