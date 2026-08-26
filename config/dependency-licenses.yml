@@ -185,3 +185,8 @@ npm:
   tailwindcss: {spdx: MIT, build_only: true}
   typescript: {spdx: Apache-2.0, build_only: true}
   vite: {spdx: MIT, build_only: true}
+  vitest: {spdx: MIT, build_only: true}
+  jsdom: {spdx: MIT, build_only: true}
+  "@testing-library/react": {spdx: MIT, build_only: true}
+  "@testing-library/jest-dom": {spdx: MIT, build_only: true}
+  "@testing-library/user-event": {spdx: MIT, build_only: true}

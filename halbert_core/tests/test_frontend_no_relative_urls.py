@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
 Static guard: the dashboard frontend must not use bare relative URLs for
 fetch/EventSource/WebSocket/<img src>. Inside the Tauri webview (origin
@@ -16,6 +18,10 @@ EXCLUDED = {
     "lib/apiBase.ts",              # the resolver itself
     "hooks/useSourcePrepDaemon.ts",  # talks to the external SourcePrep daemon (absolute URL)
 }
+
+# Test files are never bundled, and apiBase's own tests have to *assert* on the
+# URL shapes this guard forbids everywhere else.
+TEST_FILE_RE = re.compile(r"\.(test|spec)\.[jt]sx?$")
 
 # Backend route prefixes served by app.py (see vite.config.ts proxy list).
 _PREFIX = r"(?:api|llm|ws|global|embedding)(?:/|['\"`?])"
@@ -36,7 +42,7 @@ def _sources():
     for p in FRONTEND_SRC.rglob("*"):
         if p.suffix in {".ts", ".tsx", ".js", ".jsx"} and p.is_file():
             rel = p.relative_to(FRONTEND_SRC).as_posix()
-            if rel not in EXCLUDED:
+            if rel not in EXCLUDED and not TEST_FILE_RE.search(rel):
                 yield rel, p
 
 
@@ -77,6 +83,14 @@ def test_patterns_catch_known_shapes():
     # Non-backend strings must not trip the guard.
     for s in ["navigate('/apps')", "const p = '/settings'", "src={`/assets/x.png`}"]:
         assert not any(p.search(s) for p in PATTERNS), s
+
+
+def test_test_files_are_not_scanned():
+    """apiBase.test.ts asserts on `ws://${window.location.host}/...`, which is
+    the guard's own pattern. Scanning tests would make the guard unusable."""
+    scanned = {rel for rel, _ in _sources()}
+    assert scanned, "guard scanned nothing at all"
+    assert not any(TEST_FILE_RE.search(rel) for rel in scanned)
 
 
 def test_no_bare_relative_backend_urls():
