@@ -400,9 +400,9 @@ class SourcePrepRetrievalBackend:
 
         self._check_applied_scope(response, scope)
         results = self._parse_context_response(response)
-        return cap_by_source_directory(
-            results, k, per_source=self.source_cap if capping else 0
-        )
+        # per_source <= 0 is the cap's own "disabled" case, so this trims to k
+        # and nothing more when source_cap is off.
+        return cap_by_source_directory(results, k, per_source=self.source_cap)
 
     def _parse_context_response(
         self, response: Dict[str, Any]
