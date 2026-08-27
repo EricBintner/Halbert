@@ -263,6 +263,61 @@ def _make_llm_caller():
     return caller
 
 
+def _thread_manager():
+    """The process-wide ThreadManager, or None when the store is unavailable.
+
+    Module-level so tests can monkeypatch it; every thread endpoint degrades
+    to an empty answer when this returns None (spec §12).
+    """
+    try:
+        from ...agents.threads import get_thread_manager
+        return get_thread_manager()
+    except Exception as e:
+        logger.warning(f"Thread manager unavailable (non-fatal): {e}")
+        return None
+
+
+def _thread_summary(thread: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """{thread_id, title, status} for the timeline's current_thread."""
+    if not thread:
+        return None
+    return {
+        "thread_id": thread.get("id") or thread.get("thread_id"),
+        "title": thread.get("title") or "",
+        "status": thread.get("status") or "open",
+    }
+
+
+def _active_ctx(session_id: str):
+    """The live StateContext for ``session_id``, without building the agent."""
+    if _agent_instance is None:
+        return None
+    return _agent_instance.active_sessions.get(session_id)
+
+
+def _find_stored_diff(tm, diff_id: str):
+    """Locate a persisted diff proposal by id (spec §8).
+
+    Returns ``(message_id, proposals, index)`` where ``proposals`` is the
+    assistant row's full diff list, or None. Scans the newest 200 turns;
+    older diffs are not actionable from the UI.
+    """
+    if tm is None:
+        return None
+    try:
+        turns = tm.store.list_turns(limit=200)
+    except Exception as e:
+        logger.warning(f"Diff lookup failed (non-fatal): {e}")
+        return None
+    for turn in reversed(turns):
+        proposals = list(turn.get("diff_proposals") or [])
+        for index, proposal in enumerate(proposals):
+            if isinstance(proposal, dict) and proposal.get("diff_id") == diff_id:
+                message_id = (turn.get("assistant") or {}).get("message_id")
+                return None if message_id is None else (message_id, proposals, index)
+    return None
+
+
 class LLMClientAdapter:
     """Adapter that uses same routing logic as Chat (guide vs specialist)."""
     
@@ -722,81 +777,53 @@ if FASTAPI_AVAILABLE:
     async def send_message(request: SendMessageRequest, req: Request):
         """
         Send message to agent with SSE streaming response.
-        
-        Returns Server-Sent Events with state changes, tool executions, and response chunks.
+
+        A second message during a live turn queues on the state machine's
+        turn lock (spec §12); nothing here resets the machine any more.
         """
         try:
             agent = get_agent()
         except Exception as e:
             raise HTTPException(500, f"Agent initialization failed: {e}")
-        
+
         session_id = request.session_id
-        
-        # Handle concurrent requests: if session exists and not IDLE, force reset
-        from ...agents.states import AgentState
-        if session_id and session_id in agent.active_sessions:
-            if agent.current_state != AgentState.IDLE:
-                logger.warning(f"Session {session_id} still active (state={agent.current_state}), forcing reset")
-                # Mark as cancelled
-                agent.cancelled[session_id] = True
-                # Force state to IDLE
-                agent.current_state = AgentState.IDLE
-                # Brief wait for any in-flight processing
-                await asyncio.sleep(0.05)
-                # Clear cancellation flag for new request
-                agent.cancelled[session_id] = False
-        
+
         # Set performance tweaks from request (from frontend Settings > AI > Performance Tweaks)
         if hasattr(agent.llm, 'max_tokens'):
             agent.llm.max_tokens = request.max_tokens or 8192
             agent.llm.temperature = request.temperature or 0.7
             logger.info(f"Set LLM tweaks: max_tokens={agent.llm.max_tokens}, temperature={agent.llm.temperature}")
-        
+
+        # Plan A: the state machine persists the turn and resolves the hidden
+        # thread itself (begin_turn under its lock); the route only hands
+        # over the manager. None means "no store": the turn still runs.
+        thread_manager = _thread_manager()
+
         async def event_stream():
-            """Generate SSE events from agent processing with heartbeat."""
+            """Generate SSE events from agent processing."""
             from ...agents.events import StreamEvent
-            import time
-            
-            last_event_time = time.time()
-            heartbeat_interval = 15  # Send heartbeat every 15 seconds
-            
+
             try:
-                # aclosing, not a bare `async for`: this loop abandons the
-                # generator on the cancel path below (and Starlette drops it
-                # when the client disconnects), and process() holds the
-                # agent's turn lock across every yield. Closing it explicitly
-                # runs its finally — releasing the lock and settling the
-                # machine — instead of leaving that to the event loop's
-                # async-generator finalizer.
+                # aclosing, not a bare `async for`: Starlette drops this
+                # generator when the client disconnects, and process() holds
+                # the agent's turn lock across every yield. Closing it
+                # explicitly runs its finally — releasing the lock and
+                # settling the machine — instead of leaving that to the event
+                # loop's async-generator finalizer.
                 async with aclosing(agent.process(
                     query=request.message,
                     session_id=session_id,
                     images=request.images,
+                    thread_manager=thread_manager,
                 )) as stream:
                     async for event in stream:
-                        # Check if cancelled mid-stream
-                        if session_id and agent.cancelled.get(session_id):
-                            yield StreamEvent.cancelled(session_id).to_sse()
-                            return
-
-                        # Yield the event
                         yield event.to_sse()
-                        last_event_time = time.time()
-
-                        # Check if we need to send heartbeats during long gaps
-                        # (This is mainly for between-state gaps, not during streaming)
-
             except Exception as e:
                 logger.error(f"Agent processing error: {e}")
-                yield StreamEvent.error(
-                    session_id or "unknown",
-                    str(e),
-                    recoverable=False
-                ).to_sse()
+                yield StreamEvent.error(session_id or "unknown", str(e), recoverable=False).to_sse()
             finally:
-                # Ensure we signal completion
                 logger.info(f"Event stream completed for session {session_id}")
-        
+
         return StreamingResponse(
             event_stream(),
             media_type="text/event-stream",
@@ -807,7 +834,7 @@ if FASTAPI_AVAILABLE:
                 "Access-Control-Allow-Origin": "*",
             }
         )
-    
+
     @router.post("/confirm/{session_id}")
     async def confirm_action(
         session_id: str,
@@ -975,117 +1002,125 @@ if FASTAPI_AVAILABLE:
         except Exception as e:
             raise HTTPException(500, str(e))
     
-    @router.get("/conversations")
-    async def list_conversations(user_id: str = None, limit: int = 50):
-        """List conversations."""
-        try:
-            from ...agents.conversation import get_conversation_store
-            store = get_conversation_store()
-            return {"conversations": store.list_conversations(user_id, limit)}
-        except Exception as e:
-            raise HTTPException(500, str(e))
-    
-    @router.get("/conversations/{conversation_id}")
-    async def get_conversation(conversation_id: str):
-        """Get a specific conversation."""
-        try:
-            from ...agents.conversation import get_conversation_store
-            store = get_conversation_store()
-            conv = store.get(conversation_id)
-            if conv is None:
-                raise HTTPException(404, "Conversation not found")
-            return conv.to_dict()
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(500, str(e))
-    
-    @router.delete("/conversations/{conversation_id}")
-    async def delete_conversation(conversation_id: str):
-        """Delete a conversation."""
-        try:
-            from ...agents.conversation import get_conversation_store
-            store = get_conversation_store()
-            if store.delete(conversation_id):
-                return {"deleted": True}
-            raise HTTPException(404, "Conversation not found")
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(500, str(e))
-    
     # -------------------------------------------------------------------------
     # Diff Apply/Reject Endpoints (Cascade-style)
+    #
+    # Live session first, then the store (messages.diff_proposals_json,
+    # spec §8): active_sessions is evicted at the end of the turn, so a diff
+    # proposed a moment ago is usually only on disk by the time the admin
+    # clicks Apply.
     # -------------------------------------------------------------------------
-    
-    @router.post("/diff/{session_id}/{diff_id}/apply")
-    async def apply_diff(session_id: str, diff_id: str):
-        """
-        Apply a proposed file change.
-        
-        Writes the proposed content to disk and emits diff_applied event.
-        """
+
+    def _write_diff(diff: Dict[str, Any], diff_id: str) -> Dict[str, Any]:
+        import os
+        file_path = diff.get("file_path")
+        new_content = diff.get("new_content")
+        if not file_path or new_content is None:
+            raise HTTPException(400, "Diff has no file path or content to apply; use the editor flow")
         try:
-            agent = get_agent()
-        except Exception as e:
-            raise HTTPException(500, f"Agent not available: {e}")
-        
-        if session_id not in agent.active_sessions:
-            raise HTTPException(404, "Session not found")
-        
-        ctx = agent.active_sessions[session_id]
-        
-        # Find the diff proposal in pending_diffs
-        if not hasattr(ctx, 'pending_diffs') or diff_id not in ctx.pending_diffs:
-            raise HTTPException(404, "Diff not found")
-        
-        diff = ctx.pending_diffs[diff_id]
-        
-        try:
-            # Write file to disk
-            import os
-            file_path = diff.get('file_path')
-            new_content = diff.get('new_content')
-            
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            
-            with open(file_path, 'w') as f:
+            os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
+            with open(file_path, "w") as f:
                 f.write(new_content)
-            
-            # Mark as applied
-            diff['status'] = 'applied'
-            
-            logger.info(f"Applied diff {diff_id} to {file_path}")
-            return {"applied": True, "diff_id": diff_id, "file_path": file_path}
-            
         except Exception as e:
             logger.error(f"Failed to apply diff: {e}")
             raise HTTPException(500, f"Failed to apply diff: {e}")
-    
+        diff["status"] = "applied"
+        logger.info(f"Applied diff {diff_id} to {file_path}")
+        return {"applied": True, "diff_id": diff_id, "file_path": file_path}
+
+    @router.post("/diff/{session_id}/{diff_id}/apply")
+    async def apply_diff(session_id: str, diff_id: str):
+        """Apply a proposed file change (live session, else the store)."""
+        ctx = _active_ctx(session_id)
+        if ctx is not None and diff_id in getattr(ctx, "pending_diffs", {}):
+            return _write_diff(ctx.pending_diffs[diff_id], diff_id)
+        tm = _thread_manager()
+        found = _find_stored_diff(tm, diff_id)
+        if found is None:
+            raise HTTPException(404, "Diff not found")
+        message_id, proposals, index = found
+        result = _write_diff(proposals[index], diff_id)
+        try:
+            tm.store.update_message(message_id, diff_proposals=proposals)
+        except Exception as e:
+            logger.warning(f"Could not persist diff status (non-fatal): {e}")
+        return result
+
     @router.post("/diff/{session_id}/{diff_id}/reject")
     async def reject_diff(session_id: str, diff_id: str):
-        """
-        Reject a proposed file change.
-        
-        Marks the diff as rejected without writing to disk.
-        """
-        try:
-            agent = get_agent()
-        except Exception as e:
-            raise HTTPException(500, f"Agent not available: {e}")
-        
-        if session_id not in agent.active_sessions:
-            raise HTTPException(404, "Session not found")
-        
-        ctx = agent.active_sessions[session_id]
-        
-        # Find the diff proposal
-        if not hasattr(ctx, 'pending_diffs') or diff_id not in ctx.pending_diffs:
+        """Reject a proposed file change without writing to disk."""
+        ctx = _active_ctx(session_id)
+        if ctx is not None and diff_id in getattr(ctx, "pending_diffs", {}):
+            ctx.pending_diffs[diff_id]["status"] = "rejected"
+            logger.info(f"Rejected diff {diff_id}")
+            return {"rejected": True, "diff_id": diff_id}
+        tm = _thread_manager()
+        found = _find_stored_diff(tm, diff_id)
+        if found is None:
             raise HTTPException(404, "Diff not found")
-        
-        # Mark as rejected
-        ctx.pending_diffs[diff_id]['status'] = 'rejected'
-        
+        message_id, proposals, index = found
+        proposals[index]["status"] = "rejected"
+        try:
+            tm.store.update_message(message_id, diff_proposals=proposals)
+        except Exception as e:
+            logger.warning(f"Could not persist diff status (non-fatal): {e}")
         logger.info(f"Rejected diff {diff_id}")
         return {"rejected": True, "diff_id": diff_id}
+
+    # -------------------------------------------------------------------------
+    # Timeline and threads (Plan A, spec §11)
+    # -------------------------------------------------------------------------
+
+    _EMPTY_TIMELINE: Dict[str, Any] = {"turns": [], "has_more": False, "current_thread": None}
+
+    @router.get("/timeline")
+    async def get_timeline(before: Optional[str] = None, around: Optional[str] = None, limit: int = 50):
+        """One page of the timeline, newest-last, grouped by turn.
+
+        ``before`` pages backwards from a turn id; ``around`` centres on one
+        (a chip click). Degrades to an empty page, never a 500 (spec §12).
+        """
+        tm = _thread_manager()
+        if tm is None:
+            return dict(_EMPTY_TIMELINE)
+        try:
+            page = max(1, min(int(limit), 200))
+            turns = tm.store.list_turns(
+                before_turn_id=before or None, around_turn_id=around or None, limit=page + 1,
+            )
+            has_more = len(turns) > page
+            if has_more:
+                turns = turns[-page:]
+            return {"turns": turns, "has_more": has_more, "current_thread": _thread_summary(tm.current())}
+        except Exception as e:
+            logger.warning(f"Timeline unavailable (non-fatal): {e}")
+            return dict(_EMPTY_TIMELINE)
+
+    @router.get("/thread/current")
+    async def get_current_thread():
+        """The open thread as a dict (plus ``thread_id``), or null."""
+        tm = _thread_manager()
+        if tm is None:
+            return None
+        try:
+            thread = tm.current()
+        except Exception as e:
+            logger.warning(f"Current thread unavailable (non-fatal): {e}")
+            return None
+        if not thread:
+            return None
+        body = dict(thread)
+        body["thread_id"] = thread.get("id") or thread.get("thread_id")
+        return body
+
+    @router.delete("/thread/{thread_id}/recall/{recalled_thread_id}")
+    async def retract_recall(thread_id: str, recalled_thread_id: str):
+        """Mark a pulled-in thread as retracted on ``thread_id`` (spec §6)."""
+        tm = _thread_manager()
+        if tm is None:
+            return {"ok": False}
+        try:
+            return {"ok": bool(tm.retract_recall(thread_id, recalled_thread_id))}
+        except Exception as e:
+            logger.warning(f"retract_recall failed (non-fatal): {e}")
+            return {"ok": False}
