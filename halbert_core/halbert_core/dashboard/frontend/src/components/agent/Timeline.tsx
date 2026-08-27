@@ -27,7 +27,6 @@ import { announce } from '../../lib/announce';
 import { ToolExecutionCard } from './ToolExecutionCard';
 import { DiffBlock } from './DiffBlock';
 import { InlineTerminals } from './InlineTerminals';
-import { StaticTerminalChip } from './StaticTerminalChip';
 import { MessageContent, type RunCommand } from './MessageContent';
 
 interface TimelineProps {
@@ -111,26 +110,16 @@ export function executionFromBlock(block: TimelineToolBlock, fallbackId: string)
  * (which re-splits both file contents line by line) once per byte of an
  * `apt upgrade`. Subscribing here means a chunk re-renders only the turns
  * that actually own a terminal.
+ *
+ * What a turn's terminals render AS — a live tile for an id the store still
+ * has, a "terminal · ended" chip for one it does not, in the turn's own
+ * order — is InlineTerminals' call and its call alone; it is the same
+ * component AgentChat uses for the turn in flight, so a turn has exactly one
+ * rendering of that logic regardless of which page put it there.
  */
 function TurnTerminals({ ids }: { ids: string[] }) {
-  const { sessions } = useTerminalSessions();
-  const liveIds = new Set(sessions.map((s) => s.id));
-  const live = ids.filter((id) => liveIds.has(id));
-  const ended = ids.filter((id) => !liveIds.has(id));
-
-  return (
-    <>
-      {live.length > 0 && <InlineTerminals sessionIds={live} />}
-
-      {ended.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {ended.map((id) => (
-            <StaticTerminalChip key={id} id={id} />
-          ))}
-        </div>
-      )}
-    </>
-  );
+  useTerminalSessions();
+  return <InlineTerminals sessionIds={ids} />;
 }
 
 /** What a forgotten row reads as — the same marker the server stores. */
