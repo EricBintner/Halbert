@@ -19,7 +19,7 @@ project:
 
   config:
     # Only the two scope families; nothing else under the root is traced.
-    include_globs: ["host/**", "knowledge/**/*.md"]
+    include_globs: ["host/**/*", "knowledge/**/*.md"]
     exclude_globs: ["**/ssl/**", "**/letsencrypt/**", "**/shadow", "**/gshadow", "**/*.key", "**/*.pem"]
     max_file_bytes: 500000
     use_gitignore: false

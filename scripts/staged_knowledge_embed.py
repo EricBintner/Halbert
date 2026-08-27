@@ -80,7 +80,7 @@ INDEX_DIR = Path(
 )
 
 # From the project config (sourceprep_template.yml). Keep in sync.
-INCLUDE_GLOBS = ["host/**", "knowledge/**/*.md"]
+INCLUDE_GLOBS = ["host/**/*", "knowledge/**/*.md"]
 EXCLUDE_GLOBS = [
     "**/ssl/**", "**/letsencrypt/**", "**/shadow", "**/gshadow",
     "**/*.key", "**/*.pem",

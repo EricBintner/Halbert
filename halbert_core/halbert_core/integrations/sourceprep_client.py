@@ -112,6 +112,7 @@ class SourcePrepClient:
         min_score: float = 0.15,
         project_id: Optional[str] = None,
         scope: Optional[str] = None,
+        scope_mode: str = "hard",
     ) -> Dict[str, Any]:
         """POST /projects/{id}/context — structured context assembly.
 
@@ -123,6 +124,11 @@ class SourcePrepClient:
         ``scope`` (T-H1.3) is included in the request body only when set —
         the SourcePrep API already supports per-scope masking (scope_resolver).
         None (default) leaves the query unscoped (full union).
+
+        ``scope_mode`` defaults to "hard" — out-of-scope files are excluded
+        from results entirely (pre-filter via exclude_paths), not just
+        score-boosted. This is required for platform isolation: a macOS
+        query must never return Linux arch-wiki content.
         """
         body = {
             "query": query,
@@ -135,6 +141,7 @@ class SourcePrepClient:
         }
         if scope is not None:
             body["scope"] = scope
+            body["scope_mode"] = scope_mode
         return self._post("/projects/{project_id}/context", body)
 
     def search(
