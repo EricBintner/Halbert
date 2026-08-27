@@ -191,6 +191,8 @@ large build left in this programme.
 | ~~**R1**~~ | ~~Port the state ledger~~ **DONE** — `continuity/state_store.py`, trackers swapped off Haloysius, `thread_id` gained | — | — |
 | **R2** | N1 + N2 + N3 (§4) | R1 for N3 | small |
 | **R3** | Cut the Haloysius episodic line from the spec and the plan (D1.2) | founder sign-off | deletion |
+| ~~**R4-gate**~~ | ~~Margin gate~~ **DONE** — `continuity/recall_gate.py`; silent wrong recalls 0.370 → 0.000 at N=500 | — | — |
+| ~~**R7**~~ | ~~Abstain-and-probe~~ **DONE** — `continuity/freshness.py`; `decide()` returns MEMORY / LEDGER / PROBE | — | — |
 | **R4** | Scope as a property of the query — `domains` argument on receipt search, defaulting to the open thread's domains; `scope_crossed` telemetry; never a user-visible refusal | Plan A A3 | small |
 | ~~**R5**~~ | ~~Cumulative eval harness~~ **DONE** — `continuity/{corpus,recall_eval}.py`, floors pinned | — | — |
 | **R6** | Real `messages[]` at `state_machine.py:669,1280,1294` | Plan A A9 | medium |
@@ -235,11 +237,66 @@ corpus and compare. Floors (`hit@1 >= 0.95/0.90/0.55` at N=10/100/500) fail CI o
 
 ---
 
+## 5a. How Plan A adopts the two gates
+
+Both shipped in `halbert_core.continuity` so Plan A's worktree was never touched
+while its run is live. Adoption is a call-site change in each case.
+
+### The margin gate — one branch in the recall path
+
+Plan A's A3 built `search_receipts`. Where §6 decides "strong match → inject
+`retrieved_context[0]`, no model call", replace the *existence* test with the
+*margin* test:
+
+```python
+from halbert_core.continuity import classify, MatchStrength
+
+gate = classify(store.search_receipts_scored(query, limit=25))
+if gate.strength is MatchStrength.STRONG:
+    inject_receipt(gate.thread_id)          # unchanged behaviour
+    emit("thread_recalled", thread_id=gate.thread_id, gap=gate.gap)
+elif gate.strength is MatchStrength.WEAK:
+    hint_candidates(gate.candidates)        # the model calls recall_thread
+```
+
+The search must return scores. `ReceiptIndex.search_scored` in
+`continuity/recall_eval.py` shows the shape: `ORDER BY bm25(...)`, negated so
+higher is better, LIKE-fallback rows scored 0.0 so an unranked hit is never
+strong. `gate.gap` is worth putting on the `thread_recalled` event — it is the
+number that tells you whether the store is outgrowing its index.
+
+The strong-match *entity-overlap* rule in §6 (≥2 canonical entities) is
+unaffected; the gate applies to the FTS branch, which is the one that decays.
+
+### Probe-before-answering — one call before a state claim
+
+```python
+from halbert_core.continuity import decide, AnswerSource
+
+d = decide(subject, predicate, state_store)
+if d.source is AnswerSource.LEDGER:
+    answer(d.value)                    # a tracker already looked
+elif d.source is AnswerSource.PROBE:
+    say(d.preamble())                  # "We last saw that on 2026-07-14 — checking now."
+    value = run_check()
+    state_store.record_state(subject, predicate, value, "probe", thread_id=thread_id)
+    answer(value)
+else:
+    answer_from_memory()               # durable: intent, rationale, a commitment
+```
+
+`DEFAULT_FRESH_SECONDS` (60s) is the one dial on how often Halbert says "checking
+now". Raise it to probe less, at the cost of freshness.
+
+---
+
 ## 6. Open questions for the founder
 
-1. **Abstain-and-probe scope (D2).** Everywhere, only for state older than some threshold, or
-   only when the answer would drive an action? This decides R7's size and how chatty Halbert
-   feels day to day.
+1. ~~**Abstain-and-probe scope (D2).**~~ **Answered:** *"yes probe go look first too."*
+   Implemented with an age threshold rather than always-probe, because the ledger already
+   holds fresh readings from the trackers — re-running a command a tracker ran two seconds
+   ago is pure cost. `DEFAULT_FRESH_SECONDS = 60`. If Halbert feels too chatty in use, raise
+   it; if it feels stale, lower it. One constant, one dial.
 2. **The episodic line (D1.2).** Confirm it is cut from spec §8. It is an approved-spec change,
    so it should not be made silently.
 3. **Which model slot runs consolidation (R8)?** Not the chat slot. An `llm_config` question.
