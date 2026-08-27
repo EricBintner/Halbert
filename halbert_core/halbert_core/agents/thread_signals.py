@@ -9,6 +9,8 @@ deterministic hint the prompt layer places before the current task.
 
 from __future__ import annotations
 
+import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -16,6 +18,8 @@ from typing import Any, Dict, List, Optional
 
 from ..intake.signals import MessageSignals
 from .receipt import receipt_one_liner
+
+logger = logging.getLogger("halbert.agents.thread_signals")
 
 __all__ = [
     "TEMPORAL_GATE_SECONDS", "GRACE_MINUTES", "GRACE_TURNS", "STRONG_MIN_OVERLAP",
@@ -32,6 +36,53 @@ STRONG_MIN_SCORE = 0.5
 HINT_MAX_CHARS = 900
 WEAK_CANDIDATES_MAX = 2
 CANDIDATES_MAX = 3
+
+# ── hint field caps ──────────────────────────────────────────────
+# The hint is a line-oriented block quoted verbatim into the planning and
+# response prompts (contracts §5), i.e. into the prompt of an agent that
+# stages shell commands. Every field it interpolates is untrusted or
+# model-authored: thread titles come from the model's `new_thread` meta-tool
+# or from the first line a human typed, match terms come from the message,
+# receipts are extracted from stored content, and notification text carries
+# terminal output. Without flattening, any of them can inject a forged
+# labelled line ("Open loop: …", "Waiting for you: …") or close and reopen
+# the block. `_clip` flattens embedded whitespace, drops the block's own
+# delimiters and caps the length — the same defence receipt.py applies to
+# every field it renders (see the comment block there).
+HEAD_LINE_MAX = 200
+RECALL_LINE_MAX = 320
+#: Every recalled entry keeps at least this much, so section heads survive.
+RECALL_LINE_MIN = 96
+WEAK_LINE_MAX = 220
+NOTIFICATION_LINE_MAX = 220
+NOTIFICATION_ITEM_MAX = 160
+TITLE_MAX = 120
+DATE_MAX = 24
+TERMS_MAX = 96
+TERM_ITEM_MAX = 48
+ONE_LINER_MAX = 220
+
+_HINT_OPEN = "<continuity>\n"
+_HINT_CLOSE = "\n</continuity>"
+_WS_RE = re.compile(r"\s+")
+#: The block's own delimiters, stripped out of interpolated text so it can
+#: never look like a close/reopen of the block to whatever reads the prompt.
+_DELIM_RE = re.compile(r"</?\s*continuity\s*>", re.IGNORECASE)
+
+
+def _clip(text: Any, limit: int) -> str:
+    """Flatten whitespace, drop hint delimiters, cap at ``limit`` chars."""
+    limit = max(1, int(limit))
+    flat = _WS_RE.sub(" ", _DELIM_RE.sub(" ", str(text if text is not None else ""))).strip()
+    if len(flat) <= limit:
+        return flat
+    return flat[: limit - 1].rstrip() + "…"
+
+
+def _terms(terms: Optional[List[str]], fallback: str) -> str:
+    """Render match terms as a capped, flattened comma list."""
+    items = [_clip(t, TERM_ITEM_MAX) for t in (terms or [])]
+    return _clip(", ".join(i for i in items if i), TERMS_MAX) or fallback
 
 
 @dataclass
@@ -105,7 +156,11 @@ def _gather_candidates(query: str, entities: set, open_id: Optional[str], store:
     by_id: Dict[str, Candidate] = {}
     try:
         hits = store.search_receipts(expanded, exclude_thread_id=open_id, limit=CANDIDATES_MAX)
-    except Exception:
+    except Exception as e:
+        # The store logs and returns [] for its own failures, so reaching this
+        # means a duck-typed store or a signature drift — recall would go
+        # silently dead without a line here (contracts §5 thread_store_error).
+        logger.warning(f"search_receipts failed, no recall candidates: {e}")
         hits = []
     for hit in hits:
         by_id[hit["thread_id"]] = Candidate(
@@ -120,7 +175,8 @@ def _gather_candidates(query: str, entities: set, open_id: Optional[str], store:
     if entities:
         try:
             threads = store.list_threads(status=["paused", "closed"], limit=50)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"list_threads failed, no entity overlap scoring: {e}")
             threads = []
         for t in threads:
             tid = t["thread_id"]
@@ -149,6 +205,45 @@ def _gather_candidates(query: str, entities: set, open_id: Optional[str], store:
     return cands[:CANDIDATES_MAX]
 
 
+def _is_empty_thread(thread: Optional[Dict[str, Any]]) -> bool:
+    """True when nothing has been said in ``thread`` yet."""
+    if not thread:
+        return True
+    try:
+        return not int(thread.get("turn_count") or 0) and not int(thread.get("message_count") or 0)
+    except (TypeError, ValueError):
+        return False
+
+
+def _anaphora_referent(recent: Dict[str, Any], open_thread: Optional[Dict[str, Any]], now: float) -> bool:
+    """May ``recent`` be what a bare "did that work?" points at?
+
+    A bare anaphora carries no topical evidence at all, so the synthetic
+    candidate it produces is ``strong`` and can hand the turn to another
+    thread (``reopen`` when that thread is paused). Two guards keep filler
+    text from doing that:
+
+    * The open thread must not simply be *missing* its ``last_active``.
+      A thread that has real turns but no recorded activity — what an
+      interrupted ``end_turn`` leaves behind — used to compare as older
+      than everything (``float(None or 0)``), so every paused thread won
+      and an acknowledgement abandoned the subject in flight. Only a
+      thread with nothing said in it yet can be out-ranked that way, and
+      then only because there is no other referent for "that".
+    * The referent must be within one temporal gate. "did that work?"
+      cannot plausibly mean a subject last touched weeks ago.
+    """
+    last_active = recent.get("last_active")
+    if last_active is None:
+        return False
+    if (float(now) - float(last_active)) > TEMPORAL_GATE_SECONDS:
+        return False
+    open_last = open_thread.get("last_active") if open_thread else None
+    if open_last is None:
+        return _is_empty_thread(open_thread)
+    return float(last_active) >= float(open_last)
+
+
 def decide(query: str, signals: MessageSignals, open_thread: Optional[Dict[str, Any]], store: Any, now: float) -> ThreadDecision:
     """Resolve which thread the message belongs to (spec §4.3 rules)."""
     open_id = open_thread.get("thread_id") if open_thread else None
@@ -161,18 +256,17 @@ def decide(query: str, signals: MessageSignals, open_thread: Optional[Dict[str, 
     if signals.anaphora and not entities and not signals.detected_domains:
         try:
             recent = store.list_threads(status=["paused", "closed"], limit=1)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"list_threads failed, no anaphora referent: {e}")
             recent = []
-        if recent:
+        if recent and _anaphora_referent(recent[0], open_thread, now):
             r = recent[0]
-            open_last = float((open_thread or {}).get("last_active") or 0.0)
-            if float(r.get("last_active") or 0.0) >= open_last:
-                cand = Candidate(
-                    thread_id=r["thread_id"], title=r.get("title") or "",
-                    last_active=r.get("last_active"), score=1.0, match_terms=["anaphora"],
-                    strong=True, status=r.get("status") or "closed",
-                )
-                candidates = [cand] + [c for c in candidates if c.thread_id != cand.thread_id]
+            cand = Candidate(
+                thread_id=r["thread_id"], title=r.get("title") or "",
+                last_active=r.get("last_active"), score=1.0, match_terms=["anaphora"],
+                strong=True, status=r.get("status") or "closed",
+            )
+            candidates = [cand] + [c for c in candidates if c.thread_id != cand.thread_id]
 
     if cues and candidates and candidates[0].score >= STRONG_MIN_SCORE:
         candidates[0].strong = True
@@ -210,14 +304,21 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
     now = time.time() if now is None else now
     if not open_thread:
         return ""
-    title = open_thread.get("title") or "Untitled"
+    title = _clip(open_thread.get("title"), TITLE_MAX) or "Untitled"
     turns = int(open_thread.get("turn_count") or 0)
     weak: List[Candidate] = []
     if not recalled and decision.strong is None:
         weak = [c for c in decision.candidates if not c.strong][:WEAK_CANDIDATES_MAX]
-    if turns == 0 and not recalled and not weak and not notifications:
+
+    notif_line = ""
+    if notifications:
+        items = [_clip(n.get("text") or n.get("title"), NOTIFICATION_ITEM_MAX) for n in notifications]
+        joined = "; ".join(i for i in items if i)
+        if joined:
+            notif_line = _clip("Waiting for you: " + joined, NOTIFICATION_LINE_MAX)
+    if turns == 0 and not recalled and not weak and not notif_line:
         return ""
-    lines: List[str] = []
+
     if turns == 0:
         head = f'Thread: "{title}" · opened just now.'
     else:
@@ -225,25 +326,43 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
                 f'{relative_time(open_thread.get("last_active"), now)}.')
     if decision.stale:
         head += " (resuming after a gap)"
-    lines.append(head)
-    for r in recalled:
-        terms = ", ".join(r.get("match_terms") or []) or "recall"
-        lines.append(
-            f'Pulled in: "{r.get("title") or ""}" ({r.get("date") or "unknown date"}, '
-            f'{relative_time(r.get("last_active"), now)}; matched {terms}) — '
-            f'{receipt_one_liner(r.get("receipt") or "")}'
-        )
+    head_line = _clip(head, HEAD_LINE_MAX)
+
+    recall_lines = [
+        f'Pulled in: "{_clip(r.get("title"), TITLE_MAX)}" '
+        f'({_clip(r.get("date"), DATE_MAX) or "unknown date"}, '
+        f'{relative_time(r.get("last_active"), now)}; matched {_terms(r.get("match_terms"), "recall")}) — '
+        f'{_clip(receipt_one_liner(r.get("receipt") or ""), ONE_LINER_MAX)}'
+        for r in recalled
+    ]
+    weak_line = ""
     if weak:
-        parts = [
-            f'"{c.title}" ({format_date(c.last_active, now)}; matched {", ".join(c.match_terms) or "title"})'
+        weak_line = "Earlier work that may matter: " + "; ".join(
+            f'"{_clip(c.title, TITLE_MAX)}" ({format_date(c.last_active, now)}; '
+            f'matched {_terms(c.match_terms, "title")})'
             for c in weak
-        ]
-        lines.append("Earlier work that may matter: " + "; ".join(parts))
-    if notifications:
-        items = [str(n.get("text") or n.get("title") or "") for n in notifications]
-        lines.append("Waiting for you: " + "; ".join(i for i in items if i))
+        )
+
+    # Budget by priority rather than truncating the joined body as one string:
+    # a single long receipt one-liner would otherwise eat the whole budget and
+    # drop "Waiting for you" — the most time-critical line — entirely. The head
+    # and the notifications survive whole; the recalled lines (or, when there
+    # are none, the weak-candidate line) share what is left, never below
+    # RECALL_LINE_MIN so every section keeps at least its head.
+    body_budget = HINT_MAX_CHARS - len(_HINT_OPEN) - len(_HINT_CLOSE)
+    free = body_budget - len(head_line) - (len(notif_line) + 1 if notif_line else 0)
+    if recall_lines:
+        per = min(RECALL_LINE_MAX, max(RECALL_LINE_MIN, (free - len(recall_lines)) // len(recall_lines)))
+        recall_lines = [_clip(line, per) for line in recall_lines]
+    elif weak_line:
+        weak_line = _clip(weak_line, min(WEAK_LINE_MAX, max(RECALL_LINE_MIN, free - 1)))
+
+    lines: List[str] = [head_line] + recall_lines
+    if weak_line:
+        lines.append(weak_line)
+    if notif_line:
+        lines.append(notif_line)
     body = "\n".join(lines)
-    budget = HINT_MAX_CHARS - len("<continuity>\n") - len("\n</continuity>")
-    if len(body) > budget:
-        body = body[: budget - 1].rstrip() + "…"
-    return f"<continuity>\n{body}\n</continuity>"
+    if len(body) > body_budget:  # only reachable with more recalled entries than A6 sends
+        body = body[: body_budget - 1].rstrip() + "…"
+    return f"{_HINT_OPEN}{body}{_HINT_CLOSE}"
