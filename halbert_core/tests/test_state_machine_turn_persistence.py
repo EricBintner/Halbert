@@ -194,3 +194,31 @@ async def test_paused_turn_ends_only_after_confirmation():
         pass
     assert len(tm.ended) == 1
     assert tm.ended[0]["status"] == "complete" and tm.ended[0]["assistant_text"] == "restarted"
+
+
+@pytest.mark.asyncio
+async def test_stream_abandoned_during_begin_turn_still_ends_the_turn():
+    """A consumer that goes away while _begin_turn is still yielding.
+
+    _begin_turn() runs before the try whose finally ends the turn, so the
+    stop button / a client disconnect landing on that yield (aclose() ->
+    GeneratorExit) used to leave the user row in_progress with no assistant
+    row and no receipt. process()'s outer finally has to end it.
+    """
+    tm = _FakeThreadManager()
+    agent = _agent(_LLM(delay=0.3))
+    gen = agent.process("add a share", session_id="s10", thread_manager=tm)
+    seen = []
+    async for e in gen:
+        seen.append(e.type)
+        if e.type == "turn_persisted":
+            break
+    await gen.aclose()
+
+    assert seen[-1] == "turn_persisted" and len(tm.begun) == 1
+    assert len(tm.ended) == 1
+    assert tm.ended[0]["turn"].turn_id == "turn-1"
+    assert tm.ended[0]["status"] == "interrupted"
+    assert tm.ended[0]["assistant_text"] == "" and tm.ended[0]["blocks"] == []
+    assert not agent.turn_lock.locked()
+    assert agent.current_state == AgentState.IDLE

@@ -365,6 +365,17 @@ class AgentStateMachine:
                 self._end_turn(self._turn_status(session_id))
                 self._settle_turn(session_id)
         finally:
+            # _begin_turn() runs before the inner try, so a consumer that goes
+            # away while it is still yielding (stop button, disconnect) never
+            # reaches the finally that ends the turn: the user row would stay
+            # in_progress with no assistant row until the next turn's
+            # mark_interrupted() healed it. End it here instead. This is a
+            # no-op for a turn the inner finally already ended (_end_turn
+            # clears ctx.turn_context) and for one merely paused on a
+            # confirmation (_end_turn returns while AWAITING_CONFIRMATION).
+            # The status cannot come from _turn_status: the machine is still
+            # IDLE at this point, which there means "ran to the end".
+            self._end_turn("interrupted")
             # Settle before releasing so the next queued turn sees a settled
             # machine. Repeating _settle_turn is idempotent and it also covers
             # the sliver between registering the session and entering the try
@@ -620,7 +631,10 @@ class AgentStateMachine:
 
         Skipped while the turn is merely paused on a confirmation (the
         TurnContext stays on ctx; confirm_action's finally ends it).
-        Thread meta-tool calls are not blocks. Never raises.
+        Thread meta-tool calls are not blocks. Never raises, and calling it
+        twice for one turn is a no-op (the TurnContext is cleared before the
+        write), so process()'s outer finally can safely end a turn that was
+        abandoned before the inner try was ever entered.
         """
         if self.current_state == AgentState.AWAITING_CONFIRMATION:
             return
