@@ -115,6 +115,21 @@ export interface AgentSession {
   subagentEvents?: SubagentEvent[];
   /** Terminal sessions opened during this turn, oldest first (E1f). */
   terminalSessions?: string[];
+  /** Subject the server put this turn in (thread_started). */
+  thread?: { threadId: string; title: string } | null;
+  /**
+   * Earlier subject pulled into this turn (thread_recalled), one at most.
+   * `lastTurnId` is that thread's most recent turn — where the chip jumps.
+   */
+  recalled?: {
+    threadId: string;
+    title: string;
+    date: string;
+    matchTerms: string[];
+    lastTurnId: string | null;
+  } | null;
+  /** Server turn id once the user row is stored (turn_persisted). */
+  turnId?: string | null;
 }
 
 export interface StreamEvent {
@@ -150,6 +165,8 @@ export interface UseAgentStreamReturn {
   rejectDiff: (diffId: string) => void;
   cancel: () => void;
   reset: () => void;
+  /** Drop a context chip locally (the server is told separately, if at all). */
+  dismissContextItem: (id: string) => void;
 }
 
 // Phase 8: Provenance and module invocation types
@@ -164,6 +181,10 @@ export interface ModuleInvocation {
   module: string;
   props: Record<string, any>;
 }
+
+// A store failure is logged once per page load; the turn still answers and
+// the timeline just will not show it after a reload (spec §12).
+let storeErrorWarned = false;
 
 /**
  * Terminal events (E1f) drive the shared terminal-session store rather than
@@ -249,6 +270,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       contextItems: [],
       diffProposals: [],
       terminalSessions: [],
+      thread: null,
+      recalled: null,
+      turnId: null,
     });
     sessionIdRef.current = sessionId;
   }, []);
@@ -504,6 +528,54 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
             }],
           };
 
+        // Plan A continuity: the server owns thread identity. The hook only
+        // mirrors what it was told so the label and the chip can follow.
+        case 'thread_started': {
+          // A new subject pauses the previous one, and whatever was pulled
+          // into the previous one expires with it (spec §6): no thread chip
+          // survives a thread_started.
+          return {
+            ...prev,
+            thread: {
+              threadId: event.thread_id as string,
+              title: (event.title as string) ?? '',
+            },
+            recalled: null,
+            contextItems: prev.contextItems.filter((item) => item.source !== 'thread'),
+          };
+        }
+
+        case 'thread_recalled': {
+          const threadId = event.thread_id as string;
+          const title = (event.title as string) ?? '';
+          const date = (event.date as string) ?? '';
+          const matchTerms = Array.isArray(event.match_terms) ? (event.match_terms as string[]) : [];
+          const lastTurnId =
+            typeof event.last_turn_id === 'string' && event.last_turn_id ? event.last_turn_id : null;
+          // Max one thread chip: a second recall replaces the first.
+          const others = prev.contextItems.filter((item) => item.source !== 'thread');
+          return {
+            ...prev,
+            recalled: { threadId, title, date, matchTerms, lastTurnId },
+            contextItems: [
+              ...others,
+              { id: `thread:${threadId}`, source: 'thread', label: `pulled in: ${title} · ${date}`, count: 1 },
+            ],
+          };
+        }
+
+        case 'turn_persisted': {
+          return { ...prev, turnId: (event.turn_id as string) ?? null };
+        }
+
+        case 'thread_store_error': {
+          if (!storeErrorWarned) {
+            storeErrorWarned = true;
+            console.warn('[AGENT] thread store error (turn still answered):', event.message);
+          }
+          return prev;
+        }
+
         default:
           return prev;
       }
@@ -717,12 +789,10 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
 
   const reset = useCallback(() => {
     cancel();
-    // Drop the terminals this turn opened so a new conversation does not
-    // inherit the last one's dock. Terminals the user opened by hand carry no
-    // origin and survive.
-    if (sessionIdRef.current) {
-      terminalSessionStore.clearOrigin(sessionIdRef.current);
-    }
+    // One conversation: terminals belong to the timeline, not to this hook's
+    // local state, so a reset never clears the store (there is no "New
+    // Conversation" any more — see hooks/useTerminalSessions clearOrigin,
+    // which stays for the dock's own use).
     setSession(null);
     setResponse('');
     setThinking('');
@@ -730,6 +800,14 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     setModuleInvocations([]);
     sessionIdRef.current = null;
   }, [cancel]);
+
+  const dismissContextItem = useCallback((id: string) => {
+    setSession(prev => prev ? {
+      ...prev,
+      contextItems: prev.contextItems.filter(item => item.id !== id),
+      recalled: prev.recalled && `thread:${prev.recalled.threadId}` === id ? null : prev.recalled,
+    } : null);
+  }, []);
 
   const applyDiff = useCallback((diffId: string) => {
     if (!sessionIdRef.current) return;
@@ -775,7 +853,8 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     applyDiff,
     rejectDiff,
     cancel,
-    reset
+    reset,
+    dismissContextItem,
   };
 }
 
