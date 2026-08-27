@@ -30,10 +30,17 @@ from .thread_signals import (
 
 logger = logging.getLogger("halbert.agents.threads")
 
-__all__ = ["TurnContext", "ThreadManager", "get_thread_manager", "HISTORY_ROWS"]
+__all__ = [
+    "TurnContext", "ThreadManager", "get_thread_manager", "HISTORY_ROWS", "PENDING_NOTES_MAX",
+]
 
 HISTORY_ROWS = 12
 SOFT_LANDING_ROWS = 6
+# How many hidden system rows one turn will carry into the hint. `build_hint`
+# renders at most `thread_signals.NOTES_MAX` (3) of them, so this is headroom,
+# not a display budget -- its job is to keep a thread that somehow accumulated
+# a pile of notes from loading them all onto the manager lock every turn.
+PENDING_NOTES_MAX = 8
 RECALL_SNIPPETS = 5
 RECALL_MAX = 3
 
@@ -799,15 +806,17 @@ class ThreadManager:
         return history
 
     def _pending_notes(self, thread_id: str) -> List[str]:
-        """System-origin rows newer than the thread's last human row, oldest-first."""
-        notes: List[str] = []
-        for m in reversed(self.store.list_messages(thread_id)):
-            if m["origin"] == "human":
-                break
-            if m["origin"] == "system" and m.get("content"):
-                notes.append(m["content"])
-        notes.reverse()
-        return notes
+        """System-origin rows newer than the thread's last human row, oldest-first.
+
+        A bounded tail read, deliberately: ``begin_turn`` is ``@_locked``, so
+        whatever this costs is held on the lock that every turn and every
+        ``tick()`` serialises behind — the same reason `tick`'s sweep runs
+        outside it. Walking `list_messages` back to the last human row instead
+        materialised (and JSON-decoded four columns of) every row of the thread
+        to read the 0-1 rows that matter: ~30 ms on a 4k-row thread against
+        ~0.003 ms for the store's tail query (review: Plan A / A6d).
+        """
+        return self.store.pending_notes(thread_id, limit=PENDING_NOTES_MAX)
 
     def _soft_landing(self, previous_id: str) -> List[Dict[str, Any]]:
         rows = self.store.recent_messages(previous_id, limit=SOFT_LANDING_ROWS)

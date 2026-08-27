@@ -1037,6 +1037,41 @@ class SqliteConversationStore:
             logger.warning(f"recent_messages {thread_id} failed: {e}")
             return []
 
+    def pending_notes(self, thread_id: str, *, limit: int = 8) -> List[str]:
+        """Contents of the ``origin='system'`` rows newer than the thread's
+        last human row, oldest-first, at most ``limit`` of them.
+
+        The hidden observations A6d writes (a retracted recall) live as
+        ordinary rows at the tail of a thread, and ``ThreadManager.begin_turn``
+        asks for them on every turn while holding the manager lock. Reading
+        them by materialising the thread (``list_messages``) cost ~30 ms on a
+        4k-row thread — every row built, its four JSON columns decoded — to
+        look at the 0-1 rows that matter; this tail query costs ~0.003 ms
+        because the last human row's id comes straight off ``idx_messages_conv``
+        and the outer scan starts there (review: Plan A / A6d).
+
+        The oldest notes are the ones kept when there are more than ``limit``:
+        ``build_hint`` renders the head of the list, so a flood of new notes
+        must not push the first one out of the hint.
+        """
+        if self._conn is None or limit <= 0:
+            return []
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    """SELECT content FROM messages
+                       WHERE conversation_id = ?
+                         AND origin = 'system' AND content <> ''
+                         AND id > COALESCE((SELECT MAX(id) FROM messages
+                                            WHERE conversation_id = ? AND origin = 'human'), 0)
+                       ORDER BY id ASC LIMIT ?""",
+                    (thread_id, thread_id, int(limit)),
+                ).fetchall()
+            return [r["content"] for r in rows]
+        except Exception as e:
+            logger.warning(f"pending_notes {thread_id} failed: {e}")
+            return []
+
     def _turn_first_id(self, turn_id: str) -> Optional[int]:
         """First *visible* row id for a turn key -- must agree with
         ``_TURN_KEYS_SQL`` (also visible-only) or an anchor computed here

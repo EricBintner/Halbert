@@ -1104,3 +1104,59 @@ class TestMergeThread:
         assert store.search_receipts("scanner") == []
         assert store._conn.execute(
             "SELECT COUNT(*) FROM receipts_fts WHERE thread_id = 'new'").fetchone()[0] == 0
+
+
+class TestPendingNotes:
+    """The bounded tail read ``begin_turn`` does on every turn (A6d review).
+
+    Reading the same answer with ``list_messages`` materialised — and JSON
+    decoded four columns of — every row of the thread to look at the 0-1 rows
+    after the last human row: ~30 ms on a 4k-row thread, held on the manager
+    lock, against ~0.003 ms here.
+    """
+
+    def _two_turns(self, store):
+        store.create_thread("t1", "T")
+        store.append_message("t1", "user", "q1", origin="human", turn_id="u1")
+        store.append_message("t1", "assistant", "a1", origin="assistant", turn_id="u1")
+        store.append_message("t1", "system", "older note", origin="system", visible_in_timeline=False)
+        store.append_message("t1", "user", "q2", origin="human", turn_id="u2")
+        store.append_message("t1", "assistant", "a2", origin="assistant", turn_id="u2")
+
+    def test_system_rows_after_the_last_human_row_oldest_first(self, store):
+        self._two_turns(store)
+        store.append_message("t1", "system", "note one", origin="system", visible_in_timeline=False)
+        store.append_message("t1", "system", "note two", origin="system", visible_in_timeline=False)
+        assert store.pending_notes("t1") == ["note one", "note two"]
+
+    def test_nothing_since_the_last_human_row(self, store):
+        self._two_turns(store)
+        assert store.pending_notes("t1") == []
+        assert store.pending_notes("nope") == []
+
+    def test_empty_and_other_origins_are_skipped_but_do_not_stop_the_read(self, store):
+        self._two_turns(store)
+        store.append_message("t1", "system", "", origin="system", visible_in_timeline=False)
+        store.append_message("t1", "system", "from terminal", origin="terminal", visible_in_timeline=False)
+        store.append_message("t1", "system", "note", origin="system", visible_in_timeline=False)
+        assert store.pending_notes("t1") == ["note"]
+
+    def test_limit_keeps_the_oldest_notes(self, store):
+        self._two_turns(store)
+        for i in range(5):
+            store.append_message("t1", "system", f"n{i}", origin="system", visible_in_timeline=False)
+        assert store.pending_notes("t1", limit=3) == ["n0", "n1", "n2"]
+        assert store.pending_notes("t1", limit=0) == []
+
+    def test_a_thread_with_no_human_row_still_yields_its_notes(self, store):
+        store.create_thread("t1", "T")
+        store.append_message("t1", "assistant", "a", origin="assistant")
+        store.append_message("t1", "system", "note", origin="system", visible_in_timeline=False)
+        assert store.pending_notes("t1") == ["note"]
+
+    def test_notes_do_not_leak_between_threads(self, store):
+        store.create_thread("t1", "T")
+        store.create_thread("t2", "U")
+        store.append_message("t1", "system", "mine", origin="system", visible_in_timeline=False)
+        store.append_message("t2", "system", "theirs", origin="system", visible_in_timeline=False)
+        assert store.pending_notes("t1") == ["mine"] and store.pending_notes("t2") == ["theirs"]

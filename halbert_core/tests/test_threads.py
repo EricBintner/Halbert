@@ -10,7 +10,7 @@ import pytest
 from halbert_core.agents.conversation_sqlite import SqliteConversationStore
 from halbert_core.agents import threads as threads_mod
 from halbert_core.agents.thread_signals import GRACE_MINUTES, GRACE_TURNS
-from halbert_core.agents.threads import ThreadManager, get_thread_manager
+from halbert_core.agents.threads import PENDING_NOTES_MAX, ThreadManager, get_thread_manager
 from halbert_core.intake.signals import analyze_message
 
 NOW = datetime(2026, 8, 26, 12, 0).timestamp()
@@ -1129,3 +1129,34 @@ class TestRetractionNotes:
         tm.end_turn(turn4, assistant_text="ok", blocks=[], terminal_session_ids=[], diff_proposals=[])
         turn5 = tm.begin_turn("continue", analyze_message("continue"), "s5")
         assert turn5.notes == [] and "Note:" not in turn5.hint
+
+    def test_begin_turn_reads_the_notes_without_scanning_the_thread(self, tm, monkeypatch):
+        """The note read is a bounded tail query, not a whole-thread scan.
+
+        ``begin_turn`` is ``@_locked``, so what it spends is held on the lock
+        every turn and every ``tick()`` queues behind it. Reading the 0-1 rows
+        after the last human row with an unbounded ``list_messages`` cost
+        ~30 ms on a 4k-row thread — every row materialised, four JSON columns
+        decoded per row — against ~0.003 ms for the tail query (A6d review).
+        """
+        _, t2, text = self._retracted(tm)
+        scans = []
+        real = tm.store.list_messages
+
+        def spy(thread_id, **kw):
+            scans.append((thread_id, kw.get("limit")))
+            return real(thread_id, **kw)
+
+        monkeypatch.setattr(tm.store, "list_messages", spy)
+        turn4 = tm.begin_turn(text, analyze_message(text), "s4")
+        assert turn4.notes == ["admin retracted recall of 'Add samba'"]
+        assert scans == []
+
+    def test_a_flood_of_notes_is_capped(self, tm):
+        _, t2, text = self._retracted(tm)
+        for i in range(PENDING_NOTES_MAX + 5):
+            tm.store.append_message(t2.thread_id, "system", f"n{i}", origin="system",
+                                    status="complete", visible_in_timeline=False)
+        turn4 = tm.begin_turn(text, analyze_message(text), "s4")
+        assert len(turn4.notes) == PENDING_NOTES_MAX
+        assert turn4.notes[0] == "admin retracted recall of 'Add samba'"
