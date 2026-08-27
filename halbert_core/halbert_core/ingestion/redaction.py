@@ -649,6 +649,170 @@ def _redact_inline(line: str) -> str:
     return "".join(out)
 
 
+# --- Credentials with no `key<sep>value` shape ----------------------------
+#
+# Everything above needs an `=` or a `:` to find a value, and so does the
+# TOKEN_RE backstop. Three real shapes in harvested files have neither, and
+# staged verbatim until this section existed:
+#
+#   * `wpa-psk hunter2` -- Debian ifupdown takes WPA credentials as
+#     space-separated directives (`/etc/network/interfaces`, network.yml).
+#   * `myd --password SUPERSECRET` -- a command-line flag in an init script
+#     (`/etc/init.d/*`, service.yml) or a launchd `ProgramArguments` array.
+#   * `smbfs://alice:hunter2@fileserver/share` -- credentials inside a URL
+#     (`/etc/auto_master`, storage.yml; `http_proxy=` in `/etc/environment`).
+#
+# All three are matched against **small, exact, whole-token vocabularies**,
+# not against `_is_secret_key`. That predicate is a substring test tuned for
+# key names, and these positions are far more exposed: the first token of a
+# line and a `--flag` are both places where ordinary config carries a
+# credential *keyword* without carrying a credential. `sshd_config` alone --
+# staged into the flat host tree -- supplies `PasswordAuthentication`,
+# `PubkeyAuthentication`, `KbdInteractiveAuthentication`, `HostKey` and
+# `AuthorizedKeysFile`, none of them secret. Over-redaction here destroys the
+# configuration the assistant exists to reason about, so coverage is traded
+# for precision deliberately.
+
+# Directives whose entire first token is the keyword and whose value is the
+# rest of the line. Kept to the spellings that are unambiguous on their own:
+# a line beginning with exactly `psk` or `wpa-passphrase` is a credential in
+# every format that writes it that way.
+_SPACE_DIRECTIVE_KEYWORDS = frozenset(
+    {
+        "passphrase",
+        "password",
+        "psk",
+        "secret",
+        "wireless-key",
+        "wpa-passphrase",
+        "wpa-psk",
+    }
+)
+
+# Flag names, compared after stripping the leading dash(es).
+#
+# `key` is deliberately absent. `--key`, `--keyfile`, `--ssl-key` and
+# `--keytab` all take a *path*, and redacting the path hides which material a
+# service loads while protecting nothing -- the file itself is never staged.
+# For the same reason the match is whole-name: `--pass-fd 3` (a file
+# descriptor) and `--secret-file /etc/x` (a path) must survive, and they do
+# because neither name is in this set.
+#
+# Single-letter flags are absent too. `-p` is a password to mysql and a port
+# to almost everything else, and there is no way to tell from the line which
+# program is being invoked.
+_CREDENTIAL_FLAG_NAMES = frozenset(
+    {
+        "access-token",
+        "api-key",
+        "apikey",
+        "auth-token",
+        "client-secret",
+        "pass",
+        "passphrase",
+        "passwd",
+        "password",
+        "psk",
+        "secret",
+        "secret-key",
+        "token",
+        "wireless-key",
+        "wpa-psk",
+    }
+)
+
+# PAM's four management groups open every rule in `/etc/pam.d/*`, and one of
+# them is spelled exactly `password` -- so `password required pam_unix.so` has
+# the whole-line directive shape without being a credential. Found by running
+# this module over the whole of /etc: eight files on a stock macOS host lost
+# the line that says which module authenticates password changes.
+#
+# The tell is the second field, which in a PAM rule is a control word or a
+# bracketed control expression. A credential that happens to be exactly the
+# word `sufficient` is not a trade worth worrying about.
+_PAM_CONTROL_WORDS = frozenset(
+    {"include", "optional", "required", "requisite", "substack", "sufficient"}
+)
+
+_SPACE_DIRECTIVE_RE = re.compile(r"^([ \t]*)([A-Za-z][A-Za-z0-9_.\-]*)([ \t]+)(\S.*)$")
+# A credential flag, then whitespace, then its value.
+#
+# The names are compiled *into* the pattern rather than filtered afterwards.
+# Matching any `-flag value` and then asking about the name let a
+# non-credential flag consume the credential inside its own argument:
+# `/bin/sh -c 'myd --password hunter2'` matched at `-c`, whose quoted value
+# swallowed the whole command, so the scan resumed past the leak. With the
+# vocabulary in the pattern the engine simply walks on to `--password`.
+#
+# `(?![A-Za-z0-9_.\-])` is what makes the name whole rather than a prefix, so
+# `--pass-fd 3` cannot match on `pass`. `(?!--)` keeps `--password --verbose`
+# from redacting the following flag. A bare value stops at whitespace, at `<`
+# (so a value inside a plist `<string>` does not swallow the closing tag) and
+# at a quote (which in the `sh -c '...'` case is the shell's string
+# terminator, not part of the password).
+_FLAG_VALUE_RE = re.compile(
+    r"""(?<![^\s>"'])(-{1,2}(?:%s))(?![A-Za-z0-9_.\-])([ \t]+)"""
+    r"""("[^"]*"|'[^']*'|(?!--)[^\s<'"]+)"""
+    % "|".join(
+        sorted((re.escape(n) for n in _CREDENTIAL_FLAG_NAMES), key=len, reverse=True)
+    ),
+    re.IGNORECASE,
+)
+_FLAG_TOKEN_RE = re.compile(r"^-{1,2}[A-Za-z]")
+# `scheme://user:password@host`. The password runs to the `@`; scheme, user
+# and host are kept so the mount or proxy stays legible.
+URL_CREDENTIAL_RE = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9+.\-]*://)([^\s:/@]+):([^\s/@]+)@"
+)
+
+
+def _placeholder_for(line: str) -> str:
+    """`<secret>` reads as an element inside XML; plists get the text marker."""
+    return PLIST_REDACTION if _PLIST_OPEN_RE.search(line) else SECRET
+
+
+def _is_credential_flag(token: str) -> bool:
+    return token.lstrip("-").lower() in _CREDENTIAL_FLAG_NAMES
+
+
+def _redact_space_directive(line: str) -> str:
+    """Redact `<keyword> <value>` where the keyword is the whole first token."""
+    m = _SPACE_DIRECTIVE_RE.match(line)
+    if not m or m.group(2).lower() not in _SPACE_DIRECTIVE_KEYWORDS:
+        return line
+    value = m.group(4)
+    if value[:1] == "[" or value.split()[0].lower() in _PAM_CONTROL_WORDS:
+        return line  # a PAM rule, not an assignment
+    return m.group(1) + m.group(2) + m.group(3) + _placeholder_for(line)
+
+
+def _redact_flag_values(line: str) -> str:
+    """Redact the value of every `--credential-name VALUE` flag on the line.
+
+    The value is one token, not the rest of the line: an argv carries other
+    flags after it and `--user alice` must survive. The `=` spelling
+    (`--password=x`) is already a `key<sep>value` pair and is owned by
+    `_redact_inline`.
+    """
+    placeholder = _placeholder_for(line)
+    return _FLAG_VALUE_RE.sub(
+        lambda m: m.group(1) + m.group(2) + placeholder, line
+    )
+
+
+def _redact_url_credentials(text: str) -> str:
+    """Redact the password inside every `scheme://user:pass@host` in `text`."""
+
+    def sub(match: "re.Match[str]") -> str:
+        whole = match.string
+        start = whole.rfind("\n", 0, match.start()) + 1
+        stop = whole.find("\n", match.end())
+        line = whole[start:] if stop == -1 else whole[start:stop]
+        return f"{match.group(1)}{match.group(2)}:{_placeholder_for(line)}@"
+
+    return URL_CREDENTIAL_RE.sub(sub, text)
+
+
 # --- Property list (XML plist) --------------------------------------------
 #
 # macOS puts credentials in plists, where the key and the value are separate
@@ -776,6 +940,42 @@ def _handle_plist_key(lines: List[str], row: int) -> Optional[int]:
     return None
 
 
+_PLIST_FLAG_RE = re.compile(
+    r"<string>\s*(-{1,2}[A-Za-z][A-Za-z0-9_.\-]*)\s*</string>", re.IGNORECASE
+)
+_PLIST_STRING_RE = re.compile(r"<string>([^<]*)</string>", re.IGNORECASE)
+
+
+def _handle_plist_argument_flag(lines: List[str], row: int) -> Optional[int]:
+    """Redact the array member that follows a credential flag.
+
+    launchd's `ProgramArguments` is a flat `<array>` of `<string>` elements,
+    so `--token hunter2` arrives as two adjacent members and the credential
+    has no `<key>` naming it. `_handle_plist_key` has nothing to match on and
+    `_iter_pairs` finds no separator, so the value staged verbatim.
+
+    The value is the next `<string>`, on this line or the one below -- argv
+    arrays are written one member per line. A member that is itself a flag is
+    left alone: `--token` immediately followed by `--verbose` has no value.
+    """
+    for m in _PLIST_FLAG_RE.finditer(lines[row]):
+        if not _is_credential_flag(m.group(1)):
+            continue
+        k = row
+        nxt = _PLIST_STRING_RE.search(lines[row], m.end())
+        if nxt is None and row + 1 < len(lines):
+            k = row + 1
+            nxt = _PLIST_STRING_RE.search(lines[k])
+        if nxt is None:
+            continue
+        value = nxt.group(1).strip()
+        if not value or _FLAG_TOKEN_RE.match(value):
+            continue
+        lines[k] = lines[k][: nxt.start(1)] + PLIST_REDACTION + lines[k][nxt.end(1) :]
+        return k
+    return None
+
+
 # --- Values that live on a later line than their key ----------------------
 
 
@@ -843,14 +1043,19 @@ def redact_structured_values(text: str) -> str:
     lines = [ln[:-1] if ln.endswith("\r") else ln for ln in raw]
 
     i = 0
+    handlers = (_handle_plist_key, _handle_plist_argument_flag, _handle_deferred_value)
     while i < len(lines):
-        for handler in (_handle_plist_key, _handle_deferred_value):
+        for handler in handlers:
             consumed = handler(lines, i)
             if consumed is not None:
                 i = max(consumed, i)
                 break
         else:
-            lines[i] = _redact_inline(lines[i])
+            # Inline pairs first: the shapes below have no separator, so a
+            # line they match is one the pair scanner already declined.
+            line = _redact_inline(lines[i])
+            line = _redact_space_directive(line)
+            lines[i] = _redact_flag_values(line)
         i += 1
     return "\n".join(line + eol for line, eol in zip(lines, endings))
 
@@ -861,6 +1066,12 @@ def redact_text(text: str) -> str:
     text = redact_structured_values(text)
     text = TOKEN_RE.sub(_redact_token, text)
     text = HOME_RE.sub("/home/<user>", text)
+    # Before EMAIL_RE: `bob:pass@proxy.example.com` reads as an email address
+    # from `pass` onwards, so the email pass used to redact the credential by
+    # accident and take the proxy host with it -- leaving
+    # `http://bob:<email>:3128/`, which hides the leak and destroys the one
+    # field that says where the proxy is.
+    text = _redact_url_credentials(text)
     text = EMAIL_RE.sub("<email>", text)
     text = IPV4_RE.sub(lambda m: _redact_address(m, "<ip>"), text)
     text = MAC_RE.sub("<mac>", text)  # MAC before IPv6 (IPv6 pattern is greedy)

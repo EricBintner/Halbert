@@ -1031,3 +1031,180 @@ def test_a_secret_key_inside_another_value_is_still_redacted():
     out = redact_text('Environment="DB_PASS=hunter2" "OTHER=y"\n')
     assert "hunter2" not in out
     assert "OTHER=y" in out
+
+
+# --- Credentials with no `key<sep>value` shape at all ----------------------
+#
+# `_iter_pairs` needs an `=` or a `:` and TOKEN_RE requires one too, so three
+# real shapes in harvested files had nothing looking at them: a space-
+# separated directive, a command-line flag, and a credential inside a URL.
+
+
+def test_ifupdown_space_separated_wpa_credentials_are_redacted():
+    """W1: /etc/network/interfaces (network.yml). Debian ifupdown takes WPA
+    credentials inline, space-separated, with no `=` anywhere on the line."""
+    ifaces = (
+        "auto wlan0\n"
+        "iface wlan0 inet dhcp\n"
+        "    wpa-ssid HomeNet\n"
+        "    wpa-psk hunter2\n"
+        "    wpa-passphrase correcthorse\n"
+        "    wireless-key s3cr3t\n"
+    )
+    out = redact_text(ifaces)
+    assert "hunter2" not in out
+    assert "correcthorse" not in out
+    assert "s3cr3t" not in out
+    # The directive names and the non-secret siblings stay legible.
+    assert "wpa-psk <secret>" in out
+    assert "wpa-ssid HomeNet" in out
+    assert "iface wlan0 inet dhcp" in out
+
+
+def test_space_separated_keyword_must_be_the_whole_first_token():
+    """Over-redaction guard. sshd_config is staged in the flat host tree and
+    every one of these directives contains a credential keyword as a
+    substring while being ordinary, non-secret configuration."""
+    sshd = (
+        "PasswordAuthentication no\n"
+        "PubkeyAuthentication yes\n"
+        "KbdInteractiveAuthentication no\n"
+        "HostKey /etc/ssh/ssh_host_ed25519_key\n"
+        "AuthorizedKeysFile\t.ssh/authorized_keys\n"
+        "PermitRootLogin prohibit-password\n"
+    )
+    assert redact_text(sshd) == sshd
+
+
+def test_a_comment_is_not_a_space_separated_directive():
+    line = "# password rotation is handled by the vault agent\n"
+    assert redact_text(line) == line
+
+
+def test_initd_command_line_password_flag_is_redacted():
+    """W2: /etc/init.d/* (service.yml). The `=` forms on the surrounding lines
+    were already caught; only the space-separated flag leaked."""
+    initd = (
+        "#!/bin/sh\n"
+        'DB_PASSWORD="hunter2"\n'
+        "export API_TOKEN=abc123\n"
+        "exec /usr/bin/myd --password SUPERSECRET --user alice\n"
+    )
+    out = redact_text(initd)
+    assert "SUPERSECRET" not in out
+    assert "hunter2" not in out
+    assert "abc123" not in out
+    # The flag name and the neighbouring non-credential flag survive.
+    assert "--password <secret>" in out
+    assert "--user alice" in out
+
+
+def test_credential_flag_must_be_the_whole_flag_name():
+    """Over-redaction guard: these flags take a port, a descriptor and a
+    path, and all three contain or resemble a credential keyword."""
+    line = "exec /usr/bin/myd -p 5432 --pass-fd 3 --key /etc/ssl/myd.pem\n"
+    assert redact_text(line) == line
+
+
+def test_equals_form_of_a_credential_flag_still_works():
+    """Control: `--password=x` was already covered by the inline pass."""
+    out = redact_text("exec /usr/bin/myd --password=SUPERSECRET --user alice\n")
+    assert "SUPERSECRET" not in out
+    assert "--user alice" in out
+
+
+def test_plist_program_arguments_credential_is_redacted():
+    """A launchd ProgramArguments array member has no `<key>` naming it, so
+    the credential is a bare array element that nothing was looking at."""
+    plist = (
+        "<key>ProgramArguments</key>\n"
+        "<array>\n"
+        "\t<string>/usr/bin/myd</string>\n"
+        "\t<string>--token</string>\n"
+        "\t<string>hunter2secret</string>\n"
+        "\t<string>--verbose</string>\n"
+        "</array>\n"
+    )
+    out = redact_text(plist)
+    assert "hunter2secret" not in out
+    # The XML stays well formed and the rest of the argv is intact.
+    assert out.count("<string>") == out.count("</string>") == 4
+    assert "<string>/usr/bin/myd</string>" in out
+    assert "<string>--token</string>" in out
+    assert "<string>--verbose</string>" in out
+
+
+def test_plist_program_arguments_without_credentials_survive():
+    """Over-redaction guard: an ordinary argv must round-trip unchanged."""
+    plist = (
+        "<key>ProgramArguments</key>\n"
+        "<array>\n"
+        "\t<string>/usr/sbin/cupsd</string>\n"
+        "\t<string>-l</string>\n"
+        "\t<string>-c</string>\n"
+        "\t<string>/etc/cups/cupsd.conf</string>\n"
+        "</array>\n"
+    )
+    assert redact_text(plist) == plist
+
+
+def test_a_flag_followed_by_another_flag_has_no_value_to_redact():
+    plist = (
+        "<array>\n"
+        "\t<string>--token</string>\n"
+        "\t<string>--verbose</string>\n"
+        "</array>\n"
+    )
+    assert redact_text(plist) == plist
+
+
+def test_plist_inline_shell_flag_uses_the_xml_safe_marker():
+    """`<secret>` reads as an element inside XML; plists get the text marker."""
+    out = redact_text("\t<string>/bin/sh -c 'myd --password hunter2'</string>\n")
+    assert "hunter2" not in out
+    assert "<secret>" not in out
+    assert "[redacted]" in out
+    assert out.count("<string>") == out.count("</string>") == 1
+
+
+def test_auto_master_url_credentials_are_redacted():
+    """W3: /etc/auto_master (storage.yml) carries smbfs URLs with inline
+    credentials and no key/value shape at all."""
+    auto = "/net\t\t\t-hosts\n/-\t\t\tauto_smb\n:smbfs://alice:hunter2@fileserver/share\n"
+    out = redact_text(auto)
+    assert "hunter2" not in out
+    # Scheme, user and host stay: the mount stays legible.
+    assert "smbfs://alice:<secret>@fileserver/share" in out
+
+
+def test_proxy_url_credentials_are_redacted_without_eating_the_host():
+    """/etc/environment. EMAIL_RE used to swallow `pass@proxy.example.com`
+    whole, which hid the leak but destroyed the proxy host with it."""
+    out = redact_text("http_proxy=http://bob:proxypass@proxy.example.com:3128/\n")
+    assert "proxypass" not in out
+    assert "http://bob:<secret>@proxy.example.com:3128/" in out
+
+
+def test_a_url_without_credentials_is_untouched():
+    for line in (
+        "http_proxy=http://proxy.example.com:3128/\n",
+        "url=https://api.example.com/v1/things\n",
+        "server=ldap://ldap.example.com:389\n",
+    ):
+        assert redact_text(line) == line
+
+
+def test_pam_management_group_is_not_a_credential_directive():
+    """Over-redaction guard, found by running the whole of /etc through this
+    module: every rule in /etc/pam.d/* opens with its management group, and
+    one of the four groups is literally `password`. The value position holds
+    a PAM control word or a bracketed control field, never a secret."""
+    pam = (
+        "auth       optional       pam_krb5.so use_kcminit\n"
+        "account    required       pam_opendirectory.so\n"
+        "password   required       pam_opendirectory.so\n"
+        "password   sufficient     pam_unix.so\n"
+        "password   [success=1 default=ignore] pam_unix.so obscure\n"
+        "session    required       pam_launchd.so\n"
+    )
+    assert redact_text(pam) == pam
