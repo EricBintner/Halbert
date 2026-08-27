@@ -44,7 +44,13 @@ class SendMessageRequest(BaseModel):
     # Phase 4: Vision/image support (ported from chat.py)
     images: Optional[List[str]] = Field(None, description="Base64-encoded images for vision model")
     # Performance tweaks - sent from frontend Settings > AI > Performance Tweaks
-    max_tokens: Optional[int] = Field(8192, description="Max tokens for LLM response")
+    # Bounded (spec §7 follow-up): num_ctx_for_model's per-model cache only
+    # grows, so an unbounded value here would let one request pin the
+    # process-global num_ctx at the ceiling for that model forever. 32768
+    # matches both the cache's own default ceiling and the frontend's actual
+    # maximum Performance Tweaks option (Settings.tsx), so this rejects only
+    # the pathological/malicious case, not any value the UI already offers.
+    max_tokens: Optional[int] = Field(8192, ge=1, le=32768, description="Max tokens for LLM response")
     temperature: Optional[float] = Field(0.7, description="LLM temperature (0.0-1.0)")
 
 

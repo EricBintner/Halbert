@@ -483,6 +483,12 @@ _NUM_CTX_MIN = 4096
 _NUM_CTX_DEFAULT_MAX = 32768
 _NUM_CTX_HEADROOM = 512
 _NUM_CTX_CACHE: Dict[str, int] = {}
+# Vision models spend several hundred tokens encoding each image; a
+# text-only estimate over a captioning message (short text, one big
+# image) undercounts to near zero, which pins num_ctx at the floor and
+# reproduces exactly the silent head-truncation this module exists to
+# prevent. This is a rough per-image budget, not a model-specific one.
+_NUM_CTX_IMAGE_TOKENS = 768
 
 
 def compute_num_ctx(
@@ -513,10 +519,22 @@ def num_ctx_for_model(
 
 
 def estimate_prompt_tokens(messages: list, tools: Optional[list]) -> int:
-    """~4 chars/token over every message's content plus the tool schemas."""
+    """~4 chars/token over every message's content, plus the tool schemas,
+    an allowance for any ``images`` payload, and any ``tool_calls`` a prior
+    assistant turn attached (those carry real prompt tokens even when
+    ``content`` is empty/None, as in the agentic tool-calling loop)."""
     total = 0
     for m in messages or []:
-        content = m.get("content", "") if isinstance(m, dict) else m
+        if isinstance(m, dict):
+            content = m.get("content", "")
+            images = m.get("images")
+            if images:
+                total += len(images) * _NUM_CTX_IMAGE_TOKENS
+            tool_calls = m.get("tool_calls")
+            if tool_calls:
+                total += len(json.dumps(tool_calls, default=str)) // 4
+        else:
+            content = m
         if not isinstance(content, str):
             content = json.dumps(content, default=str)
         total += len(content) // 4

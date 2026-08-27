@@ -52,6 +52,33 @@ def test_estimate_counts_messages_and_tools():
     assert estimate_prompt_tokens([{"role": "user", "content": [{"type": "text", "text": "abcd" * 10}]}], None) > 0
 
 
+def test_estimate_counts_images_and_tool_calls():
+    """Review finding (A10): a text-only estimate ignores the ``images`` a
+    vision call attaches to a message and the ``tool_calls`` an assistant
+    turn attaches instead of ``content`` — both carry real prompt tokens
+    that must not silently estimate to zero."""
+    baseline = estimate_prompt_tokens([{"role": "user", "content": "caption this"}], None)
+    one_image = estimate_prompt_tokens(
+        [{"role": "user", "content": "caption this", "images": ["base64..."]}], None
+    )
+    two_images = estimate_prompt_tokens(
+        [{"role": "user", "content": "caption this", "images": ["a", "b"]}], None
+    )
+    assert one_image - baseline == mc._NUM_CTX_IMAGE_TOKENS
+    assert two_images - baseline == 2 * mc._NUM_CTX_IMAGE_TOKENS
+
+    empty_content = estimate_prompt_tokens([{"role": "assistant", "content": None}], None)
+    with_tool_calls = estimate_prompt_tokens(
+        [{
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "1", "function": {"name": "search", "arguments": '{"q": "x" * 200}'}}],
+        }],
+        None,
+    )
+    assert with_tool_calls > empty_content
+
+
 def test_ollama_chat_payload_carries_num_ctx():
     with patch("halbert_core.model.client.requests.post", return_value=_response({"message": {"content": "hi"}})) as post:
         call_llm_chat(endpoint="http://localhost:11434", model="example-model:latest",
@@ -84,6 +111,29 @@ def test_ollama_chat_warns_when_ceiling_clamp_still_leaves_prompt_over_num_ctx(c
         "huge-prompt-model:latest" in r.getMessage() and "num_ctx" in r.getMessage()
         for r in caplog.records
     )
+
+
+def test_ollama_chat_payload_num_ctx_accounts_for_images():
+    """Same review finding, through the real Ollama call path: a vision
+    prompt with an image must size num_ctx larger than the identical prompt
+    without one, or the image inflates the true prompt with nothing counted
+    for it — the exact silent head-truncation A10 exists to prevent."""
+    # Enough images to clear the 4096 floor both with and without the fix
+    # would otherwise sit under (a single image's 768-token allowance still
+    # rounds back down to the floor), so the comparison actually exercises
+    # the fix instead of two floored values that happen to be equal.
+    with patch("halbert_core.model.client.requests.post", return_value=_response({"message": {"content": "hi"}})) as post:
+        call_llm_chat(endpoint="http://localhost:11434", model="vision-model:latest",
+                      messages=[{"role": "user", "content": "describe", "images": ["x" * 4000] * 6}])
+    with_image_ctx = post.call_args.kwargs["json"]["options"]["num_ctx"]
+
+    mc._NUM_CTX_CACHE.clear()
+    with patch("halbert_core.model.client.requests.post", return_value=_response({"message": {"content": "hi"}})) as post:
+        call_llm_chat(endpoint="http://localhost:11434", model="vision-model:latest",
+                      messages=[{"role": "user", "content": "describe"}])
+    without_image_ctx = post.call_args.kwargs["json"]["options"]["num_ctx"]
+
+    assert with_image_ctx > without_image_ctx
 
 
 def test_openai_payload_has_no_options():
@@ -209,3 +259,21 @@ async def test_adapter_planning_chat_uses_num_predict_1024(adapter):
         chat.return_value = {"content": "ok", "tool_calls": []}
         await adapter.chat([{"role": "user", "content": "plan"}], tools=[])
     assert chat.call_args.kwargs["options"]["num_predict"] == 1024
+
+
+def test_send_message_request_bounds_max_tokens():
+    """Review finding (A10): num_ctx_for_model's per-model cache only grows
+    and is process-global, so an unbounded max_tokens field would let one
+    request pin num_ctx at the ceiling for that model for the rest of the
+    process's life. The request boundary must reject that, while still
+    allowing every value the frontend's own Performance Tweaks control
+    offers (up to 32768 — see Settings.tsx)."""
+    import pydantic
+    from halbert_core.dashboard.routes.agent import SendMessageRequest
+
+    SendMessageRequest(message="hi", max_tokens=32768)  # the UI's own max: allowed
+    SendMessageRequest(message="hi")  # default: allowed
+    with pytest.raises(pydantic.ValidationError):
+        SendMessageRequest(message="hi", max_tokens=1_000_000)
+    with pytest.raises(pydantic.ValidationError):
+        SendMessageRequest(message="hi", max_tokens=0)
