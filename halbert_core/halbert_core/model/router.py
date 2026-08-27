@@ -570,12 +570,24 @@ class ModelRouter:
 
         # Update via the store
         from . import llm_config as llm_store
+        from .client import CHAT_CAPABLE_PROVIDERS
+
+        if provider_name not in CHAT_CAPABLE_PROVIDERS:
+            raise llm_store.SlotProviderError("specialist_model", provider_name)
+
         cfg = llm_store.load()
         ep_id = ""
         for ep in cfg["saved_endpoints"]:
             if ep.get("provider") == provider_name:
                 ep_id = ep["id"]
                 break
+        if not ep_id:
+            # normalise() disables any slot whose endpoint_id is unknown, so
+            # writing an empty one and reporting success persisted nothing.
+            raise ValueError(
+                f"No saved endpoint uses provider {provider_name!r} — add one in "
+                f"Settings -> AI Models first"
+            )
         llm_store.set_slot("specialist_model", model_id, ep_id)
         self.specialist_id = model_id
         self._specialist_config = {"model": model_id, "provider": provider_name, "endpoint": ""}

@@ -57,6 +57,24 @@ def _chat_capable_providers() -> FrozenSet[str]:
     return CHAT_CAPABLE_PROVIDERS
 
 
+class ConfigUnreadableError(RuntimeError):
+    """models.yml exists but could not be parsed.
+
+    Readers fall back to defaults for the session; writers raise this instead,
+    because an unparsable file is indistinguishable from an empty one and
+    writing over it destroys every sibling key — compression, routing, handoff,
+    and any saved API keys — with no way back.
+    """
+
+    def __init__(self, path: Any, cause: Exception):
+        self.path = path
+        self.cause = cause
+        super().__init__(
+            f"{path} could not be parsed ({cause}). Fix or remove the file; "
+            f"refusing to overwrite it."
+        )
+
+
 class SlotProviderError(ValueError):
     """A slot names an endpoint whose provider the chat runtime cannot call."""
 
@@ -112,17 +130,38 @@ def _chmod_600(path: Path) -> None:
         pass
 
 
-def _read_raw() -> Dict[str, Any]:
+def _read_raw() -> Optional[Dict[str, Any]]:
+    """The parsed file, ``{}`` when there is none, or ``None`` when it is broken.
+
+    The three cases must stay distinguishable: ``{}`` is a fresh install and is
+    safe to write over, ``None`` is a file whose contents we could not
+    understand and must not touch.
+    """
     path = _read_path()
     if path is None:
         return {}
     try:
         with open(path, "r") as f:
             data = yaml.safe_load(f) or {}
-    except Exception as e:  # unreadable YAML: serve defaults, never rewrite
+    except Exception as e:
         logger.error("Could not read %s: %s", path, e)
-        return {}
+        return None
     return data if isinstance(data, dict) else {}
+
+
+def _read_for_write() -> Dict[str, Any]:
+    """Like :func:`_read_raw`, but refuses to proceed on an unparsable file."""
+    raw = _read_raw()
+    if raw is None:
+        path = _read_path()
+        try:
+            with open(path, "r") as f:
+                yaml.safe_load(f)
+            cause: Exception = ValueError("unknown parse failure")
+        except Exception as e:
+            cause = e
+        raise ConfigUnreadableError(path, cause)
+    return raw
 
 
 def _write_raw(data: Dict[str, Any]) -> None:
@@ -244,6 +283,28 @@ def needs_migration(raw: Dict[str, Any]) -> bool:
     return isinstance(llm, dict) and any(k in llm for k in DROPPED_KEYS)
 
 
+def _endpoints_missing_id(raw: Dict[str, Any]) -> bool:
+    """True when a saved endpoint has no id of its own."""
+    llm = raw.get("llm_config")
+    if not isinstance(llm, dict):
+        return False
+    for ep in llm.get("saved_endpoints") or []:
+        if isinstance(ep, dict) and ep.get("url") and not str(ep.get("id") or "").strip():
+            return True
+    return False
+
+
+def needs_rewrite(raw: Dict[str, Any]) -> bool:
+    """True when reading the file produced something that must be written back.
+
+    Migration is the obvious case. The other is an endpoint with no id:
+    ``_clean_endpoint`` mints one on every read, so leaving it unpersisted
+    hands out a different id each time and every slot pointing at it is
+    disabled on the next load.
+    """
+    return needs_migration(raw) or _endpoints_missing_id(raw)
+
+
 def migrate_legacy(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Fold legacy top-level keys into an llm_config dict. Pure; does not write.
 
@@ -283,15 +344,18 @@ def migrate_legacy(raw: Dict[str, Any]) -> Dict[str, Any]:
         if not model:
             return
         provider = str(legacy.get("provider") or "ollama")
-        ep = _match_endpoint(
-            endpoints, legacy.get("endpoint_id"), legacy.get("endpoint"), provider
-        )
+        # Resolve the URL once, before matching. Passing the raw (often absent)
+        # value to _match_endpoint and only defaulting it afterwards meant a
+        # legacy slot with no explicit endpoint could never match the local
+        # endpoint the user already had, and minted a duplicate beside it.
+        url = str(legacy.get("endpoint") or DEFAULT_OLLAMA_URL).strip().rstrip("/")
+        ep = _match_endpoint(endpoints, legacy.get("endpoint_id"), url, provider)
         if ep is None:
             ep = {
                 "id": _new_id(),
                 "name": "Migrated endpoint",
                 "provider": provider,
-                "url": str(legacy.get("endpoint") or DEFAULT_OLLAMA_URL).rstrip("/"),
+                "url": url,
                 "api_key": "",
             }
             endpoints.append(ep)
@@ -324,10 +388,16 @@ def normalise_file(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def load_file() -> Dict[str, Any]:
-    """The whole models.yml dict, post-migration. Rewrites the file once when legacy keys are found."""
+    """The whole models.yml dict, post-migration.
+
+    Rewrites the file once when migration or id-minting changed something. An
+    unparsable file serves defaults for the session and is left untouched.
+    """
     raw = _read_raw()
+    if raw is None:
+        return normalise_file({})
     out = normalise_file(raw)
-    if needs_migration(raw):
+    if needs_rewrite(raw):
         try:
             _backup_before_rewrite()
             _write_raw(out)
@@ -348,8 +418,14 @@ def load() -> Dict[str, Any]:
 
 
 def save(llm_config: Dict[str, Any]) -> Dict[str, Any]:
-    """Replace llm_config in the file; legacy keys are dropped, every other key is kept."""
-    raw = _read_raw()
+    """Replace llm_config in the file; legacy keys are dropped, every other key is kept.
+
+    Raises :class:`ConfigUnreadableError` rather than overwriting a file that
+    could not be parsed.
+    """
+    raw = _read_for_write()
+    if needs_migration(raw):
+        _backup_before_rewrite()
     for key in LEGACY_KEYS:
         raw.pop(key, None)
     raw["llm_config"] = normalise(llm_config)
@@ -366,13 +442,43 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return base
 
 
+def _carry_forward_api_keys(
+    incoming: Any, current: Dict[str, Any]
+) -> None:
+    """Re-attach a stored api_key to any incoming endpoint that omitted it.
+
+    ``saved_endpoints`` is a list, so a deep merge replaces it wholesale — an
+    endpoint sent without its key would have the stored one erased. A client
+    should not have to echo a secret back just to rename an endpoint, and a
+    client that never displays the key (a provider with no key field) cannot.
+    An explicit ``api_key: ""`` still clears it; only an absent key is carried.
+    """
+    if not isinstance(incoming, list):
+        return
+    stored = {
+        e["id"]: e.get("api_key", "")
+        for e in current.get("saved_endpoints") or []
+        if isinstance(e, dict) and e.get("id")
+    }
+    for ep in incoming:
+        if not isinstance(ep, dict) or "api_key" in ep:
+            continue
+        carried = stored.get(str(ep.get("id") or ""))
+        if carried:
+            ep["api_key"] = carried
+
+
 def update(partial: Dict[str, Any]) -> Dict[str, Any]:
     """Deep-merge ``partial`` into the current config and save.
 
     Raises :class:`SlotProviderError` when a slot with a model names an endpoint
     whose provider is not chat-capable — the UI must never save such a slot.
     """
-    merged = _deep_merge(load(), copy.deepcopy(partial))
+    current = load()
+    partial = copy.deepcopy(partial)
+    if "saved_endpoints" in partial:
+        _carry_forward_api_keys(partial["saved_endpoints"], current)
+    merged = _deep_merge(current, partial)
     endpoints = {e["id"]: e for e in normalise(merged)["saved_endpoints"]}
     capable = _chat_capable_providers()
     for slot in SLOTS:
@@ -388,8 +494,15 @@ def set_slot(slot: str, model: str, endpoint_id: str) -> Dict[str, Any]:
 
 
 def set_top_level(key: str, value: Any) -> None:
-    """Write a non-llm_config key (e.g. ``compression``) without disturbing llm_config."""
-    raw = _read_raw()
+    """Write a non-llm_config key (e.g. ``compression``) without disturbing llm_config.
+
+    Takes the same backup as :func:`load_file` when this write is also the one
+    that migrates the file, and refuses an unparsable file for the same reason
+    :func:`save` does.
+    """
+    raw = _read_for_write()
+    if needs_migration(raw):
+        _backup_before_rewrite()
     llm = normalise(
         migrate_legacy(raw) if needs_migration(raw) else raw.get("llm_config")
     )

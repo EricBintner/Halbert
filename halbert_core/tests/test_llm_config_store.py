@@ -230,3 +230,184 @@ def test_file_and_bak_are_mode_0600(models_config_dir):
     bak_mode = os.stat(models_config_dir / "models.yml.bak").st_mode & 0o777
     assert cfg_mode == 0o600
     assert bak_mode == 0o600
+
+
+# ── Unparsable file: readers cope, writers refuse ──────────────────
+
+# Truncated mid-flow-sequence: parses far enough to look like a real config,
+# but yaml.safe_load raises, so the store cannot know what the sibling keys are.
+BROKEN_YAML = """compression:
+  backend: lingua
+  enabled: true
+routing:
+  complexity_threshold: 3
+llm_config:
+  saved_endpoints: [{id: e1, url: "http://localhost:11434"
+"""
+
+
+def _write_broken(user: Path) -> Path:
+    p = user / "models.yml"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(BROKEN_YAML)
+    return p
+
+
+def test_unparsable_file_serves_defaults_to_readers(models_config_dir):
+    _write_broken(models_config_dir)
+    assert store.load() == store.default_llm_config()
+    assert store.load_file() == {"llm_config": store.default_llm_config()}
+    assert store.resolve("chat_model") is None
+
+
+def test_unparsable_file_refuses_every_writer_byte_for_byte(models_config_dir):
+    path = _write_broken(models_config_dir)
+    before = path.read_bytes()
+
+    with pytest.raises(store.ConfigUnreadableError) as exc:
+        store.save(store.default_llm_config())
+    assert exc.value.path == path
+    with pytest.raises(store.ConfigUnreadableError):
+        store.update({"chat_model": {"enabled": True, "endpoint_id": "e1", "model": "some-model"}})
+    with pytest.raises(store.ConfigUnreadableError):
+        store.set_top_level("compression", {"backend": "semantic", "enabled": True})
+
+    assert path.read_bytes() == before
+    assert "complexity_threshold: 3" in path.read_text()   # sibling keys still there
+    assert not (models_config_dir / "models.yml.bak").exists()
+
+
+# ── Minted endpoint ids must be persisted ─────────────────────────
+
+
+def test_endpoint_without_id_gets_a_stable_persisted_id(models_config_dir):
+    """An unpersisted id is a fresh id on every read, which disables every slot pointing at it."""
+    _write(models_config_dir, {"llm_config": {
+        "saved_endpoints": [{"name": "Local Ollama", "provider": "ollama", "url": OLLAMA}],
+    }})
+    minted = store.load()["saved_endpoints"][0]["id"]
+    assert minted
+    assert _read(models_config_dir)["llm_config"]["saved_endpoints"][0]["id"] == minted
+    assert store.load()["saved_endpoints"][0]["id"] == minted
+
+
+def test_endpoints_that_already_have_ids_do_not_trigger_a_rewrite(models_config_dir):
+    path = _write(models_config_dir, {"llm_config": {
+        "saved_endpoints": [{"id": "e1", "name": "Local Ollama", "provider": "ollama", "url": OLLAMA}],
+        "chat_model": {"enabled": True, "endpoint_id": "e1", "model": "some-model"},
+    }})
+    before = path.read_bytes()
+    store.load()
+    assert path.read_bytes() == before
+    assert not (models_config_dir / "models.yml.bak").exists()
+
+
+# ── Migration must not duplicate an endpoint the user already has ──
+
+
+def test_legacy_slot_without_endpoint_reuses_the_default_ollama_endpoint(models_config_dir):
+    """A legacy slot with no endpoint key still means the default Ollama URL."""
+    _write(models_config_dir, {
+        "llm_config": {"saved_endpoints": [
+            {"id": "e_local", "name": "Local Ollama", "provider": "ollama", "url": OLLAMA + "/"},
+        ]},
+        "orchestrator": {"model": "some-model", "always_loaded": True},
+    })
+    cfg = store.load()
+    assert len(cfg["saved_endpoints"]) == 1
+    assert cfg["saved_endpoints"][0]["id"] == "e_local"
+    assert cfg["chat_model"] == {"enabled": True, "endpoint_id": "e_local", "model": "some-model"}
+    assert not any(e["name"] == "Migrated endpoint" for e in cfg["saved_endpoints"])
+
+
+# ── The migrating write is a write too: it takes the backup ────────
+
+
+def test_set_top_level_backs_up_a_legacy_file_before_rewriting(models_config_dir):
+    path = _write(models_config_dir, LEGACY_FILE)
+    before = path.read_bytes()
+    store.set_top_level("compression", {"backend": "semantic", "enabled": True})
+    bak = models_config_dir / "models.yml.bak"
+    assert bak.read_bytes() == before
+    assert bak.stat().st_mode & 0o777 == 0o600
+    assert path.stat().st_mode & 0o777 == 0o600
+    on_disk = _read(models_config_dir)
+    assert "orchestrator" not in on_disk
+    assert on_disk["compression"] == {"backend": "semantic", "enabled": True}
+    assert on_disk["llm_config"]["chat_model"]["model"] == "guide-a"
+
+
+def test_save_backs_up_a_legacy_file_before_rewriting(models_config_dir):
+    path = _write(models_config_dir, LEGACY_FILE)
+    before = path.read_bytes()
+    store.save(store.default_llm_config())
+    bak = models_config_dir / "models.yml.bak"
+    assert bak.read_bytes() == before
+    assert bak.stat().st_mode & 0o777 == 0o600
+
+
+def test_no_backup_when_the_write_is_not_a_migration(models_config_dir):
+    _write(models_config_dir, {"llm_config": store.default_llm_config()})
+    store.set_top_level("compression", {"backend": "semantic", "enabled": True})
+    assert not (models_config_dir / "models.yml.bak").exists()
+
+
+# ── api_key carry-forward ─────────────────────────────────────────
+
+
+def _endpoint_with_key(user: Path) -> Path:
+    return _write(user, {
+        "llm_config": {
+            "saved_endpoints": [{
+                "id": "ep1", "name": "Gateway", "provider": "openai-compatible",
+                "url": "https://gw.test", "api_key": "secret-key",
+            }],
+            "chat_model": {"enabled": False, "endpoint_id": "", "model": ""},
+        }
+    })
+
+
+def test_update_carries_forward_an_omitted_api_key(models_config_dir):
+    """saved_endpoints is a list, so a deep merge replaces it wholesale.
+
+    A client renaming an endpoint it never showed the key for would otherwise
+    erase that key, after which auth silently sends an empty bearer token.
+    """
+    _endpoint_with_key(models_config_dir)
+    store.update({"saved_endpoints": [{
+        "id": "ep1", "name": "Renamed", "provider": "openai-compatible",
+        "url": "https://gw.test",
+    }]})
+    saved = store.load()["saved_endpoints"][0]
+    assert saved["name"] == "Renamed"
+    assert saved["api_key"] == "secret-key"
+
+
+def test_update_clears_the_key_on_an_explicit_empty_string(models_config_dir):
+    """Carrying forward must not make a key impossible to remove."""
+    _endpoint_with_key(models_config_dir)
+    store.update({"saved_endpoints": [{
+        "id": "ep1", "name": "Gateway", "provider": "openai-compatible",
+        "url": "https://gw.test", "api_key": "",
+    }]})
+    assert store.load()["saved_endpoints"][0]["api_key"] == ""
+
+
+def test_update_replaces_the_key_when_a_new_one_is_sent(models_config_dir):
+    _endpoint_with_key(models_config_dir)
+    store.update({"saved_endpoints": [{
+        "id": "ep1", "name": "Gateway", "provider": "openai-compatible",
+        "url": "https://gw.test", "api_key": "rotated",
+    }]})
+    assert store.load()["saved_endpoints"][0]["api_key"] == "rotated"
+
+
+def test_carry_forward_does_not_invent_a_key_for_a_new_endpoint(models_config_dir):
+    _endpoint_with_key(models_config_dir)
+    store.update({"saved_endpoints": [
+        {"id": "ep1", "name": "Gateway", "provider": "openai-compatible", "url": "https://gw.test"},
+        {"id": "ep2", "name": "Local", "provider": "ollama", "url": OLLAMA},
+    ]})
+    by_id = {e["id"]: e for e in store.load()["saved_endpoints"]}
+    assert by_id["ep1"]["api_key"] == "secret-key"
+    assert by_id["ep2"]["api_key"] == ""
