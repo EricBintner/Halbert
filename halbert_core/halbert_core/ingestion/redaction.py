@@ -1132,12 +1132,20 @@ def _handle_deferred_value(lines: List[str], row: int) -> Optional[int]:
 # --- The line pass --------------------------------------------------------
 
 
-def redact_structured_values(text: str) -> str:
+def redact_structured_values(text: str, *, prose: bool = False) -> str:
     """Redact credential values, classifying every line in its own format.
 
     Preserves the total line count and each line's original ending, so a CRLF
     file stays CRLF rather than acquiring mixed endings on the lines that were
     rewritten.
+
+    `prose=True` stands down the one rule that assumes the text is a config
+    file: `_redact_space_directive` reads a line as `<keyword> <value>` and
+    claims the whole remainder, which in a log message means
+    `password changed for user alice` becomes `password <secret>` -- exactly
+    the auth records a sysadmin assistant is there to read. Everything else
+    stays on, so a credential that reaches a log message in any of the shapes
+    that carry one (`psk=`, `--password x`, a URL) is still redacted.
     """
     raw = text.split("\n")
     endings = ["\r" if ln.endswith("\r") else "" for ln in raw]
@@ -1160,16 +1168,19 @@ def redact_structured_values(text: str) -> str:
             # Inline pairs first: the shapes below have no separator, so a
             # line they match is one the pair scanner already declined.
             line = _redact_inline(lines[i])
-            line = _redact_space_directive(line)
+            if not prose:
+                line = _redact_space_directive(line)
             lines[i] = _redact_flag_values(line)
         i += 1
     return "\n".join(line + eol for line, eol in zip(lines, endings))
 
 
-def redact_text(text: str) -> str:
+def redact_text(text: str, *, prose: bool = False) -> str:
+    """Redact `text`. Pass `prose=True` for a log message; see
+    `redact_structured_values`. Config staging leaves it False."""
     # Must run first: TOKEN_RE would otherwise eat the `|` off `password: |`
     # and orphan the block body.
-    text = redact_structured_values(text)
+    text = redact_structured_values(text, prose=prose)
     text = TOKEN_RE.sub(_redact_token, text)
     text = HOME_RE.sub("/home/<user>", text)
     # Before EMAIL_RE: `bob:pass@proxy.example.com` reads as an email address
@@ -1189,16 +1200,17 @@ def redact_text(text: str) -> str:
 
 
 def redact_event(evt: Dict[str, Any]) -> Dict[str, Any]:
+    """Redact a telemetry event. Its text is prose -- see `redact_text`."""
     out = dict(evt)
     msg = out.get("message")
     if isinstance(msg, str):
-        out["message"] = redact_text(msg)
+        out["message"] = redact_text(msg, prose=True)
     data = out.get("data")
     if isinstance(data, dict):
         red = {}
         for k, v in data.items():
             if isinstance(v, str):
-                red[k] = redact_text(v)
+                red[k] = redact_text(v, prose=True)
             else:
                 red[k] = v
         out["data"] = red

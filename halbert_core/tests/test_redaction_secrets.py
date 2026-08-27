@@ -1251,3 +1251,45 @@ def test_the_nsswitch_exemption_needs_every_token_to_be_a_source():
     """A single non-source token means this is not an NSS database line."""
     assert "hunter2secret" not in redact_text("passwd: files hunter2secret\n")
     assert "hunter2secret" not in redact_text("publickey: hunter2secret\n")
+
+
+# --- Log messages are prose, not config -----------------------------------
+
+
+def test_log_prose_is_not_read_as_a_space_separated_directive():
+    """`redact_event` feeds this module log messages, which are prose rather
+    than config -- the distinction the module already draws when it explains
+    why TOKEN_RE is kept. The whole-line directive rule is a config rule, and
+    applied to prose it ate the auth messages a sysadmin assistant most needs
+    to read. Its only callers are ingestion/runner.py and ingestion/
+    service.py, both telemetry; config staging calls redact_text directly.
+    """
+    from halbert_core.ingestion.redaction import redact_event
+
+    for msg in (
+        "password changed for user alice",
+        "password expired; forcing reset",
+        "passphrase prompt cancelled by user",
+        "psk mismatch on wlan0",
+        "secret sauce recipe loaded",
+    ):
+        assert redact_event({"message": msg})["message"] == msg, msg
+
+
+def test_prose_still_loses_every_other_credential_shape():
+    """Standing one config rule down must not open the log path up."""
+    from halbert_core.ingestion.redaction import redact_event
+
+    for msg in (
+        "psk=hunter2secret applied",
+        "ran myd --password hunter2secret --user alice",
+        "fetching smb://alice:hunter2secret@fileserver/share",
+        "api_key: hunter2secret",
+    ):
+        assert "hunter2secret" not in redact_event({"message": msg})["message"], msg
+
+
+def test_config_text_still_gets_the_directive_rule():
+    """The staging path is unaffected: it calls redact_text."""
+    assert redact_text("    wpa-psk hunter2\n") == "    wpa-psk <secret>\n"
+    assert redact_text("password changed\n") == "password <secret>\n"
