@@ -143,6 +143,52 @@ TEST_QUERIES = [
 ]
 
 
+def extract_chunks(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Chunks from a SourcePrep context response, in this script's own shape.
+
+    The daemon replies with an envelope::
+
+        {"success": true,
+         "data": {"chunks": [{"source_path": ..., "text": ..., "score": ...}],
+                  "context": "..."},
+         "error": null}
+
+    so chunks are nested under ``data``, and each one carries ``text`` and
+    ``source_path`` — not ``content`` and ``file_path``. This gate read
+    ``resp.json()["chunks"]`` and then ``chunk["content"]`` /
+    ``chunk["file_path"]``: four mismatches, and the consequence was total.
+    ``chunks`` was always ``[]``, so every query scored as failed and no gate
+    was protecting any retrieval work. The scoped runner shared the defect,
+    which also means its ``forbidden_path_prefix`` isolation assertion was
+    testing an always-empty path list and could never fail.
+
+    Normalising here rather than at each read keeps both runners' scoring
+    untouched.
+    """
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        data = {}
+
+    chunks = data.get("chunks")
+    if isinstance(chunks, list):
+        return [
+            {
+                "content": c.get("text") or c.get("content") or "",
+                "file_path": c.get("source_path") or c.get("file_path") or "",
+                "score": c.get("score", 0.0),
+            }
+            for c in chunks
+            if isinstance(c, dict)
+        ]
+
+    # Ambient mode: prose, no chunks.
+    context = data.get("context")
+    if isinstance(context, str) and context.strip():
+        return [{"content": context, "file_path": "", "score": 1.0}]
+
+    return []
+
+
 def find_project_id(server_url: str, project_name: str = "halbert") -> Optional[str]:
     """Find project ID by name from the SourcePrep daemon."""
     try:
@@ -196,10 +242,7 @@ def run_quality_gate(server_url: str, project_id: str, k: int = 5, min_score: fl
             print(f"✗ [{qid}] {query} -> ERROR: {e}")
             continue
 
-        chunks = data.get("chunks", [])
-        if not chunks and "content" in data:
-            # Fallback to search endpoint if context returns raw text
-            chunks = [{"content": data.get("content", ""), "score": 1.0, "file_path": ""}]
+        chunks = extract_chunks(data)
 
         # Validate results
         has_results = len(chunks) > 0
@@ -391,9 +434,7 @@ def run_scoped_quality_gate(server_url: str, project_id: str, k: int = 5,
             print(f"X [{qid}] {query} -> ERROR: {e}")
             continue
 
-        chunks = data.get("chunks", [])
-        if not chunks and "content" in data:
-            chunks = [{"content": data.get("content", ""), "score": 1.0, "file_path": ""}]
+        chunks = extract_chunks(data)
 
         has_results = len(chunks) > 0
         has_non_empty = any(len(c.get("content", "").strip()) > 30 for c in chunks)
