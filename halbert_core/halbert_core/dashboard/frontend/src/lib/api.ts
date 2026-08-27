@@ -92,48 +92,6 @@ export const api = {
   },
 
   // -----------------------------------------------------------------
-  // Conversations
-  // -----------------------------------------------------------------
-  listConversations() {
-    return request('/api/conversations')
-  },
-
-  createConversation(name?: string) {
-    return request('/api/conversations', {
-      method: 'POST',
-      body: JSON.stringify({ name }),
-    })
-  },
-
-  getConversation(id: string) {
-    return request(`/api/conversations/${encodeURIComponent(id)}`)
-  },
-
-  renameConversation(id: string, name: string) {
-    return request(`/api/conversations/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ name }),
-    })
-  },
-
-  deleteConversation(id: string) {
-    return request(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' })
-  },
-
-  addMessageToConversation(
-    conversationId: string,
-    role: string,
-    content: string,
-    mentions: string[] = [],
-    reasoning?: string,
-  ) {
-    return request(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({ role, content, mentions, reasoning }),
-    })
-  },
-
-  // -----------------------------------------------------------------
   // Agent chat (legacy /api/chat/* retired — T4b.1)
   //
   // Conversation traffic goes through the agent state machine at
