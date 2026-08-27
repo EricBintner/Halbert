@@ -15,6 +15,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { renderHook, waitFor, act } from '@testing-library/react'
 import { useAgentStream } from './useAgentStream'
 import { terminalSessionStore as store } from './useTerminalSessions'
+import { lastAlert, lastAnnouncement } from '../lib/announce'
 
 function sseBody(events: Array<Record<string, unknown>>) {
   const text = events.map((e) => `data: ${JSON.stringify(e)}\n`).join('')
@@ -206,5 +207,25 @@ describe('useAgentStream — thread events', () => {
     expect(result.current.response).toBe('')
     // One conversation: the tile from turn 1 outlives the hook's local state.
     expect(store.get('term-1')?.output).toBe('tick')
+  })
+
+  it('says "Waiting for your approval" assertively when a confirmation is required', async () => {
+    streamFetch([
+      ev('tool_confirmation_required', {
+        execution_id: 'x1',
+        tool: 'run_command',
+        description: 'rm -rf /tmp/scratch',
+        risk_level: 'high',
+      }),
+    ])
+
+    const { result } = renderHook(() => useAgentStream())
+    act(() => {
+      result.current.sendMessage('clean up', 'turn-1')
+    })
+
+    await waitFor(() => expect(result.current.session?.pendingConfirmation?.actionId).toBe('x1'))
+    expect(lastAlert()).toBe('Waiting for your approval')
+    expect(lastAnnouncement()).not.toBe('Waiting for your approval')
   })
 })

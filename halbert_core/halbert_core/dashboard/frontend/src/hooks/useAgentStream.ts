@@ -10,6 +10,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { apiUrl } from '@/lib/apiBase';
 import { terminalSessionStore } from './useTerminalSessions';
+import { announce } from '@/lib/announce';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -284,6 +285,13 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       event.type === 'terminal_complete'
     ) {
       applyTerminalEvent(event);
+    }
+
+    // Blocked on approval is the one thing said assertively (design §11).
+    // Outside the updater: updaters must stay pure (StrictMode runs them
+    // twice), and this must be said exactly once.
+    if (event.type === 'tool_confirmation_required') {
+      announce('Waiting for your approval', { assertive: true });
     }
 
     setSession(prev => {

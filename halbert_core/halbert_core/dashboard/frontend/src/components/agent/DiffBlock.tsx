@@ -19,6 +19,8 @@ interface DiffBlockProps {
   onApply: () => void;
   onReject: () => void;
   status?: 'pending' | 'applied' | 'rejected';
+  /** A stored turn: the session is gone, so a pending diff is a record, not a choice. */
+  readOnly?: boolean;
   className?: string;
 }
 
@@ -31,6 +33,7 @@ export function DiffBlock({
   onApply,
   onReject,
   status = 'pending',
+  readOnly = false,
   className = '',
 }: DiffBlockProps) {
   const [isExpanded, setIsExpanded] = useState(true);
@@ -124,7 +127,10 @@ export function DiffBlock({
         </div>
         
         <div className="flex items-center gap-1">
-          {status === 'pending' && (
+          {status === 'pending' && readOnly && (
+            <span className="text-[11px] font-mono text-ink-tertiary">proposed</span>
+          )}
+          {status === 'pending' && !readOnly && (
             <>
               <button
                 onClick={onReject}

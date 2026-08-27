@@ -15,6 +15,7 @@
 import { useCallback, useRef } from 'react';
 import { AgentChat } from '../agent/AgentChat';
 import { ContextStage } from './ContextStage';
+import { LiveRegion } from './LiveRegion';
 
 export function HostShell() {
   const conversationRef = useRef<HTMLDivElement>(null);
@@ -32,6 +33,9 @@ export function HostShell() {
 
   return (
     <div className="flex h-full min-h-0 min-w-0">
+      {/* One polite status region and one assertive alert region for the
+          whole shell (design §11). */}
+      <LiveRegion />
       {/* Conversation spine */}
       <div
         ref={conversationRef}
