@@ -1099,19 +1099,43 @@ Decisions taken during implementation:
   retries without the scope keywords on `TypeError`, so an older adapter
   loses its scope rather than the turn losing retrieval.
 
-### Phase 3 — Built-in skills + SourcePrep role scopes
+### Phase 3 — Built-in skills + SourcePrep role scopes ◐ *skills done; scope assignment blocked on a branch merge*
 
-| Task | Est. lines | Files |
-|------|-----------|-------|
-| 6 built-in SKILL.md files (storage, service, network, security, config, discovery) | 300 | new |
-| Assign `assigned_to_role` to the three **shipped** `*_admin` scopes (§16.9) | 15 | SourcePrep-side config |
-| Path-mask migration: role scopes from staged copies to masks (§16.9) | 60 | `roles.py`, template |
-| `sourceprep_setup.py` — provision role scopes; `invalidate_scope_cache()` after | 40 | modified |
-| `sourceprep_template.yml` — role definitions (**keep hyphens** — §16.1, do not migrate) | 30 | modified |
-| Tests: built-in skill activation, role-scoped retrieval, fallback when unprovisioned | 100 | new |
+| Task | Status | Files |
+|------|--------|-------|
+| 6 built-in SKILL.md files | **done** | `skills/builtin/*/SKILL.md` |
+| `sourceprep_setup.py` — send and verify `assigned_to_role` | **done** | modified |
+| Tests: built-in parsing, routing, role provisioning | **done** (19 pass) | `tests/test_skills_builtin.py` |
+| Assign roles to the three shipped `*_admin` scopes | **blocked** — see below | — |
+| Path-mask migration: role scopes from staged copies to masks (§16.9) | **blocked** — see below | `roles.py`, template |
 
-**Deliverable:** Halbert ships with 6 domain skills. Thanks to Phase 0, they
-work before the role scopes exist and sharpen once provisioned.
+**Deliverable (met):** Halbert ships with 6 domain skills that route correctly
+today. Verified end to end against the live daemon: *"what's my sshd_config
+PermitRootLogin set to?"* activates `security-ops` + `config-ops`, leads with
+`security-ops` (critical priority), requests the `security-ops` role, finds no
+scope carrying it, falls back to `host`, and returns this machine's real
+`host/etc/ssh/sshd_config`. That graceful degradation is exactly what Phase 0
+bought — the skills sharpen when the scopes arrive, and are useful before then.
+
+**Blocked half.** `config/roles.py` and the `network_admin` / `service_admin` /
+`storage_admin` scopes live on `model-picker-frontend` (`511dd5d`), not on this
+branch. Assigning roles here would duplicate scopes that already exist there.
+Both remaining tasks should land after those branches merge; the setup
+plumbing is already in place, so what remains is a template edit.
+
+Decisions taken during implementation:
+
+- **`discovery-ops` has no trigger domains.** The design gave it "(all)".
+  Under the Phase 1 matcher that made it activate on nearly every turn and
+  spend one of the three slots the specific skills need. Inventory *language*
+  is the signal, not subject matter.
+- **Underscored identifiers were invisible to domain detection.** `\b` treats
+  `_` as a word character, so `\bconfig\b` missed `sshd_config` and
+  `\bnginx\b` missed `nginx_proxy` — the identifiers those keywords exist to
+  catch. Both `intake/signals.py` and the skill matcher now bound on
+  alphanumerics, so separators end a word but letters still do not (`ssh` must
+  not match `sshd`). `sshd` was also added to the security domain keywords.
+  Before this, *"what's my sshd_config set to?"* activated nothing at all.
 
 ### Phase 4 — Hooks engine *(was part of Phase 3)*
 

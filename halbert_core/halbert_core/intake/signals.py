@@ -55,7 +55,7 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
         "iptables", "nftables", "netstat", "ss",
     ],
     "security": [
-        "ssh", "sudo", "permission", "firewall", "fail2ban", "root",
+        "ssh", "sshd", "sudo", "permission", "firewall", "fail2ban", "root",
         "password", "key", "certificate", "ssl", "tls", "selinux",
         "apparmor", "audit", "auth",
     ],
@@ -67,8 +67,15 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
 }
 
 # Pre-compile domain patterns for speed
+# `\b` treats "_" as a word character, so \bconfig\b misses "sshd_config" and
+# \bnginx\b misses "nginx_proxy" — exactly the identifiers these keywords are
+# meant to catch. Bound on alphanumerics instead, so separators (_ - . /) end a
+# word but letters and digits still do not ("ssh" must not match "sshd").
 _DOMAIN_PATTERNS: dict[str, re.Pattern] = {
-    domain: re.compile(r"\b(" + "|".join(re.escape(k) for k in keywords) + r")\b", re.IGNORECASE)
+    domain: re.compile(
+        r"(?<![a-zA-Z0-9])(" + "|".join(re.escape(k) for k in keywords) + r")(?![a-zA-Z0-9])",
+        re.IGNORECASE,
+    )
     for domain, keywords in _DOMAIN_KEYWORDS.items()
 }
 

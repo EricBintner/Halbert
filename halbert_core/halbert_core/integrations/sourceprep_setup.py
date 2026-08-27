@@ -314,11 +314,17 @@ class SourcePrepSetup:
             name = spec["id"]
             paths = [str(p) for p in spec.get("paths", [])]
             profile = spec.get("pipeline_profile")
+            # The bridge to skills: a skill declares a role, and the daemon
+            # resolves which scope carries it. Roles are unique per project —
+            # two scopes cannot share one — so this is a 1:1 mapping.
+            role = spec.get("assigned_to_role")
             rec = existing.get(name)
             if rec is None:
                 body: Dict[str, Any] = {"display_name": name, "paths": []}
                 if profile:
                     body["pipeline_profile"] = profile
+                if role:
+                    body["assigned_to_role"] = role
                 created = self._call("POST", f"/projects/{pid}/scopes", body)
                 sid = created.get("id")
                 if paths:
@@ -346,11 +352,44 @@ class SourcePrepSetup:
                                    {"pipeline_profile": profile})
                     except ApplyError as e:
                         logger.warning("scope profile update failed for %s: %s", name, e)
+                if role and rec.get("assigned_to_role") != role:
+                    try:
+                        self._call("PUT", f"/projects/{pid}/scopes/{sid}",
+                                   {"assigned_to_role": role})
+                    except ApplyError as e:
+                        logger.warning("scope role update failed for %s: %s", name, e)
                 outcomes[name] = "updated" if (to_add or to_remove) else "unchanged"
 
         # Verify profiles actually persisted (re-GET once). Pre-T-S1.4
         # daemons silently drop the field — Pydantic ignores extras — so
         # only the round-trip proves support.
+        wanted_roles = {
+            s["id"]: s["assigned_to_role"]
+            for s in wanted if s.get("assigned_to_role")
+        }
+        if wanted_roles:
+            live = {
+                s.get("display_name"): s
+                for s in self._list_scopes(pid)
+                if s.get("display_name")
+            }
+            unset = [
+                name for name, role in wanted_roles.items()
+                if (live.get(name) or {}).get("assigned_to_role") != role
+            ]
+            if unset:
+                # Silent failure here is expensive: a skill declaring that
+                # role would resolve to nothing and fall back to the coarse
+                # host scope, which looks like working retrieval.
+                logger.warning(
+                    "assigned_to_role not persisted for scopes %s — skills "
+                    "declaring those roles will fall back to the parent scope.",
+                    ", ".join(unset),
+                )
+                outcomes["_role_warning"] = (
+                    f"assigned_to_role not persisted for: {', '.join(unset)}"
+                )
+
         wanted_profiles = {
             s["id"]: s["pipeline_profile"]
             for s in wanted if s.get("pipeline_profile")

@@ -96,8 +96,11 @@ def _keyword_hits(keywords: Sequence[str], message: str) -> tuple:
     lowered = message.lower()
     hits = []
     for keyword in keywords:
-        # Word-boundary match so "ip" does not fire inside "description".
-        if re.search(rf"\b{re.escape(keyword)}\b", lowered):
+        # Bound on alphanumerics rather than \b: "_" is a word character, so
+        # \bsshd\b would miss "sshd_config" — the identifier the keyword
+        # exists to catch. Letters still bound, so "ssh" will not fire on
+        # "sshd" and "ip" will not fire inside "description".
+        if re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", lowered):
             hits.append(keyword)
     return tuple(hits)
 
