@@ -306,6 +306,9 @@ class ToolExecutor:
         # (spec §7). Reaching this branch means a caller bypassed PLANNING;
         # answer as a side-effect-free success with no audit entry.
         if tool_name in THREAD_META_TOOLS:
+            logger.warning(
+                f"{tool_name} reached the executor; PLANNING should have handled it inline"
+            )
             return ExecutionResult(
                 success=True,
                 result="handled inline",

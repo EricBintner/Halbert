@@ -4,6 +4,8 @@
 thread meta-tool schemas and their SAFE classification."""
 
 import json
+import logging
+
 import pytest
 
 from halbert_core.agents.events import StreamEvent
@@ -90,6 +92,17 @@ class TestMetaToolSchemas:
         assert result.success is True and result.result == "handled inline"
         assert result.requires_confirmation is False
         assert result.risk_level == RiskLevel.SAFE
+
+    @pytest.mark.asyncio
+    async def test_execute_warns_when_a_meta_tool_reaches_it(self, caplog):
+        """Reaching this branch means PLANNING was bypassed (spec §7); it
+        must not fail silently, so it has to leave a log trail."""
+        with caplog.at_level(logging.WARNING, logger="halbert.tools.executor"):
+            await ToolExecutor().execute("new_thread", {"title": "x", "reason": "y"}, session_id="s")
+        assert any(
+            "new_thread" in record.message and "PLANNING" in record.message
+            for record in caplog.records
+        )
 
 
 class TestMetaToolSafety:
