@@ -137,6 +137,21 @@ function TurnTerminals({ ids }: { ids: string[] }) {
 export const REDACTED = '[redacted by admin]';
 
 /**
+ * What a refused redaction reads as. One sentence per outcome, said in BOTH
+ * channels: spoken through the assertive live region and printed in the row
+ * that held the question.
+ *
+ * The live region is `sr-only` (LiveRegion.tsx), and a refusal leaves the
+ * words exactly as they were, so to a sighted admin a total refusal was
+ * indistinguishable from a mis-click — and a half-landed one showed the
+ * marker over the user's words while the reply beside it stayed readable,
+ * with nothing on screen saying why. A privacy promise that did not land is
+ * the last thing that may be reported invisibly.
+ */
+export const FORGET_FAILED = 'Could not forget that turn';
+export const FORGET_PARTLY_FAILED = 'Part of that turn could not be forgotten';
+
+/**
  * What the store leaves in `blocks_json` for a forgotten row that had tool
  * calls: one marker block (conversation_sqlite.redact_message). Rendering
  * this on click is what makes the turn an admin just forgot and the turn the
@@ -193,8 +208,12 @@ interface TurnArticleProps {
    * holds on disk.
    */
   assistantForgotten: boolean;
-  /** Resolves when every row that could be redacted has been tried. */
-  onForget?: (turn: TimelineTurn) => Promise<void> | void;
+  /**
+   * Resolves when every row that could be redacted has been tried, with the
+   * sentence to show the admin when some row refused, or null when the whole
+   * turn is gone. It reports rather than throws.
+   */
+  onForget?: (turn: TimelineTurn) => Promise<string | null>;
   onRunCommand?: RunCommand;
 }
 
@@ -215,6 +234,9 @@ const TurnArticle = memo(function TurnArticle({
   // so the control asks first and stays busy until the server has answered.
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
+  // The last refusal, kept on screen beside the control until the admin asks
+  // again — the live region says it once and is invisible.
+  const [failure, setFailure] = useState<string | null>(null);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (confirming) confirmRef.current?.focus();
@@ -248,7 +270,13 @@ const TurnArticle = memo(function TurnArticle({
     if (pending) return;
     setPending(true);
     try {
-      await onForget?.(turn);
+      setFailure((await onForget?.(turn)) ?? null);
+    } catch (err) {
+      // onForget reports refusals in its return value; anything thrown is a
+      // bug in this page, and even then the admin must not be left with a
+      // closed dialog and unchanged words that look like nothing happened.
+      console.warn('[TIMELINE] forget handler threw:', err);
+      setFailure(FORGET_FAILED);
     } finally {
       setPending(false);
       setConfirming(false);
@@ -325,17 +353,27 @@ const TurnArticle = memo(function TurnArticle({
         </div>
       )}
 
-      {canForget && !confirming && (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            aria-label="Forget this turn"
-            title="Replace this turn's words and tool output with a redaction marker, everywhere it is stored"
-            onClick={() => setConfirming(true)}
-            className="rounded px-1 text-[11px] font-mono text-ink-tertiary hover:text-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-          >
-            Forget this
-          </button>
+      {(canForget || failure !== null) && !confirming && (
+        <div className="flex flex-wrap items-center justify-end gap-2 text-[11px] font-mono">
+          {/* Plain text, not a live region: `announce` has already spoken
+              this sentence, and a second region here would say it twice. */}
+          {failure !== null && <span className="text-error">{failure}</span>}
+          {canForget && (
+            <button
+              type="button"
+              aria-label="Forget this turn"
+              title="Replace this turn's words and tool output with a redaction marker, everywhere it is stored"
+              onClick={() => {
+                // The old verdict does not describe the attempt about to be
+                // made, so it goes as soon as the question is asked again.
+                setFailure(null);
+                setConfirming(true);
+              }}
+              className="rounded px-1 text-ink-tertiary hover:text-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+            >
+              Forget this
+            </button>
+          )}
         </div>
       )}
 
@@ -397,9 +435,12 @@ export function Timeline({
   // "Forget this": every row is redacted server-side first; the article
   // shows the marker only for the rows the server has agreed to forget, so
   // the page never claims something is forgotten that is still on disk.
-  const handleForget = useCallback(async (turn: TimelineTurn) => {
+  //
+  // Returns the sentence the article prints beside the control when some row
+  // refused, or null when the whole turn is gone.
+  const handleForget = useCallback(async (turn: TimelineTurn): Promise<string | null> => {
     const ids = redactableIds(turn).filter((id) => !forgottenRef.current.has(id));
-    if (ids.length === 0) return;
+    if (ids.length === 0) return null;
 
     // One row at a time, recording each. Promise.all rejects on the FIRST
     // failure and neither cancels nor rolls back its siblings, so a turn
@@ -429,18 +470,18 @@ export function Timeline({
     if (failures.length === 0) {
       // The marker replaces text in place; nothing else would say so.
       announce('Turn forgotten');
-      return;
+      return null;
     }
     // A console warning is invisible in the product, and a privacy promise
-    // that did not land is precisely what the person has to hear.
+    // that did not land is precisely what the person has to hear — so the
+    // same sentence is both spoken and handed back to be shown.
     console.warn(
       `[TIMELINE] forget: ${failures.length} of ${ids.length} rows refused:`,
       failures[0],
     );
-    announce(
-      landed.length > 0 ? 'Part of that turn could not be forgotten' : 'Could not forget that turn',
-      { assertive: true },
-    );
+    const sentence = landed.length > 0 ? FORGET_PARTLY_FAILED : FORGET_FAILED;
+    announce(sentence, { assertive: true });
+    return sentence;
   }, []);
 
   if (byDay.length === 0 && !hasMore) return null;

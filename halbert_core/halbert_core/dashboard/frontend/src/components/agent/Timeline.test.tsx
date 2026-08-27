@@ -10,7 +10,7 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { Timeline, executionFromBlock, REDACTED } from './Timeline'
+import { Timeline, executionFromBlock, REDACTED, FORGET_FAILED, FORGET_PARTLY_FAILED } from './Timeline'
 import { groupByDay } from '../../hooks/useTimeline'
 import { lastAlert, lastAnnouncement } from '../../lib/announce'
 import { terminalSessionStore } from '../../hooks/useTerminalSessions'
@@ -283,6 +283,9 @@ describe('Timeline — Forget this', () => {
     expect(screen.getAllByRole('button', { name: 'Forget this turn' })).toHaveLength(1)
     // The marker replaces text in place, which nothing reads out on its own.
     expect(lastAnnouncement()).toBe('Turn forgotten')
+    // Nothing went wrong, so nothing on screen says anything did.
+    expect(screen.queryByText(FORGET_FAILED)).not.toBeInTheDocument()
+    expect(screen.queryByText(FORGET_PARTLY_FAILED)).not.toBeInTheDocument()
   })
 
   it('renders a stored marker block exactly as the clicked turn does', async () => {
@@ -325,7 +328,10 @@ describe('Timeline — Forget this', () => {
     expect(screen.getByText('is samba running?')).toBeInTheDocument()
     expect(screen.queryByText(REDACTED)).not.toBeInTheDocument()
     // A console warning is invisible in the product; the admin is told.
-    expect(lastAlert()).toBe('Could not forget that turn')
+    expect(lastAlert()).toBe(FORGET_FAILED)
+    // And told ON SCREEN: a sighted admin sees no marker and no live region,
+    // so without this the refusal is indistinguishable from a mis-click.
+    expect(screen.getByText(FORGET_FAILED)).toBeInTheDocument()
   })
 
   it('marks only the rows that landed when the server refuses one of them', async () => {
@@ -352,9 +358,39 @@ describe('Timeline — Forget this', () => {
     expect(screen.getByText('Answer to is samba running?')).toBeInTheDocument()
     expect(screen.getByText('run_command')).toBeInTheDocument()
     expect(warn).toHaveBeenCalled()
-    expect(lastAlert()).toBe('Part of that turn could not be forgotten')
+    expect(lastAlert()).toBe(FORGET_PARTLY_FAILED)
+    // Half a redaction is the worst thing to leave silent: the user bubble
+    // reads as forgotten while the reply beside it is still stored, so the
+    // reason is on screen and not only in the live region.
+    expect(screen.getByText(FORGET_PARTLY_FAILED)).toBeInTheDocument()
     // The control stays, so the row that failed can be tried again.
     expect(screen.getByRole('button', { name: 'Forget this turn' })).toBeInTheDocument()
+  })
+
+  it('drops the visible failure when the turn is tried again', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const refused = { ok: false, status: 500, text: async () => 'locked', json: async () => ({}) }
+    const agreed = { ok: true, status: 200, text: async () => '', json: async () => ({ ok: true }) }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(refused)
+      .mockResolvedValueOnce(refused)
+      .mockResolvedValue(agreed)
+    vi.stubGlobal('fetch', fetchMock)
+    render(<Timeline byDay={groupByDay([TURNS[0]], NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />)
+
+    await forget(screen.getByRole('button', { name: 'Forget this turn' }))
+    await waitFor(() => expect(screen.getByText(FORGET_FAILED)).toBeInTheDocument())
+
+    // Asking again drops the stale verdict rather than leaving it beside a
+    // question it has not answered yet...
+    await userEvent.click(screen.getByRole('button', { name: 'Forget this turn' }))
+    expect(screen.queryByText(FORGET_FAILED)).not.toBeInTheDocument()
+
+    // ...and this time the store agrees, so nothing is left claiming it failed.
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, forget this turn' }))
+    await waitFor(() => expect(screen.getAllByText(REDACTED)).toHaveLength(3))
+    expect(screen.queryByText(FORGET_FAILED)).not.toBeInTheDocument()
   })
 
   it('cannot be fired twice while the first redaction is in flight', async () => {
