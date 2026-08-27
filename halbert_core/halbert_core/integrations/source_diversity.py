@@ -41,10 +41,11 @@ robust: it keeps a giant's single best chunk when the giant is right.
 
 from __future__ import annotations
 
-import logging
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, TypeVar
 
-logger = logging.getLogger(__name__)
+#: A retrieved chunk. Capping neither inspects nor rebuilds chunks beyond
+#: reading their source path, so whatever goes in comes back out unchanged.
+Chunk = TypeVar("Chunk")
 
 #: Chunks per source directory kept by default. Measured optimum (14/15);
 #: 2 and 3 both score 13/15.
@@ -92,13 +93,13 @@ def source_directory(source_path: Any) -> Optional[str]:
 
 
 def cap_by_source_directory(
-    chunks: Iterable[Any],
+    chunks: Iterable[Chunk],
     limit: int,
     *,
     per_source: int = DEFAULT_PER_SOURCE,
     backfill: bool = True,
     path_key: str = "source_path",
-) -> List[Any]:
+) -> List[Chunk]:
     """Keep at most *per_source* chunks per source directory, then trim to *limit*.
 
     The daemon's ranking is authoritative and is never re-sorted: chunks are
@@ -128,15 +129,15 @@ def cap_by_source_directory(
         return []
 
     if per_source <= 0:
-        out: List[Any] = []
+        out: List[Chunk] = []
         for chunk in chunks:
             out.append(chunk)
             if len(out) >= limit:
                 break
         return out
 
-    kept: List[Any] = []
-    spilled: List[Any] = []
+    kept: List[Chunk] = []
+    spilled: List[Chunk] = []
     seen: Dict[str, int] = {}
 
     for chunk in chunks:
