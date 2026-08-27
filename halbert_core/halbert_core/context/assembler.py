@@ -15,6 +15,7 @@ from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
 from .tokens import TokenCounter
 from ..agents.blocks import content_to_text
+from ..agents.threads import RECEIPT_ROW_PREFIX
 
 if TYPE_CHECKING:
     pass
@@ -347,8 +348,26 @@ class ContextAssembler:
         return {k: v for k, v in budget_map.items() if k in active}
 
     # The ThreadManager hands the thread receipt over as the leading system
-    # row of the history (agents/threads.py _history). Plan A, spec §7.
-    _RECEIPT_ROW_PREFIX = "[Earlier in this subject:"
+    # row of the history (agents/threads.py _history). Plan A, spec §7. The
+    # prefix is imported, never re-typed: the producer and this reader are
+    # one contract, and a reword on one side alone would fail no test while
+    # quietly dropping the receipt back into the walk (review: A8b).
+    _RECEIPT_ROW_PREFIX = RECEIPT_ROW_PREFIX
+    _RECEIPT_HEADER = "## Earlier in this subject\n"
+    _CONVERSATION_HEADER = "## Recent Conversation\n"
+
+    #: The receipt and the recent turns share one bucket (intake/budget.py
+    #: ``conversation``) and the turns are what the model is answering, so
+    #: the receipt may only spend what the turns leave unspent. Given the
+    #: bucket first instead, a producer-max receipt (1500 chars ~= 376
+    #: tokens, threads.RECEIPT_ROW_MAX) evicted *every* turn at TINY and
+    #: SMALL and one of the six at MEDIUM — the exact inversion the old code
+    #: avoided by making the receipt row the first casualty of the
+    #: newest-first walk (review: Plan A / A8b). A long history would
+    #: otherwise evict the receipt just as completely, so it keeps a floor of
+    #: this fraction of the bucket, itself capped — always — at what still
+    #: leaves room for the newest turn.
+    _RECEIPT_MIN_SHARE = 6
 
     def _split_receipt_row(self, conversation: List[Dict]) -> tuple[str, List[Dict]]:
         """(receipt text, remaining rows).
@@ -377,6 +396,48 @@ class ContextAssembler:
             text = text[: max(0, int(len(text) * 0.8))].rstrip()
         return text
 
+    def _conversation_line(self, msg: Dict) -> str:
+        """The rendered ``**role**: content`` line for one history row."""
+        role = msg.get("role", "user")
+        # content may be a string (legacy) or a list of content blocks (A1)
+        content = content_to_text(msg.get("content", ""))
+
+        # Truncate very long messages
+        if len(content) > 1000:
+            content = content[:1000] + "..."
+
+        return f"**{role}**: {content}"
+
+    def _receipt_allowance(self, conversation: List[Dict], max_tokens: int) -> int:
+        """Tokens the receipt block may take out of the shared bucket.
+
+        What the remaining turns leave unspent — floored at
+        ``1 / _RECEIPT_MIN_SHARE`` of the bucket so a long history cannot
+        evict the receipt outright, and capped so the receipt can never
+        evict the newest turn. With no turn to protect (none supplied, or
+        the newest one too big for the bucket either way) the receipt may
+        have all of it.
+        """
+        if not conversation:
+            return max_tokens
+        # Newest-first, and stop once the turns have overrun the bucket: the
+        # floor applies from there on however far over they go, and the walk
+        # below stops at the same point, so neither is O(whole history).
+        needed = self.tokens.count(self._CONVERSATION_HEADER)
+        newest = 0
+        for i, msg in enumerate(reversed(conversation)):
+            needed += self.tokens.count(self._conversation_line(msg)) + 1
+            if i == 0:
+                newest = needed
+            if needed > max_tokens:
+                break
+        if newest > max_tokens:
+            return max_tokens
+        return min(
+            max(max_tokens - needed, max_tokens // self._RECEIPT_MIN_SHARE),
+            max_tokens - newest,
+        )
+
     def _format_conversation(
         self,
         conversation: List[Dict],
@@ -394,7 +455,9 @@ class ContextAssembler:
         recent turns, outside the newest-first walk, and the remaining rows
         are rendered raw: they are the thread's last turns, already chosen
         by the manager, and summarising them again would only lose the
-        detail the receipt was built to keep.
+        detail the receipt was built to keep. The receipt shares the bucket
+        with those turns and is bounded by ``_receipt_allowance`` so it can
+        never evict them.
         """
         if max_tokens <= 0:
             return "", 0
@@ -403,12 +466,12 @@ class ContextAssembler:
         receipt_block = ""
         receipt_tokens = 0
         if receipt:
-            receipt_header = "## Earlier in this subject\n"
+            allowance = self._receipt_allowance(conversation, max_tokens)
             body = self._fit_to_tokens(
-                receipt, max_tokens - self.tokens.count(receipt_header) - 2
+                receipt, allowance - self.tokens.count(self._RECEIPT_HEADER) - 2
             )
             if body:
-                receipt_block = receipt_header + body
+                receipt_block = self._RECEIPT_HEADER + body
                 receipt_tokens = self.tokens.count(receipt_block)
         else:
             # Phase 72: Use conversation summarization for long chats
@@ -424,21 +487,13 @@ class ContextAssembler:
 
         lines = []
         tokens = 0
-        header = "## Recent Conversation\n"
+        header = self._CONVERSATION_HEADER
         header_tokens = self.tokens.count(header)
         walk_budget = max_tokens - receipt_tokens
 
         # Work backwards from most recent
         for msg in reversed(conversation):
-            role = msg.get("role", "user")
-            # content may be a string (legacy) or a list of content blocks (A1)
-            content = content_to_text(msg.get("content", ""))
-
-            # Truncate very long messages
-            if len(content) > 1000:
-                content = content[:1000] + "..."
-
-            line = f"**{role}**: {content}"
+            line = self._conversation_line(msg)
             line_tokens = self.tokens.count(line) + 1  # +1 for newline
 
             if tokens + line_tokens + header_tokens > walk_budget:

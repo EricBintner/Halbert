@@ -101,6 +101,14 @@ _FOUNDING_ENTITIES_KEY = "founding_entities"
 PREV_TITLE_MAX = 120
 #: `build_receipt`'s own default ceiling; a longer stored receipt is clipped.
 RECEIPT_ROW_MAX = 1500
+#: The opening of the receipt row `_history` writes. The assembler splits this
+#: exact prefix back off and renders the receipt in its own `## Earlier in
+#: this subject` block (context/assembler.py `_split_receipt_row`, which
+#: imports this name rather than re-typing it): reworded on one side only,
+#: the row silently degrades back into the newest-first walk as a
+#: `**system**: [Earlier in this subject: …]` line with summarisation
+#: switched back on, and no test on either side fails (review: Plan A / A8b).
+RECEIPT_ROW_PREFIX = "[Earlier in this subject:"
 _WS_RE = re.compile(r"\s+")
 #: The row's delimiters are *substituted*, never deleted. A receipt carries
 #: `Commands:` and `Files written:` lines, and the agent reading them stages
@@ -802,7 +810,7 @@ class ThreadManager:
         receipt = thread.get("receipt") or ""
         if receipt and truncated:
             fenced = _fence(receipt, RECEIPT_ROW_MAX, keep_lines=True)
-            history.insert(0, {"role": "system", "content": f"[Earlier in this subject: {fenced}]"})
+            history.insert(0, {"role": "system", "content": f"{RECEIPT_ROW_PREFIX} {fenced}]"})
         return history
 
     def _pending_notes(self, thread_id: str) -> List[str]:

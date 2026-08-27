@@ -61,7 +61,23 @@ CONTEXT_BUDGETS: Dict[ModelTier, ContextBudget] = {
     # Plan A (spec §7): the conversation bucket holds six raw turns (12 rows
     # of ~100 tokens) at MEDIUM and LARGE. Tier totals are unchanged; the
     # other buckets pay for it. The thread receipt lives inside this bucket
-    # too (context/assembler.py renders it in its own slot).
+    # too (context/assembler.py renders it in its own slot, bounded so it
+    # cannot evict the turns).
+    #
+    # What that trade costs, measured against the assembler's per-item costs
+    # (review: Plan A / A8b). MEDIUM keeps 400 tokens for everything that is
+    # not conversation, and one item is not cheap: a full-length retrieval
+    # snippet costs ~128 tokens plus a ~6-token header, an observation
+    # truncated to 500 chars the same. So at MEDIUM retrieval now holds at
+    # most one *short* document (and `_retrieve_retrieval` returns nothing at
+    # all for full-length ones), and memory, discovery and observations at
+    # most one short item each, where before they held two or three. That is
+    # the deliberate bet of the continuous conversation: what the model said
+    # three turns ago beats a third search result. It is also the tightest
+    # this tier can be squeezed — funding any more of the conversation
+    # bucket from here would leave categories that cannot hold one item, so
+    # the next increment has to come from a larger tier total (num_ctx, A10)
+    # or from redistributing buckets left unspent at assembly time.
     ModelTier.MEDIUM: ContextBudget(
         tier=ModelTier.MEDIUM, total=2000,
         system_identity=75, user_rules=50, retrieval=100,
