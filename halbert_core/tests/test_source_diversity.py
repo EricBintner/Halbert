@@ -12,6 +12,8 @@ documentation/design/KNOWLEDGE-SCOPE-REVISION-2026-08-27.md) at 14/15 against a
 genuinely is the right answer.
 """
 
+import logging
+
 from halbert_core.integrations.source_diversity import (
     by_score_desc,
     cap_by_source_directory,
@@ -476,6 +478,58 @@ class TestDisabled:
         chunks = [_chunk(AW.format(i)) for i in range(8)]
         out = cap_by_source_directory(chunks, 5, per_source=-1, backfill=False)
         assert len(out) == 5
+
+
+class TestObservability:
+    """A systematic path-key failure disables the whole feature silently.
+
+    Treating an unreadable path as "unique, never cap" is right for one chunk,
+    but if the key drifts for *every* chunk — the daemon renaming source_path,
+    a caller passing the wrong path_key — the cap becomes a no-op and nothing
+    notices. Demonstrated: feed the corpus with the key spelled "file_path"
+    and the top-5 reverts to six-of-six arch-wiki, with no error and no test
+    failure. One debug line makes that visible.
+    """
+
+    LOGGER = "halbert_core.integrations.source_diversity"
+
+    def _capture(self, caplog, chunks, **kw):
+        caplog.set_level(logging.DEBUG, logger=self.LOGGER)
+        out = cap_by_source_directory(chunks, 5, **kw)
+        return out, [r.getMessage() for r in caplog.records if r.name == self.LOGGER]
+
+    def test_it_reports_what_it_capped(self, caplog):
+        chunks = [_chunk(AW.format(i), 0.9 - i / 100) for i in range(4)]
+        chunks += [_chunk(WS.format(0), 0.5)]
+        _, msgs = self._capture(caplog, chunks, backfill=False)
+        assert len(msgs) == 1
+        # 3 arch-wiki chunks spilled; 2 directories were seen.
+        assert "3" in msgs[0] and "2" in msgs[0]
+
+    def test_a_total_no_op_is_visible(self, caplog):
+        # The exact drift: the path lives under a key the cap is not reading.
+        chunks = [{"text": "t", "file_path": AW.format(i)} for i in range(6)]
+        out, msgs = self._capture(caplog, chunks, backfill=False)
+        # The silent no-op itself: nothing was capped, so all six survive the
+        # cap and only the limit trims them.
+        assert len(out) == 5
+        assert msgs == ["source cap: 0 chunks spilled across 0 directories (6 unkeyable)"]
+
+    def test_the_line_distinguishes_drift_from_a_genuinely_diverse_pool(self, caplog):
+        chunks = [_chunk(f"knowledge/linux/topic{i}/f.md", 0.9) for i in range(6)]
+        _, msgs = self._capture(caplog, chunks, backfill=False)
+        assert len(msgs) == 1
+        assert msgs[0] != ""
+
+    def test_logging_does_not_change_the_result(self, caplog):
+        chunks = [_chunk(AW.format(i), 0.9 - i / 100) for i in range(4)]
+        out, _ = self._capture(caplog, chunks, backfill=False)
+        assert out == cap_by_source_directory(chunks, 5, backfill=False)
+
+    def test_the_disabled_path_stays_quiet(self, caplog):
+        chunks = [_chunk(AW.format(i)) for i in range(4)]
+        _, msgs = self._capture(caplog, chunks, per_source=0)
+        assert msgs == []
 
 
 class TestPurity:

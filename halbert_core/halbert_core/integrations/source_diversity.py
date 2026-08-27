@@ -57,8 +57,11 @@ measurement behind the exemption.
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any, Dict, Iterable, List, Optional, TypeVar
+
+logger = logging.getLogger(__name__)
 
 #: A retrieved chunk. Capping neither inspects nor rebuilds chunks beyond
 #: reading their source path, so whatever goes in comes back out unchanged.
@@ -246,6 +249,7 @@ def cap_by_source_directory(
     kept: List[Chunk] = []
     spilled: List[Chunk] = []
     seen: Dict[str, int] = {}
+    unkeyable = 0
 
     for chunk in chunks:
         raw = chunk.get(path_key) if isinstance(chunk, dict) else None
@@ -253,6 +257,7 @@ def cap_by_source_directory(
 
         if directory is None:
             # No evidence of a shared source — always unique, never capped.
+            unkeyable += 1
             kept.append(chunk)
             continue
 
@@ -268,6 +273,19 @@ def cap_by_source_directory(
             kept.append(chunk)
         else:
             spilled.append(chunk)
+
+    # Enough to notice a total no-op. Treating an unreadable path as "unique,
+    # never cap" is right for one chunk, but if the key drifts for *every*
+    # chunk — the daemon renaming source_path, a caller passing the wrong
+    # path_key — the cap silently stops doing anything and the giants come
+    # straight back. A pool that reports 0 capped across 0 directories with a
+    # high unkeyable count is that failure, not a diverse pool.
+    logger.debug(
+        "source cap: %d chunks spilled across %d directories (%d unkeyable)",
+        len(spilled),
+        len(seen),
+        unkeyable,
+    )
 
     if backfill and len(kept) < limit and spilled:
         kept.extend(spilled[: limit - len(kept)])
