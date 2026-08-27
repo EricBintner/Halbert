@@ -3216,3 +3216,23 @@ async def preview_personality_section(req: PersonalityPreviewRequest) -> Dict[st
     except Exception as e:
         logger.error(f"Failed to preview personality: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class ArchetypeBlendRequest(BaseModel):
+    archetype_a_id: str
+    archetype_b_id: str
+    ratio: float = 0.5
+
+
+@router.post("/personality/blend")
+async def blend_archetypes(req: ArchetypeBlendRequest) -> Dict[str, Any]:
+    """Blend two archetypes into a Big Five profile dict."""
+    try:
+        from ...persona.archetypes import blend_archetypes as do_blend
+        profile = do_blend(req.archetype_a_id, req.archetype_b_id, req.ratio)
+        return {"status": "ok", "profile": profile}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to blend archetypes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

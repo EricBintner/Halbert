@@ -263,3 +263,43 @@ def get_archetype(archetype_id: str) -> Optional[object]:
 def is_available() -> bool:
     """Check whether Haloysius archetypes are available."""
     return len(_build_archetypes()) > 0
+
+
+def blend_archetypes(archetype_a_id: str, archetype_b_id: str, ratio: float = 0.5) -> Dict[str, float]:
+    """Blend two Halbert archetypes into a Big Five profile dict.
+
+    Args:
+        archetype_a_id: First archetype ID.
+        archetype_b_id: Second archetype ID.
+        ratio: How much of A vs B (0.0 = all B, 1.0 = all A, 0.5 = even mix).
+
+    Returns:
+        Dict with 5 Big Five trait floats.
+
+    Raises:
+        ValueError: If either archetype ID is unknown or Haloysius is unavailable.
+    """
+    registry = _build_archetypes()
+    if not registry:
+        raise ValueError("Haloysius not available, cannot blend archetypes")
+
+    a = registry.get(archetype_a_id)
+    b = registry.get(archetype_b_id)
+    if a is None:
+        raise ValueError(f"Unknown archetype ID: '{archetype_a_id}'")
+    if b is None:
+        raise ValueError(f"Unknown archetype ID: '{archetype_b_id}'")
+
+    if not 0.0 <= ratio <= 1.0:
+        raise ValueError(f"Ratio must be 0.0-1.0, got {ratio}")
+
+    def blend(va: float, vb: float) -> float:
+        return round(va * ratio + vb * (1 - ratio), 4)
+
+    return {
+        "openness": blend(a.profile.openness, b.profile.openness),
+        "conscientiousness": blend(a.profile.conscientiousness, b.profile.conscientiousness),
+        "extraversion": blend(a.profile.extraversion, b.profile.extraversion),
+        "agreeableness": blend(a.profile.agreeableness, b.profile.agreeableness),
+        "neuroticism": blend(a.profile.neuroticism, b.profile.neuroticism),
+    }

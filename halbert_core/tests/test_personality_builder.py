@@ -178,3 +178,124 @@ class TestPromptBuilderPersonality:
         assert "TEST_PERSONALITY_CONTENT" in prompt_with
         assert "<personality>" in prompt_with
         assert "</personality>" in prompt_with
+
+
+class TestArchetypeBlending:
+    """Test archetype blending (Phase 2)."""
+
+    def test_blend_same_archetype_returns_that_archetype(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        result = blend_archetypes("sentinel", "sentinel", 0.5)
+        # Blending identical archetypes should yield the same profile
+        assert abs(result["openness"] - 0.40) < 0.01
+
+    def test_blend_ratio_1_is_all_a(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        result = blend_archetypes("sentinel", "comedian", 1.0)
+        # ratio=1.0 means all sentinel
+        assert abs(result["openness"] - 0.40) < 0.01
+        assert abs(result["extraversion"] - 0.30) < 0.01
+
+    def test_blend_ratio_0_is_all_b(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        result = blend_archetypes("sentinel", "comedian", 0.0)
+        # ratio=0.0 means all comedian
+        assert abs(result["openness"] - 0.65) < 0.01
+        assert abs(result["extraversion"] - 0.75) < 0.01
+
+    def test_blend_50_50_is_average(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        result = blend_archetypes("sentinel", "comedian", 0.5)
+        # 50/50 should be the average
+        expected_openness = (0.40 + 0.65) / 2
+        assert abs(result["openness"] - expected_openness) < 0.01
+
+    def test_blend_invalid_archetype_raises(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        with pytest.raises(ValueError, match="Unknown archetype ID"):
+            blend_archetypes("sentinel", "nonexistent", 0.5)
+
+    def test_blend_invalid_ratio_raises(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        with pytest.raises(ValueError, match="Ratio must be"):
+            blend_archetypes("sentinel", "comedian", 1.5)
+
+    def test_blend_returns_all_five_traits(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        result = blend_archetypes("mentor", "surgeon", 0.7)
+        assert set(result.keys()) == {
+            "openness", "conscientiousness", "extraversion",
+            "agreeableness", "neuroticism",
+        }
+        for v in result.values():
+            assert 0.0 <= v <= 1.0
+
+
+class TestPromptManagerCustomMode:
+    """Test PromptManager CUSTOM mode loads personality from BeingConfig."""
+
+    def test_custom_mode_generates_from_personality(self, tmp_path):
+        from halbert_core.model.prompt_manager import PromptManager, PromptMode
+        from halbert_core.config.being_config import BeingConfig, save_being_config
+
+        # Set up a being.yml with personality in tmp_path
+        cfg = BeingConfig()
+        cfg.custom_personality_prompt = "TEST_CUSTOM_PERSONA_MARKER"
+        save_being_config(cfg, str(tmp_path / "being.yml"))
+
+        # Point PromptManager at tmp_path as config dir
+        pm = PromptManager(config_dir=tmp_path)
+        prompt = pm.build_prompt(mode=PromptMode.CUSTOM)
+
+        # The custom persona layer should be generated from BeingConfig
+        assert "TEST_CUSTOM_PERSONA_MARKER" in prompt
+
+    def test_custom_mode_falls_back_to_placeholder_when_no_personality(self, tmp_path):
+        from halbert_core.model.prompt_manager import PromptManager, PromptMode
+        from halbert_core.config.being_config import BeingConfig, save_being_config
+
+        # Empty personality config
+        cfg = BeingConfig()
+        save_being_config(cfg, str(tmp_path / "being.yml"))
+
+        pm = PromptManager(config_dir=tmp_path)
+        prompt = pm.build_prompt(mode=PromptMode.CUSTOM)
+
+        # Should still have base safety + mode layer, just no custom personality
+        assert "SAFETY RULES" in prompt
+        assert "Custom" in prompt
+
+    def test_custom_txt_file_overrides_generated_personality(self, tmp_path):
+        from halbert_core.model.prompt_manager import PromptManager, PromptMode
+        from halbert_core.config.being_config import BeingConfig, save_being_config
+
+        # Set up being.yml with personality
+        cfg = BeingConfig()
+        cfg.custom_personality_prompt = "FROM_BEING_CONFIG"
+        save_being_config(cfg, str(tmp_path / "being.yml"))
+
+        # Create custom.txt that should take precedence
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "custom.txt").write_text("FROM_CUSTOM_TXT_FILE")
+
+        pm = PromptManager(config_dir=tmp_path)
+        prompt = pm.build_prompt(mode=PromptMode.CUSTOM)
+
+        # File-based layer should win over generated
+        assert "FROM_CUSTOM_TXT_FILE" in prompt
+        assert "FROM_BEING_CONFIG" not in prompt
