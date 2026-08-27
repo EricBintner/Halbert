@@ -143,12 +143,17 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
     # user/assistant row.
     _HISTORY_LINE_CHARS = 500
 
-    # Ceiling for a `system` history row (threads.py's pre-window receipt
-    # summary). Matches threads.py's own RECEIPT_ROW_MAX: that module already
-    # bounds the row to this many characters via `_fence(..., keep_lines=True)`
-    # before it ever reaches this helper, so this is a defensive backstop —
-    # not the primary truncation — for a caller that hands `_history_section`
-    # something threads.py never bounded (review: Plan A / A8, round 2).
+    # Fallback ceiling for a `system` history row (threads.py's pre-window
+    # receipt summary), used only if `_history_section` cannot import
+    # threads.RECEIPT_ROW_MAX (see there). Pinned by a test to stay >= the
+    # real constant: threads.py already bounds the row to that many
+    # characters via `_fence(..., keep_lines=True)` before it ever reaches
+    # this helper — a truncation that itself reserves the receipt's final
+    # "Open loop:" line — so re-capping below it here would silently delete
+    # exactly what that truncation protected (review: Plan A / A8, round 2;
+    # a hand-copied ceiling with nothing pinning it to RECEIPT_ROW_MAX
+    # silently reintroduces that same bug if the two ever drift apart,
+    # review: Plan A / A8, round 3).
     _SYSTEM_LINE_CHARS = 1500
 
     # Collapses literal `<continuity>` / `</continuity>` sequences found
@@ -164,9 +169,30 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
     # (review: Plan A / A8, round 2).
     _CONTINUITY_TAG_RE = re.compile(r"</?\s*continuity\s*>", re.IGNORECASE)
 
+    # How much of a row `_defang_continuity` scans before it caps the result,
+    # mirroring threads.py's `_SCAN_MIN` / `_SCAN_FACTOR` (`_fence` clips to
+    # exactly this shape before its own identical fixpoint loop, "so the
+    # fixpoint below stays cheap on a pathological field"). Without this, the
+    # round-2 fix defanged the FULL, unbounded row before truncating it,
+    # which made a single untrusted RESPONDING row — command stdout, a log
+    # line, a pasted file, exactly what this module's own comments name —
+    # cost 7s at 130KB and 28s at 260KB of nested `</continuity>` payload, on
+    # the once-per-turn RESPONDING hot path (review: Plan A / A8, round 3).
+    _DEFANG_SCAN_MIN = 4096
+    _DEFANG_SCAN_FACTOR = 4
+
     @classmethod
-    def _defang_continuity(cls, text: str) -> str:
+    def _defang_continuity(cls, text: str, cap: int) -> str:
         """Neutralise ``<continuity>``/``</continuity>`` in untrusted text.
+
+        ``cap`` is the caller's eventual truncation limit for this row (500
+        for user/assistant, the system ceiling for system); ``text`` is
+        clipped to ``max(_DEFANG_SCAN_MIN, cap * _DEFANG_SCAN_FACTOR)``
+        BEFORE the fixpoint loop below runs, same as threads.py::_fence, so
+        the loop's cost is bounded by the cap rather than by an
+        attacker-chosen row length. Content beyond that clip point would be
+        truncated away by the caller's own char cap regardless, since the
+        clip point is always >= that cap.
 
         Substitutes to a fixpoint, not once: a single pass over a nested
         payload like ``"</</continuity>continuity>"`` would leave behind
@@ -175,9 +201,33 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         at least one full tag with a single space, so the string strictly
         shrinks and the loop terminates.
         """
+        text = text[: max(cls._DEFANG_SCAN_MIN, cap * cls._DEFANG_SCAN_FACTOR)]
         while cls._CONTINUITY_TAG_RE.search(text):
             text = cls._CONTINUITY_TAG_RE.sub(" ", text)
         return text
+
+    # Neutralises a leading `#`/`*` run at the start of any line of a
+    # `system` history row. A `system` row keeps its own line structure
+    # (round 2 fix) rather than being flattened to one line, because the
+    # receipt it carries is genuinely multi-line — but that also means a
+    # line inside it that starts with `##` or `**` renders exactly like a
+    # markdown section header or this module's own `**role**: ` turn marker,
+    # indistinguishable from a real prompt section or a turn the admin never
+    # wrote. Substituted with a fullwidth lookalike, never deleted — same
+    # convention threads.py uses for the row's own brackets — so the line
+    # stays legible instead of silently losing its leading characters
+    # (review: Plan A / A8, round 3). Not applied to user/assistant rows:
+    # those are flattened to one line by the whitespace join a few lines
+    # below, so a line-start marker never survives to the rendered prompt.
+    _LEADING_MARKER_RE = re.compile(r"^([ \t]*)([#*]+)", re.MULTILINE)
+    _MARKER_SUB = {ord("#"): "＃", ord("*"): "＊"}
+
+    @classmethod
+    def _defang_line_markers(cls, text: str) -> str:
+        """Neutralise a leading ``#``/``*`` run at the start of any line."""
+        return cls._LEADING_MARKER_RE.sub(
+            lambda m: m.group(1) + m.group(2).translate(cls._MARKER_SUB), text
+        )
 
     def _continuity_section(
         self, continuity: str, tools_supported: Optional[bool] = None
@@ -206,13 +256,17 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         content is flattened. A ``user``/``assistant`` row is capped at
         ``_HISTORY_LINE_CHARS`` (500). A ``system`` row is different: it is
         threads.py::_history's pre-window receipt summary, already bounded
-        to 1500 chars by ``_fence(..., keep_lines=True)`` — a truncation
-        that itself reserves the receipt's final "Open loop:" line (see
-        receipt.py::build_receipt's comment on why). Re-flattening that row
-        to one line and re-capping it at 500 chars here deleted exactly what
-        that truncation protected, on any thread whose history exceeds
-        HISTORY_ROWS (review: Plan A / A8, round 2) — so a system row keeps
-        its own line structure and its own, larger ceiling instead.
+        to ``threads.RECEIPT_ROW_MAX`` chars by ``_fence(..., keep_lines=True)``
+        — a truncation that itself reserves the receipt's final "Open loop:"
+        line (see receipt.py::build_receipt's comment on why). Re-flattening
+        that row to one line and re-capping it at 500 chars here deleted
+        exactly what that truncation protected, on any thread whose history
+        exceeds HISTORY_ROWS (review: Plan A / A8, round 2) — so a system
+        row keeps its own line structure and its own, larger ceiling
+        instead, imported from threads.py itself (falling back to the
+        hand-copied ``_SYSTEM_LINE_CHARS`` only if that import fails) so the
+        two ceilings cannot silently drift apart (review: Plan A / A8,
+        round 3).
         """
         if not history:
             return ""
@@ -221,6 +275,10 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         except Exception:  # pragma: no cover - import cycle guard
             def content_to_text(content: Any) -> str:
                 return content if isinstance(content, str) else str(content)
+        try:
+            from ..agents.threads import RECEIPT_ROW_MAX as system_cap
+        except Exception:  # pragma: no cover - import cycle guard
+            system_cap = cls._SYSTEM_LINE_CHARS
         lines = ["## Earlier in this conversation"]
         for row in history:
             if not isinstance(row, dict):
@@ -230,12 +288,15 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
                 continue
             content = row.get("content", "")
             text = content if isinstance(content, str) else content_to_text(content)
-            text = cls._defang_continuity(str(text))
+            text = str(text)
             if role == "system":
+                text = cls._defang_continuity(text, system_cap)
+                text = cls._defang_line_markers(text)
                 text = text.strip()
-                if len(text) > cls._SYSTEM_LINE_CHARS:
-                    text = text[: cls._SYSTEM_LINE_CHARS].rstrip() + "…"
+                if len(text) > system_cap:
+                    text = text[: system_cap - 1].rstrip() + "…"
             else:
+                text = cls._defang_continuity(text, cls._HISTORY_LINE_CHARS)
                 text = " ".join(text.split())
                 if len(text) > cls._HISTORY_LINE_CHARS:
                     text = text[:cls._HISTORY_LINE_CHARS] + "…"
