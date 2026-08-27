@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useEffect, useState } from 'react'
-import type { HTMLAttributes } from 'react'
+import type { HTMLAttributes, ReactNode } from 'react'
 import { providerDescriptor } from '../types'
 import type {
   LocalDiscovery,
@@ -17,6 +17,15 @@ export interface ProviderCardProps extends HTMLAttributes<HTMLDivElement> {
   endpoint?: SavedEndpoint
   /** Used when `endpoint` is undefined. */
   provider?: ProviderId
+  /**
+   * Slot beside the card title, for a host's own badge. The package renders
+   * no privacy badge of its own because only the host knows what its runtime
+   * actually does with a configured endpoint.
+   */
+  renderBadge?: (
+    endpoint: SavedEndpoint | undefined,
+    provider: ProviderId,
+  ) => ReactNode
   /**
    * Fires only once the hook reports no error for the write, so a save that
    * never reached storage cannot be announced as one that did. An endpoint
@@ -66,6 +75,7 @@ export function ProviderCard({
   picker,
   endpoint,
   provider,
+  renderBadge,
   onSaved,
   onDeleted,
   ...rest
@@ -151,6 +161,7 @@ export function ProviderCard({
       {...rest}
     >
       <span id={titleId}>{endpoint?.name ?? descriptor.label}</span>
+      {renderBadge?.(endpoint, providerId)}
 
       {chatCapable ? null : (
         <span data-badge="not-chat-capable">
