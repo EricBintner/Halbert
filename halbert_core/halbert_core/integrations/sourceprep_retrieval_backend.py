@@ -21,6 +21,7 @@ passed as the `scope` parameter to SourcePrep's context endpoint.
 from __future__ import annotations
 
 import logging
+import os
 import platform
 import re
 from typing import Any, Dict, List, Optional
@@ -42,6 +43,44 @@ logger = logging.getLogger(__name__)
 # per-source cap can choose from it. It does not inflate what reaches the
 # model: the budget governs the candidate list, and search() trims to k.
 DEFAULT_MAX_CHARS = 60000
+
+# ── Runtime knobs (production kill switch) ────────────────────────────
+#
+# The cap changes the result of *every* retrieval, and neither production site
+# forwards the constructor arguments: context/adapters.py and
+# integrations/app_seam.py pass only project_id/base_url/default_k, and
+# SourcePrepAdapter() is built with no backend at all in three more places.
+# Reading the environment at construction is therefore the only way to turn
+# this off in a running Halbert without editing code.
+#
+# Following the convention already used in this package (app_seam's
+# HALBERT_MODEL, cognition_wiring's HALBERT_LLM_THOUGHTS, the client's
+# SOURCEPREP_URL): an explicit constructor argument wins, the environment is
+# the fallback default.
+#
+#   HALBERT_SOURCE_CAP=0   the kill switch — restores the pre-cap ranking
+#                          *and* the pre-cap shallow pull, so latency reverts
+#                          with it. Any other integer retunes the cap.
+#   HALBERT_PULL_K=<int>   candidates requested before capping.
+ENV_SOURCE_CAP = "HALBERT_SOURCE_CAP"
+ENV_PULL_K = "HALBERT_PULL_K"
+
+
+def _env_int(key: str, default: int) -> int:
+    """An integer from the environment, or *default* if unset or unparseable.
+
+    A bad value must never take retrieval down, so it is logged and ignored.
+    """
+    raw = os.environ.get(key, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning(
+            "%s=%r is not an integer; falling back to %d", key, raw, default
+        )
+        return default
 
 
 # ── Intake-domain → scope routing (T-H1.3) ────────────────────────────
@@ -176,18 +215,27 @@ class SourcePrepRetrievalBackend:
         client: Optional[SourcePrepClient] = None,
         default_k: int = 5,
         default_max_chars: int = DEFAULT_MAX_CHARS,
-        source_cap: int = DEFAULT_PER_SOURCE,
-        pull_k: int = DEFAULT_PULL_K,
+        source_cap: Optional[int] = None,
+        pull_k: Optional[int] = None,
     ):
         """Args:
+            default_k: Result count ``search()`` falls back to when its caller
+                does not name one.
             default_max_chars: Character budget for the candidate list. Always
                 honoured as given; an A/B against the pre-cap behaviour sets
                 this to 12000 alongside ``source_cap=0``.
             source_cap: Chunks kept per source directory. ``0`` disables the
                 cap and the deep pull together, so measurement can A/B on
-                results and latency at once.
+                results and latency at once. ``None`` (the default) reads
+                ``HALBERT_SOURCE_CAP``, then falls back to
+                :data:`DEFAULT_PER_SOURCE`.
             pull_k: Candidates requested before capping. Never goes below the
-                caller's own k.
+                caller's own k. ``None`` reads ``HALBERT_PULL_K``, then falls
+                back to :data:`DEFAULT_PULL_K`.
+
+        ``None`` rather than a falsy test is what distinguishes "not given"
+        from an explicit ``source_cap=0``; the latter must switch the cap off,
+        not fall through to the environment and switch it back on.
         """
         self.client = client or SourcePrepClient(
             base_url=base_url,
@@ -195,8 +243,14 @@ class SourcePrepRetrievalBackend:
         )
         self.default_k = default_k
         self.default_max_chars = default_max_chars
-        self.source_cap = source_cap
-        self.pull_k = pull_k
+        self.source_cap = (
+            _env_int(ENV_SOURCE_CAP, DEFAULT_PER_SOURCE)
+            if source_cap is None
+            else source_cap
+        )
+        self.pull_k = (
+            _env_int(ENV_PULL_K, DEFAULT_PULL_K) if pull_k is None else pull_k
+        )
         self._loaded = False
         self._scope_ids: Optional[set] = None
         self._roles_to_scope: Optional[Dict[str, str]] = None
@@ -340,7 +394,7 @@ class SourcePrepRetrievalBackend:
     def search(
         self,
         query: str,
-        k: int = 3,
+        k: Optional[int] = None,
         figure_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Search the SourcePrep index for relevant context.
@@ -373,7 +427,7 @@ class SourcePrepRetrievalBackend:
 
         Args:
             query: Natural language search query.
-            k: Number of results to retrieve.
+            k: Number of results to retrieve; defaults to `default_k`.
             figure_id: Optional scope filter. Resolved against the daemon's
                 provisioned scopes first (see resolve_scope), so an
                 unbuilt scope narrows to its nearest ancestor instead of
@@ -386,6 +440,8 @@ class SourcePrepRetrievalBackend:
         if not query.strip():
             return []
 
+        if k is None:
+            k = self.default_k
         scope = self.resolve_scope(figure_id)
         capping = self.source_cap > 0
         # The cap can only choose from what the candidate list holds, so ask

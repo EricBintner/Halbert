@@ -11,9 +11,21 @@ same 9/15 as the baseline — and everything together scored 14/15.
 
 from __future__ import annotations
 
+import pytest
+
 from halbert_core.integrations.sourceprep_retrieval_backend import (
     SourcePrepRetrievalBackend,
 )
+
+_KNOBS = ("HALBERT_SOURCE_CAP", "HALBERT_PULL_K")
+
+
+@pytest.fixture(autouse=True)
+def _clean_knobs(monkeypatch):
+    """The retrieval knobs are read from the environment, so a value set in the
+    developer's shell would otherwise silently retune every test here."""
+    for key in _KNOBS:
+        monkeypatch.delenv(key, raising=False)
 
 
 class _RecordingClient:
@@ -268,6 +280,101 @@ def test_the_cap_still_applies_to_a_scoped_query():
     )
     assert client.calls[0]["scope"] == "knowledge_linux"
     assert sum(1 for r in out if "arch-wiki" in r["source_path"]) == 1
+
+
+# ── The production kill switch ────────────────────────────────────────
+#
+# source_cap and pull_k are constructor-only, and neither production site
+# forwards them: context/adapters.py and integrations/app_seam.py pass only
+# project_id/base_url/default_k, and SourcePrepAdapter() is built with no
+# backend at all in three places. Without an environment read a change
+# affecting every retrieval could not be turned off in a running Halbert
+# without editing code.
+
+
+def test_the_env_var_can_switch_the_cap_off_entirely(monkeypatch):
+    monkeypatch.setenv("HALBERT_SOURCE_CAP", "0")
+    client = _RecordingClient(_skewed_corpus())
+    out = SourcePrepRetrievalBackend(client=client).search("q", k=5)
+    assert all("arch-wiki" in r["source_path"] for r in out)
+
+
+def test_switching_the_cap_off_also_switches_off_the_deep_pull(monkeypatch):
+    # The kill switch has to restore the old latency profile too, not just the
+    # old ranking.
+    monkeypatch.setenv("HALBERT_SOURCE_CAP", "0")
+    client = _RecordingClient()
+    SourcePrepRetrievalBackend(client=client).search("q", k=5)
+    assert client.calls[0]["k"] == 5
+
+
+def test_the_env_var_can_retune_the_cap(monkeypatch):
+    monkeypatch.setenv("HALBERT_SOURCE_CAP", "2")
+    client = _RecordingClient(_skewed_corpus())
+    out = SourcePrepRetrievalBackend(client=client).search("q", k=5)
+    assert sum(1 for r in out if "arch-wiki" in r["source_path"]) == 2
+
+
+def test_the_env_var_can_retune_the_pull_depth(monkeypatch):
+    monkeypatch.setenv("HALBERT_PULL_K", "25")
+    client = _RecordingClient()
+    SourcePrepRetrievalBackend(client=client).search("q", k=5)
+    assert client.calls[0]["k"] == 25
+
+
+def test_an_explicit_argument_beats_the_env_var(monkeypatch):
+    monkeypatch.setenv("HALBERT_SOURCE_CAP", "3")
+    client = _RecordingClient(_skewed_corpus())
+    out = SourcePrepRetrievalBackend(client=client, source_cap=1).search("q", k=5)
+    assert sum(1 for r in out if "arch-wiki" in r["source_path"]) == 1
+
+
+def test_an_explicit_zero_is_honoured_not_treated_as_unset(monkeypatch):
+    # The trap: `source_cap or env` would read 0 as "not given" and re-enable
+    # the very thing the caller switched off.
+    monkeypatch.setenv("HALBERT_SOURCE_CAP", "1")
+    client = _RecordingClient(_skewed_corpus())
+    out = SourcePrepRetrievalBackend(client=client, source_cap=0).search("q", k=5)
+    assert all("arch-wiki" in r["source_path"] for r in out)
+
+
+@pytest.mark.parametrize("junk", ["", "   ", "abc", "1.5", "none"])
+def test_an_unparseable_env_value_falls_back_to_the_default(monkeypatch, junk):
+    monkeypatch.setenv("HALBERT_SOURCE_CAP", junk)
+    client = _RecordingClient(_skewed_corpus())
+    out = SourcePrepRetrievalBackend(client=client).search("q", k=5)
+    assert sum(1 for r in out if "arch-wiki" in r["source_path"]) == 1
+
+
+def test_the_defaults_stand_when_the_environment_is_silent():
+    client = _RecordingClient(_skewed_corpus())
+    backend = SourcePrepRetrievalBackend(client=client)
+    assert (backend.source_cap, backend.pull_k) == (1, 50)
+
+
+def test_the_switch_reaches_the_adapter_that_builds_its_own_backend(monkeypatch):
+    # The three production sites construct SourcePrepAdapter() with no backend
+    # and no knobs, so reading the environment inside the backend constructor
+    # is the only thing that makes the switch reachable at all.
+    monkeypatch.setenv("HALBERT_SOURCE_CAP", "0")
+    from halbert_core.context.adapters import SourcePrepAdapter
+
+    assert SourcePrepAdapter()._backend.source_cap == 0
+
+
+# ── default_k is wired, not decorative ────────────────────────────────
+
+
+def test_the_constructors_default_k_is_what_search_falls_back_to():
+    client = _RecordingClient()
+    SourcePrepRetrievalBackend(client=client, default_k=7, source_cap=0).search("q")
+    assert client.calls[0]["k"] == 7
+
+
+def test_an_explicit_k_still_wins_over_default_k():
+    client = _RecordingClient()
+    SourcePrepRetrievalBackend(client=client, default_k=7, source_cap=0).search("q", k=2)
+    assert client.calls[0]["k"] == 2
 
 
 # ── Failure modes must not regress ────────────────────────────────────
