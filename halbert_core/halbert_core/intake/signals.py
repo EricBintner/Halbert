@@ -69,10 +69,18 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
 
 # Raw-regex alternatives per domain, tried before the escaped keyword list.
 # "share" alone is too ambiguous ("can you share that document?") to count as
-# a network signal — only count it when a networking word qualifies it
-# (review: Plan A / A4).
+# a network signal — only count it when a networking word qualifies it. The
+# qualifier is a lookbehind (non-consuming) rather than part of the match, so
+# a qualifying word that is *itself* a real entity (e.g. "samba", "nfs")
+# still gets its own match right before this one instead of being swallowed
+# into a single two-word "samba share"/"nfs share" span (review: Plan A /
+# A4 — "add a samba share..." was losing "share"; "an nfs share" was losing
+# "nfs").
 _DOMAIN_EXTRA_PATTERNS: dict[str, list[str]] = {
-    "network": [r"(?:file|windows|smb|cifs|nfs|network)\s+share"],
+    "network": [
+        r"(?:(?<=file )|(?<=windows )|(?<=smb )|(?<=cifs )|(?<=nfs )"
+        r"|(?<=samba )|(?<=network ))share"
+    ],
 }
 
 # Pre-compile domain patterns for speed
@@ -192,17 +200,41 @@ class MessageSignals:
 
 # ── Entities ─────────────────────────────────────────────────────
 
-def _scan(text: str) -> tuple[list[str], set[str], list[str]]:
-    """One pass over ``text``: (detected domains, canonical entities, file paths).
+# Per-occurrence entity extraction (alias tokens/phrases, domain-keyword
+# hits, file paths) is bounded to the first N characters of the message.
+# Domain *presence* is still checked across the full message via a cheap,
+# early-exiting `search` — only building the `entities` set (and scanning
+# for file paths) is capped, so a large pasted log can't blow up latency
+# the way an unbounded `finditer`/`findall` pass over the whole text did
+# (review: Plan A / A4 — 266KB paste went 51ms -> 147ms; the un-early-exited
+# domain scan was the dominant cost, not the alias-token loop).
+_ENTITY_SCAN_LIMIT = 16 * 1024
 
-    ``analyze_message`` and ``canonical_entities`` both need domain-keyword
-    and file-path matches; running each regex once here — instead of a
-    `search` pass for domains/paths plus a separate `finditer`/`findall` pass
-    for entities — keeps analyze_message within its <1ms budget (review:
-    Plan A / A4).
+# Hard cap on how many file-path entities one message can contribute.
+# `entities` is persisted to `threads.entities_json` and folded into a
+# SQLite FTS MATCH query, so an unbounded path count (a 400KB log produced
+# 5000+ distinct paths, ~208KB of JSON) is a real cost at write and query
+# time, not just here (review: Plan A / A4).
+_MAX_PATH_ENTITIES = 20
+
+
+def _looks_like_real_path(path: str) -> bool:
+    """Reject one- or two-character noise like "/O" (from "I/O"), "/A"
+    (from "N/A"), "/W" (from "R/W") that `_FILE_PATH_RE` matches but that
+    isn't a real path (review: Plan A / A4)."""
+    return len(path.lstrip("~./")) > 1
+
+
+def _scan(text: str) -> tuple[list[str], set[str], bool]:
+    """One bounded pass: (detected domains, canonical entities, has file path).
+
+    ``analyze_message`` and ``canonical_entities`` share this so neither
+    re-runs the domain/alias/path regexes separately.
     """
-    lower = text.lower()
+    scan_text = text[:_ENTITY_SCAN_LIMIT]
+    lower = scan_text.lower()
     entities: set[str] = set()
+
     for tok in _ENTITY_TOKEN_RE.findall(lower):
         alias = ENTITY_ALIASES.get(tok.strip("._-"))
         if alias:
@@ -213,27 +245,30 @@ def _scan(text: str) -> tuple[list[str], set[str], list[str]]:
 
     domains: list[str] = []
     for domain, pattern in _DOMAIN_PATTERNS.items():
-        matched = False
-        for m in pattern.finditer(text):
-            matched = True
-            raw = m.group(1).lower()
-            # A qualified multi-word alternative (e.g. "windows share")
-            # canonicalizes to its last word ("share"); single-word
-            # alternatives are unaffected.
-            kw = raw.split()[-1] if " " in raw else raw
+        # `search` over the full text is the presence check (early-exiting,
+        # same cost profile as pre-A4). If it finds nothing, the bounded
+        # prefix can't contain a match either, so skip the finditer entirely
+        # instead of paying for both passes on every non-matching domain
+        # (review: Plan A / A4).
+        if not pattern.search(text):
+            continue
+        domains.append(domain)
+        for m in pattern.finditer(scan_text):
+            kw = m.group(1).lower()
             if kw not in _GENERIC_KEYWORDS:
                 entities.add(ENTITY_ALIASES.get(kw, kw))
-        if matched:
-            domains.append(domain)
 
-    paths: list[str] = []
-    for path in _FILE_PATH_RE.findall(text):
+    has_paths = bool(_FILE_PATH_RE.search(text))
+    path_count = 0
+    for path in _FILE_PATH_RE.findall(scan_text):
+        if path_count >= _MAX_PATH_ENTITIES:
+            break
         path = path.rstrip(".,;:")
-        if len(path) > 1:
-            paths.append(path)
+        if _looks_like_real_path(path):
             entities.add(path)
+            path_count += 1
 
-    return domains, entities, paths
+    return domains, entities, has_paths
 
 
 def canonical_entities(text: str) -> set[str]:
@@ -276,13 +311,18 @@ def analyze_message(message: str) -> MessageSignals:
     signals.has_error_indicators = any(ind in text_lower for ind in _ERROR_INDICATORS)
 
     # ── Domains + entities + file paths (one pass, see _scan) ─────
-    domains, entities, paths = _scan(text)
+    domains, entities, has_paths = _scan(text)
     signals.detected_domains = domains
     signals.entities = entities
-    signals.has_file_paths = bool(paths)
+    signals.has_file_paths = has_paths
 
     # ── Thread cues ───────────────────────────────────────────────
-    signals.past_reference = bool(PAST_REF_RE.search(text))
+    # Bounded to the same prefix as entity extraction: a past-reference cue
+    # ("last week", "remember when...") is a conversational opener, not
+    # something that shows up 200KB into a pasted log, and PAST_REF_RE's
+    # many alternatives make an unbounded full-text `search` one of the
+    # larger remaining costs on adversarial input (review: Plan A / A4).
+    signals.past_reference = bool(PAST_REF_RE.search(text[:_ENTITY_SCAN_LIMIT]))
     cue = ANAPHORA_RE.match(text)
     if cue:
         if cue.group("phrase"):

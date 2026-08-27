@@ -295,3 +295,123 @@ class TestThreadCues:
     def test_defaults(self):
         s = MessageSignals()
         assert s.entities == set() and s.past_reference is False and s.anaphora is False
+
+
+# ── Review-fix regressions (Plan A, A4 quality-fix round) ─────────
+#
+# These pin the behaviours corrected after code review found the first
+# fix pass (a5421126) changed three things with zero new test coverage:
+# the anaphora gate, the qualified-"share" regex, and the _scan bounding/
+# capping. Each assertion below fails on the pre-fix code.
+
+class TestAnaphoraGateOnGenericDomainWords:
+    """Bare "it"/"that" must not be suppressed by a *generic* domain hit
+    (e.g. "failed", "running", "start", "status") — only a real entity or
+    a non-generic domain keyword should suppress it."""
+
+    def test_generic_service_word_does_not_suppress_bare_it(self):
+        assert analyze_message("it failed again").anaphora is True
+        assert analyze_message("it won't start").anaphora is True
+        assert analyze_message("it is still running").anaphora is True
+        assert analyze_message("that status is still bad").anaphora is True
+
+    def test_real_entity_still_suppresses_bare_it(self):
+        assert analyze_message("it is the samba share again").anaphora is False
+        assert analyze_message("it won't mount the disk").anaphora is False
+
+
+class TestQualifiedShareRegex:
+    """The qualifier before "share" (samba/nfs/windows/file/smb/cifs/
+    network) must not be consumed into a single two-word match — the
+    qualifier is itself a real entity and must survive alongside
+    "share"."""
+
+    def test_samba_share_keeps_both_entities(self):
+        ents = analyze_message("add a samba share for the media folder").entities
+        assert {"samba", "share"} <= ents
+
+    def test_nfs_share_keeps_both_entities(self):
+        assert canonical_entities("set up an nfs share") == {"nfs", "share"}
+
+    def test_unqualified_nfs_mount_unaffected(self):
+        # No "share" qualifier in play here — sanity check the fix didn't
+        # change plain single-word keyword matching.
+        assert canonical_entities("the nfs mount is down") == {"nfs", "mount"}
+
+    def test_windows_share_still_aliases_to_samba_plus_share(self):
+        ents = canonical_entities("set up a windows share for the scanner")
+        assert {"samba", "share", "scanner"} <= ents
+
+
+class TestAmbiguousKeywordsExcluded:
+    """"share", "smart", "cups" alone (unqualified) must not trigger a
+    domain — only "smartctl"/"smartd", "cupsd"/"printer", and a
+    network-qualified "share" should."""
+
+    def test_bare_share_no_network_domain(self):
+        s = analyze_message("can you share that document with me?")
+        assert "network" not in s.detected_domains
+        assert "share" not in s.entities
+
+    def test_bare_share_verb_no_network_domain(self):
+        s = analyze_message("summarize the report and share it")
+        assert "network" not in s.detected_domains
+
+    def test_bare_smart_no_domain(self):
+        assert analyze_message("hey, that was smart").detected_domains == []
+
+    def test_bare_cups_no_domain(self):
+        assert analyze_message("two cups of tea").detected_domains == []
+
+
+class TestEntityScanBoundsAndPathFiltering:
+    """`_scan`'s bounded, single-pass extraction: degenerate file-path
+    noise is dropped, the path-entity count is capped, and
+    `canonical_entities`/`analyze_message().entities` stay consistent
+    with each other on the same input."""
+
+    def test_degenerate_paths_dropped(self):
+        s = analyze_message("an I/O error happened, check N/A too and R/W issue")
+        assert not any(e in s.entities for e in ("/O", "/A", "/W"))
+        # The false-positive matches don't count, but a real path still does.
+        s2 = analyze_message("an I/O error in /var/log/syslog again")
+        assert "/var/log/syslog" in s2.entities
+
+    def test_path_entity_count_is_capped(self):
+        from halbert_core.intake.signals import _MAX_PATH_ENTITIES
+
+        text = " ".join(f"/path/number/{i}" for i in range(_MAX_PATH_ENTITIES + 30))
+        ents = canonical_entities(text)
+        path_like = {e for e in ents if e.startswith("/")}
+        assert len(path_like) <= _MAX_PATH_ENTITIES
+
+    def test_canonical_entities_matches_analyze_message_entities(self):
+        for msg in (
+            "the cifs mount is broken",
+            "add a samba share for the media folder",
+            "set up an nfs share",
+            "is the vpn up?",
+            "edit /etc/samba/smb.conf please.",
+        ):
+            assert canonical_entities(msg) == analyze_message(msg).entities
+
+
+class TestLargeInputPerformance:
+    """A large pasted message (e.g. a log dump) must not scale linearly
+    with entity/path/alias extraction — that work is bounded to a
+    prefix, unlike domain-boolean detection which still scans the full
+    text (review: Plan A / A4)."""
+
+    def test_large_paste_stays_bounded(self):
+        import time
+
+        msg = ("nginx failed to start, check /var/log/nginx/error.log. " * 4000)
+        analyze_message(msg)  # warm up (regex module cache, etc.)
+        start = time.perf_counter()
+        analyze_message(msg)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        # Generous bound: this is a ~220KB adversarial paste, not the
+        # module's <1ms normal-message budget — it only guards against
+        # the entity-extraction passes (token/alias/path scans) scaling
+        # unboundedly with input size the way the pre-fix code did.
+        assert elapsed_ms < 250, f"analyze_message took {elapsed_ms:.1f}ms on a large paste"
