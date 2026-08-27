@@ -25,6 +25,7 @@ import pytest
 
 from halbert_core.config import snapshot as snapshot_mod
 from halbert_core.config.parser import parse as parse_config
+from halbert_core.ingestion.redaction import redact_lines, redact_parsed
 
 # Distinctive enough that an `in` test over the whole file is meaningful.
 WG_PRIVATE_KEY = "uJ7T3XwQZ1sPRIVATEKEYVALUE9aBcDeFgHiJkLmNoPq="
@@ -114,6 +115,84 @@ def snapshotted(tmp_path, monkeypatch):
             "source": etc / entry["path"].rsplit("/", 1)[-1],
         }
     return by_name
+
+
+def test_a_boolean_under_a_secret_key_survives():
+    """A bool cannot be a credential, and it is often the setting that matters.
+
+    It is drawn from a universally-known two-element set, so it carries no
+    bits that could identify anything -- the same argument `_is_netmask`
+    makes for subnet masks. Meanwhile the keys it sits under are exactly the
+    ones a sysadmin assistant exists to reason about: `PasswordAuthentication`
+    matches on `password`, and every launchd `MachServices.<name>` entry whose
+    service name happens to contain `key` or `token` is a bare `<true/>`.
+
+    The plist text pass already spares them -- `_redact_plist_value` returns
+    None for a self-closing `<true/>` -- so redacting them here would make
+    `tree` disagree with `lines` inside the same canon file. Measured across
+    461 launchd plists on this host: 14 leaves, all of them booleans, were
+    the only place the two passes disagreed.
+
+    An integer is not exempt. A numeric PIN is a real credential, and
+    `_normalize_scalar` turns one into an int.
+    """
+    out = redact_parsed(
+        {
+            "PasswordAuthentication": False,
+            "MachServices": {"com.apple.applekeystored": True},
+            "PrivateKey": "abc123=",
+            "pin": 1234,
+            "password": None,
+        }
+    )
+    assert out["PasswordAuthentication"] is False
+    assert out["MachServices"]["com.apple.applekeystored"] is True
+    assert out["PrivateKey"] == "<secret>"
+    assert out["pin"] == "<secret>"
+    assert out["password"] is None
+
+
+def test_redact_lines_round_trips_a_file_with_no_lines():
+    """`"\\n".join([])` is `""` and `"".split("\\n")` is `[""]`.
+
+    That asymmetry is the one place the join-redact-split round trip does not
+    preserve its own input length, and it turns "no lines" into "one line".
+    """
+    assert redact_lines([]) == []
+    assert redact_lines([""]) == [""]
+
+
+def test_an_empty_config_file_still_snapshots(tmp_path, monkeypatch):
+    """An empty config file is ordinary and must not become an error.
+
+    An empty drop-in is how a systemd unit gets masked or a default
+    overridden, so its existence is a fact about the host. Found by running
+    the redaction over every readable file under /etc on this machine: seven
+    were empty, and every one of them tripped `redact_lines`' line-count
+    guard and was recorded as a failed file instead of a snapshotted one.
+    """
+    etc = tmp_path / "etc"
+    etc.mkdir()
+    (etc / "masked.conf").write_text("", encoding="utf-8")
+    manifest = tmp_path / "manifest.yml"
+    manifest.write_text(
+        f"include:\n  - {etc}/*.conf\nexclude: []\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(snapshot_mod, "RAW_DIR", str(tmp_path / "raw"))
+    monkeypatch.setattr(snapshot_mod, "CANON_DIR", str(tmp_path / "canon"))
+    monkeypatch.setattr(snapshot_mod, "SNAP_DIR", str(tmp_path / "snap"))
+
+    summary = snapshot_mod.snapshot(str(manifest))
+
+    assert [e for e in summary if "error" in e] == []
+    assert len(summary) == 1
+    canon = json.loads(
+        (tmp_path / "canon" / f"{summary[0]['hash']}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert canon["lines"] == []
+    assert canon["hash"] == hashlib.sha256(b"").hexdigest()
 
 
 def test_canon_json_carries_no_plaintext_credential(snapshotted):

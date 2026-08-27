@@ -1283,7 +1283,15 @@ def redact_lines(lines: Sequence[str], *, prose: bool = False) -> List[str]:
     a property the type system carries: if some later pass gains a multi-line
     replacement, this raises where the caller can see it instead of silently
     renumbering a file that other code cites by line.
+
+    A file with no lines is returned as one, before any of that. The round
+    trip is asymmetric only there -- `"\\n".join([])` is `""` but
+    `"".split("\\n")` is `[""]` -- so an empty file would come back one line
+    longer than it went in and trip the guard below. Empty config files are
+    ordinary: an empty drop-in is how a systemd unit gets masked.
     """
+    if not lines:
+        return []
     out = redact_text(_collapse_pem_blocks("\n".join(lines)), prose=prose).split("\n")
     if len(out) != len(lines):
         raise ValueError(
@@ -1314,9 +1322,24 @@ def redact_parsed(value: Any) -> Any:
     key name is not a credential -- `_is_secret_key` exists precisely because
     the name is the evidence about the value.
 
-    `None` under a secret key stays `None`: a key with no value has no value
-    to leak, and inventing one would report a credential that is not set as
-    though it were.
+    Two things under a secret key are kept, because neither can carry a
+    credential and both are load-bearing configuration:
+
+    * `None`. A key with no value has no value to leak, and inventing one
+      would report a credential that is not set as though it were.
+    * A **bool**. It is drawn from a universally-known two-element set, so it
+      carries no bits that could identify anything -- the same argument
+      `_is_netmask` makes for subnet masks. The keys it sits under are
+      exactly the ones a sysadmin assistant exists to reason about:
+      `PasswordAuthentication` matches on `password`, and a launchd
+      `MachServices.<name>` entry whose service name contains `key` or
+      `token` is a bare `<true/>`. The plist text pass already spares these --
+      `_redact_plist_value` returns None for a self-closing tag -- so
+      redacting them here would put two different answers in the same
+      canonical file, `tree` disagreeing with `lines`.
+
+    An **int** is not exempt, and the distinction is not pedantry: a numeric
+    PIN is a real credential and `_normalize_scalar` turns one into an int.
     """
 
     def walk(node: Any, secret: bool) -> Any:
@@ -1329,7 +1352,8 @@ def redact_parsed(value: Any) -> Any:
             walked = [walk(v, secret) for v in node]
             return tuple(walked) if isinstance(node, tuple) else walked
         if secret:
-            return node if node is None else SECRET
+            keep = node is None or isinstance(node, bool)
+            return node if keep else SECRET
         return redact_text(node) if isinstance(node, str) else node
 
     return walk(value, False)
