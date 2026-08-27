@@ -462,6 +462,16 @@ _KEY_STOP_CHARS = frozenset(" \t\r,;{}[]()<>=:/|&")
 # TOKEN_RE backstop runs over the whole text and must stop at one.
 _TOKEN_KEY_STOPS = _KEY_STOP_CHARS | {"\n"}
 
+# Characters that end an unquoted value on a line carrying several
+# directives. `<` is in the XML set and only there: inside an XML text node a
+# literal `<` must be written `&lt;`, so an unescaped one is markup -- the
+# value's own closing tag -- and cannot be part of the value. That is a rule
+# of the format, not a guess. Off an XML line `<` is ordinary text, and
+# bounding on it would end a passphrase at its first bracket and leave the
+# rest in plaintext.
+_VALUE_STOPS = " \t,"
+_XML_VALUE_STOPS = _VALUE_STOPS + "<"
+
 
 def _iter_pairs(line: str) -> Iterator[Tuple[int, str, int, int]]:
     """Yield `(key_start, key_text, separator_index, value_start)` per pair.
@@ -529,7 +539,9 @@ def _matching_bracket(line: str, start: int) -> Optional[int]:
     return None
 
 
-def _value_end(line: str, value_start: int, whole_line_value: bool) -> Optional[int]:
+def _value_end(
+    line: str, value_start: int, whole_line_value: bool, xml: bool
+) -> Optional[int]:
     """Where the value that begins at `value_start` ends, or None to skip it.
 
     The rule, and the tradeoff it settles:
@@ -548,12 +560,14 @@ def _value_end(line: str, value_start: int, whole_line_value: bool) -> Optional[
       is what redacts `psk=correct horse battery staple` in full. Which
       candidate pairs count as directives is `_directive_pairs`' question, not
       this one's.
-    * Otherwise the value ends at the next delimiter, comma or whitespace. A
-      line with several directives is an option list or a log message, not a
-      single-valued directive. This is what keeps `uid=1000,gid=1000` in an
-      /etc/fstab cifs line instead of destroying the mount, and what keeps a
-      log message readable enough for the email/address substitutions to still
-      find their targets.
+    * Otherwise the value ends at the next delimiter, comma or whitespace --
+      or, on an XML line, at the `<` that opens its own closing tag; see
+      `_XML_VALUE_STOPS`. A line with several directives is an option list, a
+      plist text node or a log message, not a single-valued directive. This is
+      what keeps `uid=1000,gid=1000` in an /etc/fstab cifs line instead of
+      destroying the mount, what stops `<string>--token=x</string>` losing its
+      closing tag, and what keeps a log message readable enough for the
+      email/address substitutions to still find their targets.
 
     Two residual gaps, deliberately accepted:
 
@@ -576,14 +590,15 @@ def _value_end(line: str, value_start: int, whole_line_value: bool) -> Optional[
         return None if close is None else close + 1
     if whole_line_value:
         return n
+    stops = _XML_VALUE_STOPS if xml else _VALUE_STOPS
     end = value_start
-    while end < n and line[end] not in " \t,":
+    while end < n and line[end] not in stops:
         end += 1
     return end
 
 
 def _directive_pairs(
-    line: str, pairs: List[Tuple[int, str, int, int]]
+    line: str, pairs: List[Tuple[int, str, int, int]], xml: bool
 ) -> List[Tuple[int, str, int, int]]:
     """The candidates from `_iter_pairs` that are genuinely sibling directives.
 
@@ -627,7 +642,7 @@ def _directive_pairs(
         kept.append(pair)
         if value_start >= len(line):
             continue  # key with no value: nothing of it extends along the line
-        end = _value_end(line, value_start, False)
+        end = _value_end(line, value_start, False, xml)
         # A container that opens here and closes on a later line covers the
         # whole remainder of this one.
         guard = max(guard, len(line) if end is None else end)
@@ -635,16 +650,33 @@ def _directive_pairs(
 
 
 def _redact_inline(line: str) -> str:
-    """Redact every inline `key<sep>value` pair whose key is a credential."""
+    """Redact every inline `key<sep>value` pair whose key is a credential.
+
+    The pair is replaced whole -- key, separator and value together -- which
+    is this pass's contract in every format it handles: `psk=hunter2` becomes
+    one placeholder, not `psk=<placeholder>`. Inside a plist that means
+    `<string>--token=abc123</string>` comes out as
+    `<string>[redacted]</string>` and the flag name goes with the value.
+    Keeping the name would read better, but it would need an inline-only rule
+    that no other pair gets, and one question with two answers depending on
+    format is the shape of boundary error this module's history is made of.
+    The flag-name spelling that *is* two tokens (`--token abc123`) keeps its
+    name, because there `_redact_flag_values` owns the value alone and the
+    name is not half of a pair.
+    """
     pairs = list(_iter_pairs(line))
     if not pairs:
         return line
+    # Asked once per line rather than once per pair: `_placeholder_for`'s
+    # search is over the whole line, and a line can carry many pairs.
+    xml = _is_xml_value_line(line)
     # "One directive, and it starts the line" is the single-directive shape
     # that earns end-of-line value extent; see `_value_end`.
-    directives = _directive_pairs(line, pairs)
+    directives = _directive_pairs(line, pairs, xml)
     whole_line_value = (
         len(directives) == 1 and directives[0][0] == len(_leading_ws(line))
     )
+    placeholder = PLIST_REDACTION if xml else SECRET
     out: List[str] = []
     cursor = 0
     for key_start, key_text, _sep, value_start in pairs:
@@ -655,11 +687,11 @@ def _redact_inline(line: str) -> str:
             # shape (next-line scalar or block body); redacting the bare key
             # here would destroy `password:` and `keys:` headers.
             continue
-        end = _value_end(line, value_start, whole_line_value)
+        end = _value_end(line, value_start, whole_line_value, xml)
         if end is None:
             continue  # container opens here and closes on a later line
         out.append(line[cursor:key_start])
-        out.append(SECRET)
+        out.append(placeholder)
         cursor = end
     if not out:
         return line
@@ -784,9 +816,20 @@ URL_CREDENTIAL_RE = re.compile(
 )
 
 
+def _is_xml_value_line(line: str) -> bool:
+    """True when this line puts a value inside an XML text node.
+
+    One predicate for two decisions that have to agree: which placeholder is
+    safe to write (`<secret>` reads as an unknown element inside XML) and
+    where an unquoted value ends (`<` is markup there and text everywhere
+    else). They were separate, and only the first one was ever asked.
+    """
+    return _PLIST_OPEN_RE.search(line) is not None
+
+
 def _placeholder_for(line: str) -> str:
     """`<secret>` reads as an element inside XML; plists get the text marker."""
-    return PLIST_REDACTION if _PLIST_OPEN_RE.search(line) else SECRET
+    return PLIST_REDACTION if _is_xml_value_line(line) else SECRET
 
 
 def _is_credential_flag(token: str) -> bool:

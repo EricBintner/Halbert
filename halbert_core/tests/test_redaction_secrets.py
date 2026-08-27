@@ -1167,6 +1167,84 @@ def test_plist_inline_shell_flag_uses_the_xml_safe_marker():
     assert out.count("<string>") == out.count("</string>") == 1
 
 
+def test_plist_inline_pair_keeps_its_closing_tag():
+    """`--token=abc123` inside a `<string>` is an inline pair, not an argv
+    member, so `_redact_inline` owns it -- and it bounded the value on
+    whitespace, which ran straight through `</string>` and took the closing
+    tag with it. The document came out malformed.
+    """
+    out = redact_text("<string>--token=abc123secret</string>\n")
+    assert "abc123secret" not in out
+    assert out == "<string>[redacted]</string>\n"
+
+
+def test_plist_inline_pair_uses_the_xml_safe_marker():
+    """A bare `<secret>` inside a plist reads as an unknown element.
+
+    `_placeholder_for` exists for exactly this and the inline pass was the
+    one path that did not ask it.
+    """
+    out = redact_text("<string>api_key=AKIA123SECRET</string>\n")
+    assert "AKIA123SECRET" not in out
+    assert "<secret>" not in out
+    assert out == "<string>[redacted]</string>\n"
+
+
+def test_a_redacted_plist_document_still_parses():
+    """Well-formedness is the point of the XML-safe marker; assert it with a
+    parser rather than by counting tags."""
+    import plistlib
+
+    doc = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<plist version="1.0">\n'
+        "<dict>\n"
+        "\t<key>Label</key>\n"
+        "\t<string>com.example.myd</string>\n"
+        "\t<key>ProgramArguments</key>\n"
+        "\t<array>\n"
+        "\t\t<string>/usr/bin/myd</string>\n"
+        "\t\t<string>--token=abc123secret</string>\n"
+        "\t\t<string>api_key=AKIA123SECRET</string>\n"
+        "\t</array>\n"
+        "</dict>\n"
+        "</plist>\n"
+    )
+    out = redact_text(doc)
+    assert "abc123secret" not in out
+    assert "AKIA123SECRET" not in out
+
+    parsed = plistlib.loads(out.encode("utf-8"))
+    assert parsed["Label"] == "com.example.myd"
+    assert parsed["ProgramArguments"] == [
+        "/usr/bin/myd",
+        "[redacted]",
+        "[redacted]",
+    ]
+
+
+def test_a_non_credential_inline_pair_in_a_plist_string_survives():
+    """Over-redaction guard: only a credential key loses its value."""
+    plist = "\t<string>--config=/etc/cups/cupsd.conf</string>\n"
+    assert redact_text(plist) == plist
+
+
+def test_an_angle_bracket_bounds_a_value_only_inside_xml():
+    """`<` ends a value on an XML line and nowhere else.
+
+    Inside an XML text node a literal `<` must be written `&lt;`, so an
+    unescaped one is markup and cannot be part of the value. Off such a line
+    `<` is ordinary text, and bounding on it would leave everything after the
+    bracket in plaintext -- which for a passphrase is most of it. The fstab
+    shape below is the one that has to keep working: several directives on a
+    line, so the value is bounded by the comma rather than by end of line.
+    """
+    out = redact_text("username=alice,password=hun<ter2secret,uid=1000\n")
+    assert "hun<ter2secret" not in out
+    assert "ter2secret" not in out
+    assert "uid=1000" in out
+
+
 def test_auto_master_url_credentials_are_redacted():
     """W3: /etc/auto_master (storage.yml) carries smbfs URLs with inline
     credentials and no key/value shape at all."""
