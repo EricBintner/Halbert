@@ -22,12 +22,13 @@ from __future__ import annotations
 import logging
 import os
 import platform
-import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
 
+from ..config.parser import parse as parse_config
+from ..ingestion.redaction import redact_text
 from ..utils.paths import data_subdir
 
 logger = logging.getLogger(__name__)
@@ -101,14 +102,60 @@ def _os_config_paths() -> List[str]:
     return _LINUX_CONFIG_PATHS
 
 
+def _stage_one_file(src_file: Path, dest_file: Path) -> bool:
+    """Stage a single config file through the redaction pipeline.
+
+    Never a raw copy: anything landing under the staging root is indexed by
+    SourcePrep and returned by scoped queries, so unredacted content here is
+    unredacted content in the knowledge base. Binary formats (plists) are
+    normalized to text by the parser first, so they are greppable AND so the
+    redaction rules can actually match — redaction is text-based and cannot
+    see inside a binary blob.
+
+    Returns True if the file was staged.
+    """
+    try:
+        canon = parse_config(str(src_file))
+    except Exception as e:
+        logger.debug(f"Skip {src_file} (parse failed): {e}")
+        return False
+
+    # `lines` is the canonical text form for every kind the parser emits,
+    # including plists re-serialized to XML. It carries no line terminators:
+    # `splitlines()` cannot express "the file ended with a newline", so the
+    # join always loses the final one. Put it back rather than write every
+    # staged file one byte short of its original — the whole point of this
+    # tree is that it can be diffed against the live host, and a spurious
+    # "\\ No newline at end of file" on every file makes the real redaction
+    # changes harder to see. A source file that genuinely lacked a trailing
+    # newline gains one; that is the correct shape for a config file and is
+    # meaningless for a plist, which is re-serialized either way.
+    text = "\n".join(line["text"] for line in canon.get("lines") or [])
+    if text:
+        text += "\n"
+
+    try:
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+        # An empty file is still staged. Its content contributes nothing to the
+        # index, but its existence is a fact about the host — an empty drop-in
+        # is how a unit gets masked or a default overridden — and dropping it
+        # would make the staged tree misreport the machine's file inventory.
+        dest_file.write_text(redact_text(text), encoding="utf-8")
+    except (PermissionError, OSError) as e:
+        logger.warning(f"Cannot write staged copy {dest_file}: {e}")
+        return False
+    return True
+
+
 def _stage_config_files(paths: List[str], staging_root: Path) -> int:
-    """Copy config files/dirs into the staging directory.
+    """Stage config files/dirs into the staging directory, redacted.
 
     Preserves the original path structure under the staging root.
     Skips files that don't exist or aren't readable.
 
     Returns the number of files staged.
     """
+    staging_root = Path(staging_root)
     staging_root.mkdir(parents=True, exist_ok=True)
     count = 0
 
@@ -127,21 +174,15 @@ def _stage_config_files(paths: List[str], staging_root: Path) -> int:
 
         try:
             if src_path.is_file():
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src_path, dest)
-                count += 1
+                if _stage_one_file(src_path, dest):
+                    count += 1
             elif src_path.is_dir():
                 for root, dirs, files in os.walk(src_path):
                     rel = Path(root).relative_to(src_path)
                     dest_dir = dest / rel
-                    dest_dir.mkdir(parents=True, exist_ok=True)
                     for f in files:
-                        src_file = Path(root) / f
-                        try:
-                            shutil.copy2(src_file, dest_dir / f)
+                        if _stage_one_file(Path(root) / f, dest_dir / f):
                             count += 1
-                        except (PermissionError, OSError) as e:
-                            logger.debug(f"Skip {src_file}: {e}")
         except (PermissionError, OSError) as e:
             logger.warning(f"Cannot stage {src_path}: {e}")
 
