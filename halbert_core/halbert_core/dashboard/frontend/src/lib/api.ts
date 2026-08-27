@@ -339,6 +339,15 @@ export const api = {
     )
   },
 
+  /**
+   * "Forget this": the server replaces the row's content and tool blocks
+   * with "[redacted by admin]", rewrites its FTS row and regenerates the
+   * thread's receipt (spec §5). Rows are never deleted.
+   */
+  redactMessage(messageId: number): Promise<{ ok: boolean }> {
+    return request(`/api/agent/message/${encodeURIComponent(String(messageId))}/redact`, { method: 'POST' })
+  },
+
   // -----------------------------------------------------------------
   // Agent conversations (Phase 36 agent path)
   // -----------------------------------------------------------------

@@ -17,11 +17,12 @@
  * and one `role="article"` per turn.
  */
 
-import { memo } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { useTerminalSessions } from '../../hooks/useTerminalSessions';
 import type { ToolExecution } from '../../hooks/useAgentStream';
 import type { TimelineDay } from '../../hooks/useTimeline';
 import type { TimelineToolBlock, TimelineTurn } from '../../types/timeline';
+import { api } from '../../lib/api';
 import { ToolExecutionCard } from './ToolExecutionCard';
 import { DiffBlock } from './DiffBlock';
 import { InlineTerminals } from './InlineTerminals';
@@ -125,23 +126,41 @@ function TurnTerminals({ ids }: { ids: string[] }) {
   );
 }
 
+/** What a forgotten row reads as — the same marker the server stores. */
+export const REDACTED = '[redacted by admin]';
+
+/** Stored rows have server ids; a turn appended live carries -1 until the next load. */
+export function redactableIds(turn: TimelineTurn): number[] {
+  return [turn.user?.messageId, turn.assistant?.messageId].filter(
+    (id): id is number => typeof id === 'number' && id >= 0,
+  );
+}
+
 interface TurnArticleProps {
   turn: TimelineTurn;
+  /** True once "Forget this" went through: the words and the blocks are the marker. */
+  forgotten: boolean;
+  onForget?: (turn: TimelineTurn) => void;
   onRunCommand?: RunCommand;
 }
 
 /**
  * memo: a stored turn is immutable, so it should only re-render when the
- * turn object itself changes. Callers should pass a stable `onRunCommand`
- * (useCallback) or the memo buys nothing.
+ * turn object itself changes (or when it is forgotten). Callers should pass a
+ * stable `onRunCommand` and `onForget` (useCallback) or the memo buys nothing.
  */
-const TurnArticle = memo(function TurnArticle({ turn, onRunCommand }: TurnArticleProps) {
+const TurnArticle = memo(function TurnArticle({ turn, forgotten, onForget, onRunCommand }: TurnArticleProps) {
+  // Redaction replaces content and blocks_json (spec §5); the terminal ids
+  // are not part of it, so the "ended" chips stay.
+  const blocks = forgotten ? [] : turn.blocks;
+  const diffs = forgotten ? [] : turn.diffProposals;
   const hasAssistantSide =
     turn.assistant !== null ||
-    turn.blocks.length > 0 ||
+    blocks.length > 0 ||
     turn.terminalBlockIds.length > 0 ||
-    turn.diffProposals.length > 0;
-  const label = turn.user ? turn.user.content.slice(0, 80) : turn.origin;
+    diffs.length > 0;
+  const label = forgotten ? REDACTED : turn.user ? turn.user.content.slice(0, 80) : turn.origin;
+  const canForget = !forgotten && onForget !== undefined && redactableIds(turn).length > 0;
 
   return (
     <article
@@ -154,7 +173,7 @@ const TurnArticle = memo(function TurnArticle({ turn, onRunCommand }: TurnArticl
       {turn.user && (
         <div className="flex justify-end">
           <div className="max-w-[80%] bg-primary text-primary-foreground px-4 py-2 rounded-lg">
-            <p className="text-sm whitespace-pre-wrap break-words">{turn.user.content}</p>
+            <p className="text-sm whitespace-pre-wrap break-words">{forgotten ? REDACTED : turn.user.content}</p>
           </div>
         </div>
       )}
@@ -166,7 +185,7 @@ const TurnArticle = memo(function TurnArticle({ turn, onRunCommand }: TurnArticl
       {hasAssistantSide && (
         <div className="flex justify-start">
           <div className="max-w-[85%] bg-muted/50 border border-border/50 rounded-lg p-4 space-y-3">
-            {turn.blocks.map((block, i) => (
+            {blocks.map((block, i) => (
               <ToolExecutionCard
                 key={block.executionId ?? `${turn.turnId}-block-${i}`}
                 execution={executionFromBlock(block, `${turn.turnId}-block-${i}`)}
@@ -175,7 +194,7 @@ const TurnArticle = memo(function TurnArticle({ turn, onRunCommand }: TurnArticl
 
             {turn.terminalBlockIds.length > 0 && <TurnTerminals ids={turn.terminalBlockIds} />}
 
-            {turn.diffProposals.map((diff) => (
+            {diffs.map((diff) => (
               <DiffBlock
                 key={diff.id}
                 filePath={diff.filePath}
@@ -192,7 +211,11 @@ const TurnArticle = memo(function TurnArticle({ turn, onRunCommand }: TurnArticl
 
             {turn.assistant && (
               <div className="text-sm text-foreground">
-                <MessageContent content={turn.assistant.content} onRunCommand={onRunCommand} />
+                {forgotten ? (
+                  <p className="font-mono text-ink-tertiary">{REDACTED}</p>
+                ) : (
+                  <MessageContent content={turn.assistant.content} onRunCommand={onRunCommand} />
+                )}
               </div>
             )}
 
@@ -200,6 +223,20 @@ const TurnArticle = memo(function TurnArticle({ turn, onRunCommand }: TurnArticl
               <p className="text-[11px] font-mono text-ink-tertiary">cancelled</p>
             )}
           </div>
+        </div>
+      )}
+
+      {canForget && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            aria-label="Forget this turn"
+            title="Replace this turn's words and tool output with a redaction marker, everywhere it is stored"
+            onClick={() => onForget?.(turn)}
+            className="rounded px-1 text-[11px] font-mono text-ink-tertiary hover:text-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          >
+            Forget this
+          </button>
         </div>
       )}
     </article>
@@ -215,6 +252,20 @@ export function Timeline({
   onLoadLatest,
   onRunCommand,
 }: TimelineProps) {
+  const [forgotten, setForgotten] = useState<ReadonlySet<string>>(() => new Set());
+
+  // "Forget this": both stored rows are redacted server-side first; the
+  // article shows the marker once the server has agreed, never before, so
+  // the page never claims something is forgotten that is still on disk.
+  const handleForget = useCallback(async (turn: TimelineTurn) => {
+    try {
+      await Promise.all(redactableIds(turn).map((id) => api.redactMessage(id)));
+      setForgotten((prev) => new Set(prev).add(turn.turnId));
+    } catch (err) {
+      console.warn('[TIMELINE] forget failed; the turn is unchanged:', err);
+    }
+  }, []);
+
   if (byDay.length === 0 && !hasMore) return null;
 
   return (
@@ -241,7 +292,13 @@ export function Timeline({
             <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
           </header>
           {day.turns.map((turn) => (
-            <TurnArticle key={turn.turnId} turn={turn} onRunCommand={onRunCommand} />
+            <TurnArticle
+              key={turn.turnId}
+              turn={turn}
+              forgotten={forgotten.has(turn.turnId)}
+              onForget={handleForget}
+              onRunCommand={onRunCommand}
+            />
           ))}
         </section>
       ))}

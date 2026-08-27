@@ -137,3 +137,13 @@ describe('api.retractRecall', () => {
     expect(init.method).toBe('DELETE')
   })
 })
+
+describe('api.redactMessage', () => {
+  it('POSTs the redact route for one stored row', async () => {
+    const fetchMock = mockFetch({ ok: true })
+    await api.redactMessage(7)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/agent/message/7/redact')
+    expect(init.method).toBe('POST')
+  })
+})

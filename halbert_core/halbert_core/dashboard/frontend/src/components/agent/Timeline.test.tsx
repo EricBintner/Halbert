@@ -7,7 +7,7 @@
  * no longer be applied.
  */
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { Timeline, executionFromBlock } from './Timeline'
@@ -214,5 +214,69 @@ describe('executionFromBlock', () => {
   it('falls back to the caller id only when the block has no execution id', () => {
     expect(executionFromBlock(block(), 't-1-block-0').executionId).toBe('t-1-block-0')
     expect(executionFromBlock(block({ executionId: 'x9' }), 't-1-block-0').executionId).toBe('x9')
+  })
+})
+
+describe('Timeline — Forget this', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  function redactFetch() {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '',
+      json: async () => ({ ok: true }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('redacts both stored rows and replaces the turn with the marker', async () => {
+    const fetchMock = redactFetch()
+    render(<Timeline byDay={groupByDay(TURNS, NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />)
+
+    // Both fixture turns are stored (server ids 1/2 and 5), so both offer it.
+    const buttons = screen.getAllByRole('button', { name: 'Forget this turn' })
+    expect(buttons).toHaveLength(2)
+    await userEvent.click(buttons[0])
+
+    await waitFor(() => expect(screen.getAllByText('[redacted by admin]')).toHaveLength(2))
+    const calls = fetchMock.mock.calls.map(([url, init]) => [String(url), (init as RequestInit).method])
+    expect(calls).toEqual([
+      ['/api/agent/message/1/redact', 'POST'],
+      ['/api/agent/message/2/redact', 'POST'],
+    ])
+    expect(screen.queryByText('is samba running?')).not.toBeInTheDocument()
+    expect(screen.queryByText('Answer to is samba running?')).not.toBeInTheDocument()
+    expect(screen.queryByText('run_command')).not.toBeInTheDocument()
+    // Terminal ids are not part of the redaction; the ended chip stays.
+    expect(screen.getByText('terminal · ended')).toBeInTheDocument()
+    // The row is never deleted: the article and its id remain.
+    expect(screen.getAllByRole('article')[0]).toHaveAttribute('data-turn-id', 't-1')
+    expect(screen.getAllByRole('button', { name: 'Forget this turn' })).toHaveLength(1)
+  })
+
+  it('offers no control for rows without a server id, and keeps the turn when the server refuses', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 500, text: async () => 'locked', json: async () => ({}) }),
+    )
+    const local = turn('local-1', TODAY, 'not stored yet', {
+      user: { messageId: -1, content: 'not stored yet', timestamp: TODAY, status: 'complete' },
+      assistant: { messageId: -1, content: 'ok', timestamp: TODAY, status: 'complete' },
+    })
+    render(
+      <Timeline byDay={groupByDay([TURNS[0], local], NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />,
+    )
+
+    const buttons = screen.getAllByRole('button', { name: 'Forget this turn' })
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].closest('article')).toHaveAttribute('data-turn-id', 't-1')
+
+    await userEvent.click(buttons[0])
+    await waitFor(() => expect(warn).toHaveBeenCalled())
+    expect(screen.getByText('is samba running?')).toBeInTheDocument()
+    expect(screen.queryByText('[redacted by admin]')).not.toBeInTheDocument()
   })
 })
