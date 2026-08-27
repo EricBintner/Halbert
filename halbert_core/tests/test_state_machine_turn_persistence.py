@@ -222,3 +222,114 @@ async def test_stream_abandoned_during_begin_turn_still_ends_the_turn():
     assert tm.ended[0]["assistant_text"] == "" and tm.ended[0]["blocks"] == []
     assert not agent.turn_lock.locked()
     assert agent.current_state == AgentState.IDLE
+
+
+@pytest.mark.asyncio
+async def test_queued_turn_abandoned_before_planning_is_not_persisted_as_complete():
+    """A queued turn dropped on its own in_progress event is interrupted.
+
+    The queued caller's ``conversation_status: in_progress`` is the one
+    statement inside process()'s inner try that runs *before* the PLANNING
+    transition, so the machine is still IDLE there. Reading IDLE as "ran to
+    the end" wrote that empty turn to the store as ``complete`` — a row no
+    longer ``in_progress``, which boot's ``mark_interrupted()`` can never
+    heal.
+    """
+    tm = _FakeThreadManager()
+    agent = _agent(_LLM(delay=0.5))
+
+    async def first():
+        async for _ in agent.process("first", session_id="q1", thread_manager=tm):
+            pass
+
+    task = asyncio.ensure_future(first())
+    await asyncio.sleep(0.05)          # the first turn now holds the turn lock
+    gen = agent.process("second", session_id="q2", thread_manager=tm)
+    seen = []
+    async for e in gen:
+        seen.append((e.type, e.data.get("status")))
+        if e.type == "conversation_status" and e.data.get("status") == "in_progress":
+            break
+    await gen.aclose()
+    await asyncio.wait_for(task, timeout=10)
+
+    # The second turn really did queue (otherwise this proves nothing).
+    assert ("conversation_status", "waiting") in seen
+    assert seen[-1] == ("conversation_status", "in_progress")
+    assert [e["turn"].turn_id for e in tm.ended] == ["turn-1", "turn-2"]
+    assert tm.ended[0]["status"] == "complete" and tm.ended[0]["assistant_text"] == "the answer"
+    assert tm.ended[1]["status"] == "interrupted" and tm.ended[1]["assistant_text"] == ""
+    assert not agent.turn_lock.locked()
+    assert agent.current_state == AgentState.IDLE
+
+
+def _confirming_agent():
+    """An agent whose first plan stages a HIGH-risk command, then answers."""
+    llm = AsyncMock()
+    tc = MagicMock()
+    tc.function.name = "run_command"
+    tc.function.arguments = {"command": "systemctl restart sshd"}
+    calls = {"n": 0}
+
+    async def _chat(*a, **k):
+        calls["n"] += 1
+        return MagicMock(content="", tool_calls=[tc] if calls["n"] == 1 else [], plan=None)
+
+    async def _stream(messages, **kwargs):
+        yield "restarted"
+
+    llm.chat, llm.stream = AsyncMock(side_effect=_chat), _stream
+    return _agent(llm)
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_paused_turn_ends_it():
+    """cancel_session() on a turn paused at AWAITING_CONFIRMATION.
+
+    The paused turn's SSE stream has already closed, so no finally will run
+    for it again: dropping the session without ending the turn left the user
+    row in_progress forever (confirm_action is never called, and
+    _supersede_paused_turn can no longer find the session on the next
+    message). The staged action never ran, so it is recorded as not run.
+    """
+    tm = _FakeThreadManager()
+    agent = _confirming_agent()
+    async for _ in agent.process("restart sshd", session_id="c1", thread_manager=tm):
+        pass
+    assert agent.current_state == AgentState.AWAITING_CONFIRMATION and tm.ended == []
+
+    assert agent.cancel_session("c1") is True
+    assert len(tm.ended) == 1
+    end = tm.ended[0]
+    assert end["turn"].turn_id == "turn-1" and end["status"] == "cancelled"
+    staged = end["blocks"][-1]
+    assert staged["tool"] == "run_command"
+    assert staged["args"] == {"command": "systemctl restart sshd"}
+    assert staged["result"] == "not run — superseded" and staged["exit"] is None
+    assert agent.current_state == AgentState.IDLE
+    assert not agent.turn_lock.locked()
+
+    # The next turn is a normal one, and the cancelled turn is not written twice.
+    async for _ in agent.process("thanks", session_id="c2", thread_manager=tm):
+        pass
+    assert [e["turn"].turn_id for e in tm.ended] == ["turn-1", "turn-2"]
+    assert tm.ended[1]["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_live_turn_leaves_the_write_to_the_finally():
+    """cancel_session() must not end a turn that is still running.
+
+    A live turn is ended by process()'s finally, with the text, blocks and
+    terminal ids it finished with. cancel_session only asks the drive loop
+    to stop, and the handler that is running keeps going for a moment
+    afterwards — writing the turn from cancel_session would persist a
+    truncated record and make the finally's own end_turn a no-op.
+    """
+    tm = _FakeThreadManager()
+    agent = _agent(_LLM(delay=0.05))
+    async for e in agent.process("slow", session_id="c3", thread_manager=tm):
+        if e.type == "state_change" and e.data["state"] == "planning":
+            agent.cancel_session("c3")
+            assert tm.ended == []      # the running turn still owns its write
+    assert [end["status"] for end in tm.ended] == ["cancelled"]

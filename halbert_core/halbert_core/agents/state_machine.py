@@ -578,9 +578,9 @@ class AgentStateMachine:
     def _turn_status(self, session_id: str) -> str:
         """``complete`` | ``cancelled`` | ``interrupted`` for the turn ending now.
 
-        Runs before ``_settle_turn`` resets the state: IDLE means ``_drive``
-        ran to the end; anything else (an exception, the consumer going
-        away) is an interrupted turn.
+        Runs before ``_settle_turn`` resets the state: IDLE *after the turn
+        started* means ``_drive`` ran to the end; anything else (an
+        exception, the consumer going away) is an interrupted turn.
 
         ``self.cancelled`` is legacy: after A11 removes the route's
         force-reset nothing writes it any more. The live path is
@@ -597,7 +597,18 @@ class AgentStateMachine:
         if cancelled:
             return "cancelled"
         if self.current_state == AgentState.IDLE:
-            return "complete"
+            # IDLE is also the state *before* the first transition, so on
+            # its own it does not mean "ran to the end". The queued
+            # caller's conversation_status is yielded from inside the try
+            # while the machine is still IDLE; a consumer that goes away on
+            # exactly that event would otherwise persist an empty turn as
+            # ``complete`` — and a row that is no longer ``in_progress`` is
+            # one boot's ``mark_interrupted()`` can never heal, unlike the
+            # plain abandonment this would be mistaken for. Every
+            # ``_transition`` appends to ``state_history``, so it is empty
+            # only for a turn that never started.
+            started = bool(getattr(self.ctx, "state_history", None))
+            return "complete" if started else "interrupted"
         return "interrupted"
 
     @staticmethod
@@ -861,6 +872,18 @@ class AgentStateMachine:
                     ctx.conversation_status.transition(ConversationStatus.CANCELLED)
                 except ValueError:
                     pass
+            # A turn paused on a confirmation has already closed its SSE
+            # stream, so no finally will ever run for it again: dropping the
+            # session without ending the turn left the persisted user row
+            # in_progress forever — confirm_action is never called for it,
+            # and the next message's _supersede_paused_turn can no longer
+            # find the session to end it. End it exactly as a superseded
+            # pause is ended (cancelled, with the staged action recorded as
+            # never run, spec §5). A turn that is still running is left
+            # alone: process()'s finally owns its write and has the final
+            # text, blocks and terminal ids.
+            if self.current_state == AgentState.AWAITING_CONFIRMATION:
+                self._record_superseded_turn(ctx)
             del self.active_sessions[session_id]
             self.current_state = AgentState.IDLE
             return True
