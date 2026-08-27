@@ -72,9 +72,34 @@ def test_redaction_does_not_span_newlines():
     assert "- foo" in out
 
 
-def test_yaml_structure_survives_redaction():
-    netplan = "network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n"
-    assert redact_text(netplan) == netplan
+def test_netplan_wifi_redacts_value_without_eating_structure():
+    """Real netplan carries `password:` under access-points:.
+
+    The secret value must go, but the surrounding YAML structure must
+    survive — a newline-spanning separator would consume the next line's
+    first token and corrupt the file. /etc/netplan/*.yaml is harvested by
+    the network role manifest, so this is the production case.
+    """
+    netplan = (
+        "network:\n"
+        "  version: 2\n"
+        "  wifis:\n"
+        "    wlan0:\n"
+        "      access-points:\n"
+        '        "HomeNet":\n'
+        '          password: "sup3rs3cretwifi"\n'
+        "      dhcp4: true\n"
+    )
+    out = redact_text(netplan)
+
+    # The secret is gone.
+    assert "sup3rs3cretwifi" not in out
+    # But every structural line around it survives intact.
+    assert "dhcp4: true" in out
+    assert "access-points:" in out
+    assert '"HomeNet":' in out
+    # And the line following the secret was not swallowed.
+    assert out.count("\n") == netplan.count("\n")
 
 
 def test_secret_with_horizontal_whitespace_still_redacted():
