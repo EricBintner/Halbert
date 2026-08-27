@@ -21,8 +21,11 @@ class Manifest:
     def from_file(cls, path: str) -> "Manifest":
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-        include = data.get("include", [])
-        exclude = data.get("exclude", [])
+        # Role manifests reference per-user paths (~/Library/LaunchAgents,
+        # ~/.zshrc). Neither os.path.dirname nor os.walk expands ~, so an
+        # unexpanded pattern silently matches nothing.
+        include = [os.path.expanduser(p) for p in data.get("include", [])]
+        exclude = [os.path.expanduser(p) for p in data.get("exclude", [])]
         parsers = data.get("parsers", {})
         return cls(include, exclude, parsers)
 
