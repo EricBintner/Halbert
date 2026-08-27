@@ -51,6 +51,14 @@ SOFT_LANDING_ROWS = 6
 # index that ages them. Items that appear on the row without going through
 # `end_turn` — a merge (A6c), the JSON migration (A12a), another process —
 # are adopted as if they were said this turn rather than swept immediately.
+#
+# The window's clock ticks per *set*, and only on turns that carry an item of
+# that kind — see `_tick`. Counting every turn breaks segmentation from the
+# other side: `decide` needs `bool(open_domains)` before it will call a
+# domain shift, so an *empty* `topic_domains` pins a thread open exactly as a
+# saturated one did, and three acknowledgements in a row ("yes do that", "ok
+# go ahead", "thanks, looks good") emptied it — the shape the last few turns
+# before a break almost always have.
 #: Domains are coarse (six of them) and exist only to answer "is this still
 #: the same subject?", so they follow the message closely.
 DOMAIN_WINDOW_TURNS = 3
@@ -60,6 +68,11 @@ ENTITY_WINDOW_TURNS = 8
 #: message at 20 file paths, and the receipt renders at most 12.
 MAX_THREAD_ENTITIES = 20
 _TOPIC_WINDOW_KEY = "topic_window"
+_DOMAIN_CLOCK = "domain_turn"
+_ENTITY_CLOCK = "entity_turn"
+#: The founding turn's entities, kept whole: `entities_json` is a window and
+#: cannot be used to title the thread (see `_refined_title_fields`).
+_FOUNDING_ENTITIES_KEY = "founding_entities"
 
 # ── bracketed system rows ────────────────────────────────────────
 # `_history` and `_soft_landing` wrap untrusted text in a bracketed system
@@ -77,7 +90,18 @@ PREV_TITLE_MAX = 120
 #: `build_receipt`'s own default ceiling; a longer stored receipt is clipped.
 RECEIPT_ROW_MAX = 1500
 _WS_RE = re.compile(r"\s+")
-_BRACKET_RE = re.compile(r"[\[\]]")
+#: The row's delimiters are *substituted*, never deleted. A receipt carries
+#: `Commands:` and `Files written:` lines, and the agent reading them stages
+#: shell commands: deleting a bracket rewrites the command it appears in —
+#: `grep -E '^[0-9]+ ' /var/log/syslog` came back as `grep -E '^0-9+ '`, a
+#: different regex, with nothing to tell the agent it had been altered
+#: (review: Plan A / A6, round 2). The fullwidth forms keep the command
+#: readable, cannot close the row, and are visibly not ASCII, so a command
+#: quoted back out of a receipt fails loudly instead of doing something
+#: subtly different. `_DELIM_RE` below is still collapsed rather than
+#: substituted: `<continuity>` is this module's own block delimiter, not
+#: shell syntax, and cannot appear in a command by accident.
+_BRACKET_SUB = {ord("["): "［", ord("]"): "］"}
 _DELIM_RE = re.compile(r"</?\s*continuity\s*>", re.IGNORECASE)
 #: How much of a field `_fence` looks at before capping it — enough that no
 #: renderable content is lost, little enough that the fixpoint below stays
@@ -89,9 +113,11 @@ _SCAN_FACTOR = 4
 def _fence(text: Any, limit: int, *, keep_lines: bool = False) -> str:
     """Neutralise ``text`` for interpolation into a bracketed system row.
 
-    Drops the row's delimiters (``[``/``]`` and the ``<continuity>`` tags),
-    flattens whitespace unless ``keep_lines`` (the receipt keeps its labelled
-    lines), and caps the result at ``limit`` characters.
+    Substitutes the row's brackets with their fullwidth lookalikes (so a
+    quoted command stays legible instead of silently changing meaning),
+    collapses the ``<continuity>`` tags, flattens whitespace unless
+    ``keep_lines`` (the receipt keeps its labelled lines), and caps the
+    result at ``limit`` characters.
     """
     flat = str(text if text is not None else "")
     flat = flat[: max(_SCAN_MIN, limit * _SCAN_FACTOR)]
@@ -103,22 +129,42 @@ def _fence(text: Any, limit: int, *, keep_lines: bool = False) -> str:
     # one, so the string strictly shrinks and the loop terminates.
     while _DELIM_RE.search(flat):
         flat = _DELIM_RE.sub(" ", flat)
-    flat = _BRACKET_RE.sub("", flat)
+    flat = flat.translate(_BRACKET_SUB)
     flat = flat.strip() if keep_lines else _WS_RE.sub(" ", flat).strip()
     if len(flat) <= limit:
         return flat
     return flat[: limit - 1].rstrip() + "…"
 
 
+def _tick(window: Dict[str, Any], key: str, advance: bool) -> int:
+    """The current index of one topic set's clock.
+
+    The clock advances only on turns that carry an item of that kind, so the
+    window means "the last N turns that named a domain/entity" rather than
+    "the last N turns". A clock that ticked on every turn aged a subject out
+    during ordinary conversational filler — and an empty ``topic_domains``
+    blocks segmentation exactly as a saturated one does, because
+    ``thread_signals.decide`` requires ``bool(open_domains)`` before it will
+    call a domain shift. Three acknowledgements were enough to strand a
+    thread open forever (review: Plan A / A6, round 2).
+    """
+    raw = window.get(key, window.get("turn"))  # "turn": the single clock this replaced
+    try:
+        index = int(raw or 0)
+    except (TypeError, ValueError):
+        index = 0
+    return index + 1 if advance else index
+
+
 def _age_topics(
     seen: Any, stored: Any, fresh: Any, index: int, window: int,
     cap: Optional[int] = None,
 ) -> Dict[str, int]:
-    """Last-seen map for one topic set after turn ``index``.
+    """Last-seen map for one topic set at clock ``index`` (see ``_tick``).
 
-    ``seen`` is the stored map (item -> turn index), ``stored`` the column as
+    ``seen`` is the stored map (item -> clock index), ``stored`` the column as
     it stands on the row, ``fresh`` this turn's items. Items last mentioned
-    more than ``window`` turns ago are dropped; ``cap`` keeps the newest.
+    more than ``window`` ticks ago are dropped; ``cap`` keeps the newest.
     """
     aged: Dict[str, int] = {}
     if isinstance(seen, dict):
@@ -364,33 +410,57 @@ class ThreadManager:
 
         Both sets are windowed rather than accumulated — see the module
         comment on ``DOMAIN_WINDOW_TURNS`` for why a lifetime union silently
-        ends a thread's ability to ever be segmented again. The returned
-        metadata is the thread's own metadata with the updated window in it,
-        so the caller writes it back in the same ``update_thread`` call.
+        ends a thread's ability to ever be segmented again, and ``_tick`` for
+        why the window is measured in turns that *said something* rather than
+        in turns. The returned metadata is the thread's own metadata with the
+        updated window in it, so the caller writes it back in the same
+        ``update_thread`` call.
         """
         meta = dict(thread.get("metadata") or {})
         window = meta.get(_TOPIC_WINDOW_KEY)
         if not isinstance(window, dict):
             window = {}
-        try:
-            index = int(window.get("turn") or 0) + 1
-        except (TypeError, ValueError):
-            index = 1
+        domain_index = _tick(window, _DOMAIN_CLOCK, bool(turn.domains))
+        entity_index = _tick(window, _ENTITY_CLOCK, bool(turn.entities))
         domains = _age_topics(
             window.get("domains"), thread.get("topic_domains"), turn.domains,
-            index, DOMAIN_WINDOW_TURNS,
+            domain_index, DOMAIN_WINDOW_TURNS,
         )
         entities = _age_topics(
             window.get("entities"), thread.get("entities_json"), turn.entities,
-            index, ENTITY_WINDOW_TURNS, MAX_THREAD_ENTITIES,
+            entity_index, ENTITY_WINDOW_TURNS, MAX_THREAD_ENTITIES,
         )
-        meta[_TOPIC_WINDOW_KEY] = {"turn": index, "domains": domains, "entities": entities}
+        meta[_TOPIC_WINDOW_KEY] = {
+            _DOMAIN_CLOCK: domain_index, _ENTITY_CLOCK: entity_index,
+            "domains": domains, "entities": entities,
+        }
+        # The founding turn's entities are what titles the thread; record them
+        # while they are in hand, because `entities_json` will have moved on.
+        if _FOUNDING_ENTITIES_KEY not in meta and int(thread.get("turn_count") or 0) <= 1:
+            meta[_FOUNDING_ENTITIES_KEY] = list(turn.entities)
         return sorted(domains), sorted(entities), meta
 
     def _refined_title_fields(self, t: Dict[str, Any]) -> Dict[str, Any]:
+        """Promote a provisional title to "<verb> <entity>" as the thread pauses.
+
+        The entity has to come from the *founding* turn, not from the row's
+        current ``entities_json``: that column is a window over the last few
+        turns (``_topic_sets``) while the verb comes from the first user
+        message, so the two were drawn from different eras — a thread opened
+        on "add a samba share for the media folder" and paused nine nginx
+        turns later was titled "Add nginx", a subject it was never about,
+        which ``upsert_receipt`` then indexed into ``receipts_fts`` and recall
+        advertised as ``Pulled in: "Add nginx"`` (review: Plan A / A6, round
+        2). ``end_turn`` records the founding set; a row that never went
+        through it — A12a's migration, a thread merged in by A6c — has no
+        record and falls back to the column, still the best it has.
+        """
         if t.get("title_source") != "provisional":
             return {}
-        entities = list(t.get("entities_json") or [])
+        meta = t.get("metadata")
+        founding = meta.get(_FOUNDING_ENTITIES_KEY) if isinstance(meta, dict) else None
+        source = founding if isinstance(founding, (list, tuple)) else t.get("entities_json")
+        entities = [str(e) for e in (source or ()) if str(e)]
         if not entities:
             return {}
         first_user = next(
@@ -410,10 +480,20 @@ class ThreadManager:
         return receipt
 
     def _history(self, thread: Dict[str, Any]) -> List[Dict[str, Any]]:
-        rows = self.store.recent_messages(thread["thread_id"], limit=HISTORY_ROWS)
+        # Ask for one row over the window: whether it comes back is the exact
+        # answer to "was anything dropped?", and it costs one row. The
+        # thread's `message_count` cannot answer it — that counts *every*
+        # row, `recent_messages` returns only the human/assistant ones, so a
+        # single hidden `origin='system'` row (A6d's terminal observations,
+        # A9's notes) made the gate fire on a thread whose entire history is
+        # already below, prefixing two turns with a receipt of those same two
+        # turns (review: Plan A / A6, round 2).
+        rows = self.store.recent_messages(thread["thread_id"], limit=HISTORY_ROWS + 1)
+        truncated = len(rows) > HISTORY_ROWS
+        rows = rows[-HISTORY_ROWS:]
         history = [{"role": r["role"], "content": r["content"]} for r in rows]
         receipt = thread.get("receipt") or ""
-        if receipt and int(thread.get("message_count") or 0) > len(rows):
+        if receipt and truncated:
             fenced = _fence(receipt, RECEIPT_ROW_MAX, keep_lines=True)
             history.insert(0, {"role": "system", "content": f"[Earlier in this subject: {fenced}]"})
         return history
