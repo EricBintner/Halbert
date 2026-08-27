@@ -1238,13 +1238,16 @@ if FASTAPI_AVAILABLE:
     @router.post("/message/{message_id}/redact")
     async def redact_message(message_id: int):
         """"Forget this" for one row (spec §5): content and blocks become
-        "[redacted by admin]", the FTS row is rewritten and the thread's
-        receipt is regenerated. Rows are never deleted.
+        "[redacted by admin]", and every derived copy the row left behind goes
+        with it -- its FTS index row, the thread title it founded, the
+        thread's entity sets -- before the receipt is regenerated from what is
+        left. Rows are never deleted.
 
         404 only ever means "there is no such row". A store that is down
-        answers 503 and a write that did not land answers 500: a person who
-        asked to forget something must never be told "nothing to forget"
-        while the words are still on disk (A11b review findings 2 and 3).
+        answers 503 and a redaction that did not land in full answers 500: a
+        person who asked to forget something must never be told "nothing to
+        forget", or "done", while the words are still readable somewhere
+        (A11b review findings 1 and 2).
         """
         from ...agents.conversation_sqlite import RedactionFailed
 

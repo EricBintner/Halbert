@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from ..intake.signals import canonical_entities
 from .blocks import content_to_text
 from .conversation import Conversation, Message
 
@@ -80,6 +81,30 @@ _THREAD_FLAGS = ("stale", "ephemeral", "unread")
 _THREAD_UPDATABLE = {"title", "updated_at", "user_id", "metadata"} | {
     name for name, _ in _THREAD_COLUMNS
 }
+
+# Thread-metadata keys holding entity sets *derived from message text*, which
+# is why a redaction has to reach into them (``ThreadManager``'s
+# ``_TOPIC_WINDOW_KEY`` / ``_FOUNDING_ENTITIES_KEY``). Spelled out here rather
+# than imported because threads.py imports this module and not the other way
+# round; ``tests/test_agent_routes_redact.py`` pins the two spellings against
+# each other so a rename on either side fails loudly instead of silently
+# turning the scrub below into a no-op.
+_META_TOPIC_WINDOW = "topic_window"
+_META_FOUNDING_ENTITIES = "founding_entities"
+
+#: How much of one row's content the redaction's "does any surviving row still
+#: say this?" scan reads. Mirrors ``intake/signals.py::_ENTITY_SCAN_LIMIT``:
+#: entities were only ever harvested from that prefix, so reading further
+#: could not change the answer.
+_ENTITY_SCAN_CHARS = 16 * 1024
+
+#: Total characters that scan may read across the thread before it stops.
+#: The pass is a regex sweep (~0.36 ms/KB measured), so an unbounded walk of a
+#: long thread of pasted logs is seconds of CPU on the event loop -- the
+#: redaction route is ``async``. ~100 ms of work is enough to reach every row
+#: of an ordinary thread many times over; see ``_scrub_thread_entities`` for
+#: why stopping early errs safely.
+_ENTITY_SURVIVOR_BUDGET = 256 * 1024
 
 _THREAD_SELECT = """SELECT c.*,
     (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count,
@@ -879,12 +904,15 @@ class SqliteConversationStore:
     def redact_message(self, message_id: int) -> Optional[str]:
         """"Forget this" for one row: content and blocks become the
         redaction marker, diff proposals are dropped, metadata gains
-        ``redacted``, and the FTS row is rewritten so the original words are
-        unsearchable. The row itself is never deleted. Returns the thread id,
-        or None when the row does not exist (or the store has no connection).
-        Raises ``RedactionFailed`` when the write itself did not land, so a
-        caller never reports a privacy action it did not perform. The caller
-        refreshes the thread's receipt.
+        ``redacted``, and every copy the row left elsewhere in the store --
+        its FTS index row, the thread title it founded, the thread's derived
+        entity sets -- goes with it, so the original words are neither
+        searchable nor quotable back into a later prompt. The row itself is
+        never deleted. Returns the thread id, or None when the row does not
+        exist (or the store has no connection). Raises ``RedactionFailed``
+        when any part of that did not land, so a caller never reports a
+        privacy action it did not perform. The caller refreshes the thread's
+        receipt.
 
         A redacted *founding* user row takes the thread title down with it.
         Spec §5 defines the provisional title as "first user message
@@ -904,13 +932,14 @@ class SqliteConversationStore:
         try:
             with self._lock, self._conn:
                 row = self._conn.execute(
-                    "SELECT conversation_id, role, blocks_json, metadata "
+                    "SELECT conversation_id, role, content, blocks_json, metadata "
                     "FROM messages WHERE id = ?",
                     (int(message_id),),
                 ).fetchone()
                 if row is None:
                     return None
                 thread_id = row["conversation_id"]
+                original = row["content"] or ""
                 # blocks_json stays valid JSON: one marker block when the row
                 # had blocks (the timeline still shows that something ran),
                 # an empty list when it had none.
@@ -929,32 +958,134 @@ class SqliteConversationStore:
                        WHERE id = ?""",
                     (self.REDACTED, json.dumps(blocks), json.dumps(metadata), int(message_id)),
                 )
-                # ``_fts_recover()``, not ``self._fts_ok``: a store that came
-                # up with the flag False but whose messages_fts table still
-                # holds this row's *original* words (indexed by an earlier,
-                # healthy process) would otherwise leave them searchable for
-                # good — recovery's backfill only inserts rows that are
-                # missing, never rewrites one that is already there
-                # (A1 review finding 3, and update_message's own gate).
-                if self._fts_recover():
-                    self._conn.execute(
-                        "DELETE FROM messages_fts WHERE rowid = ?", (int(message_id),)
-                    )
-                    self._conn.execute(
-                        "INSERT INTO messages_fts(rowid, conversation_id, content) "
-                        "VALUES (?, ?, ?)",
-                        (int(message_id), thread_id, self.REDACTED),
-                    )
+                # `terminal_block_ids` is deliberately left alone: they are
+                # opaque session ids, not text the person typed, and the
+                # timeline still wants to show that a terminal was involved.
+                # Pre-existing metadata keys are kept for the same reason (an
+                # A12a-migrated row carries arbitrary JSON metadata from
+                # disk); only `redacted` is added.
+                self._fts_recover()   # best-effort: flips a stale degraded flag back
+                self._scrub_fts_row(int(message_id), thread_id)
                 if row["role"] == "user" and self._is_founding_user_row(thread_id, message_id):
                     self._conn.execute(
                         "UPDATE conversations SET title = ?, title_source = 'redacted' "
                         "WHERE id = ?",
                         (self.REDACTED, thread_id),
                     )
+                self._scrub_thread_entities(thread_id, original, int(message_id))
             return thread_id
         except Exception as e:
             logger.warning(f"redact_message {message_id} failed: {e}")
             raise RedactionFailed(f"redaction of message {message_id} did not land: {e}") from e
+
+    def _scrub_fts_row(self, message_id: int, thread_id: str) -> None:
+        """Rewrite one row's ``messages_fts`` copy to the marker.
+
+        Gating this on ``self._fts_ok`` / ``self._fts_recover()`` -- the way
+        every other writer in this class does -- is wrong for a redaction.
+        Recovery's backfill only INSERTs rows that are *missing*, so a row
+        indexed by an earlier healthy process and skipped here keeps its
+        original words in the index verbatim and for good: no later healthy
+        process ever rewrites it, ``search`` finds the thread by them and
+        ``search_snippets`` hands the whole sentence back (it reads the FTS
+        copy, not ``messages.content``), straight into ``recall()`` and the
+        next prompt (A11b review finding 2). So the scrub is attempted
+        whenever the table exists at all, and if it cannot land the exception
+        propagates: ``redact_message``'s transaction rolls back and the caller
+        answers 500 rather than reporting a privacy action that only half
+        happened. That is a deliberate refusal -- on a runtime whose sqlite
+        cannot touch an existing FTS5 table, a redaction fails loudly and can
+        be retried on a healthy one, where the partial alternative would have
+        left a permanent leak behind a green tick.
+
+        The one benign case is a database with no ``messages_fts`` table:
+        nothing is indexed, so there is nothing to leak, and whenever the
+        table is created later it is backfilled from ``messages``, which by
+        then holds the marker. ``sqlite_master`` answers that question with a
+        plain table query, without needing the FTS5 module itself.
+        """
+        indexed = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'messages_fts'"
+        ).fetchone()
+        if indexed is None:
+            return
+        self._conn.execute(
+            "DELETE FROM messages_fts WHERE rowid = ?", (message_id,)
+        )
+        self._conn.execute(
+            "INSERT INTO messages_fts(rowid, conversation_id, content) "
+            "VALUES (?, ?, ?)",
+            (message_id, thread_id, self.REDACTED),
+        )
+
+    def _scrub_thread_entities(
+        self, thread_id: str, redacted_text: str, message_id: int
+    ) -> None:
+        """Drop the redacted row's entities from the thread's derived sets.
+
+        ``conversations.entities_json``, ``metadata["topic_window"]["entities"]``
+        and ``metadata["founding_entities"]`` are all harvested from message
+        *text* by ``intake/signals.py::_scan``, and that harvest keeps **raw
+        file paths** (up to 20 a message) beside the alias keywords. Scrubbing
+        the row while leaving those standing left the redacted words on the
+        thread row, on the ``Entities:`` line of the receipt the caller
+        regenerates next and -- through ``upsert_receipt``'s DELETE+INSERT --
+        back in ``receipts_fts``, which is the copy ``ThreadManager.recall()``
+        feeds into later prompts as ``retrieved_context``: a redacted
+        "/srv/clients/acmecorp-payroll-2026.kdbx" was still reachable by
+        ``search_receipts("payroll")`` (A11b review finding 1).
+
+        Only entities that *no surviving row of the thread still yields* are
+        dropped: these sets describe the thread, not the row, and a path both
+        turns mentioned is still the subject of the turn that was not
+        redacted. Answering that is a regex sweep per row, so it walks the
+        thread newest-first (the sets are a window over the recent turns) and
+        stops after ``_ENTITY_SURVIVOR_BUDGET`` characters. An entity the
+        budget did not reach is dropped rather than kept: over-dropping costs
+        a recall term that ``ThreadManager._topic_sets`` re-adds from the next
+        turn that says it, while over-keeping is the leak this exists to
+        close. ``topic_domains`` is left alone deliberately: it can only ever
+        hold one of the six fixed domain names from ``intake/signals.py``,
+        never text a person typed.
+        """
+        gone = canonical_entities((redacted_text or "")[:_ENTITY_SCAN_CHARS])
+        if not gone:
+            return
+        budget = _ENTITY_SURVIVOR_BUDGET
+        for surviving in self._conn.execute(
+            "SELECT substr(content, 1, ?) FROM messages "
+            "WHERE conversation_id = ? AND id != ? ORDER BY id DESC",
+            (_ENTITY_SCAN_CHARS, thread_id, int(message_id)),
+        ):
+            head = surviving[0] or ""
+            gone -= canonical_entities(head)
+            if not gone:
+                return
+            budget -= len(head)
+            if budget <= 0:
+                break
+        thread = self._conn.execute(
+            "SELECT entities_json, metadata FROM conversations WHERE id = ?",
+            (thread_id,),
+        ).fetchone()
+        if thread is None:
+            return
+        entities = [e for e in _loads(thread["entities_json"], []) if e not in gone]
+        meta = _loads(thread["metadata"], {})
+        if not isinstance(meta, dict):
+            meta = {}
+        window = meta.get(_META_TOPIC_WINDOW)
+        if isinstance(window, dict) and isinstance(window.get("entities"), dict):
+            window["entities"] = {
+                k: v for k, v in window["entities"].items() if k not in gone
+            }
+        founding = meta.get(_META_FOUNDING_ENTITIES)
+        if isinstance(founding, (list, tuple)):
+            meta[_META_FOUNDING_ENTITIES] = [e for e in founding if e not in gone]
+        self._conn.execute(
+            "UPDATE conversations SET entities_json = ?, metadata = ? WHERE id = ?",
+            (json.dumps(entities), json.dumps(meta), thread_id),
+        )
 
     def _is_founding_user_row(self, thread_id: str, message_id: int) -> bool:
         """Whether ``message_id`` is the earliest user row of its thread --
