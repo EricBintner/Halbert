@@ -722,6 +722,30 @@ def test_ipv6_loopback_and_link_local_survive():
     assert redact_text("fe80::1%lo0 router\n") == "fe80::1%lo0 router\n"
 
 
+def test_ipv6_unique_local_addresses_survive():
+    """fc00::/7 (RFC 4193) is the IPv6 analogue of RFC1918.
+
+    A ULA is not globally routable and cannot identify this host to an
+    outside observer, so under the same rule that keeps 192.168.1.42 it is
+    operational data rather than a secret. Real hosts number their internal
+    IPv6 out of fd00::/8, so redacting it blanked the addressing half of
+    every dual-stack network file.
+    """
+    for addr in ("fd00::1", "fc00::1", "fd12:3456:789a:1::1", "fdff::ffff"):
+        line = f"peer {addr}\n"
+        assert redact_text(line) == line, f"redacted unique-local {addr}"
+
+
+def test_ula_exemption_does_not_reach_the_neighbouring_public_prefixes():
+    """fc00::/7 covers fc00–fdff only; fb.. and fe.. below fe80 are not ULA.
+
+    fec0::/10 in particular is site-local, which an existing test already
+    requires to be redacted -- the exemption must not creep into it.
+    """
+    for addr in ("fbff::1", "fe00::1", "fec0::1"):
+        assert addr not in redact_text(f"peer {addr}\n"), f"leaked {addr}"
+
+
 def test_public_ipv4_is_still_redacted():
     for addr in ("8.8.8.8", "203.0.113.5", "1.1.1.1"):
         out = redact_text(f"nameserver {addr}\n")

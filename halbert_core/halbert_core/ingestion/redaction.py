@@ -244,6 +244,15 @@ MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}\b")
 # `is_private` does subsume loopback, link-local and unspecified for IPv4,
 # and 255.255.255.255 as well (via 240/4) -- but since it is unusable for the
 # reason above, all four are asked for by name.
+#
+# fc00::/7 is the v6 half of the same rule. RFC 4193 unique-local addressing
+# is what a real dual-stack host numbers its own LAN out of (in practice
+# fd00::/8, the locally-assigned half), it is not globally routable, and it
+# identifies this machine to an outside observer no more than 192.168.1.42
+# does. It is asked for by name for the same reason the RFC1918 ranges are:
+# the stdlib's nearest predicates are both wrong here -- `is_private` sweeps
+# in 2001:db8::/32, and `is_site_local` is fec0::/10, a *different*
+# deprecated range that must still be redacted.
 _EXEMPT_NETWORKS = tuple(
     ipaddress.ip_network(cidr)
     for cidr in (
@@ -251,6 +260,7 @@ _EXEMPT_NETWORKS = tuple(
         "172.16.0.0/12",  # RFC1918
         "192.168.0.0/16",  # RFC1918
         "255.255.255.255/32",  # limited broadcast (`/etc/hosts` broadcasthost)
+        "fc00::/7",  # RFC 4193 unique-local (the v6 RFC1918)
     )
 )
 
