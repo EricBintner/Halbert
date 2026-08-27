@@ -106,3 +106,120 @@ def test_secret_with_horizontal_whitespace_still_redacted():
     """The WireGuard case that motivated the change must keep working."""
     assert "abc123def" not in redact_text("PrivateKey = abc123def\n")
     assert "xyz789" not in redact_text("psk\t=\txyz789\n")
+
+
+# --- Structured (line-oriented) redaction -------------------------------
+# Shapes a single-line regex provably cannot handle: the value lives on a
+# later line than the key. See redact_structured_values() for why.
+
+
+def test_next_line_value_is_redacted():
+    """YAML block style puts the value on the following line."""
+    y = 'access-points:\n  password:\n    "nextlinesecret"\n  dhcp4: true\n'
+    out = redact_text(y)
+    assert "nextlinesecret" not in out
+    assert "dhcp4: true" in out
+    assert out.count("\n") == y.count("\n")
+
+
+def test_next_line_redaction_preserves_indentation():
+    y = "password:\n      deeplyindentedsecret\n"
+    out = redact_text(y)
+    assert "deeplyindentedsecret" not in out
+    assert "password:" in out
+    # The value line keeps its indentation, so structure is readable.
+    assert "\n      " in out
+
+
+def test_key_with_no_value_at_all_is_left_alone():
+    """A bare key at EOF, or followed by a non-indented line, is not a secret."""
+    assert redact_text("password:\n") == "password:\n"
+    out = redact_text("password:\nnetwork:\n  version: 2\n")
+    assert "network:" in out
+    assert "version: 2" in out
+
+
+def test_quoted_next_line_scalar_containing_colon_is_redacted():
+    """A colon inside a quoted scalar does not make it a mapping.
+
+    This is the case that defeated the regex approach: any pattern narrow
+    enough to spare `endpoint: https://x` also spared this and leaked it.
+    """
+    y = 'password:\n    "pa55:word:here"\n'
+    out = redact_text(y)
+    assert "pa55:word:here" not in out
+    assert "password:" in out
+    assert out.count("\n") == y.count("\n")
+
+
+def test_literal_block_scalar_body_is_redacted():
+    """`|` bodies are the normal way to write a multi-line secret."""
+    y = "password: |\n  linesecretone\n  linesecrettwo\n"
+    out = redact_text(y)
+    assert "linesecretone" not in out
+    assert "linesecrettwo" not in out
+    assert out.count("\n") == y.count("\n")
+
+
+def test_folded_block_scalar_body_is_redacted():
+    y = "password: >\n  foldedsecret\n"
+    out = redact_text(y)
+    assert "foldedsecret" not in out
+    assert out.count("\n") == y.count("\n")
+
+
+def test_block_scalar_chomping_and_indent_modifiers_are_handled():
+    """`|-`, `|+`, `>-` and `|2` are all valid block scalar headers."""
+    for header in ("|-", "|+", ">-", "|2", "|2-"):
+        y = f"token: {header}\n  modifiersecret\n"
+        out = redact_text(y)
+        assert "modifiersecret" not in out, f"leaked with header {header!r}"
+        assert out.count("\n") == y.count("\n")
+
+
+def test_block_scalar_body_survives_deeper_nesting():
+    """Body lines are those indented deeper than the key; siblings are not."""
+    y = (
+        "wifis:\n"
+        "  wlan0:\n"
+        "    password: |\n"
+        "      bodysecretone\n"
+        "      bodysecrettwo\n"
+        "    dhcp4: true\n"
+    )
+    out = redact_text(y)
+    assert "bodysecretone" not in out
+    assert "bodysecrettwo" not in out
+    # The dedented sibling is not part of the value.
+    assert "dhcp4: true" in out
+    assert out.count("\n") == y.count("\n")
+
+
+def test_blank_line_between_key_and_value_is_redacted():
+    """A blank line does not terminate the value."""
+    y = "password:\n\n  blanklinesecret\n"
+    out = redact_text(y)
+    assert "blanklinesecret" not in out
+    assert out.count("\n") == y.count("\n")
+
+
+def test_sequence_child_is_structure_not_secret():
+    """A `- item` child is a list, not a credential (the 2b guard)."""
+    y = "api:\n  - foo\n"
+    out = redact_text(y)
+    assert "- foo" in out
+    assert out.count("\n") == y.count("\n")
+
+
+def test_mapping_child_is_structure_not_secret():
+    """A `key: value` child is a nested mapping; the inline rule owns it."""
+    y = "api:\n  timeout: 30\n"
+    out = redact_text(y)
+    assert "timeout: 30" in out
+    assert out.count("\n") == y.count("\n")
+
+
+def test_non_secret_inline_url_is_left_alone():
+    """`endpoint:` carries no secret keyword, so the URL structure stays."""
+    y = "endpoint: https://example.invalid/path\n"
+    assert redact_text(y) == y
