@@ -10,6 +10,8 @@ import pytest
 from halbert_core.agents.states import AgentState, CRAGAction, StateContext
 from halbert_core.agents.state_machine import AgentStateMachine
 from halbert_core.agents.llm_client import LLMResponse, ToolCall, FunctionCall
+from halbert_core.prompts import AgentPromptBuilder
+from halbert_core.prompts.agent_prompts import RECALLED_SECTION_HEADER
 from halbert_core.tools import ToolExecutor, ToolSafetyFramework
 
 
@@ -322,3 +324,147 @@ async def test_observing_does_not_treat_a_thread_receipt_as_retrieval():
     assert crag.calls == []
     assert agent.ctx.crag_action == CRAGAction.INCORRECT and agent.ctx.confidence == 0.3
     assert events[-1].data["state"] == "planning"
+
+
+# -----------------------------------------------------------------------------
+# Review round 2: a receipt is continuity, not retrieval — it must not spend
+# the answer prompt's retrieval slots; the last-turn lookup must not
+# materialise the recalled thread; and the PLANNING pass the re-entry pays
+# for must really contain what the recall observation says it contains.
+# -----------------------------------------------------------------------------
+
+
+class _FakeAssembler:
+    """Only assemble(): what _handle_planning needs from a context assembler."""
+
+    def __init__(self, content="ASSEMBLED-CONTEXT"):
+        self.content, self.calls = content, []
+
+    async def assemble(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(content=self.content, sources=[], total_tokens=7)
+
+
+def _with_context(agent, receipts=0, docs=0, source="rag"):
+    for i in range(receipts):
+        agent.ctx.add_context(
+            source="thread", content=f"Title: earlier {i}\nCommands: testparm (exit 0)",
+            metadata={"thread_id": f"t-{i}", "title": f"Earlier {i}", "date": "2026-07-14"},
+        )
+    for i in range(docs):
+        agent.ctx.add_context(
+            source=source, content=f"RAGDOC-{i} body", metadata={"id": f"doc-{i}"},
+        )
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_recalled_receipts_reach_the_planning_pass_the_reentry_pays_for():
+    """recall_thread tells the model "their receipts are in the available
+    context", but the receipts only ever reached RESPONDING: PLANNING's
+    context comes from the assembler, which has no parameter carrying
+    retrieved_context, so the re-entry bought a round trip that saw the thread
+    names next to a false claim about where their content was."""
+    tm = _FakeThreadManager(recall_results=[RECALLED])
+    llm = _ScriptedLLM([_call("recall_thread", query="samba share"),
+                        LLMResponse(content="", tool_calls=[], plan=[])])
+    agent = _planning(llm, tm)
+    first = [e async for e in agent._handle_planning()]
+    assert first[-1].data["state"] == "planning"
+    [e async for e in agent._handle_planning()]
+
+    replan = llm.prompts[1]
+    assert "testparm" in replan          # the receipt itself, not only its title
+    block = RECALLED_SECTION_HEADER.lstrip("# ")
+    assert block in replan
+    said = [o for o in agent.ctx.observations if "Recalled earlier subjects" in o]
+    # The observation names the block the receipts are actually rendered in.
+    assert said and "in the available context" in said[0] and block in said[0]
+
+
+@pytest.mark.asyncio
+async def test_recalled_receipts_reach_the_assembled_planning_prompt_too():
+    """The same, on the path that actually runs in production: a wired
+    assembler and the real prompt builder. The receipts follow the assembled
+    context rather than replacing it."""
+    tm = _FakeThreadManager(recall_results=[RECALLED])
+    llm = _ScriptedLLM([_call("recall_thread", query="samba share"),
+                        LLMResponse(content="", tool_calls=[], plan=[])])
+    assembler = _FakeAssembler()
+    agent = AgentStateMachine(
+        llm_client=llm, tool_executor=ToolExecutor(safety=ToolSafetyFramework()),
+        context_assembler=assembler, prompt_builder=AgentPromptBuilder(), max_loops=5,
+    )
+    agent.ctx = StateContext(session_id="s", request_id="r",
+                             user_query="now scanner share", thread_id="t-open")
+    agent.ctx.thread_manager = tm
+    agent.current_state = AgentState.PLANNING
+
+    [e async for e in agent._handle_planning()]
+    [e async for e in agent._handle_planning()]
+
+    replan = llm.prompts[1]
+    assert "ASSEMBLED-CONTEXT" in replan and "testparm" in replan
+    assert replan.index("ASSEMBLED-CONTEXT") < replan.index("testparm")
+
+
+def test_the_simple_answer_prompt_keeps_all_five_retrieved_documents():
+    """Receipts are prepended to retrieved_context during PLANNING, before
+    SEARCHING appends anything, so a [:5] slice over the whole list handed
+    three of the five answer slots to continuity and dropped real hits."""
+    agent = _with_context(_planning(_ScriptedLLM([]), None), receipts=3, docs=5)
+    prompt = agent._build_simple_response_prompt()
+    assert all(f"RAGDOC-{i}" in prompt for i in range(5))
+    assert "testparm" in prompt          # the receipts are still there, elsewhere
+
+
+def test_receipts_do_not_crowd_provenance_out_of_the_retrieved_context():
+    """_extract_provenance walks the same first five entries: three receipts
+    (which can never produce a ref) thinned the citations too."""
+    agent = _with_context(_planning(_ScriptedLLM([]), None), receipts=3)
+    for i in range(3):
+        agent.ctx.add_context(source="memory", content=f"mem {i}", metadata={"id": f"mem-{i}"})
+    refs = agent._extract_provenance("an answer with no paths in it")
+    assert [r["ref"] for r in refs] == ["mem-0", "mem-1", "mem-2"]
+
+
+@pytest.mark.asyncio
+async def test_the_last_turn_lookup_asks_the_store_for_one_id():
+    """list_messages(thread_id) materialises every row of the recalled thread
+    and JSON-decodes four columns of each (~30 ms on a 4k-row thread, under
+    the store lock) to read one column of one row — up to three times per
+    recall_thread, and once per turn under A9c's auto-recall."""
+
+    class _IndexedStore:
+        def __init__(self):
+            self.asked = []
+
+        def last_turn_id(self, thread_id):
+            self.asked.append(thread_id)
+            return "turn-indexed"
+
+        def list_messages(self, thread_id, *, limit=None):
+            raise AssertionError("the whole thread must not be read for one turn id")
+
+    store = _IndexedStore()
+    tm = _FakeThreadManager(recall_results=[RECALLED], store=store)
+    agent = _planning(_ScriptedLLM([_call("recall_thread", query="samba share")]), tm)
+    events = [e async for e in agent._handle_planning()]
+    assert events[0].type == "thread_recalled"
+    assert events[0].data["last_turn_id"] == "turn-indexed"
+    assert store.asked == ["t-9"]
+
+
+@pytest.mark.asyncio
+async def test_resume_keeps_the_resumed_receipt_in_one_place():
+    """The resumed subject's receipt IS the current subject's history: it
+    belongs in the conversation's receipt slot, which the assembler budgets.
+    The second copy on retrieved_context made it look like retrieval and got
+    it rendered twice in the answer prompt."""
+    tm = _FakeThreadManager(recall_results=[{"thread_id": "t-paused", "title": "NAS setup",
+                                             "date": "2026-06-30", "receipt": "Title: NAS setup",
+                                             "matching_messages": [], "match_terms": []}])
+    agent = _planning(_ScriptedLLM([_call("resume_thread", thread_id="t-paused")]), tm)
+    [e async for e in agent._handle_planning()]
+    assert "NAS setup" in agent.ctx.conversation_history[0]["content"]
+    assert agent.ctx.retrieved_context == []

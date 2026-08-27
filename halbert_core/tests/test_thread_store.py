@@ -1160,3 +1160,50 @@ class TestPendingNotes:
         store.append_message("t1", "system", "mine", origin="system", visible_in_timeline=False)
         store.append_message("t2", "system", "theirs", origin="system", visible_in_timeline=False)
         assert store.pending_notes("t1") == ["mine"] and store.pending_notes("t2") == ["theirs"]
+
+
+class TestLastTurnId:
+    """The one id ``thread_recalled`` carries so the chip can scroll the
+    timeline to where a recalled subject left off (spec §6, A9b review).
+
+    Read with ``list_messages`` it cost a full materialisation of the recalled
+    thread — every row built, its four JSON columns decoded — for one column
+    of one row, up to three times per ``recall_thread`` and once per turn once
+    auto-recall lands. ``list_messages(limit=N)`` cannot serve it either: that
+    LIMIT takes the OLDEST N rows.
+    """
+
+    def test_newest_turn_id_wins_and_untagged_tail_rows_are_skipped(self, store):
+        store.create_thread("t1", "T")
+        store.append_message("t1", "user", "q1", origin="human", turn_id="u1")
+        store.append_message("t1", "assistant", "a1", origin="assistant", turn_id="u1")
+        store.append_message("t1", "user", "q2", origin="human", turn_id="u2")
+        store.append_message("t1", "assistant", "a2", origin="assistant", turn_id="u2")
+        store.append_message("t1", "system", "note", origin="system", visible_in_timeline=False)
+        assert store.last_turn_id("t1") == "u2"
+
+    def test_no_turn_ids_no_rows_and_unknown_threads_are_none(self, store):
+        store.create_thread("t1", "T")
+        assert store.last_turn_id("t1") is None
+        store.append_message("t1", "system", "note", origin="system")
+        store.append_message("t1", "user", "q", origin="human", turn_id="")
+        assert store.last_turn_id("t1") is None
+        assert store.last_turn_id("nope") is None
+        assert store.last_turn_id("") is None
+
+    def test_turn_ids_do_not_leak_between_threads(self, store):
+        store.create_thread("t1", "T")
+        store.create_thread("t2", "U")
+        store.append_message("t1", "user", "mine", origin="human", turn_id="u-mine")
+        store.append_message("t2", "user", "theirs", origin="human", turn_id="u-theirs")
+        assert store.last_turn_id("t1") == "u-mine"
+        assert store.last_turn_id("t2") == "u-theirs"
+
+    def test_hidden_rows_count_too(self, store):
+        # The chip scrolls to a turn, not to a visible row: a turn whose only
+        # rows are hidden is still where the subject left off.
+        store.create_thread("t1", "T")
+        store.append_message("t1", "user", "q1", origin="human", turn_id="u1")
+        store.append_message("t1", "system", "n", origin="system",
+                             turn_id="u2", visible_in_timeline=False)
+        assert store.last_turn_id("t1") == "u2"

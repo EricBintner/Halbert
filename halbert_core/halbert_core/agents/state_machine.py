@@ -40,6 +40,29 @@ def _subagent_terminal(status: str) -> bool:
 # from crowding out everything else before that budgeting happens.
 _TOOL_RESULT_CHARS = 2000
 
+# Per-receipt ceiling for the recalled-subjects block appended to the PLANNING
+# prompt. Tighter than RESPONDING's (which renders a receipt whole, up to
+# threads.RECEIPT_ROW_MAX): the block is appended after the assembler has
+# already spent its budget, so it is overspend by construction, and PLANNING
+# only has to decide whether an earlier subject is worth searching or
+# answering from — the whole receipt still reaches the answer prompt.
+_PLANNING_RECEIPT_CHARS = 700
+
+
+def _recalled_block_name() -> str:
+    """The name of the prompt block the recalled receipts are rendered in.
+
+    recall_thread's observation points the model at that block, so the name is
+    read from the renderer's own header rather than typed twice: reworded on
+    one side only, the sentence would send the model looking for a section
+    that no longer exists — the failure this whole fix is about.
+    """
+    try:
+        from ..prompts.agent_prompts import RECALLED_SECTION_HEADER
+    except Exception:  # pragma: no cover - import cycle guard
+        return "Earlier subjects recalled"
+    return RECALLED_SECTION_HEADER.lstrip("#").strip()
+
 
 def _format_tool_observation(name: str, args: Any, result: Any) -> str:
     """Render an executed tool call as an observation the model can use."""
@@ -905,7 +928,22 @@ class AgentStateMachine:
                 len(assembled.sources),
                 assembled.total_tokens
             )
-        
+
+        # The receipts recall_thread put on the retrieved context reach
+        # RESPONDING through build_response_prompt, but ContextAssembler.assemble
+        # takes no parameter that carries them — so the PLANNING pass the
+        # re-entry pays for saw the recalled subjects' names next to an
+        # observation telling the model their receipts were "in the available
+        # context", and, with no assembler wired, next to a literal
+        # "Available context: (none)" (review: Plan A / A9b). Appended here,
+        # after the assembled content and on both prompt paths, so that
+        # sentence is true of the prompt the model actually reads.
+        receipt_block = self._receipt_block(_PLANNING_RECEIPT_CHARS)
+        if receipt_block:
+            context_content = (
+                f"{context_content}\n\n{receipt_block}" if context_content else receipt_block
+            )
+
         # Build prompt
         if self.prompts:
             prompt = self.prompts.build_planning_prompt(
@@ -941,7 +979,7 @@ class AgentStateMachine:
             )
         
         # CRAG evaluation if we have retrieved context
-        crag_documents = self._crag_documents()
+        crag_documents = self._retrieval_documents()
         if self.crag and crag_documents:
             crag_result = await self.crag.evaluate(
                 self.ctx.user_query,
@@ -1068,31 +1106,88 @@ class AgentStateMachine:
             for tc in self.ctx.tool_calls
         )
 
-    def _crag_documents(self) -> List[Dict[str, Any]]:
-        """The retrieved context CRAG is allowed to score.
+    def _thread_receipts(self) -> List[Dict[str, Any]]:
+        """The thread receipts on the retrieved context, oldest first.
 
-        Thread receipts (``source="thread"``, from recall_thread /
-        resume_thread and A9c's auto-recall) are conversation continuity, not
-        retrieval: what an earlier subject was about says nothing about
-        whether the host knowledge needed to answer *this* question was
-        found. Scoring them switches CRAG on for turns that retrieved
-        nothing, and a CORRECT verdict then sends PLANNING straight to
-        REFLECTING — the turn answers off a thread receipt and never searches
-        at all. The receipts still reach the prompt; they just do not vote on
-        retrieval quality.
+        ``source="thread"`` entries are the receipts of *other* subjects
+        recall_thread (and A9c's auto-recall) pulled in this turn. They are
+        rendered in their own prompt block — see ``_retrieval_documents`` for
+        why they are kept out of the retrieval list.
+        """
+        return [
+            c for c in self.ctx.retrieved_context
+            if (c or {}).get("source") == "thread"
+        ]
+
+    def _retrieval_documents(self) -> List[Dict[str, Any]]:
+        """The retrieved context minus the thread receipts: what this turn
+        actually retrieved.
+
+        Thread receipts are conversation continuity, not retrieval: what an
+        earlier subject was about says nothing about whether the host
+        knowledge needed to answer *this* question was found.
+
+        Letting them count as retrieval broke twice over. CRAG scored them,
+        which switched CRAG on for turns that had retrieved nothing, and a
+        CORRECT verdict then sent PLANNING straight to REFLECTING — the turn
+        answered off a thread receipt and never searched at all. And every
+        prompt/provenance site slices the first five entries, while recall
+        appends up to three receipts during PLANNING, *before* SEARCHING
+        appends a single hit — so three of those five slots went to
+        continuity and real retrieval was dropped from the answer (review:
+        Plan A / A9b). The receipts still reach the prompt, in their own
+        block; they just do not vote on retrieval quality or spend the
+        retrieval budget.
         """
         return [
             c for c in self.ctx.retrieved_context
             if (c or {}).get("source") != "thread"
         ]
 
+    def _receipt_block(self, max_chars: Optional[int] = None) -> str:
+        """The recalled subjects' receipts as a prompt block, "" when none.
+
+        One renderer for every prompt that shows them (RESPONDING's builder
+        uses the same function), so the block's header — which recall_thread's
+        observation points the model at — cannot drift between prompts.
+        """
+        receipts = self._thread_receipts()
+        if not receipts:
+            return ""
+        try:
+            from ..prompts.agent_prompts import render_recalled_receipts
+        except Exception as e:  # pragma: no cover - import cycle guard
+            logger.debug(f"receipt block unavailable (non-fatal): {e}")
+            return ""
+        return render_recalled_receipts(receipts, max_chars=max_chars)
+
     def _last_turn_id(self, thread_id: Optional[str]) -> Optional[str]:
         """The newest turn_id of ``thread_id``, for thread_recalled (spec §6:
         the chip click scrolls the timeline to it). None without a store,
-        without rows, or when the store fails."""
+        without rows, or when the store fails.
+
+        Asks the store for that one id (``last_turn_id``, a tail read off
+        ``idx_messages_conv``). Reading it with ``list_messages`` instead
+        materialised the whole recalled thread — every row built, its four
+        JSON columns decoded, all under the store lock — to look at one
+        column of one row: ~30 ms on a 4k-row thread, paid up to three times
+        per recall_thread and once per turn under A9c's auto-recall (review:
+        Plan A / A9b; ``pending_notes`` records the same measurement for the
+        same reason). ``list_messages(limit=N)`` is no help — its LIMIT takes
+        the OLDEST N rows — so the scan below stays only as the fallback for
+        a store that predates the method.
+        """
         store = getattr(self.ctx.thread_manager, "store", None)
         if store is None or not thread_id:
             return None
+        indexed = getattr(store, "last_turn_id", None)
+        if callable(indexed):
+            try:
+                found = indexed(thread_id)
+            except Exception as e:
+                logger.debug(f"last turn lookup for {thread_id} failed (non-fatal): {e}")
+                return None
+            return str(found) if found else None
         try:
             rows = store.list_messages(thread_id)
         except Exception as e:
@@ -1197,7 +1292,8 @@ class AgentStateMachine:
                 )
             self.ctx.add_observation(
                 "Recalled earlier subjects: " + "; ".join(names)
-                + ". Their receipts are in the available context."
+                + f'. Their receipts are in the available context, under '
+                  f'"{_recalled_block_name()}".'
             )
             return
 
@@ -1228,14 +1324,18 @@ class AgentStateMachine:
                 receipt = str(found[0].get("receipt", ""))
             self.ctx.thread_id = target
             self.ctx.thread_switched = True
+            # The resumed subject's receipt IS the current subject's history,
+            # so it goes in the conversation's receipt slot — the one the
+            # assembler splits back off and budgets (context/assembler.py
+            # `_split_receipt_row`), and the one `_history_section` renders in
+            # RESPONDING. It used to be copied onto retrieved_context as well,
+            # where it looked like retrieval and got rendered a second time in
+            # the answer prompt (review: Plan A / A9b). One place only; a
+            # `source="thread"` entry now means "a receipt of ANOTHER subject,
+            # recalled this turn".
             self.ctx.conversation_history = (
                 [{"role": "system", "content": f"[Earlier in this subject: {receipt}]"}] if receipt else []
             )
-            if receipt:
-                self.ctx.add_context(
-                    source="thread", content=receipt,
-                    metadata={"thread_id": target, "title": title, "resumed": True},
-                )
             self.ctx.continuity_hint = (
                 f'<continuity>\nThread: "{title or target}" · resumed just now.\n</continuity>'
             )
@@ -1620,7 +1720,7 @@ class AgentStateMachine:
         logger.info(f"OBSERVING: {len(self.ctx.observations)} observations")
         
         # CRAG evaluation
-        crag_documents = self._crag_documents()
+        crag_documents = self._retrieval_documents()
         if self.crag and crag_documents:
             crag_result = await self.crag.evaluate(
                 self.ctx.user_query,
@@ -2054,7 +2154,10 @@ class AgentStateMachine:
         # 2. Create provenance from retrieved context sources.
         # ctx.retrieved_context items carry {source, content, metadata}.
         # Only emit refs that can actually validate — never fabricated ids.
-        for ctx in self.ctx.retrieved_context[:5]:
+        # Thread receipts are skipped before the slice, not inside the loop:
+        # they can never produce a ref, so counting them against these five
+        # entries only thinned the citations (see _retrieval_documents).
+        for ctx in self._retrieval_documents()[:5]:
             source = ctx.get('source', '')
             content = ctx.get('content', '') or ''
             meta = ctx.get('metadata') or {}
@@ -2097,16 +2200,21 @@ class AgentStateMachine:
 
     def _build_simple_response_prompt(self) -> str:
         """Build a simple response prompt when no prompt builder available."""
+        # Receipts are rendered in their own block, so continuity cannot spend
+        # the five retrieval slots (see _retrieval_documents).
         context_text = "\n".join([
             f"[{c.get('source', 'unknown')}]: {c.get('content', '')[:500]}"
-            for c in self.ctx.retrieved_context[:5]
+            for c in self._retrieval_documents()[:5]
         ])
-        
+        receipt_block = self._receipt_block()
+        if receipt_block:
+            receipt_block = f"{receipt_block}\n\n"
+
         obs_text = "\n".join([f"- {obs}" for obs in self.ctx.observations])
-        
+
         return f"""Answer this question: {self.ctx.user_query}
 
-Available Information:
+{receipt_block}Available Information:
 {context_text}
 
 What I've done:

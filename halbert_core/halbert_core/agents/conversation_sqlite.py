@@ -1037,6 +1037,39 @@ class SqliteConversationStore:
             logger.warning(f"recent_messages {thread_id} failed: {e}")
             return []
 
+    def last_turn_id(self, thread_id: str) -> Optional[str]:
+        """The newest ``turn_id`` in a thread, or None when it has none.
+
+        ``thread_recalled`` carries this one id so the chip click can scroll
+        the timeline to where a recalled subject left off (spec §6), and
+        A9c's auto-recall asks for it every turn. Reading it with
+        ``list_messages`` materialised the whole thread — every row built and
+        its four JSON columns decoded, under ``self._lock`` — to look at one
+        column of one row: the same ~30 ms/4k-row cost ``pending_notes``
+        exists to avoid, paid up to three times per ``recall_thread`` (review:
+        Plan A / A9b). ``list_messages(limit=N)`` cannot serve it either —
+        that LIMIT takes the OLDEST N rows.
+
+        This walks ``idx_messages_conv`` backwards from the thread's newest
+        row and stops at the first row carrying a ``turn_id``; only a tail of
+        rows written without one (hidden system notes) is walked past.
+        """
+        if self._conn is None or not thread_id:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    """SELECT turn_id FROM messages
+                       WHERE conversation_id = ?
+                         AND turn_id IS NOT NULL AND turn_id <> ''
+                       ORDER BY id DESC LIMIT 1""",
+                    (thread_id,),
+                ).fetchone()
+            return str(row["turn_id"]) if row is not None else None
+        except Exception as e:
+            logger.warning(f"last_turn_id {thread_id} failed: {e}")
+            return None
+
     def pending_notes(self, thread_id: str, *, limit: int = 8) -> List[str]:
         """Contents of the ``origin='system'`` rows newer than the thread's
         last human row, oldest-first, at most ``limit`` of them.

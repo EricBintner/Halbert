@@ -13,6 +13,22 @@ import re
 
 logger = logging.getLogger('halbert.prompts.agent')
 
+#: Header of the block that carries the receipts of subjects recalled this
+#: turn. ``state_machine`` appends the same block, rendered by the same
+#: function, to the PLANNING context, so the two prompts name the block
+#: identically and recall_thread's observation ("their receipts are in the
+#: available context") is true of both.
+RECALLED_SECTION_HEADER = "## Earlier subjects recalled"
+
+#: How many receipts that block renders. ``recall_thread`` injects at most
+#: three (state_machine._handle_meta_tool), so this is the same ceiling seen
+#: from the prompt side rather than a second, independent policy.
+RECALLED_MAX = 3
+
+#: Ceiling for the title and date rendered on a receipt's header line. Both
+#: come from the thread record, which the admin's own words seeded.
+_RECALLED_TITLE_CHARS = 120
+
 
 class AgentPromptBuilder:
     """
@@ -495,10 +511,25 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         Returns:
             Response generation prompt
         """
-        # Format context
+        # Format context. Thread receipts are split off first: they are
+        # continuity, not retrieval, and recall_thread appends up to three of
+        # them during PLANNING — before SEARCHING appends a single rag or
+        # memory hit — so slicing [:5] over the whole list gave the first
+        # three of the five slots to receipts and silently dropped real
+        # retrieval from the answer (review: Plan A / A9b). They get their own
+        # block below instead, the way the assembler gives the *current*
+        # subject's receipt its own slot.
+        receipts = [
+            c for c in (context or [])
+            if isinstance(c, dict) and c.get("source") == "thread"
+        ]
+        documents = [
+            c for c in (context or [])
+            if not (isinstance(c, dict) and c.get("source") == "thread")
+        ]
         context_text = "\n".join([
             f"[{c.get('source', 'unknown')}]: {c.get('content', '')[:500]}"
-            for c in (context or [])[:5]
+            for c in documents[:5]
         ])
 
         # Format observations
@@ -526,13 +557,17 @@ The user is asking about your state. Follow these rules:
   {"action": "invoke_module", "module": "vitals", "props": {"timeframe": "1h"}}
 - If there are open findings or config issues, mention them with specifics"""
 
-        # Thread history, then the continuity hint, immediately before the
-        # query section (spec §4.5 / §7). Empty when neither is supplied so
-        # the prompt is byte-identical to the pre-Plan-A shape.
+        # Thread history, the receipts of any subject recalled this turn,
+        # then the continuity hint, immediately before the query section
+        # (spec §4.5 / §7). Empty when none is supplied so the prompt is
+        # byte-identical to the pre-Plan-A shape.
         preface_parts: List[str] = []
         history_text = self._history_section(history)
         if history_text:
             preface_parts.append(history_text)
+        recalled_text = render_recalled_receipts(receipts)
+        if recalled_text:
+            preface_parts.append(recalled_text)
         preface_parts.extend(self._continuity_section(continuity, tools_supported))
         preface = ("\n\n".join(preface_parts) + "\n\n") if preface_parts else ""
 
@@ -709,3 +744,67 @@ Your response:"""
         if tool:
             result += f" (tool: {tool})"
         return result
+
+
+def render_recalled_receipts(
+    entries: Optional[List[Dict[str, Any]]],
+    *,
+    max_receipts: int = RECALLED_MAX,
+    max_chars: Optional[int] = None,
+) -> str:
+    """The receipts of subjects recalled this turn as their own prompt block.
+
+    ``entries`` are ``ctx.retrieved_context`` rows with ``source == "thread"``:
+    the receipt of *another* subject ``recall_thread`` (and A9c's auto-recall)
+    pulled in. They are continuity, not retrieval — rendered in the same list
+    as rag and memory hits they spent that list's slots and pushed real
+    retrieval out of the answer (review: Plan A / A9b) — so they are rendered
+    here instead, and the caller keeps its retrieval budget for retrieval.
+
+    A receipt quotes the admin's words, command lines and log text, so each
+    one is neutralised exactly like a ``system`` history row (``<continuity>``
+    tags collapsed, leading ``#``/``*`` runs substituted with their fullwidth
+    lookalikes) and capped at ``max_chars`` — ``threads.RECEIPT_ROW_MAX`` by
+    default, the same ceiling the receipt row in the history already carries.
+    A tighter cap is for the PLANNING prompt, where the block is appended
+    after the assembler has already spent its budget.
+
+    Returns "" when there is nothing to render, so a caller can simply skip
+    the section and leave its prompt unchanged.
+    """
+    if not entries:
+        return ""
+    try:
+        from ..agents.threads import RECEIPT_ROW_MAX as default_cap
+    except Exception:  # pragma: no cover - import cycle guard
+        default_cap = AgentPromptBuilder._SYSTEM_LINE_CHARS
+    cap = int(default_cap if max_chars is None else max_chars)
+    if cap <= 0:
+        return ""
+
+    lines: List[str] = [RECALLED_SECTION_HEADER]
+    for entry in list(entries)[: max(0, int(max_receipts))]:
+        if not isinstance(entry, dict):
+            continue
+        meta = entry.get("metadata") or {}
+        title = AgentPromptBuilder._defang_continuity(
+            str(meta.get("title") or "").strip()
+            or str(meta.get("thread_id") or "").strip()
+            or "Untitled",
+            _RECALLED_TITLE_CHARS,
+        )
+        title = " ".join(title.split())[:_RECALLED_TITLE_CHARS]
+        date = AgentPromptBuilder._defang_continuity(
+            str(meta.get("date") or ""), _RECALLED_TITLE_CHARS
+        )
+        date = " ".join(date.split())[:_RECALLED_TITLE_CHARS]
+        head = f'**"{title}"' + (f" ({date})" if date else "") + "**"
+
+        body = AgentPromptBuilder._defang_continuity(str(entry.get("content") or ""), cap)
+        body = AgentPromptBuilder._defang_line_markers(body).strip()
+        if len(body) > cap:
+            # Same shape as threads.py::_fence, which caps the receipt row.
+            body = body[: cap - 1].rstrip() + "…"
+        lines.append(f"{head}\n{body}" if body else head)
+
+    return "\n\n".join(lines) if len(lines) > 1 else ""
