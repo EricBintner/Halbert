@@ -48,6 +48,19 @@ describe('InlineTerminals', () => {
     expect(screen.getAllByText('terminal · ended')).toHaveLength(2)
   })
 
+  it('wraps each ended chip in its own block-level element so consecutive chips stack, not butt together', () => {
+    // StaticTerminalChip's root is an inline-flex <span>; two of them as bare
+    // .map() siblings sit on the same line with no gap between them. Each
+    // must be wrapped so the stack's space-y-2 puts one per line.
+    const { container } = render(<InlineTerminals sessionIds={['a', 'b']} />)
+
+    const stack = container.firstElementChild!
+    expect(Array.from(stack.children).map((el) => el.tagName)).toEqual(['DIV', 'DIV'])
+    for (const wrapper of Array.from(stack.children)) {
+      expect(wrapper.querySelector('[data-session-id]')).not.toBeNull()
+    }
+  })
+
   it('renders nothing for an empty list', () => {
     const { container } = render(<InlineTerminals sessionIds={[]} />)
     expect(container).toBeEmptyDOMElement()

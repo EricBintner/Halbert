@@ -75,7 +75,9 @@ export function InlineTerminals({ sessionIds }: InlineTerminalsProps) {
         return session ? (
           <InlineTerminal key={id} session={session} />
         ) : (
-          <StaticTerminalChip key={id} id={id} />
+          <div key={id}>
+            <StaticTerminalChip id={id} />
+          </div>
         );
       })}
     </div>
