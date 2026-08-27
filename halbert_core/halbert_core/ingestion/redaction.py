@@ -22,6 +22,9 @@ MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}\b")
 JWT_RE = re.compile(r"\beyJ[0-9A-Za-z_-]*\.[0-9A-Za-z_-]*\.[0-9A-Za-z_-]*\b")
 # PEM headers/footers
 PEM_RE = re.compile(r"-----BEGIN [^-]+-----[\s\S]+?-----END [^-]+-----", re.MULTILINE)
+# macOS: local Kerberos realm identifiers in com.apple.smb.server.plist and
+# related SystemConfiguration plists. Format is LKDC:SHA1.<40 hex chars>.
+LKDC_RE = re.compile(r"LKDC:SHA1\.[0-9A-Fa-f]{40}")
 
 
 def redact_text(text: str) -> str:
@@ -33,6 +36,7 @@ def redact_text(text: str) -> str:
     text = IPV6_RE.sub("<ip6>", text)
     text = JWT_RE.sub("<jwt>", text)
     text = PEM_RE.sub("<pem_block>", text)
+    text = LKDC_RE.sub("<lkdc_realm>", text)
     return text
 
 

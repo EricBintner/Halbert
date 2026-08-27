@@ -43,3 +43,19 @@ def test_listen_port_is_not_redacted():
     """The widened regex must not swallow ordinary non-secret directives."""
     out = redact_text("[Interface]\nListenPort = 51820\n")
     assert "51820" in out
+
+
+def test_lkdc_realm_hash_is_redacted():
+    """com.apple.smb.server.plist carries an LKDC Kerberos realm hash."""
+    smb = (
+        "<key>LocalKerberosRealm</key>\n"
+        "<string>LKDC:SHA1.9F2C4E1A7B3D5F8E0C6A2B4D9E1F3A5C7B8D0E2F</string>\n"
+    )
+    out = redact_text(smb)
+    assert "9F2C4E1A7B3D5F8E0C6A2B4D9E1F3A5C7B8D0E2F" not in out
+    assert "<lkdc_realm>" in out
+
+
+def test_plain_text_without_lkdc_is_untouched():
+    text = "<key>NetBIOSName</key>\n<string>WORKSTATION</string>\n"
+    assert redact_text(text) == "<key>NetBIOSName</key>\n<string>WORKSTATION</string>\n"
