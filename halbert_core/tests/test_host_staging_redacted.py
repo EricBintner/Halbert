@@ -8,7 +8,10 @@ this directory is a secret in the knowledge base.
 """
 from __future__ import annotations
 
-from pathlib import Path
+import logging
+import os
+
+import pytest
 
 from halbert_core.tools.register_host_project import _stage_config_files
 
@@ -181,3 +184,84 @@ def test_unreadable_file_does_not_abort_the_run(tmp_path):
         assert list(staging.rglob("good.conf"))
     finally:
         bad.chmod(0o644)
+
+
+# --- Blind spots must be reported ----------------------------------------
+#
+# An assistant with a blind spot it cannot report is worse than one that says
+# "I could not read this". A file the manifest asked for and Halbert could
+# not read is a gap in what it knows about the machine it administers, and it
+# has to say so at a level the operator actually sees.
+
+_running_as_root = os.geteuid() == 0
+
+
+@pytest.mark.skipif(_running_as_root, reason="root can read mode-0000 files")
+def test_permission_denied_file_is_reported_at_warning(tmp_path, caplog):
+    """Observed on this host: com.microsoft.teams.TeamsUpdaterDaemon.plist
+    (mode 0600, owned by root) vanished from the index with no signal,
+    because the parse failure was logged at debug."""
+    src = tmp_path / "Library" / "LaunchDaemons"
+    src.mkdir(parents=True)
+    locked = src / "com.example.locked.plist"
+    locked.write_text("<plist><dict/></plist>\n")
+    locked.chmod(0o000)
+
+    staging = tmp_path / "staged"
+    try:
+        with caplog.at_level(logging.DEBUG):
+            count = _stage_config_files([str(locked)], staging)
+    finally:
+        locked.chmod(0o644)
+
+    assert count == 0
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "unreadable file vanished without a warning"
+    assert any("com.example.locked.plist" in r.getMessage() for r in warnings)
+
+
+@pytest.mark.skipif(_running_as_root, reason="root can read mode-0000 files")
+def test_one_unreadable_file_in_a_tree_is_named_and_the_rest_stage(tmp_path, caplog):
+    """The real shape: a walked directory with one root-owned member."""
+    src = tmp_path / "Library" / "LaunchDaemons"
+    src.mkdir(parents=True)
+    (src / "com.example.ok.plist").write_text("<plist><dict/></plist>\n")
+    locked = src / "com.example.locked.plist"
+    locked.write_text("<plist><dict/></plist>\n")
+    locked.chmod(0o000)
+
+    staging = tmp_path / "staged"
+    try:
+        with caplog.at_level(logging.DEBUG):
+            count = _stage_config_files([str(src)], staging)
+    finally:
+        locked.chmod(0o644)
+
+    assert count == 1
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert "com.example.locked.plist" in warnings[0].getMessage()
+
+
+def test_dangling_symlink_in_a_walked_tree_stays_at_debug(tmp_path, caplog):
+    """Nothing was lost, so nothing to report.
+
+    /etc/systemd/system is mostly symlinks into /usr/lib; a stale one is a
+    fact about the host, not a limit on what Halbert can see. The manifests
+    also list paths that exist on only one distro or platform, so absence is
+    the bulk case -- warning on it would drown the real signal.
+    """
+    src = tmp_path / "etc" / "systemd" / "system"
+    src.mkdir(parents=True)
+    (src / "real.conf").write_text("[Unit]\nDescription=fine\n")
+    (src / "broken.conf").symlink_to(tmp_path / "does-not-exist")
+
+    staging = tmp_path / "staged"
+    with caplog.at_level(logging.DEBUG):
+        count = _stage_config_files([str(src)], staging)
+
+    assert count == 1
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("broken.conf" in r.getMessage() for r in caplog.records), (
+        "the skip should still be traceable at debug"
+    )

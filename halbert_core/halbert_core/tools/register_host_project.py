@@ -102,6 +102,12 @@ def _os_config_paths() -> List[str]:
     return _LINUX_CONFIG_PATHS
 
 
+# Read failures that mean "there was never anything here to index": a
+# dangling symlink, a path that is a directory or has a file in the middle of
+# it. Everything else is reported at warning — see _stage_one_file.
+_NOTHING_TO_READ = (FileNotFoundError, IsADirectoryError, NotADirectoryError)
+
+
 def _stage_one_file(src_file: Path, dest_file: Path) -> bool:
     """Stage a single config file through the redaction pipeline.
 
@@ -116,8 +122,24 @@ def _stage_one_file(src_file: Path, dest_file: Path) -> bool:
     """
     try:
         canon = parse_config(str(src_file))
+    except _NOTHING_TO_READ as e:
+        # Nothing was lost, so there is nothing to report. A stale symlink is
+        # a fact about the host rather than a limit on what Halbert can see,
+        # and the manifests deliberately list paths that exist on only one
+        # distro or platform, so absence is the bulk case -- warning on it
+        # would drown the signal from the case below.
+        logger.debug(f"Skip {src_file} (nothing to read): {e}")
+        return False
     except Exception as e:
-        logger.debug(f"Skip {src_file} (parse failed): {e}")
+        # Everything else is a blind spot: the manifest asked for this file,
+        # the file is there, and it did not reach the index. Permission denied
+        # is the case that motivated this -- a mode-0600 root-owned plist
+        # vanished from a real staging run with no signal at the default log
+        # level. A decode error or a parser crash is the same defect from
+        # Halbert's point of view: it administers this machine and cannot say
+        # what is in one of its config files. Say so, loudly enough to be
+        # seen. These are rare, so this does not become noise.
+        logger.warning(f"Cannot read {src_file}, excluded from the index: {e}")
         return False
 
     # `lines` is the canonical text form for every kind the parser emits,
