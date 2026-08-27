@@ -69,12 +69,19 @@ function Harness({ onSelected }: { onSelected?: (s: ModelSelection) => void }) {
   })
   const [open, setOpen] = useState(false)
   return (
-    <ChatModelPill
-      picker={picker}
-      open={open}
-      onOpenChange={setOpen}
-      onSelected={onSelected}
-    />
+    <>
+      {/* AgentChat's `/model specialist` handler: it pins through this same
+          picker without the popover ever opening. */}
+      <button type="button" onClick={() => picker.pinTier('specialist')}>
+        pin by command
+      </button>
+      <ChatModelPill
+        picker={picker}
+        open={open}
+        onOpenChange={setOpen}
+        onSelected={onSelected}
+      />
+    </>
   )
 }
 
@@ -139,6 +146,161 @@ describe('ChatModelPill', () => {
 
     await userEvent.click(await screen.findByRole('option', { name: /model-b/ }))
     await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'))
+  })
+})
+
+
+/**
+ * A guide on the local runtime and a specialist at a paid cloud vendor — the
+ * arrangement where naming the wrong slot costs the user money.
+ */
+const CLOUD_ENDPOINT = {
+  id: 'ep2', name: 'Hosted', provider: 'anthropic',
+  url: 'https://api.example.invalid', api_key: 'opaque',
+}
+
+function routeWithSpecialist() {
+  return vi.fn(async (url: string, init?: RequestInit) => {
+    const u = String(url)
+    if (u.includes('/llm/config')) {
+      return jsonResponse({ data: {
+        llm_config: {
+          ...config(),
+          saved_endpoints: [ENDPOINT, CLOUD_ENDPOINT],
+          specialist_model: { enabled: true, endpoint_id: 'ep2', model: 'model-cloud' },
+        },
+        chat_capable_providers: ['ollama', 'anthropic'],
+      } })
+    }
+    if (u.includes('/api/llm/discover')) {
+      return jsonResponse({ data: {
+        ollama: { running: true, url: ENDPOINT.url, version: '1.2.3', models: ['model-a'] },
+        lm_studio: { running: false, url: 'http://localhost:1234', models: [] },
+      } })
+    }
+    if (u.includes('proxy/models')) {
+      const body = JSON.parse(String(init?.body ?? '{}'))
+      const models = body.provider === 'anthropic' ? ['model-cloud'] : ['model-a', 'model-b']
+      return jsonResponse({ data: {
+        models, model_details: models.map((name) => ({ name })),
+      } })
+    }
+    return jsonResponse({ data: {} })
+  })
+}
+
+const liveRegion = (container: HTMLElement) =>
+  container.querySelector('[data-model-picker-live]')
+
+const tierBadge = (container: HTMLElement) =>
+  container.querySelector('[data-model-picker-trigger] [data-part="tier"]')
+
+async function pinTier(name: RegExp) {
+  await userEvent.click(await screen.findByRole('combobox'))
+  await userEvent.click(await screen.findByRole('button', { name }))
+}
+
+describe('ChatModelPill on a tier pin', () => {
+  beforeEach(() => vi.stubGlobal('fetch', routeWithSpecialist()))
+
+  it('names the tier’s own model, not the chat model', async () => {
+    // The pin routes the turn to the specialist slot. Reading the chat slot
+    // instead has the pill promise a local model while a cloud one bills.
+    render(<Harness />)
+    expect(await screen.findByText('model-a')).toBeInTheDocument()
+
+    await pinTier(/^Specialist$/)
+
+    expect(await screen.findByText('model-cloud')).toBeInTheDocument()
+    expect(screen.queryByText('model-a')).not.toBeInTheDocument()
+  })
+
+  it('drops the local badge when the pinned tier is a cloud model', async () => {
+    const { container } = render(<Harness />)
+    await waitFor(() =>
+      expect(container.querySelector('[data-model-picker-trigger]'))
+        .toHaveAttribute('data-local', 'true'),
+    )
+
+    await pinTier(/^Specialist$/)
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-model-picker-trigger]'))
+        .not.toHaveAttribute('data-local'),
+    )
+    expect(await screen.findByText('Anthropic')).toBeInTheDocument()
+  })
+
+  it('falls back to the chat model when the pinned tier has none', async () => {
+    // Matches resolve_turn_model: an unconfigured tier uses the guide rather
+    // than refusing the turn, so the pill must not claim nothing will answer.
+    render(<Harness />)
+    await pinTier(/^Vision$/)
+
+    expect(await screen.findByText('model-a')).toBeInTheDocument()
+  })
+})
+
+describe('ChatModelPill tier badge', () => {
+  beforeEach(() => vi.stubGlobal('fetch', routeWithSpecialist()))
+
+  it('shows automatic routing while nothing is pinned', async () => {
+    const { container } = render(<Harness />)
+    await screen.findByText('model-a')
+    expect(tierBadge(container)).toHaveTextContent('⚡ Auto: Guide')
+  })
+
+  it('shows a pinned tier as locked to it', async () => {
+    const { container } = render(<Harness />)
+    await pinTier(/^Specialist$/)
+    await waitFor(() =>
+      expect(tierBadge(container)).toHaveTextContent('🔒 Pin: Specialist'),
+    )
+  })
+
+  it('shows the vision tier in its own form', async () => {
+    const { container } = render(<Harness />)
+    await pinTier(/^Vision$/)
+    await waitFor(() => expect(tierBadge(container)).toHaveTextContent('👁️ Vision'))
+  })
+})
+
+describe('ChatModelPill switch announcement', () => {
+  beforeEach(() => vi.stubGlobal('fetch', routeWithSpecialist()))
+
+  it('announces a switch made without the popover', async () => {
+    // The popover is torn down the moment a selection commits, so an
+    // announcement living inside it is never read. This one follows the
+    // selection, whether a click, a slash command or a tier button set it.
+    const { container } = render(<Harness />)
+    await screen.findByText('model-a')
+    expect(liveRegion(container)?.textContent).toBe('')
+
+    await userEvent.click(screen.getByRole('button', { name: /pin by command/ }))
+
+    await waitFor(() =>
+      expect(liveRegion(container)).toHaveTextContent(
+        'Switched to the Specialist tier: model-cloud on Anthropic will answer the next turn.',
+      ),
+    )
+  })
+
+  it('keeps the announcement out of sight but not out of earshot', async () => {
+    const { container } = render(<Harness />)
+    await screen.findByText('model-a')
+
+    expect(liveRegion(container)).toHaveAttribute('aria-live', 'polite')
+    expect(liveRegion(container)).toHaveClass('sr-only')
+  })
+
+  it('survives the popover closing on commit', async () => {
+    const { container } = render(<Harness />)
+    await pinTier(/^Specialist$/)
+
+    expect(await screen.findByRole('combobox')).toHaveAttribute('aria-expanded', 'false')
+    await waitFor(() =>
+      expect(liveRegion(container)).toHaveTextContent(/Specialist tier/),
+    )
   })
 })
 

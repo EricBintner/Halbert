@@ -11,7 +11,7 @@ Provides REST API for:
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 from pathlib import Path
 import yaml
 import logging
@@ -168,6 +168,95 @@ async def get_model_status() -> Dict[str, Any]:
     return result
 
 
+class _RecommendedSetup(NamedTuple):
+    """What a hardware-appropriate setup would be. Computed without writing anything."""
+
+    tier: int
+    total_vram_gb: Optional[float]
+    compression_backend: str
+    budget: Any
+    chosen: Optional[Dict[str, Any]]
+
+
+def _recommend(installed: List[Dict[str, Any]]) -> _RecommendedSetup:
+    """Judge what is installed against the detected hardware. Writes nothing.
+
+    The Quick-setup button and the first-run auto-select share this so the two
+    can never disagree about which model fits — a first run that picked a model
+    the button would have rejected is exactly the too-large model §6.1 made the
+    button exist to avoid.
+    """
+    from ...model.hardware_detector import HardwareDetector, pick_installed_model
+
+    tier, total_vram = _detect_hardware_tier()
+    detector = HardwareDetector()
+    budget = detector.recommend_budget(detector.detect())
+    return _RecommendedSetup(
+        tier=tier,
+        total_vram_gb=total_vram,
+        compression_backend='semantic' if tier == 1 else 'lingua',
+        budget=budget,
+        chosen=pick_installed_model(installed, budget),
+    )
+
+
+def _apply_recommended(setup: _RecommendedSetup, endpoint: str) -> str:
+    """Write the chosen chat model and the tier's compression backend. Returns the model.
+
+    Every write goes through the store, so the file keeps its backup, atomic
+    rename, 0600 mode and sibling keys.
+    """
+    from ...model import llm_config as llm_store
+
+    chat_model = setup.chosen['name']
+    endpoint_id = llm_store.ensure_ollama_endpoint(endpoint)
+    llm_store.set_slot("chat_model", chat_model, endpoint_id)
+    compression = dict(llm_store.load_file().get("compression") or {})
+    compression.update(backend=setup.compression_backend, enabled=True)
+    llm_store.set_top_level("compression", compression)
+    return chat_model
+
+
+def configure_first_run_model() -> Optional[str]:
+    """Give a fresh install a usable chat model, or return None having written nothing.
+
+    Registering the local endpoint and stopping left ``chat_model`` empty, so a
+    new user could not send a first message without a detour into Settings
+    (SCRUTINY §6 V-01). The caller establishes that this is a genuine fresh
+    install; the empty-slot check here keeps a user's own choice safe even if
+    it ever calls on a configured machine.
+
+    Never raises: an unreachable engine, an empty library and a library where
+    nothing fits the hardware are all ordinary outcomes that leave the slot
+    empty for Quick-setup to explain.
+    """
+    from ...model import llm_config as llm_store
+    from ...utils.ollama import list_models_raw
+
+    try:
+        if llm_store.load_global()["chat_model"]["model"]:
+            return None
+        endpoint = llm_store.DEFAULT_OLLAMA_URL
+        setup = _recommend(list_models_raw(endpoint))
+        if not setup.chosen:
+            logger.info(
+                "First run: no installed model fits the detected ~%sB budget; "
+                "leaving the chat model for the user to choose",
+                setup.budget.max_params_b_4bit,
+            )
+            return None
+        chat_model = _apply_recommended(setup, endpoint)
+    except Exception as e:
+        logger.warning("First-run model selection skipped: %s", e)
+        return None
+    logger.info(
+        "First run: chat model set to %s — the largest model installed on %s that "
+        "fits the detected ~%sB budget",
+        chat_model, endpoint, setup.budget.max_params_b_4bit,
+    )
+    return chat_model
+
+
 @router.post("/model/apply-recommended")
 async def apply_recommended_config() -> Dict[str, Any]:
     """
@@ -184,21 +273,14 @@ async def apply_recommended_config() -> Dict[str, Any]:
     """
     import httpx
     from ...model import llm_config as llm_store
-    from ...model.hardware_detector import HardwareDetector, pick_installed_model
-
-    tier, total_vram = _detect_hardware_tier()
-    compression_backend = 'semantic' if tier == 1 else 'lingua'
-
-    # Model size budget from detected hardware (parameter counts, no names)
-    detector = HardwareDetector()
-    budget = detector.recommend_budget(detector.detect())
 
     endpoint = llm_store.DEFAULT_OLLAMA_URL
     async with httpx.AsyncClient(timeout=5.0) as client:
         installed = await _ollama_models(client, endpoint) or []
 
-    chosen = pick_installed_model(installed, budget)
-    if not chosen:
+    setup = _recommend(installed)
+    tier, total_vram, budget = setup.tier, setup.total_vram_gb, setup.budget
+    if not setup.chosen:
         return {
             'success': False,
             'hardware_tier': tier,
@@ -213,13 +295,8 @@ async def apply_recommended_config() -> Dict[str, Any]:
             ),
         }
 
-    chat_model = chosen['name']
     try:
-        endpoint_id = llm_store.ensure_ollama_endpoint(endpoint)
-        llm_store.set_slot("chat_model", chat_model, endpoint_id)
-        compression = dict(llm_store.load_file().get("compression") or {})
-        compression.update(backend=compression_backend, enabled=True)
-        llm_store.set_top_level("compression", compression)
+        chat_model = _apply_recommended(setup, endpoint)
     except llm_store.ConfigUnreadableError as e:
         logger.error("Cannot apply recommended config: %s", e)
         return {
@@ -237,12 +314,12 @@ async def apply_recommended_config() -> Dict[str, Any]:
         'budget': budget.to_dict(),
         'applied': {
             'chat_model': chat_model,
-            'compression_backend': compression_backend,
+            'compression_backend': setup.compression_backend,
         },
         'message': (
             f"Applied Tier {tier} configuration: {chat_model} "
             f"(largest installed model within your ~{budget.max_params_b_4bit}B budget) "
-            f"+ {compression_backend} compression"
+            f"+ {setup.compression_backend} compression"
         ),
     }
 

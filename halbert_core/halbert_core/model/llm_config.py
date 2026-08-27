@@ -662,17 +662,27 @@ def resolve_endpoint_by_id(endpoint_id: str) -> Optional[Tuple[str, str, str]]:
     return None
 
 
-def ensure_ollama_endpoint(url: str = DEFAULT_OLLAMA_URL) -> str:
-    """Id of the Ollama endpoint at ``url``; creates "Local Ollama" if absent."""
+def ensure_endpoint(url: str, provider: str = "ollama", name: str = "") -> str:
+    """Id of the saved endpoint at (``provider``, ``url``); creates it if absent.
+
+    A caller that needs an endpoint id must get it from here rather than
+    inventing one: a slot whose ``endpoint_id`` names no saved endpoint is
+    disabled by :func:`normalise` on the next read.
+    """
     cfg = load_global()
-    u = url.rstrip("/")
+    u = (url or "").rstrip("/")
     for ep in cfg["saved_endpoints"]:
-        if ep["provider"] == "ollama" and ep["url"] == u:
+        if ep["provider"] == provider and ep["url"] == u:
             return ep["id"]
-    ep = {"id": _new_id(), "name": "Local Ollama", "provider": "ollama", "url": u, "api_key": ""}
+    ep = {"id": _new_id(), "name": name or u, "provider": provider, "url": u, "api_key": ""}
     cfg["saved_endpoints"].append(ep)
     save(cfg)
     return ep["id"]
+
+
+def ensure_ollama_endpoint(url: str = DEFAULT_OLLAMA_URL) -> str:
+    """Id of the Ollama endpoint at ``url``; creates "Local Ollama" if absent."""
+    return ensure_endpoint(url, "ollama", "Local Ollama")
 
 
 def _probe_ollama(url: str, timeout: float) -> bool:

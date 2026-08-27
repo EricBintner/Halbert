@@ -408,6 +408,39 @@ def _report_model(
         logger.warning(f"on_model_selected callback failed: {e}")
 
 
+class _ModelUnreachable(Exception):
+    """The turn's model produced nothing at all — no connection, a refusal, or
+    a missing credential — while the turn can still be handed to another one."""
+
+
+def _fallback_to_guide(turn: TurnModel, requested: str) -> Optional[TurnModel]:
+    """The guide's turn to answer in place of one that could not be reached.
+
+    ``None`` when the guide is what already failed: asking it again is the loop
+    this fallback exists to avoid.
+    """
+    from ...model.client import (
+        get_configured_model, get_ollama_endpoint, provider_for,
+    )
+
+    guide_model = get_configured_model()
+    if not guide_model or guide_model == turn.model:
+        return None
+    guide_endpoint = get_ollama_endpoint()
+    # pinned/escalated are cleared: the guide answered because the choice
+    # failed, not because anyone chose it, and a banner reading "pinned" over a
+    # model the user never picked is worse than no banner at all.
+    return turn._replace(
+        model=guide_model,
+        endpoint=guide_endpoint,
+        provider=provider_for(guide_endpoint),
+        tier="guide",
+        pinned=False,
+        escalated=False,
+        reason=f"{requested} was unreachable; the guide answered",
+    )
+
+
 class LLMClientAdapter:
     """Adapter that uses same routing logic as Chat (guide vs specialist)."""
 
@@ -446,8 +479,7 @@ class LLMClientAdapter:
         shared by all concurrent requests, so anything stored on ``self``
         leaks across sessions.
         """
-        from ...model.client import call_llm_chat, get_configured_model, \
-            get_ollama_endpoint, provider_for
+        from ...model.client import call_llm_chat
 
         # Get the prompt from messages
         prompt = messages[-1].get("content", "") if messages else ""
@@ -533,46 +565,28 @@ class LLMClientAdapter:
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             # Never strand the turn: if a specialist or a pinned model is
-            # unreachable, answer with the guide and let the UI say so. Only
-            # skip this when the guide is what already failed.
-            guide_model = get_configured_model()
-            guide_endpoint = get_ollama_endpoint()
-            if guide_model and model != guide_model:
-                logger.warning(
-                    f"Model '{model}' unavailable ({e}); falling back to "
-                    f"guide model '{guide_model}' for this turn"
-                )
-                result = call_llm_chat(
-                    endpoint=guide_endpoint,
-                    model=guide_model,
-                    messages=llm_messages,
-                    provider=provider_for(guide_endpoint),
-                    stream=False,
-                    timeout=180,
-                    tools=tools,
-                )
-                # pinned/escalated are cleared: the guide answered because the
-                # choice failed, not because anyone chose it, and a banner
-                # reading "pinned" over a model the user never picked is worse
-                # than no banner at all.
-                _report_model(
-                    on_model_selected,
-                    turn._replace(
-                        model=guide_model,
-                        endpoint=guide_endpoint,
-                        provider=provider_for(guide_endpoint),
-                        tier="guide",
-                        pinned=False,
-                        escalated=False,
-                        reason=f"{requested} was unreachable; the guide answered",
-                    ),
-                    requested,
-                )
-                return LLMResponse(
-                    content=result.get("content", ""),
-                    tool_calls=_as_tool_calls(result.get("tool_calls")),
-                )
-            raise
+            # unreachable, answer with the guide and let the UI say so.
+            guide = _fallback_to_guide(turn, requested)
+            if guide is None:
+                raise
+            logger.warning(
+                f"Model '{model}' unavailable ({e}); falling back to "
+                f"guide model '{guide.model}' for this turn"
+            )
+            result = call_llm_chat(
+                endpoint=guide.endpoint,
+                model=guide.model,
+                messages=llm_messages,
+                provider=guide.provider,
+                stream=False,
+                timeout=180,
+                tools=tools,
+            )
+            _report_model(on_model_selected, guide, requested)
+            return LLMResponse(
+                content=result.get("content", ""),
+                tool_calls=_as_tool_calls(result.get("tool_calls")),
+            )
     
     async def stream(self, messages, intake_result=None, images=None,
                      model_override=None, tier_override=None, endpoint_id=None,
@@ -587,16 +601,15 @@ class LLMClientAdapter:
         Uses aiohttp for async streaming. Filters out <think> blocks in real-time.
         Uses self.max_tokens and self.temperature from instance (set per-request).
 
-        ``on_model_selected`` is called once, before the first byte, with the
-        model this stream is about to use — a callback rather than a return
-        value because an ``async for`` never sees a generator's return.
-        """
-        import aiohttp
-        import re
-        from ...model.client import (
-            OPENAI_COMPATIBLE_PROVIDERS, _api_url, api_key_for,
-        )
+        A model that cannot be reached costs the user that model, never the
+        answer: the guide takes the turn instead and ``on_model_selected``
+        names what was lost, so the UI can say so. The guide is tried once —
+        falling back to a guide that is itself down would loop.
 
+        ``on_model_selected`` is called once, with the model whose bytes the
+        user is about to read — a callback rather than a return value because
+        an ``async for`` never sees a generator's return.
+        """
         # Use instance variables for performance tweaks
         max_tokens = self.max_tokens
         temperature = self.temperature
@@ -609,20 +622,75 @@ class LLMClientAdapter:
             prompt, intake_result, images, model_override, tier_override,
             endpoint_id,
         )
-        model, endpoint, provider = turn.model, turn.endpoint, turn.provider
         logger.info(
-            f"Agent stream model: {model} @ {endpoint} (tier={turn.tier}, "
-            f"provider={provider}, pinned={turn.pinned}) — {turn.reason}"
+            f"Agent stream model: {turn.model} @ {turn.endpoint} "
+            f"(tier={turn.tier}, provider={turn.provider}, "
+            f"pinned={turn.pinned}) — {turn.reason}"
         )
-        _report_model(on_model_selected, turn)
+        # What the turn asked for first, so a fallback can say what the user is
+        # not getting.
+        requested = turn.model
 
         if turn.tier == "vision" and images:
             _attach_images(messages, images)
 
+        try:
+            async for chunk in self._stream_turn(
+                turn, messages, max_tokens, temperature,
+                on_model_selected, requested,
+            ):
+                yield chunk
+            return
+        except _ModelUnreachable as unreachable:
+            guide = _fallback_to_guide(turn, requested)
+            if guide is None:
+                logger.error(f"Stream failed with no guide to stand in: {unreachable}")
+                yield f"\n\n[Error: {unreachable}]"
+                return
+            logger.warning(
+                f"Model '{turn.model}' unavailable ({unreachable}); streaming "
+                f"from guide model '{guide.model}' for this turn"
+            )
+
+        # Deliberately outside the handler above, so a guide that is also down
+        # ends the turn with one notice instead of re-entering the fallback.
+        try:
+            async for chunk in self._stream_turn(
+                guide, messages, max_tokens, temperature,
+                on_model_selected, requested,
+            ):
+                yield chunk
+        except _ModelUnreachable as also_unreachable:
+            logger.error(f"Guide model unreachable as well: {also_unreachable}")
+            yield f"\n\n[Error: {also_unreachable}]"
+
+    async def _stream_turn(self, turn, messages, max_tokens, temperature,
+                           on_model_selected, requested):
+        """Stream one model's answer, reporting it once the request is good.
+
+        The report waits for the response headers because that is the last
+        moment the turn can still change hands: reported earlier it credits a
+        model that never answered, reported later the "was unavailable" chip
+        arrives over text already on screen. Headers land ahead of the first
+        token, so a healthy turn's banner is not held back.
+
+        For the same reason ``_ModelUnreachable`` is raised only from before
+        that moment: the caller may put another model behind an unstarted turn,
+        while a failure after it is told to the user in-band rather than
+        restarted over text they have already read.
+        """
+        import aiohttp
+        from ...model.client import (
+            OPENAI_COMPATIBLE_PROVIDERS, _api_url, api_key_for,
+        )
+
+        model, endpoint, provider = turn.model, turn.endpoint, turn.provider
+
         # State for filtering <think> blocks
         in_think_block = False
         buffer = ""
-        
+        reported = False
+
         try:
             # The streaming path builds its own requests rather than going
             # through call_llm_chat, so it needs the same auth and provider
@@ -645,8 +713,10 @@ class LLMClientAdapter:
             elif provider == "anthropic":
                 wire = "anthropic"
                 if not api_key:
-                    yield "Error: no API key configured for this endpoint — add one in Settings → AI Models"
-                    return
+                    raise _ModelUnreachable(
+                        "no API key configured for this endpoint — add one in "
+                        "Settings → AI Models"
+                    )
                 url = _api_url(endpoint or "https://api.anthropic.com", "/v1/messages")
                 system_parts = [
                     m.get("content", "") for m in messages
@@ -694,9 +764,11 @@ class LLMClientAdapter:
                     if resp.status != 200:
                         error_text = await resp.text()
                         logger.error(f"LLM API error: {resp.status} - {error_text}")
-                        yield f"Error: API returned {resp.status}"
-                        return
-                    
+                        raise _ModelUnreachable(f"API returned {resp.status}")
+
+                    _report_model(on_model_selected, turn, requested)
+                    reported = True
+
                     async for line in resp.content:
                         if not line:
                             continue
@@ -798,11 +870,17 @@ class LLMClientAdapter:
                     if "<think" not in buffer:
                         yield buffer
                 
+        except _ModelUnreachable:
+            raise
         except asyncio.TimeoutError:
             logger.error("LLM streaming timed out")
+            if not reported:
+                raise _ModelUnreachable("the request timed out")
             yield "\n\n[Response timed out]"
         except Exception as e:
             logger.error(f"LLM streaming failed: {e}")
+            if not reported:
+                raise _ModelUnreachable(str(e) or type(e).__name__) from e
             yield f"\n\n[Error: {e}]"
 
 

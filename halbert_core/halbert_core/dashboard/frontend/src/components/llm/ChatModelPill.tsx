@@ -15,7 +15,12 @@
  */
 import { useRef } from 'react'
 import { ModelSelectorPill, QuickSwitchPopover } from '@halbert/model-picker'
-import type { ModelPillState, ModelSelection, UseModelPickerResult } from '@halbert/model-picker'
+import type {
+  ModelPillState,
+  ModelSelection,
+  TierRoles,
+  UseModelPickerResult,
+} from '@halbert/model-picker'
 import { CHAT_ROLE_ID } from '@/lib/halbertModelRoles'
 import { cn } from '@/lib/utils'
 
@@ -37,6 +42,17 @@ const STATUS_STYLE: Record<ModelPillState['status'], string> = {
   unconfigured: 'text-muted-foreground',
 }
 
+/**
+ * The slot each tier pin actually runs on, matching `_resolve_turn_model` in
+ * routes/agent.py. Without it the pill reads every pin off the chat slot and
+ * names a local model while a pinned cloud specialist answers and bills.
+ */
+const TIER_ROLES: TierRoles = {
+  guide: CHAT_ROLE_ID,
+  specialist: 'specialist_model',
+  vision: 'vision_model',
+}
+
 export function ChatModelPill({
   picker,
   open,
@@ -54,8 +70,10 @@ export function ChatModelPill({
         ref={triggerRef}
         picker={picker}
         activeRoleId={CHAT_ROLE_ID}
+        tierRoles={TIER_ROLES}
         open={open}
         onToggle={() => onOpenChange(!open)}
+        announcementClassName="sr-only"
         className={cn(
           'flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded-lg',
           'text-muted-foreground hover:text-foreground hover:bg-muted transition-colors',
@@ -72,10 +90,24 @@ export function ChatModelPill({
               <span className="text-muted-foreground">{state.providerLabel}</span>
             )}
             <span className="max-w-[180px] truncate">{state.label}</span>
-            {state.pinned && (
+            {state.pinned && !state.tierBadge && (
               // A pin bypasses complexity routing entirely, so the fact that
               // one is in force has to be visible without opening anything.
+              // A tier badge carries its own lock and needs no second one.
               <span className="text-info" aria-hidden="true">🔒</span>
+            )}
+            {state.tierBadge && (
+              // The tier decides which slot answers, and a tier pin moves that
+              // without touching anything else on the pill.
+              <span
+                data-part="tier"
+                className={cn(
+                  'shrink-0 rounded-md border border-border/60 px-1.5 py-0.5 text-[10px] leading-none',
+                  state.tier === 'auto' ? 'text-muted-foreground' : 'text-info',
+                )}
+              >
+                {state.tierBadge}
+              </span>
             )}
           </>
         )}

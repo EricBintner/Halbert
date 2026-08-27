@@ -92,6 +92,16 @@ export interface RoleAssignment {
  */
 export type Tier = 'guide' | 'specialist' | 'vision' | 'auto'
 
+/**
+ * Which {@link AppRole} each tier stands for on this host.
+ *
+ * Tiers are this package's vocabulary; role ids are the host's. Nothing here
+ * can guess that `specialist` means one host's `specialist_model` and another's
+ * `deep_model`, so a surface that must report what a tier pin will actually run
+ * is handed the map. `auto` is the absence of a pin and is never looked up.
+ */
+export type TierRoles = Partial<Record<Tier, string>>
+
 /** A per-turn choice made from the pill, the popover, or a slash command. */
 export interface ModelSelection {
   /** Exact model name. Pins the turn and bypasses the host's router. */

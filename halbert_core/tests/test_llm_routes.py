@@ -51,3 +51,51 @@ def test_sourceprep_stubs_are_gone():
                  "/llm/slots/status", "/api/llm/proxy/cloud-models"):
         assert gone not in paths
     assert {"/llm/config", "/api/llm/proxy/models", "/api/llm/proxy/test", "/api/llm/proxy/test-model"} <= paths
+
+
+# ── V-01: a fresh install boots usable, without a detour into Settings ──
+
+
+def _installed(entries, chooses="model-a"):
+    """(hardware, library) patchers for the first-run selection behind GET /llm/config."""
+    from unittest.mock import MagicMock
+    budget = MagicMock(max_params_b_4bit=14, memory_budget_gb=10.0)
+    budget.to_dict.return_value = {"max_params_b_4bit": 14}
+    detector = MagicMock()
+    detector.recommend_budget.return_value = budget
+    return patch.multiple(
+        "halbert_core.model.hardware_detector",
+        HardwareDetector=MagicMock(return_value=detector),
+        pick_installed_model=MagicMock(return_value={"name": chooses} if chooses else None),
+    ), patch("halbert_core.utils.ollama.list_models_raw", return_value=entries)
+
+
+def test_fresh_install_arrives_with_a_chat_model(models_config_dir):
+    hardware, library = _installed([{"name": "model-a", "size": 1}])
+    with patch.object(store, "_probe_ollama", return_value=True), hardware, library:
+        data = routes.get_llm_config()["data"]
+    cfg = data["llm_config"]
+    assert cfg["chat_model"]["enabled"] is True
+    assert cfg["chat_model"]["model"] == "model-a"
+    ep = next(e for e in cfg["saved_endpoints"] if e["id"] == cfg["chat_model"]["endpoint_id"])
+    assert ep["url"] == OLLAMA
+    # The pill names the effective slot, so the very first response must carry it.
+    assert data["effective"]["llm_config"]["chat_model"]["model"] == "model-a"
+
+
+def test_fresh_install_with_nothing_that_fits_still_serves_the_picker(models_config_dir):
+    hardware, library = _installed([{"name": "model-a", "size": 1}], chooses=None)
+    with patch.object(store, "_probe_ollama", return_value=True), hardware, library:
+        cfg = routes.get_llm_config()["data"]["llm_config"]
+    assert cfg["chat_model"]["enabled"] is False
+    assert [e["url"] for e in cfg["saved_endpoints"]] == [OLLAMA]
+
+
+def test_second_boot_does_not_reselect(models_config_dir):
+    """Only the boot that registers the endpoint may choose; later ones must not."""
+    store.save({"saved_endpoints": [{"id": "e1", "name": "Local", "provider": "ollama", "url": OLLAMA}],
+                "chat_model": {"enabled": False, "endpoint_id": "", "model": ""}})
+    hardware, library = _installed([{"name": "model-a", "size": 1}])
+    with patch.object(store, "_probe_ollama", return_value=True), hardware, library:
+        cfg = routes.get_llm_config()["data"]["llm_config"]
+    assert cfg["chat_model"]["enabled"] is False

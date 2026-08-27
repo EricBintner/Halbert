@@ -177,9 +177,17 @@ def _editor_payload(session_id: Optional[str] = None) -> Dict[str, Any]:
 @router.get("/llm/config")
 def get_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
     """The global layer, the layer an edit writes to. On a fresh install, adds
-    Local Ollama when it answers."""
+    Local Ollama when it answers and gives it a model that fits the hardware.
+
+    ``ensure_local_ollama_endpoint`` returns True only when the saved list was
+    empty and :11434 answered, which is the one moment nobody's choice can be
+    overwritten — every later call leaves a cleared slot cleared.
+    """
+    from . import settings as settings_routes
+
     try:
-        llm_store.ensure_local_ollama_endpoint()
+        if llm_store.ensure_local_ollama_endpoint():
+            settings_routes.configure_first_run_model()
     except llm_store.ConfigUnreadableError as e:
         # Reading still works (the store serves defaults), so show the picker
         # rather than an error page — but say why nothing can be saved.
