@@ -223,3 +223,123 @@ def test_non_secret_inline_url_is_left_alone():
     """`endpoint:` carries no secret keyword, so the URL structure stays."""
     y = "endpoint: https://example.invalid/path\n"
     assert redact_text(y) == y
+
+
+# --- Inline values owned by the line pass ---------------------------------
+# The line pass classifies EVERY line, inline values included. Before this,
+# it bailed on an inline value and handed a format-aware decision back to a
+# format-blind regex; each test below is a leak that boundary error caused.
+
+
+def test_plist_password_string_is_redacted():
+    """L1: launchd/SystemConfiguration plists put the value in the next tag."""
+    p = "<key>Password</key>\n<string>hunter2secret</string>\n"
+    out = redact_text(p)
+    assert "hunter2secret" not in out
+    # The marker must keep the XML well-formed: a literal `<secret>` would
+    # read as an unknown element, so it goes inside the text node.
+    assert "<string>[redacted]</string>" in out
+    assert "<key>Password</key>" in out
+
+
+def test_plist_nested_dict_token_is_redacted():
+    """L1: launchd EnvironmentVariables nest the secret key one level down."""
+    p = (
+        "<key>EnvironmentVariables</key>\n"
+        "<dict>\n"
+        "  <key>API_TOKEN</key>\n"
+        "  <string>sk-live-abcdef123456</string>\n"
+        "</dict>\n"
+    )
+    out = redact_text(p)
+    assert "sk-live-abcdef123456" not in out
+    assert "<key>API_TOKEN</key>" in out
+    assert out.count("\n") == p.count("\n")
+
+
+def test_plist_data_blob_is_redacted():
+    """L1: a `<data>` base64 blob under a secret key is still a credential."""
+    p = "<key>SecretData</key>\n<data>aGVsbG8xMjM0NQ==</data>\n"
+    out = redact_text(p)
+    assert "aGVsbG8xMjM0NQ==" not in out
+    assert "<data>[redacted]</data>" in out
+
+
+def test_plist_same_line_key_and_value_is_redacted():
+    """Both tags on one line is equally valid plist XML."""
+    out = redact_text("<key>Password</key><string>hunter2secret</string>\n")
+    assert "hunter2secret" not in out
+
+
+def test_plist_non_secret_key_is_untouched():
+    """The plist rule must not fire on ordinary keys."""
+    p = "<key>NetBIOSName</key>\n<string>WORKSTATION</string>\n"
+    assert redact_text(p) == p
+
+
+def test_json_quoted_key_is_redacted():
+    """L2: a quoted key put the keyword out of the regex's reach."""
+    j = '{\n  "password": "hunter2secret"\n}\n'
+    out = redact_text(j)
+    assert "hunter2secret" not in out
+    assert out.count("\n") == j.count("\n")
+
+
+def test_json_single_line_object_is_redacted():
+    """L2: one-line JSON, no whitespace around the separator."""
+    out = redact_text('{"api_key":"AKIAIOSFODNN7SECRET"}\n')
+    assert "AKIAIOSFODNN7SECRET" not in out
+
+
+def test_bare_quoted_key_forms_are_redacted():
+    """L2: quoted YAML/JSON keys, both quote styles."""
+    assert "hunter2secret" not in redact_text('"password": "hunter2secret"\n')
+    assert "hunter2secret" not in redact_text("'password': 'hunter2secret'\n")
+
+
+def test_value_with_spaces_is_redacted_to_end_of_line():
+    """L5: a passphrase with spaces leaked everything after the first word."""
+    out = redact_text("psk=correct horse battery staple\n")
+    assert "horse" not in out
+    assert "battery" not in out
+    assert "staple" not in out
+
+
+def test_quoted_value_with_spaces_is_fully_redacted():
+    """L5: the quoted form leaked the tail and the closing quote."""
+    out = redact_text('password = "correct horse battery"\n')
+    assert "correct" not in out
+    assert "horse battery" not in out
+
+
+def test_keyword_adjacency_is_not_required():
+    """L6: real NetworkManager/wpa_supplicant keys are not bare keywords."""
+    assert "A1B2C3D4E5" not in redact_text("wep-key0=A1B2C3D4E5\n")
+    assert "A1B2C3D4E5" not in redact_text('wep_key0="A1B2C3D4E5"\n')
+    assert "$6$salt$hash" not in redact_text("password_hash = $6$salt$hash\n")
+    assert "topsecretvalue" not in redact_text("secret_value = topsecretvalue\n")
+
+
+def test_fstab_option_list_keeps_non_secret_siblings():
+    """O1: /etc/fstab is the first entry in the storage manifest.
+
+    A comma-separated option list is its own shape: the secret ends at the
+    delimiter, so uid/gid survive.
+    """
+    line = "//srv/share /mnt cifs username=bob,password=hunter2,uid=1000,gid=1000 0 0\n"
+    out = redact_text(line)
+    assert "hunter2" not in out
+    assert "uid=1000" in out
+    assert "gid=1000" in out
+    assert "username=bob" in out
+
+
+def test_option_list_without_sibling_keys_is_redacted_whole():
+    """A comma inside a value is only a delimiter when a sibling key follows.
+
+    Without that evidence the value runs to end of line (the L5 rule), so a
+    passphrase that happens to contain a comma is not half-leaked.
+    """
+    out = redact_text("psk=correct,horse,battery\n")
+    assert "horse" not in out
+    assert "battery" not in out
