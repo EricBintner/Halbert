@@ -22,8 +22,9 @@ error caused most of the leaks this module has had, because a format-aware
 question -- where does this value end? -- was being answered with `\\S+`.
 """
 from __future__ import annotations
+import ipaddress
 import re
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 SECRET = "<secret>"
 # Inside XML a literal `<secret>` reads as an unknown element and breaks the
@@ -145,6 +146,75 @@ EMAIL_RE = re.compile(
 IPV4_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 IPV6_RE = re.compile(r"\b([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b")
 MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}\b")
+
+# --- Addresses: non-routable is operational data, not a secret ------------
+#
+# Halbert administers the machine it runs on, so its own loopback and private
+# addressing is core operational data rather than a secret it must keep from
+# itself. Blanket redaction gutted the files that carry it: `/etc/hosts`
+# became `<ip> localhost` / `<ip>` / `<ip> broadcasthost`, and a stock
+# `#ListenAddress 0.0.0.0` became `#ListenAddress <ip>`.
+#
+# A *public* address is different. It can identify this host or a remote peer
+# to an outside observer, and harvested config reaches an LLM that may be
+# cloud-hosted, so those still go.
+#
+# `ipaddress.is_private` is deliberately NOT the predicate, despite reading
+# like it. Verified on CPython 3.10, its IPv4 list is
+#
+#   0.0.0.0/8  10/8  127/8  169.254/16  172.16/12  192.0.0.0/29
+#   192.0.0.170/31  192.0.2.0/24  192.168/16  198.18/15  198.51.100.0/24
+#   203.0.113.0/24  240.0.0.0/4  255.255.255.255/32
+#
+# and its IPv6 list includes 2001:db8::/32. That list means "not globally
+# routable", which sweeps in the RFC 5737 / RFC 3849 documentation ranges and
+# the whole of 240/4 -- so `is_private` reports True for 203.0.113.5,
+# 192.0.2.1, 198.51.100.5 and 2001:db8::1, every one of which must still be
+# redacted. The class predicates that *are* exactly right come from the
+# stdlib; the private ranges are named explicitly because the stdlib has no
+# predicate for "RFC1918" alone.
+#
+# `is_private` does subsume loopback, link-local and unspecified for IPv4,
+# and 255.255.255.255 as well (via 240/4) -- but since it is unusable for the
+# reason above, all four are asked for by name.
+_EXEMPT_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "10.0.0.0/8",  # RFC1918
+        "172.16.0.0/12",  # RFC1918
+        "192.168.0.0/16",  # RFC1918
+        "255.255.255.255/32",  # limited broadcast (`/etc/hosts` broadcasthost)
+    )
+)
+
+_IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+
+
+def _is_exempt_address(addr: _IPAddress) -> bool:
+    """True when an address is non-routable and so not a secret.
+
+    `is_loopback` covers 127.0.0.0/8 and ::1; `is_link_local` covers
+    169.254.0.0/16 and fe80::/10; `is_unspecified` covers 0.0.0.0 and ::.
+    Network containment is version-aware (`IPv4Network.__contains__` returns
+    False for an IPv6 address rather than raising), so the v4-only networks
+    above are safe to test against either family.
+    """
+    if addr.is_loopback or addr.is_link_local or addr.is_unspecified:
+        return True
+    return any(addr in net for net in _EXEMPT_NETWORKS)
+
+
+def _redact_address(match: "re.Match[str]", placeholder: str) -> str:
+    """Substitution body for IPV4_RE/IPV6_RE: exempt the non-routable ones."""
+    text = match.group(0)
+    try:
+        addr = ipaddress.ip_address(text)
+    except ValueError:
+        # The pattern claimed this was an address and cannot be believed.
+        # Fail closed: an unparseable candidate is redacted, never exempted.
+        return placeholder
+    return text if _is_exempt_address(addr) else placeholder
+
 # JWT (very rough): three base64url segments
 JWT_RE = re.compile(r"\beyJ[0-9A-Za-z_-]*\.[0-9A-Za-z_-]*\.[0-9A-Za-z_-]*\b")
 # PEM headers/footers
@@ -611,9 +681,9 @@ def redact_text(text: str) -> str:
     text = TOKEN_RE.sub(SECRET, text)
     text = HOME_RE.sub("/home/<user>", text)
     text = EMAIL_RE.sub("<email>", text)
-    text = IPV4_RE.sub("<ip>", text)
+    text = IPV4_RE.sub(lambda m: _redact_address(m, "<ip>"), text)
     text = MAC_RE.sub("<mac>", text)  # MAC before IPv6 (IPv6 pattern is greedy)
-    text = IPV6_RE.sub("<ip6>", text)
+    text = IPV6_RE.sub(lambda m: _redact_address(m, "<ip6>"), text)
     text = JWT_RE.sub("<jwt>", text)
     text = PEM_RE.sub("<pem_block>", text)
     text = LKDC_RE.sub("<lkdc_realm>", text)

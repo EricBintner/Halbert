@@ -638,6 +638,98 @@ def test_plist_value_tag_attributes_are_preserved():
     assert 'xml:space="preserve"' in out
 
 
+# --- Addresses: non-routable is operational data, not a secret ------------
+#
+# Halbert administers the machine it runs on, so its own loopback and private
+# addressing is core operational data. A *public* address can identify the
+# host or a remote peer to an outside observer, and harvested config reaches
+# an LLM that may be cloud-hosted, so those still go.
+
+
+def test_loopback_addresses_survive():
+    """Blanket IPv4 redaction gutted /etc/hosts: `127.0.0.1 localhost`."""
+    assert redact_text("127.0.0.1 localhost\n") == "127.0.0.1 localhost\n"
+    assert redact_text("127.0.1.1 myhost\n") == "127.0.1.1 myhost\n"
+    # systemd-resolved's stub listener — a real, frequently-asked-about value.
+    assert "127.0.0.53" in redact_text("nameserver 127.0.0.53\n")
+
+
+def test_rfc1918_addresses_survive():
+    for addr in ("10.0.0.1", "10.255.255.254", "172.16.0.1", "172.31.255.255",
+                 "192.168.1.1", "192.168.0.254"):
+        line = f"Address = {addr}/24\n"
+        assert redact_text(line) == line, f"redacted private {addr}"
+
+
+def test_link_local_and_unspecified_and_broadcast_survive():
+    assert redact_text("169.254.1.1 self\n") == "169.254.1.1 self\n"
+    # `#ListenAddress 0.0.0.0` is a stock sshd_config line.
+    assert redact_text("#ListenAddress 0.0.0.0\n") == "#ListenAddress 0.0.0.0\n"
+    assert redact_text("255.255.255.255 broadcasthost\n") == (
+        "255.255.255.255 broadcasthost\n"
+    )
+
+
+def test_ipv6_loopback_and_link_local_survive():
+    assert redact_text("::1 localhost\n") == "::1 localhost\n"
+    assert redact_text("fe80::1%lo0 router\n") == "fe80::1%lo0 router\n"
+
+
+def test_public_ipv4_is_still_redacted():
+    for addr in ("8.8.8.8", "203.0.113.5", "1.1.1.1"):
+        out = redact_text(f"nameserver {addr}\n")
+        assert addr not in out, f"leaked public {addr}"
+        assert "<ip>" in out
+
+
+def test_addresses_just_outside_the_private_ranges_are_redacted():
+    """172.16/12 ends at 172.31; 172.32.0.1 is public."""
+    for addr in ("172.32.0.1", "172.15.0.1", "11.0.0.1", "193.168.1.1"):
+        assert addr not in redact_text(f"peer {addr}\n"), f"leaked {addr}"
+
+
+def test_documentation_ranges_are_redacted_despite_is_private():
+    """`ipaddress.is_private` is True for TEST-NET and 2001:db8::/32.
+
+    Verified on this interpreter: 203.0.113.5, 192.0.2.1, 198.51.100.5 and
+    2001:db8::1 all report `is_private == True`, because Python's list is
+    "not globally routable" rather than "RFC1918". Exempting on `is_private`
+    alone would therefore have exempted addresses this fix must still redact.
+    """
+    for addr in ("203.0.113.5", "192.0.2.1", "198.51.100.5"):
+        assert addr not in redact_text(f"peer {addr}\n"), f"leaked {addr}"
+    assert "2001:db8" not in redact_text("peer 2001:db8::8a2e:370:7334\n")
+
+
+def test_public_ipv6_is_still_redacted():
+    out = redact_text("nameserver 2606:4700:4700::1111\n")
+    assert "2606:4700" not in out
+    assert "<ip6>" in out
+
+    out = redact_text("peer 2001:0db8:85a3:0000:0000:8a2e:0370:7334\n")
+    assert "8a2e" not in out
+    assert "<ip6>" in out
+
+
+def test_etc_hosts_round_trips_unchanged():
+    """The file that motivated this fix. Every line is non-routable."""
+    hosts = (
+        "##\n"
+        "# Host Database\n"
+        "#\n"
+        "# localhost is used to configure the loopback interface\n"
+        "# when the system is booting.  Do not change this entry.\n"
+        "##\n"
+        "127.0.0.1\tlocalhost\n"
+        "255.255.255.255\tbroadcasthost\n"
+        "::1             localhost\n"
+        "127.0.0.1       kubernetes.docker.internal\n"
+        "192.168.1.42    nas.local nas\n"
+        "fe80::1%en0     router.local\n"
+    )
+    assert redact_text(hosts) == hosts
+
+
 def test_redaction_is_idempotent():
     """Re-redacting already-redacted text must not degrade it further."""
     for text in (
