@@ -10,10 +10,12 @@ Based on research5.md Part 13.
 from __future__ import annotations
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
 from .tokens import TokenCounter
+from .watermark import ContextWatermark
 from ..agents.blocks import content_to_text
 
 if TYPE_CHECKING:
@@ -95,6 +97,7 @@ class ContextAssembler:
         self.priorities = priorities or self.DEFAULT_PRIORITIES
         self._compressor_threshold = 4000  # Compress if context > this many tokens
         self._extra_sources = extra_sources or {}
+        self._watermark = ContextWatermark()
     
     async def assemble(
         self,
@@ -105,6 +108,7 @@ class ContextAssembler:
         include_sources: List[str] = None,
         use_compression: bool = True,
         intake: Any = None,
+        session_id: Optional[str] = None,
     ) -> AssembledContext:
         """Assemble context within token budget.
 
@@ -115,6 +119,8 @@ class ContextAssembler:
             max_tokens: Maximum tokens for assembled context
             include_sources: Specific sources to include (default: all)
             use_compression: Whether to apply compression cascade
+            session_id: Session this turn belongs to, so the memory source can
+                leave out interactions the caller is already sending verbatim
             intake: Optional Phase 3 MessageIntake. When provided:
                 - max_tokens is overridden by intake.context_budget.total
                 - retrieval is gated by intake.needs_retrieval
@@ -134,6 +140,12 @@ class ContextAssembler:
 
         # Determine which sources to include
         active_sources = include_sources or list(self.priorities.keys())
+
+        # Conversation is carried by the caller's messages[] array (E-3). A
+        # caller that keeps it there passes none here, and its budget line must
+        # then go to the other sources instead of being reserved for nothing.
+        if not conversation:
+            active_sources = [s for s in active_sources if s != "conversation"]
 
         # Phase 3: Gate retrieval based on intake.needs_retrieval
         if intake is not None and not intake.needs_retrieval:
@@ -173,7 +185,8 @@ class ContextAssembler:
             retrieval_tasks.append(("retrieval", self._retrieve_retrieval(query, budgets.get("retrieval", 0))))
         
         if "memory" in active_sources and self.memory:
-            retrieval_tasks.append(("memory", self._retrieve_memory(query, budgets.get("memory", 0))))
+            retrieval_tasks.append(("memory", self._retrieve_memory(
+                query, budgets.get("memory", 0), session_id=session_id)))
         
         if "discovery" in active_sources and self.discovery:
             retrieval_tasks.append(("discovery", self._retrieve_discovery(query, budgets.get("discovery", 0))))
@@ -360,10 +373,16 @@ class ContextAssembler:
         if max_tokens <= 0:
             return "", 0
 
-        # Phase 72: Use conversation summarization for long chats
+        # One compaction trigger across the codebase: the token watermark, not
+        # a message count. A count fires on twenty one-line turns that fit
+        # easily and stays quiet on six that do not.
         try:
-            from ..conversation.summarization import should_summarize, compress_conversation_history
-            if should_summarize(conversation):
+            from ..conversation.summarization import compress_conversation_history
+            cost = sum(
+                self.tokens.count(content_to_text(m.get("content", ""))) + 4
+                for m in conversation
+            )
+            if self._watermark.should_compact(cost, max_tokens):
                 compressed_msgs, summary = compress_conversation_history(conversation)
                 if summary:
                     # Use compressed messages with summary prefix
@@ -474,22 +493,36 @@ class ContextAssembler:
             logger.error(f"Retrieval error: {e}")
             return {}
     
-    async def _retrieve_memory(self, query: str, max_tokens: int) -> Dict:
-        """Retrieve and format memory results."""
+    async def _retrieve_memory(
+        self, query: str, max_tokens: int, session_id: Optional[str] = None
+    ) -> Dict:
+        """Retrieve and format memory results.
+
+        ``session_id`` excludes this conversation's own stored ``Q:``/``A:``
+        interactions: the turns they paraphrase are already in the caller's
+        ``messages[]`` array verbatim (E-3), so letting them back in as prose
+        would spend the memory budget saying the same thing a second time.
+        Interactions from *other* conversations are what this source is for and
+        are kept.
+        """
         if max_tokens <= 0:
             return {}
-        
+
         try:
             results = await self.memory.recall(query, limit=5)
-            
+
             lines = ["## Remembered Information"]
             tokens = self.tokens.count(lines[0])
             items = 0
-            
+
             for mem in results:
                 content = mem.get("content", "")
                 mem_type = mem.get("type", "fact")
-                
+
+                if (session_id and mem_type == "interaction"
+                        and (mem.get("metadata") or {}).get("session_id") == session_id):
+                    continue
+
                 line = f"- [{mem_type}] {content}"
                 line_tokens = self.tokens.count(line) + 1
                 
@@ -727,3 +760,148 @@ class ContextAssembler:
             "original_tokens": original_tokens,
             "ratio": round(original_tokens / max(combined_tokens, 1), 2),
         }
+
+
+# -----------------------------------------------------------------------------
+# Conversation window (E-3)
+# -----------------------------------------------------------------------------
+
+# The conversation budget is a per-tier line in intake.budget.ContextBudget;
+# this is the MEDIUM tier's value, for callers that cannot name the model.
+DEFAULT_CONVERSATION_TOKENS = 800
+
+
+def _history_tokens(messages: List[Dict], counter: TokenCounter) -> int:
+    """Token cost of a message list, role overhead included."""
+    return sum(counter.count(m.get("content", "")) + 4 for m in messages) + 2
+
+
+def _from_first_user(messages: List[Dict]) -> List[Dict]:
+    """The window from its first user message onward.
+
+    A history whose own first line is an assistant one would otherwise open the
+    array the model is sent, and the Anthropic Messages API rejects a first
+    message that is not ``user`` — failing the turn outright rather than
+    degrading it.
+    """
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "user":
+            return messages[i:]
+    return []
+
+
+def _trim_to_budget(
+    messages: List[Dict], max_tokens: int, counter: TokenCounter
+) -> List[Dict]:
+    """Keep the newest whole turns that fit, cutting in front of a user message.
+
+    A message is never split, and a question travels with the answer it earned:
+    both are kept or both are dropped. The window has no choice about opening
+    on a user message — the Anthropic Messages API rejects any other first
+    message — so the only real decision is what becomes of an answer whose
+    question the budget cannot afford, and it goes with the question. Keeping
+    it costs the same tokens as its missing half while reading, to the model,
+    as something the user was told in a conversation it can no longer see.
+    """
+    start = len(messages)
+    used = 2
+    index = len(messages)
+    for msg in reversed(messages):
+        index -= 1
+        cost = counter.count(msg.get("content", "")) + 4
+        if used + cost > max_tokens:
+            break
+        used += cost
+        if msg.get("role") == "user":
+            start = index
+    return messages[start:]
+
+
+def build_conversation_window(
+    conversation: Any,
+    query: str = "",
+    max_tokens: int = DEFAULT_CONVERSATION_TOKENS,
+    watermark: Optional[ContextWatermark] = None,
+    token_counter: Optional[TokenCounter] = None,
+    now: Optional[float] = None,
+) -> List[Dict[str, str]]:
+    """Prior turns of ``conversation`` as ``{role, content}`` within budget.
+
+    This is the only place the agent decides how much history a turn carries,
+    so the trigger lives here too: the token watermark, never a message count —
+    six long turns overflow a small local model's window while twenty short
+    ones do not.
+
+    Below the watermark the history is sent verbatim. At or above it, a summary
+    of the older turns replaces them when ContextWatermark's gates allow;
+    when they don't, the oldest turns are simply dropped, because the budget is
+    a ceiling even on a turn that has not earned a fresh compaction.
+
+    Every path returns either nothing or a window whose first ``user``/
+    ``assistant`` entry is a user one: since E-3 this list becomes the caller's
+    ``messages[]`` array, and the Anthropic Messages API rejects an array that
+    opens on an assistant message.
+    """
+    if max_tokens <= 0 or conversation is None:
+        return []
+
+    wm = watermark or ContextWatermark()
+    counter = token_counter or TokenCounter()
+
+    raw = [
+        {"role": m.get("role", "user"), "content": m.get("content", "")}
+        for m in conversation.get_history()
+    ]
+    # A no-op on anything the conversation store holds today: it records
+    # ``content`` as a plain string, and micro_compact only caps tool_result
+    # blocks inside a block-typed content list. Kept so the cap is already in
+    # place if block-typed turns are ever persisted, since an uncapped tool
+    # result would eat the whole budget before it is measured.
+    wm.micro_compact(raw)
+
+    history = [
+        {"role": m["role"], "content": content_to_text(m["content"])}
+        for m in raw
+    ]
+    history = [m for m in history if m["content"].strip()]
+    if not history:
+        return []
+
+    used = _history_tokens(history, counter)
+    if used < wm.watermark * max_tokens:
+        return _from_first_user(history)
+
+    previous_query = next(
+        (m["content"] for m in reversed(history) if m["role"] == "user"), None
+    )
+    stamp = time.time() if now is None else now
+    metadata = getattr(conversation, "metadata", None)
+    last_compaction = (metadata or {}).get("last_compaction_ts", 0.0)
+
+    if wm.should_compact(
+        used,
+        max_tokens,
+        last_compaction_ts=last_compaction,
+        topic_changed=wm.detect_topic_change(query, previous_query),
+        now=stamp,
+    ):
+        if metadata is not None:
+            metadata["last_compaction_ts"] = stamp
+        window = [
+            {"role": m.get("role", "user"),
+             "content": content_to_text(m.get("content", ""))}
+            for m in conversation.get_context_window(max_tokens)
+        ]
+        window = [m for m in window if m["content"].strip()]
+        # get_context_window keeps the most recent turns whole whatever they
+        # cost, so the ceiling is enforced here instead: the summary standing in
+        # for everything it dropped goes first, and the verbatim tail is trimmed
+        # to fit around it.
+        summary = [m for m in window if m["role"] not in ("user", "assistant")]
+        turns = [m for m in window if m["role"] in ("user", "assistant")]
+        headroom = max_tokens - _history_tokens(summary, counter) if summary else max_tokens
+        if headroom <= 0:
+            summary, headroom = [], max_tokens
+        return summary + _trim_to_budget(turns, headroom, counter)
+
+    return _trim_to_budget(history, max_tokens, counter)
