@@ -259,6 +259,16 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
   
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  /**
+   * The conversation this hook is speaking into, stable across sends.
+   *
+   * Every send used to mint a fresh id, so the backend keyed each turn on a
+   * different conversation and loaded an empty history every time — the agent
+   * could not remember the previous message however well the backend was
+   * wired. It is cleared by reset(), which is what starting a new
+   * conversation does.
+   */
+  const conversationIdRef = useRef<string | null>(null);
 
   // Cleanup on unmount - cancel backend request to prevent zombie processing
   useEffect(() => {
@@ -577,7 +587,10 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     setModuleInvocations([]);
     
     // Generate or use provided session ID
-    const sid = sessionId || crypto.randomUUID();
+    // An explicit id (a conversation reopened from the list) wins; otherwise
+    // continue the one already in progress, and only mint when there is none.
+    const sid = sessionId || conversationIdRef.current || crypto.randomUUID();
+    conversationIdRef.current = sid;
     initSession(sid);
 
     // Use fetch with POST for SSE (EventSource only supports GET)
@@ -641,6 +654,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       body: JSON.stringify({
         message: message,
         session_id: sid,
+        // The backend keys history on conversation_id, falling back to
+        // session_id; sending both keeps the two from drifting apart.
+        conversation_id: sid,
         max_tokens: maxTokens,
         temperature: temperature,
         // Omitted entirely when the user has not pinned anything, so the
@@ -785,6 +801,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     if (sessionIdRef.current) {
       terminalSessionStore.clearOrigin(sessionIdRef.current);
     }
+    // Starting a new conversation must start a new history, not continue the
+    // last one under a new title.
+    conversationIdRef.current = null;
     setSession(null);
     setResponse('');
     setTurnModel(null);
