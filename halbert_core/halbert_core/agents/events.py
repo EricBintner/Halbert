@@ -126,6 +126,42 @@ class StreamEvent:
         )
     
     @classmethod
+    def model_selected(
+        cls,
+        session_id: str,
+        model: str,
+        endpoint: str,
+        provider: str,
+        tier: str,
+        pinned: bool = False,
+        escalated: bool = False,
+        reason: str = "",
+        fallback_from: str = None
+    ) -> 'StreamEvent':
+        """Emit when the model that answers this turn has been resolved.
+
+        ``fallback_from`` names a model the user asked for that could not be
+        reached; it is omitted when nothing fell back, because "your pin
+        answered" and "something else answered instead" must not look alike.
+        """
+        data = {
+            "model": model,
+            "endpoint": endpoint,
+            "provider": provider,
+            "tier": tier,
+            "pinned": pinned,
+            "escalated": escalated,
+            "reason": reason
+        }
+        if fallback_from:
+            data["fallback_from"] = fallback_from
+        return cls(
+            type="model_selected",
+            session_id=session_id,
+            data=data
+        )
+
+    @classmethod
     def scan_start(
         cls,
         session_id: str,

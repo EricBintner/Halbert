@@ -10,7 +10,7 @@ Based on research5.md Part 7.
 from __future__ import annotations
 import logging
 import asyncio
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Callable, Dict, List, NamedTuple, Optional
 
 try:
     from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
@@ -365,9 +365,41 @@ def _resolve_turn_model(
                      False, False, "Routine query")
 
 
+def _report_model(
+    callback: Optional[Callable[[Dict[str, Any]], None]],
+    turn: TurnModel,
+    fallback_from: Optional[str] = None,
+) -> None:
+    """Hand the resolved turn model back to the caller, if it asked.
+
+    A per-call callback rather than a return value because ``stream()`` is an
+    async generator whose return value the ``async for`` in RESPONDING never
+    sees, and rather than an attribute because one adapter serves every
+    concurrent request. A caller's bookkeeping must never cost the user their
+    answer, so a raising callback is swallowed.
+    """
+    if callback is None:
+        return
+    payload = {
+        "model": turn.model,
+        "endpoint": turn.endpoint,
+        "provider": turn.provider,
+        "tier": turn.tier,
+        "pinned": turn.pinned,
+        "escalated": turn.escalated,
+        "reason": turn.reason,
+    }
+    if fallback_from and fallback_from != turn.model:
+        payload["fallback_from"] = fallback_from
+    try:
+        callback(payload)
+    except Exception as e:
+        logger.warning(f"on_model_selected callback failed: {e}")
+
+
 class LLMClientAdapter:
     """Adapter that uses same routing logic as Chat (guide vs specialist)."""
-    
+
     def __init__(self):
         """Initialize adapter - calls chat functions directly, no router needed."""
         # Performance tweaks - can be set per-request from frontend settings
@@ -375,7 +407,8 @@ class LLMClientAdapter:
         self.temperature = 0.7
     
     async def chat(self, messages, tools=None, intake_result=None, images=None,
-                   model_override=None, tier_override=None, endpoint_id=None):
+                   model_override=None, tier_override=None, endpoint_id=None,
+                   on_model_selected=None):
         """Call LLM with messages, routing to specialist for complex queries.
 
         Tool schemas are forwarded to the model and any tool calls come back on
@@ -395,6 +428,8 @@ class LLMClientAdapter:
             model_override: Exact model pinned for this turn; bypasses routing.
             tier_override: "guide" | "specialist" | "vision" for this turn.
             endpoint_id: Saved-endpoint id the pinned model came from.
+            on_model_selected: Called once with the model that actually
+                produced the content, after any fallback has settled.
 
         Every override is a parameter, never instance state: one adapter is
         shared by all concurrent requests, so anything stored on ``self``
@@ -416,6 +451,9 @@ class LLMClientAdapter:
             f"(tier={turn.tier}, provider={turn.provider}, "
             f"pinned={turn.pinned}) — {turn.reason}"
         )
+        # What the turn asked for first, so a later fallback can say what the
+        # user is not getting.
+        requested = turn.model
 
         if turn.tier == "vision":
             # Add images to the last user message
@@ -438,6 +476,7 @@ class LLMClientAdapter:
                     timeout=300,
                     options={"num_predict": 2048, "temperature": 0.7},
                 )
+                _report_model(on_model_selected, turn)
                 return LLMResponse(content=result.get("content", ""))
             except Exception as e:
                 logger.error(f"Vision model call failed: {e}, falling back to text")
@@ -469,6 +508,7 @@ class LLMClientAdapter:
                 options={"num_predict": 2048, "temperature": 0.7},
                 tools=tools,
             )
+            _report_model(on_model_selected, turn, requested)
             return LLMResponse(
                 content=result.get("content", ""),
                 tool_calls=_as_tool_calls(result.get("tool_calls")),
@@ -494,6 +534,23 @@ class LLMClientAdapter:
                     timeout=180,
                     tools=tools,
                 )
+                # pinned/escalated are cleared: the guide answered because the
+                # choice failed, not because anyone chose it, and a banner
+                # reading "pinned" over a model the user never picked is worse
+                # than no banner at all.
+                _report_model(
+                    on_model_selected,
+                    turn._replace(
+                        model=guide_model,
+                        endpoint=guide_endpoint,
+                        provider=provider_for(guide_endpoint),
+                        tier="guide",
+                        pinned=False,
+                        escalated=False,
+                        reason=f"{requested} was unreachable; the guide answered",
+                    ),
+                    requested,
+                )
                 return LLMResponse(
                     content=result.get("content", ""),
                     tool_calls=_as_tool_calls(result.get("tool_calls")),
@@ -501,7 +558,8 @@ class LLMClientAdapter:
             raise
     
     async def stream(self, messages, intake_result=None, images=None,
-                     model_override=None, tier_override=None, endpoint_id=None):
+                     model_override=None, tier_override=None, endpoint_id=None,
+                     on_model_selected=None):
         """Stream response from LLM with true incremental streaming.
 
         This — not chat() — is the production response path: the state machine
@@ -511,6 +569,10 @@ class LLMClientAdapter:
 
         Uses aiohttp for async streaming. Filters out <think> blocks in real-time.
         Uses self.max_tokens and self.temperature from instance (set per-request).
+
+        ``on_model_selected`` is called once, before the first byte, with the
+        model this stream is about to use — a callback rather than a return
+        value because an ``async for`` never sees a generator's return.
         """
         import aiohttp
         import re
@@ -535,6 +597,7 @@ class LLMClientAdapter:
             f"Agent stream model: {model} @ {endpoint} (tier={turn.tier}, "
             f"provider={provider}, pinned={turn.pinned}) — {turn.reason}"
         )
+        _report_model(on_model_selected, turn)
 
         if turn.tier == "vision" and images:
             # Add images to the last user message
