@@ -410,8 +410,39 @@ class TestLargeInputPerformance:
         start = time.perf_counter()
         analyze_message(msg)
         elapsed_ms = (time.perf_counter() - start) * 1000
-        # Generous bound: this is a ~220KB adversarial paste, not the
-        # module's <1ms normal-message budget — it only guards against
-        # the entity-extraction passes (token/alias/path scans) scaling
-        # unboundedly with input size the way the pre-fix code did.
+        # Crude backstop only. Measured on this machine: head 75ms,
+        # bound reverted 114ms, and the original unbounded A4 code
+        # 165ms — all three pass this assertion, so it does NOT catch
+        # the regression it was written for. The real guard is
+        # test_entity_extraction_stops_at_the_scan_limit below; this
+        # one just keeps a catastrophic (>3x) blow-up visible.
         assert elapsed_ms < 250, f"analyze_message took {elapsed_ms:.1f}ms on a large paste"
+
+    def test_entity_extraction_stops_at_the_scan_limit(self):
+        """The behavioural bound, machine-independently.
+
+        Entity/alias/path extraction reads only the first
+        ``_ENTITY_SCAN_LIMIT`` bytes; domain detection still sees the
+        whole message. Deleting the limit makes this fail, which is
+        what the wall-clock test above cannot do.
+        """
+        from halbert_core.intake.signals import _ENTITY_SCAN_LIMIT
+
+        # Sized off the constant so that raising it does not silently
+        # turn this into a no-op; the ceiling keeps a runaway value
+        # (or a deleted bound) from allocating the filler instead of
+        # failing the assertion.
+        assert _ENTITY_SCAN_LIMIT <= 64 * 1024, (
+            f"scan limit is now {_ENTITY_SCAN_LIMIT}; revisit this guard"
+        )
+        unit = "lorem ipsum dolor sit amet consectetur adipiscing elit. "
+        filler = unit * (_ENTITY_SCAN_LIMIT // len(unit) + 2)
+        assert len(filler) > _ENTITY_SCAN_LIMIT
+        s = analyze_message(
+            filler + " and then zpool status showed /etc/marker/beyond.conf failing"
+        )
+        # Past the prefix, nothing is harvested as an entity ...
+        assert "zfs" not in s.entities
+        assert "/etc/marker/beyond.conf" not in s.entities
+        # ... but the domain boolean still scans the full text.
+        assert "storage" in s.detected_domains
