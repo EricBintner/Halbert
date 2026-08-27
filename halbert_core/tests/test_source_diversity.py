@@ -362,6 +362,87 @@ class TestUnkeyablePaths:
         assert len(cap_by_source_directory(["a", "b", None], 5)) == 3
 
 
+class TestExemptTrees:
+    """``host/**`` is this machine's live config, not a reference corpus.
+
+    The cap exists to stop a corpus that is large *by document count* from
+    monopolising top-k. ``host/**`` has the opposite shape, and when several
+    files in one host directory match, that IS the answer: "my launch agents"
+    wants the list, not one example.
+
+    Measured against the live daemon over 16 host probes (8 specific config
+    lookups, 8 enumerations) and the 15 knowledge probes:
+
+        policy                    lookups(8)  enums(8)  knowledge(15)
+        uncapped (pre-cap prod)        5          4          8/15
+        cap 1 everywhere               5          0         14/15
+        cap 2 everywhere               5          1         12/15
+        cap 3 everywhere               5          5         11/15
+        host exempt, knowledge 1       5          6         14/15
+
+    Exempting host costs nothing: isolating the cap from the deep pull (same
+    k=50 score-sorted pool, cap on vs off) it surfaces a narrow host config
+    directory on 0 of 24 host-shaped queries — it is inert on lookups and
+    purely destructive on enumerations. Raising the cap globally instead is
+    not an option: it buys the enumerations by wrecking knowledge, 14 -> 11.
+    """
+
+    def _agents(self, n, score=0.9):
+        return [
+            _chunk(f"host/Library/LaunchAgents/com.vendor.{i}.plist", score - i / 100)
+            for i in range(n)
+        ]
+
+    def test_an_enumeration_of_host_config_survives_the_cap(self):
+        out = cap_by_source_directory(self._agents(4), 5, backfill=False)
+        assert len(out) == 4
+
+    def test_knowledge_is_still_capped_while_host_is_not(self):
+        chunks = self._agents(3) + [_chunk(AW.format(i), 0.5 - i / 100) for i in range(3)]
+        out = cap_by_source_directory(chunks, 5, backfill=False)
+        paths = [c["source_path"] for c in out]
+        assert sum(1 for p in paths if "LaunchAgents" in p) == 3
+        assert sum(1 for p in paths if "arch-wiki" in p) == 1
+
+    def test_exempt_chunks_do_not_consume_another_directorys_budget(self):
+        chunks = self._agents(2) + [
+            _chunk(AW.format(0), 0.5),
+            _chunk(WS.format(0), 0.4),
+        ]
+        out = cap_by_source_directory(chunks, 5, backfill=False)
+        assert len(out) == 4
+
+    def test_exemption_matches_a_whole_segment_not_a_string_prefix(self):
+        # "hostile" starts with "host" and must NOT be exempt.
+        chunks = [
+            _chunk(f"hostile/tracking/file_{i}.md", 0.9 - i / 100) for i in range(4)
+        ]
+        assert len(cap_by_source_directory(chunks, 5, backfill=False)) == 1
+
+    def test_a_host_lookup_still_gets_its_narrow_directory(self):
+        # The exemption must not stop host/etc/ssh reaching the result.
+        chunks = self._agents(2) + [_chunk("host/etc/ssh/sshd_config", 0.4)]
+        paths = [c["source_path"] for c in cap_by_source_directory(chunks, 5)]
+        assert "host/etc/ssh/sshd_config" in paths
+
+    def test_the_exempt_set_is_configurable(self):
+        chunks = self._agents(4)
+        out = cap_by_source_directory(chunks, 5, exempt_trees=(), backfill=False)
+        assert len(out) == 1
+
+    def test_another_tree_can_be_exempted(self):
+        chunks = [_chunk(AW.format(i), 0.9 - i / 100) for i in range(4)]
+        out = cap_by_source_directory(
+            chunks, 5, exempt_trees=("knowledge",), backfill=False
+        )
+        assert len(out) == 4
+
+    def test_disabling_the_cap_still_wins_over_the_exemption(self):
+        chunks = self._agents(3) + [_chunk(AW.format(i)) for i in range(3)]
+        out = cap_by_source_directory(chunks, 5, per_source=0)
+        assert len(out) == 5
+
+
 class TestDisabled:
     def test_per_source_zero_disables_capping(self):
         chunks = [_chunk(AW.format(i)) for i in range(8)]

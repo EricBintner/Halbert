@@ -44,6 +44,15 @@ Blanket exclusion wins the small probes and destroys the controls — a
 build-time exclusion cannot be undone by the caller, so when the user asks
 about Homebrew the Homebrew corpus is simply gone. The cap is strictly more
 robust: it keeps a giant's single best chunk when the giant is right.
+
+WHAT IS *NOT* CAPPED
+--------------------
+``host/**`` — this machine's own live configuration — is exempt. The cap
+answers a reference-corpus problem (too many documents about the same topic);
+a host tree has the opposite shape, and when several files in one host
+directory match, the *set* is the answer. Capping turned "my launch agents"
+from three plists into one. See :data:`DEFAULT_EXEMPT_TREES` for the
+measurement behind the exemption.
 """
 
 from __future__ import annotations
@@ -63,6 +72,34 @@ DEFAULT_PER_SOURCE = 1
 #: cap can only choose from what the candidate list contains, so a shallow
 #: pull leaves it nothing to promote.
 DEFAULT_PULL_K = 50
+
+#: Top-level trees whose directories are never capped, matched as a whole
+#: leading path segment.
+#:
+#: ``host/**`` is this machine's own live configuration, not a reference
+#: corpus. The cap exists to stop a corpus that is large *by document count*
+#: from monopolising top-k on volume alone; the host tree has the opposite
+#: shape, and when several files in one host directory match, that IS the
+#: answer — "my launch agents" wants the list, not one example of one.
+#:
+#: Measured against the live daemon over 16 host probes (8 specific config
+#: lookups, 8 enumerations) plus the 15 knowledge probes:
+#:
+#:     policy                     lookups(8)  enums(8)  knowledge(15)
+#:     uncapped (pre-cap prod)         5          4          8/15
+#:     cap 1 everywhere                5          0         14/15
+#:     cap 2 everywhere                5          1         12/15
+#:     cap 3 everywhere                5          5         11/15
+#:     host exempt, knowledge 1        5          6         14/15
+#:
+#: Exempting the host tree is free. Isolating the cap from the deep pull —
+#: same k=50 score-sorted pool, cap on versus off — the cap surfaces a narrow
+#: host config directory (``host/etc``, ``host/etc/ssh``,
+#: ``host/etc/ssh/sshd_config.d``) on **0 of 24** host-shaped queries. It is
+#: inert on host lookups and purely destructive on host enumerations, where it
+#: cuts a 3-4 item answer down to 1. Raising the cap globally is not the
+#: alternative: it buys the enumerations by wrecking knowledge, 14 -> 11.
+DEFAULT_EXEMPT_TREES = ("host",)
 
 
 def source_directory(source_path: Any) -> Optional[str]:
@@ -159,6 +196,7 @@ def cap_by_source_directory(
     per_source: int = DEFAULT_PER_SOURCE,
     backfill: bool = True,
     path_key: str = "source_path",
+    exempt_trees: Iterable[str] = DEFAULT_EXEMPT_TREES,
 ) -> List[Chunk]:
     """Keep at most *per_source* chunks per source directory, then trim to *limit*.
 
@@ -184,12 +222,18 @@ def cap_by_source_directory(
             source that matched beats under-delivering. Backfilled chunks are
             appended **after** the diverse ones.
         path_key: Mapping key holding the source path.
+        exempt_trees: Top-level path segments whose directories are never
+            capped — see :data:`DEFAULT_EXEMPT_TREES`. Matched as a whole
+            segment, so ``"host"`` exempts ``host/etc`` but not ``hostile/x``.
+            Pass ``()`` to cap every tree alike.
 
     Returns:
         A new list; neither the input list nor any chunk is mutated.
     """
     if limit <= 0:
         return []
+
+    exempt = frozenset(exempt_trees)
 
     if per_source <= 0:
         out: List[Chunk] = []
@@ -209,6 +253,13 @@ def cap_by_source_directory(
 
         if directory is None:
             # No evidence of a shared source — always unique, never capped.
+            kept.append(chunk)
+            continue
+
+        if directory.split("/", 1)[0] in exempt:
+            # An exempt tree: several matching files in one directory are the
+            # answer here, not redundancy. Like an unkeyable path, this neither
+            # consumes nor is limited by any directory budget.
             kept.append(chunk)
             continue
 

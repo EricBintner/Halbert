@@ -194,6 +194,67 @@ def test_equal_scores_keep_the_daemon_order():
     ]
 
 
+# ── host/** is live config, not a reference corpus ────────────────────
+
+
+def _enumeration_corpus():
+    """"my launch agents": the answer is the *list*, not one example.
+
+    Carries six distinct directories so the pool never runs short of the
+    limit — otherwise backfill refills the result from the spilled plists and
+    masks whether the exemption did anything at all.
+    """
+    return (
+        [
+            _chunk("knowledge/macos/tldr/tldr_launchctl.md", score=0.90),
+            _chunk("knowledge/macos/man-pages/launchd_01.md", score=0.85),
+        ]
+        + [
+            _chunk(f"host/Library/LaunchAgents/com.vendor.{i}.plist", score=0.80 - i / 100)
+            for i in range(4)
+        ]
+        + [
+            _chunk("knowledge/macos/ask-different/ad_01.md", score=0.60),
+            _chunk("knowledge/macos/support/sup_01.md", score=0.59),
+            _chunk("knowledge/macos/homebrew/brew_01.md", score=0.58),
+        ]
+    )
+
+
+def test_an_enumeration_of_host_config_is_not_cut_down_to_one():
+    client = _RecordingClient(_enumeration_corpus())
+    out = SourcePrepRetrievalBackend(client=client).search("my launch agents", k=5)
+    agents = [r for r in out if "LaunchAgents" in r["source_path"]]
+    assert len(agents) == 3
+
+
+def test_reference_docs_are_still_capped_alongside_uncapped_host_config():
+    corpus = _enumeration_corpus() + [
+        _chunk(f"knowledge/macos/man-pages/launchd_{i}.md", score=0.84 - i / 100)
+        for i in range(2, 5)
+    ]
+    client = _RecordingClient(corpus)
+    out = SourcePrepRetrievalBackend(client=client).search("my launch agents", k=5)
+    man = [r for r in out if "man-pages" in r["source_path"]]
+    assert len(man) == 1
+
+
+def test_a_narrow_host_config_lookup_is_unaffected():
+    client = _RecordingClient(
+        [
+            _chunk("host/etc/ssh/sshd_config", score=0.9),
+            _chunk("host/etc/ssh/sshd_config.d/100-macos.conf", score=0.8),
+            _chunk("knowledge/macos/man-pages/sshd_01.md", score=0.7),
+        ]
+    )
+    out = SourcePrepRetrievalBackend(client=client).search("my sshd config", k=5)
+    assert [r["source_path"] for r in out] == [
+        "host/etc/ssh/sshd_config",
+        "host/etc/ssh/sshd_config.d/100-macos.conf",
+        "knowledge/macos/man-pages/sshd_01.md",
+    ]
+
+
 # ── Scope interaction ─────────────────────────────────────────────────
 
 

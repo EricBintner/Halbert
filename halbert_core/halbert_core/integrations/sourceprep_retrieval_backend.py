@@ -362,6 +362,10 @@ class SourcePrepRetrievalBackend:
         Without the sort the cap discards answers the daemon ranked out of
         score order (measured: 12 of 15 pools carry score inversions).
 
+        `host/**` — this machine's live config — is exempt from the cap: when
+        several files in one host directory match, the set is the answer, and
+        capping turned "my launch agents" from three plists into one.
+
         The cap applies to scoped queries too. A scope is candidate removal
         plus a constant score offset; it does not re-rank within the scope, so
         `knowledge_linux` still contains all of arch-wiki and the dominance
