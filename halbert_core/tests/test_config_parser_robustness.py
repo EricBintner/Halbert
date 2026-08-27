@@ -43,3 +43,51 @@ def test_valid_ini_still_parses_as_ini(tmp_path):
     result = parse(str(p))
     assert result["kind"] == "ini"
     assert result["sections"]["Unit"]["description"] == "Test unit"
+
+
+import plistlib
+
+
+def test_binary_plist_is_parsed_not_mangled(tmp_path):
+    """Binary plists must not flow through the errors='replace' text path."""
+    p = tmp_path / "com.example.daemon.plist"
+    payload = {"Label": "com.example.daemon", "RunAtLoad": True, "KeepAlive": False}
+    p.write_bytes(plistlib.dumps(payload, fmt=plistlib.FMT_BINARY))
+
+    result = parse(str(p))
+    assert result["kind"] == "plist"
+    assert result["tree"]["Label"] == "com.example.daemon"
+    assert result["tree"]["RunAtLoad"] is True
+    assert "�" not in "".join(line["text"] for line in result["lines"])
+
+
+def test_xml_plist_is_parsed(tmp_path):
+    """LaunchAgents/LaunchDaemons are XML; they must parse the same way."""
+    p = tmp_path / "com.example.agent.plist"
+    payload = {"Label": "com.example.agent", "ProgramArguments": ["/bin/echo", "hi"]}
+    p.write_bytes(plistlib.dumps(payload, fmt=plistlib.FMT_XML))
+
+    result = parse(str(p))
+    assert result["kind"] == "plist"
+    assert result["tree"]["ProgramArguments"] == ["/bin/echo", "hi"]
+
+
+def test_plists_with_different_content_hash_differently(tmp_path):
+    """Hash must be computed over parsed content, so it is real and stable.
+
+    Two plists with different content must hash differently — proving the
+    hash is not being taken over identical U+FFFD replacement soup.
+    """
+    a = tmp_path / "a.plist"
+    b = tmp_path / "b.plist"
+    a.write_bytes(plistlib.dumps({"Label": "alpha"}, fmt=plistlib.FMT_BINARY))
+    b.write_bytes(plistlib.dumps({"Label": "beta"}, fmt=plistlib.FMT_BINARY))
+    assert parse(str(a))["hash"] != parse(str(b))["hash"]
+
+
+def test_unreadable_plist_falls_back_to_text(tmp_path):
+    """A corrupt or non-plist file named .plist must not raise."""
+    p = tmp_path / "broken.plist"
+    p.write_bytes(b"this is not a plist at all")
+    result = parse(str(p))
+    assert result["kind"] == "text"

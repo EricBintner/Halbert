@@ -4,6 +4,7 @@ from __future__ import annotations
 import configparser
 import json as pyjson
 import os
+import plistlib
 from typing import Any, Dict, Tuple
 
 try:
@@ -34,9 +35,17 @@ def _hash_bytes(b: bytes) -> str:
 
 
 def parse(path: str) -> Dict[str, Any]:
+    lower = path.lower()
+    # Plists are checked before the text read: binary plists are not UTF-8,
+    # and _read_text's errors="replace" would corrupt them into U+FFFD soup
+    # that then gets hashed — making drift detection compare corruption to
+    # corruption. plistlib handles both binary and XML natively.
+    if lower.endswith(".plist"):
+        parsed = _parse_plist(path)
+        if parsed is not None:
+            return parsed
     text = _read_text(path)
     h = _hash_bytes(text.encode("utf-8", errors="replace"))
-    lower = path.lower()
     if lower.endswith((".ini", ".conf", ".service", ".timer")):
         return _parse_ini_like(path, text, h)
     if lower.endswith((".yaml", ".yml")) and yaml is not None:
@@ -96,6 +105,29 @@ def _parse_json(path: str, text: str, h: str) -> Dict[str, Any]:
         "path": path,
         "hash": h,
         "kind": "json",
+        "tree": data,
+        "lines": _lines(text),
+    }
+
+
+def _parse_plist(path: str) -> Dict[str, Any] | None:
+    """Parse a binary or XML plist. Returns None if it isn't a valid plist,
+    so the caller falls through to the generic text path."""
+    try:
+        with open(path, "rb") as f:
+            data = plistlib.load(f)
+    except Exception:
+        return None
+    # Re-serialize to XML text so the content is greppable, citable by line,
+    # and hashable over real content rather than raw binary.
+    try:
+        text = plistlib.dumps(data, fmt=plistlib.FMT_XML).decode("utf-8")
+    except Exception:
+        return None
+    return {
+        "path": path,
+        "hash": _hash_bytes(text.encode("utf-8")),
+        "kind": "plist",
         "tree": data,
         "lines": _lines(text),
     }
