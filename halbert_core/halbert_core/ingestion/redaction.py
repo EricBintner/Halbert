@@ -5,7 +5,14 @@ import re
 from typing import Any, Dict
 
 # Patterns from docs schemas (tokens/keys, home paths, emails, IPv4)
-TOKEN_RE = re.compile(r"(?i)(api|secret|token|key|password)[=:]\S+")
+# Keyword list covers config formats staged into SourcePrep scopes:
+# `psk` (NetworkManager WiFi), `privatekey`/`presharedkey` (WireGuard), plus
+# the original generic terms. `\s*` around the separator is required —
+# WireGuard's standard formatting is `PrivateKey = <value>`, which the
+# original no-whitespace pattern silently missed.
+TOKEN_RE = re.compile(
+    r"(?i)(api|secret|token|key|password|psk|privatekey|presharedkey)\s*[=:]\s*\S+"
+)
 HOME_RE = re.compile(r"/home/[^/\s]+")
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 IPV4_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
