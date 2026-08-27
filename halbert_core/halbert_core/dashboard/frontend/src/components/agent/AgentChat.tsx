@@ -38,6 +38,8 @@ import { ThinkingPanel } from './ThinkingPanel';
 import { WhyChip, type ProvenanceRef } from '../WhyChip';
 import { ModuleRenderer } from '../ModuleRenderer';
 import { ConfidenceIndicator } from './ConfidenceIndicator';
+import { ChatModelPill } from '../llm/ChatModelPill';
+import type { ModelSelection } from '@halbert/model-picker';
 import { ScanBlock } from './ScanBlock';
 import { ContextBar } from './ContextBar';
 import { DiffBlock } from './DiffBlock';
@@ -79,6 +81,8 @@ interface AgentConversation {
 interface AgentChatProps {
   className?: string;
   onRunCommand?: (cmd: string) => Promise<{output?: string, error?: string, exit_code?: number}>;
+  /** Opens Settings -> AI Models from the quick-switch footer. */
+  onOpenModelSettings?: () => void;
 }
 
 // -----------------------------------------------------------------------------
@@ -183,8 +187,12 @@ function MessageContent({
   );
 }
 
-export function AgentChat({ className, onRunCommand }: AgentChatProps) {
+export function AgentChat({ className, onRunCommand, onOpenModelSettings }: AgentChatProps) {
   const [userMessages, setUserMessages] = useState<UserMessage[]>([]);
+  // The per-turn model pin. Deliberately component state and never persisted:
+  // a pin governs this conversation only, while the settings drawer is what
+  // changes the stored default.
+  const [modelSelection, setModelSelection] = useState<ModelSelection>({ tier: 'auto' });
   const [input, setInput] = useState('');
   const [agentError, setAgentError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -355,7 +363,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
           timestamp: Date.now(),
         };
         setUserMessages(prev => [...prev, userMsg]);
-        sendMessage(nextMessage);
+        sendMessage(nextMessage, undefined, modelSelection);
         setInput('');
       }, 100);
     }
@@ -535,7 +543,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
     setExpandedProvenanceModules([]);
 
     // TODO: Pass images to agent backend when vision support is added
-    sendMessage(input.trim());
+    sendMessage(input.trim(), undefined, modelSelection);
     setInput('');
   };
 
@@ -630,13 +638,19 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
           )}
         </div>
         
-        <button
-          onClick={startNewConversation}
-          className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
-          title="New conversation"
-        >
-          <Plus className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          <ChatModelPill
+            onSelectionChange={setModelSelection}
+            onOpenSettings={onOpenModelSettings}
+          />
+          <button
+            onClick={startNewConversation}
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
+            title="New conversation"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </div>
       </div>
       
       {session?.contextItems && session.contextItems.length > 0 && (
