@@ -88,6 +88,107 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
 - Respect user privacy and system security
 - One action at a time - wait for results before proceeding"""
 
+    # Continuity component (spec §7), one preamble per voice. Rendered with
+    # the <continuity> hint at the TAIL of the PLANNING message and right
+    # before the query in RESPONDING: Ollama truncates the head of an
+    # over-long prompt, so the newest, most specific context goes last.
+    CONTINUITY_PREAMBLE = {
+        "first_person": (
+            "You have one continuous conversation with the admin. Your working "
+            "context is the current subject. Earlier subjects listed below may "
+            "matter; call `recall_thread` when one does. Call `new_thread` when "
+            "the subject changes; a question you can answer in one reply does "
+            "not need a new thread."
+        ),
+        "the_computer": (
+            "This system has one continuous conversation with the admin. The "
+            "working context is the current subject. Earlier subjects listed "
+            "below may matter; call `recall_thread` when one does. Call "
+            "`new_thread` when the subject changes; a question you can answer "
+            "in one reply does not need a new thread."
+        ),
+        "hybrid": (
+            "You have one continuous conversation with the admin. Your working "
+            "context is the current subject. Earlier subjects listed below may "
+            "matter; call `recall_thread` when one does. Call `new_thread` when "
+            "the subject changes; a question you can answer in one reply does "
+            "not need a new thread."
+        ),
+    }
+
+    # The same component for a model that has rejected tool schemas
+    # (model/client.py falls back to a no-tools retry and the client sets
+    # tools_supported=False, A9d): the instruction to call recall_thread /
+    # new_thread is omitted (spec §7) — the model cannot call anything.
+    CONTINUITY_PREAMBLE_NO_TOOLS = {
+        "first_person": (
+            "You have one continuous conversation with the admin. Your working "
+            "context is the current subject. Earlier subjects listed below may "
+            "matter; use them when they do."
+        ),
+        "the_computer": (
+            "This system has one continuous conversation with the admin. The "
+            "working context is the current subject. Earlier subjects listed "
+            "below may matter; use them when they do."
+        ),
+        "hybrid": (
+            "You have one continuous conversation with the admin. Your working "
+            "context is the current subject. Earlier subjects listed below may "
+            "matter; use them when they do."
+        ),
+    }
+
+    # Longest single history line rendered into the RESPONDING prompt.
+    _HISTORY_LINE_CHARS = 500
+
+    def _continuity_section(
+        self, continuity: str, tools_supported: Optional[bool] = None
+    ) -> List[str]:
+        """The voice preamble + the hint as prompt lines; [] when no hint.
+
+        ``tools_supported`` is the client's flag: False (the model rejected
+        tool schemas) selects the preamble without the tool instruction;
+        None (unknown) and True keep the full one.
+        """
+        if not continuity or not continuity.strip():
+            return []
+        table = (
+            self.CONTINUITY_PREAMBLE_NO_TOOLS
+            if tools_supported is False
+            else self.CONTINUITY_PREAMBLE
+        )
+        preamble = table.get(self.voice, table["first_person"])
+        return [preamble, continuity.strip()]
+
+    @classmethod
+    def _history_section(cls, history: Optional[List[Dict[str, Any]]]) -> str:
+        """Thread history as one line per row, oldest first (spec §4.5).
+
+        RESPONDING never saw the conversation before Plan A. Block-typed
+        content is flattened; each line is capped at 500 characters.
+        """
+        if not history:
+            return ""
+        try:
+            from ..agents.blocks import content_to_text
+        except Exception:  # pragma: no cover - import cycle guard
+            def content_to_text(content: Any) -> str:
+                return content if isinstance(content, str) else str(content)
+        lines = ["## Earlier in this conversation"]
+        for row in history:
+            if not isinstance(row, dict):
+                continue
+            role = str(row.get("role", "user"))
+            if role not in ("user", "assistant", "system"):
+                continue
+            content = row.get("content", "")
+            text = content if isinstance(content, str) else content_to_text(content)
+            text = " ".join(str(text).split())
+            if len(text) > cls._HISTORY_LINE_CHARS:
+                text = text[:cls._HISTORY_LINE_CHARS] + "…"
+            lines.append(f"**{role}**: {text}")
+        return "\n".join(lines) if len(lines) > 1 else ""
+
     def __init__(self, base_builder=None, context_injector=None, voice: str = "first_person"):
         """
         Initialize the agent prompt builder.
@@ -197,46 +298,44 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         context: str,
         plan: List[Dict] = None,
         observations: List[str] = None,
+        continuity: str = "",
+        tools_supported: Optional[bool] = None,
     ) -> str:
         """
         Build prompt for PLANNING state.
-        
-        Args:
-            query: User's query
-            context: Assembled context string
-            plan: Current plan steps
-            observations: Previous observations
-            
-        Returns:
-            Planning prompt string
+
+        Section order: context, observations, instructions, plan, then the
+        continuity hint and finally ``## Current Task`` with the query. The
+        task moved from the head to the tail on purpose (spec §7): if the
+        prompt is ever truncated it is the head that goes, and the query and
+        the hint are the two things the model must still see.
+        ``tools_supported=False`` drops the tool instruction from the
+        continuity preamble (spec §7).
         """
-        parts = [
-            "## Current Task",
-            f"User request: {query}",
-        ]
-        
+        parts: List[str] = []
+
         if context:
-            parts.extend(["", "## Available Context", context])
-        
+            parts.extend(["## Available Context", context, ""])
+
         if observations:
             parts.extend([
-                "",
                 "## Previous Observations",
-                "\n".join(f"- {obs}" for obs in observations)
+                "\n".join(f"- {obs}" for obs in observations),
+                "",
             ])
-        
+
         parts.extend([
-            "",
             "## Instructions",
             "1. Analyze what information is needed to answer this request",
             "2. Check if the available context already answers the question",
             "3. If more information is needed, use the appropriate tools",
             "4. Create a concise plan (maximum 5 steps)",
             "5. Execute one step at a time",
+            "",
         ])
-        
+
         if plan:
-            parts.extend(["", "## Current Plan"])
+            parts.append("## Current Plan")
             for i, step in enumerate(plan):
                 status = step.get("status", "pending")
                 step_text = step.get("step", "")
@@ -247,25 +346,38 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
                     "failed": "✗"
                 }.get(status, "○")
                 parts.append(f"{i+1}. {status_icon} {step_text}")
-        
+            parts.append("")
+
+        section = self._continuity_section(continuity, tools_supported)
+        if section:
+            parts.extend(section)
+            parts.append("")
+
+        parts.extend(["## Current Task", f"User request: {query}"])
         return "\n".join(parts)
-    
+
     def build_response_prompt(
         self,
         query: str,
         context: List[Dict],
         observations: List[str],
         confidence: float = None,
+        history: Optional[List[Dict[str, Any]]] = None,
+        continuity: str = "",
+        tools_supported: Optional[bool] = None,
     ) -> str:
         """
         Build prompt for RESPONDING state.
-        
+
         Args:
             query: Original user query
             context: Retrieved context items
             observations: Tool observations
             confidence: CRAG confidence score
-            
+            history: Prior turns in this thread, oldest first (spec §4.5)
+            continuity: The rendered <continuity> hint, if any (spec §7)
+            tools_supported: The client's tool-schema-acceptance flag (A9d)
+
         Returns:
             Response generation prompt
         """
@@ -300,7 +412,17 @@ The user is asking about your state. Follow these rules:
   {"action": "invoke_module", "module": "vitals", "props": {"timeframe": "1h"}}
 - If there are open findings or config issues, mention them with specifics"""
 
-        prompt = f"""## Task
+        # Thread history, then the continuity hint, immediately before the
+        # query section (spec §4.5 / §7). Empty when neither is supplied so
+        # the prompt is byte-identical to the pre-Plan-A shape.
+        preface_parts: List[str] = []
+        history_text = self._history_section(history)
+        if history_text:
+            preface_parts.append(history_text)
+        preface_parts.extend(self._continuity_section(continuity, tools_supported))
+        preface = ("\n\n".join(preface_parts) + "\n\n") if preface_parts else ""
+
+        prompt = f"""{preface}## Task
 Answer this question: {query}
 
 ## Available Information
