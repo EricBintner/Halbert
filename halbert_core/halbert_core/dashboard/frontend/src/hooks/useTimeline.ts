@@ -40,6 +40,7 @@ export interface UseTimelineReturn {
   loadLatest: () => Promise<void>;
   /** True while the page is a window around an earlier turn, not the newest page. */
   anchored: boolean;
+  /** No-op while `anchored`: the turn is already persisted and returns on `loadLatest`. */
   appendLive: (turn: TimelineTurn) => void;
   currentThread: TimelineCurrentThread | null;
   setCurrentThread: Dispatch<SetStateAction<TimelineCurrentThread | null>>;
@@ -192,6 +193,12 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
   }, [pageSize]);
 
   const appendLive = useCallback((turn: TimelineTurn) => {
+    // While anchored the page is a historical window (loadAround), not the
+    // tail of the conversation: splicing a live turn onto it would assert
+    // an adjacency that is false (a "Today" turn at the end of, say, last
+    // Tuesday's window). The turn is already persisted server-side, so it
+    // is dropped here and simply reappears on the next loadLatest.
+    if (anchored) return;
     setTurns((prev) => {
       const idx = prev.findIndex((t) => t.turnId === turn.turnId);
       if (idx === -1) return [...prev, turn];
@@ -199,7 +206,7 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
       next[idx] = turn;
       return next;
     });
-  }, []);
+  }, [anchored]);
 
   const byDay = useMemo(() => groupByDay(turns), [turns]);
 

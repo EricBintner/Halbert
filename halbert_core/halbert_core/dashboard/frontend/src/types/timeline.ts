@@ -18,6 +18,16 @@ export interface TimelineToolBlock {
   result?: unknown;
   exit?: number | null;
   executionId?: string;
+  /**
+   * The tool call's own status as the backend recorded it (e.g. "success",
+   * "error", "superseded") — independent of `exit`, which is only ever a
+   * number for `run_command`. A consumer rendering pass/fail must prefer
+   * this over an exit-code heuristic, or a failed non-run_command tool (or
+   * a staged call superseded before it ran) reads as a successful one.
+   */
+  status?: string;
+  /** Set alongside status === "error"; the failure message. */
+  error?: string;
 }
 
 export type TimelineOrigin =
@@ -101,6 +111,8 @@ export function blockFromServer(raw: unknown): TimelineToolBlock {
     exit: typeof exit === 'number' ? exit : exit == null ? null : Number(exit),
     executionId: typeof r.execution_id === 'string' ? r.execution_id
       : typeof r.executionId === 'string' ? r.executionId : undefined,
+    status: typeof r.status === 'string' ? r.status : undefined,
+    error: typeof r.error === 'string' ? r.error : undefined,
   };
 }
 

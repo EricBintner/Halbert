@@ -204,6 +204,31 @@ describe('useTimeline', () => {
     article.remove()
   })
 
+  it('appendLive is a no-op while anchored on a historical window', async () => {
+    const fetchMock = fetchPages(
+      page([rawTurn('t-9', 1_784_000_900, 'nine')], true),
+      page([rawTurn('t-1', 1_784_000_000, 'one'), rawTurn('t-2', 1_784_000_100, 'two')], true),
+    )
+    const { result } = renderHook(() => useTimeline())
+    await waitFor(() => expect(result.current.turns).toHaveLength(1))
+
+    await act(async () => {
+      await result.current.loadAround('t-1')
+    })
+    expect(result.current.anchored).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    // A turn finishes streaming elsewhere in the app while this window is
+    // open on an old day; splicing it onto the tail of an unrelated
+    // historical page would be a false ordering, so it is dropped here —
+    // it is already persisted and comes back on loadLatest.
+    act(() => {
+      result.current.appendLive(turn('live-1', Date.now(), 'draft'))
+    })
+
+    expect(result.current.turns.map((t) => t.turnId)).toEqual(['t-1', 't-2'])
+  })
+
   it('loadLatest returns to the newest page and clears the anchor', async () => {
     const fetchMock = fetchPages(
       page([rawTurn('t-9', 1_784_000_900, 'nine')], true),

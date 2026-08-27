@@ -69,6 +69,54 @@ describe('api.getTimeline', () => {
     const page = await api.getTimeline({})
     expect(page).toEqual({ turns: [], hasMore: false, currentThread: null })
   })
+
+  it('carries a failed tool block\'s status and error through, not just its exit code', async () => {
+    // A non-run_command tool (read_file) fails: state_machine._tool_block
+    // never sets `exit` for it, only `status`/`error` — a consumer that
+    // derives pass/fail from `exit` alone would render this as a silent
+    // success. See state_machine.py:614-638, 1664-1666.
+    mockFetch({
+      has_more: false,
+      current_thread: null,
+      turns: [
+        {
+          turn_id: 't-1',
+          thread_id: 'th-1',
+          timestamp: 1_784_000_000,
+          origin: 'human',
+          user: null,
+          assistant: null,
+          blocks: [
+            { tool: 'read_file', args: { path: '/etc/no-such' }, result: null, exit: null, execution_id: 'x2', status: 'error', error: 'ENOENT' },
+            // The staged-but-superseded shape carries no execution_id or error key at all.
+            { tool: 'run_command', args: { command: 'reboot' }, result: 'not run — superseded', exit: null, status: 'superseded' },
+          ],
+          terminal_block_ids: [],
+          diff_proposals: [],
+        },
+      ],
+    })
+
+    const page = await api.getTimeline({})
+    expect(page.turns[0].blocks[0]).toEqual({
+      tool: 'read_file',
+      args: { path: '/etc/no-such' },
+      result: null,
+      exit: null,
+      executionId: 'x2',
+      status: 'error',
+      error: 'ENOENT',
+    })
+    expect(page.turns[0].blocks[1]).toEqual({
+      tool: 'run_command',
+      args: { command: 'reboot' },
+      result: 'not run — superseded',
+      exit: null,
+      executionId: undefined,
+      status: 'superseded',
+      error: undefined,
+    })
+  })
 })
 
 describe('api.getCurrentThread', () => {
