@@ -423,6 +423,13 @@ def _redact_plist_element(lines: List[str], row: int, start: int, name: str) -> 
     for k in range(row, last):
         idx = lines[k].lower().find(close, start if k == row else 0)
         if idx == -1:
+            if k > row and "<key>" in lines[k].lower():
+                # The element was never closed and the next dictionary entry
+                # has already begun, so the value cannot extend any further.
+                # Without this bound the search ran on to some later
+                # `</string>` and blanked every `<key>` in between, destroying
+                # the record instead of just the credential.
+                break
             continue
         if k == row:
             if idx > start:

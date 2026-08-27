@@ -587,3 +587,65 @@ def test_head_noun_rule_spares_qualified_non_secret_keys():
     # ...while the head-noun spellings are still caught.
     assert "hunter2secret" not in redact_text("db_pass=hunter2secret\n")
     assert "hunter2secret" not in redact_text("wifi-pwd=hunter2secret\n")
+
+
+def test_unterminated_plist_string_does_not_eat_the_next_entry():
+    """A truncated plist must lose its credential, not the record around it.
+
+    The unclosed `<string>` search used to run on to the next `</string>` in
+    the file and blank every `<key>` in between.
+    """
+    p = (
+        "<key>Password</key>\n"
+        "<string>hunter2secret\n"
+        "<key>Label</key>\n"
+        "<string>keepme</string>\n"
+    )
+    out = redact_text(p)
+    assert "hunter2secret" not in out
+    assert "<key>Label</key>" in out
+    assert "keepme" in out
+    assert out.count("\n") == p.count("\n")
+
+
+def test_plist_array_and_dict_under_a_secret_key_are_redacted():
+    """A container named by a secret key has its whole subtree redacted.
+
+    Its `<key>` elements survive, so which settings exist is still visible;
+    only the values go. Siblings after the container are untouched.
+    """
+    p = (
+        "<key>Passwords</key>\n"
+        "<array>\n"
+        "  <string>s3cretone</string>\n"
+        "  <string>s3crettwo</string>\n"
+        "</array>\n"
+        "<key>Label</key>\n"
+        "<string>keepme</string>\n"
+    )
+    out = redact_text(p)
+    assert "s3cretone" not in out
+    assert "s3crettwo" not in out
+    assert "keepme" in out
+    assert out.count("\n") == p.count("\n")
+
+
+def test_plist_value_tag_attributes_are_preserved():
+    out = redact_text(
+        '<key>Password</key>\n<string xml:space="preserve">hunter2secret</string>\n'
+    )
+    assert "hunter2secret" not in out
+    assert 'xml:space="preserve"' in out
+
+
+def test_redaction_is_idempotent():
+    """Re-redacting already-redacted text must not degrade it further."""
+    for text in (
+        "psk=hunter2secret\n",
+        "<key>Password</key>\n<string>hunter2secret</string>\n",
+        '{"api_key":"AKIAIOSFODNN7SECRET"}\n',
+        "//srv/s /mnt cifs username=bob,password=hunter2,uid=1000 0 0\n",
+        "password: |\n  linesecret\n",
+    ):
+        once = redact_text(text)
+        assert redact_text(once) == once, f"not idempotent: {text!r}"
