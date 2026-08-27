@@ -11647,15 +11647,30 @@ interface TimelineProps {
   onRunCommand?: RunCommand;
 }
 
-/** A stored tool block in the shape the card renders. Exit 0 (or unknown) reads as success. */
+/**
+ * A stored tool block in the shape the card renders. `block.status` is the
+ * backend's own verdict (spec §8 messages.blocks_json / state_machine.py
+ * _tool_block) and is authoritative when present: `exit` is only ever set
+ * for `run_command` (state_machine.py:614-638), so a failed non-run_command
+ * tool, or a call superseded before it ran (~line 446, `{exit: null, status:
+ * "superseded"}`), would otherwise render as a green "success" card under
+ * the exit-only heuristic. Only when the backend sent no status at all
+ * (older, pre-status rows) does this fall back to that heuristic: exit 0 or
+ * unknown reads as success.
+ */
 export function executionFromBlock(block: TimelineToolBlock, fallbackId: string): ToolExecution {
   const exit = block.exit;
+  const status: ToolExecution['status'] =
+    block.status === 'success' ? 'success'
+    : block.status === 'error' || block.status === 'superseded' ? 'error'
+    : exit == null || exit === 0 ? 'success' : 'error';
   return {
     executionId: block.executionId ?? fallbackId,
     tool: block.tool,
     args: block.args ?? {},
-    status: exit == null || exit === 0 ? 'success' : 'error',
+    status,
     result: block.result,
+    error: block.error,
   };
 }
 

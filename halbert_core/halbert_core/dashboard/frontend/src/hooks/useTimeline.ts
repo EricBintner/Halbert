@@ -42,6 +42,15 @@ export interface UseTimelineReturn {
   anchored: boolean;
   /** No-op while `anchored`: the turn is already persisted and returns on `loadLatest`. */
   appendLive: (turn: TimelineTurn) => void;
+  /**
+   * True when the mount-time load could not reach the server (network error,
+   * backend restarting). An empty `turns` for this reason is not the same
+   * as an empty `turns` because there is truly no history yet — a consumer
+   * gating a "first time we've spoken" greeting on `turns.length === 0` must
+   * also check `!loadFailed`, or a restart-timed request shows that greeting
+   * over a real stored conversation. Cleared by any later successful load.
+   */
+  loadFailed: boolean;
   currentThread: TimelineCurrentThread | null;
   setCurrentThread: Dispatch<SetStateAction<TimelineCurrentThread | null>>;
   byDay: TimelineDay[];
@@ -99,6 +108,7 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
   const [loading, setLoading] = useState(true);
   const [anchored, setAnchored] = useState(false);
   const [currentThread, setCurrentThread] = useState<TimelineCurrentThread | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const inFlight = useRef(false);
   // Turn to scroll to once the page that contains it has rendered.
   const scrollTarget = useRef<string | null>(null);
@@ -113,11 +123,17 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
         setTurns(page.turns);
         setHasMore(page.hasMore);
         setCurrentThread(page.currentThread);
+        setLoadFailed(false);
       })
       .catch((err) => {
-        // The endpoint degrades to empty, never 500; a network failure is
-        // the same story on this side: an empty timeline, not a broken page.
+        // The endpoint degrades to empty {turns: [], ...} on the server,
+        // never a 500 — this catch is only reachable for an actual
+        // transport failure (network down, backend mid-restart). `turns`
+        // still lands empty either way, so `loadFailed` is the only signal
+        // a consumer has to tell that apart from a genuinely new install.
+        if (cancelled) return;
         console.warn('[TIMELINE] initial load failed:', err);
+        setLoadFailed(true);
       })
       .finally(() => {
         inFlight.current = false;
@@ -147,6 +163,7 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
       const page = await api.getTimeline({ before: turns[0].turnId, limit: pageSize });
       setTurns((prev) => mergeOlder(page.turns, prev));
       setHasMore(page.hasMore);
+      setLoadFailed(false);
     } catch (err) {
       console.warn('[TIMELINE] older page failed:', err);
     } finally {
@@ -166,6 +183,7 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
       setTurns(page.turns);
       setHasMore(page.hasMore);
       setAnchored(true);
+      setLoadFailed(false);
     } catch (err) {
       console.warn('[TIMELINE] around page failed:', err);
     } finally {
@@ -184,6 +202,7 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
       setHasMore(page.hasMore);
       setCurrentThread(page.currentThread);
       setAnchored(false);
+      setLoadFailed(false);
     } catch (err) {
       console.warn('[TIMELINE] latest page failed:', err);
     } finally {
@@ -219,6 +238,7 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
     loadLatest,
     anchored,
     appendLive,
+    loadFailed,
     currentThread,
     setCurrentThread,
     byDay,

@@ -109,6 +109,7 @@ describe('useTimeline', () => {
     expect(result.current.loading).toBe(false)
     expect(result.current.currentThread?.title).toBe('Samba share setup')
     expect(result.current.byDay).toHaveLength(1)
+    expect(result.current.loadFailed).toBe(false)
   })
 
   it('loadOlder pages backwards from the oldest turn and prepends', async () => {
@@ -160,7 +161,7 @@ describe('useTimeline', () => {
     expect(result.current.byDay[result.current.byDay.length - 1].label).toBe('Today')
   })
 
-  it('survives a failed load with an empty timeline', async () => {
+  it('survives a failed load with an empty timeline, and says so via loadFailed', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('backend restarting')))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
@@ -169,6 +170,35 @@ describe('useTimeline', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.turns).toEqual([])
     expect(warn).toHaveBeenCalled()
+    // An empty timeline because the fetch never came back must be
+    // distinguishable from an empty timeline because there is truly no
+    // history yet — otherwise a restart-timed request shows the "we have
+    // never spoken" greeting over a real stored conversation.
+    expect(result.current.loadFailed).toBe(true)
+  })
+
+  it('clears loadFailed once a later load succeeds', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('backend restarting'))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => '',
+        json: async () => page([rawTurn('t-1', 1_784_000_000, 'one')]),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const { result } = renderHook(() => useTimeline())
+    await waitFor(() => expect(result.current.loadFailed).toBe(true))
+
+    await act(async () => {
+      await result.current.loadLatest()
+    })
+
+    expect(result.current.loadFailed).toBe(false)
+    expect(result.current.turns.map((t) => t.turnId)).toEqual(['t-1'])
   })
 
   it('loadAround replaces the page with the window around a turn and scrolls to it', async () => {
