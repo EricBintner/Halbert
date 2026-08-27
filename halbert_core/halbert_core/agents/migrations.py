@@ -7,10 +7,12 @@ Two on-disk shapes existed before Plan A:
 
 * ``~/.halbert/conversations/*.json`` — the old ``agents/conversation.py``
   ``ConversationStore`` shape: ``conversation_id``, ``title``, ``messages``
-  with float ``timestamp`` values.
+  with float ``timestamp`` values. A message's ``content`` may already be a
+  block list (``agents/blocks.py``).
 * ``~/.config/halbert/conversations/*.json`` — the old
   ``dashboard/routes/conversations.py`` shape: ``id``, ``name``, ``persona``,
-  ``messages`` with ISO-8601 ``timestamp`` strings.
+  ``messages`` with ISO-8601 ``timestamp`` strings and a per-message
+  ``tool_calls`` list.
 
 Every file becomes one **closed** thread with a deterministic receipt so
 recall can find it. Idempotent: each source path is recorded in a
@@ -18,15 +20,34 @@ recall can find it. Idempotent: each source path is recorded in a
 again. Files that fail to parse are skipped (WARNING), not recorded, and
 retried on the next boot. Counts only successful saves.
 
+This is a one-way door — A12c/A12d delete both source stores — so the
+message *structure* is carried across too, not just the text: block-typed
+content and ``tool_calls`` become ``messages.blocks_json``, which is what
+makes the receipt's "Commands" and "Files written" lines (the two a sysadmin
+agent is most often asked for) answerable about a migrated thread at all
+(review round 2, finding 4).
+
 A thread is written across several store calls, so a run can die between
 them (SQLITE_BUSY at boot, a full disk, ``kill -9``). The ``migrations_done``
 row is therefore written ``partial`` *before* the thread and flipped to
 ``done`` only once the thread is complete: a half-written thread is deleted
 on the spot when the failure is catchable, and the surviving ``partial`` row
-tells the next run to drop whatever is left under that id and import the
-file again. Without that marker the next run would find a truncated, still
+tells the next run to drop whatever that run left behind and import the file
+again. Without that marker the next run would find a truncated, still
 **open** thread, mistake it for a live conversation, and record the file as
 done forever (A12a review finding 1).
+
+Two things make "drop whatever that run left behind" safe to say:
+
+* nothing is deleted unless it can be *shown* to be this migration's own
+  half-written import — the thread carries a ``migrated_from`` metadata
+  marker naming its source file, and its rows must still be a prefix of what
+  that file says (review round 2, finding 1). A live thread that has since
+  claimed the same id is left alone;
+* the repair does not depend on the source file surviving. Rows still
+  ``partial`` whose source is gone are swept at the end of every run, so a
+  remnant cannot outlive the store it came from — which A12c/A12d delete on
+  purpose (review round 2, finding 2).
 """
 
 from __future__ import annotations
@@ -38,13 +59,14 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from ..intake.signals import analyze_message, canonical_entities
-from .blocks import content_to_text
+from .blocks import content_to_anthropic, content_to_text
 from .conversation import Conversation
 from .conversation_sqlite import SqliteConversationStore
 from .receipt import build_receipt, provisional_title
+from .threads import MAX_THREAD_ENTITIES
 
 logger = logging.getLogger("halbert.agents.migrations")
 
@@ -58,6 +80,16 @@ _ROLE_ORIGIN = {"user": "human", "assistant": "assistant", "system": "system"}
 #: ``_DONE`` means the file is finished with, forever.
 _PARTIAL = "partial"
 _DONE = "done"
+
+#: Thread metadata key naming the file a migrated thread was built from. It
+#: is the proof of ownership the repair path needs before it deletes
+#: anything, and useful provenance afterwards.
+_SOURCE_META_KEY = "migrated_from"
+
+#: Same ceiling ``state_machine._tool_block`` puts on a persisted tool
+#: result: a legacy ``tool_calls`` entry can carry a whole command's stdout,
+#: and ``blocks_json`` is read back on every receipt rebuild.
+_MAX_BLOCK_RESULT = 4000
 
 
 # ---------------------------------------------------------------------------
@@ -127,20 +159,146 @@ def _record(
             )
 
 
-def _discard_partial(store: SqliteConversationStore, thread_id: Optional[str]) -> None:
-    """Drop the thread a previous, interrupted run left half-written.
+def _forget(store: SqliteConversationStore, source_path: str) -> None:
+    """Drop a bookkeeping row entirely, so the file starts from scratch if it
+    ever comes back."""
+    with _lock_of(store):
+        with store._conn:
+            store._conn.execute(
+                "DELETE FROM migrations_done WHERE source_path = ?", (source_path,)
+            )
 
-    Safe to delete: this id is only ever recorded ``partial`` after the run
-    that recorded it proved no thread was using it, and new threads take
-    ``uuid4().hex`` ids, so nothing else can have claimed it since.
+
+# ---------------------------------------------------------------------------
+# Proving a leftover thread is ours before deleting it
+# ---------------------------------------------------------------------------
+
+def _is_complete(thread: Dict[str, Any]) -> bool:
+    """Did a migration finish this thread? Closed *and* carrying a receipt is
+    the last thing ``_build_thread`` does, so both together mean the only
+    step left was the bookkeeping flip."""
+    return (
+        str(thread.get("status") or "") == "closed"
+        and bool(str(thread.get("receipt") or "").strip())
+    )
+
+
+def _marks_source(thread: Dict[str, Any], source_path: str) -> bool:
+    meta = thread.get("metadata")
+    return isinstance(meta, dict) and meta.get(_SOURCE_META_KEY) == source_path
+
+
+def _rows_match_source(
+    store: SqliteConversationStore,
+    thread: Dict[str, Any],
+    rec: Optional[Dict[str, Any]],
+) -> bool:
+    """Are this thread's rows still a prefix of what ``rec`` says they should be?
+
+    Second, independent proof of ownership: it holds for a thread written
+    before ``migrated_from`` existed, and for one whose metadata a later
+    writer replaced. It cannot hold for a live conversation that claimed the
+    id, whose rows and title are its own.
     """
-    if not thread_id or store.get_thread(thread_id) is None:
-        return
+    if rec is None or thread.get("title") != rec["title"]:
+        return False
+    rows = store.list_messages(thread.get("thread_id") or thread.get("id"))
+    source = rec["messages"]
+    if not rows or len(rows) > len(source):
+        return False
+    for row, message in zip(rows, source):
+        if row.get("role") != message["role"]:
+            return False
+        if str(row.get("content") or "") != message["content"]:
+            return False
+        try:
+            if float(row.get("timestamp")) != float(message["timestamp"]):
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def _discard_remnant(
+    store: SqliteConversationStore,
+    source_path: str,
+    thread_id: Optional[str],
+    rec: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Delete ``thread_id`` iff it is this source file's own half-written import.
+
+    Deleting on the id alone would be a data-loss path the moment anything
+    else can create a thread under a caller-supplied id (``save`` /
+    ``create`` / ``get_or_create`` all accept one, and A12b/A12c wire legacy
+    ids through them): a live thread that had claimed the id would be
+    silently replaced by the stale JSON. So a delete needs proof — the
+    ``migrated_from`` marker, or rows that are still a prefix of the source —
+    and a finished thread is never touched (review round 2, finding 1).
+    """
+    if not thread_id:
+        return False
+    thread = store.get_thread(thread_id)
+    if thread is None or _is_complete(thread):
+        return False
+    if not (_marks_source(thread, source_path) or _rows_match_source(store, thread, rec)):
+        logger.warning(
+            f"migration: thread {thread_id} is recorded partial for {source_path} but "
+            "is not that import's own half-written remains; leaving it untouched"
+        )
+        return False
     logger.warning(
         f"migration: discarding the half-written thread {thread_id} left by an "
-        "interrupted run and importing its source file again"
+        f"interrupted import of {source_path}"
     )
-    store.delete(thread_id)
+    return store.delete(thread_id)
+
+
+def _sweep_orphaned_partials(store: SqliteConversationStore) -> int:
+    """Drop half-written threads whose source file no longer exists.
+
+    ``_migrate_dir`` can only repair a remnant while the file it came from is
+    still there to import again. But A12c/A12d delete both legacy stores on
+    purpose, and a user can delete them by hand, so "interrupted, then the
+    source went away" is a state to expect rather than an impossibility.
+    Left alone the remnant stays **open** for good: ``current_open_thread()``
+    hands it to the very next turn as if it were a live conversation, and it
+    is truncated and unrecallable (no receipt). Only threads that still prove
+    they are ours are dropped; a complete one — the run died on the final
+    bookkeeping write — is kept and its row simply flipped to done (review
+    round 2, finding 2).
+    """
+    try:
+        with _lock_of(store):
+            rows = store._conn.execute(
+                "SELECT source_path, thread_id FROM migrations_done WHERE state = ?",
+                (_PARTIAL,),
+            ).fetchall()
+    except Exception as e:
+        logger.warning(f"migration: could not read the partial bookkeeping rows: {e}")
+        return 0
+    dropped = 0
+    for row in rows:
+        source_path, thread_id = row[0], row[1]
+        try:
+            if Path(source_path).exists():
+                continue  # the file is still there; _migrate_dir repairs it
+            thread = store.get_thread(thread_id) if thread_id else None
+            if thread is None:
+                _forget(store, source_path)
+                continue
+            if _is_complete(thread) or not _marks_source(thread, source_path):
+                _record(store, source_path, thread_id, _DONE)
+                continue
+            logger.warning(
+                f"migration: dropping the half-written thread {thread_id}; the source "
+                f"{source_path} it came from is gone, so it can never be completed"
+            )
+            if store.delete(thread_id):
+                _forget(store, source_path)
+                dropped += 1
+        except Exception as e:
+            logger.warning(f"migration: sweeping {source_path} failed: {e}")
+    return dropped
 
 
 # ---------------------------------------------------------------------------
@@ -165,13 +323,82 @@ def _parse_timestamp(value: Any, fallback: float) -> float:
     return fallback
 
 
+def _clip_result(value: Any) -> Any:
+    if isinstance(value, str) and len(value) > _MAX_BLOCK_RESULT:
+        return value[:_MAX_BLOCK_RESULT] + "…"
+    if isinstance(value, (str, int, float, bool, dict, list, type(None))):
+        return value
+    return str(value)
+
+
+def _tool_call_block(raw: Any) -> Optional[Dict[str, Any]]:
+    """One legacy ``tool_calls`` entry as a receipt-readable block.
+
+    ``receipt._tool_name`` / ``_args_of`` / ``_exit_of`` read ``tool``/``name``,
+    ``args``/``input`` and ``exit``, so the block only has to name the tool and
+    carry its arguments to make the "Commands" and "Files written" lines work.
+    Both the Anthropic ``tool_use`` shape and an OpenAI ``function`` entry are
+    accepted, because the dashboard's ``tool_calls`` was only ever typed as
+    ``List[Dict[str, Any]]`` and never written by one code path.
+    """
+    if not isinstance(raw, dict):
+        return None
+    function = raw.get("function") if isinstance(raw.get("function"), dict) else {}
+    name = raw.get("tool") or raw.get("name") or function.get("name")
+    if not name:
+        return None
+    args: Any = None
+    for key in ("args", "input", "arguments", "parameters"):
+        if raw.get(key) is not None:
+            args = raw[key]
+            break
+    if args is None:
+        args = function.get("arguments")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            args = {"value": args}
+    if not isinstance(args, dict):
+        args = {} if args is None else {"value": args}
+    block: Dict[str, Any] = {"type": "tool_use", "tool": str(name), "args": args}
+    for key in ("result", "exit", "status", "error"):
+        if raw.get(key) is not None:
+            block[key] = _clip_result(raw[key])
+    return block
+
+
+def _message_blocks(raw: Dict[str, Any], content: Any) -> List[Dict[str, Any]]:
+    """The structured half of one legacy message.
+
+    Block-typed ``content`` keeps its blocks (exactly what ``append_message``
+    would have derived had the content not been stringified first), and the
+    dashboard shape's ``tool_calls`` are appended after them.
+    """
+    blocks: List[Dict[str, Any]] = []
+    if isinstance(content, list):
+        for block in content_to_anthropic(content):
+            if isinstance(block, dict):
+                out = dict(block)
+                if "content" in out:
+                    out["content"] = _clip_result(out["content"])
+                blocks.append(out)
+    for call in raw.get("tool_calls") or ():
+        block = _tool_call_block(call)
+        if block is not None:
+            blocks.append(block)
+    return blocks
+
+
 def _normalise(data: Any, file_mtime: float) -> Optional[Dict[str, Any]]:
     """Reduce either JSON shape to one record, or None if unrecognised.
 
     Record: ``{thread_id, title, user_id, created_at, updated_at,
-    messages: [{role, content, timestamp}]}`` — messages in file order,
-    empty content dropped, timestamps as floats (a missing timestamp
-    inherits the previous row's).
+    messages: [{role, content, timestamp, blocks}]}`` — messages in file
+    order, timestamps as floats (a missing timestamp inherits the previous
+    row's). A message with neither text nor blocks is dropped; one with only
+    blocks is kept, because its tool calls are the part of the record the
+    receipt is built from.
     """
     if not isinstance(data, dict):
         return None
@@ -198,14 +425,18 @@ def _normalise(data: Any, file_mtime: float) -> Optional[Dict[str, Any]]:
             continue
         role = str(raw.get("role") or "user").strip().lower()
         content = raw.get("content")
+        blocks = _message_blocks(raw, content)
         if isinstance(content, list):
-            content = content_to_text(content)
-        content = str(content or "").strip()
-        if not content:
+            text = content_to_text(content).strip()
+        else:
+            text = str(content or "").strip()
+        if not text and not blocks:
             continue
         ts = _parse_timestamp(raw.get("timestamp"), last_ts)
         last_ts = ts
-        messages.append({"role": role, "content": content, "timestamp": ts})
+        messages.append(
+            {"role": role, "content": text, "timestamp": ts, "blocks": blocks}
+        )
 
     if messages:
         updated_at = max(updated_at, messages[-1]["timestamp"])
@@ -224,10 +455,53 @@ def _normalise(data: Any, file_mtime: float) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Topic sets
+# ---------------------------------------------------------------------------
+
+def _thread_domains(messages: Sequence[Dict[str, Any]]) -> List[str]:
+    """Domains detected across the thread's human messages."""
+    domains = set()
+    for message in messages:
+        if message["role"] != "user" or not message["content"].strip():
+            continue
+        domains.update(analyze_message(message["content"]).detected_domains)
+    return sorted(domains)
+
+
+def _thread_entities(messages: Sequence[Dict[str, Any]]) -> List[str]:
+    """Entities harvested per message, newest-first down to the same ceiling
+    a live thread keeps.
+
+    One ``canonical_entities`` call over the concatenated thread stops at
+    ``intake.signals._ENTITY_SCAN_LIMIT`` (16 KB), so on a long thread every
+    subject raised after the first few turns contributes nothing and the
+    thread is unrecallable by entity for good — this migration is the only
+    time these rows are ever indexed. Per-message harvesting is what every
+    live writer does (``threads._topic_sets``), and its
+    ``MAX_THREAD_ENTITIES`` cap matters here too: ``entities_json`` is what
+    ``thread_signals._gather_candidates`` overlaps against, so a wide thread
+    that kept every entity it ever mentioned becomes a recall magnet
+    (review round 2, finding 3).
+    """
+    last_seen: Dict[str, int] = {}
+    for index, message in enumerate(messages):
+        for entity in canonical_entities(message["content"]):
+            last_seen[str(entity)] = index
+    if len(last_seen) > MAX_THREAD_ENTITIES:
+        # Same tie-break as `threads._age_topics`: newest first, then name.
+        last_seen = dict(
+            sorted(last_seen.items(), key=lambda kv: (-kv[1], kv[0]))[:MAX_THREAD_ENTITIES]
+        )
+    return sorted(last_seen)
+
+
+# ---------------------------------------------------------------------------
 # Writing one thread
 # ---------------------------------------------------------------------------
 
-def _write_thread(store: SqliteConversationStore, rec: Dict[str, Any]) -> bool:
+def _write_thread(
+    store: SqliteConversationStore, rec: Dict[str, Any], source_path: str
+) -> bool:
     """Write one thread, deleting it again if any step refuses.
 
     Returns False (after a WARNING) if any store call refused or raised. The
@@ -238,7 +512,7 @@ def _write_thread(store: SqliteConversationStore, rec: Dict[str, Any]) -> bool:
     """
     tid = rec["thread_id"]
     try:
-        if _build_thread(store, rec):
+        if _build_thread(store, rec, source_path):
             return True
     except Exception as e:
         logger.warning(f"migration: writing thread {tid} raised {e}")
@@ -250,7 +524,9 @@ def _write_thread(store: SqliteConversationStore, rec: Dict[str, Any]) -> bool:
     return False
 
 
-def _build_thread(store: SqliteConversationStore, rec: Dict[str, Any]) -> bool:
+def _build_thread(
+    store: SqliteConversationStore, rec: Dict[str, Any], source_path: str
+) -> bool:
     """Create the thread row, append every message, close it, index its
     receipt. Returns False (after a WARNING) if any store call refused."""
     tid = rec["thread_id"]
@@ -262,6 +538,7 @@ def _build_thread(store: SqliteConversationStore, rec: Dict[str, Any]) -> bool:
         title=title,
         created_at=rec["created_at"],
         updated_at=rec["updated_at"],
+        metadata={_SOURCE_META_KEY: source_path},
     ))
     if store.get_thread(tid) is None:
         logger.warning(f"migration: thread row for {tid} was not created")
@@ -279,6 +556,7 @@ def _build_thread(store: SqliteConversationStore, rec: Dict[str, Any]) -> bool:
             origin=origin,
             turn_id=turn_id,
             status="complete",
+            blocks=m["blocks"] or None,
             timestamp=m["timestamp"],
         )
         if message_id is None:
@@ -286,15 +564,13 @@ def _build_thread(store: SqliteConversationStore, rec: Dict[str, Any]) -> bool:
             return False
         rows.append({
             "role": role, "content": m["content"], "timestamp": m["timestamp"],
-            "origin": origin, "blocks": [],
+            "origin": origin, "turn_id": turn_id, "blocks": m["blocks"],
         })
         if role == "assistant":
             turn_id = None
 
-    human_text = "\n".join(m["content"] for m in rec["messages"] if m["role"] == "user")
-    all_text = "\n".join(m["content"] for m in rec["messages"])
-    domains = list(analyze_message(human_text).detected_domains) if human_text.strip() else []
-    entities = sorted(canonical_entities(all_text))
+    domains = _thread_domains(rec["messages"])
+    entities = _thread_entities(rec["messages"])
 
     if not store.update_thread(
         tid,
@@ -333,11 +609,6 @@ def _migrate_dir(store: SqliteConversationStore, directory: Path) -> int:
             seen = _migration_row(store, source)
             if seen is not None and seen["state"] == _DONE:
                 continue
-            if seen is not None:
-                # An earlier run died between recording this file and
-                # finishing its thread. Clear what it left before the
-                # "already exists" check below can mistake it for a live one.
-                _discard_partial(store, seen["thread_id"])
             with open(file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             rec = _normalise(data, file_path.stat().st_mtime)
@@ -347,6 +618,16 @@ def _migrate_dir(store: SqliteConversationStore, directory: Path) -> int:
             if not rec["messages"]:
                 _record(store, source, rec["thread_id"], _DONE)
                 continue
+            if seen is not None:
+                # An earlier run died between recording this file and
+                # finishing its thread. Clear only what that run itself
+                # wrote — under the id the file names now and, if the file
+                # has been re-keyed since, under the recorded one — before
+                # the "already exists" check below can mistake a remnant for
+                # a live thread. Reading the file first is what makes
+                # "is this remnant really ours?" answerable at all.
+                for candidate in dict.fromkeys((rec["thread_id"], seen["thread_id"])):
+                    _discard_remnant(store, source, candidate, rec)
             if store.get_thread(rec["thread_id"]) is not None:
                 logger.info(
                     f"migration: thread {rec['thread_id']} already exists, "
@@ -355,7 +636,7 @@ def _migrate_dir(store: SqliteConversationStore, directory: Path) -> int:
                 _record(store, source, rec["thread_id"], _DONE)
                 continue
             _record(store, source, rec["thread_id"], _PARTIAL)
-            if _write_thread(store, rec):
+            if _write_thread(store, rec, source):
                 _record(store, source, rec["thread_id"], _DONE)
                 migrated += 1
             else:
@@ -389,6 +670,9 @@ def migrate_legacy_conversations(
         return counts
     counts["agent_json"] = _migrate_dir(store, Path(agent_dir or AGENT_JSON_DIR))
     counts["legacy_json"] = _migrate_dir(store, Path(legacy_dir or LEGACY_JSON_DIR))
+    # Anything still recorded partial whose file has gone can never be
+    # repaired by re-import; drop it rather than leave an open remnant.
+    _sweep_orphaned_partials(store)
     if counts["agent_json"] or counts["legacy_json"]:
         logger.info(
             f"Migrated legacy conversations into threads: "
