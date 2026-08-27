@@ -42,7 +42,7 @@ class TestOllamaCapabilities:
         live /api/show reports vision support must still be flagged."""
         def _get(url, **kwargs):
             if url.endswith("/api/tags"):
-                return _resp(payload={"models": [{"name": "bakllava:7b"}]})
+                return _resp(payload={"models": [{"name": "opaque-name:7b"}]})
             raise AssertionError(f"unexpected GET {url}")
 
         def _post(url, **kwargs):
@@ -63,13 +63,17 @@ class TestOllamaCapabilities:
         assert detail["vision"] is True
         assert detail["tool_use"] is True
 
-    def test_no_runtime_capabilities_falls_back_to_provider_default(self):
-        """Older Ollama with no `capabilities` field in /api/show: tool_use
-        still defaults True (existing provider-level fact for ollama), vision
-        stays False without a name hint or runtime confirmation."""
+    def test_no_runtime_capabilities_leaves_vision_unknown_not_false(self):
+        """Older Ollama with no `capabilities` field in /api/show.
+
+        tool_use still defaults True (a real provider-level fact for ollama),
+        but vision is *omitted*. Reporting False would assert the daemon has
+        no vision models at all, emptying the Vision slot on every install
+        whose Ollama predates the capabilities field.
+        """
         def _get(url, **kwargs):
             if url.endswith("/api/tags"):
-                return _resp(payload={"models": [{"name": "mistral:7b"}]})
+                return _resp(payload={"models": [{"name": "plain-model:7b"}]})
             raise AssertionError
 
         def _post(url, **kwargs):
@@ -84,7 +88,7 @@ class TestOllamaCapabilities:
             ))
 
         detail = out["data"]["model_details"][0]
-        assert detail["vision"] is False
+        assert "vision" not in detail
         assert detail["tool_use"] is True
 
     def test_name_hint_sets_vision_even_when_show_fails(self):
@@ -92,7 +96,7 @@ class TestOllamaCapabilities:
         hint the model's own name already gives."""
         def _get(url, **kwargs):
             if url.endswith("/api/tags"):
-                return _resp(payload={"models": [{"name": "qwen2.5-vl:7b"}]})
+                return _resp(payload={"models": [{"name": "some-vl:7b"}]})
             raise AssertionError
 
         def _post(url, **kwargs):
@@ -122,9 +126,15 @@ class TestCloudCapabilities:
         assert detail["vision"] is True
         assert detail["tool_use"] is True
 
-    def test_openai_models_get_tool_use_but_not_vision_without_a_name_hint(self):
+    def test_openai_models_get_tool_use_and_leave_vision_unknown(self):
         """No hardcoded model-name table: an OpenAI model with no 'vision'
-        token in its id is not claimed vision-capable."""
+        token in its id is not claimed vision-capable.
+
+        OpenAI asserts tool use for everything it serves, so that is reported.
+        It asserts nothing about vision, so vision is *absent* rather than
+        False -- absent means "unknown", and the picker lets unknown through
+        instead of hiding the model.
+        """
         with patch.object(llm.requests, "get",
                            return_value=_resp(payload={"data": [{"id": "gpt-text-only"}]})):
             out = llm.proxy_models(llm.LLMProxyRequest(
@@ -132,11 +142,11 @@ class TestCloudCapabilities:
             ))
         detail = out["data"]["model_details"][0]
         assert detail["tool_use"] is True
-        assert detail["vision"] is False
+        assert "vision" not in detail
 
     def test_openai_model_with_vision_in_its_name_is_flagged(self):
         with patch.object(llm.requests, "get",
-                           return_value=_resp(payload={"data": [{"id": "gpt-4-vision-preview"}]})):
+                           return_value=_resp(payload={"data": [{"id": "hosted-vision-preview"}]})):
             out = llm.proxy_models(llm.LLMProxyRequest(
                 provider="openai", url="https://api.openai.test", api_key="sk-o",
             ))
