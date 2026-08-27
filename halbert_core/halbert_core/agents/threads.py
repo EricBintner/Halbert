@@ -21,16 +21,21 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..intake.signals import MessageSignals
+from . import conversation_sqlite as _cs
 from .conversation_sqlite import SqliteConversationStore
 from .receipt import build_receipt, provisional_title, refined_title
-from .thread_signals import ThreadDecision, build_hint, decide, format_date
+from .thread_signals import (
+    GRACE_MINUTES, GRACE_TURNS, ThreadDecision, build_hint, decide, format_date,
+)
 
 logger = logging.getLogger("halbert.agents.threads")
 
-__all__ = ["TurnContext", "ThreadManager", "HISTORY_ROWS"]
+__all__ = ["TurnContext", "ThreadManager", "get_thread_manager", "HISTORY_ROWS"]
 
 HISTORY_ROWS = 12
 SOFT_LANDING_ROWS = 6
+RECALL_SNIPPETS = 5
+RECALL_MAX = 3
 
 # ── topic windows ────────────────────────────────────────────────
 # `topic_domains` / `entities_json` are what `thread_signals.decide` compares
@@ -375,6 +380,73 @@ class ThreadManager:
             turns_since_pause=0, metadata=meta, updated_at=now,
         )
 
+    def new_thread(self, title: str, reason: str, *, from_thread_id: str) -> str:
+        """Model-initiated switch: pause ``from_thread_id``, open a new thread."""
+        clean = provisional_title(title or "")
+        return self._open_new_thread(clean, "model", self._now(), from_thread_id=from_thread_id, reason=reason)
+
+    def tick(self) -> List[str]:
+        """Close paused threads past the grace window; returns the closed ids.
+
+        Plan B adds the live-terminal guard: never close while a terminal
+        session of this thread is open (spec §5 "Stale").
+        """
+        now = self._now()
+        closed: List[str] = []
+        for t in self.store.list_threads(status="paused", limit=200):
+            paused_at = float(t.get("paused_at") or t.get("updated_at") or now)
+            successor_id = (t.get("metadata") or {}).get("successor")
+            successor_turns = 0
+            if successor_id:
+                successor = self.store.get_thread(successor_id) or {}
+                successor_turns = int(successor.get("turns_since_pause") or 0)
+            if (now - paused_at) >= GRACE_MINUTES * 60 or successor_turns >= GRACE_TURNS:
+                self._close_thread(t, now)
+                closed.append(t["thread_id"])
+        return closed
+
+    # ------------------------------------------------------------------
+    # Recall
+    # ------------------------------------------------------------------
+
+    def recall(
+        self,
+        query: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        *,
+        exclude_thread_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Up to 3 candidates: {thread_id, title, date, receipt, matching_messages, match_terms}."""
+        now = self._now()
+        if thread_id:
+            t = self.store.get_thread(thread_id)
+            return [self._recall_result(t, query, [], now)] if t is not None else []
+        if not query:
+            return []
+        out: List[Dict[str, Any]] = []
+        for hit in self.store.search_receipts(query, exclude_thread_id=exclude_thread_id, limit=RECALL_MAX):
+            t = self.store.get_thread(hit["thread_id"])
+            if t is not None:
+                out.append(self._recall_result(t, query, list(hit.get("match_terms") or []), now))
+        return out
+
+    def retract_recall(self, thread_id: str, recalled_thread_id: str) -> bool:
+        """Mark an accepted recall on ``thread_id`` as retracted."""
+        t = self.store.get_thread(thread_id)
+        if t is None:
+            return False
+        now = self._now()
+        recalled = list(t.get("recalled_json") or [])
+        changed = False
+        for entry in recalled:
+            if entry.get("thread_id") == recalled_thread_id and entry.get("status") == "accepted":
+                entry["status"] = "retracted"
+                entry["at"] = now
+                changed = True
+        if not changed:
+            return False
+        return self.store.update_thread(thread_id, recalled_json=recalled)
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
@@ -402,6 +474,19 @@ class ThreadManager:
         fields.update(self._refined_title_fields(t))
         self.store.update_thread(thread_id, **fields)
         self._refresh_receipt(thread_id)
+
+    def _close_thread(self, t: Dict[str, Any], now: float) -> None:
+        thread_id = t["thread_id"]
+        fields: Dict[str, Any] = {"status": "closed", "updated_at": now}
+        fields.update(self._refined_title_fields(t))
+        self.store.update_thread(thread_id, **fields)
+        self._refresh_receipt(thread_id)
+        closed = self.store.get_thread(thread_id) or t
+        for hook in list(self.on_thread_closed):
+            try:
+                hook(closed)
+            except Exception as e:
+                logger.warning(f"on_thread_closed hook failed: {e}")
 
     def _topic_sets(
         self, thread: Dict[str, Any], turn: TurnContext
@@ -538,3 +623,25 @@ class ThreadManager:
         recalled.append({k: entry[k] for k in ("thread_id", "title", "date", "status", "at")})
         thread["recalled_json"] = recalled
         self.store.update_thread(thread["thread_id"], recalled_json=recalled)
+
+    def _recall_result(self, t: Dict[str, Any], query: Optional[str], match_terms: List[str], now: float) -> Dict[str, Any]:
+        snippets = self.store.search_snippets(t["thread_id"], query, limit=RECALL_SNIPPETS) if query else []
+        return {
+            "thread_id": t["thread_id"],
+            "title": t.get("title") or "",
+            "date": format_date(t.get("last_active") or t.get("created_at"), now),
+            "receipt": t.get("receipt") or "",
+            "matching_messages": snippets,
+            "match_terms": list(match_terms),
+        }
+
+
+_manager: Optional[ThreadManager] = None
+
+
+def get_thread_manager() -> ThreadManager:
+    """Process-wide manager over the default conversations database."""
+    global _manager
+    if _manager is None:
+        _manager = ThreadManager(SqliteConversationStore(_cs._DEFAULT_DB))
+    return _manager

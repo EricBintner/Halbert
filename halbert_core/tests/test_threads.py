@@ -8,7 +8,9 @@ from datetime import datetime
 import pytest
 
 from halbert_core.agents.conversation_sqlite import SqliteConversationStore
-from halbert_core.agents.threads import ThreadManager
+from halbert_core.agents import threads as threads_mod
+from halbert_core.agents.thread_signals import GRACE_MINUTES, GRACE_TURNS
+from halbert_core.agents.threads import ThreadManager, get_thread_manager
 from halbert_core.intake.signals import analyze_message
 
 NOW = datetime(2026, 8, 26, 12, 0).timestamp()
@@ -534,3 +536,92 @@ class TestRecallEdges:
         assert [r["thread_id"] for r in turn4.recalled] == [t1.thread_id]
         rec = tm.store.get_thread(t2.thread_id)["recalled_json"]
         assert len(rec) == 1 and rec[0]["thread_id"] == t1.thread_id
+
+
+class TestNewResumeTick:
+    def test_end_turn_moves_user_row_on_override(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        text = "and now something else"
+        turn = tm.begin_turn(text, analyze_message(text), "s2")
+        new_id = tm.new_thread("Other thing", "model switched", from_thread_id=turn.thread_id)
+        tm.end_turn(turn, assistant_text="", blocks=[], terminal_session_ids=[], diff_proposals=[],
+                    status="cancelled", thread_id_override=new_id)
+        assert tm.store.list_messages(t1.thread_id)[-1]["role"] == "assistant"
+        moved = tm.store.list_messages(new_id)
+        assert len(moved) == 1 and moved[0]["content"] == text and moved[0]["status"] == "cancelled"
+        assert tm.store.get_thread(new_id)["turns_since_pause"] == 1
+
+    def test_new_thread_pauses_and_tick_closes_after_grace(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Scanner share", "different device", from_thread_id=t1.thread_id)
+        cur = tm.current()
+        assert cur["thread_id"] == new_id and cur["title"] == "Scanner share" and cur["title_source"] == "model"
+        assert cur["metadata"] == {"reason": "different device", "previous_thread_id": t1.thread_id}
+        old = tm.store.get_thread(t1.thread_id)
+        assert old["status"] == "paused" and old["paused_at"] == NOW and old["metadata"]["successor"] == new_id
+        assert tm.tick() == []
+        tm.clock.advance(GRACE_MINUTES * 60)
+        seen = []
+        tm.on_thread_closed.append(lambda t: seen.append(t["thread_id"]))
+        assert tm.tick() == [t1.thread_id] and seen == [t1.thread_id]
+        assert tm.store.get_thread(t1.thread_id)["status"] == "closed"
+        assert tm.store.search_receipts("samba")[0]["thread_id"] == t1.thread_id
+        assert tm.tick() == []
+
+    def test_tick_closes_after_grace_turns(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        for i in range(GRACE_TURNS - 1):
+            _turn(tm, f"scanner step {i}")
+            assert tm.tick() == []
+        _turn(tm, "scanner final step")
+        assert tm.tick() == [t1.thread_id]
+
+    def test_pause_refines_provisional_title(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        old = tm.store.get_thread(t1.thread_id)
+        assert old["title"] == "Add samba" and old["title_source"] == "receipt"
+
+
+class TestRecall:
+    def test_recall_by_query_returns_receipt_and_snippets(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder", assistant="Added [media] to /etc/samba/smb.conf.")
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        res = tm.recall("samba media share", exclude_thread_id=new_id)
+        assert len(res) == 1 and res[0]["thread_id"] == t1.thread_id and res[0]["date"] == "Aug 26"
+        assert res[0]["title"] == "Add samba" and res[0]["receipt"].startswith("Title: Add samba")
+        assert set(res[0]["match_terms"]) == {"samba", "media", "share"}
+        assert res[0]["matching_messages"] and all("samba" in s.lower() for s in res[0]["matching_messages"])
+        assert tm.recall("zzznothing") == []
+        assert tm.recall() == []
+        by_id = tm.recall(thread_id=t1.thread_id)
+        assert by_id[0]["thread_id"] == t1.thread_id and by_id[0]["matching_messages"] == []
+        assert tm.recall(thread_id="nope") == []
+
+    def test_retract_recall_and_no_re_recall(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder", assistant="Added [media] at /srv/media.")
+        tm.clock.advance(3 * 3600)
+        t2 = _turn(tm, "check the disk space on /var")
+        tm.clock.advance(31 * 60)
+        assert tm.tick() == [t1.thread_id]
+        text = "add another share like we did for the media one"
+        turn3 = _turn(tm, text)
+        assert turn3.recalled and turn3.recalled[0]["thread_id"] == t1.thread_id
+        assert tm.retract_recall(t2.thread_id, t1.thread_id) is True
+        rec = tm.store.get_thread(t2.thread_id)["recalled_json"]
+        assert rec[0]["status"] == "retracted" and rec[0]["at"] == tm.clock.t
+        assert tm.retract_recall(t2.thread_id, t1.thread_id) is False
+        assert tm.retract_recall("nope", t1.thread_id) is False
+        turn4 = tm.begin_turn(text, analyze_message(text), "s4")
+        assert turn4.recalled == [] and "Pulled in" not in turn4.hint
+
+
+class TestSingleton:
+    def test_get_thread_manager_uses_default_db(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(threads_mod._cs, "_DEFAULT_DB", str(tmp_path / "conv.db"))
+        monkeypatch.setattr(threads_mod, "_manager", None)
+        m = get_thread_manager()
+        assert get_thread_manager() is m and isinstance(m, ThreadManager)
+        assert (tmp_path / "conv.db").exists()
+        m.store.close()
