@@ -58,15 +58,19 @@ CONTEXT_BUDGETS: Dict[ModelTier, ContextBudget] = {
         system_identity=75, user_rules=75, retrieval=100,
         memory=75, discovery=75, conversation=300, observations=100,
     ),
+    # Plan A (spec §7): the conversation bucket holds six raw turns (12 rows
+    # of ~100 tokens) at MEDIUM and LARGE. Tier totals are unchanged; the
+    # other buckets pay for it. The thread receipt lives inside this bucket
+    # too (context/assembler.py renders it in its own slot).
     ModelTier.MEDIUM: ContextBudget(
         tier=ModelTier.MEDIUM, total=2000,
-        system_identity=100, user_rules=100, retrieval=300,
-        memory=225, discovery=200, conversation=800, observations=275,
+        system_identity=75, user_rules=50, retrieval=100,
+        memory=50, discovery=50, conversation=1600, observations=75,
     ),
     ModelTier.LARGE: ContextBudget(
         tier=ModelTier.LARGE, total=4000,
-        system_identity=150, user_rules=150, retrieval=600,
-        memory=450, discovery=400, conversation=1700, observations=550,
+        system_identity=125, user_rules=100, retrieval=400,
+        memory=275, discovery=250, conversation=2400, observations=450,
     ),
     ModelTier.XLARGE: ContextBudget(
         tier=ModelTier.XLARGE, total=8000,

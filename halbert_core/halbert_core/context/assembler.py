@@ -346,6 +346,37 @@ class ContextAssembler:
         # Filter to active sources only
         return {k: v for k, v in budget_map.items() if k in active}
 
+    # The ThreadManager hands the thread receipt over as the leading system
+    # row of the history (agents/threads.py _history). Plan A, spec §7.
+    _RECEIPT_ROW_PREFIX = "[Earlier in this subject:"
+
+    def _split_receipt_row(self, conversation: List[Dict]) -> tuple[str, List[Dict]]:
+        """(receipt text, remaining rows).
+
+        The text is empty unless the first row is the ThreadManager's
+        ``[Earlier in this subject: …]`` system row.
+        """
+        if not conversation:
+            return "", []
+        first = conversation[0]
+        if not isinstance(first, dict) or first.get("role") != "system":
+            return "", list(conversation)
+        text = content_to_text(first.get("content", ""))
+        if not text.startswith(self._RECEIPT_ROW_PREFIX):
+            return "", list(conversation)
+        receipt = text[len(self._RECEIPT_ROW_PREFIX):].strip()
+        if receipt.endswith("]"):
+            receipt = receipt[:-1].rstrip()
+        return receipt, list(conversation[1:])
+
+    def _fit_to_tokens(self, text: str, max_tokens: int) -> str:
+        """Shorten ``text`` (by characters) until it counts within ``max_tokens``."""
+        if max_tokens <= 0:
+            return ""
+        while text and self.tokens.count(text) > max_tokens:
+            text = text[: max(0, int(len(text) * 0.8))].rstrip()
+        return text
+
     def _format_conversation(
         self,
         conversation: List[Dict],
@@ -356,25 +387,46 @@ class ContextAssembler:
         Uses hierarchical summarization for long conversations (Phase 72):
         - Last 6 messages kept as raw text
         - Older messages summarized via extractive summary
+
+        Plan A (spec §7): when the ThreadManager supplied a receipt as the
+        leading ``[Earlier in this subject: …]`` system row, the receipt is
+        rendered as its own ``## Earlier in this subject`` block before the
+        recent turns, outside the newest-first walk, and the remaining rows
+        are rendered raw: they are the thread's last turns, already chosen
+        by the manager, and summarising them again would only lose the
+        detail the receipt was built to keep.
         """
         if max_tokens <= 0:
             return "", 0
 
-        # Phase 72: Use conversation summarization for long chats
-        try:
-            from ..conversation.summarization import should_summarize, compress_conversation_history
-            if should_summarize(conversation):
-                compressed_msgs, summary = compress_conversation_history(conversation)
-                if summary:
-                    # Use compressed messages with summary prefix
-                    conversation = compressed_msgs
-        except ImportError:
-            pass  # Fall back to simple truncation if summarization unavailable
+        receipt, conversation = self._split_receipt_row(conversation)
+        receipt_block = ""
+        receipt_tokens = 0
+        if receipt:
+            receipt_header = "## Earlier in this subject\n"
+            body = self._fit_to_tokens(
+                receipt, max_tokens - self.tokens.count(receipt_header) - 2
+            )
+            if body:
+                receipt_block = receipt_header + body
+                receipt_tokens = self.tokens.count(receipt_block)
+        else:
+            # Phase 72: Use conversation summarization for long chats
+            try:
+                from ..conversation.summarization import should_summarize, compress_conversation_history
+                if should_summarize(conversation):
+                    compressed_msgs, summary = compress_conversation_history(conversation)
+                    if summary:
+                        # Use compressed messages with summary prefix
+                        conversation = compressed_msgs
+            except ImportError:
+                pass  # Fall back to simple truncation if summarization unavailable
 
         lines = []
         tokens = 0
         header = "## Recent Conversation\n"
         header_tokens = self.tokens.count(header)
+        walk_budget = max_tokens - receipt_tokens
 
         # Work backwards from most recent
         for msg in reversed(conversation):
@@ -389,17 +441,22 @@ class ContextAssembler:
             line = f"**{role}**: {content}"
             line_tokens = self.tokens.count(line) + 1  # +1 for newline
 
-            if tokens + line_tokens + header_tokens > max_tokens:
+            if tokens + line_tokens + header_tokens > walk_budget:
                 break
 
             lines.insert(0, line)
             tokens += line_tokens
 
-        if not lines:
+        if not lines and not receipt_block:
             return "", 0
 
-        result = header + "\n".join(lines)
-        return result, tokens + header_tokens
+        parts: List[str] = []
+        if receipt_block:
+            parts.append(receipt_block)
+        if lines:
+            parts.append(header + "\n".join(lines))
+            tokens += header_tokens
+        return "\n\n".join(parts), tokens + receipt_tokens
     
     def _format_observations(
         self,
