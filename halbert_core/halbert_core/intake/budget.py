@@ -65,19 +65,26 @@ CONTEXT_BUDGETS: Dict[ModelTier, ContextBudget] = {
     # cannot evict the turns).
     #
     # What that trade costs, measured against the assembler's per-item costs
-    # (review: Plan A / A8b). MEDIUM keeps 400 tokens for everything that is
-    # not conversation, and one item is not cheap: a full-length retrieval
-    # snippet costs ~128 tokens plus a ~6-token header, an observation
-    # truncated to 500 chars the same. So at MEDIUM retrieval now holds at
-    # most one *short* document (and `_retrieve_retrieval` returns nothing at
-    # all for full-length ones), and memory, discovery and observations at
-    # most one short item each, where before they held two or three. That is
-    # the deliberate bet of the continuous conversation: what the model said
-    # three turns ago beats a third search result. It is also the tightest
-    # this tier can be squeezed — funding any more of the conversation
-    # bucket from here would leave categories that cannot hold one item, so
-    # the next increment has to come from a larger tier total (num_ctx, A10)
-    # or from redistributing buckets left unspent at assembly time.
+    # (review: Plan A / A8b, round 2). MEDIUM keeps 400 tokens for everything
+    # that is not conversation, and at that size three of these buckets are
+    # already smaller than one *length-capped* item: an observation truncated
+    # to the assembler's 500-char cap costs 127 tokens plus a 6-token header
+    # against `observations=75`; a 500-char retrieval snippet 130 + 6 against
+    # `retrieval=100`; a 300-char discovery item 80 + 5 against
+    # `discovery=50`. For those the section is dropped whole — not one item,
+    # nothing — and only a short item gets through at all: 269 chars for an
+    # observation, 356 for a document, 163 for a discovery item, 158 for a
+    # memory. Before this change MEDIUM held two full-length observations and
+    # two documents. That is the deliberate bet of the continuous
+    # conversation — what the model said three turns ago beats a third search
+    # result — but it is a bet on the mainstream local tier and it is bigger
+    # than "one fewer search result", so
+    # `ContextAssembler._log_budget_drop` records every section that falls
+    # out rather than letting it happen silently. Funding any more of the
+    # conversation bucket from here would empty a category outright; the next
+    # increment has to come from a larger tier total (num_ctx, A10) or from
+    # redistributing buckets left unspent at assembly time — both plan-level
+    # calls, deliberately not made here.
     ModelTier.MEDIUM: ContextBudget(
         tier=ModelTier.MEDIUM, total=2000,
         system_identity=75, user_rules=50, retrieval=100,

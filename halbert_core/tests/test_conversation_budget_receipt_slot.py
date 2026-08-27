@@ -4,9 +4,17 @@
 the assembler renders a thread receipt in its own slot instead of
 re-summarising the history it was already built from (spec §7)."""
 
+import logging
+
 import pytest
 
 from halbert_core.agents.conversation_sqlite import SqliteConversationStore
+from halbert_core.agents.receipt import (
+    CUT_MARKER,
+    ONE_LINER_LABELS,
+    OPEN_LOOP_LABEL,
+    receipt_one_liner,
+)
 from halbert_core.agents.threads import (
     RECEIPT_ROW_MAX,
     RECEIPT_ROW_PREFIX,
@@ -46,6 +54,30 @@ MAX_RECEIPT_ROW = {
 }
 
 
+#: A receipt the shape `agents.receipt.build_receipt` actually emits: nine
+#: labelled lines, with a `Commands:` line carrying a command whose meaning
+#: changes if it is cut short (`rm -rf /srv/media/tmp-old-transcodes` ->
+#: `rm -rf /srv/media`) and an `Open loop:` line the producer reserves.
+NINE_LINE_RECEIPT = "\n".join([
+    "Title: Samba media share",
+    "When: 2026-07-14..2026-07-16 \u00b7 7 turns",
+    "Domains: file sharing, storage",
+    "Entities: smbd, /srv/media, /etc/samba/smb.conf, nas-01, media-rw",
+    "Started with: set up a samba share for the media library on the NAS",
+    "Last said: The share mounts read-write from the laptop now.",
+    "Commands: testparm -s (exit 0); systemctl restart smbd (exit 0); "
+    "rm -rf /srv/media/tmp-old-transcodes (exit 0)",
+    "Files written: /etc/samba/smb.conf; /etc/fstab; /srv/media/.hidden",
+    "Open loop: verify the mount survives a reboot.",
+])
+NINE_LINE_ROW = {
+    "role": "system",
+    "content": f"{RECEIPT_ROW_PREFIX} {NINE_LINE_RECEIPT}]",
+}
+DANGEROUS_COMMAND = "rm -rf /srv/media/tmp-old-transcodes"
+OPEN_LOOP_LINE = NINE_LINE_RECEIPT.splitlines()[-1]
+
+
 def _turns(n, pad=""):
     rows = []
     for i in range(n):
@@ -56,6 +88,13 @@ def _turns(n, pad=""):
 
 def _raw_lines(out):
     return [l for l in out.splitlines() if l.startswith("**user**") or l.startswith("**assistant**")]
+
+
+def _receipt_body(out):
+    """The rendered receipt, header stripped, turns dropped."""
+    header = "## Earlier in this subject\n"
+    assert out.startswith(header), out
+    return out.split("## Recent Conversation")[0][len(header):].strip()
 
 
 class TestBudget:
@@ -213,3 +252,145 @@ class TestProducerContract:
         assert out.startswith("## Earlier in this subject\n")
         assert "**system**" not in out
         assert "step 0 of the samba setup" in out.split("## Recent Conversation")[0]
+
+
+class TestReceiptCut:
+    """What survives a cut is an operational question, not a cosmetic one.
+
+    The character tail-cut this replaced deleted `Open loop:` — the line
+    `build_receipt` reserves precisely because it is the most important one
+    — and stopped mid-string inside `Commands:` / `Files written:`, turning
+    `rm -rf /srv/media/tmp-old-transcodes` into `rm -rf /srv/media`: valid,
+    different, and with no marker to say it had been shortened (review:
+    Plan A / A8b).
+    """
+
+    #: Every budget from "one token" to "the whole receipt and then some",
+    #: so no band between the ladder's rungs goes unchecked.
+    BUDGETS = range(1, 200)
+
+    def test_an_uncut_receipt_is_returned_whole_and_unmarked(self):
+        assembler = ContextAssembler()
+        assert assembler._fit_receipt(NINE_LINE_RECEIPT, 4000) == NINE_LINE_RECEIPT
+        assert CUT_MARKER not in NINE_LINE_RECEIPT
+
+    def test_every_cut_is_marked(self):
+        assembler = ContextAssembler()
+        for budget in self.BUDGETS:
+            body = assembler._fit_receipt(NINE_LINE_RECEIPT, budget)
+            if not body or body == NINE_LINE_RECEIPT or CUT_MARKER in body:
+                continue
+            # Unmarked only where the marker itself would not fit — and a
+            # whole line beats a mangled one plus a notice that it was
+            # mangled, so what is left is still an intact line.
+            assert assembler.tokens.count(f"{CUT_MARKER}\n{body}") > budget, (budget, body)
+            assert body in NINE_LINE_RECEIPT.splitlines(), (budget, body)
+
+    def test_a_cut_never_half_quotes_a_line(self):
+        """A line is kept whole, dropped, or marked — never silently short."""
+        assembler = ContextAssembler()
+        originals = NINE_LINE_RECEIPT.splitlines()
+        # `receipt_one_liner`'s digest is three *complete* lines joined by
+        # the producer's own function, so it is not a half-quote either.
+        digest = receipt_one_liner(NINE_LINE_RECEIPT)
+        for budget in self.BUDGETS:
+            for line in assembler._fit_receipt(NINE_LINE_RECEIPT, budget).splitlines():
+                assert (
+                    line == CUT_MARKER
+                    or line in originals
+                    or line == digest
+                    or line.endswith(CUT_MARKER)
+                ), (budget, line)
+
+    def test_a_staged_command_is_never_silently_shortened(self):
+        """`rm -rf /srv/media` is not `rm -rf /srv/media/tmp-old-transcodes`."""
+        assembler = ContextAssembler()
+        for budget in self.BUDGETS:
+            body = assembler._fit_receipt(NINE_LINE_RECEIPT, budget)
+            if "rm -rf /srv/media" in body:
+                assert DANGEROUS_COMMAND in body, (budget, body)
+
+    def test_the_open_loop_survives_whenever_there_is_room_for_it(self):
+        assembler = ContextAssembler()
+        floor = assembler.tokens.count(OPEN_LOOP_LINE)
+        for budget in self.BUDGETS:
+            body = assembler._fit_receipt(NINE_LINE_RECEIPT, budget)
+            if budget >= floor:
+                assert OPEN_LOOP_LINE in body, (budget, body)
+            elif body:
+                # Below that it is cut like anything else — but marked, and
+                # it is still the line that is kept.
+                assert body.endswith(CUT_MARKER), (budget, body)
+                assert OPEN_LOOP_LINE.startswith(body[:-1].rstrip()), (budget, body)
+
+    def test_a_metadata_only_prefix_falls_back_to_the_digest(self):
+        """`Title`/`When`/`Domains`/`Entities` say nothing about what happened.
+
+        Where the leading lines would fill the room with metadata alone and
+        `receipt_one_liner`'s digest fits in the same room, the digest wins.
+        """
+        assembler = ContextAssembler()
+        digest = receipt_one_liner(NINE_LINE_RECEIPT)
+        used = [
+            b for b in self.BUDGETS
+            if assembler._fit_receipt(NINE_LINE_RECEIPT, b) == f"{CUT_MARKER}\n{digest}"
+        ]
+        assert used, "the one-liner fallback is unreachable at every budget"
+        for budget in self.BUDGETS:
+            body = assembler._fit_receipt(NINE_LINE_RECEIPT, budget)
+            if not body or body == NINE_LINE_RECEIPT:
+                continue
+            if any(ln.startswith(ONE_LINER_LABELS) for ln in body.splitlines()):
+                continue
+            # Nothing about what happened survived, so the digest must not
+            # have fitted either.
+            assert assembler.tokens.count(f"{CUT_MARKER}\n{digest}") > budget, budget
+
+    @pytest.mark.parametrize(
+        "tier,pad",
+        [
+            (ModelTier.TINY, PAD),
+            (ModelTier.SMALL, ""),
+            (ModelTier.SMALL, PAD),
+            (ModelTier.MEDIUM, PAD),
+        ],
+    )
+    def test_a_real_receipt_keeps_its_open_loop_at_every_tier(self, tier, pad):
+        budget = CONTEXT_BUDGETS[tier].conversation
+        out, tokens = ContextAssembler()._format_conversation(
+            [NINE_LINE_ROW] + _turns(6, pad), budget
+        )
+        body = _receipt_body(out)
+        assert body.splitlines()[-1].startswith(OPEN_LOOP_LABEL), (tier, body)
+        if DANGEROUS_COMMAND.split("/srv")[0] in body:
+            assert DANGEROUS_COMMAND in body, (tier, body)
+        assert tokens <= budget
+
+
+class TestBucketsBelowOneItem:
+    """MEDIUM's non-conversation buckets are now smaller than one item.
+
+    A8b's Step 3 funds the conversation bucket out of the others, and at
+    MEDIUM three of them end up below the cost of a single length-capped
+    item: `observations=75` against a 500-char cap (~134 tokens once the
+    header is counted) drops a realistic `systemctl status` whole. The
+    budget trade itself is a plan-level decision (spec §7 / A10's num_ctx),
+    not the assembler's to make — but it is recorded here, and the drop is
+    logged rather than silent (review: Plan A / A8b).
+    """
+
+    OBSERVATION = "systemctl status smbd: " + ("active (running) since Tue; " * 22)
+
+    def test_a_realistic_observation_does_not_fit_at_medium(self, caplog):
+        assert len(self.OBSERVATION) > 500
+        budget = CONTEXT_BUDGETS[ModelTier.MEDIUM].observations
+        assembler = ContextAssembler()
+        assert assembler.tokens.count(self.OBSERVATION[:500]) > budget
+        with caplog.at_level(logging.INFO, logger="halbert.context.assembler"):
+            assert assembler._format_observations([self.OBSERVATION], budget) == ("", 0)
+        assert any("observations" in r.getMessage() for r in caplog.records), caplog.text
+
+    def test_a_short_observation_still_fits_at_medium(self):
+        budget = CONTEXT_BUDGETS[ModelTier.MEDIUM].observations
+        out, tokens = ContextAssembler()._format_observations(["smbd is running"], budget)
+        assert "smbd is running" in out and 0 < tokens <= budget

@@ -15,6 +15,12 @@ from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
 from .tokens import TokenCounter
 from ..agents.blocks import content_to_text
+from ..agents.receipt import (
+    CUT_MARKER,
+    ONE_LINER_LABELS,
+    OPEN_LOOP_LABEL,
+    receipt_one_liner,
+)
 from ..agents.threads import RECEIPT_ROW_PREFIX
 
 if TYPE_CHECKING:
@@ -388,13 +394,95 @@ class ContextAssembler:
             receipt = receipt[:-1].rstrip()
         return receipt, list(conversation[1:])
 
-    def _fit_to_tokens(self, text: str, max_tokens: int) -> str:
-        """Shorten ``text`` (by characters) until it counts within ``max_tokens``."""
+    def _cut_to_tokens(self, text: str, max_tokens: int) -> str:
+        """Shorten one line by characters until it counts within ``max_tokens``.
+
+        The last resort, for the one case whole lines cannot serve: a single
+        line longer than the whole allowance. ``build_receipt`` ends the same
+        way for the same reason, and like it this marks the cut.
+        """
+        if max_tokens <= 0 or not text:
+            return ""
+        if self.tokens.count(text) <= max_tokens:
+            return text
+        while text:
+            text = text[: max(0, int(len(text) * 0.8))].rstrip()
+            if not text:
+                return ""
+            if self.tokens.count(text + CUT_MARKER) <= max_tokens:
+                return text + CUT_MARKER
+        return ""
+
+    def _fit_receipt(self, receipt: str, max_tokens: int) -> str:
+        """Cut ``receipt`` down to ``max_tokens`` a whole line at a time.
+
+        A receipt is nine labelled lines and *which* of them survive is an
+        operational question, not a cosmetic one. The character tail-cut this
+        replaced deleted ``Open loop:`` — the line ``build_receipt`` reserves
+        precisely because it is the last and most important one — and stopped
+        mid-string inside ``Commands:`` / ``Files written:``, turning
+        ``rm -rf /srv/media/tmp-old-transcodes`` into ``rm -rf /srv/media``:
+        valid, different, and with nothing to say it had been shortened. That
+        is the same failure ``threads._fence`` substitutes brackets to avoid
+        (review: Plan A / A8b). So:
+
+        * whole lines only, so no path or command is ever half-quoted;
+        * ``Open loop:`` reserved, as ``build_receipt`` reserves it;
+        * ``agents.receipt.receipt_one_liner``'s digest — the same three
+          lines the recall hint shows — when a leading run of lines would
+          fill the room with ``Title``/``When``/``Domains``/``Entities`` and
+          say nothing about what actually happened;
+        * the producer's ``…`` on its own line wherever content was dropped,
+          so the model, and anyone reading the prompt, can see the cut.
+        """
         if max_tokens <= 0:
             return ""
-        while text and self.tokens.count(text) > max_tokens:
-            text = text[: max(0, int(len(text) * 0.8))].rstrip()
-        return text
+        lines = [ln.rstrip() for ln in receipt.splitlines() if ln.strip()]
+        if not lines:
+            return ""
+        flat = "\n".join(lines)
+        if self.tokens.count(flat) <= max_tokens:
+            return flat
+
+        # Reserve the open-loop line (the last one, where the producer puts
+        # it); every other line stays a candidate in its original order.
+        reserved: List[str] = []
+        head = lines
+        for i in range(len(lines) - 1, -1, -1):
+            if lines[i].startswith(OPEN_LOOP_LABEL):
+                reserved = [lines[i]]
+                head = lines[:i] + lines[i + 1:]
+                break
+
+        # Whole lines from the top, stopping at the first that does not fit
+        # rather than skipping it: the receipt's order is its priority order,
+        # and a prefix is predictable where a sieve is not. Room for the
+        # marker and the reserved line is held back from the first iteration,
+        # and the loop stops at the overrun, so this is not O(every line).
+        kept: List[str] = []
+        for line in head:
+            trial = kept + [line, CUT_MARKER] + reserved
+            if self.tokens.count("\n".join(trial)) > max_tokens:
+                break
+            kept.append(line)
+
+        if not any(ln.startswith(ONE_LINER_LABELS) for ln in kept):
+            # The prefix is down to the metadata half. The digest says what
+            # happened, how it ended and what is open, in the same room.
+            digest = receipt_one_liner(flat)
+            marked = f"{CUT_MARKER}\n{digest}"
+            if digest and self.tokens.count(marked) <= max_tokens:
+                return marked
+
+        if kept or reserved:
+            block = "\n".join(kept + [CUT_MARKER] + reserved)
+            if self.tokens.count(block) <= max_tokens:
+                return block
+        # No room even for the marker beside the reserved line. A whole line
+        # beats a mangled one plus a notice that it was mangled, so the line
+        # goes in unmarked while it still fits; below that it is cut, marked,
+        # the way `build_receipt` ends when `max_chars` cannot hold it either.
+        return self._cut_to_tokens(reserved[0] if reserved else flat, max_tokens)
 
     def _conversation_line(self, msg: Dict) -> str:
         """The rendered ``**role**: content`` line for one history row."""
@@ -467,7 +555,7 @@ class ContextAssembler:
         receipt_tokens = 0
         if receipt:
             allowance = self._receipt_allowance(conversation, max_tokens)
-            body = self._fit_to_tokens(
+            body = self._fit_receipt(
                 receipt, allowance - self.tokens.count(self._RECEIPT_HEADER) - 2
             )
             if body:
@@ -513,6 +601,23 @@ class ContextAssembler:
             tokens += header_tokens
         return "\n\n".join(parts), tokens + receipt_tokens
     
+    def _log_budget_drop(self, section: str, dropped: int, max_tokens: int) -> None:
+        """Record a source that produced nothing because nothing fitted.
+
+        A bucket smaller than one length-capped item is real at the tighter
+        tiers — MEDIUM keeps 75 tokens for observations against a 500-char
+        cap (~134 tokens), so one `systemctl status` falls out whole — and
+        until now the agent simply stopped seeing that source with nothing
+        on the record to say why. This does not decide the budget trade
+        (that is spec §7 / A10, not the assembler's call); it makes it
+        visible (review: Plan A / A8b).
+        """
+        if dropped:
+            logger.info(
+                "%s: %d item(s) dropped, none fit in %d tokens",
+                section, dropped, max_tokens,
+            )
+
     def _format_observations(
         self,
         observations: List[str],
@@ -540,6 +645,7 @@ class ContextAssembler:
             tokens += line_tokens
         
         if len(lines) == 1:
+            self._log_budget_drop("observations", len(observations), max_tokens)
             return "", 0
         
         return "\n".join(lines), tokens
@@ -575,6 +681,7 @@ class ContextAssembler:
                 items += 1
             
             if items == 0:
+                self._log_budget_drop("retrieval", len(results), max_tokens)
                 return {}
             
             return {
@@ -613,6 +720,7 @@ class ContextAssembler:
                 items += 1
             
             if items == 0:
+                self._log_budget_drop("memory", len(results), max_tokens)
                 return {}
             
             return {
@@ -651,6 +759,7 @@ class ContextAssembler:
                 items += 1
             
             if items == 0:
+                self._log_budget_drop("discovery", len(results), max_tokens)
                 return {}
             
             return {
@@ -690,6 +799,7 @@ class ContextAssembler:
                 items += 1
             
             if items == 0:
+                self._log_budget_drop(source_name, len(results), max_tokens)
                 return {}
             
             return {

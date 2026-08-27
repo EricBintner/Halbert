@@ -20,7 +20,28 @@ __all__ = [
     "receipt_one_liner",
     "split_sentences",
     "first_sentence",
+    "CUT_MARKER",
+    "ONE_LINER_LABELS",
+    "OPEN_LOOP_LABEL",
 ]
+
+#: Appended wherever this module shortens something. Every consumer that
+#: shortens a receipt further marks its cut with the same character, so a
+#: reader can always tell a receipt that was trimmed from one that ended
+#: where it says it ends.
+CUT_MARKER = "\u2026"
+#: The last line of a receipt, and the one `build_receipt` reserves when
+#: `max_chars` cannot hold the whole thing: what is still open is what the
+#: next turn has to act on.
+OPEN_LOOP_LABEL = "Open loop:"
+#: The three lines a receipt is reduced to when it cannot be carried whole:
+#: what was asked, how it ended, what is still open. `receipt_one_liner`
+#: joins exactly these, and the context assembler drops every *other* line
+#: first when the conversation bucket cannot hold the receipt
+#: (context/assembler.py `_fit_receipt`), so the two agree on "the part
+#: worth keeping" by construction instead of by two hand-kept lists
+#: (review: Plan A / A8b).
+ONE_LINER_LABELS = ("Started with:", "Last said:", OPEN_LOOP_LABEL)
 
 # Never split on "." alone: a sentence ends only at .!? followed by whitespace.
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -72,7 +93,7 @@ def _clip(text: Any, limit: int) -> str:
     flat = _WS_RE.sub(" ", str(text or "")).strip()
     if len(flat) <= limit:
         return flat
-    return flat[: limit - 1].rstrip() + "…"
+    return flat[: limit - 1].rstrip() + CUT_MARKER
 
 
 def split_sentences(text: str) -> List[str]:
@@ -219,7 +240,7 @@ def build_receipt(
         f"Last said: {last_said or 'none'}",
         f"Commands: {commands}",
         f"Files written: {files}",
-        f"Open loop: {open_loop}",
+        f"{OPEN_LOOP_LABEL} {open_loop}",
     ]
     text = "\n".join(lines)
     if len(text) <= max_chars:
@@ -232,17 +253,19 @@ def build_receipt(
     head = "\n".join(lines[:-1])
     budget = max_chars - len(open_loop_line) - 1  # -1 for the joining "\n"
     if budget > 0:
-        head = head[: budget - 1].rstrip() + "…"
+        head = head[: budget - 1].rstrip() + CUT_MARKER
         return head + "\n" + open_loop_line
     # Even the open-loop line alone doesn't fit in max_chars; fall back to
     # a flat cut rather than producing something longer than max_chars.
-    return text[: max_chars - 1].rstrip() + "…"
+    return text[: max_chars - 1].rstrip() + CUT_MARKER
 
 
 def receipt_one_liner(receipt: str) -> str:
     """The three lines the hint quotes: Started with / Last said / Open loop."""
-    keep = ("Started with:", "Last said:", "Open loop:")
-    parts = [ln.strip() for ln in (receipt or "").splitlines() if ln.startswith(keep)]
+    parts = [
+        ln.strip() for ln in (receipt or "").splitlines()
+        if ln.startswith(ONE_LINER_LABELS)
+    ]
     return " ".join(parts)
 
 
