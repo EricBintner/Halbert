@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -631,8 +632,22 @@ def _call_ollama(
     num_predict = options.get("num_predict", options.get("max_tokens", 1024))
     prompt_tokens = estimate_prompt_tokens(messages, tools)
     # Always present (spec §7): without it Ollama truncates the head.
+    #
+    # `on_event_loop` even though this function is synchronous: being
+    # synchronous is not the same as being off the loop. This call site is
+    # reachable from a coroutine with no thread anywhere in between —
+    # routes/agent.py::send_message -> AgentStateMachine.process() ->
+    # self.intake.analyze() (inline) -> ComplexityRouter.assess -> _call_llm ->
+    # call_llm_chat -> _do_llm_call -> here — so a blocking probe taken here
+    # stops the event loop and every open SSE stream with it, for up to the
+    # probe timeout and longer if name resolution hangs. Whether the chat
+    # request below is itself off the loop is the caller's problem and is
+    # covered elsewhere (tests/test_agent_chat_off_the_event_loop.py); this
+    # probe is a stall we can simply not take, so we don't. Discovery goes to
+    # a worker thread, and the window it learns caps the turns after this one.
     num_ctx = options.get("num_ctx") or num_ctx_for_model(
         model, prompt_tokens, num_predict, options.get("num_ctx_max"),
+        endpoint=endpoint, on_event_loop=True,
     )
     if prompt_tokens + _NUM_CTX_HEADROOM > num_ctx:
         # The clamp (model_max or the 32768 default ceiling) capped num_ctx
@@ -687,14 +702,358 @@ _NUM_CTX_CACHE: Dict[str, int] = {}
 # prevent. This is a rough per-image budget, not a model-specific one.
 _NUM_CTX_IMAGE_TOKENS = 768
 
+# The fallback ceiling is an operator dial. It is NOT lowered by default:
+# num_ctx is already sized to the prompt and never speculatively larger, so
+# every token the ceiling removes is a token of the *prompt* that Ollama
+# silently drops off the head. A smaller default would buy GPU memory by
+# reintroducing exactly the truncation this module exists to prevent. An
+# operator whose card cannot hold 32768 tokens of KV cache sets this and gets
+# the loud "will truncate the head of the prompt" warning instead of an OOM.
+_NUM_CTX_MAX_ENV = "HALBERT_NUM_CTX_MAX"
+
+# The window is a high-water mark so Ollama does not reload the model on every
+# message — but a mark that latches forever means one outlier prompt (a pasted
+# log, an unusually large retrieval) pins the model at the ceiling for the rest
+# of the process, and every one-line question after it allocates the full
+# window. It is released once no prompt has needed more than half of it for
+# this long. Long enough that no realistic turn sequence trips it (the planning
+# call and the response call of one turn are seconds apart); short enough that
+# a session recovers the memory on its own.
+_NUM_CTX_RELEASE_SECONDS = 900.0
+_NUM_CTX_HIGH_WATER_AT: Dict[str, float] = {}
+
+
+# ── The model's real context window: the producer for the cap above ──────────
+#
+# `compute_num_ctx` has always taken a `model_max`, and until this fix nothing
+# in the tree ever supplied one, so every model got the 32768 fallback. The
+# right producer is the model's ARCHITECTURE maximum — the largest window the
+# weights can hold.
+#
+# It is emphatically NOT Ollama's `parameters` block `num_ctx`, which is the
+# Modelfile's *default* load window and is routinely a small fraction of it.
+# Measured against a live daemon: one installed model reports an architecture
+# context length of 262144 alongside a Modelfile
+# `num_ctx 8192`. Capping at the Modelfile default would pin that model at
+# 8192 and truncate the head of every larger prompt — the bug A10 exists to
+# prevent, reproduced by construction. See tests/test_llm_show_context_length.py.
+#
+# Two producers, both cheap:
+#   * `routes/llm.py::proxy_models` publishes what it already learned while
+#     listing models for the picker (/api/tags carries `details.context_length`
+#     for most models; /api/show's `model_info` covers the rest). Free.
+#   * failing that, a lazy probe of the endpoint, taken only when the prompt
+#     needs more than the 4096 floor — below it no architecture window can
+#     change the answer. One GET of `{endpoint}/api/tags` names every model on
+#     the daemon; a window small enough to actually cap something is then
+#     confirmed with one POST to `{endpoint}/api/show` for the model being
+#     called, because /api/tags reports a single unlabelled number and this
+#     path has no other chance to tell an architecture maximum from a
+#     load-time default.
+#
+# Unknown stays unknown: on a machine where the endpoint is down, is not Ollama
+# at all (this path is also the llamacpp/mlx fallback), or does not list the
+# model, the result is None and behaviour is exactly what it is today.
+#
+# NONE OF IT MAY HAPPEN ON AN EVENT LOOP. These are ordinary blocking requests,
+# so a caller that can reach a loop asks `model_context_limit_nowait`, which
+# answers from what is already known and puts discovery on a worker thread.
+# That is both production callers: the async streaming path, and `_call_ollama`
+# — synchronous, but reachable from a coroutine with no thread in between
+# (send_message -> the state machine -> intake -> call_llm_chat -> here), so
+# "synchronous" says nothing about whether a loop is underneath. The blocking
+# `model_context_limit` is for callers that are genuinely off any loop: a CLI
+# run, or the worker thread this module starts itself.
+_MODEL_MAX_CACHE: Dict[str, int] = {}
+# endpoint -> monotonic time before which /api/tags will not be asked again.
+# A retry time, never a permanent latch: Ollama being started, or restarted,
+# under a long-lived Halbert is the normal case on a real install, and an
+# endpoint that was down at first probe must not be written off for the life
+# of the process — on a headless install this probe is the only producer there
+# is. A dead endpoint still costs one failed request per retry window, not one
+# per LLM call, which is what the latch was there for.
+_CONTEXT_PROBED_ENDPOINTS: Dict[str, float] = {}
+# endpoint -> the model names its /api/tags listing actually returned. Nothing
+# is asked of /api/show for a name (or an endpoint) that no successful listing
+# ever mentioned, so a non-Ollama endpoint costs one failed request, not two.
+_CONTEXT_ENDPOINT_MODELS: Dict[str, set] = {}
+# (endpoint, model) -> monotonic time before which /api/show will not be asked
+# about it again. A retry time for the same reason as above: a daemon that was
+# restarting when the question was put must not silence the answer for the life
+# of the process. Once the window is known nothing asks again anyway.
+_CONTEXT_SHOWN_MODELS: Dict[Tuple[str, str], float] = {}
+_CONTEXT_PROBE_TIMEOUT = 3.0
+_CONTEXT_PROBE_RETRY_SECONDS = 60.0
+# Background discovery started on behalf of an event loop, one live thread per
+# endpoint. Kept so a caller (and a test) can tell whether discovery is running.
+_CONTEXT_PROBE_THREADS: Dict[str, threading.Thread] = {}
+_CONTEXT_PROBE_LOCK = threading.Lock()
+# A "maximum" below the num_ctx floor cannot describe a language model's
+# window: compute_num_ctx never returns less than _NUM_CTX_MIN, so such a
+# number can only ever cap a prompt and never allow one. Keys like
+# `<projector>.vision.context_length: 77` are the reason — they belong to a
+# projector, not to the model being called.
+_MIN_CREDIBLE_CONTEXT_LENGTH = _NUM_CTX_MIN
+
+
+def _num_ctx_ceiling() -> int:
+    """The fallback ceiling, read per call so the dial works at runtime."""
+    raw = os.environ.get(_NUM_CTX_MAX_ENV)
+    if raw:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Ignoring %s=%r: not an integer number of tokens", _NUM_CTX_MAX_ENV, raw
+            )
+        else:
+            if value > 0:
+                return value
+            logger.warning("Ignoring %s=%r: must be positive", _NUM_CTX_MAX_ENV, raw)
+    return _NUM_CTX_DEFAULT_MAX
+
+
+def remember_model_context_limit(model: str, limit: Any) -> None:
+    """Record a model's architecture context window, learned from anywhere.
+
+    A producer can only ever RAISE a known window, never lower it. That is a
+    structural guard, not an optimisation: if some future producer hands us a
+    Modelfile default again, it cannot pull an already-known architecture
+    maximum down and start silently truncating prompts. Over-stating a window
+    only ever removes the cap, leaving the ceiling in charge — which is exactly
+    today's behaviour — while under-stating it truncates.
+    """
+    if not model or not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        return
+    if limit > _MODEL_MAX_CACHE.get(model, 0):
+        _MODEL_MAX_CACHE[model] = limit
+
+
+def remember_listing_context_length(model: str, limit: Any) -> None:
+    """A window read from a model LISTING (/api/tags), which is weaker evidence
+    than /api/show's ``model_info``.
+
+    A listing gives one unlabelled number per model. On the daemon this was
+    written against it is the architecture maximum, but the field's meaning is
+    version-dependent — it is missing entirely from that same daemon's
+    safetensors entries — and a listing carries nothing that distinguishes an
+    architecture maximum from the window a model is loaded with by default.
+    That is the exact distinction /api/show is read so carefully for, because
+    on a real model the two differ by 32x. Since a producer may only ever RAISE
+    a window, a wrong small number here is not a bad guess that gets corrected:
+    it is a permanent cap, and permanent silent head-truncation with it.
+
+    So a listing may only confirm what cannot bind. At or above the fallback
+    ceiling the number changes nothing about the num_ctx we would have asked
+    for anyway; anything smaller has to come from /api/show — the picker's
+    enrichment pass, or this module's own :func:`_probe_model_architecture`.
+    """
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit >= _num_ctx_ceiling():
+        remember_model_context_limit(model, limit)
+
+
+def architecture_context_length(model_info: Any) -> int:
+    """The largest window the weights can hold, from an /api/show ``model_info``.
+
+    GGUF spells the key ``<general.architecture>.context_length``, so the prefix
+    varies per model family and is never hardcoded — it is read from
+    ``general.architecture``. The two fixed keys an earlier fallback looked for,
+    ``llm.context_length`` and ``general.context_length``, are emitted by no
+    model: checked against every model on a live daemon, that fallback never
+    once fired, so the window came back as 0 for models advertising 262144.
+    Any ``*.context_length`` key is therefore accepted, with the declared
+    architecture preferred; ``embedding_length`` and friends are excluded by
+    the suffix.
+
+    Which of several such keys matters. A payload can carry a projector or
+    vision tower alongside the language model — a
+    ``<projector>.vision.context_length: 77`` beside a declared architecture
+    that publishes no context_length of its own — and taking whichever came
+    first published 77 as the model's
+    "maximum". 77 pins num_ctx at the 4096 floor for every prompt, for the life
+    of the process (a producer may only ever raise a known window), which is
+    exactly the silent head-truncation this whole path exists to prevent. So:
+    the declared architecture's own key wins outright; failing that the LARGEST
+    candidate wins, and only if it is a credible window for a language model at
+    all. Over-stating merely leaves the ceiling in charge; under-stating
+    truncates.
+    """
+    if not isinstance(model_info, dict):
+        return 0
+    arch = str(model_info.get("general.architecture") or "").strip()
+    best = 0
+    for key, value in model_info.items():
+        if not isinstance(key, str) or not key.endswith(".context_length"):
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            continue
+        if arch and key == f"{arch}.context_length":
+            return int(value)
+        if value < _MIN_CREDIBLE_CONTEXT_LENGTH:
+            continue
+        best = max(best, int(value))
+    return best
+
+
+def _probe_context_limits(endpoint: str) -> None:
+    """One GET of {endpoint}/api/tags per endpoint per retry window, best effort.
+
+    /api/tags names every model on the daemon and carries each one's
+    ``details.context_length``, so a single round trip answers for all of them.
+    The retry time is stamped before the request goes out, so a daemon that is
+    down, or is not Ollama, costs one failed request per window rather than one
+    per LLM call — and unlike the latch this replaces, a daemon that comes up
+    afterwards is still discovered.
+
+    What /api/tags reports is a candidate, not a cap. The /api/show path is
+    careful to publish only the architecture maximum and never the Modelfile's
+    load-time default — they differ by 32x on a real model — while /api/tags
+    hands over one unlabelled number whose meaning is version-dependent
+    (verified as the architecture maximum on this machine's daemon; absent
+    entirely on its safetensors/MLX entries). A value at or above the fallback
+    ceiling cannot cap anything below what we would have used anyway, so it is
+    published free. Anything smaller would bind, and is left to
+    :func:`_probe_model_architecture` to confirm.
+    """
+    key = (endpoint or "").rstrip("/")
+    if not key:
+        return
+    now = time.monotonic()
+    if now < _CONTEXT_PROBED_ENDPOINTS.get(key, 0.0):
+        return
+    _CONTEXT_PROBED_ENDPOINTS[key] = now + _CONTEXT_PROBE_RETRY_SECONDS
+    try:
+        response = requests.get(f"{key}/api/tags", timeout=_CONTEXT_PROBE_TIMEOUT)
+        if response.status_code != 200:
+            return
+        listed = set()
+        for entry in (response.json() or {}).get("models") or []:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name") or ""
+            if not name:
+                continue
+            listed.add(name)
+            remember_listing_context_length(
+                name, (entry.get("details") or {}).get("context_length")
+            )
+        _CONTEXT_ENDPOINT_MODELS[key] = listed
+    except Exception as e:
+        logger.debug("Could not read context windows from %s: %s", key, e)
+
+
+def _probe_model_architecture(endpoint: str, model: str) -> None:
+    """One POST to {endpoint}/api/show for one model, per retry window.
+
+    This is the discrimination the picker's listing already applies and that
+    /api/tags cannot: ``model_info`` labels the architecture maximum, so a
+    Modelfile default (or a vision tower's 77) can be told apart from the real
+    window instead of being trusted verbatim as a permanent cap.
+
+    Only asked for a model a successful /api/tags listing actually named, so an
+    endpoint that is not Ollama costs one failed request rather than two, and
+    only when the window is still unknown — which is also the mlx/safetensors
+    case, where /api/tags carries no context_length at all.
+    """
+    key = (endpoint or "").rstrip("/")
+    if not model or model not in _CONTEXT_ENDPOINT_MODELS.get(key, ()):
+        return
+    now = time.monotonic()
+    if now < _CONTEXT_SHOWN_MODELS.get((key, model), 0.0):
+        return
+    _CONTEXT_SHOWN_MODELS[(key, model)] = now + _CONTEXT_PROBE_RETRY_SECONDS
+    try:
+        response = requests.post(
+            f"{key}/api/show", json={"name": model}, timeout=_CONTEXT_PROBE_TIMEOUT
+        )
+        if response.status_code != 200:
+            return
+        remember_model_context_limit(
+            model, architecture_context_length((response.json() or {}).get("model_info"))
+        )
+    except Exception as e:
+        logger.debug("Could not read %s's context window from %s: %s", model, key, e)
+
+
+def model_context_limit(model: str, endpoint: Optional[str] = None) -> Optional[int]:
+    """The model's architecture context window, or None when nothing knows it.
+
+    Blocking: up to two short requests on a cold endpoint. Never call it from a
+    coroutine — see :func:`model_context_limit_nowait`.
+    """
+    known = _MODEL_MAX_CACHE.get(model)
+    if known:
+        return known
+    if not endpoint:
+        return None
+    _probe_context_limits(endpoint)
+    known = _MODEL_MAX_CACHE.get(model)
+    if known:
+        return known
+    _probe_model_architecture(endpoint, model)
+    return _MODEL_MAX_CACHE.get(model)
+
+
+def _background_probe(model: str, endpoint: str) -> None:
+    try:
+        model_context_limit(model, endpoint)
+    except Exception as e:  # pragma: no cover - the probe swallows its own
+        logger.debug("Background context probe for %s failed: %s", model, e)
+
+
+def model_context_limit_nowait(model: str, endpoint: Optional[str] = None) -> Optional[int]:
+    """What is already known about the model's window. Never a round trip.
+
+    For callers that can reach an asyncio event loop — the coroutines, and the
+    synchronous functions a coroutine calls without a thread in between.
+    ``requests`` is synchronous, so a probe taken with a loop underneath stalls
+    every other request the process is serving — every open SSE stream
+    included — for as long as the daemon takes to answer, which is up to the
+    timeout and longer if name resolution hangs. Measured on this tree, the
+    inline version blocked the loop for 3.01s.
+
+    So this answers from the cache, and when the answer is not there yet it
+    starts discovery on a worker thread whose result lands in that same cache.
+    A cold process therefore sizes its first big turn against the fallback
+    ceiling — exactly the behaviour that shipped before any of this —
+    and every turn after it against the model's real window. One live thread
+    per endpoint: a turn that arrives while discovery is running does not start
+    a second one.
+    """
+    known = _MODEL_MAX_CACHE.get(model)
+    if known:
+        return known
+    key = (endpoint or "").rstrip("/")
+    if not key or not model:
+        return None
+    now = time.monotonic()
+    if now < _CONTEXT_PROBED_ENDPOINTS.get(key, 0.0) and (
+        now < _CONTEXT_SHOWN_MODELS.get((key, model), 0.0)
+        or model not in _CONTEXT_ENDPOINT_MODELS.get(key, ())
+    ):
+        # Everything this probe could learn about this model has been asked
+        # already; there is nothing for a thread to do.
+        return None
+    with _CONTEXT_PROBE_LOCK:
+        running = _CONTEXT_PROBE_THREADS.get(key)
+        if running is not None and running.is_alive():
+            return None
+        thread = threading.Thread(
+            target=_background_probe, args=(model, key),
+            name="halbert-context-probe", daemon=True,
+        )
+        _CONTEXT_PROBE_THREADS[key] = thread
+    thread.start()
+    return None
+
 
 def compute_num_ctx(
     prompt_tokens_estimate: int, num_predict: int, model_max: Optional[int]
 ) -> int:
-    """clamp(round_up(prompt + 512 + num_predict, 1024), 4096, model_max or 32768)."""
+    """clamp(round_up(prompt + 512 + num_predict, 1024), 4096, model_max or the ceiling)."""
     need = int(prompt_tokens_estimate) + _NUM_CTX_HEADROOM + int(num_predict)
     rounded = ((need + 1023) // 1024) * 1024
-    ceiling = int(model_max) if model_max else _NUM_CTX_DEFAULT_MAX
+    ceiling = min(int(model_max), _num_ctx_ceiling()) if model_max else _num_ctx_ceiling()
     return max(_NUM_CTX_MIN, min(rounded, ceiling))
 
 
@@ -703,15 +1062,83 @@ def num_ctx_for_model(
     prompt_tokens_estimate: int,
     num_predict: int,
     model_max: Optional[int] = None,
+    endpoint: Optional[str] = None,
+    on_event_loop: bool = False,
 ) -> int:
-    """Per-model num_ctx: computed once, grown only when a prompt needs more."""
+    """Per-model num_ctx: sized from the prompt, held across a turn, released
+    when it has gone unneeded.
+
+    ``model_max`` overrides discovery; ``endpoint`` allows it. Neither is
+    required — with both absent this behaves exactly as it did before, so a
+    caller that has no endpoint to give is never worse off than it was.
+
+    ``on_event_loop`` says the caller can reach an event loop, and it is not a
+    hint: discovery is synchronous ``requests``, so a probe taken with a loop
+    underneath stops it and with it every other request the process is
+    serving. Every caller in this tree that can reach a loop sets it — the
+    dashboard adapter's ``_stream_turn``, which is a coroutine, and
+    ``_call_ollama``, which is synchronous but sits at the end of an
+    all-inline chain from ``routes/agent.py::send_message`` with no thread
+    anywhere in between. "Synchronous" is not "off the loop", and a caller
+    that cannot prove it is off one has to assume it is not. Such a caller
+    gets what is known now, plus discovery on a worker thread for the turns
+    after this one; only a caller that is genuinely off any loop (a CLI run, a
+    worker thread) leaves it False and waits for the answer.
+    """
+    if model_max is None:
+        # Only worth a lookup when the prompt needs more than the floor: below
+        # it no architecture window can change the answer, so the common short
+        # prompt never pays for one — not even the cost of starting a thread.
+        if compute_num_ctx(prompt_tokens_estimate, num_predict, None) > _NUM_CTX_MIN:
+            model_max = (
+                model_context_limit_nowait(model, endpoint) if on_event_loop
+                else model_context_limit(model, endpoint)
+            )
     wanted = compute_num_ctx(prompt_tokens_estimate, num_predict, model_max)
+    now = time.monotonic()
     cached = _NUM_CTX_CACHE.get(model)
-    if cached is not None and cached >= wanted:
+
+    if cached is not None and model_max:
+        # A window learned since the high-water mark was set corrects the mark
+        # rather than growing it. The mark exists so Ollama does not reload the
+        # model between messages, but holding 32768 for a model whose weights
+        # top out at 8192 asks for KV cache the model cannot use, and the mark
+        # would hold it for the whole release period — a quarter of an hour of
+        # a session, after one big first turn on a cold process that had not
+        # discovered the window yet. Never below what the prompt in hand
+        # needs, so this cannot truncate anything.
+        cap = max(_NUM_CTX_MIN, min(int(model_max), _num_ctx_ceiling()))
+        if cached > cap:
+            logger.info(
+                f"num_ctx for {model} corrected {cached} -> {cap}: the model's "
+                f"window is {model_max}"
+            )
+            cached = cap
+            _NUM_CTX_CACHE[model] = cap
+
+    if cached is None or wanted > cached:
+        if cached is not None:
+            logger.info(f"num_ctx for {model} grows {cached} -> {wanted}")
+        _NUM_CTX_CACHE[model] = wanted
+        _NUM_CTX_HIGH_WATER_AT[model] = now
+        return wanted
+
+    if wanted > cached // 2:
+        # Still using most of the window: hold it, and keep the clock warm.
+        _NUM_CTX_HIGH_WATER_AT[model] = now
         return cached
-    if cached is not None:
-        logger.info(f"num_ctx for {model} grows {cached} -> {wanted}")
+
+    if now - _NUM_CTX_HIGH_WATER_AT.get(model, now) < _NUM_CTX_RELEASE_SECONDS:
+        return cached
+
+    # Nothing has needed more than half this window for a long time. Drop to
+    # what the prompt in hand needs — never below it, so this cannot truncate.
+    logger.info(
+        f"num_ctx for {model} released {cached} -> {wanted} after "
+        f"{_NUM_CTX_RELEASE_SECONDS:.0f}s below half the window"
+    )
     _NUM_CTX_CACHE[model] = wanted
+    _NUM_CTX_HIGH_WATER_AT[model] = now
     return wanted
 
 

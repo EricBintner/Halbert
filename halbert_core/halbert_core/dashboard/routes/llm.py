@@ -266,6 +266,87 @@ class LLMModelTestRequest(BaseModel):
 # ── LLM Proxy Endpoints ──────────────────────────────────────────
 
 
+def _publish_context_limit(name: str, tokens: Any) -> None:
+    """Tell the model runtime a model's real context window.
+
+    ``compute_num_ctx`` has always taken a cap and nothing ever supplied one,
+    so every local call was sized against the 32768 fallback — up to ~2GB of KV
+    cache for a 7B, against the no-options-block behaviour that shipped before.
+    Listing models for the picker already learns the true window, so the fix
+    costs no extra request: it is published from here.
+
+    Only ever an architecture maximum, read from /api/show's ``model_info``.
+    The runtime refuses to lower a window it already knows, so a wrong small
+    number cannot start truncating prompts — but it equally cannot be taken
+    back, which is why the weaker number in a model listing goes through
+    :func:`_publish_listing_context_limit` instead.
+    """
+    if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
+        return
+    try:
+        from ...model.client import remember_model_context_limit
+    except Exception:  # pragma: no cover - the picker must still list models
+        return
+    remember_model_context_limit(name, tokens)
+
+
+def _publish_listing_context_limit(name: str, tokens: Any) -> None:
+    """Tell the model runtime what /api/tags said, on the runtime's terms.
+
+    The listing's ``details.context_length`` is one unlabelled number with no
+    way to tell an architecture maximum from a load-time default, so the
+    runtime accepts it only where it cannot cap anything (see
+    ``client.remember_listing_context_length``). The enrichment pass below
+    publishes the corroborated number for every model it covers, so nothing is
+    lost for a model the picker actually inspects — while a model past the
+    /api/show cap, or a daemon whose /api/show is unavailable, falls back to
+    the fallback ceiling rather than to a number nobody checked.
+    """
+    if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
+        return
+    try:
+        from ...model.client import remember_listing_context_length
+    except Exception:  # pragma: no cover - the picker must still list models
+        return
+    remember_listing_context_length(name, tokens)
+
+
+def _architecture_context_length(data: Dict[str, Any]) -> int:
+    """The largest window the weights can hold, from /api/show's ``model_info``.
+
+    The key selection lives beside the cap it feeds
+    (``model.client.architecture_context_length``) rather than here, because
+    the model runtime's own endpoint probe has to apply exactly the same
+    discrimination when it confirms a window from /api/show — and a second
+    copy of "which of these keys is the model's window" is how the two paths
+    would drift apart.
+    """
+    try:
+        from ...model.client import architecture_context_length
+    except Exception:  # pragma: no cover - the picker must still list models
+        return 0
+    return architecture_context_length(data.get("model_info"))
+
+
+def _modelfile_num_ctx(data: Dict[str, Any]) -> int:
+    """The Modelfile's ``num_ctx`` — the window the model is LOADED with by
+    default, which is a different number from the architecture maximum and
+    routinely a small fraction of it (measured live: 8192 against 262144).
+
+    Reported for display, never used as a cap. Capping num_ctx here would pin
+    that model at 8192 and silently truncate the head of every larger prompt —
+    the exact failure sizing num_ctx exists to prevent.
+    """
+    for line in str(data.get("parameters") or "").split("\n"):
+        line = line.strip()
+        if line.startswith("num_ctx"):
+            try:
+                return int(line.split()[1])
+            except (IndexError, ValueError):
+                return 0
+    return 0
+
+
 def _ollama_show_detail(url: str, name: str, timeout: float = 3.0) -> Optional[Dict[str, Any]]:
     """Fetch context length, licence text and capabilities from Ollama /api/show."""
     try:
@@ -277,26 +358,14 @@ def _ollama_show_detail(url: str, name: str, timeout: float = 3.0) -> Optional[D
         if r.status_code != 200:
             return None
         data = r.json()
-        params = data.get("parameters") or ""
-        ctx = 0
-        for line in params.split("\n"):
-            line = line.strip()
-            if line.startswith("num_ctx"):
-                try:
-                    ctx = int(line.split()[1])
-                except (IndexError, ValueError):
-                    pass
-                break
-        if not ctx:
-            # Fall back to model_info
-            model_info = data.get("model_info") or {}
-            for key in ("llm.context_length", "general.context_length"):
-                if key in model_info:
-                    try:
-                        ctx = int(model_info[key])
-                    except (ValueError, TypeError):
-                        pass
-                    break
+        num_ctx_default = _modelfile_num_ctx(data)
+        architecture_tokens = _architecture_context_length(data)
+        # The architecture maximum is the real context window. The Modelfile
+        # default is the last resort for old daemons that report no model_info
+        # at all — better than showing nothing — but it stays out of
+        # ``architecture_tokens``, which is the only field allowed to cap
+        # num_ctx. Letting it through there is precisely the truncation trap.
+        ctx = architecture_tokens or num_ctx_default
         ctx_label = f"{ctx // 1000}k" if ctx >= 1000 else str(ctx) if ctx > 0 else ""
         lic = data.get("license")
         if isinstance(lic, list):
@@ -304,6 +373,8 @@ def _ollama_show_detail(url: str, name: str, timeout: float = 3.0) -> Optional[D
         return {
             "context_tokens": ctx,
             "context_window": ctx_label,
+            "architecture_tokens": architecture_tokens,
+            "num_ctx_default": num_ctx_default,
             "license": lic if isinstance(lic, str) else None,
             "capabilities": data.get("capabilities"),
         }
@@ -396,6 +467,23 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                         }
                         if family:
                             detail["family"] = family
+                        # /api/tags already carries a context window for most
+                        # models, so the listing the picker does anyway answers
+                        # for all of them in one round trip. (Verified live: it
+                        # reports the architecture maximum, not the Modelfile
+                        # default — 262144 for a model whose Modelfile sets
+                        # num_ctx 8192.) It is DISPLAYED as it comes; the
+                        # num_ctx cap is a stricter question, so it goes to the
+                        # runtime as a listing, not as an architecture maximum,
+                        # and the /api/show pass below is what confirms a
+                        # window small enough to cap anything.
+                        tags_ctx = (m.get("details") or {}).get("context_length")
+                        if isinstance(tags_ctx, int) and not isinstance(tags_ctx, bool) and tags_ctx > 0:
+                            detail["context_tokens"] = tags_ctx
+                            detail["context_window"] = (
+                                f"{tags_ctx // 1000}k" if tags_ctx >= 1000 else str(tags_ctx)
+                            )
+                            _publish_listing_context_limit(name, tags_ctx)
                         _add_capabilities(detail, name, "ollama")
                         model_details.append(detail)
 
@@ -421,6 +509,10 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                     if show["context_tokens"] > 0:
                         md["context_tokens"] = show["context_tokens"]
                         md["context_window"] = show["context_window"]
+                    # Only the architecture maximum may cap num_ctx. The
+                    # Modelfile default that show falls back to for display is
+                    # deliberately not published.
+                    _publish_context_limit(md["name"], show.get("architecture_tokens"))
                     if show.get("license"):
                         _annotate_license(md, license_text=show["license"])
                     if show.get("capabilities"):
