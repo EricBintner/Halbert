@@ -202,14 +202,19 @@ class TestCapRespected:
         chunks = [_chunk(AW.format(i)) for i in range(6)]
         assert len(cap_by_source_directory(chunks, 5, backfill=False)) == 1
 
-    def test_the_giant_keeps_its_single_best_slot(self):
-        # The control case: when a giant source genuinely is right, it must
-        # not be excluded — only capped.
-        chunks = [_chunk(AW.format(0), score=0.9)] + [
-            _chunk(WS.format(i), score=0.5) for i in range(4)
+    def test_the_giant_keeps_its_single_best_slot_and_only_that_slot(self):
+        # The control case: when a giant source genuinely is right, it must be
+        # capped, not excluded. Both halves are asserted — the earlier version
+        # of this test checked only that the giant held rank 1, which is also
+        # true with the cap switched off, so it never tested the cap.
+        chunks = [_chunk(AW.format(i), score=0.9 - i / 100) for i in range(3)]
+        chunks += [
+            _chunk(f"knowledge/linux/topic{i}/f.md", score=0.5 - i / 100)
+            for i in range(4)
         ]
         out = cap_by_source_directory(chunks, 5)
         assert out[0]["source_path"] == AW.format(0)
+        assert sum(1 for c in out if "arch-wiki" in c["source_path"]) == 1
 
     def test_cap_of_two_keeps_two(self):
         chunks = [_chunk(AW.format(i)) for i in range(6)]
@@ -260,9 +265,12 @@ class TestOrderingPreserved:
         out = cap_by_source_directory(chunks, 4)
         assert [c["score"] for c in out] == [0.9, 0.7, 0.6, 0.5]
 
-    def test_the_first_chunk_of_a_directory_is_the_one_kept(self):
+    def test_the_chunk_a_directory_keeps_is_its_first_one(self):
+        # Backfill off: with it on all four come back regardless, so the
+        # earlier version of this test held with the cap switched off too.
         chunks = [_chunk(AW.format(i), score=0.9 - i * 0.1) for i in range(4)]
-        out = cap_by_source_directory(chunks, 5)
+        out = cap_by_source_directory(chunks, 5, backfill=False)
+        assert len(out) == 1
         assert out[0]["score"] == 0.9
 
     def test_does_not_sort_by_score(self):
@@ -338,10 +346,19 @@ class TestBackfill:
 
 
 class TestUnkeyablePaths:
+    """Backfill is disabled throughout.
+
+    Every fixture here holds fewer distinct directories than the limit, so
+    backfill would refill the result from the spilled chunks and make the
+    capped output identical to the uncapped one — these tests would then pass
+    against a build that buckets unkeyable paths under "", which is the exact
+    trap they exist to catch.
+    """
+
     def test_unkeyable_paths_are_never_collapsed_into_one_bucket(self):
         # The trap: treating "" as a directory would keep 1 of these 4.
         chunks = [_chunk("", score=0.9 - i / 100) for i in range(4)]
-        out = cap_by_source_directory(chunks, 5)
+        out = cap_by_source_directory(chunks, 5, backfill=False)
         assert len(out) == 4
 
     def test_unkeyable_paths_do_not_consume_another_directory_budget(self):
@@ -356,10 +373,10 @@ class TestUnkeyablePaths:
 
     def test_missing_source_path_key_is_unkeyable(self):
         chunks = [{"text": "a"}, {"text": "b"}, {"text": "c"}]
-        assert len(cap_by_source_directory(chunks, 5)) == 3
+        assert len(cap_by_source_directory(chunks, 5, backfill=False)) == 3
 
     def test_non_mapping_entries_are_passed_through_uncapped(self):
-        assert len(cap_by_source_directory(["a", "b", None], 5)) == 3
+        assert len(cap_by_source_directory(["a", "b", None], 5, backfill=False)) == 3
 
 
 class TestExemptTrees:
@@ -444,15 +461,21 @@ class TestExemptTrees:
 
 
 class TestDisabled:
+    """Backfill is disabled throughout, for the same reason as
+    TestUnkeyablePaths: with it on, an all-one-directory fixture is refilled
+    to the limit either way, so these assertions hold even if the ``per_source
+    <= 0`` branch is deleted outright."""
+
     def test_per_source_zero_disables_capping(self):
         chunks = [_chunk(AW.format(i)) for i in range(8)]
-        out = cap_by_source_directory(chunks, 5, per_source=0)
+        out = cap_by_source_directory(chunks, 5, per_source=0, backfill=False)
         assert len(out) == 5
         assert all("arch-wiki" in c["source_path"] for c in out)
 
     def test_negative_per_source_disables_capping(self):
         chunks = [_chunk(AW.format(i)) for i in range(8)]
-        assert len(cap_by_source_directory(chunks, 5, per_source=-1)) == 5
+        out = cap_by_source_directory(chunks, 5, per_source=-1, backfill=False)
+        assert len(out) == 5
 
 
 class TestPurity:
