@@ -45,6 +45,7 @@ import type {
 } from '@halbert/model-picker'
 import { Brain, Check, ChevronDown, Cloud, HardDrive, X } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { QuickSetup } from './QuickSetup'
 import { CloudDisclosureModal } from '@/components/legal'
 import { HALBERT_MODEL_ROLES, modelPickerTransport } from '@/lib/halbertModelRoles'
 import { cn } from '@/lib/utils'
@@ -409,6 +410,12 @@ export function ModelSettings() {
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {/* Only while there is nothing to talk to: auto-discovery finds a
+            running engine, but it does not say which installed model to pick,
+            or what to do when nothing is running at all. */}
+        {!picker.loading && !picker.assignmentFor('chat_model')?.enabled && (
+          <QuickSetup onApplied={() => picker.refresh()} />
+        )}
         {picker.error ? (
           <p
             role="alert"

@@ -141,3 +141,42 @@ describe('ChatModelPill', () => {
     await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'))
   })
 })
+
+
+describe('ChatModelPill on a layered host', () => {
+  it('names the model in force, not the one being edited', async () => {
+    // The drawer edits the global layer; a workspace file or a session pin can
+    // override it. Showing the editable value would have the pill name a model
+    // that is not answering — the one question the pill exists to answer.
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url)
+      if (u.includes('/llm/config')) {
+        return jsonResponse({ data: {
+          llm_config: { ...config(), chat_model: { enabled: true, endpoint_id: 'ep1', model: 'model-global' } },
+          chat_capable_providers: ['ollama'],
+          effective: {
+            llm_config: { ...config(), chat_model: { enabled: true, endpoint_id: 'ep1', model: 'model-inforce' } },
+            overridden_slots: { chat_model: 'workspace' },
+          },
+        } })
+      }
+      if (u.includes('/api/llm/discover')) {
+        return jsonResponse({ data: {
+          ollama: { running: true, url: ENDPOINT.url, version: '1.2.3', models: ['model-global', 'model-inforce'] },
+          lm_studio: { running: false, url: 'http://localhost:1234', models: [] },
+        } })
+      }
+      if (u.includes('proxy/models')) {
+        return jsonResponse({ data: {
+          models: ['model-global', 'model-inforce'],
+          model_details: [{ name: 'model-global' }, { name: 'model-inforce' }],
+        } })
+      }
+      return jsonResponse({ data: {} })
+    }))
+
+    render(<Harness />)
+    expect(await screen.findByText('model-inforce')).toBeInTheDocument()
+    expect(screen.queryByText('model-global')).not.toBeInTheDocument()
+  })
+})

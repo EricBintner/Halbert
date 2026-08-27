@@ -123,8 +123,26 @@ export interface LocalDiscovery {
 /** Everything the picker reads and writes, in the host's own storage. */
 export interface PickerConfig {
   endpoints: SavedEndpoint[]
-  /** Keyed by {@link AppRole.id}. */
+  /**
+   * What an edit changes, keyed by {@link AppRole.id}.
+   *
+   * On a host with configuration layers this is the *editable* layer, which is
+   * not necessarily what is in force — see {@link effectiveAssignments}. An
+   * editor must name the layer it writes to, so this is what the drawer shows
+   * and saves.
+   */
   assignments: Record<string, RoleAssignment>
+  /**
+   * What is actually in force, once every layer is resolved.
+   *
+   * Absent on a host with no layering, where it is the same thing as
+   * {@link assignments}. Surfaces that report what will answer — the in-chat
+   * pill above all — must prefer this, or they will name a model a higher
+   * layer has already overridden.
+   */
+  effectiveAssignments?: Record<string, RoleAssignment>
+  /** Role id → the layer overriding it, for roles a higher layer has taken. */
+  overriddenSlots?: Record<string, string>
   /**
    * Providers the host's chat runtime can actually call. Others stay listable
    * and testable but are excluded from role dropdowns and badged — the fix for

@@ -66,11 +66,15 @@ export function useModelPillState(
   picker: UseModelPickerResult,
   activeRoleId: string,
 ): ModelPillState {
-  const { selection, models, assignmentFor, endpointFor, discovery, isPinned } =
+  const { selection, models, effectiveAssignmentFor, endpointFor, discovery, isPinned } =
     picker
 
   return useMemo(() => {
-    const assignment = assignmentFor(activeRoleId)
+    // The effective assignment, not the editable one: on a layered host the
+    // pill would otherwise name a model a workspace file or a session pin has
+    // already overridden, which is exactly the question the pill exists to
+    // answer.
+    const assignment = effectiveAssignmentFor(activeRoleId)
     const fallback =
       assignment?.enabled && assignment.model ? assignment : undefined
 
@@ -109,7 +113,7 @@ export function useModelPillState(
     }
   }, [
     activeRoleId,
-    assignmentFor,
+    effectiveAssignmentFor,
     discovery,
     endpointFor,
     isPinned,
