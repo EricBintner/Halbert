@@ -10,6 +10,12 @@
  */
 
 import { apiBase, apiUrl } from './apiBase'
+import {
+  pageFromServer,
+  threadFromServer,
+  type TimelineCurrentThread,
+  type TimelinePage,
+} from '../types/timeline'
 
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${apiBase()}${path}`, {
@@ -308,6 +314,29 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ command }),
     })
+  },
+
+  // -----------------------------------------------------------------------
+  // Timeline (continuous conversation, Plan A): one conversation, paged.
+  // -----------------------------------------------------------------------
+  getTimeline(params: { before?: string; around?: string; limit?: number } = {}): Promise<TimelinePage> {
+    const qs = new URLSearchParams()
+    if (params.before) qs.set('before', params.before)
+    if (params.around) qs.set('around', params.around)
+    if (params.limit) qs.set('limit', String(params.limit))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request(`/api/agent/timeline${suffix}`).then(pageFromServer)
+  },
+
+  getCurrentThread(): Promise<TimelineCurrentThread | null> {
+    return request('/api/agent/thread/current').then(threadFromServer)
+  },
+
+  retractRecall(threadId: string, recalledThreadId: string): Promise<{ ok: boolean }> {
+    return request(
+      `/api/agent/thread/${encodeURIComponent(threadId)}/recall/${encodeURIComponent(recalledThreadId)}`,
+      { method: 'DELETE' },
+    )
   },
 
   // -----------------------------------------------------------------
