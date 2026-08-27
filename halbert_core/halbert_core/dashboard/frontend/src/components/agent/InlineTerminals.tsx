@@ -19,6 +19,7 @@ import { useTerminalSessions, type TerminalSession } from '../../hooks/useTermin
 import { useIntersectionDock } from '../../hooks/useIntersectionDock';
 import { TerminalTile } from './TerminalTile';
 import { TetherChip } from './TetherChip';
+import { StaticTerminalChip } from './StaticTerminalChip';
 
 interface InlineTerminalsProps {
   /** Terminal session ids opened during this turn, oldest first. */
@@ -63,14 +64,20 @@ export function InlineTerminals({ sessionIds }: InlineTerminalsProps) {
   if (sessionIds.length === 0) return null;
 
   const byId = new Map(sessions.map((s) => [s.id, s]));
-  const mine = sessionIds.map((id) => byId.get(id)).filter((s): s is TerminalSession => !!s);
-  if (mine.length === 0) return null;
 
+  // An id the store does not know is a terminal that ended before this page
+  // held it (reload, or a turn older than the store). It stays in the
+  // transcript as a static chip; it is never dropped.
   return (
     <div className="space-y-2">
-      {mine.map((session) => (
-        <InlineTerminal key={session.id} session={session} />
-      ))}
+      {sessionIds.map((id) => {
+        const session = byId.get(id);
+        return session ? (
+          <InlineTerminal key={id} session={session} />
+        ) : (
+          <StaticTerminalChip key={id} id={id} />
+        );
+      })}
     </div>
   );
 }
