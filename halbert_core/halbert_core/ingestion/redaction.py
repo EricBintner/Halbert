@@ -208,10 +208,18 @@ def _is_structure(content: str) -> bool:
     -- the caller filters those out first, because a comment is neither a
     value nor a terminator.
 
-    Known consequence of the mapping rule: a bare URL alone on a child line
-    (`https://host/path`) has no space after its colon, so it classifies as a
-    scalar and gets redacted. Under a secret-keyword parent that is arguably
-    the right answer, and it is the price of not leaking `pa55:word:here`.
+    Two known consequences of the mapping rule, both accepted deliberately:
+
+    * A bare URL alone on a child line (`https://host/path`) has no space
+      after its colon, so it classifies as a scalar and gets redacted. Under
+      a secret-keyword parent that is arguably the right answer, and it is
+      the price of not leaking `pa55:word:here`.
+    * The `=` branch spares a YAML scalar that happens to contain one:
+      PyYAML reads `password:\\n  foo=bar` as `{'password': 'foo=bar'}`, but
+      the shape is indistinguishable from an ini/systemd `key=value`, which
+      the branch exists to protect. A credential of that literal form is left
+      in place. Narrowing this is a format-detection problem, not a pattern
+      one.
 
     Not covered: a sequence item that is itself a secret (`passwords:\\n  -
     hunter2`). The `- ` guard exists to protect `api:\\n  - foo`, which is
@@ -383,9 +391,11 @@ def _redact_plist_line(text: str) -> str:
 
 
 def _unclosed_value_tag(text: str) -> Optional[re.Match]:
+    """The first value tag on this line whose close tag is on a later line."""
+    lowered = text.lower()  # hoisted: this loop runs once per open tag
     m = _PLIST_OPEN_RE.search(text)
     while m:
-        if ("</" + m.group(1).lower()) in text.lower()[m.end() :]:
+        if ("</" + m.group(1).lower()) in lowered[m.end() :]:
             m = _PLIST_OPEN_RE.search(text, m.end())
             continue
         return m

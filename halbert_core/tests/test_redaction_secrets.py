@@ -220,7 +220,15 @@ def test_mapping_child_is_structure_not_secret():
 
 
 def test_non_secret_inline_url_is_left_alone():
-    """`endpoint:` carries no secret keyword, so the URL structure stays."""
+    """The URL structure must survive *under a secret-keyword parent*.
+
+    The previous version of this test fed a line with no secret keyword in
+    it, so nothing could ever have touched it -- it asserted the absence of
+    a code path rather than its behaviour. `api:` is the keyword-bearing
+    parent from the discrimination example in redaction.py, and it is the
+    side of that example that was never actually exercised.
+    """
+    assert redact_text("api:\n  endpoint: https://x\n") == "api:\n  endpoint: https://x\n"
     y = "endpoint: https://example.invalid/path\n"
     assert redact_text(y) == y
 
@@ -343,3 +351,185 @@ def test_option_list_without_sibling_keys_is_redacted_whole():
     out = redact_text("psk=correct,horse,battery\n")
     assert "horse" not in out
     assert "battery" not in out
+
+
+# --- Comments, mapping discrimination, and line endings -------------------
+
+
+def test_comment_between_key_and_value_does_not_terminate_it():
+    """L3: PyYAML reads this as {'password': 'realsecret'}.
+
+    A blank line already did not terminate a deferred value; a comment does
+    not either, but it used to `break` the scan and leave the value below it
+    in plaintext.
+    """
+    y = "password:\n  # comment\n  realsecret\n"
+    out = redact_text(y)
+    assert "realsecret" not in out
+    assert "# comment" in out
+    assert out.count("\n") == y.count("\n")
+
+
+def test_comment_only_inline_value_still_defers():
+    """PyYAML reads `password: # note` + indented line as the value."""
+    out = redact_text("password: # note\n  realsecret\n")
+    assert "realsecret" not in out
+
+
+def test_comment_does_not_terminate_a_non_secret_mapping():
+    """The comment skip must not turn a nested mapping into a value."""
+    y = "api:\n  # comment\n  timeout: 30\n"
+    out = redact_text(y)
+    assert "timeout: 30" in out
+
+
+def test_comment_inside_a_block_scalar_is_body_not_comment():
+    """Inside `|` a `#` is literal text, so it is part of the credential."""
+    y = "password: |\n  # notacomment\n  linesecret\n"
+    out = redact_text(y)
+    assert "notacomment" not in out
+    assert "linesecret" not in out
+
+
+def test_block_header_with_trailing_comment_is_recognised():
+    """L4: YAML permits `password: | # note`.
+
+    The anchored header pattern did not match it, so TOKEN_RE ate the `|`
+    and orphaned the whole block body in plaintext -- the exact failure the
+    pass ordering exists to prevent.
+    """
+    y = "password: | # inline comment\n  realsecret\n  secondline\n"
+    out = redact_text(y)
+    assert "realsecret" not in out
+    assert "secondline" not in out
+    assert out.count("\n") == y.count("\n")
+
+
+def test_unquoted_scalar_containing_colon_is_redacted():
+    """L8: `pa55:word:here` is a scalar, not a mapping.
+
+    Ground truth, not folklore: yaml.safe_load('password:\\n  pa55:word:here\\n')
+    returns {'password': 'pa55:word:here'}. YAML opens a mapping only when a
+    colon is followed by whitespace or end of line.
+    """
+    y = "password:\n  pa55:word:here\n"
+    out = redact_text(y)
+    assert "pa55:word:here" not in out
+    assert out.count("\n") == y.count("\n")
+
+
+def test_mapping_discrimination_still_spares_real_structure():
+    """The narrowed mapping rule must not start eating nested mappings."""
+    assert redact_text("api:\n  endpoint: https://x\n") == "api:\n  endpoint: https://x\n"
+    assert "timeout: 30" in redact_text("api:\n  timeout: 30\n")
+    assert "- foo" in redact_text("api:\n  - foo\n")
+
+
+def test_quoted_mapping_keys_are_not_eaten():
+    """O2: a leading quote is not proof of a scalar.
+
+    netplan writes SSIDs as quoted mapping keys (`"HomeNet":`), and the old
+    rule ate the first child of `keys:` while leaving the rest -- a
+    half-destroyed mapping.
+    """
+    y = 'keys:\n  "primary": /etc/ssl/a.pem\n  "backup": /etc/ssl/b.pem\n'
+    out = redact_text(y)
+    assert '"primary": /etc/ssl/a.pem' in out
+    assert '"backup": /etc/ssl/b.pem' in out
+
+
+def test_crlf_line_endings_are_preserved():
+    """O4: rewriting a line must not leave the file with mixed endings."""
+    y = "password:\r\n  hunter2secret\r\n  keepme\r\n"
+    out = redact_text(y)
+    assert "hunter2secret" not in out
+    assert out == "password:\r\n  <secret>\r\n  keepme\r\n"
+    assert "\n" not in out.replace("\r\n", "")
+
+
+def test_crlf_inline_value_keeps_its_ending():
+    out = redact_text("psk=hunter2secret\r\nkeep=me\r\n")
+    assert "hunter2secret" not in out
+    assert out == "<secret>\r\nkeep=me\r\n"
+
+
+def test_tab_indentation_is_not_read_as_a_dedent():
+    """A tab is one character but eight columns; comparing raw lengths made
+    it look like a dedent from four spaces and ended the value early."""
+    y = "    password:\n\tdeepsecret\n"
+    out = redact_text(y)
+    assert "deepsecret" not in out
+
+
+# --- Keyword coverage -----------------------------------------------------
+
+
+def test_short_and_alternate_secret_keywords_are_covered():
+    """L7: real config files do not spell it `password` every time."""
+    cases = {
+        "passphrase=hunter2secret\n": "hunter2secret",
+        "pass=hunter2secret\n": "hunter2secret",
+        "passwd=hunter2secret\n": "hunter2secret",
+        "credential=hunter2secret\n": "hunter2secret",
+        "auth=hunter2secret\n": "hunter2secret",
+        "Authorization: Bearer abcdefghijklmnop\n": "abcdefghijklmnop",
+        "pin=987654\n": "987654",
+        "seed=hunter2secret\n": "hunter2secret",
+        "pwd=hunter2secret\n": "hunter2secret",
+        "client_secret=hunter2secret\n": "hunter2secret",
+        "access_token: hunter2secret\n": "hunter2secret",
+    }
+    for text, leaked in cases.items():
+        assert leaked not in redact_text(text), f"leaked from {text!r}"
+
+
+def test_borgmatic_encryption_passphrase_is_redacted():
+    """/etc/borgmatic.d/*.yaml is a harvested path and this is its literal key."""
+    y = (
+        "location:\n"
+        "  source_directories:\n"
+        "    - /home/user\n"
+        "storage:\n"
+        "  encryption_passphrase: hunter2secret\n"
+    )
+    out = redact_text(y)
+    assert "hunter2secret" not in out
+    assert "source_directories:" in out
+
+
+def test_short_keywords_do_not_match_inside_unrelated_words():
+    """The short spellings are whole-word only: `pin` lives inside `mapping`,
+    `pass` inside `bypass`, `seed` inside `seeded`."""
+    for text in ("mapping=identity\n", "bypass=true\n", "compass=north\n"):
+        assert redact_text(text) == text
+
+
+def test_known_non_secret_keys_are_exempt():
+    """Keys that contain a secret substring but are not credentials."""
+    for text in (
+        "key-mgmt=wpa-psk\n",
+        "key_mgmt=WPA-PSK\n",
+        "KEYMAP=us\n",
+        "apiVersion: v1\n",
+    ):
+        assert redact_text(text) == text
+
+
+# --- Cost -----------------------------------------------------------------
+
+
+def test_long_single_line_does_not_stall_the_redactor():
+    """EMAIL_RE backtracked quadratically over an unbroken word run.
+
+    Measured before the fix: 35 ms at 5,000 characters, 569 ms at 20,000,
+    5,111 ms at 60,000 -- a clean 4x per doubling. Line breaks used to bound
+    it; whole-file staging removes that bound, and a one-line base64 blob or
+    a long JSON token is ordinary input. The threshold is deliberately loose:
+    the point is linear-vs-quadratic, not a microbenchmark.
+    """
+    import time
+
+    blob = "a" * 60000
+    start = time.perf_counter()
+    redact_text(blob)
+    assert time.perf_counter() - start < 1.0
