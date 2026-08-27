@@ -1,6 +1,34 @@
 # Role-Scoped Config Harvesting Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> ## ✅ Status: EXECUTED AND MERGED — do not re-run this plan
+>
+> Recorded **2026-08-27**. Tasks 1–12 were implemented, tested and merged as
+> commit **`0cb99ad`** on **`model-picker-frontend`**, across the 35 commits
+> from `4196367` (design) to `8bbba25`. All 63 of their checkboxes are ticked
+> below and every deliverable is on disk — the three role manifests, the role
+> registry, `stage_role_tree`, the SourcePrep template scopes and the quality
+> gate's role queries.
+>
+> **Three items remain, and they are the only outstanding work this document
+> describes.** All three sit in "Blocked on external verification" near the
+> end, all three are still unticked, and all three need a running SourcePrep
+> daemon that was not reachable from this machine: the fail-closed scope
+> lookup, whether `to_remove` actually removes, and the end-to-end quality
+> gate run. Until they are confirmed, **the role scopes are not
+> production-ready** — the first of them in particular would mean a typo'd
+> scope name silently searching the entire corpus.
+>
+> One correction was made after the merge: Task 5's heading and summary said
+> staging consumes `snapshot.py`'s redacted output. It does not — it redacts
+> inline off the live path. Both that task and the design doc are corrected
+> in place and the correction is marked where it applies.
+
+> **For agentic workers:** this plan has already been executed — see the status
+> above before starting anything. It is kept as the record of what was built
+> and why. REQUIRED SUB-SKILL if any *remaining* item is picked up: use
+> superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax for
+> tracking; a ticked box means merged in `0cb99ad`.
 
 **Goal:** Ship three role-scoped SourcePrep scopes (`network_admin`, `service_admin`, `storage_admin`) that give the agent narrow, per-subsystem config context — after first closing a live secret-leak in the staging path.
 
@@ -94,7 +122,7 @@ whitespace around the separator).
 - Modify: `halbert_core/halbert_core/ingestion/redaction.py:8`
 - Test: `halbert_core/tests/test_redaction_secrets.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `halbert_core/tests/test_redaction_secrets.py`:
 
@@ -146,7 +174,7 @@ def test_listen_port_is_not_redacted():
     assert "51820" in out
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -158,7 +186,7 @@ Expected: `test_networkmanager_psk_is_redacted`,
 `test_wireguard_preshared_key_is_redacted` FAIL (the secret string is still
 present in the output). The other two PASS.
 
-- [ ] **Step 3: Widen the regex**
+- [x] **Step 3: Widen the regex**
 
 In `halbert_core/halbert_core/ingestion/redaction.py`, replace line 8:
 
@@ -200,7 +228,7 @@ path. Close it with an anchored second pattern that redacts the indented
 value line while preserving the key line and its indentation, and make sure a
 *non-indented* following line (a sibling key, not a value) is left alone.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -209,7 +237,7 @@ python -m pytest tests/test_redaction_secrets.py -v
 
 Expected: 5 passed.
 
-- [ ] **Step 5: Run the full suite to check for regressions**
+- [x] **Step 5: Run the full suite to check for regressions**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -221,7 +249,7 @@ Expected: no *new* failures. Pre-existing unrelated failures may be present
 have failed on main before this work); note the count before and after if
 unsure.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -246,7 +274,7 @@ Kerberos realm hash.
 - Modify: `halbert_core/halbert_core/ingestion/redaction.py`
 - Test: `halbert_core/tests/test_redaction_secrets.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `halbert_core/tests/test_redaction_secrets.py`:
 
@@ -267,7 +295,7 @@ def test_plain_text_without_lkdc_is_untouched():
     assert redact_text(text) == "<key>NetBIOSName</key>\n<string>WORKSTATION</string>\n"
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -276,7 +304,7 @@ python -m pytest tests/test_redaction_secrets.py::test_lkdc_realm_hash_is_redact
 
 Expected: FAIL — the realm hash is still present.
 
-- [ ] **Step 3: Add the pattern**
+- [x] **Step 3: Add the pattern**
 
 In `halbert_core/halbert_core/ingestion/redaction.py`, add after the `PEM_RE`
 definition (line 17):
@@ -293,7 +321,7 @@ Then in `redact_text`, add before the `return` (after the `PEM_RE` line):
     text = LKDC_RE.sub("<lkdc_realm>", text)
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -302,7 +330,7 @@ python -m pytest tests/test_redaction_secrets.py -v
 
 Expected: 7 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -328,7 +356,7 @@ scripts hit this routinely.
 - Modify: `halbert_core/halbert_core/config/parser.py:49-65`
 - Test: `halbert_core/tests/test_config_parser_robustness.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `halbert_core/tests/test_config_parser_robustness.py`:
 
@@ -380,7 +408,7 @@ def test_valid_ini_still_parses_as_ini(tmp_path):
     assert result["sections"]["Unit"]["description"] == "Test unit"
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -391,7 +419,7 @@ Expected: `test_duplicate_keys_fall_back_to_text` FAILS with
 `configparser.DuplicateOptionError`, `test_missing_section_header_falls_back_to_text`
 FAILS with `configparser.MissingSectionHeaderError`. The third PASSES.
 
-- [ ] **Step 3: Catch the errors and fall back**
+- [x] **Step 3: Catch the errors and fall back**
 
 In `halbert_core/halbert_core/config/parser.py`, replace `_parse_ini_like`
 (lines 49–65) with:
@@ -424,7 +452,7 @@ def _parse_ini_like(path: str, text: str, h: str) -> Dict[str, Any]:
     }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -433,7 +461,7 @@ python -m pytest tests/test_config_parser_robustness.py -v
 
 Expected: 3 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -461,7 +489,7 @@ which makes this blocking for `service_admin`.
 - Modify: `halbert_core/halbert_core/config/parser.py`
 - Test: `halbert_core/tests/test_config_parser_robustness.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `halbert_core/tests/test_config_parser_robustness.py`:
 
@@ -514,7 +542,7 @@ def test_unreadable_plist_falls_back_to_text(tmp_path):
     assert result["kind"] == "text"
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -527,7 +555,7 @@ Expected: `test_binary_plist_is_parsed_not_mangled`,
 `"text"`, no `tree` key). `test_unreadable_plist_falls_back_to_text` passes
 incidentally.
 
-- [ ] **Step 3: Add the plist branch**
+- [x] **Step 3: Add the plist branch**
 
 In `halbert_core/halbert_core/config/parser.py`, add `plistlib` to the imports
 at the top (after `import os`):
@@ -586,7 +614,7 @@ def _parse_plist(path: str) -> Dict[str, Any] | None:
     }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -595,7 +623,7 @@ python -m pytest tests/test_config_parser_robustness.py -v
 
 Expected: 7 passed.
 
-- [ ] **Step 5: Verify against a real macOS plist**
+- [x] **Step 5: Verify against a real macOS plist**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -612,7 +640,7 @@ Expected: `kind: plist`, a real hash, and real key names such as
 `CurrentSet`, `NetworkServices`, `Sets`, `System`. If this file does not exist
 (non-macOS host), skip this step.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -723,7 +751,7 @@ never runs on that path.
 - Modify: `halbert_core/halbert_core/tools/register_host_project.py:104-150`
 - Test: `halbert_core/tests/test_host_staging_redacted.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `halbert_core/tests/test_host_staging_redacted.py`:
 
@@ -820,7 +848,7 @@ def test_missing_source_is_skipped_not_fatal(tmp_path):
     assert _stage_config_files([str(tmp_path / "nope.conf")], staging) == 0
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -830,7 +858,7 @@ python -m pytest tests/test_host_staging_redacted.py -v
 Expected: the four redaction/plist tests FAIL (secrets present verbatim,
 plist staged as raw binary). `test_missing_source_is_skipped_not_fatal` PASSES.
 
-- [ ] **Step 3: Rewrite `_stage_config_files` to redact**
+- [x] **Step 3: Rewrite `_stage_config_files` to redact**
 
 In `halbert_core/halbert_core/tools/register_host_project.py`, add these
 imports near the existing ones (after `from ..utils.paths import data_subdir`):
@@ -921,7 +949,7 @@ Note `shutil` may now be unused in this module — check with
 `grep -n "shutil" halbert_core/halbert_core/tools/register_host_project.py`
 and remove the import only if there are no remaining uses.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -930,7 +958,7 @@ python -m pytest tests/test_host_staging_redacted.py -v
 
 Expected: 5 passed.
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -940,7 +968,7 @@ python -m pytest tests/ -q 2>&1 | tail -20
 Expected: no new failures. `test_sourceprep_setup.py` in particular must still
 pass — it exercises `apply()`'s call ordering, which reaches `_stage_host_tree`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -964,7 +992,7 @@ machine before anything ships.
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Check no SourcePrep build is running**
+- [x] **Step 1: Check no SourcePrep build is running**
 
 ```bash
 ps aux | grep -E 'staged_knowledge_embed|prep.cli serve' | grep -v grep
@@ -973,7 +1001,7 @@ ps aux | grep -E 'staged_knowledge_embed|prep.cli serve' | grep -v grep
 If a build is running, **stop here** and wait — do not proceed. A concurrent
 run can clobber staged output.
 
-- [ ] **Step 2: Stage the real host config to a scratch directory**
+- [x] **Step 2: Stage the real host config to a scratch directory**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -988,7 +1016,7 @@ print(f'staged {n} files to {out}')
 
 Expected: a non-zero file count.
 
-- [ ] **Step 3: Grep the staged output for secret patterns**
+- [x] **Step 3: Grep the staged output for secret patterns**
 
 ```bash
 grep -rEin 'psk[[:space:]]*=|privatekey[[:space:]]*=|presharedkey[[:space:]]*=' \
@@ -998,7 +1026,7 @@ grep -rEin 'psk[[:space:]]*=|privatekey[[:space:]]*=|presharedkey[[:space:]]*=' 
 Expected: `CLEAN: no unredacted secrets`. Any other output is a real leak —
 stop and fix before continuing.
 
-- [ ] **Step 4: Confirm plists staged as readable text**
+- [x] **Step 4: Confirm plists staged as readable text**
 
 ```bash
 find /tmp/halbert-stage-verify -name '*.plist' | head -3 | while read f; do
@@ -1009,7 +1037,7 @@ done
 Expected: readable XML (`<?xml version=...`), not binary or U+FFFD
 replacement characters. Skip if the host has no staged plists.
 
-- [ ] **Step 5: Clean up**
+- [x] **Step 5: Clean up**
 
 ```bash
 rm -rf /tmp/halbert-stage-verify
@@ -1030,7 +1058,7 @@ match nothing.
 - Modify: `halbert_core/halbert_core/config/manifest.py:20-27`
 - Test: `halbert_core/tests/test_config_roles.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `halbert_core/tests/test_config_roles.py`:
 
@@ -1097,7 +1125,7 @@ def test_absolute_paths_are_unchanged(tmp_path):
     assert Manifest.from_file(str(man_file)).include == ["/etc/fstab"]
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -1107,7 +1135,7 @@ python -m pytest tests/test_config_roles.py -v
 Expected: the three home-expansion tests FAIL (`~` still literal).
 `test_absolute_paths_are_unchanged` PASSES.
 
-- [ ] **Step 3: Expand at load time**
+- [x] **Step 3: Expand at load time**
 
 In `halbert_core/halbert_core/config/manifest.py`, replace `from_file`
 (lines 20–27) with:
@@ -1128,7 +1156,7 @@ In `halbert_core/halbert_core/config/manifest.py`, replace `from_file`
 
 `os` is already imported at the top of the file.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -1137,7 +1165,7 @@ python -m pytest tests/test_config_roles.py -v
 
 Expected: 4 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -1160,7 +1188,7 @@ on-disk config — no command-output-only state.
 **Files:**
 - Create: `config/scopes/network.yml`, `config/scopes/service.yml`, `config/scopes/storage.yml`
 
-- [ ] **Step 1: Create `config/scopes/network.yml`**
+- [x] **Step 1: Create `config/scopes/network.yml`**
 
 ```yaml
 # network_admin — interfaces, DNS, routing, wireless, VPN, name resolution.
@@ -1208,7 +1236,7 @@ exclude:
   - /etc/NetworkManager/system-connections/*.bak
 ```
 
-- [ ] **Step 2: Create `config/scopes/service.yml`**
+- [x] **Step 2: Create `config/scopes/service.yml`**
 
 ```yaml
 # service_admin — what runs at boot/login and how it is supervised.
@@ -1238,7 +1266,7 @@ exclude:
   - /System/Library/LaunchAgents/**
 ```
 
-- [ ] **Step 3: Create `config/scopes/storage.yml`**
+- [x] **Step 3: Create `config/scopes/storage.yml`**
 
 ```yaml
 # storage_admin — mount intent, encryption, RAID/LVM/pool config, backup
@@ -1285,7 +1313,7 @@ exclude:
   - /etc/lvm/backup/**
 ```
 
-- [ ] **Step 4: Verify all three parse and resolve**
+- [x] **Step 4: Verify all three parse and resolve**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -1301,7 +1329,7 @@ Expected: each loads without error and prints counts. On macOS, `service`
 should match a substantial number of files; `storage` may match zero or few —
 that is correct and expected per the design doc.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -1326,7 +1354,7 @@ code read from one source instead of each hardcoding the list.
 - Create: `halbert_core/halbert_core/config/roles.py`
 - Test: `halbert_core/tests/test_config_roles.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `halbert_core/tests/test_config_roles.py`:
 
@@ -1385,7 +1413,7 @@ def test_role_scope_is_immutable():
     assert ROLES["network_admin"].__dataclass_params__.frozen
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -1394,7 +1422,7 @@ python -m pytest tests/test_config_roles.py -v
 
 Expected: `ModuleNotFoundError: No module named 'halbert_core.config.roles'`.
 
-- [ ] **Step 3: Create the registry**
+- [x] **Step 3: Create the registry**
 
 Create `halbert_core/halbert_core/config/roles.py`:
 
@@ -1492,7 +1520,7 @@ def roles_for_platform(system: str) -> List[str]:
     return [name for name, role in ROLES.items() if role.file_backed_on(system)]
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -1501,7 +1529,7 @@ python -m pytest tests/test_config_roles.py -v
 
 Expected: 12 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -1523,7 +1551,7 @@ excludes everything rather than narrowing." \
 - Modify: `halbert_core/halbert_core/tools/register_host_project.py`
 - Test: `halbert_core/tests/test_host_staging_redacted.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `halbert_core/tests/test_host_staging_redacted.py`:
 
@@ -1574,7 +1602,7 @@ def test_stage_role_tree_empty_manifest_creates_no_dir(tmp_path):
     assert count == 0
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -1583,7 +1611,7 @@ python -m pytest tests/test_host_staging_redacted.py -v -k role_tree
 
 Expected: `ImportError: cannot import name 'stage_role_tree'`.
 
-- [ ] **Step 3: Implement `stage_role_tree`**
+- [x] **Step 3: Implement `stage_role_tree`**
 
 In `halbert_core/halbert_core/tools/register_host_project.py`, add after
 `_stage_config_files`:
@@ -1616,7 +1644,7 @@ def stage_role_tree(
     return staged
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -1625,7 +1653,7 @@ python -m pytest tests/test_host_staging_redacted.py -v
 
 Expected: 8 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -1647,7 +1675,7 @@ path as the flat host tree." \
 - Modify: `halbert_core/halbert_core/integrations/sourceprep_setup.py` (`_stage_host_tree`)
 - Test: `halbert_core/tests/test_config_roles.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `halbert_core/tests/test_config_roles.py`:
 
@@ -1688,7 +1716,7 @@ def test_existing_scopes_are_preserved():
     assert {"host", "knowledge-linux", "knowledge-macos"} <= scope_ids
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -1698,7 +1726,7 @@ python -m pytest tests/test_config_roles.py -v -k template
 Expected: the first three FAIL (role scopes absent);
 `test_existing_scopes_are_preserved` PASSES.
 
-- [ ] **Step 3: Add the scopes to the template**
+- [x] **Step 3: Add the scopes to the template**
 
 In `halbert_core/halbert_core/integrations/sourceprep_template.yml`, add after
 the `host` scope entry (after line 50, before `- id: knowledge-linux`):
@@ -1719,7 +1747,7 @@ the `host` scope entry (after line 50, before `- id: knowledge-linux`):
     pipeline_profile: system_config
 ```
 
-- [ ] **Step 4: Wire role staging into `apply()`**
+- [x] **Step 4: Wire role staging into `apply()`**
 
 In `halbert_core/halbert_core/integrations/sourceprep_setup.py`, replace
 `_stage_host_tree` (lines 260–268) with:
@@ -1751,7 +1779,7 @@ In `halbert_core/halbert_core/integrations/sourceprep_setup.py`, replace
         return staged
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert/halbert_core
@@ -1761,7 +1789,7 @@ python -m pytest tests/test_config_roles.py tests/test_sourceprep_setup.py -v
 Expected: all pass. `test_sourceprep_setup.py` exercises `apply()`'s call
 ordering against a fake transport and must be unaffected.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -1783,7 +1811,7 @@ scope_mode=hard excludes everything instead of narrowing." \
 **Files:**
 - Modify: `scripts/corpus_quality_gate.py` (the `SCOPED_QUERIES` list, around line 259)
 
-- [ ] **Step 1: Confirm the entry shape**
+- [x] **Step 1: Confirm the entry shape**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -1796,7 +1824,7 @@ Expected: entries use the keys `id`, `query`, `scope`, `expected_terms`, and
 returned chunk's `source_path` starts with that prefix — that is the isolation
 assertion.
 
-- [ ] **Step 2: Add role-scope queries**
+- [x] **Step 2: Add role-scope queries**
 
 Append these entries to the `SCOPED_QUERIES` list in
 `scripts/corpus_quality_gate.py` (around line 320, after the last existing
@@ -1838,7 +1866,7 @@ Note: `r05`/`r06` will return zero chunks on a macOS host, because
 those two as expected-on-macOS, not as a gate failure — the same way the
 existing `s21`–`s24` cross-platform negatives are handled.
 
-- [ ] **Step 3: Verify the file still parses**
+- [x] **Step 3: Verify the file still parses**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -1847,7 +1875,7 @@ python -c "import ast; ast.parse(open('scripts/corpus_quality_gate.py').read());
 
 Expected: `OK`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd /Volumes/4TB-BAD/Halbert
@@ -1862,11 +1890,20 @@ role scopes, following the existing platform-scope pattern." \
 
 ## Blocked on external verification
 
+> **NOT DONE as of 2026-08-27 — the only outstanding work in this plan.**
+> Tasks 1–12 above are merged in `0cb99ad`; all three items below are not,
+> and their boxes are deliberately left unticked. Each needs a running
+> SourcePrep daemon, which is why none of them shipped with the merge rather
+> than because any of them was judged unnecessary. **The role scopes are not
+> production-ready until these are confirmed.** The first matters most: if
+> scope lookup does not fail closed, a typo'd scope name searches the entire
+> corpus, which is the exact inverse of what the scopes are for.
+
 These cannot be completed from this machine — SourcePrep's source is not
 reachable here (only its staged data directory under
-`~/.local/share/halbert/sourceprep`). Both are recorded in the design doc's
-"Unverified claims" section. **Confirm them against a running daemon before
-treating the role scopes as production-ready.**
+`~/.local/share/halbert/sourceprep`). The first two are recorded in the design
+doc's "Unverified claims" section. **Confirm them against a running daemon
+before treating the role scopes as production-ready.**
 
 - [ ] **Confirm scope lookup fails closed.** Reportedly an unrecognized scope
   name yields `mask=None` and falls back to the global union with HTTP 200 — a
