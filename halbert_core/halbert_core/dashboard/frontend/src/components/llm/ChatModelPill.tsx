@@ -8,19 +8,25 @@
  * vocabulary, the settings link — and so does not belong in a package that
  * knows no role names.
  *
- * The selection is reported upward rather than held here: it has to ride on
- * the next `sendMessage` call, and it must never be persisted. A pin lives for
- * the session only; the settings drawer is what changes the stored default.
+ * The picker is owned by the composer rather than created here, because the
+ * `/model` command has to drive the same pin this control shows. Two pickers
+ * would mean typing `/model <name>` and clicking the pill disagreed about what
+ * is pinned.
  */
-import { useCallback, useRef, useState } from 'react'
-import { ModelSelectorPill, QuickSwitchPopover, useModelPicker } from '@halbert/model-picker'
-import type { ModelPillState, ModelSelection } from '@halbert/model-picker'
-import { CHAT_ROLE_ID, HALBERT_MODEL_ROLES, modelPickerTransport } from '@/lib/halbertModelRoles'
+import { useRef } from 'react'
+import { ModelSelectorPill, QuickSwitchPopover } from '@halbert/model-picker'
+import type { ModelPillState, ModelSelection, UseModelPickerResult } from '@halbert/model-picker'
+import { CHAT_ROLE_ID } from '@/lib/halbertModelRoles'
 import { cn } from '@/lib/utils'
 
 export interface ChatModelPillProps {
-  /** Fires whenever the pin changes, including when it is cleared. */
-  onSelectionChange: (selection: ModelSelection) => void
+  picker: UseModelPickerResult
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  /** Pre-fills the popover search, e.g. from an ambiguous `/model <query>`. */
+  initialQuery?: string
+  /** Fires when a selection is committed from the popover. */
+  onSelected?: (selection: ModelSelection) => void
   onOpenSettings?: () => void
   className?: string
 }
@@ -32,24 +38,15 @@ const STATUS_STYLE: Record<ModelPillState['status'], string> = {
 }
 
 export function ChatModelPill({
-  onSelectionChange,
+  picker,
+  open,
+  onOpenChange,
+  initialQuery,
+  onSelected,
   onOpenSettings,
   className,
 }: ChatModelPillProps) {
-  const picker = useModelPicker({
-    transport: modelPickerTransport,
-    roles: HALBERT_MODEL_ROLES,
-  })
-  const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
-
-  const handleSelected = useCallback(
-    (selection: ModelSelection) => {
-      onSelectionChange(selection)
-      setOpen(false)
-    },
-    [onSelectionChange],
-  )
 
   return (
     <div className="relative">
@@ -58,7 +55,7 @@ export function ChatModelPill({
         picker={picker}
         activeRoleId={CHAT_ROLE_ID}
         open={open}
-        onToggle={() => setOpen((v) => !v)}
+        onToggle={() => onOpenChange(!open)}
         className={cn(
           'flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded-lg',
           'text-muted-foreground hover:text-foreground hover:bg-muted transition-colors',
@@ -87,8 +84,12 @@ export function ChatModelPill({
       <QuickSwitchPopover
         picker={picker}
         open={open}
-        onClose={() => setOpen(false)}
-        onSelected={handleSelected}
+        onClose={() => onOpenChange(false)}
+        initialQuery={initialQuery}
+        onSelected={(selection) => {
+          onSelected?.(selection)
+          onOpenChange(false)
+        }}
         onOpenSettings={onOpenSettings}
         triggerRef={triggerRef}
         className={cn(

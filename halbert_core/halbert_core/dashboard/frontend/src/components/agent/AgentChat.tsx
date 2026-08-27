@@ -39,7 +39,11 @@ import { WhyChip, type ProvenanceRef } from '../WhyChip';
 import { ModuleRenderer } from '../ModuleRenderer';
 import { ConfidenceIndicator } from './ConfidenceIndicator';
 import { ChatModelPill } from '../llm/ChatModelPill';
-import type { ModelSelection } from '@halbert/model-picker';
+import { ModelStatusCard } from '../llm/ModelStatusCard';
+import { TurnModelNotice } from '../llm/TurnModelNotice';
+import { useModelPicker, matchModels, providerDescriptor } from '@halbert/model-picker';
+import { HALBERT_MODEL_ROLES, CHAT_ROLE_ID, modelPickerTransport } from '@/lib/halbertModelRoles';
+import { parseModelCommand, formatModelStatus, type ModelStatusLines } from '@/lib/slashCommands';
 import { ScanBlock } from './ScanBlock';
 import { ContextBar } from './ContextBar';
 import { DiffBlock } from './DiffBlock';
@@ -55,6 +59,19 @@ interface UserMessage {
   content: string;
   timestamp: number;
   images?: string[];  // Base64 image data
+}
+
+/**
+ * An ephemeral note the composer itself puts in the stream — the answer to a
+ * `/model` command. It never reaches the backend and is not part of the
+ * conversation the agent sees.
+ */
+interface SystemNotice {
+  id: string;
+  timestamp: number;
+  text?: string;
+  status?: ModelStatusLines;
+  tone: 'info' | 'warning';
 }
 
 interface AttachedImage {
@@ -192,7 +209,16 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   // The per-turn model pin. Deliberately component state and never persisted:
   // a pin governs this conversation only, while the settings drawer is what
   // changes the stored default.
-  const [modelSelection, setModelSelection] = useState<ModelSelection>({ tier: 'auto' });
+  // One picker for the whole composer: the pill shows it and `/model` drives
+  // it. Two would let the command and the control disagree about what is
+  // pinned. The pin lives here and is never persisted.
+  const picker = useModelPicker({
+    transport: modelPickerTransport,
+    roles: HALBERT_MODEL_ROLES,
+  });
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState<string | undefined>(undefined);
+  const [systemNotices, setSystemNotices] = useState<SystemNotice[]>([]);
   const [input, setInput] = useState('');
   const [agentError, setAgentError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -244,6 +270,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     thinking,
     provenance,
     moduleInvocations,
+    turnModel,
     sendMessage,
     confirmAction,
     applyDiff,
@@ -363,7 +390,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
           timestamp: Date.now(),
         };
         setUserMessages(prev => [...prev, userMsg]);
-        sendMessage(nextMessage, undefined, modelSelection);
+        sendMessage(nextMessage, undefined, picker.selection);
         setInput('');
       }, 100);
     }
@@ -514,7 +541,106 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     setExpandedProvenanceModules(prev => prev.filter(m => m.key !== key));
   };
 
+  const notify = (notice: Omit<SystemNotice, 'id' | 'timestamp'>) => {
+    setSystemNotices(prev => [
+      ...prev,
+      { ...notice, id: 'note-' + Date.now() + '-' + prev.length, timestamp: Date.now() },
+    ]);
+  };
+
+  /**
+   * Handle composer input that is a `/model` command.
+   *
+   * Returns true when the input was consumed, so the caller must not send it.
+   * A command never reaches the backend — it changes the pin for the next turn
+   * and answers in the stream.
+   */
+  const handleModelCommand = (raw: string): boolean => {
+    const command = parseModelCommand(raw);
+    if (!command) return false;
+
+    const candidates = picker.modelsForRole(CHAT_ROLE_ID);
+
+    const pinMatching = (query: string, tier?: 'guide' | 'specialist' | 'vision') => {
+      const matches = matchModels(candidates, query);
+      if (matches.length === 0) {
+        notify({ tone: 'warning', text: `No configured model matches "${query}".` });
+        return;
+      }
+      // More than one match is a question, not a guess: open the popover with
+      // the query already typed rather than silently picking the top hit.
+      if (matches.length > 1) {
+        setPickerQuery(query);
+        setPickerOpen(true);
+        return;
+      }
+      const chosen = matches[0];
+      picker.pinModel(chosen.id, chosen.endpointId);
+      if (tier) picker.pinTier(tier);
+      notify({
+        tone: 'info',
+        text: `Pinned to ${chosen.name} (${providerDescriptor(chosen.provider).label}).`,
+      });
+    };
+
+    switch (command.kind) {
+      case 'open':
+        setPickerQuery(undefined);
+        setPickerOpen(true);
+        break;
+      case 'search':
+        pinMatching(command.query);
+        break;
+      case 'pin':
+        pinMatching(command.query);
+        break;
+      case 'tier':
+        if (command.query) {
+          pinMatching(command.query, command.tier);
+        } else {
+          picker.pinTier(command.tier);
+          notify({ tone: 'info', text: `Pinned to the ${command.tier} tier.` });
+        }
+        break;
+      case 'auto':
+        picker.clearPin();
+        notify({ tone: 'info', text: 'Back to automatic routing.' });
+        break;
+      case 'status': {
+        const assignment = picker.assignmentFor(CHAT_ROLE_ID);
+        const endpoint = assignment ? picker.endpointFor(assignment.endpointId) : undefined;
+        const active = picker.selection.model
+          || turnModel?.model
+          || assignment?.model
+          || '';
+        const model = candidates.find(m => m.id === active);
+        notify({
+          tone: 'info',
+          status: formatModelStatus({
+            activeModel: active,
+            providerLabel: endpoint ? providerDescriptor(endpoint.provider).label : '',
+            isLocal: model ? model.isLocal : Boolean(endpoint && providerDescriptor(endpoint.provider).isLocal),
+            pinned: picker.isPinned,
+            tier: picker.selection.tier && picker.selection.tier !== 'auto'
+              ? picker.selection.tier
+              : (turnModel?.tier || 'auto'),
+            contextWindow: model?.capabilities.contextWindow,
+            endpointUrl: endpoint?.url,
+          }),
+        });
+        break;
+      }
+      case 'error':
+        notify({ tone: 'warning', text: command.message });
+        break;
+    }
+    setInput('');
+    return true;
+  };
+
   const handleSend = async () => {
+    if (!isStreaming && handleModelCommand(input)) return;
+
     // Queue messages if streaming
     if (isStreaming && input.trim()) {
       setMessageQueue(prev => [...prev, input.trim()]);
@@ -543,7 +669,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     setExpandedProvenanceModules([]);
 
     // TODO: Pass images to agent backend when vision support is added
-    sendMessage(input.trim(), undefined, modelSelection);
+    sendMessage(input.trim(), undefined, picker.selection);
     setInput('');
   };
 
@@ -640,7 +766,13 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
         
         <div className="flex items-center gap-1">
           <ChatModelPill
-            onSelectionChange={setModelSelection}
+            picker={picker}
+            open={pickerOpen}
+            onOpenChange={(next) => {
+              setPickerOpen(next);
+              if (!next) setPickerQuery(undefined);
+            }}
+            initialQuery={pickerQuery}
             onOpenSettings={onOpenModelSettings}
           />
           <button
@@ -725,6 +857,8 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
                     />
                   ))}
                   
+                  {turnModel && <TurnModelNotice turn={turnModel} />}
+
                   {thinking && <ThinkingPanel thinking={thinking} isStreaming={isStreaming} />}
                   
                   {session.confidence > 0 && (
@@ -791,6 +925,26 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
           </div>
         )}
         
+        {systemNotices.map(notice => (
+          <div key={notice.id} className="text-xs">
+            {notice.status ? (
+              <ModelStatusCard rows={notice.status} />
+            ) : (
+              <div
+                role="status"
+                className={cn(
+                  'rounded-lg border px-3 py-2',
+                  notice.tone === 'warning'
+                    ? 'border-warning/40 bg-warning/10 text-foreground'
+                    : 'border-border bg-muted/40 text-muted-foreground',
+                )}
+              >
+                {notice.text}
+              </div>
+            )}
+          </div>
+        ))}
+
         <div ref={messagesEndRef} />
       </div>
       

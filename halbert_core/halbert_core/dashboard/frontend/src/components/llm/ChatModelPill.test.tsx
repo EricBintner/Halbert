@@ -11,6 +11,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
+import { useModelPicker } from '@halbert/model-picker'
+import type { ModelSelection } from '@halbert/model-picker'
+import { HALBERT_MODEL_ROLES, modelPickerTransport } from '@/lib/halbertModelRoles'
 import { ChatModelPill } from './ChatModelPill'
 
 function jsonResponse(body: unknown) {
@@ -56,6 +60,24 @@ function route(ollamaRunning = true) {
   })
 }
 
+
+/** Mirrors how AgentChat owns the picker and hands it to the pill. */
+function Harness({ onSelected }: { onSelected?: (s: ModelSelection) => void }) {
+  const picker = useModelPicker({
+    transport: modelPickerTransport,
+    roles: HALBERT_MODEL_ROLES,
+  })
+  const [open, setOpen] = useState(false)
+  return (
+    <ChatModelPill
+      picker={picker}
+      open={open}
+      onOpenChange={setOpen}
+      onSelected={onSelected}
+    />
+  )
+}
+
 beforeEach(() => {
   fetchMock = route()
   vi.stubGlobal('fetch', fetchMock)
@@ -64,12 +86,12 @@ afterEach(() => vi.unstubAllGlobals())
 
 describe('ChatModelPill', () => {
   it('shows the configured chat model without being asked', async () => {
-    render(<ChatModelPill onSelectionChange={() => {}} />)
+    render(<Harness />)
     expect(await screen.findByText('model-a')).toBeInTheDocument()
   })
 
   it('exposes the trigger as a combobox for assistive tech', async () => {
-    render(<ChatModelPill onSelectionChange={() => {}} />)
+    render(<Harness />)
     const trigger = await screen.findByRole('combobox')
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(trigger).toHaveAttribute('aria-haspopup', 'listbox')
@@ -77,7 +99,7 @@ describe('ChatModelPill', () => {
 
   it('reports a pinned model upward so it can ride on the next send', async () => {
     const onSelectionChange = vi.fn()
-    render(<ChatModelPill onSelectionChange={onSelectionChange} />)
+    render(<Harness onSelected={onSelectionChange} />)
 
     await userEvent.click(await screen.findByRole('combobox'))
     await userEvent.click(await screen.findByRole('option', { name: /model-b/ }))
@@ -90,7 +112,7 @@ describe('ChatModelPill', () => {
   it('never writes a pin to the stored configuration', async () => {
     // A pin governs this conversation only. Persisting it would silently
     // change the default for every future session.
-    render(<ChatModelPill onSelectionChange={() => {}} />)
+    render(<Harness />)
     await userEvent.click(await screen.findByRole('combobox'))
     await userEvent.click(await screen.findByRole('option', { name: /model-b/ }))
 
@@ -102,7 +124,7 @@ describe('ChatModelPill', () => {
 
   it('marks the pill offline when the local engine is not running', async () => {
     vi.stubGlobal('fetch', route(false))
-    render(<ChatModelPill onSelectionChange={() => {}} />)
+    render(<Harness />)
     const trigger = await screen.findByRole('combobox')
     await waitFor(() =>
       expect(trigger.getAttribute('aria-label')).toMatch(/not running/i),
@@ -110,7 +132,7 @@ describe('ChatModelPill', () => {
   })
 
   it('closes the popover after a selection', async () => {
-    render(<ChatModelPill onSelectionChange={() => {}} />)
+    render(<Harness />)
     const trigger = await screen.findByRole('combobox')
     await userEvent.click(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
