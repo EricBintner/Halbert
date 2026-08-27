@@ -1044,3 +1044,38 @@ class TestReceiptsRound2Findings:
         assert term_hits == {"alpha": frozenset(), "beta": frozenset(), "gamma": frozenset()}
         warnings = [r for r in caplog.records if "receipt term recheck" in r.message]
         assert len(warnings) == 1
+
+
+# ---------------------------------------------------------------------------
+# Merge-back: merge_thread (A6c)
+# ---------------------------------------------------------------------------
+
+class TestMergeThread:
+    def test_merge_moves_rows_fts_and_flags(self, store):
+        store.create_thread("prev", "Samba share")
+        store.update_thread("prev", status="paused", paused_at=10.0)
+        store.upsert_receipt("prev", "Samba share", "Title: Samba share\nEntities: samba")
+        store.create_thread("new", "Scanner share")
+        store.upsert_receipt("new", "Scanner share", "Title: Scanner share\nEntities: scanner")
+        a = store.append_message("prev", "user", "add the samba share", turn_id="t1")
+        b = store.append_message("new", "user", "now the scanner share", turn_id="t2")
+        c = store.append_message("new", "assistant", "scanner share added", origin="assistant", turn_id="t2")
+        assert store.merge_thread("new", "prev", now=50.0) == 2
+        assert [m["message_id"] for m in store.list_messages("prev")] == [a, b, c]
+        assert store.list_messages("new") == []
+        assert [r[0] for r in store._conn.execute(
+            "SELECT conversation_id FROM messages_fts WHERE messages_fts MATCH '\"scanner\"' ORDER BY rowid"
+        ).fetchall()] == ["prev", "prev"]
+        new = store.get_thread("new")
+        assert (new["status"], new["merged_into"], new["receipt"], new["paused_at"]) == ("merged", "prev", "", None)
+        assert store._conn.execute("SELECT COUNT(*) FROM receipts_fts WHERE thread_id = 'new'").fetchone()[0] == 0
+        prev = store.get_thread("prev")
+        assert (prev["status"], prev["paused_at"], prev["turns_since_pause"], prev["updated_at"]) == ("open", None, 0, 50.0)
+        assert store.search_receipts("scanner") == []
+        assert store.search_snippets("prev", "scanner") and store.search_snippets("new", "scanner") == []
+
+    def test_merge_refuses_missing_or_same_thread(self, store):
+        store.create_thread("prev", "P")
+        assert store.merge_thread("nope", "prev") is None
+        assert store.merge_thread("prev", "prev") is None
+        assert store.get_thread("prev")["status"] == "open"

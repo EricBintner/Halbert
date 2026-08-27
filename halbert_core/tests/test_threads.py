@@ -142,6 +142,7 @@ class TestBeginEndTurn:
         t1 = _turn(tm, "add a samba share for the media folder")
         tm.clock.advance(3 * 3600)
         t2 = _turn(tm, "check the disk space on /var")
+        tm.clock.advance(GRACE_MINUTES * 60)  # past the grace window: plain reopen (merge cases: TestMergeBack)
         assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is True
         assert tm.current()["thread_id"] == t1.thread_id
         assert tm.store.get_thread(t2.thread_id)["status"] == "paused"
@@ -537,6 +538,7 @@ class TestConcurrency:
         tm.clock.advance(3 * 3600)
         t2 = _turn(tm, "check the disk space on /var")
         stale = tm.store.get_thread(t1.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)  # past the grace window: plain reopens, no merge (A6c)
         assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is True
         tm.clock.advance(GRACE_MINUTES * 60)
         assert tm.resume_thread(t2.thread_id, from_thread_id=t1.thread_id) is True
@@ -676,7 +678,9 @@ class TestDegradedStore:
         t1 = _turn(tm, "swap the failing nvme in the zfs pool", assistant="Resilver running.")
         tm.clock.advance(3 * 3600)
         t2 = _turn(tm, "add a samba share for the media folder")
-        monkeypatch.setattr(ThreadManager, "resume_thread", lambda *a, **k: False)
+        # begin_turn reopens through the internal `_reopen_thread` (A6c): the
+        # strong-match path never merges, so it does not go via `resume_thread`.
+        monkeypatch.setattr(ThreadManager, "_reopen_thread", lambda *a, **k: False)
         text = "the zfs resilver on the nvme finished"
         turn = tm.begin_turn(text, analyze_message(text), "s3")
         assert turn.decision.action == "reopen" and turn.thread_id == t2.thread_id
@@ -903,3 +907,84 @@ class TestSingleton:
         assert len(made) == 8
         assert len({id(m) for m in made}) == 1 and len({id(m.store) for m in made}) == 1
         made[0].store.close()
+
+
+class TestMergeBack:
+    def test_merge_moves_rows_and_marks_merged(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder", assistant="Added [media].")
+        new_id = tm.new_thread("Scanner share", "different device", from_thread_id=t1.thread_id)
+        t2 = _turn(tm, "now the scanner share too", assistant="Added [scanner].")
+        assert t2.thread_id == new_id
+        assert tm.merge_back(new_id) == t1.thread_id
+        rows = tm.store.list_messages(t1.thread_id)
+        assert [r["content"] for r in rows] == ["add a samba share for the media folder", "Added [media].",
+                                                "now the scanner share too", "Added [scanner]."]
+        assert tm.store.list_messages(new_id) == []
+        merged = tm.store.get_thread(new_id)
+        assert (merged["status"], merged["merged_into"], merged["receipt"]) == ("merged", t1.thread_id, "")
+        prev = tm.store.get_thread(t1.thread_id)
+        assert prev["status"] == "open" and prev["paused_at"] is None and prev["turns_since_pause"] == 0
+        assert "successor" not in prev["metadata"] and prev["metadata"]["merged_from"] == [new_id]
+        assert prev["entities_json"] == ["samba", "scanner", "share"] and prev["last_active"] == NOW
+        assert "· 2 turns" in prev["receipt"] and "Last said: Added [scanner]." in prev["receipt"]
+        assert tm.current()["thread_id"] == t1.thread_id
+        assert tm.store._conn.execute(
+            "SELECT COUNT(*) FROM receipts_fts WHERE thread_id = ?", (new_id,)).fetchone()[0] == 0
+
+    def test_merged_thread_excluded_from_search_and_recall(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        _turn(tm, "now the scanner share too")
+        assert tm.store.search_receipts("scanner")[0]["thread_id"] == new_id
+        assert tm.merge_back(new_id) == t1.thread_id
+        assert [h["thread_id"] for h in tm.store.search_receipts("scanner")] == [t1.thread_id]
+        hits = tm.recall("scanner share")
+        assert [r["thread_id"] for r in hits] == [t1.thread_id] and hits[0]["matching_messages"]
+
+    def test_merge_back_refused_outside_grace_or_without_predecessor(self, tm):
+        first = _turn(tm, "add a samba share for the media folder")
+        assert tm.merge_back(first.thread_id) is None  # nothing to merge into
+        assert tm.merge_back("nope") is None
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id=first.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+        assert tm.merge_back(new_id) is None  # time window elapsed
+        assert tm.store.get_thread(new_id)["status"] == "open"
+        assert tm.store.get_thread(first.thread_id)["status"] == "paused"
+        assert tm.tick() == [first.thread_id]
+        # GRACE_TURNS turns on the successor also end the window
+        third_id = tm.new_thread("Printer", "x", from_thread_id=new_id)
+        for i in range(GRACE_TURNS):
+            _turn(tm, f"printer step {i}")
+        assert tm.merge_back(third_id) is None
+        assert tm.store.get_thread(new_id)["status"] == "paused"
+
+    def test_resume_within_grace_merges(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Scanner share", "model guessed a new subject", from_thread_id=t1.thread_id)
+        _turn(tm, "now the scanner share too")
+        assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is True
+        assert tm.store.get_thread(new_id)["status"] == "merged"
+        assert tm.current()["thread_id"] == t1.thread_id
+        assert len(tm.store.list_messages(t1.thread_id)) == 4
+        assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is False  # already open
+
+    def test_resume_after_grace_reopens_without_merging(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        _turn(tm, "now the scanner share too")
+        tm.clock.advance(GRACE_MINUTES * 60)
+        assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is True
+        paused = tm.store.get_thread(new_id)
+        assert paused["status"] == "paused" and paused["metadata"]["successor"] == t1.thread_id
+        assert len(tm.store.list_messages(t1.thread_id)) == 2 and len(tm.store.list_messages(new_id)) == 2
+        assert tm.current()["thread_id"] == t1.thread_id
+
+    def test_auto_reopen_on_strong_match_never_merges(self, tm):
+        t1 = _turn(tm, "swap the failing nvme in the zfs pool", assistant="Resilver running.")
+        new_id = tm.new_thread("Samba share", "x", from_thread_id=t1.thread_id)
+        _turn(tm, "add a samba share for the media folder")
+        text = "the zfs resilver on the nvme finished"
+        turn = tm.begin_turn(text, analyze_message(text), "s3")
+        assert turn.decision.action == "reopen" and turn.thread_id == t1.thread_id
+        assert tm.store.get_thread(new_id)["status"] == "paused"
+        assert len(tm.store.list_messages(new_id)) == 2

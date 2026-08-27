@@ -271,7 +271,10 @@ class ThreadManager:
             if previous_id:
                 history = self._soft_landing(previous_id)
         elif decision.action == "reopen" and decision.target_thread_id:
-            if self.resume_thread(decision.target_thread_id, from_thread_id=previous_id):
+            # Auto-reopen on a strong match is always a plain reopen: the open
+            # thread was a real subject of its own, so it is paused, not merged.
+            target = self.store.get_thread(decision.target_thread_id)
+            if target is not None and self._reopen_thread(target, previous_id, now):
                 thread_id = decision.target_thread_id
             else:
                 thread_id = previous_id
@@ -370,19 +373,65 @@ class ThreadManager:
 
     @_locked
     def resume_thread(self, thread_id: str, *, from_thread_id: Optional[str]) -> bool:
-        """Reopen a paused thread and pause ``from_thread_id``."""
+        """Reopen a paused thread from ``from_thread_id`` (the model's ``resume_thread``).
+
+        When ``from_thread_id`` was opened *from* ``thread_id`` and the grace
+        window is still open, the split was spurious ("no, same topic"): the
+        young thread is merged back (spec §5 "Merge") instead of being paused
+        beside its predecessor. Otherwise this is a plain reopen that pauses
+        ``from_thread_id``.
+        """
         now = self._now()
         target = self.store.get_thread(thread_id)
         if target is None or target.get("status") != "paused":
             return False
         if from_thread_id and from_thread_id != thread_id:
-            self._pause_thread(from_thread_id, now, successor=thread_id)
-        meta = dict(target.get("metadata") or {})
+            source = self.store.get_thread(from_thread_id)
+            if source is not None and source.get("status") == "open":
+                prev = self._paused_predecessor(source)
+                if prev is not None and prev["thread_id"] == thread_id and self._within_grace(prev, source, now):
+                    return self.merge_back(from_thread_id) == thread_id
+        return self._reopen_thread(target, from_thread_id, now)
+
+    def merge_back(self, new_thread_id: str) -> Optional[str]:
+        """Fold a young open thread back into its paused predecessor (spec §5 "Merge").
+
+        Applies only while the grace window is open (fewer than ``GRACE_TURNS``
+        turns on the new thread and the predecessor's ``paused_at`` newer than
+        ``GRACE_MINUTES``). Moves the new thread's rows onto the predecessor,
+        marks the new thread ``merged`` (``merged_into`` set, receipt dropped,
+        receipts_fts row deleted), reopens the predecessor and refreshes its
+        receipt. Returns the predecessor id, or ``None`` when nothing merged.
+        """
+        now = self._now()
+        new = self.store.get_thread(new_thread_id)
+        if new is None or new.get("status") != "open":
+            return None
+        prev = self._paused_predecessor(new)
+        if prev is None or not self._within_grace(prev, new, now):
+            return None
+        prev_id = prev["thread_id"]
+        if self.store.merge_thread(new_thread_id, prev_id, now=now) is None:
+            return None
+        meta = dict(prev.get("metadata") or {})
         meta.pop("successor", None)
-        return self.store.update_thread(
-            thread_id, status="open", paused_at=None, stale=False,
-            turns_since_pause=0, metadata=meta, updated_at=now,
+        meta["merged_from"] = list(meta.get("merged_from") or []) + [new_thread_id]
+        recalled = list(prev.get("recalled_json") or [])
+        seen = {e.get("thread_id") for e in recalled}
+        recalled.extend(e for e in (new.get("recalled_json") or []) if e.get("thread_id") not in seen)
+        last_active = max(float(prev.get("last_active") or 0.0), float(new.get("last_active") or 0.0))
+        self.store.update_thread(
+            prev_id,
+            metadata=meta,
+            recalled_json=recalled,
+            topic_domains=sorted(set(prev.get("topic_domains") or []) | set(new.get("topic_domains") or [])),
+            entities_json=sorted(set(prev.get("entities_json") or []) | set(new.get("entities_json") or [])),
+            last_active=last_active or None,
+            updated_at=now,
         )
+        self._refresh_receipt(prev_id)
+        logger.info(f"thread {new_thread_id} merged back into {prev_id}")
+        return prev_id
 
     @_locked
     def new_thread(self, title: str, reason: str, *, from_thread_id: str) -> str:
@@ -518,6 +567,49 @@ class ThreadManager:
         fields.update(self._refined_title_fields(t))
         self.store.update_thread(thread_id, **fields)
         self._refresh_receipt(thread_id)
+
+    def _reopen_thread(self, target: Dict[str, Any], from_thread_id: Optional[str], now: float) -> bool:
+        """Plain reopen: ``target`` becomes open and ``from_thread_id`` is paused beside it."""
+        thread_id = target["thread_id"]
+        if target.get("status") != "paused":
+            return False
+        if from_thread_id and from_thread_id != thread_id:
+            self._pause_thread(from_thread_id, now, successor=thread_id)
+        meta = dict(target.get("metadata") or {})
+        meta.pop("successor", None)
+        return self.store.update_thread(
+            thread_id, status="open", paused_at=None, stale=False,
+            turns_since_pause=0, metadata=meta, updated_at=now,
+        )
+
+    @staticmethod
+    def _predecessor_id(thread: Dict[str, Any]) -> Optional[str]:
+        """The thread this one was opened from (``_open_new_thread`` records it)."""
+        meta = thread.get("metadata") or {}
+        return meta.get("previous_thread_id") or thread.get("parent_thread_id") or None
+
+    def _paused_predecessor(self, thread: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The paused thread ``thread`` was opened from; else the most recently paused one."""
+        prev_id = self._predecessor_id(thread)
+        prev = self.store.get_thread(prev_id) if prev_id else None
+        if prev is None:
+            paused = [
+                t for t in self.store.list_threads(status="paused", limit=50)
+                if t.get("paused_at") is not None and t["thread_id"] != thread["thread_id"]
+            ]
+            prev = max(paused, key=lambda t: float(t["paused_at"]), default=None)
+        if prev is None or prev.get("status") != "paused":
+            return None
+        return prev
+
+    @staticmethod
+    def _within_grace(paused: Dict[str, Any], successor: Dict[str, Any], now: float) -> bool:
+        """True while ``paused`` may still be merged into (the inverse of ``tick``'s close rule)."""
+        paused_at = paused.get("paused_at")
+        if paused_at is None:
+            return False
+        turns = int(successor.get("turns_since_pause") or 0)
+        return turns < GRACE_TURNS and (float(now) - float(paused_at)) < GRACE_MINUTES * 60
 
     @_locked
     def _close_thread(self, thread_id: str, now: float) -> Optional[Dict[str, Any]]:

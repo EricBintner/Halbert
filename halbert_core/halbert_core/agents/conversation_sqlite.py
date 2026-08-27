@@ -1396,6 +1396,65 @@ class SqliteConversationStore:
             return []
 
     # ------------------------------------------------------------------
+    # Merge-back (spec §5 "Merge")
+    # ------------------------------------------------------------------
+
+    def merge_thread(
+        self, src_thread_id: str, dst_thread_id: str, *, now: Optional[float] = None
+    ) -> Optional[int]:
+        """Fold thread ``src`` into thread ``dst`` in one transaction.
+
+        Moves every message row (and its ``messages_fts`` row) of ``src`` onto
+        ``dst``; marks ``src`` ``merged`` (``merged_into = dst``, receipt
+        dropped, ``receipts_fts`` row deleted); reopens ``dst`` (status open,
+        ``paused_at`` cleared, ``turns_since_pause`` reset). Returns the number
+        of rows moved, or ``None`` when either thread is missing or the write
+        failed (nothing is left half-done).
+        """
+        if self._conn is None or not src_thread_id or src_thread_id == dst_thread_id:
+            return None
+        ts = float(now) if now is not None else time.time()
+        try:
+            with self._lock, self._conn:
+                present = self._conn.execute(
+                    "SELECT COUNT(*) FROM conversations WHERE id IN (?, ?)",
+                    (src_thread_id, dst_thread_id),
+                ).fetchone()[0]
+                if int(present) != 2:
+                    return None
+                cur = self._conn.execute(
+                    "UPDATE messages SET conversation_id = ? WHERE conversation_id = ?",
+                    (dst_thread_id, src_thread_id),
+                )
+                moved = int(cur.rowcount or 0)
+                if self._fts_ok:
+                    self._conn.execute(
+                        "UPDATE messages_fts SET conversation_id = ? WHERE conversation_id = ?",
+                        (dst_thread_id, src_thread_id),
+                    )
+                    self._conn.execute(
+                        "DELETE FROM receipts_fts WHERE thread_id = ?", (src_thread_id,)
+                    )
+                self._conn.execute(
+                    """UPDATE conversations
+                       SET status = 'merged', merged_into = ?, receipt = '',
+                           receipt_updated_at = NULL, paused_at = NULL, updated_at = ?
+                       WHERE id = ?""",
+                    (dst_thread_id, ts, src_thread_id),
+                )
+                self._conn.execute(
+                    """UPDATE conversations
+                       SET status = 'open', paused_at = NULL, stale = 0,
+                           turns_since_pause = 0, updated_at = ?
+                       WHERE id = ?""",
+                    (ts, dst_thread_id),
+                )
+            return moved
+        except Exception as e:
+            logger.warning(f"merge_thread {src_thread_id} -> {dst_thread_id} failed: {e}")
+            return None
+
+    # ------------------------------------------------------------------
     # session_somatic_blocks (C1 link)
     # ------------------------------------------------------------------
 
