@@ -393,8 +393,14 @@ class TestReviewFollowUps:
         assert (await first.__anext__()).type == "session_started"
 
         events = [e async for e in agent.process("two", session_id="B")]
-        assert [e.type for e in events] == ["conversation_status", "error", "session_ended"]
-        assert events[1].data["recoverable"] is True
+        assert [e.type for e in events] == [
+            "conversation_status", "conversation_status", "error", "session_ended",
+        ]
+        # The badge this caller set to "waiting" before blocking has to be
+        # cleared by the give-up path too: the reducer keeps the last status
+        # string and neither error nor session_ended touches it.
+        assert [e.data["status"] for e in events[:2]] == ["waiting", "error"]
+        assert events[2].data["recoverable"] is True
         assert "B" not in agent.active_sessions
         assert agent.ctx.session_id == "A"   # the running turn is untouched
 
@@ -419,3 +425,90 @@ class TestReviewFollowUps:
         assert not agent.turn_lock.locked()
         assert agent.current_state == AgentState.IDLE
         assert "ab" not in agent.active_sessions
+
+
+class TestConfirmActionLock:
+    """confirm_action() waits on the same lock as process(), so it needs the
+    same bound: the UI aborts the paused turn's SSE and POSTs /confirm
+    immediately, and that generator may still be holding the lock."""
+
+    async def _paused(self):
+        agent = _agent(_high_risk_llm())
+        async for _ in agent.process("restart sshd", session_id="first"):
+            pass
+        assert agent.current_state == AgentState.AWAITING_CONFIRMATION
+        assert not agent.turn_lock.locked()
+        agent.llm = _SlowLLM([], delay=0)   # the re-plan after a rejection
+        return agent, agent.active_sessions["first"].pending_confirmation["action_id"]
+
+    @pytest.mark.asyncio
+    async def test_confirm_waits_for_the_lock_and_then_runs(self):
+        agent, action_id = await self._paused()
+        await agent.turn_lock.acquire()     # stand in for the closing turn
+
+        events = []
+
+        async def confirm():
+            async for e in agent.confirm_action("first", action_id, confirmed=False):
+                events.append(e)
+
+        task = asyncio.ensure_future(confirm())
+        await asyncio.sleep(0.05)
+        assert events == [], "confirm ran while another turn held the lock"
+
+        agent.turn_lock.release()
+        await asyncio.wait_for(task, timeout=5)
+        types = [e.type for e in events]
+        assert "session_ended" in types and "error" not in types
+        assert not agent.turn_lock.locked()
+        assert agent.current_state == AgentState.IDLE
+        assert "first" not in agent.active_sessions
+
+    @pytest.mark.asyncio
+    async def test_confirm_gives_up_instead_of_hanging_forever(self):
+        # Pre-A9a confirm_action took no lock at all, so a wedged turn must
+        # not turn /confirm into a request that never answers and never
+        # closes its stream.
+        agent, action_id = await self._paused()
+        agent.TURN_LOCK_TIMEOUT_S = 0.05
+        await agent.turn_lock.acquire()
+
+        events = [
+            e async for e in agent.confirm_action("first", action_id, confirmed=True)
+        ]
+        assert [e.type for e in events] == [
+            "conversation_status", "error", "session_ended",
+        ]
+        assert events[0].data["status"] == "error"
+        assert events[1].data["recoverable"] is True
+        # The paused turn is untouched: nothing ran, and the confirmation is
+        # still there to retry.
+        assert agent.current_state == AgentState.AWAITING_CONFIRMATION
+        assert agent.active_sessions["first"].pending_confirmation["action_id"] == action_id
+        assert agent.turn_lock.locked()     # still ours, never stolen
+        agent.turn_lock.release()
+
+    @pytest.mark.asyncio
+    async def test_confirm_releases_the_lock_on_every_early_return(self):
+        agent, action_id = await self._paused()
+        for sid, aid in (("nobody", action_id), ("first", "wrong-id")):
+            types = [
+                e.type async for e in agent.confirm_action(sid, aid, confirmed=True)
+            ]
+            assert types == ["error"]
+            assert not agent.turn_lock.locked()
+
+    @pytest.mark.asyncio
+    async def test_confirm_releases_the_lock_when_its_stream_is_abandoned(self):
+        # routes/agent.py consumes confirm_action() under contextlib.aclosing
+        # for exactly this: closing the generator must run its finally.
+        from contextlib import aclosing
+
+        agent, action_id = await self._paused()
+        async with aclosing(
+            agent.confirm_action("first", action_id, confirmed=False)
+        ) as stream:
+            async for _ in stream:
+                break
+        assert not agent.turn_lock.locked()
+

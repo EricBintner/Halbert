@@ -251,21 +251,9 @@ class AgentStateMachine:
         # drives the last step. The wait is bounded (TURN_LOCK_TIMEOUT_S) so
         # a wedged turn surfaces as an error the user can retry instead of
         # queueing every later message behind a badge that never changes.
-        try:
-            await asyncio.wait_for(
-                self.turn_lock.acquire(), timeout=self.TURN_LOCK_TIMEOUT_S
-            )
-        except asyncio.TimeoutError:
-            logger.error(
-                f"Session {session_id} gave up waiting for the turn lock after "
-                f"{self.TURN_LOCK_TIMEOUT_S:.0f}s (state={self.current_state.value})"
-            )
-            yield StreamEvent.error(
-                session_id,
-                "The previous turn is still running. Try that again in a moment.",
-                recoverable=True,
-            )
-            yield StreamEvent.session_ended(session_id, 0, 0)
+        if not await self._acquire_turn_lock(session_id):
+            for event in self._turn_lock_timeout_events(session_id):
+                yield event
             return
 
         try:
@@ -424,6 +412,51 @@ class AgentStateMachine:
         except Exception as e:
             logger.warning(f"end_turn for a superseded turn failed (non-fatal): {e}")
 
+    async def _acquire_turn_lock(self, session_id: str) -> bool:
+        """Take ``turn_lock`` for a turn, bounded by TURN_LOCK_TIMEOUT_S.
+
+        True once the lock is held; the caller then owns the release. False
+        when the wait timed out: the caller streams
+        ``_turn_lock_timeout_events()`` and returns without touching the turn
+        that is still running.
+
+        Both entry points wait here, so both are bounded. An unbounded wait
+        in either one hangs the request with no error and no stream close,
+        recoverable only by restarting the process.
+        """
+        try:
+            await asyncio.wait_for(
+                self.turn_lock.acquire(), timeout=self.TURN_LOCK_TIMEOUT_S
+            )
+            return True
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Session {session_id} gave up waiting for the turn lock after "
+                f"{self.TURN_LOCK_TIMEOUT_S:.0f}s (state={self.current_state.value})"
+            )
+            return False
+
+    def _turn_lock_timeout_events(self, session_id: str) -> List[StreamEvent]:
+        """The stream a caller that never got the lock sees: a terminal
+        status for its own badge, a recoverable error, and a closed session.
+
+        The status is the bare factory, deliberately not
+        ``_set_conversation_status``: that one writes through ``self.ctx``,
+        which here still belongs to the turn that is running and holding the
+        lock. Without it the badge would stay on the "waiting" this caller
+        emitted before blocking — the frontend reducer keeps the last status
+        string and neither ``error`` nor ``session_ended`` touches it.
+        """
+        return [
+            StreamEvent.conversation_status(session_id, "error"),
+            StreamEvent.error(
+                session_id,
+                "The previous turn is still running. Try that again in a moment.",
+                recoverable=True,
+            ),
+            StreamEvent.session_ended(session_id, 0, 0),
+        ]
+
     def _settle_turn(self, session_id: str) -> None:
         """Cleanup shared by process() and confirm_action().
 
@@ -577,7 +610,17 @@ class AgentStateMachine:
         Yields:
             StreamEvent objects
         """
-        async with self.turn_lock:
+        # Bounded acquire + explicit release rather than ``async with``: the
+        # UI aborts the paused turn's SSE and POSTs /confirm immediately, so
+        # that generator may still be closing (and holding the lock) when we
+        # arrive. That is normally milliseconds, but a wedged turn must not
+        # make /confirm hang forever with nothing to show for it.
+        if not await self._acquire_turn_lock(session_id):
+            for event in self._turn_lock_timeout_events(session_id):
+                yield event
+            return
+
+        try:
             if session_id not in self.active_sessions:
                 yield StreamEvent.error(session_id, "Session not found", recoverable=False)
                 return
@@ -632,7 +675,9 @@ class AgentStateMachine:
                     yield event
             finally:
                 self._settle_turn(session_id)
-    
+        finally:
+            self.turn_lock.release()
+
     def cancel_session(self, session_id: str) -> bool:
         """Cancel an active session."""
         if session_id in self.active_sessions:
