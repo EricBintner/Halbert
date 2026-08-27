@@ -58,3 +58,57 @@ def test_absolute_paths_are_unchanged(tmp_path):
     man_file = tmp_path / "manifest.yml"
     man_file.write_text("include:\n  - /etc/fstab\nexclude: []\nparsers: {}\n")
     assert Manifest.from_file(str(man_file)).include == ["/etc/fstab"]
+
+
+from halbert_core.config.roles import (
+    ROLES,
+    RoleScope,
+    manifest_path_for,
+    roles_for_platform,
+    staging_subdir_for,
+)
+
+
+def test_wave_one_roles_are_registered():
+    assert set(ROLES) == {"network_admin", "service_admin", "storage_admin"}
+
+
+def test_every_role_has_a_manifest_that_exists():
+    for name in ROLES:
+        assert os.path.isfile(manifest_path_for(name)), f"{name} manifest missing"
+
+
+def test_staging_subdir_is_derived_from_role_name():
+    assert staging_subdir_for("network_admin") == "network"
+    assert staging_subdir_for("storage_admin") == "storage"
+
+
+def test_storage_is_docs_only_on_macos():
+    """macOS has no fstab; storage_admin ships docs-only there."""
+    assert ROLES["storage_admin"].file_backed_on("Linux") is True
+    assert ROLES["storage_admin"].file_backed_on("Darwin") is False
+
+
+def test_network_is_file_backed_on_both_platforms():
+    assert ROLES["network_admin"].file_backed_on("Linux") is True
+    assert ROLES["network_admin"].file_backed_on("Darwin") is True
+
+
+def test_roles_for_platform_excludes_docs_only_roles():
+    linux = roles_for_platform("Linux")
+    darwin = roles_for_platform("Darwin")
+    assert "storage_admin" in linux
+    assert "storage_admin" not in darwin
+    assert "service_admin" in darwin
+
+
+def test_firewall_files_alias_network_into_security():
+    """Design decision: firewall is primary to security, aliased to network."""
+    assert "security_admin" in ROLES["network_admin"].aliases_from
+
+
+def test_role_scope_is_immutable():
+    import dataclasses
+
+    assert dataclasses.is_dataclass(RoleScope)
+    assert ROLES["network_admin"].__dataclass_params__.frozen
