@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from .corpus import SyntheticThread, generate_corpus
 
@@ -59,17 +59,28 @@ class ReceiptIndex:
 
     def search(self, query: str, limit: int = 10) -> List[str]:
         """Thread ids best-first. Falls back to LIKE when MATCH cannot parse."""
+        return [tid for tid, _ in self.search_scored(query, limit=limit)]
+
+    def search_scored(self, query: str, limit: int = 10) -> List[Tuple[str, float]]:
+        """``(thread_id, relevance)`` best-first, relevance higher-is-better.
+
+        SQLite's ``bm25()`` returns a negative number where more negative is a
+        better match; it is negated here so callers can reason about a *gap*
+        between first and second place without sign confusion. LIKE-fallback
+        rows all score 0.0 — no ranking information is available, which
+        ``recall_gate`` treats as never strong enough to inject silently.
+        """
         tokens = _tokenise(query)
         if not tokens:
             return []
         match = " OR ".join(f'"{t}"' for t in tokens)
         try:
             rows = self._conn.execute(
-                "SELECT thread_id FROM receipts_fts WHERE receipts_fts MATCH ? "
-                "ORDER BY bm25(receipts_fts) LIMIT ?",
+                "SELECT thread_id, bm25(receipts_fts) AS score FROM receipts_fts "
+                "WHERE receipts_fts MATCH ? ORDER BY score LIMIT ?",
                 (match, limit),
             ).fetchall()
-            return [r["thread_id"] for r in rows]
+            return [(r["thread_id"], -float(r["score"])) for r in rows]
         except sqlite3.OperationalError:
             pass
         like = f"%{tokens[0]}%"
@@ -77,7 +88,7 @@ class ReceiptIndex:
             "SELECT thread_id FROM receipts_fts WHERE receipt LIKE ? LIMIT ?",
             (like, limit),
         ).fetchall()
-        return [r["thread_id"] for r in rows]
+        return [(r["thread_id"], 0.0) for r in rows]
 
     def close(self) -> None:
         self._conn.close()
