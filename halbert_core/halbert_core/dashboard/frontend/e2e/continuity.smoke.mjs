@@ -32,6 +32,10 @@ const TURN_TIMEOUT_MS = Number(process.env.HALBERT_SMOKE_TURN_TIMEOUT_MS ?? 180_
 // Everything that is not "wait for a model to answer": the navigation, the
 // stored history landing, the feed committing. Seconds, not minutes.
 const SETTLE_TIMEOUT_MS = Number(process.env.HALBERT_SMOKE_SETTLE_TIMEOUT_MS ?? 30_000)
+// `AgentChat` calls `useTimeline()` with its default page size, and
+// `GET /api/agent/timeline` with no `before` returns the newest `limit` turns.
+// So a reload shows at most this many articles however long the conversation is.
+const PAGE_SIZE = 50
 
 const MESSAGE_1 = 'Please run `uname -a` and tell me the kernel version.'
 const MESSAGE_2 = 'Unrelated: what is 2 + 2?'
@@ -109,7 +113,25 @@ page.on('console', (msg) => {
 
 const composer = () => page.locator('textarea[placeholder^="Ask Halbert"], textarea[placeholder^="Type to queue"]').first()
 const articles = () => page.locator('[role="feed"] article')
-const tileOrChip = () => page.locator('[data-terminal-origin], [data-session-id]')
+
+/**
+ * The terminals belonging to ONE turn — a live tile (`data-terminal-origin`,
+ * InlineTerminals) or the ended chip that replaces it (`data-session-id`,
+ * StaticTerminalChip).
+ *
+ * Scoping to the turn is the whole point. Both markers are stamped on every
+ * stored turn that ever opened a terminal, so a page-wide query answers
+ * "has this machine ever run a command?" — which is true on any developer's
+ * box before the smoke sends a thing. The assertions below name turn 1
+ * specifically, and each has to be able to fail when turn 1's terminal is the
+ * one that vanished.
+ */
+const terminalsOfTurn = (turnId) => {
+  const scope = `[data-turn-id="${turnId.replace(/"/g, '\\"')}"]`
+  // Written as a two-branch selector list rather than `:is(…)` so it does not
+  // depend on which playwright the runner happened to `npm i --no-save`.
+  return page.locator(`${scope} [data-terminal-origin], ${scope} [data-session-id]`)
+}
 
 async function articleCount() {
   return (await page.locator('[role="feed"]').count()) === 0 ? 0 : articles().count()
@@ -189,12 +211,23 @@ try {
   await sendAndWait(MESSAGE_1, before + 1)
   log('turn 1 folded into the timeline', (await articleCount()) === before + 1)
   log('day divider is an h2', (await page.locator('header.thread-divider h2').count()) > 0)
+  // Turns render oldest-first (useTimeline groupByDay) and appendLive puts the
+  // finished turn at the end, so the last article is the one just sent. Its id
+  // is what scopes every terminal assertion from here on; the same id comes
+  // back from the server after the reload (turnFromSession uses the
+  // `turn_persisted` id, falling back to `local-…` only when the store failed
+  // — in which case nothing about this turn should survive the reload anyway).
+  const turn1Id = await articles().last().getAttribute('data-turn-id')
   // Whether a command ran at all is the model's call, not the UI's. Treating
   // "answered from memory" as a failure would make a red run ambiguous, so it
   // is a SKIP: a non-zero exit from this script means the UI regressed.
-  const hadTerminal = (await tileOrChip().count()) > 0
+  const hadTerminal = turn1Id !== null && (await terminalsOfTurn(turn1Id).count()) > 0
   if (hadTerminal) {
-    log('turn 1 opened a terminal (tile or chip)', true)
+    log('turn 1 opened a terminal (tile or chip)', true, `turn ${turn1Id}`)
+  } else if (turn1Id === null) {
+    // Not a model choice — the article carries no id to scope by, so the three
+    // terminal assertions cannot be made about turn 1 at all.
+    log('turn 1 article carries a turn id', false, 'terminal checks below are unscopable')
   } else {
     skip(
       'turn 1 opened a terminal (tile or chip)',
@@ -208,7 +241,7 @@ try {
   log('turn 2 folded into the timeline', (await articleCount()) === before + 2)
   log('turn 1 still on screen after turn 2', (await page.getByText('uname -a').count()) > 0)
   if (hadTerminal) {
-    log('tile from turn 1 survives turn 2', (await tileOrChip().count()) > 0)
+    log('tile from turn 1 survives turn 2', (await terminalsOfTurn(turn1Id).count()) > 0)
   }
 
   await navigateAndSettle(() =>
@@ -216,13 +249,21 @@ try {
   )
   await page.waitForSelector('[role="feed"] article', { timeout: SETTLE_TIMEOUT_MS })
   const after = await articleCount()
-  log('both turns are back after reload', after >= before + 2, `${after} articles`)
+  // The reload gets the newest page, not the whole conversation: once the store
+  // is within a turn or two of PAGE_SIZE the turns just sent push older ones off
+  // that page, and the count stops growing. That the turns which came back are
+  // the RIGHT two is what the two text assertions below check; this line only
+  // catches a page that came back short.
+  const expected = Math.min(before + 2, PAGE_SIZE)
+  log('both turns are back after reload', after >= expected, `${after} articles, expected >= ${expected}`)
   log('turn 1 text persisted', (await page.getByText('uname -a').count()) > 0)
   log('turn 2 text persisted', (await page.getByText('2 + 2').count()) > 0)
   if (hadTerminal) {
-    const chip = await page.getByText('terminal · ended').count()
-    const tile = await page.locator('[data-terminal-origin]').count()
-    log('terminal from turn 1 is a tile or an ended chip after reload', chip + tile > 0)
+    // Same turn, same scope: the server's copy of turn 1 keeps its id, so this
+    // asks whether THAT turn still shows a terminal, not whether the machine
+    // has one somewhere on screen.
+    const survived = await terminalsOfTurn(turn1Id).count()
+    log('terminal from turn 1 is a tile or an ended chip after reload', survived > 0)
   }
   log('sticky topic label back after reload', (await page.getByTestId('current-topic').count()) > 0)
   log('polite live region exists', (await page.locator('[role="status"][aria-live="polite"]').count()) === 1)
