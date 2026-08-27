@@ -3892,10 +3892,10 @@ class TestMergeBack:
 
 **Files:**
 - Modify: `halbert_core/halbert_core/agents/threads.py` (`TurnContext`; `begin_turn`; `retract_recall`; `_history`; new `_pending_notes`)
-- Modify: `halbert_core/halbert_core/agents/thread_signals.py` (`build_hint` gains `notes`)
-- Test: `halbert_core/tests/test_threads.py` (append), `halbert_core/tests/test_thread_signals.py` (insert one test)
+- Test: `halbert_core/tests/test_threads.py` (append)
+- `halbert_core/halbert_core/agents/thread_signals.py` is **not** touched here: A5 already ships `build_hint(..., notes=...)` and its tests (see the step below).
 
-Spec §6: "a retracted recall is excluded from compaction and adds a system-origin observation the next PLANNING sees". A6b's `retract_recall` only flips the `recalled_json` status. Here it also appends a hidden system row (`origin='system'`, `visible_in_timeline=0`, content `admin retracted recall of '<title>'`) to the thread; `begin_turn` collects such rows newer than the last human row into `TurnContext.notes`, and `build_hint` renders each as a `Note: …` line inside `<continuity>`. Hidden rows never enter the timeline (`list_turns` filters `visible_in_timeline`), the history (`recent_messages` keeps human/assistant only) or the receipt's turn count.
+Spec §6: "a retracted recall is excluded from compaction and adds a system-origin observation the next PLANNING sees". A6b's `retract_recall` only flips the `recalled_json` status. Here it also appends a hidden system row (`origin='system'`, `visible_in_timeline=0`, content `admin retracted recall of '<title>'`) to the thread; `begin_turn` collects such rows newer than the last human row into `TurnContext.notes`, which `build_hint` (already shipped, A5) renders as `Note: …` lines inside `<continuity>`. Hidden rows never enter the timeline (`list_turns` filters `visible_in_timeline`), the history (`recent_messages` keeps human/assistant only) or the receipt's turn count.
 
 - [ ] **Write the failing tests.** Append to `halbert_core/tests/test_threads.py`:
 
@@ -3937,56 +3937,17 @@ class TestRetractionNotes:
         assert turn5.notes == [] and "Note:" not in turn5.hint
 ```
 
-  In `halbert_core/tests/test_thread_signals.py`, inside `TestBuildHint`, insert immediately before `def test_time_helpers(self):`:
-
-```python
-    def test_notes_line(self):
-        ot = {"title": "Nginx tuning", "turn_count": 1, "last_active": NOW - 60}
-        hint = build_hint(ot, self._stay(), [], [], now=NOW, notes=["admin retracted recall of 'Samba media share'"])
-        assert hint.splitlines()[2] == "Note: admin retracted recall of 'Samba media share'"
-        fresh = build_hint({"title": "x", "turn_count": 0}, self._stay(action="open_new"), [], [], now=NOW, notes=["n"])
-        assert fresh.splitlines()[1:3] == ['Thread: "x" · opened just now.', "Note: n"]
-
-```
+  **Nothing is inserted into `halbert_core/tests/test_thread_signals.py`.** A5's review round already added `test_notes_line` — the exact test this task specified — plus `test_notes_sit_between_the_recall_lines_and_the_notifications`, `test_hostile_notes_are_flattened` and `test_notes_never_cost_the_notification_or_the_recall_heads`, and all four pass against the shipped `build_hint`. Leave that file untouched.
 
 - [ ] **Run it, expect failure:**
   `cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_threads.py tests/test_thread_signals.py -q -p no:cacheprovider`
-  Expected: `3 failed, 38 passed` — `test_retract_appends_hidden_system_row` (`'assistant' != 'system'`: the last row is still the assistant row), `test_begin_turn_collects_notes_until_next_human_row` (`AttributeError: 'TurnContext' object has no attribute 'notes'`), `test_notes_line` (`TypeError: build_hint() got an unexpected keyword argument 'notes'`).
+  Expected: exactly **2 failures**, both of them the `test_threads.py` additions above — `test_retract_appends_hidden_system_row` (`'assistant' != 'system'`: the last row is still the assistant row) and `test_begin_turn_collects_notes_until_next_human_row` (`AttributeError: 'TurnContext' object has no attribute 'notes'`). `test_notes_line` passes already: A5 ships the `notes` keyword. (Counts are a target, not a measurement — trust the run.)
 
-- [ ] **Implement `build_hint` notes** — edit `halbert_core/halbert_core/agents/thread_signals.py`:
+- [x] **`build_hint` notes — already implemented, do NOT re-apply.** `halbert_core/halbert_core/agents/thread_signals.py` shipped this in A5 (its review round): `build_hint(open_thread, decision, recalled, notifications, voice="first_person", *, now=None, notes: Optional[List[str]] = None)` renders each note as a `Note: <text>` line after the recall / "Earlier work" lines and before `Waiting for you`, and a fresh thread carrying only notes no longer returns `""`.
 
-  1. Replace the `build_hint` signature and docstring
-     ```python
-     def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: List[Dict[str, Any]], notifications: List[Dict[str, Any]], voice: str = "first_person", *, now: Optional[float] = None) -> str:
-         """Render the ``<continuity>`` block (≤ 900 chars); '' when there is nothing to say.
+  The string replacements this task originally carried are **stale and harmful**: their anchors (`if turns == 0 and not recalled and not weak and not notifications:`, the `lines.append("Earlier work that may matter: " ...)` / `if notifications:` pair) no longer exist — notification assembly moved above the early return, and the body is composed from `head_line` / `recall_lines` / `weak_line` / `note_lines` / `notif_line`. Appending `Note:` lines straight into `lines` would also bypass the priority budget (`body_budget` / `free`), push the body past `HINT_MAX_CHARS` and hit the tail-truncation backstop that eats the `Waiting for you` line.
 
-         ``voice`` is accepted for the prompt layer, which wraps the block through
-         the voice renderer; the facts inside are voice-neutral.
-         """
-     ```
-     with
-     ```python
-     def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: List[Dict[str, Any]], notifications: List[Dict[str, Any]], voice: str = "first_person", *, now: Optional[float] = None, notes: Optional[List[str]] = None) -> str:
-         """Render the ``<continuity>`` block (≤ 900 chars); '' when there is nothing to say.
-
-         ``voice`` is accepted for the prompt layer, which wraps the block through
-         the voice renderer; the facts inside are voice-neutral. ``notes`` are
-         system-origin observations (a retracted recall) rendered as ``Note:`` lines.
-         """
-     ```
-  2. Replace `    if turns == 0 and not recalled and not weak and not notifications:` with `    if turns == 0 and not recalled and not weak and not notifications and not notes:`.
-  3. Replace
-     ```python
-             lines.append("Earlier work that may matter: " + "; ".join(parts))
-         if notifications:
-     ```
-     with
-     ```python
-             lines.append("Earlier work that may matter: " + "; ".join(parts))
-         for note in notes or []:
-             lines.append(f"Note: {note}")
-         if notifications:
-     ```
+  What is in the tree instead: each note is capped at `NOTE_ITEM_MAX = 180` then rendered through `NOTE_LINE_MAX = 200`; at most `NOTES_MAX = 3` lines render, within a `NOTES_TOTAL_MAX = 300` char allowance; and the allowance is taken *after* reserving `RECALL_LINE_MIN + 1` per recall (or weak) line, so notes never cost a recall line its head or the notification line its place. Notes that do not fit are dropped whole rather than truncating the block.
 
 - [ ] **Implement the manager side** — edit `halbert_core/halbert_core/agents/threads.py`:
 
@@ -4081,18 +4042,18 @@ class TestRetractionNotes:
 
 - [ ] **Run tests, expect PASS:**
   `cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_threads.py tests/test_thread_signals.py -q -p no:cacheprovider`
-  Expected: `41 passed` (24 threads, 17 signals). Then the whole S set:
+  Expected: `58 passed` (24 threads, 34 signals — A5 closed at 34 after its review round; counts are targets, trust the run). Then the whole S set:
   `/Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_threads.py tests/test_thread_signals.py tests/test_thread_store.py tests/test_receipt.py tests/test_intake_signals.py tests/test_conversation_sqlite.py tests/test_session_affinity.py -q -p no:cacheprovider`
-  Expected: `165 passed` (24 threads, 17, 31, 10, 50, 20, 13). Then the full suite: `/Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests -q -p no:cacheprovider` — expected: 4 pre-existing failures only (test_tool_calling_bridge, test_phase_d_integration), everything else passes.
+  Expected: `182 passed` (24 threads, 34 signals, 31, 10, 50, 20, 13 — targets, trust the run). Then the full suite: `/Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests -q -p no:cacheprovider` — expected: 4 pre-existing failures only (test_tool_calling_bridge, test_phase_d_integration), everything else passes.
 
 - [ ] **Commit:**
   ```
-  cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/agents/threads.py halbert_core/halbert_core/agents/thread_signals.py halbert_core/tests/test_threads.py halbert_core/tests/test_thread_signals.py && git commit -m "feat(agents): surface a retracted recall to the next turn as a hidden note
+  cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/agents/threads.py halbert_core/tests/test_threads.py && git commit -m "feat(agents): surface a retracted recall to the next turn as a hidden note
 
   retract_recall appends a system-origin row (visible_in_timeline=0,
   'admin retracted recall of <title>') to the thread; begin_turn collects
-  system rows newer than the last human row into TurnContext.notes and
-  build_hint renders them as 'Note:' lines inside <continuity>. Hidden rows
+  system rows newer than the last human row into TurnContext.notes, which
+  build_hint (already shipped in A5) renders as 'Note:' lines. Hidden rows
   never reach the timeline, the model history or the receipt turn count;
   _history now decides 'older turns exist' from human/assistant rows only."
   ```
@@ -4110,9 +4071,8 @@ class TestRetractionNotes:
 - (A6c) `SqliteConversationStore.merge_thread(src_thread_id, dst_thread_id, *, now=None) -> int | None`: one transaction — moves `messages` + `messages_fts` rows, deletes `src`'s `receipts_fts` row, sets `src` to `status='merged', merged_into=dst, receipt=''`, and reopens `dst` (`status='open', paused_at=NULL, stale=0, turns_since_pause=0`). Returns rows moved; `None` when a thread is missing / src == dst / the write failed.
 - (A6c) `ThreadManager.merge_back(new_thread_id) -> str | None` folds an *open* thread into its paused predecessor while the grace window is open (`turns_since_pause < GRACE_TURNS` on the new thread and `now - paused_at < GRACE_MINUTES * 60`; the exact complement of `tick()`'s close rule). Predecessor lookup: `metadata["previous_thread_id"]` (what `_open_new_thread` records) → `parent_thread_id` column → the most recently paused thread. Domains, entities and `recalled_json` of the merged thread fold into the predecessor; `metadata["merged_from"]` lists merged ids; `last_active` becomes the newer of the two; the predecessor's receipt is rebuilt.
 - (A6c) `ThreadManager.resume_thread(thread_id, *, from_thread_id)` (the model's tool) now **merges** when `from_thread_id` is open, was opened from `thread_id`, and the window is open; otherwise it is the plain reopen (pause `from_thread_id` with `metadata["successor"]`, reopen the target). The strong-match auto-reopen in `begin_turn` uses the internal `_reopen_thread` and never merges. Planner M: after a merging `resume_thread` returns `True`, the from-thread is `merged` and its rows — including the in-flight user row — already live on the target; setting `ctx.thread_id = target` and calling `end_turn(..., thread_id_override=target)` stays correct (`update_message(thread_id=target)` on an already-moved row is a no-op move).
-- (A6d) `retract_recall` additionally appends a hidden row to the thread: `role='system', origin='system', status='complete', visible_in_timeline=0`, content `admin retracted recall of '<title>'`. `TurnContext.notes: list[str]` carries system-origin rows newer than the last human row (oldest-first); `build_hint(..., notes: list[str] | None = None)` renders each as `Note: <text>` after the recall / "Earlier work" lines and before `Waiting for you`, and a fresh thread with notes no longer yields an empty hint. `_history` decides "older turns exist" from `recent_messages(limit=HISTORY_ROWS + 1)` rather than `message_count`, so hidden rows never trigger the receipt system row.
+- (A6d) `retract_recall` additionally appends a hidden row to the thread: `role='system', origin='system', status='complete', visible_in_timeline=0`, content `admin retracted recall of '<title>'`. `TurnContext.notes: list[str]` carries system-origin rows newer than the last human row (oldest-first); `build_hint(..., notes: list[str] | None = None)` — **shipped in A5, not in this task** — renders each as `Note: <text>` after the recall / "Earlier work" lines and before `Waiting for you`, capped (`NOTE_ITEM_MAX = 180`, `NOTE_LINE_MAX = 200`, `NOTES_MAX = 3` lines, `NOTES_TOTAL_MAX = 300` chars) and budgeted before the recall lines so they cannot cost the notification line its place; a fresh thread with notes no longer yields an empty hint. `_history` decides "older turns exist" from `recent_messages(limit=HISTORY_ROWS + 1)` rather than `message_count`, so hidden rows never trigger the receipt system row.
 - (A6b) `tick()` closes on time/turn count only; the spec §5 "live terminal sessions keep a thread from auto-closing" guard is Plan B (noted in the docstring).
-
 ### Task A7: Thread events, StateContext thread fields, meta-tool schemas, SAFE classification
 
 **Files:**

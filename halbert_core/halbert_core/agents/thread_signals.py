@@ -56,11 +56,23 @@ RECALL_LINE_MIN = 96
 WEAK_LINE_MAX = 220
 NOTIFICATION_LINE_MAX = 220
 NOTIFICATION_ITEM_MAX = 160
+#: "Note: …" lines (a retracted recall, A6d). One line each, and a total
+#: allowance so a burst of them cannot crowd out the recall section.
+NOTE_LINE_MAX = 200
+NOTE_ITEM_MAX = 180
+NOTES_MAX = 3
+NOTES_TOTAL_MAX = 300
 TITLE_MAX = 120
 DATE_MAX = 24
 TERMS_MAX = 96
 TERM_ITEM_MAX = 48
 ONE_LINER_MAX = 220
+
+#: How much of a field `_clip` looks at before capping it: enough that no
+#: renderable content is lost (every cap here is ≤ RECALL_LINE_MAX), little
+#: enough that the delimiter fixpoint stays cheap on megabytes of output.
+_SCAN_MIN = 1024
+_SCAN_FACTOR = 8
 
 _HINT_OPEN = "<continuity>\n"
 _HINT_CLOSE = "\n</continuity>"
@@ -73,7 +85,20 @@ _DELIM_RE = re.compile(r"</?\s*continuity\s*>", re.IGNORECASE)
 def _clip(text: Any, limit: int) -> str:
     """Flatten whitespace, drop hint delimiters, cap at ``limit`` chars."""
     limit = max(1, int(limit))
-    flat = _WS_RE.sub(" ", _DELIM_RE.sub(" ", str(text if text is not None else ""))).strip()
+    flat = _WS_RE.sub(" ", str(text if text is not None else ""))
+    # Cut to a bounded window before the loop below. Notification text is
+    # unbounded terminal output, and a fixpoint over n characters costs
+    # O(n²); everything past this window is discarded by the cap anyway.
+    flat = flat[: max(_SCAN_MIN, limit * _SCAN_FACTOR)]
+    # Substitute to a fixpoint, not once: a single pass turns the nested
+    # payload "</</continuity>continuity>" into "</ continuity>", which is
+    # itself a close tag under _DELIM_RE (the pattern tolerates whitespace),
+    # so one pass leaves a working delimiter behind. Every pass replaces at
+    # least twelve characters with one, so the string strictly shrinks and
+    # the loop terminates.
+    while _DELIM_RE.search(flat):
+        flat = _DELIM_RE.sub(" ", flat)
+    flat = _WS_RE.sub(" ", flat).strip()
     if len(flat) <= limit:
         return flat
     return flat[: limit - 1].rstrip() + "…"
@@ -295,11 +320,14 @@ def decide(query: str, signals: MessageSignals, open_thread: Optional[Dict[str, 
 
 # ── hint ─────────────────────────────────────────────────────────
 
-def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: List[Dict[str, Any]], notifications: List[Dict[str, Any]], voice: str = "first_person", *, now: Optional[float] = None) -> str:
+def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: List[Dict[str, Any]], notifications: List[Dict[str, Any]], voice: str = "first_person", *, now: Optional[float] = None, notes: Optional[List[str]] = None) -> str:
     """Render the ``<continuity>`` block (≤ 900 chars); '' when there is nothing to say.
 
     ``voice`` is accepted for the prompt layer, which wraps the block through
-    the voice renderer; the facts inside are voice-neutral.
+    the voice renderer; the facts inside are voice-neutral. ``notes`` are
+    system-origin observations (a retracted recall, spec §6) rendered as
+    ``Note:`` lines after the recall lines and before ``Waiting for you``;
+    at most ``NOTES_MAX`` are rendered, within ``NOTES_TOTAL_MAX`` chars.
     """
     now = time.time() if now is None else now
     if not open_thread:
@@ -316,7 +344,12 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
         joined = "; ".join(i for i in items if i)
         if joined:
             notif_line = _clip("Waiting for you: " + joined, NOTIFICATION_LINE_MAX)
-    if turns == 0 and not recalled and not weak and not notif_line:
+    note_lines: List[str] = []
+    for note in (notes or [])[:NOTES_MAX]:
+        text = _clip(note, NOTE_ITEM_MAX)
+        if text:
+            note_lines.append(_clip(f"Note: {text}", NOTE_LINE_MAX))
+    if turns == 0 and not recalled and not weak and not notif_line and not note_lines:
         return ""
 
     if turns == 0:
@@ -346,11 +379,27 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
     # Budget by priority rather than truncating the joined body as one string:
     # a single long receipt one-liner would otherwise eat the whole budget and
     # drop "Waiting for you" — the most time-critical line — entirely. The head
-    # and the notifications survive whole; the recalled lines (or, when there
-    # are none, the weak-candidate line) share what is left, never below
-    # RECALL_LINE_MIN so every section keeps at least its head.
+    # and the notifications survive whole; the notes take a bounded slice next;
+    # the recalled lines (or, when there are none, the weak-candidate line)
+    # share what is left, never below RECALL_LINE_MIN so every section keeps at
+    # least its head. Reserving RECALL_LINE_MIN per recall line before the notes
+    # are admitted is what keeps that floor affordable — without the reserve a
+    # long note run would push the body past the budget and back into the
+    # tail truncation this ordering exists to avoid.
     body_budget = HINT_MAX_CHARS - len(_HINT_OPEN) - len(_HINT_CLOSE)
     free = body_budget - len(head_line) - (len(notif_line) + 1 if notif_line else 0)
+    if note_lines:
+        reserved_lines = len(recall_lines) or (1 if weak_line else 0)
+        reserve = reserved_lines * (RECALL_LINE_MIN + 1)
+        allowance = min(NOTES_TOTAL_MAX, max(0, free - reserve))
+        kept: List[str] = []
+        for line in note_lines:
+            if len(line) + 1 > allowance:
+                break  # a note that does not fit drops rather than truncating the block
+            allowance -= len(line) + 1
+            kept.append(line)
+        note_lines = kept
+        free -= sum(len(line) + 1 for line in note_lines)
     if recall_lines:
         per = min(RECALL_LINE_MAX, max(RECALL_LINE_MIN, (free - len(recall_lines)) // len(recall_lines)))
         recall_lines = [_clip(line, per) for line in recall_lines]
@@ -360,6 +409,7 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
     lines: List[str] = [head_line] + recall_lines
     if weak_line:
         lines.append(weak_line)
+    lines.extend(note_lines)
     if notif_line:
         lines.append(notif_line)
     body = "\n".join(lines)
