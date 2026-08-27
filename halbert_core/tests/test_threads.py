@@ -545,7 +545,9 @@ class TestConcurrency:
         t2 = _turn(tm, "check the disk space on /var")
         stale = tm.store.get_thread(t1.thread_id)
         assert stale["status"] == "paused"
+        tm.clock.advance(GRACE_MINUTES * 60)  # past the grace window: plain reopen, no merge (A6c)
         assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is True
+        assert tm.store.get_thread(t2.thread_id)["status"] == "paused"
         monkeypatch.setattr(tm.store, "list_threads", lambda *a, **k: [stale])
         tm.clock.advance(GRACE_MINUTES * 60)
         assert tm.tick() == []
@@ -1067,3 +1069,27 @@ class TestMergeBack:
         assert tm.store.get_thread(new_id)["status"] == "open"
         assert tm.store.get_thread(t1.thread_id)["status"] == "paused"
         assert len(tm.store.list_messages(t1.thread_id)) == 2
+
+    def test_resume_reopens_when_the_store_merge_fails(self, tm, monkeypatch):
+        """A6c review finding 1: a failed merge must still land the resume.
+
+        ``store.merge_thread`` is best-effort by design — a BUSY database, a
+        full disk, any exception, and it logs, rolls its whole transaction
+        back and returns ``None``, leaving both threads exactly as they were.
+        Answering ``False`` there reported "no, same topic" as *failed* and
+        did nothing at all: the target stayed paused and the conversation
+        carried on in the thread the admin had just disowned. A second
+        earlier or later the same call is a plain reopen, so that is what a
+        failed merge degrades to.
+        """
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        _turn(tm, "now the scanner share too")
+        monkeypatch.setattr(tm.store, "merge_thread", lambda *a, **k: None)
+        assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is True
+        assert tm.store.get_thread(t1.thread_id)["status"] == "open"
+        paused = tm.store.get_thread(new_id)
+        assert paused["status"] == "paused" and paused["metadata"]["successor"] == t1.thread_id
+        assert tm.current()["thread_id"] == t1.thread_id
+        assert len(tm.store.list_messages(t1.thread_id)) == 2
+        assert len(tm.store.list_messages(new_id)) == 2

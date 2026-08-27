@@ -380,6 +380,17 @@ class ThreadManager:
         young thread is merged back (spec §5 "Merge") instead of being paused
         beside its predecessor. Otherwise this is a plain reopen that pauses
         ``from_thread_id``.
+
+        A merge that does not happen degrades to that plain reopen rather
+        than failing the resume. Once the branch is taken the only way
+        ``merge_back`` answers anything but ``thread_id`` is a store failure
+        — ``merge_thread`` is best-effort, logging and returning ``None`` on
+        a BUSY database or a full disk, and it rolls its whole transaction
+        back, so both rows are still exactly as they were read here.
+        Answering ``False`` there reported the admin's "no, same topic" as
+        failed and did nothing at all, leaving the conversation in the
+        thread they had just disowned, when a second earlier or later the
+        same call is a reopen (review: Plan A / A6c finding 1).
         """
         now = self._now()
         target = self.store.get_thread(thread_id)
@@ -390,7 +401,8 @@ class ThreadManager:
             if source is not None and source.get("status") == "open":
                 prev = self._paused_predecessor(source)
                 if prev is not None and prev["thread_id"] == thread_id and self._within_grace(prev, source, now):
-                    return self.merge_back(from_thread_id) == thread_id
+                    if self.merge_back(from_thread_id) == thread_id:
+                        return True
         return self._reopen_thread(target, from_thread_id, now)
 
     @_locked
