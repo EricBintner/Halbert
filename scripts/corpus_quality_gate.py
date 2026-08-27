@@ -321,14 +321,24 @@ SCOPED_QUERIES = [
     {"id": "r03_service_launch", "query": "program that runs at login",
      "scope": "service_admin", "expected_terms": ["label"],
      "forbidden_path_prefix": "host/network/"},
+    # "programarguments" appears only in plist CONTENT, never in a path —
+    # unlike "launch", which host/service/Library/LaunchDaemons/... would
+    # satisfy on the path alone (the matcher concatenates content + path).
     {"id": "r04_service_manager", "query": "service manager configuration",
-     "scope": "service_admin", "expected_terms": ["launch"],
+     "scope": "service_admin", "expected_terms": ["programarguments"],
      "forbidden_path_prefix": "host/storage/"},
     {"id": "r05_storage_mounts", "query": "persistent filesystem mount options",
      "scope": "storage_admin", "expected_terms": ["mount"],
      "forbidden_path_prefix": "host/network/"},
+    # "-hosts" is auto_master CONTENT, not path — the bare term "auto" would
+    # be satisfied by host/storage/etc/auto_master on the path alone.
+    # Caveat: on a stock macOS host that line is commented out (`#/net
+    # -hosts`), so this asserts the file body was indexed including comments.
+    # If the chunker strips comments this needs revisiting — macOS
+    # storage_admin content is thin enough that no uncommented term is both
+    # distinctive and absent from the path.
     {"id": "r06_storage_automount", "query": "automount map configuration",
-     "scope": "storage_admin", "expected_terms": ["auto"],
+     "scope": "storage_admin", "expected_terms": ["-hosts"],
      "forbidden_path_prefix": "host/network/"},
     # Isolation probes: a role scope must never surface knowledge/ docs,
     # which belong to the platform axis, not the role axis.

@@ -219,6 +219,42 @@ taking.
 config on the machine** and should rank above host files rather than equal to
 them. Treat as an optional include.
 
+### IP address policy — decided 2026-08-26
+
+**Non-routable addresses are exempt from redaction; public addresses are still
+redacted.**
+
+Exempt: loopback (`127.0.0.0/8`, `::1`), RFC1918 private
+(`10/8`, `172.16/12`, `192.168/16`), link-local (`169.254/16`, `fe80::/10`),
+the unspecified address `0.0.0.0`, and the broadcast address
+`255.255.255.255`.
+
+**Why.** Verified on real staged output, blanket IPv4 redaction gutted
+`/etc/hosts` — `127.0.0.1 localhost` became `<ip> localhost`,
+`255.255.255.255 broadcasthost` became `<ip>`, and `#ListenAddress 0.0.0.0`
+became `<ip>`. Halbert administers the machine it runs on, so its own
+loopback and private addressing is core operational data, not a secret it
+needs protecting from itself. A public address can identify the host or a
+remote peer to an outside observer — harvested config reaches an LLM that may
+be a cloud model — so those stay redacted.
+
+The blanket rule was also inconsistent in practice: `::1 localhost` survived
+because `IPV4_RE`'s `\b` cannot anchor before a leading colon, so the policy
+was already de facto partial.
+
+**Separate defect, not a policy question:** `IPV6_RE` matches any
+colon-separated numeric triple, so sshd's `MaxStartups 10:30:100` became
+`MaxStartups <ip6>`, and it ate a timestamp inside an RCS ID. Those are not
+addresses. The pattern needs to require hex-group structure that a bare
+decimal triple cannot satisfy.
+
+**Related false positives** found in the same pass, to fix via the existing
+`_NON_SECRET_KEYS` mechanism rather than by weakening keyword matching:
+`SHAuthorizationRight: system.preferences` (the `authorization` substring
+firing on a *right name*) and `SecureSocketWithKey: DISPLAY` (the `key`
+substring firing on an *env-var name*). Both redact a value that is a
+well-known identifier, not a credential.
+
 ## Wave 1 manifests
 
 Each role gets a manifest following the existing `Manifest` schema
@@ -398,6 +434,55 @@ scope via the existing add/remove-paths API, with `scope_mode="hard"`.
 
 One `ConfigWatcher` per role manifest — the existing class already accepts an
 arbitrary `manifest_path`, so no changes needed there.
+
+## KNOWN LIMITATION — role trees duplicate the flat host tree
+
+**This contradicts the primary+alias model stated above, and the model is the
+part that is currently wrong.** Recorded here rather than quietly fixed,
+because both candidate fixes change staging topology and cannot be verified
+without a built index.
+
+That section claims *"scopes are masks over one shared index, so registering a
+path into two scopes costs zero extra indexing."* True of scope registration —
+but wave 1 does not register one file into two scopes. `stage_role_tree()`
+writes a **second physical copy** into `sourceprep/host/<role>/`, while the
+flat `host` scope's `paths: ["host"]` and the project's
+`include_globs: ["host/**"]` already cover it.
+
+Measured on the development host: the flat tree stages 42 files; **40 of them
+stage again** under role trees (39 launchd plists + `/etc/hosts`). Total goes
+42 → 99 with 40 duplicated.
+
+Consequences:
+
+1. Overlapping files are indexed twice.
+2. `host`-scoped queries can return the same content from two different paths.
+3. **The sharp one:** `remap_edges_for_unified_root` maps config edges
+   `file:/etc/…` → `file:host/etc/…` only. Edges therefore attach solely to
+   the flat copy, so `trace_expand: true` expands nothing inside a role
+   scope — role scopes silently lose the trace-graph expansion that the
+   platform scopes get.
+
+**Two candidate fixes, both design-level:**
+
+- **(a) Masks over the flat tree.** Stage once into `host/` as today, and
+  register each role scope with the concrete `host/`-relative paths its
+  manifest matched. This is the honest reading of the primary+alias model and
+  makes aliasing free as claimed. Cost: scope `paths` become *derived from
+  host state* rather than static template entries, which changes the template
+  model and `_reconcile_scopes`.
+- **(b) Prune overlaps from the flat list.** Remove from
+  `_LINUX_CONFIG_PATHS`/`_MACOS_CONFIG_PATHS` anything a role manifest claims,
+  so each file stages exactly once. The `host` scope still covers everything
+  because role directories live *under* `host/`. Smaller change, but the edge
+  remap must become role-aware or consequence (3) persists.
+
+(b) is the smaller change; (a) is the one that matches the design. Decide with
+a working index in front of you, not from the code.
+
+**Also latent:** a role subdirectory name could collide with a real absolute
+path — `/storage/...` on Linux would stage to `host/storage/...`, the same
+place `storage_admin` writes. Not reachable from the current path lists.
 
 ## Explicitly out of scope
 

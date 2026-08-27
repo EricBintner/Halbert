@@ -672,6 +672,30 @@ class to exclude `<` fixes it.
 
 ---
 
+### Task 4d: Manifest paths that keyword redaction structurally cannot cover
+
+Surfaced by the adversarial review. Redaction keys off *key names*, so a file
+whose entire content is a bare credential has no key to match and cannot be
+protected by any keyword rule.
+
+- **`/etc/restic/*`** is in the `storage_admin` manifest (Task 8). Restic
+  password files are **entirely** a secret, with no key and no structure.
+  Must be handled by a manifest **exclude** or a per-path rule, not by
+  redaction. Decide before Task 8 ships.
+
+Audit the wave-1 manifests for other bare-credential file shapes with the same
+property (files whose whole body is the secret). Candidates to check:
+`/etc/borgmatic.d/*` referenced passphrase files, any `*_password` /
+`*.key`-adjacent path, and anything a tool documents as "a file containing
+only the password".
+
+The general rule to apply: **if a file's entire content is a credential,
+exclude the file — do not rely on redaction.** Keyword redaction is a
+denylist over key names and is structurally open-ended; it protects
+`key = value` shapes, not naked secrets.
+
+---
+
 ### Task 5: Rewire host staging onto redacted snapshot output
 
 This is the actual leak fix. `_stage_config_files()` copies live `/etc` paths
