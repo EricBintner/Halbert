@@ -22,7 +22,8 @@
 
     /* Path mapping */
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@halbert/model-picker": ["../../../../packages/model-picker/src"]
     }
   },
   "include": ["src"],

@@ -194,6 +194,8 @@ class AgentStateMachine:
         user_id: str = None,
         conversation_history: List[Dict] = None,
         images: List[str] = None,
+        model_override: str = None,
+        tier_override: str = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Process a user query through the state machine.
@@ -205,6 +207,11 @@ class AgentStateMachine:
             session_id: Optional session ID (generated if not provided)
             user_id: Optional user ID
             conversation_history: Previous messages in conversation
+            images: Base64-encoded image attachments
+            model_override: Exact model name pinned for this turn; bypasses
+                the complexity router
+            tier_override: "guide" | "specialist" | "vision" — force a tier
+                without naming a model
             
         Yields:
             StreamEvent objects for each state change, tool call, etc.
@@ -221,6 +228,8 @@ class AgentStateMachine:
             conversation_history=conversation_history or [],
             max_loops=self.max_loops,
             images=images,
+            model_override=model_override,
+            tier_override=tier_override,
         )
 
         # Phase 3: Run intake pipeline before cognitive tick
@@ -660,6 +669,8 @@ class AgentStateMachine:
             messages=[{"role": "user", "content": prompt}],
             tools=tool_schemas,
             intake_result=self.ctx.intake if self.ctx else None,
+            model_override=self.ctx.model_override if self.ctx else None,
+            tier_override=self.ctx.tier_override if self.ctx else None,
         )
         
         # Parse plan if present
@@ -678,7 +689,9 @@ class AgentStateMachine:
             crag_result = await self.crag.evaluate(
                 self.ctx.user_query,
                 self.ctx.retrieved_context,
-                self.ctx.observations
+                self.ctx.observations,
+                model_override=self.ctx.model_override,
+                tier_override=self.ctx.tier_override,
             )
             self.ctx.confidence = crag_result.confidence
             self.ctx.crag_action = CRAGAction(crag_result.action.value)
@@ -1121,7 +1134,9 @@ class AgentStateMachine:
             crag_result = await self.crag.evaluate(
                 self.ctx.user_query,
                 self.ctx.retrieved_context,
-                self.ctx.observations
+                self.ctx.observations,
+                model_override=self.ctx.model_override,
+                tier_override=self.ctx.tier_override,
             )
             
             self.ctx.confidence = crag_result.confidence
@@ -1265,6 +1280,8 @@ class AgentStateMachine:
                 messages=[{"role": "user", "content": prompt}],
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
+                model_override=self.ctx.model_override if self.ctx else None,
+                tier_override=self.ctx.tier_override if self.ctx else None,
             ):
                 chunk_count += 1
                 logger.debug(f"Chunk {chunk_count}: {repr(chunk[:50])}...")
@@ -1277,6 +1294,8 @@ class AgentStateMachine:
                 messages=[{"role": "user", "content": prompt}],
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
+                model_override=self.ctx.model_override if self.ctx else None,
+                tier_override=self.ctx.tier_override if self.ctx else None,
             )
             content = response.content if hasattr(response, 'content') else str(response)
             self.ctx.response_chunks.append(content)

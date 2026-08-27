@@ -107,6 +107,8 @@ class CRAGEvaluator:
         query: str,
         documents: List[Dict],
         observations: List[str] = None,
+        model_override: str = None,
+        tier_override: str = None,
     ) -> CRAGResult:
         """
         Evaluate if documents can answer the query.
@@ -115,6 +117,11 @@ class CRAGEvaluator:
             query: The user's query
             documents: Retrieved documents with 'content' field
             observations: Previous observations from tool execution
+            model_override: Model pinned for this turn. Forwarded so a pin
+                also governs CRAG's own LLM call — this evaluator shares the
+                caller's LLM adapter, so without it a pinned cheap model
+                would still let CRAG escalate to the specialist.
+            tier_override: Tier pinned for this turn, same reasoning.
             
         Returns:
             CRAGResult with action recommendation
@@ -139,7 +146,9 @@ class CRAGEvaluator:
         relevance = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0.0
         
         # Assess completeness (can documents answer the query?)
-        completeness = await self._assess_completeness(query, documents, observations)
+        completeness = await self._assess_completeness(
+            query, documents, observations, model_override, tier_override
+        )
         
         # Assess freshness
         freshness = self._assess_freshness(documents)
@@ -241,6 +250,8 @@ class CRAGEvaluator:
         query: str,
         documents: List[Dict],
         observations: List[str] = None,
+        model_override: str = None,
+        tier_override: str = None,
     ) -> float:
         """
         Assess if documents fully answer the query.
@@ -249,7 +260,9 @@ class CRAGEvaluator:
         """
         if self.llm:
             try:
-                return await self._llm_completeness_check(query, documents, observations)
+                return await self._llm_completeness_check(
+                    query, documents, observations, model_override, tier_override
+                )
             except Exception as e:
                 logger.warning(f"LLM completeness check failed: {e}")
         
@@ -261,6 +274,8 @@ class CRAGEvaluator:
         query: str,
         documents: List[Dict],
         observations: List[str] = None,
+        model_override: str = None,
+        tier_override: str = None,
     ) -> float:
         """Use LLM to assess completeness."""
         # Build document summaries
@@ -291,7 +306,9 @@ Rate completeness from 0.0 to 1.0:
 Reply with just the number (e.g., "0.7")."""
 
         response = await self.llm.chat(
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            model_override=model_override,
+            tier_override=tier_override,
         )
         
         content = response.content if hasattr(response, 'content') else str(response)

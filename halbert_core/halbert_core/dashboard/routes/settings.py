@@ -214,11 +214,21 @@ async def apply_recommended_config() -> Dict[str, Any]:
         }
 
     chat_model = chosen['name']
-    endpoint_id = llm_store.ensure_ollama_endpoint(endpoint)
-    llm_store.set_slot("chat_model", chat_model, endpoint_id)
-    compression = dict(llm_store.load_file().get("compression") or {})
-    compression.update(backend=compression_backend, enabled=True)
-    llm_store.set_top_level("compression", compression)
+    try:
+        endpoint_id = llm_store.ensure_ollama_endpoint(endpoint)
+        llm_store.set_slot("chat_model", chat_model, endpoint_id)
+        compression = dict(llm_store.load_file().get("compression") or {})
+        compression.update(backend=compression_backend, enabled=True)
+        llm_store.set_top_level("compression", compression)
+    except llm_store.ConfigUnreadableError as e:
+        logger.error("Cannot apply recommended config: %s", e)
+        return {
+            'success': False,
+            'hardware_tier': tier,
+            'total_vram_gb': total_vram,
+            'budget': budget.to_dict(),
+            'message': str(e),
+        }
 
     return {
         'success': True,
@@ -259,8 +269,18 @@ async def install_model(model_name: str) -> Dict[str, Any]:
             )
 
             if response.status_code == 200:
-                endpoint_id = llm_store.ensure_ollama_endpoint(endpoint)
-                llm_store.set_slot("chat_model", model_name, endpoint_id)
+                try:
+                    endpoint_id = llm_store.ensure_ollama_endpoint(endpoint)
+                    llm_store.set_slot("chat_model", model_name, endpoint_id)
+                except llm_store.ConfigUnreadableError as e:
+                    # The pull succeeded; only the config write failed.
+                    logger.error("Installed %s but could not save it: %s", model_name, e)
+                    return {
+                        'success': False,
+                        'message': f'{model_name} was installed, but it could not be '
+                                   f'saved as the chat model: {e}',
+                        'model': model_name,
+                    }
                 logger.info(f"Model {model_name} installed successfully")
                 return {
                     'success': True,

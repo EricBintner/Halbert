@@ -62,6 +62,11 @@ def _annotate_license(detail: Dict[str, Any], license_text: Optional[str] = None
 
 _ALLOWED_LOCAL_PORTS = {11434, 1234, 1235}  # Ollama, LM Studio
 
+# Upper bound on per-model /api/show enrichment. Generous enough to cover any
+# realistic local library; a bound still exists so a pathological endpoint
+# cannot stall the listing.
+_OLLAMA_SHOW_LIMIT = 200
+
 _ANTHROPIC_VERSION = "2023-06-01"
 
 
@@ -144,7 +149,13 @@ def _config_payload() -> Dict[str, Any]:
 @router.get("/llm/config")
 def get_llm_config() -> Dict[str, Any]:
     """Halbert's model configuration. On a fresh install, adds Local Ollama when it answers."""
-    llm_store.ensure_local_ollama_endpoint()
+    try:
+        llm_store.ensure_local_ollama_endpoint()
+    except llm_store.ConfigUnreadableError as e:
+        # Reading still works (the store serves defaults), so show the picker
+        # rather than an error page — but say why nothing can be saved.
+        logger.error("models.yml is unreadable: %s", e)
+        return {"data": {**_config_payload(), "config_error": str(e)}}
     return {"data": _config_payload()}
 
 
@@ -153,6 +164,15 @@ def update_llm_config(body: LLMConfigUpdate):
     """Deep-merge a partial llm_config (callers send whole slots) and return the saved result."""
     try:
         llm_store.update(body.llm_config)
+    except llm_store.ConfigUnreadableError as e:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {
+                "code": "CONFIG_UNREADABLE",
+                "path": str(e.path),
+                "message": str(e),
+            }},
+        )
     except llm_store.SlotProviderError as e:
         return JSONResponse(
             status_code=422,
@@ -188,7 +208,7 @@ class LLMModelTestRequest(BaseModel):
 
 
 def _ollama_show_detail(url: str, name: str, timeout: float = 3.0) -> Optional[Dict[str, Any]]:
-    """Fetch context length and licence text from Ollama /api/show for a single model."""
+    """Fetch context length, licence text and capabilities from Ollama /api/show."""
     try:
         r = requests.post(
             f"{url}/api/show",
@@ -222,9 +242,62 @@ def _ollama_show_detail(url: str, name: str, timeout: float = 3.0) -> Optional[D
         lic = data.get("license")
         if isinstance(lic, list):
             lic = "\n\n".join(str(x) for x in lic)
-        return {"context_tokens": ctx, "context_window": ctx_label, "license": lic if isinstance(lic, str) else None}
+        return {
+            "context_tokens": ctx,
+            "context_window": ctx_label,
+            "license": lic if isinstance(lic, str) else None,
+            "capabilities": data.get("capabilities"),
+        }
     except Exception:
         return None
+
+
+# What a provider genuinely asserts about every model it serves. Authority is
+# per-capability, not per-provider: Ollama can say its models call tools, but
+# it says nothing about vision until /api/show reports it, and lm-studio /
+# openai-compatible are transports that will serve anything, so they assert
+# nothing at all.
+_PROVIDER_ASSERTS: Dict[str, tuple] = {
+    "anthropic": ("vision", "tool_use"),
+    "openai": ("tool_use",),
+    "openrouter": ("tool_use",),
+    "ollama": ("tool_use",),
+}
+
+
+def _add_capabilities(detail: Dict[str, Any], name: str, provider: str, runtime: Optional[Dict[str, Any]] = None) -> None:
+    """Set vision/tool_use/reasoning on a model_details entry (D-4).
+
+    Delegates to model.capabilities.ModelCapabilities.detect(), which layers
+    generic name tokens, provider-level defaults and (when given) runtime
+    metadata such as Ollama's own reported `capabilities` list. No cloud
+    model-name table is added here — see the module docstring in
+    tests/test_llm_proxy_capabilities.py for why.
+
+    A capability we could not determine is **omitted**, never emitted as
+    ``False``. The distinction matters: the picker filters roles on these
+    flags, so asserting "no tools" for a provider we simply cannot inspect
+    empties the Chat dropdown, and asserting "no vision" for an Ollama daemon
+    that does not report capabilities empties the Vision dropdown. Absent
+    means unknown, and the picker lets unknown through.
+    """
+    from ...model.capabilities import ModelCapabilities
+
+    caps = ModelCapabilities.detect(name, provider, runtime=runtime)
+    # A runtime capabilities list comes from the model itself; a provider in
+    # the set above makes a genuine claim. Otherwise only a positive name-token
+    # match is worth reporting.
+    from_runtime = bool(runtime and runtime.get("capabilities"))
+    asserted = _PROVIDER_ASSERTS.get(provider, ())
+    for key, value in (
+        ("vision", caps.vision),
+        ("tool_use", caps.tool_use),
+        ("reasoning", caps.reasoning),
+    ):
+        if value or from_runtime or key in asserted:
+            detail[key] = value
+        else:
+            detail.pop(key, None)
 
 
 @router.post("/api/llm/proxy/models")
@@ -264,11 +337,26 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                         }
                         if family:
                             detail["family"] = family
+                        _add_capabilities(detail, name, "ollama")
                         model_details.append(detail)
 
-                # Fetch context_length via /api/show (batched, max 20)
-                for md in model_details[:20]:
-                    show = _ollama_show_detail(url, md["name"])
+                # Enrich every model with /api/show. Since D-4 this decides
+                # whether a model is selectable at all — a cap here silently
+                # hid vision models past the cut, in whatever order /api/tags
+                # happened to return them. Run them concurrently so covering
+                # the whole list costs roughly one round trip.
+                shown = model_details[:_OLLAMA_SHOW_LIMIT]
+                if len(model_details) > _OLLAMA_SHOW_LIMIT:
+                    logger.warning(
+                        "Endpoint lists %d models; enriching only the first %d. "
+                        "Capabilities for the rest are reported as unknown.",
+                        len(model_details), _OLLAMA_SHOW_LIMIT,
+                    )
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    shows = list(pool.map(
+                        lambda md: _ollama_show_detail(url, md["name"]), shown
+                    ))
+                for md, show in zip(shown, shows):
                     if not show:
                         continue
                     if show["context_tokens"] > 0:
@@ -276,6 +364,16 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                         md["context_window"] = show["context_window"]
                     if show.get("license"):
                         _annotate_license(md, license_text=show["license"])
+                    if show.get("capabilities"):
+                        # Live data from the model itself supersedes the
+                        # name-only guess above.
+                        _add_capabilities(
+                            md, md["name"], "ollama",
+                            runtime={
+                                "capabilities": show["capabilities"],
+                                "context_length": show.get("context_tokens"),
+                            },
+                        )
 
         elif req.provider in ("openai", "openai-compatible", "lm-studio", "anthropic"):
             headers = _cloud_auth_headers(req.provider, req.api_key)
@@ -307,6 +405,7 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                             detail["cost_tier"] = "OpenAI"
                         elif req.provider == "anthropic":
                             detail["cost_tier"] = "Anthropic"
+                        _add_capabilities(detail, name, req.provider)
                         model_details.append(detail)
 
         elif req.provider == "google":
@@ -341,6 +440,7 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                     "context_tokens": ctx,
                     "cost_tier": "Google Gemini",
                 }
+                _add_capabilities(detail, name, "google")
                 model_details.append(detail)
 
     except Exception as e:

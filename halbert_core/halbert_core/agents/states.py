@@ -190,6 +190,17 @@ class StateContext:
 
     # Phase 4: Vision/image attachments (base64-encoded)
     images: Optional[List[str]] = None
+
+    # Per-turn model selection from the in-chat picker. These ride on the
+    # context — never on the shared LLM adapter — because one adapter instance
+    # is shared by every concurrent request, so anything stored on it leaks
+    # between sessions.
+    #   model_override: an exact model name; bypasses the complexity router
+    #                   entirely (Locked Mode).
+    #   tier_override:  "guide" | "specialist" | "vision"; forces a tier but
+    #                   still resolves the concrete model from models.yml.
+    model_override: Optional[str] = None
+    tier_override: Optional[str] = None
     
     def add_observation(self, observation: str):
         """Add an observation from tool execution."""

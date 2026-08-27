@@ -49,6 +49,45 @@ jobs:
       # Catches a story that no longer compiles against its component.
       - run: npm run build-storybook -- --quiet
 
+  model-picker:
+    name: Model picker (types + boundary + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/model-picker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run typecheck
+      # The boundary check is what keeps the package extractable: it fails on
+      # any import that reaches back into the dashboard it currently ships in.
+      - run: npm run check:boundary
+      - run: npm test
+
+  dashboard-frontend:
+    name: Dashboard frontend (types + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: halbert_core/halbert_core/dashboard/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # The picker is consumed from source through a vite alias and a tsconfig
+      # path, not an npm workspace, so tsc resolves react from the package's
+      # own node_modules and reports it missing unless they are installed too.
+      - name: Install the aliased picker's deps
+        working-directory: packages/model-picker
+        run: npm install
+      - run: npm install
+      - run: npx tsc --noEmit
+      - run: npm run test
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -61,8 +100,15 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install pytest
-          # Install package with all dependencies including dashboard extras
-          pip install -e "halbert_core/[dashboard]"
-      - name: Run tests
+          # [dev] carries pytest-asyncio, without which all 140 async tests
+          # in the suite error out rather than run.
+          pip install -e "halbert_core/[dashboard,dev]"
+      # tests/rag/ stays out: it builds a live embedding index, which downloads
+      # a model on first use.
+      - name: Run root tests
         run: pytest tests/ -q --ignore=tests/rag/
+      # Where the backend suite actually lives — the root tests/ tree above is
+      # an older remnant, and running only it left 1296 tests unrun.
+      - name: Run halbert_core tests
+        working-directory: halbert_core
+        run: pytest tests/ -q
