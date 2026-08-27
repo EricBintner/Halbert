@@ -25,9 +25,22 @@ import platform
 import re
 from typing import Any, Dict, List, Optional
 
+from .source_diversity import (
+    DEFAULT_PER_SOURCE,
+    DEFAULT_PULL_K,
+    cap_by_source_directory,
+)
 from .sourceprep_client import SourcePrepClient
 
 logger = logging.getLogger(__name__)
+
+# Character budget for the deep pull. This binds, and the old default (12000)
+# was the binding value: at k=25 the same query returns 9 chunks at 12000 and
+# 17 at 60000. Raising it is worth nothing on its own (measured 9/15, i.e.
+# unchanged) — it exists so the candidate list is not truncated before the
+# per-source cap can choose from it. It does not inflate what reaches the
+# model: the budget governs the candidate list, and search() trims to k.
+DEFAULT_MAX_CHARS = 60000
 
 
 # ── Intake-domain → scope routing (T-H1.3) ────────────────────────────
@@ -161,14 +174,28 @@ class SourcePrepRetrievalBackend:
         base_url: Optional[str] = None,
         client: Optional[SourcePrepClient] = None,
         default_k: int = 5,
-        default_max_chars: int = 12000,
+        default_max_chars: int = DEFAULT_MAX_CHARS,
+        source_cap: int = DEFAULT_PER_SOURCE,
+        pull_k: int = DEFAULT_PULL_K,
     ):
+        """Args:
+            default_max_chars: Character budget for the candidate list. Always
+                honoured as given; an A/B against the pre-cap behaviour sets
+                this to 12000 alongside ``source_cap=0``.
+            source_cap: Chunks kept per source directory. ``0`` disables the
+                cap and the deep pull together, so measurement can A/B on
+                results and latency at once.
+            pull_k: Candidates requested before capping. Never goes below the
+                caller's own k.
+        """
         self.client = client or SourcePrepClient(
             base_url=base_url,
             project_id=project_id,
         )
         self.default_k = default_k
         self.default_max_chars = default_max_chars
+        self.source_cap = source_cap
+        self.pull_k = pull_k
         self._loaded = False
         self._scope_ids: Optional[set] = None
         self._roles_to_scope: Optional[Dict[str, str]] = None
@@ -325,6 +352,18 @@ class SourcePrepRetrievalBackend:
         The `figure_id` parameter is mapped to SourcePrep's `scope` filter
         for domain-specific retrieval (e.g. "network", "storage").
 
+        Retrieval is a deep pull followed by a per-source-directory cap: the
+        daemon is asked for `pull_k` candidates, at most `source_cap` are kept
+        per source directory in the daemon's own ranking order, and the top `k`
+        are returned. Without this the two giant corpora — arch-wiki (2,331
+        docs) and macos man-pages (~5,280) — win top-k on document count alone
+        and crowd out the small topic directories that hold the answer.
+
+        The cap applies to scoped queries too. A scope is candidate removal
+        plus a constant score offset; it does not re-rank within the scope, so
+        `knowledge_linux` still contains all of arch-wiki and the dominance
+        problem is untouched by scoping.
+
         Args:
             query: Natural language search query.
             k: Number of results to retrieve.
@@ -334,18 +373,22 @@ class SourcePrepRetrievalBackend:
                 silently widening to a global union.
 
         Returns:
-            List of result dicts with at least a 'text' key, plus
+            List of at most `k` result dicts with at least a 'text' key, plus
             'source_path', 'score', and 'metadata' when available.
         """
         if not query.strip():
             return []
 
         scope = self.resolve_scope(figure_id)
+        capping = self.source_cap > 0
+        # The cap can only choose from what the candidate list holds, so ask
+        # for more than the caller wants — but never for less.
+        pull = max(self.pull_k, k) if capping else k
 
         try:
             response = self.client.get_context(
                 query=query,
-                k=k,
+                k=pull,
                 max_chars=self.default_max_chars,
                 structured=True,
                 trace_expand=True,
@@ -356,7 +399,10 @@ class SourcePrepRetrievalBackend:
             return []
 
         self._check_applied_scope(response, scope)
-        return self._parse_context_response(response)
+        results = self._parse_context_response(response)
+        return cap_by_source_directory(
+            results, k, per_source=self.source_cap if capping else 0
+        )
 
     def _parse_context_response(
         self, response: Dict[str, Any]

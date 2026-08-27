@@ -107,7 +107,7 @@ class SourcePrepClient:
         self,
         query: str = "",
         k: int = 5,
-        max_chars: int = 12000,
+        max_chars: int = 60000,
         structured: bool = True,
         trace_expand: bool = True,
         min_score: float = 0.15,
@@ -130,6 +130,12 @@ class SourcePrepClient:
         from results entirely (pre-filter via exclude_paths), not just
         score-boosted. This is required for platform isolation: a macOS
         query must never return Linux arch-wiki content.
+
+        ``max_chars`` is a budget over the whole candidate list and it *binds*:
+        at k=25 the same query returns 9 chunks at 12000 and 17 at 60000. The
+        old 12000 default silently truncated any deep pull, so it is now 60000.
+        Note this default does not govern the live agent path —
+        SourcePrepRetrievalBackend passes its own ``default_max_chars``.
         """
         body = {
             "query": query,
