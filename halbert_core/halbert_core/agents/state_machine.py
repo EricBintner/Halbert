@@ -18,6 +18,7 @@ from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHEC
 from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep, ConversationStatus
 from .events import StreamEvent
 from ..streaming.terminal_bridge import get_terminal_event_bus
+from ..tools.safety import THREAD_META_TOOLS
 
 if TYPE_CHECKING:
     from ..tools.safety import ToolSafetyFramework
@@ -94,6 +95,17 @@ class AgentStateMachine:
         AgentState.AWAITING_CONFIRMATION: [AgentState.EXECUTING, AgentState.PLANNING],
         AgentState.ERROR: [AgentState.PLANNING, AgentState.RESPONDING, AgentState.IDLE],
     }
+
+    # How long a queued turn waits for ``turn_lock`` before it gives up with
+    # a visible error. Spec §12 queues a second message behind the running
+    # turn; it does not promise an unbounded wait. The lock is held across
+    # every yield of process(), so a turn that wedges (a model call with no
+    # timeout, or a release missed because a consumer was torn down without
+    # closing the generator) would otherwise hang every later message
+    # forever behind nothing but a "waiting" badge, recoverable only by
+    # restarting the process. Generous enough for a real turn (several
+    # model calls and a long command); overridable per instance in tests.
+    TURN_LOCK_TIMEOUT_S: float = 600.0
     
     def __init__(
         self,
@@ -226,7 +238,8 @@ class AgentStateMachine:
         # route no longer force-resets the machine, A11). Tell the UI it
         # is waiting before blocking (spec §12: "emits conversation_status:
         # waiting"); the status is the plain string the badge expects.
-        if self.turn_lock.locked():
+        queued = self.turn_lock.locked()
+        if queued:
             logger.info(f"Session {session_id} waiting for the current turn to finish")
             yield StreamEvent.conversation_status(
                 session_id, "waiting", waiting_for="previous turn"
@@ -235,8 +248,27 @@ class AgentStateMachine:
         # One turn at a time (spec §12). Everything below, including the
         # finally, runs under the lock; asyncio.Lock is not task-bound, so
         # releasing it from the generator's cleanup is fine whichever task
-        # drives the last step.
-        async with self.turn_lock:
+        # drives the last step. The wait is bounded (TURN_LOCK_TIMEOUT_S) so
+        # a wedged turn surfaces as an error the user can retry instead of
+        # queueing every later message behind a badge that never changes.
+        try:
+            await asyncio.wait_for(
+                self.turn_lock.acquire(), timeout=self.TURN_LOCK_TIMEOUT_S
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Session {session_id} gave up waiting for the turn lock after "
+                f"{self.TURN_LOCK_TIMEOUT_S:.0f}s (state={self.current_state.value})"
+            )
+            yield StreamEvent.error(
+                session_id,
+                "The previous turn is still running. Try that again in a moment.",
+                recoverable=True,
+            )
+            yield StreamEvent.session_ended(session_id, 0, 0)
+            return
+
+        try:
             self._supersede_paused_turn(session_id)
 
             # Initialize context
@@ -281,6 +313,14 @@ class AgentStateMachine:
             yield StreamEvent.session_started(session_id, request_id)
 
             try:
+                # A queued caller was told "waiting" before it blocked, and
+                # nothing else on the normal turn path clears that badge —
+                # the frontend reducer just keeps the last status string, so
+                # without this the turn would read "waiting" while it plans,
+                # runs commands and streams, and only flip at the very end.
+                if queued:
+                    yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
+
                 # Inside the try (spec §12): an invalid transition, an
                 # exception in a handler or a consumer that goes away
                 # mid-turn must all reach the cleanup below, otherwise the
@@ -291,6 +331,14 @@ class AgentStateMachine:
                     yield event
             finally:
                 self._settle_turn(session_id)
+        finally:
+            # Settle before releasing so the next queued turn sees a settled
+            # machine. Repeating _settle_turn is idempotent and it also covers
+            # the sliver between registering the session and entering the try
+            # above: a consumer that goes away exactly there would otherwise
+            # leave the session registered.
+            self._settle_turn(session_id)
+            self.turn_lock.release()
 
     def _supersede_paused_turn(self, session_id: str) -> None:
         """A new message while a turn waits on a confirmation abandons it.
@@ -316,9 +364,18 @@ class AgentStateMachine:
         self.current_state = AgentState.IDLE
 
     def _record_superseded_turn(self, old_ctx: Optional[StateContext]) -> None:
-        """End a superseded, persisted turn so its receipt records the
-        staged action (spec §5). No manager or no TurnContext: nothing to do.
-        Never raises."""
+        """End a superseded, persisted turn so its receipt records what the
+        turn did and the action it never ran (spec §5).
+
+        ``ThreadManager.end_turn`` is the only writer of the assistant row —
+        nothing persists blocks as they happen — so everything the abandoned
+        turn already did has to be written here too. A turn that ran ``ls``,
+        spawned a terminal and then paused on ``systemctl restart sshd``
+        keeps the ``ls``, its terminal id and any proposed diff on the
+        receipt; only the staged action is recorded as "not run — superseded".
+
+        No manager or no TurnContext: nothing to do. Never raises.
+        """
         if old_ctx is None:
             return
         tm = getattr(old_ctx, "thread_manager", None)
@@ -327,12 +384,23 @@ class AgentStateMachine:
             return
         old_ctx.turn_context = None   # ended here, never again
         pending = old_ctx.pending_confirmation or {}
-        blocks: List[Dict[str, Any]] = []
+        calls = list(old_ctx.tool_calls or [])
+        # The staged call is the one the confirmation names; it is still
+        # status="pending" because it never ran.
+        staged = next((tc for tc in calls if tc.id == pending.get("action_id")), None)
+        if staged is None and pending and calls:
+            staged = calls[-1]
+        blocks: List[Dict[str, Any]] = [
+            self._tool_block(tc)
+            for tc in calls
+            if tc is not staged
+            and tc.status not in ("pending", "running")
+            and tc.name not in THREAD_META_TOOLS
+        ]
         if pending:
             args = pending.get("args")
             if not isinstance(args, dict):
-                last = old_ctx.tool_calls[-1] if old_ctx.tool_calls else None
-                args = last.args if last is not None and isinstance(last.args, dict) else {}
+                args = staged.args if staged is not None and isinstance(staged.args, dict) else {}
             blocks.append({
                 "tool": str(pending.get("tool", "")),
                 "args": args,
@@ -343,10 +411,14 @@ class AgentStateMachine:
         try:
             tm.end_turn(
                 turn,
-                assistant_text="",
+                assistant_text="".join(old_ctx.response_chunks or []),
                 blocks=blocks,
-                terminal_session_ids=[],
-                diff_proposals=[],
+                terminal_session_ids=list(old_ctx.terminal_session_ids or []),
+                diff_proposals=[
+                    {"diff_id": diff_id,
+                     **(diff if isinstance(diff, dict) else {"value": diff})}
+                    for diff_id, diff in (old_ctx.pending_diffs or {}).items()
+                ],
                 status="cancelled",
             )
         except Exception as e:
@@ -366,6 +438,32 @@ class AgentStateMachine:
         self.current_state = AgentState.IDLE
         self.active_sessions.pop(session_id, None)
         self.cancelled.pop(session_id, None)
+
+    @staticmethod
+    def _tool_block(tc: ToolCall) -> Dict[str, Any]:
+        """One persisted tool block (spec §8 messages.blocks_json)."""
+        result = tc.result
+        if not isinstance(result, (str, int, float, bool, dict, list, type(None))):
+            result = str(result)
+        if isinstance(result, str) and len(result) > 4000:
+            result = result[:4000] + "…"
+        exit_code: Optional[int] = None
+        if tc.name == "run_command":
+            text = tc.result if isinstance(tc.result, str) else ""
+            m = re.match(r"Exit code (-?\d+)", text)
+            if m:
+                exit_code = int(m.group(1))
+            elif tc.status == "success":
+                exit_code = 0
+        return {
+            "tool": tc.name,
+            "args": tc.args if isinstance(tc.args, dict) else {"value": str(tc.args)},
+            "result": result,
+            "exit": exit_code,
+            "execution_id": tc.id,
+            "status": tc.status,
+            "error": tc.error,
+        }
 
     async def _drive(self) -> AsyncIterator[StreamEvent]:
         """Run the state machine from ``self.current_state`` until it settles.

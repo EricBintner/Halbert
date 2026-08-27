@@ -13,7 +13,7 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from halbert_core.agents.states import AgentState, StateContext
+from halbert_core.agents.states import AgentState, StateContext, ToolCall as RecordedToolCall
 from halbert_core.agents.state_machine import AgentStateMachine
 from halbert_core.agents.llm_client import LLMResponse
 from halbert_core.streaming.terminal_bridge import get_terminal_event_bus
@@ -292,3 +292,130 @@ class TestSomaticThreadId:
         assert event.data["thread_id"] == "t-42" and event.data["block_id"] == "blk-1"
         agent.ctx.thread_id = None
         assert (await agent._emit_somatic_block(block)).data["thread_id"] == "som"
+
+
+class TestReviewFollowUps:
+    """Fixes from the A9a code review: a superseded turn keeps the work it
+    already did, a queued turn clears its own "waiting" badge, and the wait
+    for the lock is bounded."""
+
+    @pytest.mark.asyncio
+    async def test_a_superseded_turn_keeps_the_work_it_already_did(self):
+        # ThreadManager.end_turn is the only writer of the assistant row, so
+        # a turn that ran `ls`, spawned a terminal and proposed a diff before
+        # pausing must carry all of it onto the receipt — not just the
+        # command it never ran.
+        agent = _agent(_high_risk_llm())
+        async for _ in agent.process("restart sshd", session_id="first"):
+            pass
+        assert agent.current_state == AgentState.AWAITING_CONFIRMATION
+        paused = agent.active_sessions["first"]
+        tm = _RecordingThreadManager()
+        paused.thread_manager = tm
+        paused.turn_context = object()
+        paused.tool_calls.insert(0, RecordedToolCall(
+            id="ran-1", name="run_command", args={"command": "ls"},
+            status="success", result="Exit code 0\na",
+        ))
+        paused.terminal_session_ids.append("term-9")
+        paused.response_chunks.append("partial ")
+        paused.pending_diffs["d-1"] = {
+            "file_path": "/etc/hosts", "edit_blocks": [], "status": "pending",
+        }
+
+        agent.llm = _SlowLLM([], delay=0)
+        async for _ in agent.process("something else", session_id="second"):
+            pass
+
+        assert len(tm.ended) == 1
+        end = tm.ended[0]
+        assert end["status"] == "cancelled"
+        assert end["assistant_text"] == "partial "
+        assert end["terminal_session_ids"] == ["term-9"]
+        assert end["diff_proposals"] == [{
+            "diff_id": "d-1", "file_path": "/etc/hosts",
+            "edit_blocks": [], "status": "pending",
+        }]
+        assert len(end["blocks"]) == 2
+        ran, staged = end["blocks"]
+        assert ran["tool"] == "run_command" and ran["args"] == {"command": "ls"}
+        assert ran["exit"] == 0 and ran["status"] == "success" and ran["execution_id"] == "ran-1"
+        assert staged == {
+            "tool": "run_command", "args": {"command": "systemctl restart sshd"},
+            "result": "not run — superseded", "exit": None, "status": "superseded",
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_queued_turn_clears_its_waiting_badge_when_it_starts(self):
+        # The frontend reducer keeps the last conversation_status string, so
+        # "waiting" has to be cleared as the queued turn starts working —
+        # not left standing while it plans, runs commands and streams.
+        agent = _agent(_SlowLLM([], delay=0.2))
+        first = agent.process("one", session_id="A")
+        assert (await first.__anext__()).type == "session_started"
+
+        second_events = []
+
+        async def run_b():
+            async for e in agent.process("two", session_id="B"):
+                second_events.append(e)
+
+        task = asyncio.ensure_future(run_b())
+        await asyncio.sleep(0.02)
+        async for _ in first:
+            pass
+        await asyncio.wait_for(task, timeout=5)
+
+        types = [e.type for e in second_events]
+        assert types[:3] == ["conversation_status", "session_started", "conversation_status"]
+        assert second_events[0].data["status"] == "waiting"
+        assert second_events[2].data["status"] == "in_progress"
+        # …and it is cleared before any work, not at the end of the turn.
+        assert types.index("state_change") > 2
+        assert "session_ended" in types and "error" not in types
+
+    @pytest.mark.asyncio
+    async def test_an_unqueued_turn_only_emits_its_closing_status(self):
+        # The extra in_progress is for queued turns only: a turn that never
+        # waited still emits nothing but the status it ends on.
+        agent = _agent(_SlowLLM([], delay=0))
+        events = [e async for e in agent.process("solo", session_id="solo")]
+        assert [e.data["status"] for e in events if e.type == "conversation_status"] == ["success"]
+
+    @pytest.mark.asyncio
+    async def test_a_wedged_turn_surfaces_as_an_error_instead_of_hanging(self):
+        # The lock is held across every yield of process(); if a release is
+        # ever missed the next message must fail visibly rather than queue
+        # behind a badge that never changes.
+        agent = _agent(_SlowLLM([], delay=0.4))
+        agent.TURN_LOCK_TIMEOUT_S = 0.05
+        first = agent.process("one", session_id="A")
+        assert (await first.__anext__()).type == "session_started"
+
+        events = [e async for e in agent.process("two", session_id="B")]
+        assert [e.type for e in events] == ["conversation_status", "error", "session_ended"]
+        assert events[1].data["recoverable"] is True
+        assert "B" not in agent.active_sessions
+        assert agent.ctx.session_id == "A"   # the running turn is untouched
+
+        async for _ in first:
+            pass
+        assert not agent.turn_lock.locked()
+        assert agent.current_state == AgentState.IDLE
+
+    @pytest.mark.asyncio
+    async def test_closing_an_abandoned_stream_settles_the_machine(self):
+        # What routes/agent.py relies on by consuming process() under
+        # contextlib.aclosing: closing the generator runs its finally, so the
+        # lock is released and the machine is IDLE without waiting for the
+        # event loop's async-generator finalizer.
+        from contextlib import aclosing
+
+        agent = _agent(_SlowLLM([], delay=0))
+        async with aclosing(agent.process("hi", session_id="ab")) as stream:
+            async for e in stream:
+                if e.type == "session_started":
+                    break
+        assert not agent.turn_lock.locked()
+        assert agent.current_state == AgentState.IDLE
+        assert "ab" not in agent.active_sessions

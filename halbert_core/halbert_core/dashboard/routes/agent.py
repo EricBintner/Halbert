@@ -10,6 +10,7 @@ Based on research5.md Part 7.
 from __future__ import annotations
 import logging
 import asyncio
+from contextlib import aclosing
 from typing import Optional, Dict, Any, List
 
 try:
@@ -683,23 +684,31 @@ if FASTAPI_AVAILABLE:
             heartbeat_interval = 15  # Send heartbeat every 15 seconds
             
             try:
-                async for event in agent.process(
+                # aclosing, not a bare `async for`: this loop abandons the
+                # generator on the cancel path below (and Starlette drops it
+                # when the client disconnects), and process() holds the
+                # agent's turn lock across every yield. Closing it explicitly
+                # runs its finally — releasing the lock and settling the
+                # machine — instead of leaving that to the event loop's
+                # async-generator finalizer.
+                async with aclosing(agent.process(
                     query=request.message,
                     session_id=session_id,
                     images=request.images,
-                ):
-                    # Check if cancelled mid-stream
-                    if session_id and agent.cancelled.get(session_id):
-                        yield StreamEvent.cancelled(session_id).to_sse()
-                        return
-                    
-                    # Yield the event
-                    yield event.to_sse()
-                    last_event_time = time.time()
-                    
-                    # Check if we need to send heartbeats during long gaps
-                    # (This is mainly for between-state gaps, not during streaming)
-                    
+                )) as stream:
+                    async for event in stream:
+                        # Check if cancelled mid-stream
+                        if session_id and agent.cancelled.get(session_id):
+                            yield StreamEvent.cancelled(session_id).to_sse()
+                            return
+
+                        # Yield the event
+                        yield event.to_sse()
+                        last_event_time = time.time()
+
+                        # Check if we need to send heartbeats during long gaps
+                        # (This is mainly for between-state gaps, not during streaming)
+
             except Exception as e:
                 logger.error(f"Agent processing error: {e}")
                 yield StreamEvent.error(
@@ -743,12 +752,15 @@ if FASTAPI_AVAILABLE:
         
         async def event_stream():
             try:
-                async for event in agent.confirm_action(
+                # See send_message: confirm_action also holds the turn lock
+                # across its yields, so the generator is closed explicitly.
+                async with aclosing(agent.confirm_action(
                     session_id,
                     request.action_id,
                     request.confirmed
-                ):
-                    yield event.to_sse()
+                )) as stream:
+                    async for event in stream:
+                        yield event.to_sse()
             except Exception as e:
                 logger.error(f"Confirmation error: {e}")
                 from ...agents.events import StreamEvent
