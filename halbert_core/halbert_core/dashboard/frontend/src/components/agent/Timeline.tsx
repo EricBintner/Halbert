@@ -17,6 +17,7 @@
  * and one `role="article"` per turn.
  */
 
+import { memo } from 'react';
 import { useTerminalSessions } from '../../hooks/useTerminalSessions';
 import type { ToolExecution } from '../../hooks/useAgentStream';
 import type { TimelineDay } from '../../hooks/useTimeline';
@@ -42,19 +43,26 @@ interface TimelineProps {
 /**
  * A stored tool block in the shape the card renders. `block.status` is the
  * backend's own verdict (spec §8 messages.blocks_json / state_machine.py
- * _tool_block) and is authoritative when present: `exit` is only ever set
- * for `run_command` (state_machine.py:614-638), so a failed non-run_command
+ * _tool_block) and is authoritative WHENEVER IT IS PRESENT — not just for
+ * the values this file happens to know. `exit` is only ever set for
+ * `run_command` (state_machine.py:614-638), so a failed non-run_command
  * tool, or a call superseded before it ran (~line 446, `{exit: null, status:
  * "superseded"}`), would otherwise render as a green "success" card under
- * the exit-only heuristic. Only when the backend sent no status at all
- * (older, pre-status rows) does this fall back to that heuristic: exit 0 or
- * unknown reads as success.
+ * the exit-only heuristic. The backend's status vocabulary is wider than
+ * success/error/superseded: a ToolCall is created `pending` (states.py:97,
+ * state_machine.py:1221) and `_end_turn` (state_machine.py:660) persists
+ * every call regardless of status, so a turn interrupted between dispatch
+ * and completion stores `{status: "pending", exit: null}`. Anything that is
+ * not the backend saying "success" is therefore rendered as a failed card:
+ * a stored transcript must never tell an admin a command succeeded when it
+ * never ran. Only when the backend sent no status at all (older, pre-status
+ * rows) does this fall back to the exit heuristic: exit 0 or unknown reads
+ * as success.
  */
 export function executionFromBlock(block: TimelineToolBlock, fallbackId: string): ToolExecution {
   const exit = block.exit;
-  const status: ToolExecution['status'] =
-    block.status === 'success' ? 'success'
-    : block.status === 'error' || block.status === 'superseded' ? 'error'
+  const status: ToolExecution['status'] = block.status
+    ? (block.status === 'success' ? 'success' : 'error')
     : exit == null || exit === 0 ? 'success' : 'error';
   return {
     executionId: block.executionId ?? fallbackId,
@@ -66,15 +74,49 @@ export function executionFromBlock(block: TimelineToolBlock, fallbackId: string)
   };
 }
 
+/**
+ * The terminal slot of one stored turn — and the ONLY thing in the timeline
+ * that subscribes to the live terminal store.
+ *
+ * TerminalSessionStore.emit() fires on every output chunk (appendOutput and
+ * the ws stdout handler), so a subscription at the top of Timeline would
+ * re-render every day section, every turn, every tool card and every diff
+ * (which re-splits both file contents line by line) once per byte of an
+ * `apt upgrade`. Subscribing here means a chunk re-renders only the turns
+ * that actually own a terminal.
+ */
+function TurnTerminals({ ids }: { ids: string[] }) {
+  const { sessions } = useTerminalSessions();
+  const liveIds = new Set(sessions.map((s) => s.id));
+  const live = ids.filter((id) => liveIds.has(id));
+  const ended = ids.filter((id) => !liveIds.has(id));
+
+  return (
+    <>
+      {live.length > 0 && <InlineTerminals sessionIds={live} />}
+
+      {ended.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {ended.map((id) => (
+            <StaticTerminalChip key={id} id={id} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 interface TurnArticleProps {
   turn: TimelineTurn;
-  liveIds: Set<string>;
   onRunCommand?: RunCommand;
 }
 
-function TurnArticle({ turn, liveIds, onRunCommand }: TurnArticleProps) {
-  const liveTerminals = turn.terminalBlockIds.filter((id) => liveIds.has(id));
-  const endedTerminals = turn.terminalBlockIds.filter((id) => !liveIds.has(id));
+/**
+ * memo: a stored turn is immutable, so it should only re-render when the
+ * turn object itself changes. Callers should pass a stable `onRunCommand`
+ * (useCallback) or the memo buys nothing.
+ */
+const TurnArticle = memo(function TurnArticle({ turn, onRunCommand }: TurnArticleProps) {
   const hasAssistantSide =
     turn.assistant !== null ||
     turn.blocks.length > 0 ||
@@ -112,15 +154,7 @@ function TurnArticle({ turn, liveIds, onRunCommand }: TurnArticleProps) {
               />
             ))}
 
-            {liveTerminals.length > 0 && <InlineTerminals sessionIds={liveTerminals} />}
-
-            {endedTerminals.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {endedTerminals.map((id) => (
-                  <StaticTerminalChip key={id} id={id} />
-                ))}
-              </div>
-            )}
+            {turn.terminalBlockIds.length > 0 && <TurnTerminals ids={turn.terminalBlockIds} />}
 
             {turn.diffProposals.map((diff) => (
               <DiffBlock
@@ -151,7 +185,7 @@ function TurnArticle({ turn, liveIds, onRunCommand }: TurnArticleProps) {
       )}
     </article>
   );
-}
+});
 
 export function Timeline({
   byDay,
@@ -162,9 +196,6 @@ export function Timeline({
   onLoadLatest,
   onRunCommand,
 }: TimelineProps) {
-  const { sessions } = useTerminalSessions();
-  const liveIds = new Set(sessions.map((s) => s.id));
-
   if (byDay.length === 0 && !hasMore) return null;
 
   return (
@@ -191,7 +222,7 @@ export function Timeline({
             <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
           </header>
           {day.turns.map((turn) => (
-            <TurnArticle key={turn.turnId} turn={turn} liveIds={liveIds} onRunCommand={onRunCommand} />
+            <TurnArticle key={turn.turnId} turn={turn} onRunCommand={onRunCommand} />
           ))}
         </section>
       ))}

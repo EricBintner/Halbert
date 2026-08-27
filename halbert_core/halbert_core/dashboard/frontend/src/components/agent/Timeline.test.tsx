@@ -7,18 +7,45 @@
  * no longer be applied.
  */
 
-import { render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, it, expect, vi } from 'vitest'
-import { Timeline } from './Timeline'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { Timeline, executionFromBlock } from './Timeline'
 import { groupByDay } from '../../hooks/useTimeline'
-import type { TimelineTurn } from '../../types/timeline'
+import { terminalSessionStore } from '../../hooks/useTerminalSessions'
+import type { TimelineToolBlock, TimelineTurn } from '../../types/timeline'
 
 // The live tile needs xterm + a real font pipeline; the timeline test is
 // about records, so the tile is a stub here.
 vi.mock('./TerminalTile', () => ({
   TerminalTile: ({ session }: { session: { id: string } }) => <div data-testid="live-tile">{session.id}</div>,
 }))
+
+// A live tile watches itself with an IntersectionObserver (docking), which
+// jsdom does not implement; docking is not what this file is about.
+vi.stubGlobal(
+  'IntersectionObserver',
+  class {
+    root = null
+    rootMargin = ''
+    thresholds: number[] = []
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return []
+    }
+  },
+)
+
+// The terminal store is a module singleton: a session seeded by one test must
+// not decide the next test's live-vs-ended branch. Unmount first — closeAll()
+// notifies its subscribers, and a store update landing on a still-mounted tree
+// is a React state update outside act().
+afterEach(() => {
+  cleanup()
+  terminalSessionStore.closeAll()
+})
 
 const NOW = new Date(2026, 6, 16, 12, 0, 0) // Thu 16 Jul 2026
 
@@ -91,6 +118,18 @@ describe('Timeline', () => {
     expect(screen.getByText('proposed')).toBeInTheDocument()
   })
 
+  it('renders a live tile instead of the chip while the store still holds the terminal', () => {
+    // Same id as the stored turn's terminal, but this time the page still has
+    // the session (a reload has not happened yet), so the turn shows the live
+    // terminal rather than the record of one.
+    terminalSessionStore.adopt('term-gone', { command: 'apt upgrade' })
+
+    render(<Timeline byDay={groupByDay(TURNS, NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />)
+
+    expect(screen.getByTestId('live-tile')).toHaveTextContent('term-gone')
+    expect(screen.queryByText('terminal · ended')).not.toBeInTheDocument()
+  })
+
   it('offers "Load earlier" only when there is more, and marks the feed busy while paging', async () => {
     const onLoadOlder = vi.fn()
     const { rerender } = render(
@@ -124,5 +163,42 @@ describe('Timeline', () => {
     )
     await userEvent.click(screen.getByRole('button', { name: 'Back to latest' }))
     expect(onLoadLatest).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('executionFromBlock', () => {
+  function block(extra: Partial<TimelineToolBlock> = {}): TimelineToolBlock {
+    return { tool: 'run_command', args: { command: 'ls /srv' }, ...extra }
+  }
+
+  it('reads the exit code only when the backend stored no status', () => {
+    expect(executionFromBlock(block({ exit: 0 }), 'f').status).toBe('success')
+    expect(executionFromBlock(block({ exit: 1 }), 'f').status).toBe('error')
+    // exit is only ever set for run_command; unknown reads as success.
+    expect(executionFromBlock(block({ exit: null }), 'f').status).toBe('success')
+  })
+
+  it("prefers the backend's own verdict over the exit code", () => {
+    expect(executionFromBlock(block({ status: 'success', exit: null }), 'f').status).toBe('success')
+    expect(executionFromBlock(block({ status: 'error', exit: null, error: 'no such file' }), 'f')).toMatchObject({
+      status: 'error',
+      error: 'no such file',
+    })
+    // Staged, then superseded before it ran (state_machine.py:410-455).
+    expect(executionFromBlock(block({ status: 'superseded', exit: null }), 'f').status).toBe('error')
+  })
+
+  it('never calls a call that never finished a success', () => {
+    // A ToolCall is born "pending" (states.py:97) and _end_turn persists every
+    // call whatever its status (state_machine.py:660), so a turn interrupted
+    // between dispatch and completion stores {status: 'pending', exit: null} —
+    // which the exit heuristic on its own would render as a green success.
+    expect(executionFromBlock(block({ status: 'pending', exit: null }), 'f').status).toBe('error')
+    expect(executionFromBlock(block({ status: 'running' }), 'f').status).toBe('error')
+  })
+
+  it('falls back to the caller id only when the block has no execution id', () => {
+    expect(executionFromBlock(block(), 't-1-block-0').executionId).toBe('t-1-block-0')
+    expect(executionFromBlock(block({ executionId: 'x9' }), 't-1-block-0').executionId).toBe('x9')
   })
 })
