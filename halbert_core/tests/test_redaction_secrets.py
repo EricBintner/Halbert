@@ -59,3 +59,25 @@ def test_lkdc_realm_hash_is_redacted():
 def test_plain_text_without_lkdc_is_untouched():
     text = "<key>NetBIOSName</key>\n<string>WORKSTATION</string>\n"
     assert redact_text(text) == "<key>NetBIOSName</key>\n<string>WORKSTATION</string>\n"
+
+
+def test_redaction_does_not_span_newlines():
+    """`\\s*` would match \\n and swallow the next line's first token.
+
+    /etc/netplan/*.yaml is harvested by the network role manifest, so a
+    key-like mapping at end-of-line must not consume the following line.
+    """
+    out = redact_text("api:\n  - foo\n")
+    assert "foo" in out
+    assert "- foo" in out
+
+
+def test_yaml_structure_survives_redaction():
+    netplan = "network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n"
+    assert redact_text(netplan) == netplan
+
+
+def test_secret_with_horizontal_whitespace_still_redacted():
+    """The WireGuard case that motivated the change must keep working."""
+    assert "abc123def" not in redact_text("PrivateKey = abc123def\n")
+    assert "xyz789" not in redact_text("psk\t=\txyz789\n")

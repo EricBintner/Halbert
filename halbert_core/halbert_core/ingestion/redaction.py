@@ -7,11 +7,17 @@ from typing import Any, Dict
 # Patterns from docs schemas (tokens/keys, home paths, emails, IPv4)
 # Keyword list covers config formats staged into SourcePrep scopes:
 # `psk` (NetworkManager WiFi), `privatekey`/`presharedkey` (WireGuard), plus
-# the original generic terms. `\s*` around the separator is required —
+# the original generic terms. Whitespace around the separator is required —
 # WireGuard's standard formatting is `PrivateKey = <value>`, which the
 # original no-whitespace pattern silently missed.
+#
+# That whitespace is horizontal-only (`[ \t]*`) on purpose. `\s*` also matches
+# newlines, so a key-like mapping at end-of-line would consume the next line's
+# first token: `api:\n  - foo` collapsed to `<secret> foo`. Harvested YAML
+# (/etc/netplan/*.yaml) must keep its structure, so the separator may never
+# span a line break.
 TOKEN_RE = re.compile(
-    r"(?i)(api|secret|token|key|password|psk|privatekey|presharedkey)\s*[=:]\s*\S+"
+    r"(?i)(api|secret|token|key|password|psk|privatekey|presharedkey)[ \t]*[=:][ \t]*\S+"
 )
 HOME_RE = re.compile(r"/home/[^/\s]+")
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
