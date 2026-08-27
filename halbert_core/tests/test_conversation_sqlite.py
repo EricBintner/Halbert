@@ -2,13 +2,10 @@
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Tests for SqliteConversationStore + migration (F1)."""
 
-import json
 import pytest
 
-from halbert_core.agents.conversation import Conversation, Message, ConversationStore
-from halbert_core.agents.conversation_sqlite import (
-    SqliteConversationStore, migrate_json_conversations_to_sqlite,
-)
+from halbert_core.agents.conversation import Conversation, Message
+from halbert_core.agents.conversation_sqlite import SqliteConversationStore
 
 
 @pytest.fixture
@@ -158,38 +155,3 @@ class TestSomaticBlocks:
         store.add_somatic_block("s2", "b2")
         assert len(store.list_somatic_blocks("s1")) == 1
         assert len(store.list_somatic_blocks("s2")) == 1
-
-
-# ---------------------------------------------------------------------------
-# Migration JSON -> SQLite
-# ---------------------------------------------------------------------------
-
-class TestMigration:
-    def test_migrate_json_to_sqlite(self, tmp_path):
-        # Build a JSON ConversationStore with a couple of conversations
-        json_store = ConversationStore(storage_path=str(tmp_path))
-        c1 = json_store.create("j1", "u1")
-        c1.add_message("user", "configure nginx")
-        c1.add_message("assistant", "done")
-        json_store.save(c1)
-        c2 = json_store.create("j2", "u1")
-        c2.add_message("user", "check disk usage")
-        json_store.save(c2)
-
-        sqlite_store = SqliteConversationStore(":memory:")
-        n = migrate_json_conversations_to_sqlite(json_store, sqlite_store)
-        assert n == 2
-
-        # Conversations migrated with messages
-        g1 = sqlite_store.get("j1")
-        assert g1 is not None and len(g1.messages) == 2
-        # FTS search works on migrated content
-        assert "j1" in sqlite_store.search("nginx")
-        assert "j2" in sqlite_store.search("disk")
-        sqlite_store.close()
-
-    def test_migrate_empty_dir(self, tmp_path):
-        json_store = ConversationStore(storage_path=str(tmp_path))
-        sqlite_store = SqliteConversationStore(":memory:")
-        assert migrate_json_conversations_to_sqlite(json_store, sqlite_store) == 0
-        sqlite_store.close()

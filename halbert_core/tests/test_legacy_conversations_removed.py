@@ -39,3 +39,36 @@ def test_agent_conversations_endpoints_are_gone(client):
 def test_conversations_route_module_is_gone():
     import halbert_core.dashboard.routes  # noqa: F401  (parent package must import)
     assert importlib.util.find_spec("halbert_core.dashboard.routes.conversations") is None
+
+
+def test_json_stores_are_gone_from_agents_conversation():
+    import halbert_core.agents.conversation as conv
+
+    # the records stay — the SQLite store and the history path use them
+    assert hasattr(conv, "Conversation")
+    assert hasattr(conv, "Message")
+    for name in ("ConversationStore", "SessionStore", "Session",
+                 "get_conversation_store", "get_session_store"):
+        assert not hasattr(conv, name), name
+
+
+def test_agents_package_no_longer_reexports_deleted_symbols():
+    import halbert_core.agents as agents
+
+    for name in ("ConversationStore", "get_conversation_store",
+                 "PlanningHandler", "SearchingHandler", "ReadingHandler",
+                 "ExecutingHandler", "ObservingHandler", "RespondingHandler"):
+        assert name not in agents.__all__, name
+        assert not hasattr(agents, name), name
+    assert "Conversation" in agents.__all__
+    assert "Message" in agents.__all__
+
+
+def test_handlers_package_is_gone():
+    import halbert_core.agents  # noqa: F401
+    assert importlib.util.find_spec("halbert_core.agents.handlers") is None
+
+
+def test_json_migration_helper_is_gone():
+    import halbert_core.agents.conversation_sqlite as cs
+    assert not hasattr(cs, "migrate_json_conversations_to_sqlite")

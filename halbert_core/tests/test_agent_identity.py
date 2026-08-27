@@ -75,38 +75,3 @@ class TestVoicesStayDistinct:
         assert builder._get_identity() == AgentPromptBuilder(
             voice="first_person"
         )._get_identity()
-
-
-class TestRespondingFallback:
-    """RESPONDING has its own system prompt for when the builder failed to
-    wire. It carried the generic-assistant line, so a wiring failure silently
-    changed who Halbert said it was."""
-
-    def _handler(self, prompt_builder):
-        from halbert_core.agents.handlers.responding import RespondingHandler
-        from unittest.mock import MagicMock
-
-        agent = MagicMock()
-        agent.prompt_builder = prompt_builder
-        return RespondingHandler(agent)
-
-    def test_fallback_is_not_a_generic_assistant(self):
-        prompt = self._handler(None)._get_system_prompt()
-        assert "AI assistant" not in prompt
-        assert "Halbert" in prompt
-
-    def test_builder_is_preferred_when_wired(self):
-        from unittest.mock import MagicMock
-
-        builder = MagicMock()
-        builder.build_system_prompt.return_value = "WIRED"
-        assert self._handler(builder)._get_system_prompt() == "WIRED"
-
-    def test_fallback_survives_a_broken_prompts_package(self):
-        with patch(
-            "halbert_core.prompts.agent_prompts.AgentPromptBuilder._get_identity",
-            side_effect=RuntimeError("boom"),
-        ):
-            prompt = self._handler(None)._get_system_prompt()
-        assert "Halbert" in prompt
-        assert "AI assistant" not in prompt

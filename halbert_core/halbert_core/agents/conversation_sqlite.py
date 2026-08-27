@@ -803,11 +803,11 @@ class SqliteConversationStore:
                     )
                 # MAX(...): agrees with save()'s ON CONFLICT clause (A1 review
                 # finding 3) so the two write paths can't rewind each other.
-                # migrate_json_conversations_to_sqlite backfills with an
-                # explicit, often much older, ``timestamp=`` — an
-                # unconditional assignment here would otherwise drop a
-                # thread's recency below whatever it already was, corrupting
-                # ``ORDER BY updated_at DESC`` in list_conversations/list_threads
+                # agents/migrations.py backfills messages with an explicit,
+                # often much older, ``timestamp=`` — an unconditional
+                # assignment here would otherwise drop a thread's recency
+                # below whatever it already was, corrupting ``ORDER BY
+                # updated_at DESC`` in list_conversations/list_threads
                 # (A1 review finding 3).
                 self._conn.execute(
                     "UPDATE conversations SET updated_at = MAX(updated_at, ?) WHERE id = ?",
@@ -1850,46 +1850,3 @@ class SqliteConversationStore:
             except Exception:
                 pass
             self._conn = None
-
-
-# ---------------------------------------------------------------------------
-# One-time migration: JSON -> SQLite (superseded by agents/migrations.py in A12)
-# ---------------------------------------------------------------------------
-
-def migrate_json_conversations_to_sqlite(
-    json_store: Any, sqlite_store: SqliteConversationStore
-) -> int:
-    """Migrate every ``*.json`` conversation from a JSON ``ConversationStore``
-    into a ``SqliteConversationStore``. Returns the number migrated.
-
-    Idempotent: a thread that already holds messages is not re-appended.
-    (Superseded by ``agents/migrations.py`` in A12, which also closes threads.)
-    """
-    storage_path = getattr(json_store, "storage_path", None)
-    if storage_path is None or not Path(storage_path).exists():
-        return 0
-    n = 0
-    for file_path in Path(storage_path).glob("*.json"):
-        try:
-            with open(file_path, "r") as f:
-                data = json.load(f)
-            conv = Conversation.from_dict(data)
-            messages = list(conv.messages)
-            conv.messages = []
-            existing = sqlite_store.get(conv.conversation_id)
-            if existing is not None and existing.messages:
-                n += 1  # already migrated
-                continue
-            if not sqlite_store.save(conv):
-                continue
-            for m in messages:
-                sqlite_store.append_message(
-                    conv.conversation_id, m.role, m.content,
-                    origin="assistant" if m.role == "assistant" else "human",
-                    metadata=m.metadata, timestamp=m.timestamp,
-                )
-            n += 1
-        except Exception as e:
-            logger.warning(f"migration skipped {file_path}: {e}")
-    logger.info(f"Migrated {n} conversations from JSON to SQLite")
-    return n

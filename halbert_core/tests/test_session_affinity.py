@@ -118,20 +118,3 @@ class TestConfidence:
         fts = router.route("nginx firewall")
         cur = router.route("zzzzunrelated", current_session_id="c")
         assert fts.confidence > cur.confidence
-
-
-# ---------------------------------------------------------------------------
-# Works with the JSON ConversationStore too (duck-typed)
-# ---------------------------------------------------------------------------
-
-def test_works_with_json_store(tmp_path):
-    from halbert_core.agents.conversation import ConversationStore
-    json_store = ConversationStore(storage_path=str(tmp_path))
-    c = json_store.create("json-conv", "u1")
-    c.add_message("user", "configure the nginx web server")
-    json_store.save(c)
-
-    router = SessionAffinityRouter(json_store)
-    aff = router.route("tell me about nginx")
-    assert aff.tier == "fts"
-    assert aff.session_id == "json-conv"
