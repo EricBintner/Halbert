@@ -730,6 +730,53 @@ def test_etc_hosts_round_trips_unchanged():
     assert redact_text(hosts) == hosts
 
 
+# --- IPv6: a colon-separated numeric triple is not an address -------------
+
+
+def test_sshd_maxstartups_is_not_an_ipv6_address():
+    """`MaxStartups 10:30:100` is a real sshd tunable, not an address."""
+    assert redact_text("MaxStartups 10:30:100\n") == "MaxStartups 10:30:100\n"
+
+
+def test_timestamp_inside_an_rcs_id_survives():
+    """/etc/ssh/sshd_config ships with an OpenBSD RCS ID carrying a clock."""
+    line = "# $OpenBSD: sshd_config,v 1.104 2021/07/02 05:11:21 dtucker Exp $\n"
+    assert redact_text(line) == line
+
+
+def test_short_colon_separated_versions_survive():
+    for line in ("version 1:2:3\n", "ratio 4:3\n", "elapsed 00:00:07\n"):
+        assert redact_text(line) == line
+
+
+def test_genuine_ipv6_forms_are_still_classified_as_ipv6():
+    """Tightening must not cost recognition of real addresses.
+
+    Exempt ones survive by exemption, not by failing to be recognised, so the
+    positive control is the public forms: each must become `<ip6>`.
+    """
+    for addr in (
+        "2001:db8::8a2e:370:7334",
+        "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+        "2606:4700:4700::1111",
+        "fec0::1",
+    ):
+        out = redact_text(f"peer {addr}\n")
+        assert out == "peer <ip6>\n", f"{addr} not recognised as IPv6: {out!r}"
+
+
+def test_apt_style_double_colon_keys_are_not_addresses():
+    """apt writes `Acquire::http::Proxy`; dropping \\b must not catch it."""
+    line = 'Acquire::http::Proxy "http://proxy.local:3142";\n'
+    assert "Acquire::http::Proxy" in redact_text(line)
+
+
+def test_mac_addresses_are_still_redacted_before_ipv6_sees_them():
+    out = redact_text("permanent-mac-address=00:1A:2B:3C:4D:5E\n")
+    assert "1A:2B" not in out
+    assert "<mac>" in out
+
+
 def test_redaction_is_idempotent():
     """Re-redacting already-redacted text must not degrade it further."""
     for text in (

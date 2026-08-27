@@ -144,7 +144,33 @@ EMAIL_RE = re.compile(
     r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}"
 )
 IPV4_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
-IPV6_RE = re.compile(r"\b([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b")
+# An IPv6 address in text is either the *compressed* form -- it contains a
+# `::` run -- or the full eight groups. There is no third shape, so a
+# colon-separated run that has neither cannot be an address whatever its
+# digits are. The three branches below are exactly those two shapes, with the
+# compressed one split by whether anything precedes the `::`.
+#
+# The previous pattern (`\b([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b`) asked
+# only for two-to-seven colon-separated groups and so matched any decimal
+# triple. Verified before this change: `MaxStartups 10:30:100` -- a real sshd
+# tunable -- became `MaxStartups <ip6>`; the `05:11:21` clock inside
+# sshd_config's OpenBSD RCS ID became `<ip6>`; and, because `{0,4}` admits
+# empty groups, `Acquire::http::Proxy` became `Acquire<ip6>http<ip6>Proxy`.
+#
+# `\b` is replaced by explicit lookarounds. A word boundary cannot anchor
+# before a leading colon, so `::1` was never matched at all -- it survived the
+# old blanket redaction by accident rather than by rule.
+_H16 = r"[0-9A-Fa-f]{1,4}"
+_H16_TAIL = rf"(?:{_H16}(?::{_H16}){{0,6}})?"
+IPV6_RE = re.compile(
+    r"(?<![0-9A-Za-z.:])"
+    r"(?:"
+    rf"(?:{_H16}:){{7}}{_H16}"  # full eight groups, no compression
+    rf"|(?:{_H16}:){{1,7}}:{_H16_TAIL}"  # compressed, groups before the `::`
+    rf"|::{_H16_TAIL}"  # compressed, `::` leads
+    r")"
+    r"(?![0-9A-Za-z.:])"
+)
 MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}\b")
 
 # --- Addresses: non-routable is operational data, not a secret ------------
