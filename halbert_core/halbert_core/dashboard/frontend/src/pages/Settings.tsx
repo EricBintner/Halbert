@@ -129,6 +129,121 @@ function BeingSettings() {
 
   return (
     <div className="space-y-4">
+      {/* Character (Phase 3) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Brain className="h-5 w-5" />
+            Character
+          </CardTitle>
+          <CardDescription>
+            Name, communication style, and custom instructions for your computer.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Name */}
+          <div className="space-y-2">
+            <Label>Name</Label>
+            <Input
+              defaultValue={config.name || ''}
+              placeholder="Halbert"
+              onBlur={(e) => {
+                if (e.target.value !== (config.name || '')) {
+                  saveConfig({ name: e.target.value })
+                }
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              What you call your computer.
+            </p>
+          </div>
+
+          {/* Communication Style */}
+          <div className="space-y-2">
+            <Label>Communication Style</Label>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {(['concise', 'balanced', 'detailed', 'analytical', 'casual'] as const).map((style) => (
+                <Button
+                  key={style}
+                  variant={config.archetype_id === style ? 'default' : 'outline'}
+                  onClick={() => saveConfig({ archetype_id: style })}
+                  disabled={saving}
+                  className="capitalize"
+                >
+                  {style}
+                </Button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {config.archetype_id === 'concise' && 'Fast, minimal words, imperative commands.'}
+              {config.archetype_id === 'balanced' && 'Clear, calm, factual, helpful.'}
+              {config.archetype_id === 'detailed' && 'Explanatory, instructional. Explains why before acting.'}
+              {config.archetype_id === 'analytical' && 'Systems-focused, design-oriented, addresses root causes.'}
+              {config.archetype_id === 'casual' && 'Approachable, light touch, conversational.'}
+              {!config.archetype_id && 'Simple 5-way selector. Default: Balanced.'}
+            </p>
+          </div>
+
+          {/* Voice Presentation */}
+          <div className="space-y-2">
+            <Label>Voice Presentation</Label>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { key: 'not_defined', label: 'Not Defined' },
+                { key: 'male', label: 'Male' },
+                { key: 'female', label: 'Female' },
+              ] as const).map(({ key, label }) => (
+                <Button
+                  key={key}
+                  variant={config.voice_presentation === key ? 'default' : 'outline'}
+                  onClick={() => saveConfig({ voice_presentation: key })}
+                  disabled={saving}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              How the voice is characterized in conversation.
+            </p>
+          </div>
+
+          {/* Conversation Model (deferred backend) */}
+          <div className="space-y-2">
+            <Label>Conversation Model</Label>
+            <Select
+              defaultValue={config.model || ''}
+              onChange={(e) => saveConfig({ model: e.target.value || null })}
+              disabled={saving}
+            >
+              <option value="">Default (System Agent Model)</option>
+              <option value="_custom" disabled>Custom Model Path (coming soon)</option>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Use the system default, or assign a fine-tuned model to this persona.
+            </p>
+          </div>
+
+          {/* Custom Instructions */}
+          <div className="space-y-2">
+            <Label>Custom Instructions</Label>
+            <textarea
+              className="w-full min-h-[100px] font-sans text-sm rounded-md border border-input bg-background px-3 py-2 ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              defaultValue={config.custom_personality_prompt || ''}
+              placeholder="e.g. Always show the full shell command before asking for confirmation. Keep status updates brief."
+              onBlur={(e) => {
+                if (e.target.value !== (config.custom_personality_prompt || '')) {
+                  saveConfig({ custom_personality_prompt: e.target.value })
+                }
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              Plain text instructions injected directly into system guidance.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Voice Setting */}
       <Card>
         <CardHeader>

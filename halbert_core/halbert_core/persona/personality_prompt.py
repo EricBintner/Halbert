@@ -81,6 +81,11 @@ def generate_personality_section(being_cfg: Any) -> str:
     directives = getattr(being_cfg, "directives", []) or []
     extras = _format_extras(tone, speech, directives)
 
+    # Voice presentation guidance (Phase 3)
+    vp = getattr(being_cfg, "voice_presentation", "not_defined") or "not_defined"
+    if vp in ("male", "female"):
+        extras = (extras + "\n" if extras else "") + f"VOICE PRESENTATION: {vp}"
+
     # 2. Archetype
     archetype_id = getattr(being_cfg, "archetype_id", None)
     if archetype_id:

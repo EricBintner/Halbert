@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 VALID_VOICES = {"first_person", "the_computer", "hybrid"}
 VALID_PROACTIVITY = {"off", "quiet", "balanced", "assertive"}
+VALID_VOICE_PRESENTATIONS = {"not_defined", "male", "female"}
+VALID_COMMUNICATION_STYLES = {"concise", "balanced", "detailed", "analytical", "casual"}
 
 
 @dataclass
@@ -50,6 +52,11 @@ class BeingConfig:
     speech_patterns: List[str] = field(default_factory=list)
     directives: List[str] = field(default_factory=list)
     custom_personality_prompt: str = ""  # escape hatch: replaces generated layer
+
+    # --- Character (Phase 3 UI) ---
+    name: str = ""  # display name; syncs with preferences.yml ai_name
+    voice_presentation: str = "not_defined"  # not_defined | male | female
+    model: Optional[str] = None  # optional per-persona model override (deferred backend)
 
     def validate(self) -> None:
         """Validate the config. Raises ValueError on invalid values."""
@@ -82,6 +89,11 @@ class BeingConfig:
                 raise ValueError(
                     f"Personality trait '{trait}' must be 0.0-1.0, got {value}"
                 )
+        if self.voice_presentation not in VALID_VOICE_PRESENTATIONS:
+            raise ValueError(
+                f"Invalid voice_presentation '{self.voice_presentation}'. "
+                f"Must be one of: {VALID_VOICE_PRESENTATIONS}"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
