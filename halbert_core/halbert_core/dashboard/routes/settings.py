@@ -3071,6 +3071,13 @@ class BeingConfigUpdate(BaseModel):
     quiet_hours: Optional[Dict[str, str]] = None
     morning_report: Optional[Dict[str, Any]] = None
     category_overrides: Optional[Dict[str, str]] = None
+    # Personality
+    personality_profile: Optional[Dict[str, float]] = None
+    archetype_id: Optional[str] = None
+    tone_descriptors: Optional[List[str]] = None
+    speech_patterns: Optional[List[str]] = None
+    directives: Optional[List[str]] = None
+    custom_personality_prompt: Optional[str] = None
 
 
 @router.get("/being")
@@ -3107,13 +3114,105 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
             cfg.morning_report = update.morning_report
         if update.category_overrides is not None:
             cfg.category_overrides = update.category_overrides
+        # Personality
+        if update.personality_profile is not None:
+            cfg.personality_profile = update.personality_profile
+        if update.archetype_id is not None:
+            cfg.archetype_id = update.archetype_id if update.archetype_id else None
+        if update.tone_descriptors is not None:
+            cfg.tone_descriptors = update.tone_descriptors
+        if update.speech_patterns is not None:
+            cfg.speech_patterns = update.speech_patterns
+        if update.directives is not None:
+            cfg.directives = update.directives
+        if update.custom_personality_prompt is not None:
+            cfg.custom_personality_prompt = update.custom_personality_prompt
 
         # Validate + save
         save_being_config(cfg)
+
+        # Hot-reload personality into the running agent
+        try:
+            from .agent import get_agent
+            agent = get_agent()
+            if agent and hasattr(agent, 'prompt_builder'):
+                agent.prompt_builder.reload_personality()
+        except Exception as e:
+            logger.warning(f"Could not hot-reload personality: {e}")
 
         return {"status": "ok", "config": cfg.to_dict()}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to save being config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Personality Archetypes & Preview
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/personality/archetypes")
+async def list_personality_archetypes() -> Dict[str, Any]:
+    """List available sysadmin personality archetypes."""
+    try:
+        from ...persona.archetypes import list_archetypes, is_available
+        if not is_available():
+            return {"status": "ok", "archetypes": [], "available": False}
+        return {"status": "ok", "archetypes": list_archetypes(), "available": True}
+    except Exception as e:
+        logger.error(f"Failed to list archetypes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/personality/archetypes/{archetype_id}")
+async def get_personality_archetype(archetype_id: str) -> Dict[str, Any]:
+    """Get a specific personality archetype by id."""
+    try:
+        from ...persona.archetypes import get_archetype
+        archetype = get_archetype(archetype_id)
+        if archetype is None:
+            raise HTTPException(status_code=404, detail=f"Archetype '{archetype_id}' not found")
+        return {"status": "ok", "archetype": archetype.to_dict()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get archetype: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class PersonalityPreviewRequest(BaseModel):
+    personality_profile: Optional[Dict[str, float]] = None
+    archetype_id: Optional[str] = None
+    tone_descriptors: Optional[List[str]] = None
+    speech_patterns: Optional[List[str]] = None
+    directives: Optional[List[str]] = None
+    custom_personality_prompt: Optional[str] = None
+
+
+@router.post("/personality/preview")
+async def preview_personality_section(req: PersonalityPreviewRequest) -> Dict[str, Any]:
+    """Dry-run: generate the personality prompt section without saving."""
+    try:
+        from ...config.being_config import BeingConfig
+        from ...persona.personality_prompt import generate_personality_section
+
+        cfg = BeingConfig()
+        if req.personality_profile is not None:
+            cfg.personality_profile = req.personality_profile
+        if req.archetype_id is not None:
+            cfg.archetype_id = req.archetype_id or None
+        if req.tone_descriptors is not None:
+            cfg.tone_descriptors = req.tone_descriptors
+        if req.speech_patterns is not None:
+            cfg.speech_patterns = req.speech_patterns
+        if req.directives is not None:
+            cfg.directives = req.directives
+        if req.custom_personality_prompt is not None:
+            cfg.custom_personality_prompt = req.custom_personality_prompt
+
+        section = generate_personality_section(cfg)
+        return {"status": "ok", "section": section}
+    except Exception as e:
+        logger.error(f"Failed to preview personality: {e}")
         raise HTTPException(status_code=500, detail=str(e))

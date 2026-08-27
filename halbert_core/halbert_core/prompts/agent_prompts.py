@@ -361,7 +361,7 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
             lines.append(f"**{role}**: {text}")
         return "\n".join(lines) if len(lines) > 1 else ""
 
-    def __init__(self, base_builder=None, context_injector=None, voice: str = "first_person"):
+    def __init__(self, base_builder=None, context_injector=None, voice: str = "first_person", being_cfg=None):
         """
         Initialize the agent prompt builder.
 
@@ -372,10 +372,12 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
                 user preferences, discovery summary.
             voice: Self-reference voice mode. One of:
                 "first_person" (default), "the_computer", "hybrid".
+            being_cfg: Optional BeingConfig instance for personality settings.
         """
         self.base_builder = base_builder
         self.context_injector = context_injector
         self.voice = voice
+        self._being_cfg = being_cfg
 
     def set_voice(self, voice: str) -> None:
         """Update the voice setting. Called when BeingConfig changes."""
@@ -383,6 +385,34 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
             self.voice = voice
         else:
             logger.warning(f"Invalid voice '{voice}', keeping '{self.voice}'")
+
+    def reload_personality(self) -> None:
+        """Re-read being.yml for personality/voice changes.
+
+        Called by the API after a BeingConfig update so the running agent
+        picks up the new values without a restart.
+        """
+        try:
+            from ..config.being_config import load_being_config
+            self._being_cfg = load_being_config()
+            self.set_voice(self._being_cfg.voice)
+        except Exception as e:
+            logger.warning(f"Personality reload failed: {e}")
+
+    def _generate_personality(self) -> str:
+        """Generate the personality prompt section from BeingConfig.
+
+        Returns an empty string when no personality is configured or when
+        Haloysius is unavailable.
+        """
+        if self._being_cfg is None:
+            return ""
+        try:
+            from ..persona.personality_prompt import generate_personality_section
+            return generate_personality_section(self._being_cfg)
+        except Exception as e:
+            logger.warning(f"Personality generation failed: {e}")
+            return ""
 
     @staticmethod
     def _platform_phrase() -> str:
@@ -445,6 +475,7 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
                     tier="specialist",
                     system_context=system_context or None,
                     user_prefs=user_preferences or {},
+                    personality_section=self._generate_personality(),
                 )
                 if prompt:
                     return prompt
@@ -454,9 +485,14 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         # Fallback: hardcoded layers
         parts = [
             self._get_identity(),
-            self.LAYER_2_CAPABILITIES,
-            self.LAYER_3_CONSTRAINTS,
         ]
+
+        personality = self._generate_personality()
+        if personality:
+            parts.append(personality)
+
+        parts.append(self.LAYER_2_CAPABILITIES)
+        parts.append(self.LAYER_3_CONSTRAINTS)
         
         if user_preferences:
             pref_section = self._format_preferences(user_preferences)

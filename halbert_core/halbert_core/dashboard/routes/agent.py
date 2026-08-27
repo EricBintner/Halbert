@@ -151,12 +151,14 @@ def get_agent():
             being_cfg = load_being_config()
             voice = being_cfg.voice
         except Exception:
+            being_cfg = None
             voice = "first_person"
 
         prompt_builder = AgentPromptBuilder(
             base_builder=prompt_builder,
             context_injector=context_injector,
             voice=voice,
+            being_cfg=being_cfg,
         )
 
         # Create LLM client
