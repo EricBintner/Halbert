@@ -242,3 +242,89 @@ def test_every_template_role_scope_is_in_the_registry():
     scope_ids = {s["id"] for s in _load_template()["scopes"]}
     for role in ROLES:
         assert role in scope_ids, f"{role} in registry but not template"
+
+
+# --- The manifests must reach a wheel ------------------------------------
+#
+# `test_every_role_has_a_manifest_that_exists` passes in a checkout and
+# cannot see this: production resolves the manifests relative to the
+# *installed package*, and a repo-relative path does not exist there.
+
+
+def _package_root() -> str:
+    from halbert_core.config import roles as roles_mod
+
+    return os.path.dirname(os.path.dirname(os.path.abspath(roles_mod.__file__)))
+
+
+def test_role_manifests_live_inside_the_installed_package():
+    """A path outside the package cannot survive `pip install`.
+
+    Resolved as `<package>/../../../config/scopes`, every manifest was
+    missing under a wheel: stage_role_tree raised FileNotFoundError,
+    _stage_host_tree swallowed it as non-fatal, and sourceprep_template.yml
+    then registered host/network, host/service and host/storage against
+    directories that were never created -- the empty-scope condition
+    roles.py warns about, where scope_mode="hard" makes an empty mask
+    exclude everything rather than narrow.
+    """
+    root = _package_root() + os.sep
+    for name in ROLES:
+        path = os.path.abspath(manifest_path_for(name))
+        assert path.startswith(root), f"{name} manifest is outside the package: {path}"
+        assert os.path.isfile(path), f"{name} manifest missing: {path}"
+
+
+def _package_data_globs():
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib
+
+    pyproject = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyproject.toml"
+    )
+    with open(pyproject, "rb") as f:
+        data = tomllib.load(f)
+    return data.get("tool", {}).get("setuptools", {}).get("package-data", {})
+
+
+def test_pyproject_declares_the_manifests_as_package_data():
+    """Living inside the package is necessary but not sufficient.
+
+    Verified by building a wheel from this pyproject before the fix: with
+    only `include = ["halbert_core*"]` and no package-data stanza, the wheel
+    held 331 entries and *zero* non-.py files -- so even
+    integrations/sourceprep_template.yml, which already lived inside the
+    package, was absent from every non-editable install.
+    """
+    import fnmatch
+
+    globs = _package_data_globs()
+    assert globs, "no [tool.setuptools.package-data]: a wheel drops every data file"
+
+    root = _package_root()
+    for name in ROLES:
+        rel = os.path.relpath(os.path.abspath(manifest_path_for(name)), root)
+        # `halbert_core.config` + `scopes/*.yml` -> `config/scopes/<name>.yml`
+        matched = any(
+            fnmatch.fnmatch(rel, os.path.join(*pkg.split(".")[1:], pattern))
+            for pkg, patterns in globs.items()
+            for pattern in patterns
+        )
+        assert matched, f"{rel} is not covered by any package-data glob"
+
+
+def test_the_sourceprep_template_is_package_data_too():
+    """It is read at registration time and was missing from the wheel for
+    exactly the same reason the manifests were."""
+    import fnmatch
+
+    globs = _package_data_globs()
+    rel = os.path.join("integrations", "sourceprep_template.yml")
+    assert os.path.isfile(os.path.join(_package_root(), rel))
+    assert any(
+        fnmatch.fnmatch(rel, os.path.join(*pkg.split(".")[1:], pattern))
+        for pkg, patterns in globs.items()
+        for pattern in patterns
+    ), f"{rel} is not covered by any package-data glob"

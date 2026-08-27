@@ -82,5 +82,15 @@ halbert = "halbert_core.dashboard.__main__:main"
 where = ["."]
 include = ["halbert_core*"]
 
+# Non-Python files the runtime reads. Without this stanza a wheel built from
+# this project contained 331 entries and not one non-.py file, so every data
+# file inside the package was absent from every non-editable install --
+# including sourceprep_template.yml, which registers the SourcePrep scopes.
+# tests/test_config_roles.py fails if a manifest stops being covered here.
+[tool.setuptools.package-data]
+"halbert_core.config" = ["scopes/*.yml"]
+"halbert_core.integrations" = ["*.yml"]
+"halbert_core.prompts" = ["*.txt"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
