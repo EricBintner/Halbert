@@ -160,6 +160,11 @@ class AgentStateMachine:
         
         # Cancellation tracking for session interruption
         self.cancelled: Dict[str, bool] = {}
+
+        # One turn at a time (spec §12): held for the whole of process() and
+        # confirm_action(), including their cleanup. A second /message during
+        # a turn waits here instead of the route force-resetting the machine.
+        self.turn_lock = asyncio.Lock()
     
     # Property aliases for handler compatibility
     @property
@@ -194,74 +199,173 @@ class AgentStateMachine:
         user_id: str = None,
         conversation_history: List[Dict] = None,
         images: List[str] = None,
+        thread_id: str = None,
+        continuity: str = "",
+        thread_manager=None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Process a user query through the state machine.
-        
+
         Yields StreamEvents for real-time frontend updates.
-        
+
         Args:
             query: User's question/request
             session_id: Optional session ID (generated if not provided)
             user_id: Optional user ID
             conversation_history: Previous messages in conversation
-            
-        Yields:
-            StreamEvent objects for each state change, tool call, etc.
+            images: Optional base64 images for the vision model
+            thread_id: Hidden thread this turn belongs to (Plan A); the
+                ThreadManager overrides it when one is wired
+            continuity: The <continuity> hint for this turn ("" when none)
+            thread_manager: ThreadManager that persists the turn (may be None)
         """
         session_id = session_id or str(uuid.uuid4())
         request_id = str(uuid.uuid4())
-        
-        # Initialize context
-        self.ctx = StateContext(
-            session_id=session_id,
-            request_id=request_id,
-            user_query=query,
-            user_id=user_id,
-            conversation_history=conversation_history or [],
-            max_loops=self.max_loops,
-            images=images,
-        )
 
-        # Phase 3: Run intake pipeline before cognitive tick
-        if self.intake is not None:
+        # A second /message during a live turn queues on the lock (the
+        # route no longer force-resets the machine, A11). Tell the UI it
+        # is waiting before blocking (spec §12: "emits conversation_status:
+        # waiting"); the status is the plain string the badge expects.
+        if self.turn_lock.locked():
+            logger.info(f"Session {session_id} waiting for the current turn to finish")
+            yield StreamEvent.conversation_status(
+                session_id, "waiting", waiting_for="previous turn"
+            )
+
+        # One turn at a time (spec §12). Everything below, including the
+        # finally, runs under the lock; asyncio.Lock is not task-bound, so
+        # releasing it from the generator's cleanup is fine whichever task
+        # drives the last step.
+        async with self.turn_lock:
+            self._supersede_paused_turn(session_id)
+
+            # Initialize context
+            self.ctx = StateContext(
+                session_id=session_id,
+                request_id=request_id,
+                user_query=query,
+                user_id=user_id,
+                conversation_history=conversation_history or [],
+                max_loops=self.max_loops,
+                images=images,
+                thread_id=thread_id,
+                continuity_hint=continuity or "",
+                thread_manager=thread_manager,
+            )
+
+            # Phase 3: Run intake pipeline before cognitive tick
+            if self.intake is not None:
+                try:
+                    self.ctx.intake = self.intake.analyze(query)
+                    logger.info(
+                        f"Intake: intent={self.ctx.intake.intent}, "
+                        f"complexity={self.ctx.intake.complexity_score}, "
+                        f"model={self.ctx.intake.recommended_model}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Intake pipeline failed (non-fatal): {e}")
+
+            # Phase D: Inject persona cognition if tick is wired
+            if self.cognition_tick is not None:
+                try:
+                    from ..integrations.cognition_wiring import get_cognition
+                    self.ctx.persona_cognition = get_cognition()
+                except Exception as e:
+                    logger.warning(f"Could not inject persona cognition: {e}")
+
+            # Track active session
+            self.active_sessions[session_id] = self.ctx
+
+            logger.info(f"Starting agent processing: session={session_id}, query={query[:100]}")
+
+            yield StreamEvent.session_started(session_id, request_id)
+
             try:
-                self.ctx.intake = self.intake.analyze(query)
+                # Inside the try (spec §12): an invalid transition, an
+                # exception in a handler or a consumer that goes away
+                # mid-turn must all reach the cleanup below, otherwise the
+                # machine is stranded mid-state and the next turn cannot
+                # start.
+                yield await self._transition(AgentState.PLANNING)
+                async for event in self._drive():
+                    yield event
+            finally:
+                self._settle_turn(session_id)
+
+    def _supersede_paused_turn(self, session_id: str) -> None:
+        """A new message while a turn waits on a confirmation abandons it.
+
+        The route used to force-reset the machine (routes/agent.py); now the
+        machine settles itself. The staged HIGH-risk action is never run;
+        when the paused turn was persisted (it carries a TurnContext) it is
+        ended as ``cancelled`` with one block recording the action as
+        "not run — superseded" so the receipt's Commands line carries it
+        (spec §5). Any session left in active_sessions by a previous turn
+        is evicted with it.
+        """
+        if self.current_state == AgentState.IDLE and not self.active_sessions:
+            return
+        for sid in list(self.active_sessions):
+            old_ctx = self.active_sessions.pop(sid, None)
+            if sid != session_id:
                 logger.info(
-                    f"Intake: intent={self.ctx.intake.intent}, "
-                    f"complexity={self.ctx.intake.complexity_score}, "
-                    f"model={self.ctx.intake.recommended_model}"
+                    f"Superseding session {sid} left in "
+                    f"{self.current_state.value} by a new message"
                 )
-            except Exception as e:
-                logger.warning(f"Intake pipeline failed (non-fatal): {e}")
+            self._record_superseded_turn(old_ctx)
+        self.current_state = AgentState.IDLE
 
-        # Phase D: Inject persona cognition if tick is wired
-        if self.cognition_tick is not None:
-            try:
-                from ..integrations.cognition_wiring import get_cognition
-                self.ctx.persona_cognition = get_cognition()
-            except Exception as e:
-                logger.warning(f"Could not inject persona cognition: {e}")
-        
-        # Track active session
-        self.active_sessions[session_id] = self.ctx
-        
-        logger.info(f"Starting agent processing: session={session_id}, query={query[:100]}")
-        
-        yield StreamEvent.session_started(session_id, request_id)
-        
-        # Start processing
-        yield await self._transition(AgentState.PLANNING)
-        
+    def _record_superseded_turn(self, old_ctx: Optional[StateContext]) -> None:
+        """End a superseded, persisted turn so its receipt records the
+        staged action (spec §5). No manager or no TurnContext: nothing to do.
+        Never raises."""
+        if old_ctx is None:
+            return
+        tm = getattr(old_ctx, "thread_manager", None)
+        turn = getattr(old_ctx, "turn_context", None)
+        if tm is None or turn is None:
+            return
+        old_ctx.turn_context = None   # ended here, never again
+        pending = old_ctx.pending_confirmation or {}
+        blocks: List[Dict[str, Any]] = []
+        if pending:
+            args = pending.get("args")
+            if not isinstance(args, dict):
+                last = old_ctx.tool_calls[-1] if old_ctx.tool_calls else None
+                args = last.args if last is not None and isinstance(last.args, dict) else {}
+            blocks.append({
+                "tool": str(pending.get("tool", "")),
+                "args": args,
+                "result": "not run — superseded",
+                "exit": None,
+                "status": "superseded",
+            })
         try:
-            async for event in self._drive():
-                yield event
-        finally:
-            # Cleanup — but keep a paused (awaiting-confirmation) session so
-            # confirm_action() can find it.
-            if (session_id in self.active_sessions
-                    and self.current_state != AgentState.AWAITING_CONFIRMATION):
-                del self.active_sessions[session_id]
+            tm.end_turn(
+                turn,
+                assistant_text="",
+                blocks=blocks,
+                terminal_session_ids=[],
+                diff_proposals=[],
+                status="cancelled",
+            )
+        except Exception as e:
+            logger.warning(f"end_turn for a superseded turn failed (non-fatal): {e}")
+
+    def _settle_turn(self, session_id: str) -> None:
+        """Cleanup shared by process() and confirm_action().
+
+        A turn paused on AWAITING_CONFIRMATION keeps its session so
+        confirm_action() can find it. Anything else is over: the machine
+        returns to IDLE (also after a mid-turn exception or disconnect,
+        which used to strand it in PLANNING and break the next turn) and
+        the session is evicted.
+        """
+        if self.current_state == AgentState.AWAITING_CONFIRMATION:
+            return
+        self.current_state = AgentState.IDLE
+        self.active_sessions.pop(session_id, None)
+        self.cancelled.pop(session_id, None)
 
     async def _drive(self) -> AsyncIterator[StreamEvent]:
         """Run the state machine from ``self.current_state`` until it settles.
@@ -375,65 +479,61 @@ class AgentStateMachine:
         Yields:
             StreamEvent objects
         """
-        if session_id not in self.active_sessions:
-            yield StreamEvent.error(session_id, "Session not found", recoverable=False)
-            return
-        
-        self.ctx = self.active_sessions[session_id]
-        
-        if not self.ctx.pending_confirmation:
-            yield StreamEvent.error(session_id, "No pending confirmation")
-            return
-        
-        if self.ctx.pending_confirmation.get("action_id") != action_id:
-            yield StreamEvent.error(session_id, "Action ID mismatch")
-            return
-        
-        try:
-            if confirmed:
-                # Execute the confirmed action
-                self.ctx.pending_confirmation["confirmed"] = True
-                # Approval granted: resume working (A2c)
-                yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
-                yield await self._transition(AgentState.EXECUTING)
-            else:
-                # User rejected - go back to planning
-                self.ctx.pending_confirmation = None
-                # Settle the rejected call and name it in the observation.
-                # A bare "User rejected the action" told the next PLANNING pass
-                # nothing about *what* was refused, and left the call at
-                # status="pending" so _already_called() could not stop the model
-                # proposing the identical command again.
-                rejected = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
-                if rejected is not None and rejected.id == action_id:
-                    rejected.status = "error"
-                    rejected.error = "rejected by user"
-                    self.ctx.add_observation(
-                        f"The user refused to run {rejected.name}({rejected.args}). "
-                        "Do not propose it again; answer without it or suggest "
-                        "a different approach."
-                    )
-                else:
-                    self.ctx.add_observation("User rejected the action")
-                # Rejection resumes the conversation (the agent re-plans and still
-                # responds), so this is IN_PROGRESS, not a terminal CANCELLED.
-                # True cancellation is cancel_session() below. (A2c)
-                yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
-                yield await self._transition(AgentState.PLANNING)
+        async with self.turn_lock:
+            if session_id not in self.active_sessions:
+                yield StreamEvent.error(session_id, "Session not found", recoverable=False)
+                return
 
-            # Resume the turn. Running only _handle_executing() here stopped
-            # the machine dead at OBSERVING: the tool ran but the user never
-            # got an answer, and the stream never closed. _drive() is the same
-            # loop process() uses, so a resumed turn finishes like any other.
-            async for event in self._drive():
-                yield event
-        finally:
-            # The paused session was kept in active_sessions only so this
-            # method could find it. Evict it now unless the machine paused
-            # again on another confirmation.
-            if (session_id in self.active_sessions
-                    and self.current_state != AgentState.AWAITING_CONFIRMATION):
-                del self.active_sessions[session_id]
+            self.ctx = self.active_sessions[session_id]
+
+            if not self.ctx.pending_confirmation:
+                yield StreamEvent.error(session_id, "No pending confirmation")
+                return
+
+            if self.ctx.pending_confirmation.get("action_id") != action_id:
+                yield StreamEvent.error(session_id, "Action ID mismatch")
+                return
+
+            try:
+                if confirmed:
+                    # Execute the confirmed action
+                    self.ctx.pending_confirmation["confirmed"] = True
+                    # Approval granted: resume working (A2c)
+                    yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
+                    yield await self._transition(AgentState.EXECUTING)
+                else:
+                    # User rejected - go back to planning
+                    self.ctx.pending_confirmation = None
+                    # Settle the rejected call and name it in the observation.
+                    # A bare "User rejected the action" told the next PLANNING pass
+                    # nothing about *what* was refused, and left the call at
+                    # status="pending" so _already_called() could not stop the model
+                    # proposing the identical command again.
+                    rejected = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
+                    if rejected is not None and rejected.id == action_id:
+                        rejected.status = "error"
+                        rejected.error = "rejected by user"
+                        self.ctx.add_observation(
+                            f"The user refused to run {rejected.name}({rejected.args}). "
+                            "Do not propose it again; answer without it or suggest "
+                            "a different approach."
+                        )
+                    else:
+                        self.ctx.add_observation("User rejected the action")
+                    # Rejection resumes the conversation (the agent re-plans and still
+                    # responds), so this is IN_PROGRESS, not a terminal CANCELLED.
+                    # True cancellation is cancel_session() below. (A2c)
+                    yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
+                    yield await self._transition(AgentState.PLANNING)
+
+                # Resume the turn. Running only _handle_executing() here stopped
+                # the machine dead at OBSERVING: the tool ran but the user never
+                # got an answer, and the stream never closed. _drive() is the same
+                # loop process() uses, so a resumed turn finishes like any other.
+                async for event in self._drive():
+                    yield event
+            finally:
+                self._settle_turn(session_id)
     
     def cancel_session(self, session_id: str) -> bool:
         """Cancel an active session."""
@@ -521,6 +621,10 @@ class AgentStateMachine:
             approval_request_id=block.approval_request_id,
             action_id=block.action_id,
             reflection_id=block.reflection_id,
+            # Somatic blocks are tagged with the hidden thread (spec §8);
+            # the event's session_id stays per turn for routing. Before a
+            # thread exists (no manager) the turn's session id stands in.
+            thread_id=self.ctx.thread_id or self.ctx.session_id,
         )
         try:
             from ..proactive.events import ProactiveEvent, get_event_bus
@@ -528,7 +632,10 @@ class AgentStateMachine:
                 type="somatic_block",
                 severity="info",
                 title=f"Block {event.data['block_type']}: {event.data['status']}",
-                body=f"session={block.session_id} block={block.id}",
+                body=(
+                    f"session={block.session_id} "
+                    f"thread={self.ctx.thread_id or self.ctx.session_id} block={block.id}"
+                ),
             )
             await get_event_bus().publish(pe)
         except Exception as e:
@@ -648,7 +755,11 @@ class AgentStateMachine:
             prompt = self.prompts.build_planning_prompt(
                 query=self.ctx.user_query,
                 context=context_content,
-                plan=[p.to_dict() for p in self.ctx.plan]
+                plan=[p.to_dict() for p in self.ctx.plan],
+                continuity=self.ctx.continuity_hint,
+                # False once the client fell back to a no-tools retry (spec
+                # §7): the preamble then omits the tool instruction.
+                tools_supported=getattr(self.llm, "tools_supported", None),
             )
         else:
             prompt = self._build_simple_planning_prompt(context_content)
@@ -952,6 +1063,14 @@ class AgentStateMachine:
             )
         return None
 
+    def _note_terminal_payload(self, payload: Dict[str, Any]) -> None:
+        """Remember every terminal this turn spawned (persisted at end_turn)."""
+        if payload.get("kind") != "spawn":
+            return
+        terminal_id = str(payload.get("terminal_session_id", ""))
+        if terminal_id and terminal_id not in self.ctx.terminal_session_ids:
+            self.ctx.terminal_session_ids.append(terminal_id)
+
     async def _run_tool_streaming(
         self,
         tool_name: str,
@@ -985,7 +1104,9 @@ class AgentStateMachine:
                     {task, getter}, return_when=asyncio.FIRST_COMPLETED
                 )
                 if getter in done:
-                    event = self._terminal_event(self.ctx.session_id, getter.result())
+                    payload = getter.result()
+                    self._note_terminal_payload(payload)
+                    event = self._terminal_event(self.ctx.session_id, payload)
                     if event is not None:
                         yield event
                     continue
@@ -995,7 +1116,9 @@ class AgentStateMachine:
 
             # Flush whatever the tool published on its way out.
             while not queue.empty():
-                event = self._terminal_event(self.ctx.session_id, queue.get_nowait())
+                payload = queue.get_nowait()
+                self._note_terminal_payload(payload)
+                event = self._terminal_event(self.ctx.session_id, payload)
                 if event is not None:
                     yield event
 
@@ -1247,7 +1370,10 @@ class AgentStateMachine:
             prompt = self.prompts.build_response_prompt(
                 query=self.ctx.user_query,
                 context=self.ctx.retrieved_context,
-                observations=self.ctx.observations
+                observations=self.ctx.observations,
+                history=self.ctx.conversation_history,
+                continuity=self.ctx.continuity_hint,
+                tools_supported=getattr(self.llm, "tools_supported", None),
             )
             logger.info("Using AgentPromptBuilder for response prompt")
         else:
@@ -1298,13 +1424,10 @@ class AgentStateMachine:
             logger.debug(f"Module invocation parsing skipped: {e}")
             module_invocations, clean_response = [], full_response
 
-        # Store interaction in memory (clean text, no invocation JSON)
-        if self.memory:
-            await self.memory.store_interaction(
-                query=self.ctx.user_query,
-                response=clean_response,
-                session_id=self.ctx.session_id
-            )
+        # Not stored in memory here any more (spec §7): thread receipts, and
+        # the Haloysius line written when a thread closes, replace
+        # memory.store_interaction. Storing every Q/A made each turn a global
+        # memory that leaked into unrelated threads.
 
         # Commit the stripped text as the session's final response text
         self.ctx.response_chunks.clear()
@@ -1416,7 +1539,10 @@ class AgentStateMachine:
     
     def _build_simple_planning_prompt(self, context: str) -> str:
         """Build a simple planning prompt when no prompt builder available."""
-        parts = [
+        parts = []
+        if self.ctx.continuity_hint:
+            parts.extend([self.ctx.continuity_hint, ""])
+        parts += [
             f"User query: {self.ctx.user_query}",
             "",
             "Available context:",
