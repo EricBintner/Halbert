@@ -152,6 +152,18 @@ TOKEN_RE = re.compile(
 )
 
 
+def _enclosing_line(text: str, start: int, end: int) -> str:
+    """The whole line `text[start:end]` sits on.
+
+    The substitution passes run over the whole document, but two of them need
+    the format-aware question the line pass asks -- is this line an NSS
+    database entry, is it XML -- and a `re.Match` only carries its own span.
+    """
+    left = text.rfind("\n", 0, start) + 1
+    right = text.find("\n", end)
+    return text[left:] if right == -1 else text[left:right]
+
+
 def _redact_token(match: "re.Match[str]") -> str:
     """TOKEN_RE body: ask the one predicate about the *whole* key.
 
@@ -169,6 +181,12 @@ def _redact_token(match: "re.Match[str]") -> str:
         start -= 1
     sep = next(i for i, ch in enumerate(head) if ch in "=:")
     if not _is_secret_key(text[start : match.start()] + head[:sep]):
+        return head
+    # The line pass may have deliberately spared this line -- an NSS database
+    # line is exempt on the strength of its *value*, which this pass cannot
+    # see. Without the check the backstop redacted `passwd: files systemd`
+    # straight back again.
+    if _is_nss_database_line(_enclosing_line(text, start, match.end())):
         return head
     return SECRET
 
@@ -804,10 +822,7 @@ def _redact_url_credentials(text: str) -> str:
     """Redact the password inside every `scheme://user:pass@host` in `text`."""
 
     def sub(match: "re.Match[str]") -> str:
-        whole = match.string
-        start = whole.rfind("\n", 0, match.start()) + 1
-        stop = whole.find("\n", match.end())
-        line = whole[start:] if stop == -1 else whole[start:stop]
+        line = _enclosing_line(match.string, match.start(), match.end())
         return f"{match.group(1)}{match.group(2)}:{_placeholder_for(line)}@"
 
     return URL_CREDENTIAL_RE.sub(sub, text)
@@ -933,6 +948,92 @@ def _redact_plist_value(lines: List[str], row: int, start: int) -> Optional[int]
     return None
 
 
+# --- /etc/nsswitch.conf ---------------------------------------------------
+#
+# Two of the NSS database names are credential keywords to `_is_secret_key`:
+# `passwd` is a tier-1 substring and `publickey` matches on `key`. Both lines
+# are single directives, so both became `<secret>` while `group:`, `hosts:`
+# and `shadow:` survived -- a half-destroyed file that misreports which
+# sources this host resolves users and hosts from. /etc/nsswitch.conf is in
+# network.yml.
+#
+# A whole-key entry in `_NON_SECRET_KEYS` is the obvious fix and is wrong:
+# the comparison there has no access to the value, so exempting the key
+# `passwd` also exempts `passwd=hunter2` and `PASSWD=hunter2` -- and
+# /etc/default/* , where that spelling is ordinary, is staged in the flat
+# host tree. Verified: with `passwd` in `_NON_SECRET_KEYS`, all three of
+# `passwd=secret`, `passwd=hunter2` and `PASSWD=hunter2` survive unredacted,
+# because `_redact_token` asks the same exempted predicate.
+#
+# So the exemption is conditioned on the value, the way `_PAM_CONTROL_WORDS`
+# is: an NSS line's value is drawn entirely from a fixed vocabulary of source
+# modules, plus `[ACTION=value]` reaction fields. A credential is not.
+_NSS_DATABASES = frozenset(
+    {
+        "aliases",
+        "ethers",
+        "group",
+        "gshadow",
+        "hosts",
+        "initgroups",
+        "netgroup",
+        "networks",
+        "passwd",
+        "protocols",
+        "publickey",
+        "rpc",
+        "services",
+        "shadow",
+    }
+)
+_NSS_SOURCES = frozenset(
+    {
+        "altfiles",
+        "cache",
+        "compat",
+        "db",
+        "dns",
+        "files",
+        "hesiod",
+        "ldap",
+        "mdns",
+        "mdns4",
+        "mdns4_minimal",
+        "mdns6",
+        "mdns6_minimal",
+        "mdns_minimal",
+        "mymachines",
+        "myhostname",
+        "nis",
+        "nisplus",
+        "resolve",
+        "sss",
+        "systemd",
+        "winbind",
+        "wins",
+    }
+)
+# Database names are lowercase by specification, which is itself part of the
+# discrimination: `PASSWD=` cannot reach this rule.
+_NSS_LINE_RE = re.compile(r"^[ \t]*([a-z][a-z0-9_]*)[ \t]*:[ \t]*(\S.*?)[ \t]*$")
+
+
+def _is_nss_database_line(line: str) -> bool:
+    """True for an `/etc/nsswitch.conf` `database: sources` line."""
+    m = _NSS_LINE_RE.match(line)
+    if not m or m.group(1) not in _NSS_DATABASES:
+        return False
+    return all(
+        token.startswith("[") or token.endswith("]") or token.lower() in _NSS_SOURCES
+        for token in m.group(2).split()
+    )
+
+
+def _handle_nss_database_line(lines: List[str], row: int) -> Optional[int]:
+    """Claim an NSS database line so nothing below redacts it."""
+    return row if _is_nss_database_line(lines[row]) else None
+
+
 def _handle_plist_key(lines: List[str], row: int) -> Optional[int]:
     for m in _PLIST_KEY_RE.finditer(lines[row]):
         if _is_secret_key(m.group(1)):
@@ -1043,7 +1144,12 @@ def redact_structured_values(text: str) -> str:
     lines = [ln[:-1] if ln.endswith("\r") else ln for ln in raw]
 
     i = 0
-    handlers = (_handle_plist_key, _handle_plist_argument_flag, _handle_deferred_value)
+    handlers = (
+        _handle_nss_database_line,
+        _handle_plist_key,
+        _handle_plist_argument_flag,
+        _handle_deferred_value,
+    )
     while i < len(lines):
         for handler in handlers:
             consumed = handler(lines, i)

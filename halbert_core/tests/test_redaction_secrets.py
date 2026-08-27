@@ -1208,3 +1208,46 @@ def test_pam_management_group_is_not_a_credential_directive():
         "session    required       pam_launchd.so\n"
     )
     assert redact_text(pam) == pam
+
+
+# --- /etc/nsswitch.conf: `passwd` names a database, not a credential -------
+
+
+def test_nsswitch_database_lines_survive():
+    """N4: /etc/nsswitch.conf is in network.yml. `passwd` is a tier-1
+    substring and the line is single-directive, so it became `<secret>` while
+    `group:` and `hosts:` survived -- a half-destroyed file that misreports
+    NSS configuration. `publickey:` was destroyed the same way, by `key`."""
+    nsswitch = (
+        "# /etc/nsswitch.conf\n"
+        "passwd:         files systemd\n"
+        "group:          files systemd\n"
+        "shadow:         files\n"
+        "hosts:          files mdns4_minimal [NOTFOUND=return] dns myhostname\n"
+        "publickey:      nisplus\n"
+        "netgroup:       nis\n"
+        "services:       db files\n"
+        "protocols:      db files\n"
+    )
+    assert redact_text(nsswitch) == nsswitch
+
+
+def test_a_genuine_passwd_assignment_is_still_redacted():
+    """The exemption must not reach an assignment. /etc/default/* is staged
+    in the flat host tree and `PASSWD=hunter2` there is a real credential."""
+    assert redact_text("passwd=secret\n") == "<secret>\n"
+    for line in (
+        "passwd=hunter2secret\n",
+        "PASSWD=hunter2secret\n",
+        "Passwd = hunter2secret\n",
+        "passwd: hunter2secret\n",
+        "db_passwd=hunter2secret\n",
+        "passwd_file=hunter2secret\n",
+    ):
+        assert "hunter2secret" not in redact_text(line), line
+
+
+def test_the_nsswitch_exemption_needs_every_token_to_be_a_source():
+    """A single non-source token means this is not an NSS database line."""
+    assert "hunter2secret" not in redact_text("passwd: files hunter2secret\n")
+    assert "hunter2secret" not in redact_text("publickey: hunter2secret\n")
