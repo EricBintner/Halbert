@@ -258,13 +258,28 @@ class SourcePrepSetup:
     # ── step implementations ──────────────────────────────────
 
     def _stage_host_tree(self, root: Path) -> int:
+        import platform as _platform
+
+        from ..config.roles import roles_for_platform
         from ..tools.register_host_project import (
             _os_config_paths,
             _stage_config_files,
+            stage_role_tree,
         )
 
         staged = _stage_config_files(_os_config_paths(), root / "host")
         logger.info("Staged %d host config files under %s/host", staged, root)
+
+        # Role scopes stage into sibling subdirectories under host/. Only
+        # roles that are file-backed on this platform are staged — an empty
+        # scope under scope_mode="hard" excludes everything rather than
+        # narrowing, so a docs-only role must not get an empty staged tree.
+        for role in roles_for_platform(_platform.system()):
+            try:
+                staged += stage_role_tree(role, root / "host")
+            except Exception as e:
+                logger.warning("Role staging failed for %s (non-fatal): %s", role, e)
+
         return staged
 
     def _find_or_create_project(

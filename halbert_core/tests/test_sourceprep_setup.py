@@ -179,11 +179,18 @@ def test_template_loads_and_has_contract_surface():
     assert set(cfg["disabled_stages"]) >= {"rules", "concepts", "audit", "antibodies"}
     assert cfg["auto_config"]["fastSync"] is True
     names = [s["id"] for s in t["scopes"]]
-    assert names == ["host", "knowledge-linux", "knowledge-macos",
+    assert names == ["host",
+                     "network_admin", "service_admin", "storage_admin",
+                     "knowledge-linux", "knowledge-macos",
                      "knowledge-bsd", "knowledge-common"]
     profiles = {s["id"]: s["pipeline_profile"] for s in t["scopes"]}
     assert profiles["host"] == "system_config"
-    assert all(v == "prose_docs" for k, v in profiles.items() if k != "host")
+    # Two axes, two profiles: the knowledge axis is prose, and everything on
+    # the host axis -- the flat scope and the role scopes alike -- is config.
+    assert all(
+        v == ("prose_docs" if k.startswith("knowledge") else "system_config")
+        for k, v in profiles.items()
+    )
 
 
 # ── Edge remapping ──────────────────────────────────────────────
@@ -274,14 +281,16 @@ def test_apply_creates_scopes_with_profiles_and_paths(setup):
     s.apply(stage_host=False, edges=SAMPLE_EDGES)
 
     creates = transport.calls_to("POST", "/scopes")
-    assert len(creates) == 5
+    assert len(creates) == 8
     names = {c["display_name"] for c in creates}
-    assert names == {"host", "knowledge-linux", "knowledge-macos",
+    assert names == {"host",
+                     "network_admin", "service_admin", "storage_admin",
+                     "knowledge-linux", "knowledge-macos",
                      "knowledge-bsd", "knowledge-common"}
     host_create = next(c for c in creates if c["display_name"] == "host")
     assert host_create.get("pipeline_profile") == "system_config"
     adds = transport.calls_to("POST", "/add")
-    assert len(adds) == 5  # one add-paths call per created scope
+    assert len(adds) == 8  # one add-paths call per created scope
 
 
 def test_apply_second_run_is_noop_for_scopes(setup):
@@ -377,3 +386,71 @@ def test_apply_daemon_unreachable_returns_skipped(tmp_path):
     result = s.apply(stage_host=False, edges=SAMPLE_EDGES)
     assert result.get("status") == "skipped"
     assert "unreachable" in str(result.get("reason", "")).lower()
+
+
+# ── Role-axis staging ───────────────────────────────────────────
+#
+# Every test above passes stage_host=False, so _stage_host_tree itself was
+# uncovered. It now stages the role trees too, and an unstaged role scope is
+# worse than no role scope at all: it is an *empty* scope, and under
+# scope_mode="hard" an empty mask excludes everything rather than narrowing.
+
+
+def _fake_role_staging(monkeypatch, fn):
+    """Neutralise the flat host walk and script stage_role_tree.
+
+    _stage_host_tree imports both names inside the function body, so the
+    module attributes are re-read on every call and patching them here is
+    what the real code will see.
+    """
+    from halbert_core.tools import register_host_project as rhp
+
+    monkeypatch.setattr(rhp, "_os_config_paths", lambda: [])
+    monkeypatch.setattr(rhp, "stage_role_tree", fn)
+
+
+def test_stage_host_tree_stages_every_platform_role(setup, monkeypatch):
+    import platform
+
+    from halbert_core.config.roles import roles_for_platform
+
+    called: List[Tuple[str, str]] = []
+
+    def record(role, root):
+        called.append((role, Path(root).name))
+        return 1
+
+    _fake_role_staging(monkeypatch, record)
+
+    s, _transport, tmp_path = setup
+    staged = s._stage_host_tree(tmp_path / "sp-root")
+
+    expected = roles_for_platform(platform.system())
+    assert expected, "no role is file-backed here — the fixture is meaningless"
+    assert [role for role, _ in called] == expected
+    # Role trees are siblings under host/, matching the template's
+    # host/<role> scope paths.
+    assert {parent for _, parent in called} == {"host"}
+    assert staged == len(expected)
+
+
+def test_stage_host_tree_survives_one_failing_role(setup, monkeypatch):
+    """One unreadable role must not abort the others, or the whole apply."""
+    import platform
+
+    from halbert_core.config.roles import roles_for_platform
+
+    def flaky(role, root):
+        if role == "network_admin":
+            raise OSError("permission denied")
+        return 2
+
+    _fake_role_staging(monkeypatch, flaky)
+
+    s, _transport, tmp_path = setup
+    staged = s._stage_host_tree(tmp_path / "sp-root")
+
+    survivors = [
+        r for r in roles_for_platform(platform.system()) if r != "network_admin"
+    ]
+    assert staged == 2 * len(survivors)

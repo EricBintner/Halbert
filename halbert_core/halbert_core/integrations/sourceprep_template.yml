@@ -48,6 +48,18 @@ scopes:
   - id: host
     paths: ["host"]
     pipeline_profile: system_config
+  # Role axis (wave 1). Additive to the flat `host` scope above — these are
+  # narrower siblings, not replacements. Each points at the subdirectory
+  # stage_role_tree() writes.
+  - id: network_admin
+    paths: ["host/network"]
+    pipeline_profile: system_config
+  - id: service_admin
+    paths: ["host/service"]
+    pipeline_profile: system_config
+  - id: storage_admin
+    paths: ["host/storage"]
+    pipeline_profile: system_config
   - id: knowledge-linux
     paths: ["knowledge/linux"]
     pipeline_profile: prose_docs

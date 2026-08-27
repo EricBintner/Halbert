@@ -195,3 +195,50 @@ def test_an_excluded_path_is_really_dropped(tmp_path):
 
     found = Manifest.from_file(str(man_file)).iter_paths()
     assert [os.path.basename(p) for p in found] == ["vdev_id.conf"]
+
+
+# --- The role axis must be registered as SourcePrep scopes ----------------
+
+import yaml
+
+
+def _load_template():
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(
+        here, "halbert_core", "integrations", "sourceprep_template.yml"
+    )
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def test_template_declares_all_wave_one_role_scopes():
+    scope_ids = {s["id"] for s in _load_template()["scopes"]}
+    assert {"network_admin", "service_admin", "storage_admin"} <= scope_ids
+
+
+def test_role_scopes_point_at_their_staging_subdir():
+    scopes = {s["id"]: s for s in _load_template()["scopes"]}
+    assert scopes["network_admin"]["paths"] == ["host/network"]
+    assert scopes["service_admin"]["paths"] == ["host/service"]
+    assert scopes["storage_admin"]["paths"] == ["host/storage"]
+
+
+def test_role_scopes_use_system_config_profile():
+    scopes = {s["id"]: s for s in _load_template()["scopes"]}
+    for name in ("network_admin", "service_admin", "storage_admin"):
+        assert scopes[name]["pipeline_profile"] == "system_config"
+
+
+def test_existing_scopes_are_preserved():
+    """Role scopes are additive; the platform axis must survive."""
+    scope_ids = {s["id"] for s in _load_template()["scopes"]}
+    assert {"host", "knowledge-linux", "knowledge-macos"} <= scope_ids
+
+
+def test_every_template_role_scope_is_in_the_registry():
+    """Template and registry must not drift apart."""
+    from halbert_core.config.roles import ROLES
+
+    scope_ids = {s["id"] for s in _load_template()["scopes"]}
+    for role in ROLES:
+        assert role in scope_ids, f"{role} in registry but not template"
