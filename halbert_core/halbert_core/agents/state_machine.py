@@ -336,6 +336,12 @@ class AgentStateMachine:
 
             yield StreamEvent.session_started(session_id, request_id)
 
+            # Plan A: persist the user row and resolve the thread before any
+            # model call (spec §4.1-§4.4), under the lock so thread
+            # resolve/open/pause never races another turn.
+            async for event in self._begin_turn():
+                yield event
+
             try:
                 # A queued caller was told "waiting" before it blocked, and
                 # nothing else on the normal turn path clears that badge —
@@ -354,6 +360,9 @@ class AgentStateMachine:
                 async for event in self._drive():
                     yield event
             finally:
+                # end_turn before the state reset: the status is derived
+                # from where the machine stopped (spec §4.7, §12).
+                self._end_turn(self._turn_status(session_id))
                 self._settle_turn(session_id)
         finally:
             # Settle before releasing so the next queued turn sees a settled
@@ -508,6 +517,78 @@ class AgentStateMachine:
         self.active_sessions.pop(session_id, None)
         self.cancelled.pop(session_id, None)
 
+    async def _begin_turn(self) -> AsyncIterator[StreamEvent]:
+        """Persist the user message and resolve the thread (spec §4.1-§4.4).
+
+        Seeds ``ctx`` from the TurnContext: thread id, hint, history
+        (receipt + last raw turns) and any deterministic recall, whose
+        receipt goes in as ``retrieved_context[0]`` with ``source="thread"``.
+        A store failure emits ``thread_store_error`` once and the turn
+        carries on without persistence.
+        """
+        tm = self.ctx.thread_manager
+        if tm is None:
+            return
+        sid = self.ctx.session_id
+        try:
+            from ..intake.signals import analyze_message
+            signals = analyze_message(self.ctx.user_query)
+            turn = tm.begin_turn(self.ctx.user_query, signals, sid)
+        except Exception as e:
+            logger.warning(f"begin_turn failed (non-fatal): {e}")
+            yield StreamEvent.thread_store_error(sid, f"begin_turn: {e}")
+            return
+
+        self.ctx.turn_context = turn
+        self.ctx.thread_id = turn.thread_id
+        self.ctx.continuity_hint = turn.hint or ""
+        self.ctx.conversation_history = list(turn.history or [])
+        self.ctx.recalled_threads = list(turn.recalled or [])
+
+        for r in self.ctx.recalled_threads:
+            rid = str(r.get("thread_id", ""))
+            rtitle = str(r.get("title", ""))
+            rdate = str(r.get("date", ""))
+            self.ctx.add_context(
+                source="thread",
+                content=str(r.get("receipt", "")),
+                metadata={
+                    "thread_id": rid, "title": rtitle, "date": rdate,
+                    "match_terms": list(r.get("match_terms") or []),
+                },
+            )
+            yield StreamEvent.thread_recalled(
+                sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="auto",
+                last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
+            )
+
+        yield StreamEvent.turn_persisted(sid, turn.thread_id, turn.turn_id)
+
+    def _turn_status(self, session_id: str) -> str:
+        """``complete`` | ``cancelled`` | ``interrupted`` for the turn ending now.
+
+        Runs before ``_settle_turn`` resets the state: IDLE means ``_drive``
+        ran to the end; anything else (an exception, the consumer going
+        away) is an interrupted turn.
+
+        ``self.cancelled`` is legacy: after A11 removes the route's
+        force-reset nothing writes it any more. The live path is
+        ``ctx.conversation_status`` (``cancel_session`` transitions it to
+        CANCELLED); the dict check stays only for out-of-tree callers.
+        """
+        cancelled = bool(self.cancelled.get(session_id))
+        try:
+            cancelled = cancelled or (
+                self.ctx.conversation_status.current() == ConversationStatus.CANCELLED
+            )
+        except Exception:
+            pass
+        if cancelled:
+            return "cancelled"
+        if self.current_state == AgentState.IDLE:
+            return "complete"
+        return "interrupted"
+
     @staticmethod
     def _tool_block(tc: ToolCall) -> Dict[str, Any]:
         """One persisted tool block (spec §8 messages.blocks_json)."""
@@ -533,6 +614,44 @@ class AgentStateMachine:
             "status": tc.status,
             "error": tc.error,
         }
+
+    def _end_turn(self, status: str) -> None:
+        """Hand the finished turn to the ThreadManager (spec §4.7).
+
+        Skipped while the turn is merely paused on a confirmation (the
+        TurnContext stays on ctx; confirm_action's finally ends it).
+        Thread meta-tool calls are not blocks. Never raises.
+        """
+        if self.current_state == AgentState.AWAITING_CONFIRMATION:
+            return
+        ctx = self.ctx
+        if ctx is None:
+            return
+        tm = ctx.thread_manager
+        turn = ctx.turn_context
+        if tm is None or turn is None:
+            return
+        ctx.turn_context = None
+        blocks = [
+            self._tool_block(tc) for tc in ctx.tool_calls
+            if tc.name not in THREAD_META_TOOLS
+        ]
+        diffs = [
+            {"diff_id": diff_id, **(diff if isinstance(diff, dict) else {"value": diff})}
+            for diff_id, diff in ctx.pending_diffs.items()
+        ]
+        try:
+            tm.end_turn(
+                turn,
+                assistant_text="".join(ctx.response_chunks),
+                blocks=blocks,
+                terminal_session_ids=list(ctx.terminal_session_ids),
+                diff_proposals=diffs,
+                status=status,
+                thread_id_override=ctx.thread_id if ctx.thread_switched else None,
+            )
+        except Exception as e:
+            logger.warning(f"end_turn failed (non-fatal): {e}")
 
     async def _drive(self) -> AsyncIterator[StreamEvent]:
         """Run the state machine from ``self.current_state`` until it settles.
@@ -710,6 +829,9 @@ class AgentStateMachine:
                 async for event in self._drive():
                     yield event
             finally:
+                # end_turn before the state reset: the status is derived
+                # from where the machine stopped (spec §4.7, §12).
+                self._end_turn(self._turn_status(session_id))
                 self._settle_turn(session_id)
         finally:
             self.turn_lock.release()
