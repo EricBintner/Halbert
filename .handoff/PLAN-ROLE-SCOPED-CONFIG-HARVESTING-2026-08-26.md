@@ -4,7 +4,7 @@
 
 **Goal:** Ship three role-scoped SourcePrep scopes (`network_admin`, `service_admin`, `storage_admin`) that give the agent narrow, per-subsystem config context — after first closing a live secret-leak in the staging path.
 
-**Architecture:** Reuse the existing Phase 1/3 config pipeline (`manifest.py` → `snapshot.py` → redaction → `drift.py`, watched by `watcher.py`) unchanged, pointing it at narrow per-role manifests instead of one blanket `/etc/**/*.conf` glob. Rewire host staging to consume `snapshot.py`'s *redacted* output rather than copying live `/etc` paths verbatim. Register each role's staged tree as a SourcePrep scope with `scope_mode="hard"`.
+**Architecture:** Reuse the existing Phase 1/3 config pipeline (`manifest.py` → `snapshot.py` → redaction → `drift.py`, watched by `watcher.py`) unchanged, pointing it at narrow per-role manifests instead of one blanket `/etc/**/*.conf` glob. Redact host staging inline — read the live path through `config/parser.py::parse()` and run `redact_text()` over the result on the way into the staging tree, rather than copying `/etc` paths verbatim. Register each role's staged tree as a SourcePrep scope with `scope_mode="hard"`.
 
 **Tech Stack:** Python 3.10+, pytest, PyYAML, `watchdog`, stdlib `configparser`/`plistlib`, SourcePrep HTTP API.
 
@@ -652,7 +652,7 @@ Two things make this load-bearing for *this* plan rather than a backlog item:
    macOS harvest scope deliberately excludes `/Library/Preferences`; that
    manifest re-introduces it.
 2. Task 5 converts binary plists to XML text. They were previously opaque
-   blobs in the index; afterwards they are greppable — so the rewire makes
+   blobs in the index; afterwards they are greppable — so the change makes
    plist secrets *more* legible exactly where redaction does not reach.
 
 A scan of all 39 plists under `/Library/Launch{Daemons,Agents}` on this host
@@ -696,11 +696,28 @@ denylist over key names and is structurally open-ended; it protects
 
 ---
 
-### Task 5: Rewire host staging onto redacted snapshot output
+### Task 5: Redact host staging inline
 
 This is the actual leak fix. `_stage_config_files()` copies live `/etc` paths
 verbatim with `shutil.copy2()` into the SourcePrep-visible tree. Redaction
-never runs on that path — `snapshot.py`'s redacted output is orphaned.
+never runs on that path.
+
+> **Corrected 2026-08-27.** This task was titled "Rewire host staging onto
+> redacted snapshot output" and its summary said the fix was to consume
+> `snapshot.py`'s orphaned `data/config/raw/<hash>.txt`. That is **not** what
+> shipped, and the steps below never described it either — Step 3 has always
+> read the live path via `parse_config()` and redacted inline. Only the
+> heading and this paragraph were wrong; they are fixed so a reviewer
+> checking the code against the plan is not sent looking for a snapshot read
+> that does not exist.
+>
+> Inline is what shipped because it has no ordering dependency: consuming
+> `raw/<hash>.txt` would make staging produce nothing until `snapshot()` had
+> run, and stage stale content whenever the snapshot lagged the file on disk
+> — which on this path means a rotated-out credential staying in the index
+> while the staged tree still looks populated. Reading the live file has no
+> such state to get wrong, and going through the parser is what carries the
+> binary-plist conversion.
 
 **Files:**
 - Modify: `halbert_core/halbert_core/tools/register_host_project.py:104-150`

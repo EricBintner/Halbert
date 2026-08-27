@@ -177,6 +177,12 @@ with **no redaction at all** (only whole-file excludes for
 `shadow`/`ssl`/`letsencrypt`). Verified: no `redact` reference exists anywhere
 in that file.
 
+> **Status (2026-08-27):** the paragraph above describes the state *before*
+> commit `0cb99ad`, and is kept as the diagnosis that motivated the work. The
+> leak is closed. Item 3 below prescribed a fix that was **not** the one that
+> shipped — it has been corrected in place; read it, not this paragraph, for
+> what the code now does.
+
 1. **Redaction regex.** `TOKEN_RE` is
    `(?i)(api|secret|token|key|password)[=:]\S+` (`redaction.py:8`). It misses
    NetworkManager WiFi passwords (`psk=<password>` — "psk" isn't a keyword)
@@ -192,10 +198,32 @@ in that file.
    and raw-text writing share one try block in `snapshot.py`, **the entire
    file is dropped, not degraded**. Catch both and fall back to
    `kind:"text"`.
-3. **Rewire staging onto redacted output.** `_stage_config_files()` must
-   consume `data/config/raw/<hash>.txt` instead of copying live OS paths.
-   Required regardless of role scopes; a hard prerequisite for
+3. **Redact staging.** `_stage_config_files()` must stop copying live OS
+   paths verbatim. Required regardless of role scopes; a hard prerequisite for
    `network_admin` specifically.
+
+   **What shipped — corrected 2026-08-27.** This item originally read "consume
+   `data/config/raw/<hash>.txt` instead of copying live OS paths", and that is
+   not what was built. `register_host_project.py::_stage_one_file()` reads the
+   **live path** through `config/parser.py::parse()` and redacts the result
+   with `redact_text()` on its way to the staging tree. It never opens the
+   snapshot. Both designs close the leak; the wrong one is written down here
+   on the security-critical path, where a reviewer checking the code against
+   this doc would look for a snapshot read that does not exist.
+
+   Inline won on **ordering**. Consuming `raw/<hash>.txt` makes staging
+   depend on `snapshot()` having run first: with no snapshot, staging
+   produces nothing; with a snapshot older than the file on disk, staging
+   ships stale content — and "stale" on this path means a credential that was
+   supposed to have been rotated out of the index is still in it, silently,
+   because the staged tree looks populated either way. Reading the live file
+   has no such state to get wrong. Going through the parser rather than
+   reading bytes is what carries the plist conversion, which is what makes a
+   binary plist greppable and redactable at all.
+
+   The snapshot's own sinks are redacted in their own right — `raw/` since
+   this merge, `canon/` since the follow-up — so neither sink is the weaker
+   guarantee and nothing depends on which one a future reader reaches for.
 4. **Run it once, end-to-end, for real.** `data/config/` output directories
    are currently empty — `snapshot()` has never executed on this machine.
    Confirm by hand that no secret pattern survives into staged output.
