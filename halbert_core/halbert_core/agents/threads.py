@@ -380,11 +380,38 @@ class ThreadManager:
             turns_since_pause=0, metadata=meta, updated_at=now,
         )
 
+    @_locked
     def new_thread(self, title: str, reason: str, *, from_thread_id: str) -> str:
-        """Model-initiated switch: pause ``from_thread_id``, open a new thread."""
-        clean = provisional_title(title or "")
-        return self._open_new_thread(clean, "model", self._now(), from_thread_id=from_thread_id, reason=reason)
+        """Model-initiated switch: pause the open thread, open a new one.
 
+        ``from_thread_id`` is only the caller's *belief* about which thread it
+        is leaving, and it is not trusted: A9's tool bridge passes the turn's
+        ``thread_id``, which is a synthesized ``uuid4()`` on the documented
+        store-outage path, and any of it can be stale by the time the model
+        answers. The predecessor is resolved against ``current_open_thread()``
+        instead, because the two halves of the switch disagree about an
+        unknown id — ``_pause_thread`` returns silently when the row is
+        missing or is not ``status='open'`` while ``_open_new_thread`` creates
+        the successor regardless — which left *two* rows at ``status='open'``
+        with no concurrency at all: ``current()`` kept answering with the old
+        one, so the next turn continued in the subject the model believed it
+        had left, and ``tick()`` sweeps only ``paused`` so neither row could
+        ever be reaped (review: Plan A / A6b).
+        """
+        now = self._now()
+        open_thread = self.store.current_open_thread()
+        previous_id = open_thread["thread_id"] if open_thread else None
+        if from_thread_id and from_thread_id != previous_id:
+            logger.warning(
+                f"new_thread names {from_thread_id} as the current thread but "
+                f"{previous_id} is open; leaving that one instead"
+            )
+        return self._open_new_thread(
+            provisional_title(title or ""), "model", now,
+            from_thread_id=previous_id, reason=reason,
+        )
+
+    @_locked
     def tick(self) -> List[str]:
         """Close paused threads past the grace window; returns the closed ids.
 
@@ -430,6 +457,7 @@ class ThreadManager:
                 out.append(self._recall_result(t, query, list(hit.get("match_terms") or []), now))
         return out
 
+    @_locked
     def retract_recall(self, thread_id: str, recalled_thread_id: str) -> bool:
         """Mark an accepted recall on ``thread_id`` as retracted."""
         t = self.store.get_thread(thread_id)
@@ -637,11 +665,24 @@ class ThreadManager:
 
 
 _manager: Optional[ThreadManager] = None
+#: ``_manager is None`` -> construct -> assign is a read-modify-write, and the
+#: callers arrive concurrently on a cold process: A8's route helper runs in
+#: FastAPI's threadpool while the agent loop touches the manager too. Losing
+#: that race is not just a wasted object — each duplicate carries its own
+#: ``RLock``, so the serialisation ``_locked`` provides is defeated across
+#: them, and every loser leaks an open sqlite connection that is never closed
+#: (four concurrent first calls made four managers and four stores; review:
+#: Plan A / A6b).
+_manager_lock = threading.Lock()
 
 
 def get_thread_manager() -> ThreadManager:
     """Process-wide manager over the default conversations database."""
     global _manager
-    if _manager is None:
-        _manager = ThreadManager(SqliteConversationStore(_cs._DEFAULT_DB))
-    return _manager
+    manager = _manager
+    if manager is None:
+        with _manager_lock:
+            if _manager is None:
+                _manager = ThreadManager(SqliteConversationStore(_cs._DEFAULT_DB))
+            manager = _manager
+    return manager

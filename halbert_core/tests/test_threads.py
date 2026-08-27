@@ -419,6 +419,142 @@ class TestConcurrency:
         assert len(tm.store.list_threads(status="open")) == 1
         assert len(tm.store.list_threads()) == 2
 
+    @staticmethod
+    def _lock_probe(tm, monkeypatch, store_method):
+        """Record, per ``store_method`` call, whether ``tm._lock`` is held.
+
+        A second thread tries the lock without blocking: an ``RLock`` already
+        held refuses it, a free one hands it straight over. Pins the ``_locked``
+        docstring's invariant — "every public method that moves a thread
+        between statuses belongs behind this lock" — from the outside.
+        """
+        real = getattr(tm.store, store_method)
+        held = []
+
+        def probe(*args, **kwargs):
+            result = real(*args, **kwargs)
+            taken = []
+
+            def other():
+                got = tm._lock.acquire(blocking=False)
+                taken.append(got)
+                if got:
+                    tm._lock.release()
+
+            w = threading.Thread(target=other)
+            w.start()
+            w.join(timeout=10)
+            held.append(taken == [False])
+            return result
+
+        monkeypatch.setattr(tm.store, store_method, probe)
+        return held
+
+    @pytest.mark.parametrize(
+        "store_method, call",
+        [
+            ("create_thread", lambda tm, tid: tm.new_thread("Scanner share", "x", from_thread_id=tid)),
+            ("list_threads", lambda tm, tid: tm.tick()),
+            ("get_thread", lambda tm, tid: tm.retract_recall(tid, "gone")),
+        ],
+        ids=["new_thread", "tick", "retract_recall"],
+    )
+    def test_status_moves_hold_the_manager_lock(self, tm, monkeypatch, store_method, call):
+        tid = _turn(tm, "add a samba share for the media folder").thread_id
+        held = self._lock_probe(tm, monkeypatch, store_method)
+        call(tm, tid)
+        assert held and all(held)
+
+    def test_new_thread_cannot_race_a_turn_into_a_second_open_row(self, tm, monkeypatch):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        entered, released = threading.Event(), threading.Event()
+        real = tm.store.create_thread
+
+        def synced(*args, **kwargs):
+            # new_thread pauses the old row *before* it creates the successor.
+            # Unlocked, a begin_turn arriving in this window found no open
+            # thread at all and opened its own, leaving two rows at
+            # status='open' — the loser never selected again, never paused, and
+            # out of reach of tick(), which sweeps only 'paused'. Behind the
+            # manager's lock the turn cannot get in here, so it waits.
+            entered.set()
+            released.wait(timeout=0.5)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(tm.store, "create_thread", synced)
+        failures = []
+
+        def switch():
+            try:
+                tm.new_thread("Scanner share", "different device", from_thread_id=t1.thread_id)
+            except Exception as e:  # pragma: no cover - reported below
+                failures.append(e)
+
+        def turn():
+            try:
+                # Only reachable once new_thread is inside the store call, i.e.
+                # once it has paused the old row and holds the lock.
+                entered.wait(timeout=10)
+                text = "check the disk space on /var"
+                tm.begin_turn(text, analyze_message(text), "s2")
+            except Exception as e:  # pragma: no cover - reported below
+                failures.append(e)
+            finally:
+                released.set()
+
+        workers = [threading.Thread(target=switch), threading.Thread(target=turn)]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join(timeout=10)
+        assert failures == []
+        assert not any(w.is_alive() for w in workers)
+        assert len(tm.store.list_threads(status="open")) == 1
+        assert tm.current() is not None
+
+    def test_tick_cannot_close_a_thread_that_was_just_resumed(self, tm, monkeypatch):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.clock.advance(3 * 3600)
+        t2 = _turn(tm, "check the disk space on /var")
+        assert tm.store.get_thread(t1.thread_id)["status"] == "paused"
+        tm.clock.advance(GRACE_MINUTES * 60)
+        entered, released = threading.Event(), threading.Event()
+        real = tm.store.list_threads
+
+        def synced(*args, **kwargs):
+            # tick() has read the paused list and is about to close what was on
+            # it. Unlocked, a resume_thread landing here reopened one of those
+            # rows and tick() closed it a moment later anyway: the resume
+            # answered True and the conversation was left with nothing open.
+            rows = real(*args, **kwargs)
+            entered.set()
+            released.wait(timeout=0.5)
+            return rows
+
+        monkeypatch.setattr(tm.store, "list_threads", synced)
+        closed, resumed = [], []
+
+        def sweep():
+            closed.extend(tm.tick())
+
+        def resume():
+            # Only reachable once tick() is inside the store call, i.e. once it
+            # already holds the lock — so the sweep always goes first and the
+            # outcome is one ordering, not a race.
+            entered.wait(timeout=10)
+            resumed.append(tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id))
+            released.set()
+
+        workers = [threading.Thread(target=sweep), threading.Thread(target=resume)]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join(timeout=10)
+        assert not any(w.is_alive() for w in workers)
+        assert closed == [t1.thread_id] and resumed == [False]
+        assert tm.store.get_thread(t1.thread_id)["status"] == "closed"
+        assert tm.current()["thread_id"] == t2.thread_id
+
 
 class TestDegradedStore:
     """"Store failures never raise" — the class docstring, pinned."""
@@ -583,6 +719,41 @@ class TestNewResumeTick:
         old = tm.store.get_thread(t1.thread_id)
         assert old["title"] == "Add samba" and old["title_source"] == "receipt"
 
+    def test_new_thread_ignores_an_unknown_from_thread_id(self, tm):
+        # A9's bridge passes the turn's thread_id, which is a synthesized
+        # uuid4() on the store-outage path. Trusted, it paused nothing and
+        # created the successor anyway: two rows at status='open', the next
+        # turn still in the old subject, and tick() unable to reap either.
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Scanner share", "different device", from_thread_id="phantom-id")
+        assert [t["thread_id"] for t in tm.store.list_threads(status="open")] == [new_id]
+        assert tm.current()["thread_id"] == new_id
+        assert tm.store.get_thread(new_id)["metadata"] == {
+            "reason": "different device", "previous_thread_id": t1.thread_id,
+        }
+        old = tm.store.get_thread(t1.thread_id)
+        assert old["status"] == "paused" and old["metadata"]["successor"] == new_id
+        tm.clock.advance(GRACE_MINUTES * 60)
+        assert tm.tick() == [t1.thread_id]
+
+    def test_new_thread_leaves_the_open_thread_not_a_stale_one(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.clock.advance(3 * 3600)
+        t2 = _turn(tm, "check the disk space on /var")
+        assert tm.store.get_thread(t1.thread_id)["status"] == "paused"
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        assert [t["thread_id"] for t in tm.store.list_threads(status="open")] == [new_id]
+        assert tm.store.get_thread(t2.thread_id)["status"] == "paused"
+        assert tm.store.get_thread(t2.thread_id)["metadata"]["successor"] == new_id
+        assert tm.store.get_thread(new_id)["metadata"]["previous_thread_id"] == t2.thread_id
+
+    def test_new_thread_with_nothing_open_just_opens_one(self, tm):
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id="phantom-id")
+        assert tm.current()["thread_id"] == new_id
+        assert tm.store.get_thread(new_id)["metadata"] == {
+            "reason": "x", "previous_thread_id": None,
+        }
+
 
 class TestRecall:
     def test_recall_by_query_returns_receipt_and_snippets(self, tm):
@@ -625,3 +796,28 @@ class TestSingleton:
         assert get_thread_manager() is m and isinstance(m, ThreadManager)
         assert (tmp_path / "conv.db").exists()
         m.store.close()
+
+    def test_concurrent_first_calls_share_one_manager(self, tmp_path, monkeypatch):
+        # A8's route helper calls this from FastAPI's threadpool while the
+        # agent loop calls it too, so concurrent first touch is the ordinary
+        # shape. Unguarded, four callers built four managers: four RLocks (so
+        # `_locked` no longer serialises anything) and three leaked sqlite
+        # connections that nothing ever closes.
+        monkeypatch.setattr(threads_mod._cs, "_DEFAULT_DB", str(tmp_path / "conv.db"))
+        monkeypatch.setattr(threads_mod, "_manager", None)
+        gate = threading.Barrier(8)
+        made = []
+
+        def call():
+            gate.wait(timeout=10)
+            made.append(get_thread_manager())
+
+        workers = [threading.Thread(target=call) for _ in range(8)]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join(timeout=10)
+        assert not any(w.is_alive() for w in workers)
+        assert len(made) == 8
+        assert len({id(m) for m in made}) == 1 and len({id(m.store) for m in made}) == 1
+        made[0].store.close()
