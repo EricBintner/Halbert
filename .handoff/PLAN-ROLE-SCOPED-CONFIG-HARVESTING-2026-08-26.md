@@ -19,6 +19,31 @@ pytest from `/Volumes/4TB-BAD/Halbert`, `import halbert_core` resolves as a
 *namespace package* pointing at the outer project directory and package-level
 imports fail. All commands below use `cd /Volumes/4TB-BAD/Halbert/halbert_core`.
 
+**Prefix pytest with `arch -arm64` and use the repo venv explicitly:**
+
+```bash
+cd <worktree>/halbert_core
+arch -arm64 /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/ -q
+```
+
+The venv python is a universal2 binary that otherwise starts in x86_64 mode,
+and every compiled wheel in it is arm64-only — so collection dies in
+`conftest.py` before any test runs. The default `python` on PATH is miniconda
+3.9, too old for the codebase's `X | Y` annotations. Verified baseline with
+the correct invocation: **1288 passed, 0 failed.**
+
+**A second test tree exists at the repo root.** `tests/test_redaction.py`,
+`tests/test_redaction_extra.py`, and `tests/test_ingestion_e2e.py` live at
+`<repo>/tests/`, NOT under `halbert_core/tests/`, so the command above never
+runs them. They exercise `redact_text` directly. When touching
+`ingestion/redaction.py`, also run:
+
+```bash
+cd <worktree>
+arch -arm64 /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest \
+  tests/test_redaction.py tests/test_redaction_extra.py tests/test_ingestion_e2e.py -q
+```
+
 **Commit with explicit pathspecs** (`git commit -m "..." -- <paths>`). Other
 sessions edit this working tree concurrently; a bare `git commit -a` will sweep
 their staged work into your commit.
@@ -150,9 +175,30 @@ with:
 # WireGuard's standard formatting is `PrivateKey = <value>`, which the
 # original no-whitespace pattern silently missed.
 TOKEN_RE = re.compile(
-    r"(?i)(api|secret|token|key|password|psk|privatekey|presharedkey)\s*[=:]\s*\S+"
+    r"(?i)(api|secret|token|key|password|psk|privatekey|presharedkey)[ \t]*[=:][ \t]*\S+"
 )
 ```
+
+**Horizontal whitespace only — `[ \t]*`, not `\s*`.** `\s` matches newlines,
+so a keyword-and-separator at end-of-line *with no inline value* consumes the
+next line's first token: `api:\n  - foo` redacts to `<secret> foo`,
+structurally mangling the file. Guard it with
+`test_redaction_does_not_span_newlines`.
+
+Note the precise trigger, verified by control experiment: the shape requires
+an **empty inline value**. A well-formed `password: "value"` terminates the
+match at the value and never crosses the line break — so a normal netplan
+WiFi stanza does *not* trip this. A keyword-bearing YAML sample is therefore
+not automatically a regression test for it; check that any such test actually
+fails against the `\s*` form before trusting it.
+
+**Separately, the next-line value shape leaks and needs its own pattern.**
+`password:\n  "secret"` (YAML block style) is matched by neither the original
+regex nor the `[ \t]*` form — `\S+` hits the newline and stops. This is
+pre-existing, not introduced by the fix above, but it is a genuine plaintext
+path. Close it with an anchored second pattern that redacts the indented
+value line while preserving the key line and its indentation, and make sure a
+*non-indented* following line (a sibling key, not a value) is left alone.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -579,6 +625,50 @@ corruption. Plists are the primary harvestable format on macOS." \
   -- halbert_core/halbert_core/config/parser.py \
      halbert_core/tests/test_config_parser_robustness.py
 ```
+
+---
+
+### Task 4c: Close the plist-XML redaction gap
+
+**Verified empirically 2026-08-26**, not theorized. A secret inside a plist
+survives `redact_text` entirely:
+
+| input | output |
+|---|---|
+| `<key>Password</key>\n<string>s3cretvalue</string>` | unchanged |
+| `<key>psk</key>\n<string>hunter2wifipass</string>` | unchanged |
+| `<key>SecretData</key>\n<data>aGVsbG8...</data>` | unchanged |
+
+Mechanism: both redaction passes require a literal `=` or `:` separator.
+`TOKEN_RE` needs `keyword[ \t]*[=:]`, and in plist XML the keyword is followed
+by `<`. The line pass's key-line matcher also needs `[=:]`, which neither
+`<key>Password</key>` nor `<string>s3cretvalue</string>` contains — so the key
+line is never identified and its value is never a candidate.
+
+Two things make this load-bearing for *this* plan rather than a backlog item:
+
+1. `config/scopes/network.yml` (Task 8) stages
+   `/Library/Preferences/SystemConfiguration/preferences.plist`. The current
+   macOS harvest scope deliberately excludes `/Library/Preferences`; that
+   manifest re-introduces it.
+2. Task 5 converts binary plists to XML text. They were previously opaque
+   blobs in the index; afterwards they are greppable — so the rewire makes
+   plist secrets *more* legible exactly where redaction does not reach.
+
+A scan of all 39 plists under `/Library/Launch{Daemons,Agents}` on this host
+found only two benign non-credential hits, so nothing leaks today. The risk is
+that the gap is silent and scope-dependent.
+
+**The fix must be XML-aware, not a widened regex.** Add a third pass keyed on
+the `<key>NAME</key>` → `<string>VALUE</string>` / `<data>VALUE</data>` shape,
+reusing the same secret-keyword list. Emit a marker that keeps the document
+well-formed (a literal `<secret>` would read as an unknown tag).
+
+Related over-redaction bug to fix at the same time: when `TOKEN_RE` *does*
+fire inside plist XML it corrupts the markup, because `\S+` is greedy through
+the closing tag — `<string>--token=abc123</string>` becomes
+`<string>--<secret>`, eating `</string>`. Constraining the value character
+class to exclude `<` fixes it.
 
 ---
 
