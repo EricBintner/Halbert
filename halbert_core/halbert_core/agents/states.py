@@ -198,6 +198,10 @@ class StateContext:
     thread_switched: bool = False
     thread_manager: Optional[Any] = None
     recalled_threads: List[Dict[str, Any]] = field(default_factory=list)
+    # How many times an inline thread meta-tool has re-entered PLANNING this
+    # turn (A9b). Inline meta-tools deliberately do not raise loop_count, so
+    # max_loops cannot end a PLANNING→PLANNING chain; this counter does.
+    meta_tool_reentries: int = 0
     # Terminal sessions this turn's tools spawned (spawn payloads seen on the
     # terminal bridge); persisted on the assistant row at end_turn.
     terminal_session_ids: List[str] = field(default_factory=list)

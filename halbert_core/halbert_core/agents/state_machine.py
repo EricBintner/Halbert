@@ -108,6 +108,17 @@ class AgentStateMachine:
     # restarting the process. Generous enough for a real turn (several
     # model calls and a long command); overridable per instance in tests.
     TURN_LOCK_TIMEOUT_S: float = 600.0
+
+    # How many times an inline thread meta-tool may re-enter PLANNING in one
+    # turn. Meta-tools are handled inline and deliberately do not raise
+    # loop_count, so max_loops never ends a PLANNING→PLANNING chain, and
+    # _already_called only stops the *identical* call: a run of meta-tools
+    # with differing arguments would otherwise keep re-planning (a model
+    # round-trip each time) until the oscillation guard fired and ended the
+    # turn with a user-visible error. Two is enough for a legitimate
+    # sequence (recall then resume); the call after that is still handled,
+    # it just answers instead of planning again.
+    MAX_META_TOOL_REENTRIES: int = 2
     
     def __init__(
         self,
@@ -930,10 +941,11 @@ class AgentStateMachine:
             )
         
         # CRAG evaluation if we have retrieved context
-        if self.crag and self.ctx.retrieved_context:
+        crag_documents = self._crag_documents()
+        if self.crag and crag_documents:
             crag_result = await self.crag.evaluate(
                 self.ctx.user_query,
-                self.ctx.retrieved_context,
+                crag_documents,
                 self.ctx.observations
             )
             self.ctx.confidence = crag_result.confidence
@@ -956,8 +968,8 @@ class AgentStateMachine:
                 # thread_started / thread_recalled, run PLANNING once more
                 # with the new hint. No tool card, no loop increment. The
                 # identical call twice in a turn teaches the model nothing,
-                # so it reflects instead; that also stops PLANNING→PLANNING
-                # repeating forever.
+                # so it reflects instead; MAX_META_TOOL_REENTRIES bounds the
+                # re-entries that differing calls would otherwise run up.
                 if self._already_called(tool_name, tool_args):
                     logger.info(f"PLANNING: {tool_name} already handled this turn")
                     self.ctx.add_observation(
@@ -965,14 +977,35 @@ class AgentStateMachine:
                     )
                     yield await self._transition(AgentState.REFLECTING)
                     return
+                # _handle_meta_tool records exactly one tool call when it did
+                # something. Count the records rather than reading back the
+                # last one's name: a no-op new_thread leaves the *earlier*
+                # new_thread record at index -1, so a name check would call
+                # the no-op a success and re-plan on nothing.
+                recorded_before = len(self.ctx.tool_calls)
                 async for event in self._handle_meta_tool(tool_name, tool_args or {}):
                     yield event
-                if self.ctx.tool_calls and self.ctx.tool_calls[-1].name == tool_name:
-                    yield await self._transition(AgentState.PLANNING)
-                else:
+                if len(self.ctx.tool_calls) == recorded_before:
                     # Nothing recorded: the call was a no-op (a second
                     # new_thread), so there is nothing new to plan on.
                     yield await self._transition(AgentState.REFLECTING)
+                    return
+                self.ctx.meta_tool_reentries += 1
+                if self.ctx.meta_tool_reentries > self.MAX_META_TOOL_REENTRIES:
+                    # Budget spent. The call above still took effect; we just
+                    # stop paying for another PLANNING round-trip, so the turn
+                    # ends on its own instead of through the oscillation guard.
+                    logger.info(
+                        "PLANNING: thread meta-tool re-entry budget spent "
+                        f"({self.ctx.meta_tool_reentries}), reflecting"
+                    )
+                    self.ctx.add_observation(
+                        "Enough thread bookkeeping for this turn; answer the "
+                        "question with what you have."
+                    )
+                    yield await self._transition(AgentState.REFLECTING)
+                    return
+                yield await self._transition(AgentState.PLANNING)
                 return
 
             if self._already_called(tool_name, tool_args):
@@ -1034,6 +1067,24 @@ class AgentStateMachine:
             and tc.status in ("success", "error")
             for tc in self.ctx.tool_calls
         )
+
+    def _crag_documents(self) -> List[Dict[str, Any]]:
+        """The retrieved context CRAG is allowed to score.
+
+        Thread receipts (``source="thread"``, from recall_thread /
+        resume_thread and A9c's auto-recall) are conversation continuity, not
+        retrieval: what an earlier subject was about says nothing about
+        whether the host knowledge needed to answer *this* question was
+        found. Scoring them switches CRAG on for turns that retrieved
+        nothing, and a CORRECT verdict then sends PLANNING straight to
+        REFLECTING — the turn answers off a thread receipt and never searches
+        at all. The receipts still reach the prompt; they just do not vote on
+        retrieval quality.
+        """
+        return [
+            c for c in self.ctx.retrieved_context
+            if (c or {}).get("source") != "thread"
+        ]
 
     def _last_turn_id(self, thread_id: Optional[str]) -> Optional[str]:
         """The newest turn_id of ``thread_id``, for thread_recalled (spec §6:
@@ -1569,10 +1620,11 @@ class AgentStateMachine:
         logger.info(f"OBSERVING: {len(self.ctx.observations)} observations")
         
         # CRAG evaluation
-        if self.crag and self.ctx.retrieved_context:
+        crag_documents = self._crag_documents()
+        if self.crag and crag_documents:
             crag_result = await self.crag.evaluate(
                 self.ctx.user_query,
-                self.ctx.retrieved_context,
+                crag_documents,
                 self.ctx.observations
             )
             
@@ -1586,7 +1638,7 @@ class AgentStateMachine:
             )
         else:
             # No CRAG, estimate based on context
-            if self.ctx.retrieved_context:
+            if crag_documents:
                 self.ctx.confidence = 0.6
                 self.ctx.crag_action = CRAGAction.AMBIGUOUS
             else:

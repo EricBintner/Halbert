@@ -3,9 +3,11 @@
 """Plan A / A9b: new_thread / recall_thread / resume_thread are handled
 inline in PLANNING: no tool card, no loop increment, PLANNING re-runs once."""
 
+from types import SimpleNamespace
+
 import pytest
 
-from halbert_core.agents.states import AgentState, StateContext
+from halbert_core.agents.states import AgentState, CRAGAction, StateContext
 from halbert_core.agents.state_machine import AgentStateMachine
 from halbert_core.agents.llm_client import LLMResponse, ToolCall, FunctionCall
 from halbert_core.tools import ToolExecutor, ToolSafetyFramework
@@ -191,3 +193,132 @@ async def test_resume_failure_keeps_the_open_thread():
     assert [e.type for e in events] == ["state_change"]
     assert agent.ctx.thread_id == "t-open" and agent.ctx.thread_switched is False
     assert any("Could not resume" in o for o in agent.ctx.observations)
+
+
+# -----------------------------------------------------------------------------
+# Review round: the no-op signal, the re-entry bound, and CRAG's input
+# -----------------------------------------------------------------------------
+
+
+class _CragStub:
+    """Records every document list it is asked to score."""
+
+    def __init__(self, action="CORRECT", confidence=0.95):
+        self.calls, self._action, self._confidence = [], action, confidence
+
+    async def evaluate(self, query, documents, observations):
+        self.calls.append(list(documents))
+        return SimpleNamespace(
+            confidence=self._confidence, action=SimpleNamespace(value=self._action)
+        )
+
+
+def _crag_planning(llm, crag, tm=None, **kw):
+    agent = AgentStateMachine(
+        llm_client=llm, tool_executor=ToolExecutor(safety=ToolSafetyFramework()),
+        crag_evaluator=crag, max_loops=5,
+    )
+    agent.ctx = StateContext(session_id="s", request_id="r",
+                             user_query="now scanner share", thread_id="t-open", **kw)
+    agent.ctx.thread_manager = tm
+    agent.current_state = AgentState.PLANNING
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_a_genuine_second_new_thread_reflects_instead_of_replanning():
+    """The no-op signal must not be "tool_calls[-1].name == tool_name".
+
+    A second new_thread records nothing, so the record left at index -1 is the
+    *first* new_thread's — a name check reads that as a success and re-enters
+    PLANNING on a context nothing changed in. Production can only reach the
+    no-op this way (whatever set thread_switched also recorded a call), so
+    this is the test that actually exercises the branch.
+    """
+    tm = _FakeThreadManager()
+    agent = _planning(
+        _ScriptedLLM([_call("new_thread", title="One", reason="a"),
+                      _call("new_thread", title="Two", reason="b")]),
+        tm, thread_id="t-old",
+    )
+    first = [e async for e in agent._handle_planning()]
+    assert [e.type for e in first] == ["thread_started", "state_change"]
+    assert first[-1].data["state"] == "planning"
+
+    second = [e async for e in agent._handle_planning()]
+    assert [e.type for e in second] == ["state_change"]
+    assert second[0].data["state"] == "reflecting"
+    assert tm.calls == [("new_thread", "One", "a", "t-old")]
+    assert [tc.name for tc in agent.ctx.tool_calls] == ["new_thread"]
+    assert agent.ctx.meta_tool_reentries == 1
+    assert agent.ctx.loop_count == 0
+
+
+@pytest.mark.asyncio
+async def test_meta_tool_reentries_are_bounded_and_never_hit_the_oscillation_guard():
+    """Inline meta-tools skip loop_count, so max_loops cannot end a
+    PLANNING→PLANNING chain of *differing* calls. Without its own bound the
+    only backstop is _detect_oscillation, which ends the turn with a
+    user-visible "State oscillation detected" error."""
+    tm = _FakeThreadManager(recall_results=[RECALLED])
+    llm = _ScriptedLLM([_call("recall_thread", query=f"q{i}") for i in range(3)])
+    agent = _agent(llm)
+    events = [e async for e in agent.process(
+        "what came of the share", session_id="s-bound", thread_id="t-old", thread_manager=tm)]
+    types = [e.type for e in events]
+    reentries = [e for e in events
+                 if e.type == "state_change"
+                 and e.data["state"] == "planning" and e.data["previous_state"] == "planning"]
+    assert len(reentries) == AgentStateMachine.MAX_META_TOOL_REENTRIES == 2
+    assert not any(e.type == "error" and "oscillation" in str(e.data.get("message", "")).lower()
+                   for e in events)
+    assert types.count("thread_recalled") == 3      # the third call still took effect
+    assert agent.ctx.meta_tool_reentries == 3
+    assert "response_complete" in types and "session_ended" in types
+
+
+@pytest.mark.asyncio
+async def test_recall_receipts_do_not_switch_crag_on_so_the_turn_still_searches():
+    """A recalled receipt is continuity, not retrieval. Scoring it turned CRAG
+    on for a turn that had retrieved nothing, and a CORRECT verdict routed
+    PLANNING straight to REFLECTING — answering off the receipt and never
+    querying host knowledge for the actual question."""
+    crag = _CragStub(action="CORRECT", confidence=0.95)
+    tm = _FakeThreadManager(recall_results=[RECALLED])
+    llm = _ScriptedLLM([_call("recall_thread", query="samba share"),
+                        LLMResponse(content="", tool_calls=[], plan=[])])
+    agent = _crag_planning(llm, crag, tm)
+
+    first = [e async for e in agent._handle_planning()]
+    assert [e.type for e in first] == ["thread_recalled", "state_change"]
+    assert first[-1].data["state"] == "planning"
+
+    second = [e async for e in agent._handle_planning()]
+    assert crag.calls == []
+    assert "confidence_update" not in [e.type for e in second]
+    assert agent.ctx.crag_action == CRAGAction.PENDING
+    assert second[-1].data["state"] == "searching"
+
+
+@pytest.mark.asyncio
+async def test_crag_scores_real_retrieval_and_skips_the_thread_entries():
+    crag = _CragStub(action="CORRECT", confidence=0.95)
+    agent = _crag_planning(_ScriptedLLM([LLMResponse(content="", tool_calls=[], plan=[])]), crag)
+    agent.ctx.add_context(source="thread", content="Title: Samba media share", metadata={})
+    agent.ctx.add_context(source="rag", content="smb.conf lives in /etc/samba", metadata={})
+    events = [e async for e in agent._handle_planning()]
+    assert len(crag.calls) == 1 and [d["source"] for d in crag.calls[0]] == ["rag"]
+    assert agent.ctx.crag_action == CRAGAction.CORRECT
+    assert events[-1].data["state"] == "reflecting"
+
+
+@pytest.mark.asyncio
+async def test_observing_does_not_treat_a_thread_receipt_as_retrieval():
+    crag = _CragStub()
+    agent = _crag_planning(_ScriptedLLM([]), crag)
+    agent.ctx.add_context(source="thread", content="Title: Samba media share", metadata={})
+    agent.current_state = AgentState.OBSERVING
+    events = [e async for e in agent._handle_observing()]
+    assert crag.calls == []
+    assert agent.ctx.crag_action == CRAGAction.INCORRECT and agent.ctx.confidence == 0.3
+    assert events[-1].data["state"] == "planning"
