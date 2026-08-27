@@ -63,9 +63,11 @@ function capabilityTags(model: DiscoveredModel): string[] {
 /**
  * The searchable switcher the pill opens.
  *
- * Committing does not dismiss: the live region has to outlive the click to be
- * read at all, and whether a quick switch closes the surface is the host's
- * call, made from `onSelected`.
+ * Committing does not dismiss; whether a quick switch closes the surface is the
+ * host's call, made from `onSelected`. The switch itself is announced by the
+ * pill's live region rather than one here, because that region follows the
+ * selection and so survives both a host that closes on commit and a pin made
+ * without opening this at all.
  *
  * Focus return and the trigger's `aria-controls` both travel through
  * `triggerRef`/`onRequestFocusReturn` rather than a DOM lookup: a package that
@@ -92,7 +94,6 @@ export function QuickSwitchPopover({
 
   const [query, setQuery] = useState(initialQuery ?? '')
   const [highlight, setHighlight] = useState(0)
-  const [announcement, setAnnouncement] = useState('')
 
   const { models, selection, pinModel, pinTier } = picker
 
@@ -107,7 +108,6 @@ export function QuickSwitchPopover({
     if (!open) return
     setQuery(initialQuery ?? '')
     setHighlight(0)
-    setAnnouncement('')
     inputRef.current?.focus()
   }, [open, initialQuery])
 
@@ -177,9 +177,6 @@ export function QuickSwitchPopover({
   const commitModel = useCallback(
     (model: DiscoveredModel) => {
       pinModel(model.id, model.endpointId)
-      setAnnouncement(
-        `${model.name} on ${providerDescriptor(model.provider).label} will answer the next turn.`,
-      )
       onSelected?.({ model: model.id, endpointId: model.endpointId })
     },
     [pinModel, onSelected],
@@ -188,12 +185,6 @@ export function QuickSwitchPopover({
   const commitTier = useCallback(
     (tier: Tier) => {
       pinTier(tier)
-      const label = TIERS.find((t) => t.id === tier)?.label ?? tier
-      setAnnouncement(
-        tier === 'auto'
-          ? 'Routing the next turn automatically.'
-          : `Pinned to the ${label} tier.`,
-      )
       onSelected?.({ tier })
     },
     [pinTier, onSelected],
@@ -345,11 +336,6 @@ export function QuickSwitchPopover({
           All models and endpoints…
         </button>
       ) : null}
-
-      {/* Rendered plainly: this package ships no CSS, so hosts hide it themselves. */}
-      <div aria-live="polite" data-model-picker-live="">
-        {announcement}
-      </div>
     </div>
   )
 }
