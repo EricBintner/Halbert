@@ -13,6 +13,7 @@ genuinely is the right answer.
 """
 
 from halbert_core.integrations.source_diversity import (
+    by_score_desc,
     cap_by_source_directory,
     source_directory,
 )
@@ -92,6 +93,105 @@ AW = "knowledge/linux/arch-wiki/arch_wiki_{}.md"
 MP = "knowledge/macos/man-pages/man_pages_{}.md"
 WS = "knowledge/linux/webserver-docs/webserver_docs_{}.md"
 BK = "knowledge/linux/backup-docs/backup_docs_{}.md"
+
+
+# ── by_score_desc: the pool ordering ──────────────────────────────────
+
+
+class TestByScoreDesc:
+    """The daemon's chunk order is NOT score-descending.
+
+    Measured against the live daemon: 12 of the 15 probe pools contain score
+    inversions. On "journalctl filter by unit since boot",
+    knowledge/linux/logging-docs sits at rank 25 of 29 with score 0.6248 —
+    *behind* macos/homebrew (0.6059 at rank 18) and macos/man-pages (0.6110 at
+    rank 11). It is the 6th distinct directory in daemon order, and a cap of 1
+    at k=5 can surface only 5, so the answer is lost. Sorting the pool by score
+    first makes it the 3rd distinct directory and rescues the probe.
+    """
+
+    def test_sorts_by_score_descending(self):
+        chunks = [_chunk(WS.format(0), 0.1), _chunk(BK.format(0), 0.9)]
+        assert [c["score"] for c in by_score_desc(chunks)] == [0.9, 0.1]
+
+    def test_the_journalctl_inversion_is_corrected(self):
+        # The live shape: the answer scores higher than chunks ranked above it.
+        pool = [
+            _chunk(MP.format(0), 0.6110),
+            _chunk("knowledge/macos/homebrew/brew_01.md", 0.6059),
+            _chunk("knowledge/linux/logging-docs/logging_01.md", 0.6248),
+        ]
+        top = by_score_desc(pool)[0]["source_path"]
+        assert top == "knowledge/linux/logging-docs/logging_01.md"
+
+    def test_is_stable_so_equal_scores_keep_daemon_order(self):
+        chunks = [
+            _chunk(AW.format(0), 0.5),
+            _chunk(WS.format(0), 0.5),
+            _chunk(BK.format(0), 0.5),
+        ]
+        out = by_score_desc(chunks)
+        assert [c["source_path"] for c in out] == [
+            AW.format(0),
+            WS.format(0),
+            BK.format(0),
+        ]
+
+    def test_missing_score_sorts_last(self):
+        chunks = [{"source_path": WS.format(0)}, _chunk(BK.format(0), 0.1)]
+        out = by_score_desc(chunks)
+        assert [c["source_path"] for c in out] == [BK.format(0), WS.format(0)]
+
+    def test_non_numeric_score_sorts_last(self):
+        chunks = [_chunk(WS.format(0), "high"), _chunk(BK.format(0), 0.1)]
+        out = by_score_desc(chunks)
+        assert [c["source_path"] for c in out] == [BK.format(0), WS.format(0)]
+
+    def test_nan_score_sorts_last(self):
+        # NaN compares false against everything; left in the key it corrupts
+        # the sort rather than merely misplacing one chunk.
+        chunks = [_chunk(WS.format(0), float("nan")), _chunk(BK.format(0), 0.1)]
+        out = by_score_desc(chunks)
+        assert [c["source_path"] for c in out] == [BK.format(0), WS.format(0)]
+
+    def test_booleans_are_not_scores(self):
+        chunks = [_chunk(WS.format(0), True), _chunk(BK.format(0), 0.1)]
+        out = by_score_desc(chunks)
+        assert [c["source_path"] for c in out] == [BK.format(0), WS.format(0)]
+
+    def test_uniformly_unscored_input_degrades_to_the_given_order(self):
+        # The safety property of "unscored sorts last" plus a stable sort: if
+        # the score key ever disappears wholesale, ordering falls back to the
+        # daemon's own ranking rather than scrambling.
+        chunks = [{"source_path": p} for p in (AW.format(0), WS.format(0), BK.format(0))]
+        out = by_score_desc(chunks)
+        assert [c["source_path"] for c in out] == [
+            AW.format(0),
+            WS.format(0),
+            BK.format(0),
+        ]
+
+    def test_negative_scores_still_outrank_unscored(self):
+        chunks = [{"source_path": WS.format(0)}, _chunk(BK.format(0), -5.0)]
+        out = by_score_desc(chunks)
+        assert [c["source_path"] for c in out] == [BK.format(0), WS.format(0)]
+
+    def test_non_mapping_entries_do_not_raise(self):
+        assert len(by_score_desc(["a", None, _chunk(WS.format(0), 0.5)])) == 3
+
+    def test_empty_input_returns_empty(self):
+        assert by_score_desc([]) == []
+
+    def test_accepts_any_iterable(self):
+        chunks = (_chunk(AW.format(i), score=i / 10) for i in range(4))
+        assert [c["score"] for c in by_score_desc(chunks)] == [0.3, 0.2, 0.1, 0.0]
+
+    def test_input_is_not_mutated_and_chunks_are_returned_as_is(self):
+        a, b = _chunk(WS.format(0), 0.1), _chunk(BK.format(0), 0.9)
+        chunks = [a, b]
+        out = by_score_desc(chunks)
+        assert chunks == [a, b]
+        assert out[0] is b and out[1] is a
 
 
 class TestCapRespected:

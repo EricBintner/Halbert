@@ -19,9 +19,15 @@ nginx query are arch-wiki, while ``webserver-docs`` — which has the answer —
 appears once, further down.
 
 The fix is a degenerate MMR over a categorical provenance feature: pull a
-deeper candidate list than the caller wants, keep at most ``per_source`` chunks
-per source directory in the daemon's own ranking order, then trim to the
-requested count.
+deeper candidate list than the caller wants, order it by score, keep at most
+``per_source`` chunks per source directory, then trim to the requested count.
+
+The ordering step is not incidental. **The daemon's chunk order is not
+score-descending** — 12 of the 15 measured pools contain score inversions —
+and because a cap of 1 at ``k=5`` can surface only the first five distinct
+directories, an inversion that pushes the answering directory past position 5
+deletes it. Sorting the pool by score first is what takes the probe set from
+14/15 to 15/15. See :func:`by_score_desc`.
 
 Measured against the live daemon over 15 probes — 10 whose answer lives in a
 small directory, 5 controls where a giant source genuinely IS correct
@@ -29,7 +35,8 @@ small directory, 5 controls where a giant source genuinely IS correct
 
     baseline k=5                      6/10 small   3/5 controls   9/15
     raise max_chars alone             6/10 small   3/5 controls   9/15
-    deep pull + cap 1 per directory   9/10 small   5/5 controls  14/15
+    deep pull + cap 1, daemon order   9/10 small   5/5 controls  14/15
+    deep pull + cap 1, score-sorted  10/10 small   5/5 controls  15/15
     cap 2 per directory               8/10 small   5/5 controls  13/15
     blanket exclusion of the giants  10/10 small   1/5 controls  11/15
 
@@ -41,6 +48,7 @@ robust: it keeps a giant's single best chunk when the giant is right.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Iterable, List, Optional, TypeVar
 
 #: A retrieved chunk. Capping neither inspects nor rebuilds chunks beyond
@@ -92,6 +100,58 @@ def source_directory(source_path: Any) -> Optional[str]:
     return cleaned[:cut]
 
 
+#: Sentinel rank for a chunk carrying no usable score. Below every real
+#: score, so unscored chunks fall to the back of the pool.
+_UNSCORED = float("-inf")
+
+
+def _score_of(chunk: Any, score_key: str) -> float:
+    """A chunk's score as a sortable float, or ``-inf`` when it has none.
+
+    ``bool`` is excluded despite being an ``int`` subclass — ``True`` is not a
+    relevance of 1.0 — and ``NaN`` is rejected rather than passed through,
+    because a NaN key compares false against everything and corrupts the whole
+    sort instead of misplacing the one chunk that carries it.
+    """
+    if not isinstance(chunk, dict):
+        return _UNSCORED
+    value = chunk.get(score_key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return _UNSCORED
+    if math.isnan(value):
+        return _UNSCORED
+    return float(value)
+
+
+def by_score_desc(
+    chunks: Iterable[Chunk], *, score_key: str = "score"
+) -> List[Chunk]:
+    """Order a candidate pool by score, best first.
+
+    **The daemon's chunk order is not score-descending.** Measured against the
+    live daemon, 12 of the 15 probe pools contain score inversions. On
+    ``journalctl filter by unit since boot``,
+    ``knowledge/linux/logging-docs`` — which holds the answer — sits at rank 25
+    of 29 with score ``0.6248``, *behind* ``macos/homebrew`` (``0.6059``, rank
+    18) and ``macos/man-pages`` (``0.6110``, rank 11). In daemon order it is
+    the 6th distinct directory, and a cap of 1 at ``k=5`` surfaces at most 5,
+    so the answer is dropped. Sorted by score it is the 3rd, and survives.
+
+    The sort is **stable**, so chunks with equal scores keep the daemon's
+    relative order — the daemon's ranking still breaks every tie it can.
+
+    Chunks with a missing, non-numeric, or NaN score sort **last**. Two
+    reasons: an unscored chunk carries no evidence of relevance, so promoting
+    it above scored ones would be unjustified; and because the sort is stable,
+    a *uniform* loss of the score key (a daemon response-shape change, say)
+    degrades to the daemon's own order rather than scrambling it.
+
+    Returns:
+        A new list; neither the input nor any chunk is mutated.
+    """
+    return sorted(chunks, key=lambda c: _score_of(c, score_key), reverse=True)
+
+
 def cap_by_source_directory(
     chunks: Iterable[Chunk],
     limit: int,
@@ -102,9 +162,12 @@ def cap_by_source_directory(
 ) -> List[Chunk]:
     """Keep at most *per_source* chunks per source directory, then trim to *limit*.
 
-    The daemon's ranking is authoritative and is never re-sorted: chunks are
-    consumed in the order given, the first *per_source* seen for a directory
-    are kept, later ones spill.
+    This function never re-sorts. The order it is *given* is authoritative:
+    chunks are consumed in sequence, the first *per_source* seen for a
+    directory are kept, later ones spill. Ordering is a separate concern, and
+    the live path establishes it first — see :func:`by_score_desc`, which
+    ``SourcePrepRetrievalBackend.search`` applies to the pool before capping,
+    because the daemon's own chunk order is *not* score-descending.
 
     Args:
         chunks: Ranked chunks, best first. Any iterable; entries are expected

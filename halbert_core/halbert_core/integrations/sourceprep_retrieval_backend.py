@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
 from .source_diversity import (
     DEFAULT_PER_SOURCE,
     DEFAULT_PULL_K,
+    by_score_desc,
     cap_by_source_directory,
 )
 from .sourceprep_client import SourcePrepClient
@@ -352,12 +353,14 @@ class SourcePrepRetrievalBackend:
         The `figure_id` parameter is mapped to SourcePrep's `scope` filter
         for domain-specific retrieval (e.g. "network", "storage").
 
-        Retrieval is a deep pull followed by a per-source-directory cap: the
-        daemon is asked for `pull_k` candidates, at most `source_cap` are kept
-        per source directory in the daemon's own ranking order, and the top `k`
-        are returned. Without this the two giant corpora — arch-wiki (2,331
-        docs) and macos man-pages (~5,280) — win top-k on document count alone
-        and crowd out the small topic directories that hold the answer.
+        Retrieval is a deep pull, a score sort, then a per-source-directory
+        cap: the daemon is asked for `pull_k` candidates, those are ordered by
+        score, at most `source_cap` are kept per source directory, and the top
+        `k` are returned. Without the cap the two giant corpora — arch-wiki
+        (2,331 docs) and macos man-pages (~5,280) — win top-k on document count
+        alone and crowd out the small topic directories that hold the answer.
+        Without the sort the cap discards answers the daemon ranked out of
+        score order (measured: 12 of 15 pools carry score inversions).
 
         The cap applies to scoped queries too. A scope is candidate removal
         plus a constant score offset; it does not re-rank within the scope, so
@@ -400,9 +403,19 @@ class SourcePrepRetrievalBackend:
 
         self._check_applied_scope(response, scope)
         results = self._parse_context_response(response)
-        # per_source <= 0 is the cap's own "disabled" case, so this trims to k
-        # and nothing more when source_cap is off.
-        return cap_by_source_directory(results, k, per_source=self.source_cap)
+        if not capping:
+            # per_source <= 0 is the cap's own "disabled" case: trim to k in
+            # the daemon's own order and change nothing else, so an A/B
+            # against the pre-cap behaviour measures the pre-cap behaviour.
+            return cap_by_source_directory(results, k, per_source=self.source_cap)
+
+        # Order before capping. The daemon's chunk order is not
+        # score-descending, and the cap can only surface the first `k` distinct
+        # directories it meets — so an inversion that pushes the answering
+        # directory past position `k` deletes it outright.
+        return cap_by_source_directory(
+            by_score_desc(results), k, per_source=self.source_cap
+        )
 
     def _parse_context_response(
         self, response: Dict[str, Any]

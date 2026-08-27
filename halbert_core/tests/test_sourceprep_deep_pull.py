@@ -128,6 +128,72 @@ def test_pull_depth_and_cap_size_are_configurable():
     assert sum(1 for r in out if "arch-wiki" in r["source_path"]) == 2
 
 
+# ── The pool is score-ordered before it is capped ─────────────────────
+
+
+LOG = "knowledge/linux/logging-docs/logging_docs_01.md"
+
+
+def _inverted_corpus():
+    """The live ``journalctl filter by unit since boot`` pool, in miniature.
+
+    The daemon returns chunks out of score order. ``logging-docs`` — which
+    holds the answer — arrives *last*, behind five other distinct directories,
+    yet outscores three of them. In daemon order it is the 6th distinct
+    directory, so a cap of 1 at k=5 drops it; by score it is 3rd and survives.
+
+    man-pages/arch-wiki-ext are also transposed against their scores, so the
+    daemon order is inverted *within* the first five as well as at the tail.
+    """
+    return [
+        _chunk("knowledge/linux/tldr/tldr_02.md", score=0.7761),
+        _chunk(AW.format(0), score=0.6574),
+        _chunk("knowledge/macos/man-pages/man_01.md", score=0.6110),
+        _chunk("knowledge/linux/arch-wiki-ext/ext_01.md", score=0.6243),
+        _chunk("knowledge/macos/homebrew/brew_01.md", score=0.6059),
+        _chunk(LOG, score=0.6248),
+    ]
+
+
+def test_a_high_scoring_answer_ranked_late_by_the_daemon_still_reaches_the_result():
+    client = _RecordingClient(_inverted_corpus())
+    out = SourcePrepRetrievalBackend(client=client).search("journalctl by unit", k=5)
+    assert LOG in [r["source_path"] for r in out]
+
+
+def test_the_returned_chunks_are_in_score_order():
+    client = _RecordingClient(_inverted_corpus())
+    out = SourcePrepRetrievalBackend(client=client).search("q", k=5)
+    scores = [r["score"] for r in out]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_the_lower_scoring_chunk_is_the_one_displaced():
+    # homebrew (0.6059) is the weakest of the six and is what logging-docs
+    # (0.6248) takes the slot from — not one of the stronger directories.
+    client = _RecordingClient(_inverted_corpus())
+    out = SourcePrepRetrievalBackend(client=client).search("q", k=5)
+    paths = [r["source_path"] for r in out]
+    assert "knowledge/macos/homebrew/brew_01.md" not in paths
+
+
+def test_disabling_the_cap_also_leaves_the_daemon_order_untouched():
+    # The A/B arm must reproduce the pre-cap behaviour exactly, sort included.
+    client = _RecordingClient(_inverted_corpus())
+    out = SourcePrepRetrievalBackend(client=client, source_cap=0).search("q", k=5)
+    assert [r["score"] for r in out] == [0.7761, 0.6574, 0.6110, 0.6243, 0.6059]
+
+
+def test_equal_scores_keep_the_daemon_order():
+    client = _RecordingClient(
+        [_chunk(f"knowledge/linux/d{i}/f.md", score=0.5) for i in range(4)]
+    )
+    out = SourcePrepRetrievalBackend(client=client).search("q", k=4)
+    assert [r["source_path"] for r in out] == [
+        f"knowledge/linux/d{i}/f.md" for i in range(4)
+    ]
+
+
 # ── Scope interaction ─────────────────────────────────────────────────
 
 
