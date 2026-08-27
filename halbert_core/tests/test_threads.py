@@ -1093,3 +1093,39 @@ class TestMergeBack:
         assert tm.current()["thread_id"] == t1.thread_id
         assert len(tm.store.list_messages(t1.thread_id)) == 2
         assert len(tm.store.list_messages(new_id)) == 2
+
+
+class TestRetractionNotes:
+    def _retracted(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder", assistant="Added [media] at /srv/media.")
+        tm.clock.advance(3 * 3600)
+        t2 = _turn(tm, "check the disk space on /var")
+        tm.clock.advance(31 * 60)
+        assert tm.tick() == [t1.thread_id]
+        text = "add another share like we did for the media one"
+        turn3 = _turn(tm, text)
+        assert turn3.recalled[0]["thread_id"] == t1.thread_id
+        assert tm.retract_recall(t2.thread_id, t1.thread_id) is True
+        return t1, t2, text
+
+    def test_retract_appends_hidden_system_row(self, tm):
+        t1, t2, _ = self._retracted(tm)
+        rows = tm.store.list_messages(t2.thread_id)
+        note = rows[-1]
+        assert (note["role"], note["origin"], note["visible_in_timeline"]) == ("system", "system", False)
+        assert note["content"] == "admin retracted recall of 'Add samba'" and note["timestamp"] == tm.clock.t
+        assert all(t["origin"] != "system" for t in tm.store.list_turns())
+        assert all(r["origin"] != "system" for r in tm.store.recent_messages(t2.thread_id))
+        assert tm.retract_recall(t2.thread_id, t1.thread_id) is False
+        assert len(tm.store.list_messages(t2.thread_id)) == len(rows)
+
+    def test_begin_turn_collects_notes_until_next_human_row(self, tm):
+        t1, t2, text = self._retracted(tm)
+        turn4 = tm.begin_turn(text, analyze_message(text), "s4")
+        assert turn4.thread_id == t2.thread_id and turn4.recalled == []
+        assert turn4.notes == ["admin retracted recall of 'Add samba'"]
+        assert "\nNote: admin retracted recall of 'Add samba'\n" in turn4.hint and "Pulled in" not in turn4.hint
+        assert turn4.history[0]["role"] == "user"  # hidden rows never enter the history
+        tm.end_turn(turn4, assistant_text="ok", blocks=[], terminal_session_ids=[], diff_proposals=[])
+        turn5 = tm.begin_turn("continue", analyze_message("continue"), "s5")
+        assert turn5.notes == [] and "Note:" not in turn5.hint

@@ -229,6 +229,8 @@ class TurnContext:
     previous_thread_id: Optional[str] = None
     domains: List[str] = field(default_factory=list)
     entities: List[str] = field(default_factory=list)
+    #: system-origin rows newer than the last human row (e.g. a retracted recall)
+    notes: List[str] = field(default_factory=list)
 
 
 class ThreadManager:
@@ -297,8 +299,9 @@ class ThreadManager:
 
         if not history:
             history = self._history(thread)
+        notes = self._pending_notes(thread_id)
         try:
-            hint = build_hint(thread, decision, recalled, [], now=now)
+            hint = build_hint(thread, decision, recalled, [], now=now, notes=notes)
         except Exception as e:
             logger.warning(f"hint builder failed: {e}")
             hint = ""
@@ -320,6 +323,7 @@ class ThreadManager:
             previous_thread_id=previous_id if previous_id != thread_id else None,
             domains=list(signals.detected_domains or []),
             entities=sorted(signals.entities or ()),
+            notes=notes,
         )
 
     @_locked
@@ -561,7 +565,18 @@ class ThreadManager:
                 changed = True
         if not changed:
             return False
-        return self.store.update_thread(thread_id, recalled_json=recalled)
+        if not self.store.update_thread(thread_id, recalled_json=recalled):
+            return False
+        title = next(
+            (e.get("title") or "" for e in recalled if e.get("thread_id") == recalled_thread_id), ""
+        )
+        # Hidden system row: the next begin_turn surfaces it as a "Note:" line
+        # (spec §6 "adds a system-origin observation the next PLANNING sees").
+        self.store.append_message(
+            thread_id, "system", f"admin retracted recall of '{title or recalled_thread_id}'",
+            origin="system", status="complete", timestamp=now, visible_in_timeline=False,
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Internals
@@ -782,6 +797,17 @@ class ThreadManager:
             fenced = _fence(receipt, RECEIPT_ROW_MAX, keep_lines=True)
             history.insert(0, {"role": "system", "content": f"[Earlier in this subject: {fenced}]"})
         return history
+
+    def _pending_notes(self, thread_id: str) -> List[str]:
+        """System-origin rows newer than the thread's last human row, oldest-first."""
+        notes: List[str] = []
+        for m in reversed(self.store.list_messages(thread_id)):
+            if m["origin"] == "human":
+                break
+            if m["origin"] == "system" and m.get("content"):
+                notes.append(m["content"])
+        notes.reverse()
+        return notes
 
     def _soft_landing(self, previous_id: str) -> List[Dict[str, Any]]:
         rows = self.store.recent_messages(previous_id, limit=SOFT_LANDING_ROWS)
