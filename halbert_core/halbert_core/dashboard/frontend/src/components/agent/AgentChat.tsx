@@ -170,6 +170,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
     loadLatest,
     anchored,
     appendLive,
+    loadFailed,
     currentThread,
     setCurrentThread,
     byDay,
@@ -230,19 +231,37 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
     loadMentionables();
   }, []);
   
-  // The finished turn becomes a stored turn. Guarded so a turn parked on a
-  // confirmation prompt (stream closed, session waiting) is not appended
-  // early, and so one turn is appended once.
+  // The finished turn becomes a stored turn. Guarded so a turn still waiting
+  // on the admin is not folded away early, and so one turn is appended once.
+  //
+  // Two things park a turn. A confirmation prompt (stream closed, session
+  // waiting) is the obvious one. A diff the agent proposed and nobody has
+  // answered is the same situation: the timeline renders stored diffs
+  // read-only (Timeline.tsx), because a past turn must not act on a session
+  // that no longer exists — so folding a pending proposal in would degrade
+  // Apply/Reject to the word "proposed" the instant the reply finished, with
+  // the backend still perfectly willing to carry out the decision. It stays
+  // live until applyDiff/rejectDiff resolves it, and this effect re-runs.
   useEffect(() => {
     if (isStreaming || !liveUser || !session) return;
     if (session.pendingConfirmation || session.state === 'awaiting_confirmation') return;
+    if (session.diffProposals.some((diff) => diff.status === 'pending')) return;
     const turn = turnFromSession(session, liveUser, response, { cancelled: cancelledRef.current });
     if (appendedRef.current === turn.turnId) return;
     appendedRef.current = turn.turnId;
-    appendLive(turn);
+    if (anchored) {
+      // appendLive is a documented no-op on an anchored window (the turn
+      // would assert an adjacency that is false), so appending here would
+      // simply lose the exchange the admin just had until they found the
+      // "Back to latest" button. Go back to the tail instead: the turn is
+      // already stored, and the newest page has it.
+      void loadLatest();
+    } else {
+      appendLive(turn);
+    }
     setLiveUser(null);
     cancelledRef.current = false;
-  }, [isStreaming, liveUser, session, response, appendLive]);
+  }, [isStreaming, liveUser, session, response, appendLive, anchored, loadLatest]);
 
   // Thread identity is the server's; the label and the live region follow.
   useEffect(() => {
@@ -300,6 +319,7 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
           content: nextMessage,
           timestamp: Date.now(),
         };
+        cancelledRef.current = false;
         setLiveUser(userMsg);
         sendMessage(nextMessage);
         setInput('');
@@ -475,6 +495,10 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
       images: imageData.length > 0 ? imageData : undefined,
     };
 
+    // A turn that was parked (waiting on a diff) never reached the effect
+    // that clears this, so a Stop pressed two turns ago must not follow the
+    // new one into the transcript as "cancelled".
+    cancelledRef.current = false;
     setLiveUser(userMsg);
     setAgentError(null);
     setAttachedImages([]);
@@ -541,8 +565,14 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {/* Empty state: the host introduces itself — only when there is
-            nothing stored and nothing in flight. */}
-        {turns.length === 0 && !liveUser && !timelineLoading && <HostGreeting onPrompt={setInput} />}
+            nothing stored and nothing in flight. `loadFailed` is the rest of
+            that condition: an empty timeline because the request could not
+            reach a restarting backend is not an empty timeline because this
+            is the first time we have spoken, and greeting over someone's
+            real conversation is the worse of the two mistakes. */}
+        {turns.length === 0 && !liveUser && !timelineLoading && !loadFailed && (
+          <HostGreeting onPrompt={setInput} />
+        )}
 
         {/* Every turn that has finished, oldest first, grouped by day. */}
         <Timeline

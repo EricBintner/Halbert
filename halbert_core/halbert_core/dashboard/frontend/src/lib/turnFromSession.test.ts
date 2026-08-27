@@ -5,9 +5,14 @@
  * hook accumulated during the turn is folded into one TimelineTurn.
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { turnFromSession } from './turnFromSession'
+import { executionFromBlock } from '../components/agent/Timeline'
 import type { AgentSession } from '../hooks/useAgentStream'
+
+// Timeline pulls the terminal tile in through InlineTerminals; nothing here
+// renders, so keep the xterm dependency out of this file's module graph.
+vi.mock('../components/agent/TerminalTile', () => ({ TerminalTile: () => null }))
 
 function session(extra: Partial<AgentSession> = {}): AgentSession {
   return {
@@ -49,9 +54,9 @@ describe('turnFromSession', () => {
     expect(turn.assistant?.content).toBe('Here you go.')
     expect(turn.assistant?.status).toBe('complete')
     expect(turn.blocks).toEqual([
-      { tool: 'run_command', args: { command: 'ls' }, result: 'a b', exit: 0, executionId: 'x1' },
-      { tool: 'run_command', args: { command: 'false' }, result: undefined, exit: 1, executionId: 'x2' },
-      { tool: 'read_file', args: { path: '/etc/hosts' }, result: undefined, exit: null, executionId: 'x3' },
+      { tool: 'run_command', args: { command: 'ls' }, result: 'a b', exit: 0, executionId: 'x1', status: 'success', error: undefined },
+      { tool: 'run_command', args: { command: 'false' }, result: undefined, exit: 1, executionId: 'x2', status: 'error', error: 'exit 1' },
+      { tool: 'read_file', args: { path: '/etc/hosts' }, result: undefined, exit: null, executionId: 'x3', status: 'running', error: undefined },
     ])
     expect(turn.terminalBlockIds).toEqual(['term-1'])
     expect(turn.diffProposals[0].id).toBe('d1')
@@ -61,6 +66,58 @@ describe('turnFromSession', () => {
     const turn = turnFromSession(session({ turnId: null, thread: null }), USER, 'ok')
     expect(turn.turnId).toBe('local-sess-1')
     expect(turn.threadId).toBe('')
+  })
+
+  it('keeps each call\'s own verdict, so an unfinished one never reads as a success', () => {
+    const turn = turnFromSession(
+      session({
+        toolExecutions: [
+          // Stop pressed mid-command: cancel() closes the stream and marks
+          // nothing, so this call is still 'running' when the turn is folded.
+          { executionId: 'x1', tool: 'run_command', args: { command: 'systemctl stop nginx' }, status: 'running' },
+          // A failed tool that has no exit code of its own.
+          { executionId: 'x2', tool: 'read_file', args: { path: '/etc/shadow' }, status: 'error', error: 'permission denied' },
+        ],
+      }),
+      USER,
+      'partial',
+      { cancelled: true },
+    )
+
+    expect(turn.blocks[0]).toEqual({
+      tool: 'run_command',
+      args: { command: 'systemctl stop nginx' },
+      result: undefined,
+      exit: null,
+      executionId: 'x1',
+      status: 'running',
+      error: undefined,
+    })
+
+    // What the timeline actually paints: `exit` is absent for both, so its
+    // pass/fail reading falls through to the stored status. Without one it
+    // defaults to success — a green tick on a privileged command that was
+    // interrupted, and a failed read with its message gone.
+    expect(executionFromBlock(turn.blocks[0], 'fallback').status).not.toBe('success')
+    expect(executionFromBlock(turn.blocks[1], 'fallback').status).toBe('error')
+    expect(executionFromBlock(turn.blocks[1], 'fallback').error).toBe('permission denied')
+  })
+
+  it('invents no exit code for a tool that has none', () => {
+    const turn = turnFromSession(
+      session({
+        toolExecutions: [
+          { executionId: 'x9', tool: 'read_file', args: { path: '/etc/hosts' }, status: 'success', result: '127.0.0.1' },
+        ],
+      }),
+      USER,
+      'ok',
+    )
+    // `exit` is the run_command convention (types/timeline.ts); a read_file
+    // says how it went through its status.
+    expect(turn.blocks[0].exit).toBeNull()
+    expect(turn.blocks[0].status).toBe('success')
+    expect(executionFromBlock(turn.blocks[0], 'fallback').status).toBe('success')
   })
 
   it('marks interrupted and cancelled turns, and omits an empty reply', () => {
