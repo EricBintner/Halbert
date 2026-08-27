@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
-from typing import Callable, Dict, List
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .budget import ContextBudget, get_context_budget
 from .complexity import ComplexityLevel, ComplexityRouter
@@ -65,6 +65,14 @@ class MessageIntake:
     needs_tools: bool
     needs_web_search: bool  # transitional, deferred to F4
 
+    # From the skill matcher, when one is wired in. Holds SkillMatch objects,
+    # typed loosely so intake stays independent of the skills package.
+    active_skills: List[Any] = field(default_factory=list)
+
+    @property
+    def active_skill_names(self) -> List[str]:
+        return [getattr(m, "name", "") for m in self.active_skills]
+
 
 # ── Pipeline ─────────────────────────────────────────────────────
 
@@ -76,6 +84,7 @@ class IntakePipeline:
         complexity_router: ComplexityRouter,
         budget_fn: Callable[[str], ContextBudget],
         model_config: Dict,
+        skill_matcher: Any = None,
     ):
         """Args:
             complexity_router: the ComplexityRouter instance.
@@ -87,15 +96,24 @@ class IntakePipeline:
                 - llm_config.specialist_model.{enabled,model}
                 - llm_config.vision_model.{enabled,model}
                 - routing.complexity_threshold: int (default 3)
+            skill_matcher: optional skills.SkillMatcher. When present, the
+                skills active for the turn are matched from the signals and
+                carried on MessageIntake. Left None, intake behaves exactly
+                as before — skills are additive, not a new requirement.
         """
         self._router = complexity_router
         self._budget_fn = budget_fn
         self._model_config = model_config
+        self._skill_matcher = skill_matcher
 
-    def analyze(self, message: str) -> MessageIntake:
+    def analyze(self, message: str, *,
+                explicit_skills: Optional[Sequence[str]] = None) -> MessageIntake:
         """Run the full intake pipeline on a message.
 
         Returns a MessageIntake with all fields populated.
+
+        `explicit_skills` are skills the user invoked by name (`/storage-ops`),
+        which override trigger matching for the turn.
         """
         # ── Stage 1: Signals ──────────────────────────────────────
         signals = analyze_message(message)
@@ -130,6 +148,20 @@ class IntakePipeline:
         needs_tools = signals.is_troubleshooting and complexity.score >= threshold
         needs_web_search = bool(_WEB_SEARCH_RE.search(message))
 
+        # ── Stage 5: Skills ───────────────────────────────────────
+        # Matching never fails a turn: a broken skill file or matcher costs
+        # the turn its role scope and expertise prompt, not its answer.
+        active_skills: List[Any] = []
+        if self._skill_matcher is not None:
+            try:
+                active_skills = list(
+                    self._skill_matcher.match(
+                        message, signals, explicit=explicit_skills
+                    )
+                )
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("skill matching failed; continuing", exc_info=True)
+
         return MessageIntake(
             # Signals
             intent=signals.intent,
@@ -156,4 +188,5 @@ class IntakePipeline:
             needs_retrieval=needs_retrieval,
             needs_tools=needs_tools,
             needs_web_search=needs_web_search,
+            active_skills=active_skills,
         )

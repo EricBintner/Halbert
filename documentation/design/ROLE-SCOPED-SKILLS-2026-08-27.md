@@ -1035,19 +1035,34 @@ low disk space and activates the cleanup skill before the user asks.
 provisioned without silently widening retrieval. This unblocks Phase 3 from
 having to land atomically with a SourcePrep rebuild.
 
-### Phase 1 — Skill loader + matcher (foundation)
+### Phase 1 — Skill loader + matcher (foundation) ✅ *done*
 
-| Task | Est. lines | Files |
-|------|-----------|-------|
-| `skills/parser.py` — parse SKILL.md frontmatter + body | 80 | new |
-| `skills/loader.py` — load from 4 dirs (builtin, global, host, `.claude` compat) | 60 | new |
-| `skills/registry.py` — in-memory registry, CRUD, override resolution | 40 | new |
-| `skills/matcher.py` — match MessageSignals → skills; **resolve platform itself** (§16.7) | 100 | new |
-| Wire matcher into `intake/pipeline.py` | 20 | modified |
-| Tests: parser, loader, matcher, registry | 200 | new |
+| Task | Status | Files |
+|------|--------|-------|
+| `skills/parser.py` — frontmatter + body, tier/priority validation, scope canonicalization | **done** | new |
+| `skills/loader.py` — 4 dirs, both layouts, malformed files skipped not fatal | **done** | new |
+| `skills/registry.py` — registry, aliases, `extends` flattening | **done** | new |
+| `skills/matcher.py` — signals → skills; resolves platform itself (§16.7) | **done** | new |
+| Wire matcher into `intake/pipeline.py` (optional, additive) | **done** | modified |
+| Tests | **done** (29 pass) | `tests/test_skills.py` |
 
 **Deliverable:** Skills load and match against intake signals. No retrieval,
 budget, or safety integration yet — just the activation pipeline.
+
+Decisions taken during implementation:
+
+- **Activation is conservative.** `MIN_SCORE` equals one domain hit, so a
+  keyword alone cannot activate a skill and a skill with no triggers never
+  auto-activates (it stays reachable explicitly). Weights: domain 3, keyword 2.
+- **Platform and intent are filters, not contributors.** A skill restricted to
+  a platform we are not on cannot activate at any score — otherwise every
+  `platform: [darwin]` skill would score on every macOS turn.
+- **Skills carry a `role`, not just a `scope`.** Per §16.5, `role:` is the
+  preferred bridge and is left hyphenated; `scope:` is canonicalized to
+  underscores, since a scope name a skill invents has no daemon-side
+  `display_name` mapping to save it from silently widening.
+- **Matching never fails a turn.** A broken skill file or a throwing matcher
+  costs the turn its expertise prompt and role scope, not its answer.
 
 ### Phase 2 — Composer, context, and safety *(was Phase 2 + Phase 3)*
 
