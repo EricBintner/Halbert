@@ -108,18 +108,38 @@ function fromRoleAssignment(a: RoleAssignment): RawSlot {
   return { enabled: a.enabled, endpoint_id: a.endpointId, model: a.model }
 }
 
+function toAssignments(llm: RawLlmConfig): Record<string, RoleAssignment> {
+  return {
+    chat_model: toRoleAssignment(llm.chat_model),
+    specialist_model: toRoleAssignment(llm.specialist_model),
+    vision_model: toRoleAssignment(llm.vision_model),
+  }
+}
+
 function toPickerConfig(payload: {
   llm_config: RawLlmConfig
   chat_capable_providers: string[]
+  effective?: {
+    llm_config?: RawLlmConfig
+    overridden_slots?: Record<string, string>
+  }
 }): PickerConfig {
   const llm = payload.llm_config
+  const effective = payload.effective
   return {
     endpoints: (llm.saved_endpoints || []).map(toSavedEndpoint),
-    assignments: {
-      chat_model: toRoleAssignment(llm.chat_model),
-      specialist_model: toRoleAssignment(llm.specialist_model),
-      vision_model: toRoleAssignment(llm.vision_model),
-    },
+    // The editable layer. GET and PUT are both the global layer, so the
+    // drawer's round trip cannot carry a higher layer into the user's file.
+    assignments: toAssignments(llm),
+    // What is actually in force. Absent before the backend grew layers, and
+    // identical to `assignments` for a user with no workspace file or session
+    // pin — which is everyone today.
+    ...(effective?.llm_config
+      ? { effectiveAssignments: toAssignments(effective.llm_config) }
+      : {}),
+    ...(effective?.overridden_slots
+      ? { overriddenSlots: effective.overridden_slots }
+      : {}),
     chatCapableProviders: (payload.chat_capable_providers || []) as ProviderId[],
   }
 }

@@ -52,6 +52,8 @@ function stubPicker(
     isChatCapable: () => true,
     modelsForRole: () => MODELS,
     assignmentFor: () => undefined,
+    effectiveAssignmentFor: () => undefined,
+    overrideLayerFor: () => undefined,
     endpointFor: () => undefined,
     selection: { tier: 'auto' },
     setSelection: vi.fn(),
