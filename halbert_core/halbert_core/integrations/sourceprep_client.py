@@ -90,8 +90,9 @@ class SourcePrepClient:
         self,
         path: str,
         params: Optional[Dict[str, Any]] = None,
+        project_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        url = self._url(path)
+        url = self._url(path, project_id=project_id)
         try:
             resp = requests.get(url, params=params, timeout=self.timeout)
             resp.raise_for_status()
@@ -160,6 +161,30 @@ class SourcePrepClient:
                 "min_score": min_score,
             },
         )
+
+    # -- Scopes -------------------------------------------------------------
+
+    def list_scopes(self, project_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """GET /projects/{id}/scopes — the scopes provisioned on the daemon.
+
+        Returns each scope's ``id`` (daemon-native, underscored), its
+        ``display_name`` (as written in sourceprep_template.yml, hyphenated),
+        and ``assigned_to_role``. Callers use this to check a scope exists
+        before querying it: the context endpoint answers an unknown scope
+        with a silent global union (scope_resolver.resolve_mask rule 2), so
+        an unchecked scope name degrades retrieval instead of failing.
+
+        Returns an empty list if the daemon is unreachable — callers must
+        treat "no scopes known" as "cannot verify", not as "none exist".
+        """
+        try:
+            data = self._get("/projects/{project_id}/scopes", project_id=project_id)
+        except Exception:
+            logger.debug("SourcePrep scope listing failed", exc_info=True)
+            return []
+        inner = data.get("data", data) if isinstance(data, dict) else {}
+        scopes = inner.get("scopes", inner) if isinstance(inner, dict) else inner
+        return [s for s in scopes if isinstance(s, dict)] if isinstance(scopes, list) else []
 
     # -- Observations -------------------------------------------------------
 

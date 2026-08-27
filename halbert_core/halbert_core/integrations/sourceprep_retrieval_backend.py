@@ -170,6 +170,8 @@ class SourcePrepRetrievalBackend:
         self.default_k = default_k
         self.default_max_chars = default_max_chars
         self._loaded = False
+        self._scope_ids: Optional[set] = None
+        self._roles_to_scope: Optional[Dict[str, str]] = None
 
     def load(self, figure_id: Optional[str] = None) -> bool:
         """Verify the SourcePrep daemon is reachable and project is built.
@@ -188,6 +190,124 @@ class SourcePrepRetrievalBackend:
 
         self._loaded = True
         return True
+
+    # ── Scope resolution ──────────────────────────────────────────────
+    #
+    # SourcePrep answers an unknown scope name with a silent global union
+    # (scope_resolver.resolve_mask rule 2: mask=None, applied_scope="global",
+    # plus a scope_warning nobody was reading). A query asking for a scope
+    # that is not provisioned therefore came back UNFILTERED — on a macOS
+    # host, a ZFS question could be answered out of the FreeBSD handbook,
+    # which is exactly what scope_mode="hard" exists to prevent.
+    #
+    # So resolve the requested scope against the daemon's real scope list
+    # first, narrowing to the nearest provisioned ancestor: a skill may ask
+    # for "host_storage" on a host where only the coarse "host" scope has
+    # been built, and should get "host" rather than everything.
+
+    def invalidate_scope_cache(self) -> None:
+        """Drop the cached scope list (call after provisioning new scopes)."""
+        self._scope_ids = None
+        self._roles_to_scope = None
+
+    def _available_scope_ids(self) -> set:
+        """Scope ids provisioned on the daemon, cached for the backend's life.
+
+        An empty set means "could not verify" (daemon unreachable or the
+        listing failed), never "no scopes exist" — resolve_scope fails open
+        in that case rather than silently dropping the caller's scope.
+        """
+        if self._scope_ids is None:
+            try:
+                scopes = self.client.list_scopes()
+                self._scope_ids = {s["id"] for s in scopes if s.get("id")}
+                self._roles_to_scope = {
+                    s["assigned_to_role"]: s["id"]
+                    for s in scopes
+                    if s.get("assigned_to_role") and s.get("id")
+                }
+            except Exception:  # pragma: no cover - resolution must never raise
+                logger.debug("scope listing failed; scoping unverified", exc_info=True)
+                self._scope_ids = set()
+                self._roles_to_scope = {}
+        return self._scope_ids
+
+    def resolve_scope(self, requested: Optional[str]) -> Optional[str]:
+        """Narrow *requested* to the nearest scope the daemon actually has.
+
+        Walks the underscore-delimited chain from most to least specific:
+        ``host_storage`` → ``host`` → None. Returns None when nothing in the
+        chain is provisioned, which asks for an unscoped union deliberately
+        instead of tripping the daemon's silent fallback.
+
+        Fails open (returns *requested* unchanged) when the scope list could
+        not be read, so a transient daemon hiccup does not widen retrieval.
+        """
+        if not requested:
+            return None
+
+        available = self._available_scope_ids()
+        if not available:
+            return requested
+
+        parts = requested.split("_")
+        for stop in range(len(parts), 0, -1):
+            candidate = "_".join(parts[:stop])
+            if candidate in available:
+                if candidate != requested:
+                    logger.info(
+                        "scope %r not provisioned; narrowing to %r",
+                        requested, candidate,
+                    )
+                return candidate
+
+        logger.warning(
+            "scope %r has no provisioned ancestor; querying unscoped", requested
+        )
+        return None
+
+    def resolve_role(self, role: Optional[str]) -> Optional[str]:
+        """Map a skill role to the id of the scope that carries it.
+
+        Halbert deliberately never sends ``role=`` to the daemon. The daemon's
+        role path fails open *and silently*: an unknown role returns
+        ``applied_scope="global"`` with the requested role echoed back in
+        ``applied_role`` and **no** ``scope_warning`` — indistinguishable from
+        success, and strictly worse than the scope path, which at least warns.
+        Verified live 2026-08-27: ``role=storage-ops`` on an unprovisioned role
+        answered a ZFS query out of the FreeBSD handbook.
+
+        So resolve the role to a scope id here and send that instead, which
+        routes through resolve_scope's hardened path.
+
+        Returns None when no scope carries the role — the caller should then
+        fall back to its own scope, not query by role.
+        """
+        if not role:
+            return None
+
+        self._available_scope_ids()  # populates the role map
+        scope_id = (self._roles_to_scope or {}).get(role)
+        if scope_id is None:
+            logger.info("no scope carries role %r; falling back to scope routing", role)
+        return scope_id
+
+    def _check_applied_scope(
+        self, response: Dict[str, Any], requested: Optional[str]
+    ) -> None:
+        """Log when the daemon did not honour the scope we asked for."""
+        data = response.get("data", response)
+        if not isinstance(data, dict):
+            return
+        warning = data.get("scope_warning")
+        applied = data.get("applied_scope")
+        if warning:
+            logger.warning("SourcePrep scope not honoured: %s", warning)
+        elif requested and applied and applied != requested:
+            logger.warning(
+                "SourcePrep applied scope %r, not the requested %r",
+                applied, requested,
+            )
 
     def search(
         self,
@@ -208,7 +328,10 @@ class SourcePrepRetrievalBackend:
         Args:
             query: Natural language search query.
             k: Number of results to retrieve.
-            figure_id: Optional scope filter (mapped to SourcePrep scope).
+            figure_id: Optional scope filter. Resolved against the daemon's
+                provisioned scopes first (see resolve_scope), so an
+                unbuilt scope narrows to its nearest ancestor instead of
+                silently widening to a global union.
 
         Returns:
             List of result dicts with at least a 'text' key, plus
@@ -217,6 +340,8 @@ class SourcePrepRetrievalBackend:
         if not query.strip():
             return []
 
+        scope = self.resolve_scope(figure_id)
+
         try:
             response = self.client.get_context(
                 query=query,
@@ -224,12 +349,13 @@ class SourcePrepRetrievalBackend:
                 max_chars=self.default_max_chars,
                 structured=True,
                 trace_expand=True,
-                scope=figure_id,
+                scope=scope,
             )
         except Exception as e:
             logger.error(f"SourcePrep context retrieval failed: {e}")
             return []
 
+        self._check_applied_scope(response, scope)
         return self._parse_context_response(response)
 
     def _parse_context_response(
