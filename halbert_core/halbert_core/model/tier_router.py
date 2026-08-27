@@ -237,9 +237,10 @@ class TierRouter:
             config_path: Path to models.yml (auto-detected if None)
         """
         self.config_path = self._find_config(config_path)
+        self._config_session = self._active_session()
         self.raw_config = self._load_raw_config()
         self.config = self._parse_config(self.raw_config)
-        
+
         # Provider instances (created on demand)
         self._providers: Dict[str, ModelProvider] = {}
         
@@ -273,8 +274,29 @@ class TierRouter:
         logger.warning("No models.yml found; TierRouter will have no models")
         return user_models_config()  # default (non-existent) location
     
+    @staticmethod
+    def _active_session() -> Optional[str]:
+        from .config_layers import active_session
+        return active_session()
+
     def _load_raw_config(self) -> Dict[str, Any]:
-        """Load raw YAML configuration."""
+        """The models.yml the rest of Halbert resolves against.
+
+        When the file found is the one llm_config owns, the config comes from
+        the store so the workspace and session layers apply. Parsing it here
+        instead let the router pick the global specialist while, in the same
+        request on the same host, get_specialist_model() picked a workspace or
+        session pin, with nothing to say the two disagreed.
+        """
+        from . import llm_config as llm_store
+
+        if self.config_path == llm_store.global_config_path():
+            return llm_store.load_file(self._config_session)
+        return self._read_single_file()
+
+    def _read_single_file(self) -> Dict[str, Any]:
+        """Raw YAML for a file outside the store — an explicit path, or the
+        packaged template the store deliberately never reads."""
         if self.config_path.exists():
             try:
                 with open(self.config_path) as f:
@@ -282,7 +304,22 @@ class TierRouter:
             except Exception as e:
                 logger.warning(f"Failed to load config: {e}")
         return {}
-    
+
+    def refresh(self) -> bool:
+        """Re-resolve the config when the bound session changed. True if it did.
+
+        The router is cached for the life of the process, so a session pinned
+        after it was built would be honoured by every other resolution in the
+        turn and ignored by this one.
+        """
+        session = self._active_session()
+        if session == self._config_session:
+            return False
+        self._config_session = session
+        self.raw_config = self._load_raw_config()
+        self.config = self._parse_config(self.raw_config)
+        return True
+
     def _parse_config(self, raw: Dict[str, Any]) -> TierRouterConfig:
         """Parse configuration, handling both new and legacy formats."""
         # Check for new schema version

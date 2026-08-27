@@ -3,7 +3,19 @@
 """Shared fixtures."""
 import pytest
 
-from halbert_core.model.config_locator import ENV_VAR
+from halbert_core.model.config_locator import ENV_VAR, WORKSPACE_ENV_VAR
+
+
+@pytest.fixture(autouse=True)
+def _no_declared_workspace_layer(monkeypatch):
+    """No suite inherits a workspace layer from the developer's shell.
+
+    Unlike $HALBERT_MODELS_CONFIG this one is *additive*: an exported overlay
+    does not have to be the file under test to reach it, it only has to declare
+    a pin, and every reader that resolves the layers then sees it. So it is
+    cleared for every test, not only the ones that ask for a temp config dir.
+    """
+    monkeypatch.delenv(WORKSPACE_ENV_VAR, raising=False)
 
 
 @pytest.fixture

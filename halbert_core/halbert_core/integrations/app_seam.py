@@ -128,6 +128,21 @@ class HalbertModelBackend:
 
     # -- TierRouter access -------------------------------------------------
 
+    def _resync_tier_router(self) -> None:
+        """Let a cached router re-resolve its layers before it is used again.
+
+        The router is built once per process but the session layer changes per
+        turn, so without this the seam would route against the global slot
+        while everything else in the same turn honoured the session's pin.
+        """
+        refresh = getattr(self._tier_router, "refresh", None)
+        if not callable(refresh):
+            return
+        try:
+            refresh()
+        except Exception as e:
+            logger.warning(f"TierRouter config refresh failed ({e}); keeping the cached config")
+
     def _get_tier_router(self) -> Any:
         """Return a cached TierRouter, or None if it can't route anything.
 
@@ -135,7 +150,10 @@ class HalbertModelBackend:
         (models.yml not found) is treated as unavailable so ``chat()`` doesn't
         raise ``ModelNotFoundError`` on every call.
         """
-        if self._tier_router is not None or self._tier_router_unavailable:
+        if self._tier_router is not None:
+            self._resync_tier_router()
+            return self._tier_router
+        if self._tier_router_unavailable:
             return self._tier_router
         try:
             from ..model.tier_router import TierRouter  # lazy: import-order safety
@@ -146,7 +164,9 @@ class HalbertModelBackend:
             # user config dir (never the repo checkout). If no user file
             # exists we deliberately do NOT construct TierRouter, because its
             # own _find_config would fall through to the repo config/models.yml
-            # (with its Tailscale specialist) and silently diverge from chat.
+            # and silently diverge from chat. Handing the router the store's own
+            # file is also what makes it read the layers rather than parse a
+            # single file, so a workspace or session pin reaches both.
             path = find_models_config(include_repo=False) or user_models_config()
             if not path.is_file():
                 logger.warning(
