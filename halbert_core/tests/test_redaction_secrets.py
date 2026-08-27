@@ -746,6 +746,88 @@ def test_ula_exemption_does_not_reach_the_neighbouring_public_prefixes():
         assert addr not in redact_text(f"peer {addr}\n"), f"leaked {addr}"
 
 
+# --- Netmasks: configuration, not an address ------------------------------
+#
+# A subnet mask identifies nothing. It is drawn from a 33-element set that is
+# the same on every machine on earth, so it carries no bits that could point
+# at this host or a peer -- the only thing address redaction protects.
+
+
+def test_netmasks_survive_redaction():
+    """`NETMASK=255.255.255.0` became `NETMASK=<ip>` on every ifcfg-* file."""
+    for mask in (
+        "255.255.255.0",
+        "255.255.0.0",
+        "255.0.0.0",
+        "255.255.255.128",
+        "255.255.255.252",
+        "255.255.254.0",
+        "128.0.0.0",
+    ):
+        line = f"NETMASK={mask}\n"
+        assert redact_text(line) == line, f"redacted netmask {mask}"
+
+
+def test_netmask_survives_whatever_the_key_is_called():
+    """The mask is recognised by shape, so no keyword vocabulary to maintain.
+
+    Four real spellings from four different files: RHEL/SUSE ifcfg,
+    Debian /etc/network/interfaces, ISC dhcpd, and rsyncd's addr/mask form
+    where the mask has no key in front of it at all.
+    """
+    for line in (
+        "NETMASK=255.255.255.0\n",
+        "    netmask 255.255.255.0\n",
+        "option subnet-mask 255.255.255.0;\n",
+        "hosts allow = 192.168.1.0/255.255.255.0\n",
+    ):
+        assert redact_text(line) == line, f"redacted the mask in {line!r}"
+
+
+def test_a_dotted_quad_that_is_not_a_valid_mask_is_still_redacted():
+    """Contiguous leading ones is the defining property; 255.0.255.0 has a
+    hole, so it is an address that merely looks mask-ish."""
+    for not_a_mask in ("255.0.255.0", "255.255.0.255", "0.0.0.255", "255.255.1.0"):
+        out = redact_text(f"peer {not_a_mask}\n")
+        assert not_a_mask not in out, f"exempted non-mask {not_a_mask}"
+        assert "<ip>" in out
+
+
+def test_ifcfg_eth0_keeps_its_netmask_and_loses_its_public_addresses():
+    """The file shape this fix exists for, whole.
+
+    A public IPADDR/GATEWAY must still go: exempting the mask must not be a
+    back door into exempting the addresses beside it.
+    """
+    ifcfg = (
+        "DEVICE=eth0\n"
+        "BOOTPROTO=static\n"
+        "IPADDR=203.0.113.42\n"
+        "NETMASK=255.255.255.0\n"
+        "GATEWAY=203.0.113.1\n"
+        "ONBOOT=yes\n"
+    )
+    out = redact_text(ifcfg)
+    assert "NETMASK=255.255.255.0" in out
+    assert "203.0.113.42" not in out, "public IPADDR leaked"
+    assert "203.0.113.1" not in out, "public GATEWAY leaked"
+    assert "IPADDR=<ip>" in out
+    assert "DEVICE=eth0" in out
+
+
+def test_a_private_ifcfg_now_round_trips_unchanged():
+    """The common case on a LAN host: nothing in the file is redactable."""
+    ifcfg = (
+        "DEVICE=eth0\n"
+        "BOOTPROTO=static\n"
+        "IPADDR=192.168.1.50\n"
+        "NETMASK=255.255.255.0\n"
+        "GATEWAY=192.168.1.1\n"
+        "ONBOOT=yes\n"
+    )
+    assert redact_text(ifcfg) == ifcfg
+
+
 def test_public_ipv4_is_still_redacted():
     for addr in ("8.8.8.8", "203.0.113.5", "1.1.1.1"):
         out = redact_text(f"nameserver {addr}\n")

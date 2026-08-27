@@ -267,6 +267,44 @@ _EXEMPT_NETWORKS = tuple(
 _IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
 
+def _is_netmask(addr: ipaddress.IPv4Address) -> bool:
+    """True for a dotted quad that is a valid IPv4 subnet mask.
+
+    A mask is not an address. It names no host and no peer, it is pure
+    configuration, and every `ifcfg-*` file on RHEL and SUSE carries one --
+    all of which the network_admin manifest harvests. Redacting it turned
+    `NETMASK=255.255.255.0` into `NETMASK=<ip>`, destroying the one field
+    that says how big the subnet is.
+
+    Detected by **value shape** -- contiguous leading ones, the defining
+    property of a valid mask -- rather than by key name. Two reasons:
+
+    * A mask has no single key. RHEL writes `NETMASK=`, Debian writes
+      `netmask `, ISC dhcpd writes `option subnet-mask`, and rsyncd's
+      `hosts allow = 192.168.1.0/255.255.255.0` puts one after a slash with
+      no key of its own. A key-name rule needs a vocabulary that grows every
+      time a new file format is harvested, and is silently wrong until
+      someone notices the gap. The shape rule is complete on day one.
+    * The exemption is safe *because* it is shape-based. There are exactly
+      33 valid masks, they are the same 33 on every machine on earth, and
+      none of them is an assignable host address -- they are prefix
+      boundaries. A value drawn from a fixed, universally-known 33-element
+      set carries no bits that could identify this host or a remote peer,
+      which is the only thing address redaction exists to protect. The
+      converse worry -- that a bare `255.255.255.0` in `/etc/hosts` is a
+      host entry rather than a mask -- costs nothing either way: it would be
+      an entry for a /24's broadcast address, equally non-identifying.
+
+    Implemented by inverting: a run of ones followed by a run of zeros
+    inverts to a run of zeros followed by a run of ones, i.e. one less than
+    a power of two. `255.0.255.0` has a hole and fails; `255.255.255.255`
+    and `0.0.0.0` pass, and were already exempt as broadcast and
+    unspecified respectively.
+    """
+    inverted = int(addr) ^ 0xFFFFFFFF
+    return inverted & (inverted + 1) == 0
+
+
 def _is_exempt_address(addr: _IPAddress) -> bool:
     """True when an address is non-routable and so not a secret.
 
@@ -275,8 +313,14 @@ def _is_exempt_address(addr: _IPAddress) -> bool:
     Network containment is version-aware (`IPv4Network.__contains__` returns
     False for an IPv6 address rather than raising), so the v4-only networks
     above are safe to test against either family.
+
+    Netmasks are the one exemption here that is not about routability -- see
+    `_is_netmask`. There is no v6 equivalent: IPv6 prefixes are written as
+    `/64`, never as a mask address.
     """
     if addr.is_loopback or addr.is_link_local or addr.is_unspecified:
+        return True
+    if isinstance(addr, ipaddress.IPv4Address) and _is_netmask(addr):
         return True
     return any(addr in net for net in _EXEMPT_NETWORKS)
 
