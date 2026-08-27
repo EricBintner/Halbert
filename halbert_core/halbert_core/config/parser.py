@@ -49,7 +49,15 @@ def parse(path: str) -> Dict[str, Any]:
 def _parse_ini_like(path: str, text: str, h: str) -> Dict[str, Any]:
     parser = configparser.ConfigParser(interpolation=None)
     # Allow ; and # comments
-    parser.read_string(text)
+    try:
+        parser.read_string(text)
+    except configparser.Error:
+        # Real config routinely violates strict ini rules: systemd drop-ins
+        # repeat directives (Environment=, ExecStartPre=), and dispatcher
+        # scripts / bare KEY=value files have no [Section] header. Degrading
+        # to text keeps the content searchable; raising would drop the file
+        # entirely, because snapshot.py wraps parse + raw-write in one try.
+        return _parse_text(path, text, h)
     sections: Dict[str, Dict[str, Any]] = {}
     for section in parser.sections():
         items: Dict[str, Any] = {}
