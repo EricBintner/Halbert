@@ -10,7 +10,14 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { Timeline, executionFromBlock, REDACTED, FORGET_FAILED, FORGET_PARTLY_FAILED } from './Timeline'
+import {
+  Timeline,
+  executionFromBlock,
+  REDACTED,
+  FORGET_FAILED,
+  FORGET_NOT_STORED_YET,
+  FORGET_PARTLY_FAILED,
+} from './Timeline'
 import { groupByDay } from '../../hooks/useTimeline'
 import { lastAlert, lastAnnouncement } from '../../lib/announce'
 import { terminalSessionStore } from '../../hooks/useTerminalSessions'
@@ -92,12 +99,92 @@ describe('Timeline', () => {
     const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
     expect(headings).toEqual(['Tue, Jul 14', 'Today'])
 
-    const times = Array.from(container.querySelectorAll('header.thread-divider time')).map((t) => t.getAttribute('datetime'))
+    // The divider used to be a <header>; it is a plain element now (see the
+    // feed-structure test below), so the selector asks for the divider, not
+    // for the tag it happens to be made of.
+    const times = Array.from(container.querySelectorAll('.thread-divider time')).map((t) => t.getAttribute('datetime'))
     expect(times).toEqual(['2026-07-14', '2026-07-16'])
 
     const articles = screen.getAllByRole('article')
     expect(articles).toHaveLength(2)
     expect(articles[0]).toHaveAttribute('data-turn-id', 't-1')
+  })
+
+  it('hangs every turn article directly off the feed, with its day divider in front of it', () => {
+    const { container } = render(
+      <Timeline byDay={groupByDay(TURNS, NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />,
+    )
+    const feed = screen.getByRole('feed')
+    const articles = screen.getAllByRole('article')
+
+    // ARIA's feed pattern expects the articles to be the feed's own
+    // children: a <section> in between is a container the reader has to
+    // account for, and it was a `region` landmark per day sitting inside
+    // the conversation.
+    articles.forEach((article) => expect(article.parentElement).toBe(feed))
+    expect(container.querySelector('section')).toBeNull()
+
+    // The dividers still render, still say the day out loud as a heading,
+    // and still come in front of the turns they introduce.
+    const children = Array.from(feed.children)
+    const dividers = children.filter((el) => el.classList.contains('thread-divider'))
+    expect(dividers.map((d) => d.querySelector('h2')?.textContent)).toEqual(['Tue, Jul 14', 'Today'])
+    expect(children.indexOf(dividers[0])).toBe(children.indexOf(articles[0]) - 1)
+    expect(children.indexOf(dividers[1])).toBe(children.indexOf(articles[1]) - 1)
+
+    // A <header> that is no longer inside sectioning content is a `banner`
+    // landmark — which would put one landmark per day inside the feed.
+    expect(screen.queryByRole('banner')).toBeNull()
+
+    // The one thing the <section> did that a heading does not: name the day
+    // on the way INTO the group. Article-by-article navigation skips the
+    // divider, so the first article of each day is described by that day's
+    // heading — and only the first, or a fifty-turn day says "Today" fifty
+    // times.
+    const dayIds = dividers.map((d) => d.querySelector('h2')?.id)
+    expect(dayIds.every((id) => typeof id === 'string' && id.length > 0)).toBe(true)
+    expect(articles.map((a) => a.getAttribute('aria-describedby'))).toEqual(dayIds)
+  })
+
+  it('numbers the articles across the whole feed, and calls the set open while there is more', () => {
+    // What role="feed" navigation announces is the position in the set. The
+    // fixture is two turns on two different days, so a count that restarted
+    // at each divider would read "1 of 2" twice.
+    const { rerender } = render(
+      <Timeline byDay={groupByDay(TURNS, NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />,
+    )
+    let articles = screen.getAllByRole('article')
+    expect(articles.map((a) => a.getAttribute('aria-posinset'))).toEqual(['1', '2'])
+    expect(articles.map((a) => a.getAttribute('aria-setsize'))).toEqual(['2', '2'])
+
+    // While there are older pages the size is not known, and -1 is ARIA's
+    // value for that. Announcing the loaded count instead would tell an
+    // admin "2 of 2" in the middle of a six-month conversation — on the
+    // paging path this whole feed exists for.
+    rerender(<Timeline byDay={groupByDay(TURNS, NOW)} hasMore loading={false} onLoadOlder={() => {}} />)
+    articles = screen.getAllByRole('article')
+    expect(articles.map((a) => a.getAttribute('aria-posinset'))).toEqual(['1', '2'])
+    expect(articles.map((a) => a.getAttribute('aria-setsize'))).toEqual(['-1', '-1'])
+  })
+
+  it('names the feed for the machine when the page knows what it is called', () => {
+    const { rerender } = render(
+      <Timeline byDay={groupByDay(TURNS, NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />,
+    )
+    // Nothing passed the name: the region still has one rather than none.
+    expect(screen.getByRole('feed')).toHaveAttribute('aria-label', 'Conversation')
+
+    rerender(
+      <Timeline
+        byDay={groupByDay(TURNS, NOW)}
+        hasMore={false}
+        loading={false}
+        onLoadOlder={() => {}}
+        displayName="Anvil"
+      />,
+    )
+    // The name chosen in onboarding, never the DNS hostname.
+    expect(screen.getByRole('feed')).toHaveAttribute('aria-label', 'Conversation with Anvil')
   })
 
   it('renders user and assistant content with their roles', () => {
@@ -319,6 +406,9 @@ describe('Timeline — Forget this', () => {
       <Timeline byDay={groupByDay([TURNS[0], local], NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />,
     )
 
+    // The control that survives a HALF-landed redaction (above) must not be
+    // loosened into this case: a turn the store never confirmed has nothing
+    // on disk, so there is nothing to offer to scrub.
     const buttons = screen.getAllByRole('button', { name: 'Forget this turn' })
     expect(buttons).toHaveLength(1)
     expect(buttons[0].closest('article')).toHaveAttribute('data-turn-id', 't-1')
@@ -391,6 +481,95 @@ describe('Timeline — Forget this', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Yes, forget this turn' }))
     await waitFor(() => expect(screen.getAllByText(REDACTED)).toHaveLength(3))
     expect(screen.queryByText(FORGET_FAILED)).not.toBeInTheDocument()
+  })
+
+  it('keeps the control after a partial forget, and finishes once the store names the row', async () => {
+    // The turn Stop leaves behind: the user row is stored and scrubbable,
+    // the reply row has no id yet. Redacting the half that can be redacted
+    // used to take the control away with it — `redactableIds` had nothing
+    // left to offer — so the admin was left with a red line saying part of
+    // their turn is still on disk and no way to finish. The id arrives a
+    // moment later (useTimeline reads it back a second time); the button
+    // has to still be there when it does.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchMock = redactFetch()
+    const unnamedReply = {
+      messageId: -1,
+      content: 'Let me put that in',
+      timestamp: TODAY,
+      status: 'cancelled' as const,
+    }
+    const halfStored = turn('t-7', TODAY, 'my api key is hunter2', {
+      user: { messageId: 41, content: 'my api key is hunter2', timestamp: TODAY, status: 'cancelled' },
+      assistant: unnamedReply,
+    })
+    const { rerender } = render(
+      <Timeline byDay={groupByDay([halfStored], NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />,
+    )
+
+    await forget(screen.getByRole('button', { name: 'Forget this turn' }))
+    await waitFor(() => expect(screen.getByText(FORGET_NOT_STORED_YET)).toBeInTheDocument())
+    // The control survives the half-landing, beside the reason it did not
+    // land in full.
+    expect(screen.getByRole('button', { name: 'Forget this turn' })).toBeInTheDocument()
+
+    // The store finishes writing the reply row and the page reads its id.
+    rerender(
+      <Timeline
+        byDay={groupByDay([{ ...halfStored, assistant: { ...unnamedReply, messageId: 42 } }], NOW)}
+        hasMore={false}
+        loading={false}
+        onLoadOlder={() => {}}
+      />,
+    )
+    await forget(screen.getByRole('button', { name: 'Forget this turn' }))
+
+    await waitFor(() => expect(screen.queryByText('Let me put that in')).not.toBeInTheDocument())
+    // One row per POST, and the row that was already gone is not asked for
+    // a second time.
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/agent/message/41/redact',
+      '/api/agent/message/42/redact',
+    ])
+    expect(screen.getAllByText(REDACTED)).toHaveLength(2)
+    // Nothing is left on disk now, so nothing is left to say or to press.
+    expect(lastAnnouncement()).toBe('Turn forgotten')
+    expect(screen.queryByText(FORGET_NOT_STORED_YET)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Forget this turn' })).not.toBeInTheDocument()
+  })
+
+  it('never calls a turn forgotten while one of its rows has no server id', async () => {
+    // What Stop leaves on a turn the page has just folded in: `begin_turn`
+    // stored the user row before the model was called, so it has an id and
+    // can be scrubbed; `end_turn` has not written the reply row yet, so
+    // there is nothing to send a redaction to. Redacting only what can be
+    // redacted and then saying "Turn forgotten" would promise the admin
+    // something the store never agreed to.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchMock = redactFetch()
+    const halfStored = turn('t-7', TODAY, 'my api key is hunter2', {
+      user: { messageId: 41, content: 'my api key is hunter2', timestamp: TODAY, status: 'cancelled' },
+      assistant: { messageId: -1, content: 'Let me put that in', timestamp: TODAY, status: 'cancelled' },
+    })
+    render(<Timeline byDay={groupByDay([halfStored], NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />)
+
+    // The control is offered: one row CAN be forgotten, and it is the row
+    // that holds what the admin regrets typing.
+    await forget(screen.getByRole('button', { name: 'Forget this turn' }))
+
+    // And the sentence names WHY, because the two reasons a redaction can
+    // half-land need two different things from the admin: a row the server
+    // refused will refuse again, a row with no id yet is one the store has
+    // not finished writing.
+    await waitFor(() => expect(screen.getByText(FORGET_NOT_STORED_YET)).toBeInTheDocument())
+    expect(screen.queryByText(FORGET_PARTLY_FAILED)).not.toBeInTheDocument()
+    expect(screen.queryByText('my api key is hunter2')).not.toBeInTheDocument()
+    // The row that could not be reached is neither scrubbed on screen nor
+    // claimed to be gone.
+    expect(screen.getByText('Let me put that in')).toBeInTheDocument()
+    expect(lastAlert()).toBe(FORGET_NOT_STORED_YET)
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(['/api/agent/message/41/redact'])
+    expect(warn).toHaveBeenCalled()
   })
 
   it('cannot be fired twice while the first redaction is in flight', async () => {

@@ -64,8 +64,20 @@ export interface ModelSelectorPillProps
   /**
    * Class for the switch announcement. This package ships no CSS, so a host
    * that wants the live region off-screen rather than visible says so here.
+   * Ignored when `onAnnounce` is given, because then there is no region.
    */
   announcementClassName?: string
+  /**
+   * Where a switch is spoken, for a host that already owns a polite live
+   * region. Given one, the pill hands over the sentence and renders no region
+   * of its own: two polite regions in one document is one more than a screen
+   * reader can be relied on to read in a predictable order, and the host's is
+   * the one that also carries everything else it has to say.
+   *
+   * Without it the pill keeps its own region, which is what a host with no
+   * live region needs — dropping the fallback would make a switch silent.
+   */
+  onAnnounce?: (text: string) => void
   /** Render-prop escape hatch; receives everything needed to draw a custom pill. */
   children?: (state: ModelPillState) => ReactNode
 }
@@ -231,10 +243,14 @@ function switchAnnouncement(state: ModelPillState): string {
  * silent — a slash command, a host's own tier control — and the popover's own
  * region is torn down before a screen reader reaches it by any host that closes
  * on commit. Following the selection is what makes all of them audible.
+ *
+ * With a `sink` the sentence goes there and the returned text stays empty, so
+ * the caller renders no region: one switch, spoken once, in the host's region.
  */
 function useSwitchAnnouncement(
   state: ModelPillState,
   selection: ModelSelection,
+  sink?: (text: string) => void,
 ): string {
   const [announcement, setAnnouncement] = useState('')
   const key = `${selection.model ?? ''} ${selection.endpointId ?? ''} ${selection.tier ?? ''}`
@@ -247,6 +263,13 @@ function useSwitchAnnouncement(
     latest.current = state
   })
 
+  // Likewise a ref: a host passing an inline arrow would otherwise change this
+  // effect's identity on every render and re-announce the standing selection.
+  const sinkRef = useRef(sink)
+  useEffect(() => {
+    sinkRef.current = sink
+  })
+
   const spoken = useRef<string | null>(null)
   useEffect(() => {
     if (spoken.current === null) {
@@ -256,7 +279,9 @@ function useSwitchAnnouncement(
     }
     if (spoken.current === key) return
     spoken.current = key
-    setAnnouncement(switchAnnouncement(latest.current))
+    const sentence = switchAnnouncement(latest.current)
+    if (sinkRef.current) sinkRef.current(sentence)
+    else setAnnouncement(sentence)
   }, [key])
 
   return announcement
@@ -280,13 +305,14 @@ export const ModelSelectorPill = forwardRef<HTMLButtonElement, ModelSelectorPill
   open = false,
   onToggle,
   announcementClassName,
+  onAnnounce,
   children,
   onClick,
   onKeyDown,
   ...rest
 }: ModelSelectorPillProps, ref) {
   const state = useModelPillState(picker, activeRoleId, tierRoles)
-  const announcement = useSwitchAnnouncement(state, picker.selection)
+  const announcement = useSwitchAnnouncement(state, picker.selection, onAnnounce)
 
   const handleClick = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>) => {
@@ -375,14 +401,18 @@ export const ModelSelectorPill = forwardRef<HTMLButtonElement, ModelSelectorPill
       </button>
 
       {/* Outside the button: the trigger's aria-label replaces its contents for
-          assistive tech, so a region nested inside it would never be spoken. */}
-      <span
-        aria-live="polite"
-        data-model-picker-live=""
-        className={announcementClassName}
-      >
-        {announcement}
-      </span>
+          assistive tech, so a region nested inside it would never be spoken.
+          Omitted entirely when the host announces for us — a second polite
+          region is worse than none, whether or not it has anything to say. */}
+      {onAnnounce ? null : (
+        <span
+          aria-live="polite"
+          data-model-picker-live=""
+          className={announcementClassName}
+        >
+          {announcement}
+        </span>
+      )}
     </>
   )
 })

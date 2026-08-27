@@ -26,7 +26,8 @@ import {
   Camera,
 } from 'lucide-react';
 import { useAgentStream, type AgentSession } from '../../hooks/useAgentStream';
-import { useTimeline } from '../../hooks/useTimeline';
+import { useTimeline, type UseTimelineReturn } from '../../hooks/useTimeline';
+import { useHostIdentity } from '../../hooks/useHostIdentity';
 import { StateBadge } from './StateBadge';
 import { PlanChecklist } from './PlanChecklist';
 import { ToolExecutionCard } from './ToolExecutionCard';
@@ -88,6 +89,16 @@ interface Mentionable {
   name: string;
   type: string;
 }
+
+/**
+ * How often this surface re-reads the host's identity.
+ *
+ * It wants one field — the name the conversation is with — and a machine's
+ * name effectively never changes. `useHostIdentity` polls once for every
+ * consumer at the shortest period any of them asked for, so a slow ask here
+ * costs nothing; the same number the mode switch uses, for the same reason.
+ */
+const NAME_POLL_MS = 60_000;
 
 interface AgentChatProps {
   className?: string;
@@ -211,6 +222,21 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     byDay,
   } = useTimeline();
 
+  /**
+   * Who the conversation is with, for the feed's accessible name.
+   *
+   * `display_name` is the name chosen in onboarding — what this machine is
+   * called. Never `hostname`, which is a DNS fact about the machine and not
+   * its name. Until it resolves, Timeline falls back to a bare
+   * "Conversation"; a feed that named itself after nothing would be worse.
+   *
+   * The period is deliberate and matches the mode switch: a machine's name
+   * effectively never changes, and `useHostIdentity` runs ONE shared request
+   * loop at the shortest period any mounted consumer asked for — so asking
+   * slowly here adds a consumer, not a second poll.
+   */
+  const { identity } = useHostIdentity(NAME_POLL_MS);
+
   // Phase 59: @mention autocomplete
   const [mentionables, setMentionables] = useState<Mentionable[]>([]);
   const [showMentions, setShowMentions] = useState(false);
@@ -278,7 +304,9 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     response: string;
     anchored: boolean;
     appendLive: (turn: TimelineTurn) => void;
-    loadLatest: () => Promise<void>;
+    // Taken from the hook rather than restated, so widening what `loadLatest`
+    // answers with is one edit and not a type error here as well.
+    loadLatest: UseTimelineReturn['loadLatest'];
   }>({ liveUser, session, response, anchored, appendLive, loadLatest });
   useEffect(() => {
     foldInputs.current = { liveUser, session, response, anchored, appendLive, loadLatest };
@@ -568,7 +596,51 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
       ...prev,
       { ...notice, id: 'note-' + Date.now() + '-' + prev.length, timestamp: Date.now() },
     ]);
+    // Through the shell's region, not a region of this note's own. A
+    // `role="status"` on an element that mounts with its text already in it is
+    // both an extra polite region (see lib/announce.ts) and an unreliable
+    // announcement: what a screen reader watches is a region that was already
+    // there changing. The status-card form has no one sentence to read out, so
+    // it stays visual-only, as it was.
+    if (notice.text) announce(notice.text);
   };
+
+  /**
+   * The one thing on this surface that is not a reply and still has to be
+   * heard: the conversation could not be loaded. Announced on the transition
+   * into failure, which is a transition on every attempt — `loadLatest`
+   * clears `loadFailed` before it asks and writes it again in the catch, so
+   * asking again and failing again says so again.
+   */
+  useEffect(() => {
+    if (loadFailed) announce('Could not load the stored conversation');
+  }, [loadFailed]);
+
+  /**
+   * A retry in flight, which is not the same as `loadFailed`.
+   *
+   * The notice below is the admin's only way back from a backend that was
+   * restarting, and its button is what they have just pressed. Rendering it
+   * on `loadFailed` alone unmounted the whole notice the instant the retry
+   * cleared that flag — taking the focused button out from under the person
+   * using it and dropping focus to the body, then putting a new one back a
+   * moment later. It stays while its own attempt is running.
+   */
+  const [retrying, setRetrying] = useState(false);
+  const retryLoad = useCallback(() => {
+    setRetrying(true);
+    void loadLatest()
+      .then((loaded) => {
+        // The other half of the sentence above. Failure announces itself on
+        // the transition into `loadFailed`; success used to announce nothing
+        // at all, because the only thing that changed was the page filling
+        // with turns — which is not a change a screen reader reads out. The
+        // admin who pressed this button heard the failure, pressed again,
+        // and then heard nothing whether it had worked or not.
+        if (loaded) announce('Conversation loaded');
+      })
+      .finally(() => setRetrying(false));
+  }, [loadLatest]);
 
   /**
    * Handle composer input that is a `/model` command.
@@ -774,16 +846,15 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
             only warns to the console, and an empty page renders nothing, so
             an admin whose backend was mid-restart was shown a blank
             conversation with no explanation and no way back short of
-            restarting the app. `loadFailed` is only ever cleared by a
-            successful load, and nothing schedules one — so the way back has
-            to be offered here. */}
-        {loadFailed && (
-          <div className="flex justify-center" role="status">
+            restarting the app — so the way back has to be offered here, and
+            has to survive being used (see `retrying`). */}
+        {(loadFailed || retrying) && (
+          <div className="flex justify-center">
             <div className="flex items-center gap-2 rounded-lg border border-hairline bg-canvas-subtle px-3 py-1.5 text-[11px] font-mono text-ink-secondary">
               <span>Could not load the stored conversation</span>
               <button
                 type="button"
-                onClick={() => { void loadLatest(); }}
+                onClick={retryLoad}
                 disabled={timelineLoading}
                 className="rounded border border-hairline px-1.5 py-0.5 text-ink-secondary hover:text-ink disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               >
@@ -802,6 +873,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
           onLoadOlder={loadOlder}
           onLoadLatest={loadLatest}
           onRunCommand={onRunCommand}
+          displayName={identity?.display_name}
         />
 
         {/* The turn in flight: the live assistant block, exactly as before. */}
@@ -950,7 +1022,6 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
               <ModelStatusCard rows={notice.status} />
             ) : (
               <div
-                role="status"
                 className={cn(
                   'rounded-lg border px-3 py-2',
                   notice.tone === 'warning'
@@ -1103,7 +1174,6 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
             }}
             initialQuery={pickerQuery}
             onOpenSettings={onOpenModelSettings}
-            popoverClassName="absolute right-0 bottom-full mb-1 w-96 z-50"
           />
         </div>
       </div>

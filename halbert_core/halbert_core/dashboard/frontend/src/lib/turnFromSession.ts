@@ -8,6 +8,11 @@
  * locally rather than refetching. On the next load the server's copy wins
  * by id. When the store never confirmed the turn (thread_store_error), a
  * local id keeps the transcript continuous for this page load only.
+ *
+ * The stream carries the TURN id and no row ids, so both rows are folded in
+ * at `messageId: -1`. That is a gap, not a resting state: "Forget this"
+ * redacts by row id, so useTimeline reads the real ones back off the store
+ * as soon as the turn is appended (useTimeline.appendLive).
  */
 
 import type { AgentSession, ToolExecution } from '../hooks/useAgentStream';
@@ -57,6 +62,23 @@ function blockFromExecution(execution: ToolExecution): TimelineToolBlock {
   };
 }
 
+/**
+ * The prefix on a turn id this page made up for itself, because the store
+ * never confirmed the turn (thread_store_error, or a turn abandoned before
+ * `turn_persisted`).
+ *
+ * It is exported because the difference is load-bearing, not cosmetic:
+ * nothing on the server answers to a local id, so anything that would go
+ * back to the store about a turn — reading its row ids so it can be
+ * forgotten, above all — has to tell the two apart before it asks.
+ */
+export const LOCAL_TURN_PREFIX = 'local-';
+
+/** True for a turn id the server has never heard of (see LOCAL_TURN_PREFIX). */
+export function isLocalTurnId(turnId: string): boolean {
+  return turnId.startsWith(LOCAL_TURN_PREFIX);
+}
+
 export function turnFromSession(
   session: AgentSession,
   userMessage: LiveUserMessage,
@@ -70,7 +92,7 @@ export function turnFromSession(
       : 'complete';
   const now = Date.now();
   return {
-    turnId: session.turnId ?? `local-${session.sessionId}`,
+    turnId: session.turnId ?? `${LOCAL_TURN_PREFIX}${session.sessionId}`,
     threadId: session.thread?.threadId ?? '',
     timestamp: userMessage.timestamp,
     origin: 'human',

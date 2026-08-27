@@ -367,6 +367,17 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           return { ...prev, plan: updatedPlan };
 
         case 'model_selected':
+          // A fallback is the one thing about model selection that is not
+          // ordinary: the admin asked for one model and got another, possibly
+          // at a different price and certainly with different behaviour. It is
+          // said here rather than from the notice that shows it, because this
+          // event arrives once per turn while that notice mounts twice.
+          if (event.fallback_from) {
+            announce(
+              `${event.fallback_from as string} was unavailable. ` +
+              `${event.model as string} answered instead.`,
+            );
+          }
           setTurnModel({
             model: event.model as string,
             endpoint: event.endpoint as string,

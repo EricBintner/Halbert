@@ -13,12 +13,23 @@
  */
 
 import { useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AgentChat } from '../agent/AgentChat';
+import { useShellMode } from '@/contexts/ShellModeContext';
 import { ContextStage } from './ContextStage';
 import { LiveRegion } from './LiveRegion';
 
+/**
+ * Where the model picker's "All models and endpoints…" link goes. The models
+ * tab of the settings page, which lives in browsing mode — so this is a mode
+ * change and a navigation, and the shell is the only component that owns both.
+ */
+const MODEL_SETTINGS_ROUTE = '/settings?tab=ai';
+
 export function HostShell() {
   const conversationRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  const { setMode } = useShellMode();
 
   /**
    * Scroll the conversation back to where a docked terminal was opened.
@@ -31,6 +42,16 @@ export function HostShell() {
     origin?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, []);
 
+  /**
+   * Leave the engaged surface for the full model configuration. Navigating
+   * without the mode change lands on a route that engaged mode does not
+   * render, which looks to the user like the link did nothing.
+   */
+  const openModelSettings = useCallback(() => {
+    setMode('browsing');
+    navigate(MODEL_SETTINGS_ROUTE);
+  }, [navigate, setMode]);
+
   return (
     <div className="flex h-full min-h-0 min-w-0">
       {/* One polite status region and one assertive alert region for the
@@ -41,7 +62,7 @@ export function HostShell() {
         ref={conversationRef}
         className="flex-1 min-w-0 flex flex-col bg-background border-r border-border"
       >
-        <AgentChat className="h-full" />
+        <AgentChat className="h-full" onOpenModelSettings={openModelSettings} />
       </div>
 
       {/* Context stage — half the surface on a wide window, never a strip */}

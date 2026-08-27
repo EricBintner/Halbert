@@ -119,9 +119,13 @@ describe('ModelSettings', () => {
   it('gates a new cloud endpoint behind the disclosure modal before saving it', async () => {
     const user = userEvent.setup()
     render(<ModelSettings />)
-    await screen.findByText('Chat (Guide)')
-
-    await user.selectOptions(screen.getByLabelText(/add a provider/i), 'openai')
+    // Waited for by the control this test actually needs, not by a proxy for
+    // it. 'Chat (Guide)' is a role label and renders early; the "Add a
+    // provider" select lives in the drawer's providers region, which opens
+    // from an effect gated on the picker having FINISHED loading. The two are
+    // separate commits, and under a loaded machine (a full parallel run) the
+    // gap between them is wide enough that a synchronous get lands in it.
+    await user.selectOptions(await screen.findByLabelText(/add a provider/i), 'openai')
 
     const card = screen.getByRole('group', { name: /openai/i })
     await user.clear(within(card).getByLabelText(/address/i))
@@ -145,9 +149,9 @@ describe('ModelSettings', () => {
   it('never saves a declined cloud endpoint', async () => {
     const user = userEvent.setup()
     render(<ModelSettings />)
-    await screen.findByText('Chat (Guide)')
-
-    await user.selectOptions(screen.getByLabelText(/add a provider/i), 'anthropic')
+    // See the sibling test above: the select is a later commit than the
+    // role labels, so it has to be waited for on its own account.
+    await user.selectOptions(await screen.findByLabelText(/add a provider/i), 'anthropic')
     const card = screen.getByRole('group', { name: /anthropic/i })
     await user.type(within(card).getByLabelText(/address/i), 'https://api.anthropic.com')
     await user.type(within(card).getByLabelText('Key'), 'sk-ant')

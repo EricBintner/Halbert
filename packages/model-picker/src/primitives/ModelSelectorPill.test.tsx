@@ -117,6 +117,7 @@ function mount(
   options: {
     tierRoles?: typeof TIER_ROLES
     assignments?: Record<string, RoleAssignment>
+    onAnnounce?: (text: string) => void
   } = {},
 ) {
   const view = render(
@@ -124,6 +125,7 @@ function mount(
       picker={stubPicker(selection, options.assignments)}
       activeRoleId={DEFAULT_ROLE}
       tierRoles={options.tierRoles}
+      onAnnounce={options.onAnnounce}
     />,
   )
   const read = () => ({
@@ -143,6 +145,7 @@ function mount(
           picker={stubPicker(next, options.assignments)}
           activeRoleId={DEFAULT_ROLE}
           tierRoles={options.tierRoles}
+          onAnnounce={options.onAnnounce}
         />,
       ),
   }
@@ -276,5 +279,59 @@ describe('ModelSelectorPill switch announcement', () => {
     show({ tier: 'auto' })
 
     expect(read().live?.textContent).toBe('')
+  })
+})
+
+/**
+ * A host with its own polite live region — a shell that already announces
+ * "New subject" and "Turn forgotten" — must not end up with two of them.
+ * Two polite regions in one document is one more than a screen reader can be
+ * relied on to read in a predictable order, so the pill hands the sentence
+ * over and renders nothing rather than competing.
+ */
+describe('ModelSelectorPill announcing through the host', () => {
+  it('renders no region of its own once the host takes the announcements', () => {
+    const onAnnounce = vi.fn()
+    const { read } = mount({ tier: 'auto' }, { tierRoles: TIER_ROLES, onAnnounce })
+
+    expect(read().live).toBeNull()
+  })
+
+  it('hands the host the same sentence its own region would have carried', () => {
+    const onAnnounce = vi.fn()
+    const { show } = mount({ tier: 'auto' }, { tierRoles: TIER_ROLES, onAnnounce })
+
+    show({ tier: 'specialist' })
+
+    expect(onAnnounce).toHaveBeenCalledTimes(1)
+    expect(onAnnounce).toHaveBeenCalledWith(
+      'Switched to the Specialist tier: model-b on Anthropic will answer the next turn.',
+    )
+  })
+
+  it('says nothing to the host on arrival either', () => {
+    const onAnnounce = vi.fn()
+    mount({ tier: 'auto' }, { tierRoles: TIER_ROLES, onAnnounce })
+
+    expect(onAnnounce).not.toHaveBeenCalled()
+  })
+
+  it('stays quiet when a re-render leaves the selection alone', () => {
+    const onAnnounce = vi.fn()
+    const { show } = mount({ tier: 'auto' }, { tierRoles: TIER_ROLES, onAnnounce })
+
+    show({ tier: 'auto' })
+
+    expect(onAnnounce).not.toHaveBeenCalled()
+  })
+
+  it('keeps its own region for a host that offers none', () => {
+    // The package ships for hosts that have no live region at all; dropping
+    // the fallback would make a switch silent for them.
+    const { read, show } = mount({ tier: 'auto' }, { tierRoles: TIER_ROLES })
+    show({ tier: 'specialist' })
+
+    expect(read().live).not.toBeNull()
+    expect(read().live?.textContent).toContain('Specialist tier')
   })
 })

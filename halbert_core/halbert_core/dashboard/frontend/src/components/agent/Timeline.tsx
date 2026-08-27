@@ -13,11 +13,29 @@
  * and appends the finished turn through useTimeline.appendLive.
  *
  * Markup, per the design: a `role="feed"` container that is `aria-busy`
- * while paging, `<header><h2>{day}</h2><time datetime></header>` dividers,
- * and one `role="article"` per turn.
+ * while paging, `<h2>{day}</h2><time datetime>` dividers, and one
+ * `role="article"` per turn carrying `aria-posinset`/`aria-setsize`.
+ *
+ * The articles are the feed's OWN children, and the day dividers are their
+ * siblings. A feed is read article by article, and what that navigation
+ * announces is each article's position in the set — so the position is the
+ * position in the whole conversation, counted straight through the
+ * dividers, and the size is `-1` (ARIA's "not known yet") for as long as
+ * there are older pages to load. Restarting the count inside each day, or
+ * naming a size while `hasMore`, would tell an admin "1 of 2" in the middle
+ * of a six-month conversation.
+ *
+ * The days used to be `<section>`s wrapping their turns: a container
+ * between the feed and its articles, and a `region` landmark per day inside
+ * the conversation. They are Fragments now, so the grouping survives in the
+ * reading order (divider, then that day's turns) without a box around it —
+ * and the one thing the section did that the heading does not, naming the
+ * day on the way IN to the group, is kept by describing the first article
+ * of each day with that day's heading. Every article of a fifty-turn day
+ * repeating "Today" would be noise; the boundary is where the day is news.
  */
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTerminalSessions } from '../../hooks/useTerminalSessions';
 import type { ToolExecution } from '../../hooks/useAgentStream';
 import type { TimelineDay } from '../../hooks/useTimeline';
@@ -39,6 +57,15 @@ interface TimelineProps {
   /** Back to the newest page; rendered as a control only while `anchored`. */
   onLoadLatest?: () => void;
   onRunCommand?: RunCommand;
+  /**
+   * What this machine is called — `identity.display_name`, the name chosen
+   * in onboarding, NEVER the DNS `hostname`. The design names the feed
+   * "Conversation with <name>" (Appendix C §5): a screen-reader user
+   * arriving at the region is told whose conversation it is, in the words
+   * the admin themselves chose. Optional because the name is fetched, and a
+   * feed with no name at all is worse than one named "Conversation".
+   */
+  displayName?: string;
 }
 
 /**
@@ -139,6 +166,18 @@ export const REDACTED = '[redacted by admin]';
  */
 export const FORGET_FAILED = 'Could not forget that turn';
 export const FORGET_PARTLY_FAILED = 'Part of that turn could not be forgotten';
+/**
+ * The third outcome, and the only one with something to do about it: no row
+ * refused, one simply has no server id yet (see `unnamedRowCount`). It is a
+ * different fact from a refusal and it needs a different sentence — the
+ * store has not finished writing that row, the page is already asking for
+ * it again (useTimeline.hydrateMessageIds), and the control stays on screen
+ * so the second ask has somewhere to land. Telling an admin "part of that
+ * turn could not be forgotten" here would name a failure that is not one
+ * and hide the only action that works.
+ */
+export const FORGET_NOT_STORED_YET =
+  'Part of that turn is not stored yet and could not be forgotten. Try again in a moment.';
 
 /**
  * What the store leaves in `blocks_json` for a forgotten row that had tool
@@ -154,11 +193,36 @@ const REDACTED_BLOCK: TimelineToolBlock = {
   redacted: true,
 };
 
-/** Stored rows have server ids; a turn appended live carries -1 until the next load. */
+/**
+ * The rows of this turn the server has named, and can therefore be asked to
+ * redact.
+ *
+ * A turn folded out of the live block starts with -1 on both rows — the
+ * stream carries the turn id and no row ids — and `useTimeline.appendLive`
+ * reads the real ones back off the store immediately, so in the ordinary
+ * case this is both rows within a round trip of the reply finishing.
+ */
 export function redactableIds(turn: TimelineTurn): number[] {
   return [turn.user?.messageId, turn.assistant?.messageId].filter(
     (id): id is number => typeof id === 'number' && id >= 0,
   );
+}
+
+/**
+ * How many rows this turn has that the server has NOT named.
+ *
+ * A row with no id cannot be redacted, and a row that cannot be redacted is
+ * a row still on disk — so it counts as a refusal, not as nothing. The case
+ * is real rather than theoretical: pressing Stop folds the turn in the
+ * instant the page stops listening, while the backend is still unwinding
+ * the turn it was told to abandon, so the user row (written before the
+ * model was ever called) is named and the reply row may not be written yet.
+ * That is the turn someone stops BECAUSE of what they just typed, and
+ * "Turn forgotten" over a row the store never agreed to scrub is the one
+ * answer this control must never give.
+ */
+export function unnamedRowCount(turn: TimelineTurn): number {
+  return [turn.user, turn.assistant].filter((row) => row !== null && row.messageId < 0).length;
 }
 
 /**
@@ -204,6 +268,16 @@ interface TurnArticleProps {
    */
   onForget?: (turn: TimelineTurn) => Promise<string | null>;
   onRunCommand?: RunCommand;
+  /** Position in the whole feed, 1-based (see the note at the top). */
+  position: number;
+  /** Turns in the feed, or -1 while older pages are still unloaded. */
+  setSize: number;
+  /**
+   * The id of this turn's day heading, on the first article of each day
+   * only: the day is announced on the way into the group, as the `<section>`
+   * that used to wrap it did, without repeating on every article inside it.
+   */
+  dayLabelId?: string;
 }
 
 /**
@@ -217,6 +291,9 @@ const TurnArticle = memo(function TurnArticle({
   assistantForgotten,
   onForget,
   onRunCommand,
+  position,
+  setSize,
+  dayLabelId,
 }: TurnArticleProps) {
   // Forgetting cannot be undone — content, blocks, diffs, the FTS row, the
   // thread's entity sets and (for a founding row) the thread title all go —
@@ -250,10 +327,25 @@ const TurnArticle = memo(function TurnArticle({
   const label = userForgotten ? REDACTED : turn.user ? turn.user.content.slice(0, 80) : turn.origin;
   // A half-landed redaction leaves one row still readable, so the control
   // stays until every stored row of this turn is forgotten.
+  //
+  // The last clause is the unnamed row: a turn whose user row was scrubbed
+  // while its reply row had no server id yet (Stop, see `unnamedRowCount`)
+  // has nothing left that `redactableIds` can name, so without it the
+  // button unmounted the moment the first half landed — leaving the admin
+  // a red line saying part of the turn is still stored and no way to
+  // finish. The id arrives a moment later (useTimeline.hydrateMessageIds
+  // asks again), and the control has to still be there when it does.
+  //
+  // It is deliberately gated on something having been forgotten already,
+  // not on `unnamedRowCount(turn) > 0` alone: a turn the store never
+  // confirmed at all has both rows at -1 and nothing on disk, and offering
+  // to forget words that were never written would be a lie.
+  const partlyForgotten = userForgotten || assistantForgotten;
   const canForget =
     onForget !== undefined &&
     ((turn.user !== null && turn.user.messageId >= 0 && !userForgotten) ||
-      (turn.assistant !== null && turn.assistant.messageId >= 0 && !assistantForgotten));
+      (turn.assistant !== null && turn.assistant.messageId >= 0 && !assistantForgotten) ||
+      (partlyForgotten && unnamedRowCount(turn) > 0));
 
   const confirm = async () => {
     if (pending) return;
@@ -276,6 +368,9 @@ const TurnArticle = memo(function TurnArticle({
     <article
       role="article"
       aria-label={label}
+      aria-posinset={position}
+      aria-setsize={setSize}
+      aria-describedby={dayLabelId}
       data-turn-id={turn.turnId}
       data-thread-id={turn.threadId}
       className="space-y-3"
@@ -413,6 +508,7 @@ export function Timeline({
   onLoadOlder,
   onLoadLatest,
   onRunCommand,
+  displayName,
 }: TimelineProps) {
   // Message ids, not turn ids: the two rows of a turn are two server writes
   // and either can fail on its own.
@@ -429,7 +525,11 @@ export function Timeline({
   // refused, or null when the whole turn is gone.
   const handleForget = useCallback(async (turn: TimelineTurn): Promise<string | null> => {
     const ids = redactableIds(turn).filter((id) => !forgottenRef.current.has(id));
-    if (ids.length === 0) return null;
+    // Counted before anything is sent, and counted as refusals below: a row
+    // the server has not named cannot be redacted, so the turn is not gone
+    // however well the rows that COULD be sent do (see unnamedRowCount).
+    const unnamed = unnamedRowCount(turn);
+    if (ids.length === 0 && unnamed === 0) return null;
 
     // One row at a time, recording each. Promise.all rejects on the FIRST
     // failure and neither cancels nor rolls back its siblings, so a turn
@@ -456,7 +556,7 @@ export function Timeline({
       setForgotten(next);
     }
 
-    if (failures.length === 0) {
+    if (failures.length === 0 && unnamed === 0) {
       // The marker replaces text in place; nothing else would say so.
       announce('Turn forgotten');
       return null;
@@ -465,18 +565,54 @@ export function Timeline({
     // that did not land is precisely what the person has to hear — so the
     // same sentence is both spoken and handed back to be shown.
     console.warn(
-      `[TIMELINE] forget: ${failures.length} of ${ids.length} rows refused:`,
+      `[TIMELINE] forget: ${failures.length} of ${ids.length} rows refused,`,
+      `${unnamed} row(s) had no server id:`,
       failures[0],
     );
-    const sentence = landed.length > 0 ? FORGET_PARTLY_FAILED : FORGET_FAILED;
+    // Three outcomes, three sentences. A row the server REFUSED is the
+    // serious one and wins when both happened; a row that only lacks an id
+    // is not a failure of the store's but a write it has not finished, and
+    // saying so is the difference between "this cannot be forgotten" and
+    // "ask again in a moment" (see FORGET_NOT_STORED_YET).
+    const sentence =
+      failures.length > 0
+        ? landed.length > 0
+          ? FORGET_PARTLY_FAILED
+          : FORGET_FAILED
+        : FORGET_NOT_STORED_YET;
     announce(sentence, { assertive: true });
     return sentence;
   }, []);
 
+  // Ids for the day headings, unique to this feed: `aria-describedby` needs
+  // something to point at, and a second Timeline on the page must not point
+  // at the first one's dividers.
+  const feedId = useId();
+  // Where each day starts in the flattened feed, and how many turns there
+  // are in total — the position a reader announces is the position in the
+  // conversation, not in the day (see the note at the top of this file).
+  let counted = 0;
+  const dayStart = byDay.map((day) => {
+    const start = counted;
+    counted += day.turns.length;
+    return start;
+  });
+  // -1 is ARIA's "the set has more in it than is loaded"; the loaded count
+  // would be a number the admin can act on and be wrong about.
+  const setSize = hasMore ? -1 : counted;
+
   if (byDay.length === 0 && !hasMore) return null;
 
   return (
-    <div role="feed" aria-label="Conversation" aria-busy={loading} className="space-y-2">
+    // space-y-4, not space-y-2: the day groups used to be <section>s that
+    // carried the 1rem rhythm between a divider and its turns themselves.
+    // With the groups flattened, that spacing has to come from the feed.
+    <div
+      role="feed"
+      aria-label={displayName ? `Conversation with ${displayName}` : 'Conversation'}
+      aria-busy={loading}
+      className="space-y-4"
+    >
       {hasMore && (
         <div className="flex justify-center">
           <button
@@ -490,15 +626,25 @@ export function Timeline({
         </div>
       )}
 
-      {byDay.map((day) => (
-        <section key={day.dayKey} aria-label={day.label} className="space-y-4">
-          <header className="thread-divider flex items-center gap-3 pt-2">
+      {/* A Fragment, not a wrapper: see the note on the feed above. The
+          divider is a plain div rather than the <header> it used to be —
+          with no <section> around it, a <header> here would not be inside
+          sectioning content any more, which turns it into a `banner`
+          landmark, one per day, in the middle of the conversation. */}
+      {byDay.map((day, dayIndex) => (
+        <Fragment key={day.dayKey}>
+          <div className="thread-divider flex items-center gap-3 pt-2">
             <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
-            <h2 className="text-[11px] font-mono uppercase tracking-label text-ink-tertiary">{day.label}</h2>
+            <h2
+              id={`${feedId}-day-${day.dayKey}`}
+              className="text-[11px] font-mono uppercase tracking-label text-ink-tertiary"
+            >
+              {day.label}
+            </h2>
             <time dateTime={day.dayKey} className="sr-only">{day.dayKey}</time>
             <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
-          </header>
-          {day.turns.map((turn) => (
+          </div>
+          {day.turns.map((turn, turnIndex) => (
             <TurnArticle
               key={turn.turnId}
               turn={turn}
@@ -506,9 +652,12 @@ export function Timeline({
               assistantForgotten={turn.assistant !== null && forgotten.has(turn.assistant.messageId)}
               onForget={handleForget}
               onRunCommand={onRunCommand}
+              position={dayStart[dayIndex] + turnIndex + 1}
+              setSize={setSize}
+              dayLabelId={turnIndex === 0 ? `${feedId}-day-${day.dayKey}` : undefined}
             />
           ))}
-        </section>
+        </Fragment>
       ))}
 
       {/* A chip jump replaced the page with an earlier window; the turns

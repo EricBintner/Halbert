@@ -210,7 +210,13 @@ try {
 
   await sendAndWait(MESSAGE_1, before + 1)
   log('turn 1 folded into the timeline', (await articleCount()) === before + 1)
-  log('day divider is an h2', (await page.locator('header.thread-divider h2').count()) > 0)
+  // Tag-free on purpose: the divider is a plain <div class="thread-divider">.
+  // It stopped being a <header> when the day groups were flattened into the
+  // feed's own child list -- a <header> outside sectioning content maps to a
+  // `banner` landmark, and one per day inside the conversation is worse than
+  // no landmark at all. The assertion is that the day is a heading, which is
+  // what a screen reader navigates by; the element that wraps it is not.
+  log('day divider is an h2', (await page.locator('.thread-divider h2').count()) > 0)
   // Turns render oldest-first (useTimeline groupByDay) and appendLive puts the
   // finished turn at the end, so the last article is the one just sent. Its id
   // is what scopes every terminal assertion from here on; the same id comes

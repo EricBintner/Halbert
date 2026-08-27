@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { turnFromSession } from './turnFromSession'
+import { turnFromSession, isLocalTurnId } from './turnFromSession'
 import { executionFromBlock } from '../components/agent/Timeline'
 import type { AgentSession } from '../hooks/useAgentStream'
 
@@ -66,6 +66,14 @@ describe('turnFromSession', () => {
     const turn = turnFromSession(session({ turnId: null, thread: null }), USER, 'ok')
     expect(turn.turnId).toBe('local-sess-1')
     expect(turn.threadId).toBe('')
+  })
+
+  it('says which turn ids the server can be asked about', () => {
+    // Anything that would go back to the server for this turn — reading its
+    // row ids back so it can be forgotten, above all — has to tell the two
+    // apart first: nothing on the server answers to the local id.
+    expect(isLocalTurnId(turnFromSession(session({ turnId: null }), USER, 'ok').turnId)).toBe(true)
+    expect(isLocalTurnId(turnFromSession(session(), USER, 'ok').turnId)).toBe(false)
   })
 
   it('keeps each call\'s own verdict, so an unfinished one never reads as a success', () => {
