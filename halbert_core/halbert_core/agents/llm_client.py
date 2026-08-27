@@ -93,8 +93,9 @@ class OllamaClient(BaseLLMClient):
         self.endpoint = endpoint.rstrip('/')
         self.timeout = timeout
         # Plan A (spec §7): False once this model rejected tool schemas and
-        # chat() fell back to a no-tools retry; None until then. The state
-        # machine passes it to the prompt builder.
+        # chat() fell back to a no-tools retry that answered; None until
+        # then, and None again once a later call's schemas are accepted. The
+        # state machine passes it to the prompt builder.
         self.tools_supported: Optional[bool] = None
     
     def _require_model(self) -> str:
@@ -145,14 +146,15 @@ class OllamaClient(BaseLLMClient):
                     timeout=aiohttp.ClientTimeout(total=self.timeout)
                 ) as resp:
                     if tools and resp.status in (400, 404, 422, 501):
-                        # No tool calling on this model (spec §7): retry
-                        # without the schemas, remember it, log once.
-                        if self.tools_supported is not False:
-                            logger.warning(
-                                f"Model {payload['model']} rejected tool schemas "
-                                f"(HTTP {resp.status}); retrying without tools"
-                            )
-                        self.tools_supported = False
+                        # Maybe no tool calling on this model (spec §7):
+                        # retry without the schemas. These statuses also
+                        # cover causes that have nothing to do with tools —
+                        # Ollama answers 404 for a model that is not pulled —
+                        # so the flag is set and the warning logged only once
+                        # the no-tools retry has actually answered, which is
+                        # what proves the schemas were the problem. A retry
+                        # that fails raises from here and leaves the flag
+                        # alone (review: Plan A / A9d).
                         payload.pop("tools", None)
                         async with session.post(
                             f"{self.endpoint}/api/chat",
@@ -160,10 +162,24 @@ class OllamaClient(BaseLLMClient):
                             timeout=aiohttp.ClientTimeout(total=self.timeout)
                         ) as retry:
                             retry.raise_for_status()
-                            return self._parse_response(await retry.json())
+                            data = await retry.json()
+                        if self.tools_supported is not False:
+                            # Once per model per client (spec §7); later
+                            # fallbacks are silent.
+                            logger.warning(
+                                f"Model {payload['model']} rejected tool schemas "
+                                f"(HTTP {resp.status}); retried without tools"
+                            )
+                        self.tools_supported = False
+                        return self._parse_response(data)
                     resp.raise_for_status()
                     data = await resp.json()
-                    
+                    if tools:
+                        # The schemas were accepted: forget any earlier
+                        # rejection, so a 4xx from an unrelated cause cannot
+                        # mute the tool instruction for this client's life.
+                        self.tools_supported = None
+
                     return self._parse_response(data)
                     
         except asyncio.TimeoutError:

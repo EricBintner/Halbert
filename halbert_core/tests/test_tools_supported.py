@@ -2,9 +2,18 @@
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Plan A / A9d: a model that rejects tool schemas is remembered once per
 process; the clients expose tools_supported=False so the prompt layer can
-drop the tool instruction from the continuity preamble (spec §7)."""
+drop the tool instruction from the continuity preamble (spec §7).
+
+The memory is per model and is evidence, not a latch: it is written only
+after the no-tools retry has answered (a 4xx has other causes — an unpulled
+model 404s), it is cleared again once the model accepts schemas, and one
+model's rejection never speaks for another model the same client routes to.
+"""
 
 import logging
+from types import SimpleNamespace
+
+import aiohttp
 import pytest
 import requests
 from unittest.mock import MagicMock, patch
@@ -64,8 +73,46 @@ class TestRegistry:
                 call_llm_chat(endpoint="http://localhost:11434", model="m:7b", messages=MSGS, tools=TOOLS)
         assert model_supports_tools("m:7b") is None
 
+    def test_a_failing_no_tools_retry_records_nothing(self, caplog):
+        """A 404 for an unpulled model must not be remembered as "cannot call
+        tools": only a retry that answers without the schemas proves that."""
+        caplog.set_level(logging.WARNING, logger="halbert.model.client")
+        with patch("halbert_core.model.client.requests.post",
+                   side_effect=[_rejecting(404), _rejecting(404)]):
+            with pytest.raises(requests.HTTPError):
+                call_llm_chat(endpoint="http://localhost:11434", model="m:7b", messages=MSGS, tools=TOOLS)
+        assert model_supports_tools("m:7b") is None
+        assert not [r for r in caplog.records if "rejected tool schemas" in r.getMessage()]
+        # once the model is pulled, the same call works and stays unknown
+        with patch("halbert_core.model.client.requests.post",
+                   side_effect=[_ok({"message": {"content": "a"}})]):
+            call_llm_chat(endpoint="http://localhost:11434", model="m:7b", messages=MSGS, tools=TOOLS)
+        assert model_supports_tools("m:7b") is None
+
+    def test_an_accepted_tools_call_clears_an_earlier_rejection(self):
+        with patch("halbert_core.model.client.requests.post",
+                   side_effect=[_rejecting(400), _ok({"message": {"content": "a"}})]):
+            call_llm_chat(endpoint="http://localhost:11434", model="m:7b", messages=MSGS, tools=TOOLS)
+        assert model_supports_tools("m:7b") is False
+        with patch("halbert_core.model.client.requests.post",
+                   side_effect=[_ok({"message": {"content": "b"}})]):
+            call_llm_chat(endpoint="http://localhost:11434", model="m:7b", messages=MSGS, tools=TOOLS)
+        assert model_supports_tools("m:7b") is None
+
+    def test_a_call_without_tools_leaves_the_registry_alone(self):
+        with patch("halbert_core.model.client.requests.post",
+                   side_effect=[_rejecting(400), _ok({"message": {"content": "a"}})]):
+            call_llm_chat(endpoint="http://localhost:11434", model="m:7b", messages=MSGS, tools=TOOLS)
+        with patch("halbert_core.model.client.requests.post",
+                   side_effect=[_ok({"message": {"content": "b"}})]):
+            call_llm_chat(endpoint="http://localhost:11434", model="m:7b", messages=MSGS)
+        assert model_supports_tools("m:7b") is False
+
 
 # --- OllamaClient (aiohttp) --------------------------------------------------
+
+_REQUEST_INFO = SimpleNamespace(real_url="http://localhost:11434/api/chat")
+
 
 class _Resp:
     def __init__(self, status, payload):
@@ -78,8 +125,12 @@ class _Resp:
         return False
 
     def raise_for_status(self):
+        # aiohttp's own error type, so a failing retry reaches OllamaClient's
+        # `except aiohttp.ClientError` the way it does against a real server.
         if self.status >= 400:
-            raise RuntimeError(f"HTTP {self.status}")
+            raise aiohttp.ClientResponseError(
+                _REQUEST_INFO, (), status=self.status, message=f"HTTP {self.status}"
+            )
 
     async def json(self):
         return self._payload
@@ -105,13 +156,19 @@ class _Session:
         return _Session.responses.pop(0)
 
 
-@pytest.mark.asyncio
-async def test_ollama_client_retries_without_tools_and_sets_the_flag(monkeypatch):
+@pytest.fixture
+def ollama_client(monkeypatch):
     from halbert_core.agents.llm_client import OllamaClient
     monkeypatch.setattr("aiohttp.ClientSession", _Session)
     _Session.posted.clear()
+    _Session.responses.clear()
+    return OllamaClient(model="m:7b")
+
+
+@pytest.mark.asyncio
+async def test_ollama_client_retries_without_tools_and_sets_the_flag(ollama_client):
+    client = ollama_client
     _Session.responses[:] = [_Resp(400, {}), _Resp(200, {"message": {"content": "plain"}})]
-    client = OllamaClient(model="m:7b")
     assert client.tools_supported is None
     out = await client.chat(MSGS, tools=TOOLS)
     assert out.content == "plain" and client.tools_supported is False
@@ -120,6 +177,45 @@ async def test_ollama_client_retries_without_tools_and_sets_the_flag(monkeypatch
     _Session.responses[:] = [_Resp(200, {"message": {"content": "again"}})]
     assert (await client.chat(MSGS)).content == "again"
     assert client.tools_supported is False
+
+
+@pytest.mark.asyncio
+async def test_ollama_client_logs_the_fallback_once_per_model(ollama_client, caplog):
+    caplog.set_level(logging.WARNING, logger="halbert.agents.llm_client")
+    client = ollama_client
+    _Session.responses[:] = [
+        _Resp(400, {}), _Resp(200, {"message": {"content": "one"}}),
+        _Resp(400, {}), _Resp(200, {"message": {"content": "two"}}),
+    ]
+    assert (await client.chat(MSGS, tools=TOOLS)).content == "one"
+    assert (await client.chat(MSGS, tools=TOOLS)).content == "two"
+    assert client.tools_supported is False
+    warnings = [r for r in caplog.records if "rejected tool schemas" in r.getMessage()]
+    assert len(warnings) == 1
+
+
+@pytest.mark.asyncio
+async def test_ollama_client_records_nothing_when_the_retry_fails_too(ollama_client, caplog):
+    """404 is also how Ollama answers for a model that is not pulled: the
+    turn fails, and the client must not remember it as tool-blind."""
+    caplog.set_level(logging.WARNING, logger="halbert.agents.llm_client")
+    client = ollama_client
+    _Session.responses[:] = [_Resp(404, {}), _Resp(404, {})]
+    with pytest.raises(aiohttp.ClientResponseError):
+        await client.chat(MSGS, tools=TOOLS)
+    assert client.tools_supported is None
+    assert not [r for r in caplog.records if "rejected tool schemas" in r.getMessage()]
+
+
+@pytest.mark.asyncio
+async def test_ollama_client_forgets_the_rejection_once_the_schemas_are_accepted(ollama_client):
+    client = ollama_client
+    _Session.responses[:] = [_Resp(400, {}), _Resp(200, {"message": {"content": "plain"}})]
+    await client.chat(MSGS, tools=TOOLS)
+    assert client.tools_supported is False
+    _Session.responses[:] = [_Resp(200, {"message": {"content": "with tools"}})]
+    assert (await client.chat(MSGS, tools=TOOLS)).content == "with tools"
+    assert client.tools_supported is None
 
 
 # --- LLMClientAdapter (dashboard) -------------------------------------------
@@ -151,3 +247,43 @@ async def test_adapter_learns_tools_supported_from_the_fallback(adapter):
     with patch("halbert_core.model.client.requests.post", side_effect=[_ok({"message": {"content": "ok"}})]):
         await adapter.chat(MSGS, tools=None)
     assert adapter.tools_supported is False
+
+
+@pytest.fixture
+def dual_adapter(monkeypatch):
+    """An adapter that routes between a guide and a specialist model."""
+    monkeypatch.setattr("halbert_core.model.client.get_configured_model", lambda: "guide:7b")
+    monkeypatch.setattr("halbert_core.model.client.get_ollama_endpoint", lambda: "http://localhost:11434")
+    monkeypatch.setattr("halbert_core.model.client.get_specialist_model",
+                        lambda: ("specialist:70b", "http://localhost:11434", "ollama"))
+    monkeypatch.setattr("halbert_core.model.client.get_vision_model", lambda: (None, "http://localhost:11434"))
+    from halbert_core.dashboard.routes.agent import LLMClientAdapter
+    return LLMClientAdapter()
+
+
+@pytest.mark.asyncio
+async def test_a_specialist_rejection_does_not_speak_for_the_guide_model(dual_adapter):
+    """The adapter routes per turn, so one model's rejection must not mute
+    the tool instruction for the other one (review: Plan A / A9d)."""
+    complex_turn = SimpleNamespace(recommended_model="specialist")
+    simple_turn = SimpleNamespace(recommended_model="guide")
+
+    with patch("halbert_core.model.client.requests.post",
+               side_effect=[_rejecting(400), _ok({"message": {"content": "ok"}})]):
+        await dual_adapter.chat(MSGS, tools=TOOLS, intake_result=complex_turn)
+    assert model_supports_tools("specialist:70b") is False
+    assert model_supports_tools("guide:7b") is None
+    # the guide model can still call tools, so the preamble keeps the instruction
+    assert dual_adapter.tools_supported is None
+
+    # ... and a later simple turn routed to the guide model still gets it
+    with patch("halbert_core.model.client.requests.post",
+               side_effect=[_ok({"message": {"content": "ok"}})]):
+        await dual_adapter.chat(MSGS, tools=TOOLS, intake_result=simple_turn)
+    assert dual_adapter.tools_supported is None
+
+    # only once no configured model can call one does it drop
+    with patch("halbert_core.model.client.requests.post",
+               side_effect=[_rejecting(400), _ok({"message": {"content": "ok"}})]):
+        await dual_adapter.chat(MSGS, tools=TOOLS, intake_result=simple_turn)
+    assert dual_adapter.tools_supported is False

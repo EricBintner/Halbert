@@ -367,12 +367,15 @@ def call_llm_chat(
 # ── Tool-schema rejection registry (Plan A, spec §7) ─────────────
 #
 # Models without tool calling answer a ``tools`` payload with a 4xx. The
-# fallback below retries without tools and records the model here, so the
-# warning is logged once per model per process and the clients can expose
-# tools_supported=False: the prompt layer then drops the "call
-# recall_thread / new_thread" instruction from the continuity preamble
-# (AgentPromptBuilder.CONTINUITY_PREAMBLE_NO_TOOLS) for a model that
-# cannot call anything.
+# fallback below retries without tools and, once that retry has actually
+# answered, records the model here, so the warning is logged once per model
+# per process and the clients can expose tools_supported=False: the prompt
+# layer then drops the "call recall_thread / new_thread" instruction from
+# the continuity preamble (AgentPromptBuilder.CONTINUITY_PREAMBLE_NO_TOOLS)
+# for a model that cannot call anything.
+#
+# The entry is keyed by model and is evidence, not a latch: a later call
+# whose schemas the model accepts clears it again.
 
 _TOOLS_REJECTED: Dict[str, bool] = {}
 
@@ -404,21 +407,36 @@ def _call_with_tool_fallback(
         return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
 
     try:
-        return _do_llm_call(
+        result = _do_llm_call(
             endpoint, model, messages, provider, stream, timeout, options, tools
         )
     except requests.HTTPError as e:
         status = getattr(e.response, "status_code", None)
         if status not in (400, 404, 422, 501):
             raise
-        if not _TOOLS_REJECTED.get(model):
+        already_known = bool(_TOOLS_REJECTED.get(model))
+        # Retry before recording anything. These statuses cover plenty of
+        # causes that have nothing to do with tool schemas — Ollama answers
+        # 404 for a model that simply is not pulled, 400 for an oversized
+        # payload — and only a retry that succeeds *without* the schemas
+        # proves the schemas were the problem. A retry that fails too raises
+        # from here and leaves the registry untouched, so an unpulled model
+        # is not durably remembered as tool-blind (review: Plan A / A9d).
+        retried = _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
+        if not already_known:
             # Once per model per process (spec §7); later fallbacks are silent.
             logger.warning(
                 f"Model {model} rejected tool schemas (HTTP {status}); "
-                "retrying without tools"
+                "retried without tools"
             )
         _TOOLS_REJECTED[model] = True
-        return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
+        return retried
+
+    # The schemas were accepted: forget any earlier rejection, so a 4xx that
+    # came from an unrelated cause cannot mute the tool instruction for the
+    # rest of the process once the model is answering tool calls again.
+    _TOOLS_REJECTED.pop(model, None)
+    return result
 
 
 def _normalise_tool_calls(raw_calls: list) -> list:

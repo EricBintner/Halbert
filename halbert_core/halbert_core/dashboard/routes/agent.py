@@ -265,21 +265,49 @@ class LLMClientAdapter:
         # Performance tweaks - can be set per-request from frontend settings
         self.max_tokens = 8192
         self.temperature = 0.7
-        # Plan A (spec §7): False once the model rejected tool schemas and
-        # call_llm_chat fell back to a no-tools retry; None until then. The
-        # state machine passes it to the prompt builder.
-        self.tools_supported: Optional[bool] = None
+        # Plan A (spec §7): the guide/specialist models the last routed turn
+        # could have been answered by, and the models a no-tools fallback has
+        # already been logged for. The capability itself is not kept here —
+        # see tools_supported.
+        self._routable_models: tuple = ()
+        self._tools_noted: set = set()
+
+    @property
+    def tools_supported(self) -> Optional[bool]:
+        """False only when every model this adapter routes to has rejected
+        tool schemas this process; None while any of them might still call
+        one (spec §7). The state machine passes it to the prompt builder.
+
+        Deliberately not one latched flag. ``chat`` routes between a guide
+        and a specialist model, so a specialist that cannot call tools would
+        otherwise mute the "call recall_thread / new_thread" instruction for
+        every later turn, including the simple ones that route back to a
+        guide model that can call them — the continuity feature would go
+        quietly uninstructed for the rest of the process (review: Plan A /
+        A9d). Asking the per-model registry instead also means a model
+        swapped in via Settings starts out unknown again.
+        """
+        from ...model.client import model_supports_tools
+        if not self._routable_models:
+            return None  # nothing routed yet: unknown
+        if all(model_supports_tools(m) is False for m in self._routable_models):
+            return False
+        return None
 
     def _note_tools_support(self, model: str, tools) -> None:
-        """Remember when ``model`` fell back to a no-tools retry (spec §7)."""
+        """Log once per model that ``model`` fell back to a no-tools retry.
+
+        The capability itself already lives in the model client's registry,
+        keyed by model; this only keeps the log from repeating per turn.
+        """
         from ...model.client import model_supports_tools
-        if tools and model_supports_tools(model) is False:
-            if self.tools_supported is not False:
-                logger.info(
-                    f"Model {model} answers without tools; the continuity "
-                    "preamble drops the tool instruction"
-                )
-            self.tools_supported = False
+        if tools and model_supports_tools(model) is False and model not in self._tools_noted:
+            self._tools_noted.add(model)
+            logger.info(
+                f"Model {model} answers without tools; the continuity "
+                "preamble drops the tool instruction when no configured "
+                "model can call one"
+            )
     
     async def chat(self, messages, tools=None, intake_result=None, images=None):
         """Call LLM with messages, routing to specialist for complex queries.
@@ -342,6 +370,7 @@ class LLMClientAdapter:
         model = get_configured_model()
         if not model:
             raise HTTPException(400, "No model configured — choose one in Settings → AI Models (models.yml)")
+        configured_guide = model
         endpoint = get_ollama_endpoint()
         provider = "ollama"
 
@@ -361,7 +390,14 @@ class LLMClientAdapter:
                 model = specialist_model
                 endpoint = specialist_endpoint
                 provider = specialist_provider or "ollama"
-        
+
+        # Plan A (spec §7): the models this turn could have been answered by.
+        # tools_supported reports on all of them, so one model's rejection
+        # cannot speak for the other (see the property).
+        self._routable_models = tuple(
+            m for m in (configured_guide, specialist_model) if m
+        )
+
         # Build messages for LLM
         llm_messages = []
         if system:
