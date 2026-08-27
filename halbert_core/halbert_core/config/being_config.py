@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -40,6 +40,17 @@ class BeingConfig:
     category_overrides: Dict[str, str] = field(default_factory=dict)
     timezone: str = "local"  # IANA tz name, or "local" for system timezone
 
+    # --- Personality ---
+    personality_profile: Dict[str, float] = field(default_factory=lambda: {
+        "openness": 0.5, "conscientiousness": 0.5,
+        "extraversion": 0.5, "agreeableness": 0.5, "neuroticism": 0.5,
+    })
+    archetype_id: Optional[str] = None
+    tone_descriptors: List[str] = field(default_factory=list)
+    speech_patterns: List[str] = field(default_factory=list)
+    directives: List[str] = field(default_factory=list)
+    custom_personality_prompt: str = ""  # escape hatch: replaces generated layer
+
     def validate(self) -> None:
         """Validate the config. Raises ValueError on invalid values."""
         if self.voice not in VALID_VOICES:
@@ -61,6 +72,15 @@ class BeingConfig:
                 raise ValueError(
                     f"Invalid proactivity override '{level}' for category '{cat}'. "
                     f"Must be one of: {VALID_PROACTIVITY}"
+                )
+        # Personality validation
+        for trait, value in self.personality_profile.items():
+            if trait not in ("openness", "conscientiousness", "extraversion",
+                             "agreeableness", "neuroticism"):
+                raise ValueError(f"Unknown personality trait '{trait}'")
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(
+                    f"Personality trait '{trait}' must be 0.0-1.0, got {value}"
                 )
 
     def to_dict(self) -> Dict[str, Any]:

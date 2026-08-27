@@ -96,6 +96,7 @@ class PromptBuilder:
         rag_results: Optional[List[Dict[str, Any]]] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         model_name: Optional[str] = None,
+        personality_section: Optional[str] = None,
     ) -> str:
         """
         Build a complete prompt for a specific tier.
@@ -108,6 +109,7 @@ class PromptBuilder:
             rag_results: RAG retrieval results
             conversation_history: Recent conversation turns
             model_name: Optional model name for model-specific overrides
+            personality_section: Optional personality prompt section to inject
             
         Returns:
             Complete assembled prompt
@@ -129,7 +131,13 @@ class PromptBuilder:
         if tier_additions.strip():
             parts.append(tier_additions.strip())
         
-        # 3. Dynamic context sections
+        # 4. Personality section (if provided)
+        if personality_section:
+            parts.append(
+                f"<personality>\n{personality_section}\n</personality>"
+            )
+        
+        # 5. Dynamic context sections
         if system_context:
             parts.append(system_context)
         
