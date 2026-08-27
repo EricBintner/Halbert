@@ -18,6 +18,20 @@ function jsonResponse(body: unknown, status = 200): Response {
   } as Response
 }
 
+function configEnvelope(savedEndpoints: unknown[]): unknown {
+  return {
+    data: {
+      llm_config: {
+        saved_endpoints: savedEndpoints,
+        chat_model: { enabled: false, endpoint_id: '', model: '' },
+        specialist_model: { enabled: false, endpoint_id: '', model: '' },
+        vision_model: { enabled: false, endpoint_id: '', model: '' },
+      },
+      chat_capable_providers: [],
+    },
+  }
+}
+
 describe('modelPickerTransport', () => {
   let fetchMock: ReturnType<typeof vi.fn>
 
@@ -162,6 +176,51 @@ describe('modelPickerTransport', () => {
         }),
       ).rejects.toThrow(/not yet usable for chat/)
     })
+
+    it('omits api_key entirely when the endpoint object does not carry one', async () => {
+      // A card for a provider with no key field never sees the key, so it must
+      // not be able to erase it. The backend carries a stored key forward for
+      // an absent field, which is why one request is enough.
+      fetchMock.mockResolvedValueOnce(jsonResponse(configEnvelope([])))
+
+      await createModelPickerTransport().saveConfig({
+        endpoints: [{ id: 'ep_1', name: 'x', provider: 'openai-compatible', url: 'http://h' }],
+      })
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const [url, init] = fetchMock.mock.calls[0]
+      expect(url).toBe('/llm/config')
+      expect(init.method).toBe('PUT')
+      expect(JSON.parse(init.body).llm_config.saved_endpoints).toEqual([
+        { id: 'ep_1', name: 'x', provider: 'openai-compatible', url: 'http://h' },
+      ])
+    })
+
+    it('sends an empty api_key only when the endpoint explicitly carries one', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(configEnvelope([])))
+
+      await createModelPickerTransport().saveConfig({
+        endpoints: [{ id: 'ep_1', name: 'x', provider: 'openai-compatible', url: 'http://h', apiKey: '' }],
+      })
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).llm_config.saved_endpoints).toEqual([
+        { id: 'ep_1', name: 'x', provider: 'openai-compatible', url: 'http://h', api_key: '' },
+      ])
+    })
+
+    it('saves an endpoint with no key in a single request', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(configEnvelope([])))
+
+      await createModelPickerTransport().saveConfig({
+        endpoints: [{ id: 'ep_2', name: 'x', provider: 'ollama', url: 'http://h' }],
+      })
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).llm_config.saved_endpoints).toEqual([
+        { id: 'ep_2', name: 'x', provider: 'ollama', url: 'http://h' },
+      ])
+    })
   })
 
   describe('listModels', () => {
@@ -169,8 +228,8 @@ describe('modelPickerTransport', () => {
       fetchMock.mockResolvedValueOnce(
         jsonResponse({
           data: {
-            models: ['llama3:8b'],
-            model_details: [{ name: 'llama3:8b', cost_tier: '8B · Q4 · 4.7GB', context_tokens: 8192 }],
+            models: ['model-a'],
+            model_details: [{ name: 'model-a', cost_tier: '8B · Q4 · 4.7GB', context_tokens: 8192 }],
           },
         }),
       )
@@ -184,8 +243,8 @@ describe('modelPickerTransport', () => {
 
       expect(models).toEqual([
         {
-          id: 'llama3:8b',
-          name: 'llama3:8b',
+          id: 'model-a',
+          name: 'model-a',
           endpointId: 'ep_1',
           provider: 'ollama',
           isLocal: true,
@@ -196,7 +255,7 @@ describe('modelPickerTransport', () => {
 
     it('marks a cloud provider endpoint as not local', async () => {
       fetchMock.mockResolvedValueOnce(
-        jsonResponse({ data: { models: ['claude-x'], model_details: [{ name: 'claude-x' }] } }),
+        jsonResponse({ data: { models: ['model-b'], model_details: [{ name: 'model-b' }] } }),
       )
 
       const models = await createModelPickerTransport().listModels({
@@ -230,14 +289,14 @@ describe('modelPickerTransport', () => {
   describe('testEndpoint', () => {
     it('maps success/message to EndpointTestResult', async () => {
       fetchMock.mockResolvedValueOnce(
-        jsonResponse({ data: { success: true, message: 'Connected to Ollama v0.5', models: ['llama3:8b'] } }),
+        jsonResponse({ data: { success: true, message: 'Connected to Ollama v0.5', models: ['model-a'] } }),
       )
 
       const result = await createModelPickerTransport().testEndpoint({
         id: 'ep_1', name: 'x', provider: 'ollama', url: 'http://localhost:11434',
       })
 
-      expect(result).toEqual({ ok: true, message: 'Connected to Ollama v0.5', models: ['llama3:8b'] })
+      expect(result).toEqual({ ok: true, message: 'Connected to Ollama v0.5', models: ['model-a'] })
     })
   })
 
@@ -249,12 +308,12 @@ describe('modelPickerTransport', () => {
 
       const result = await createModelPickerTransport().testModel!(
         { id: 'ep_1', name: 'x', provider: 'ollama', url: 'http://h' },
-        'llama3:8b',
+        'model-a',
       )
 
       expect(result).toEqual({ ok: true, message: 'Model responded successfully' })
       const body = JSON.parse(fetchMock.mock.calls[0][1].body)
-      expect(body.model).toBe('llama3:8b')
+      expect(body.model).toBe('model-a')
     })
   })
 
@@ -263,7 +322,7 @@ describe('modelPickerTransport', () => {
       fetchMock.mockResolvedValueOnce(
         jsonResponse({
           data: {
-            ollama: { running: true, url: 'http://localhost:11434', version: '0.5.1', models: ['llama3:8b'] },
+            ollama: { running: true, url: 'http://localhost:11434', version: '0.5.1', models: ['model-a'] },
             lm_studio: { running: false, url: 'http://localhost:1234', models: [] },
           },
         }),
@@ -272,7 +331,7 @@ describe('modelPickerTransport', () => {
       const discovery = await createModelPickerTransport().discoverLocal!()
 
       expect(discovery).toEqual({
-        ollama: { running: true, url: 'http://localhost:11434', version: '0.5.1', models: ['llama3:8b'] },
+        ollama: { running: true, url: 'http://localhost:11434', version: '0.5.1', models: ['model-a'] },
         lmStudio: { running: false, url: 'http://localhost:1234', models: [] },
       })
     })

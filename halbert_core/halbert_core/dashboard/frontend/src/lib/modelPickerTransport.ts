@@ -79,13 +79,24 @@ function toSavedEndpoint(ep: RawEndpoint): SavedEndpoint {
   }
 }
 
+/**
+ * An absent `ep.apiKey` means the object never carried the key — a card for a
+ * provider with `needsApiKey: false` renders no key field — not "clear it", so
+ * only a real string is sent and `storedKey` fills the rest. Emitting
+ * `api_key: ''` for the absent case erased the saved key, because
+ * `saved_endpoints` is a list and PUT /llm/config replaces it whole.
+ */
 function fromSavedEndpoint(ep: SavedEndpoint): RawEndpoint {
   return {
     id: ep.id,
     name: ep.name,
     provider: ep.provider,
     url: ep.url,
-    api_key: ep.apiKey || '',
+    // Omitted when the caller does not carry a key — a card for a provider
+    // with no key field never sees one, and must not be able to erase it.
+    // PUT /llm/config carries the stored key forward for an absent field, and
+    // clears it only for an explicit empty string.
+    ...(typeof ep.apiKey === 'string' ? { api_key: ep.apiKey } : {}),
   }
 }
 
