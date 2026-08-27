@@ -10,10 +10,16 @@ Based on research5.md Part 11.
 from enum import Enum
 from dataclasses import dataclass
 from typing import Dict, List, Set, Pattern, Optional
+import fnmatch
 import re
 import logging
 
 logger = logging.getLogger('halbert.tools.safety')
+
+
+_RISK_ORDER = {
+    "safe": 0, "low": 1, "medium": 2, "high": 3, "critical": 4,
+}
 
 
 class RiskLevel(Enum):
@@ -284,18 +290,96 @@ class ToolSafetyFramework:
             user_overrides: Optional dict mapping command patterns to risk levels
         """
         self.user_overrides = user_overrides or {}
-    
+        self._skill_safety = None
+
+    def set_skill_safety(self, safety) -> None:
+        """Install the active skills' composed safety constraints.
+
+        Skills contribute *rules*, not enforcement. Every tool call already
+        passes through this classifier on its way to ToolExecutor and, for
+        HIGH risk, to the approval flow — so skill constraints join that chain
+        instead of standing up a parallel gate that a caller could bypass.
+
+        Pass None to clear (skills are per-turn). Duck-typed on the four
+        SkillSafety fields so tools/ need not import skills/.
+        """
+        self._skill_safety = safety
+
+    def _check_skill_safety(self, tool_name: str, args: Dict) -> Optional[SafetyCheckResult]:
+        """Classify against the active skills' constraints, if any match."""
+        safety = self._skill_safety
+        if safety is None:
+            return None
+
+        command = str(args.get("command", "") or "").strip()
+        path = str(args.get("path", "") or "").strip()
+
+        for pattern in getattr(safety, "blocked_commands", ()) or ():
+            if command and (fnmatch.fnmatch(command, pattern) or pattern.rstrip("*") in command):
+                logger.warning("BLOCKED by active skill: %s (pattern %s)", command, pattern)
+                return SafetyCheckResult(
+                    risk_level=RiskLevel.CRITICAL,
+                    allowed=False,
+                    requires_confirmation=False,
+                    reason=f"Blocked by an active skill: matches {pattern!r}",
+                    matched_rule="skill.blocked_commands",
+                )
+
+        needs_approval = bool(getattr(safety, "destructive_requires_approval", False))
+
+        for pattern in getattr(safety, "protected_paths", ()) or ():
+            hit = (path and (fnmatch.fnmatch(path, pattern) or path.startswith(pattern.rstrip("*"))))
+            if not hit and command:
+                hit = fnmatch.fnmatch(command, f"*{pattern}*") or pattern.rstrip("/*") in command
+            if hit:
+                return SafetyCheckResult(
+                    risk_level=RiskLevel.HIGH,
+                    allowed=True,
+                    requires_confirmation=True,
+                    reason=f"An active skill protects {pattern}",
+                    matched_rule="skill.protected_paths",
+                )
+
+        if command and needs_approval:
+            for service in getattr(safety, "protected_services", ()) or ():
+                if service in command and any(
+                    verb in command for verb in ("stop", "disable", "mask", "kill", "restart")
+                ):
+                    return SafetyCheckResult(
+                        risk_level=RiskLevel.HIGH,
+                        allowed=True,
+                        requires_confirmation=True,
+                        reason=f"An active skill protects the {service} service",
+                        matched_rule="skill.protected_services",
+                    )
+
+        return None
+
     def classify(self, tool_name: str, args: Dict) -> SafetyCheckResult:
         """
         Classify risk level for a tool call.
-        
+
         Args:
             tool_name: Name of the tool
             args: Tool arguments
-            
+
         Returns:
             SafetyCheckResult with risk level and policy
+
+        When active skills declare safety constraints, the stricter of the
+        built-in classification and the skill classification wins. Skills can
+        only tighten: a skill cannot make a CRITICAL built-in command safe.
         """
+        base = self._classify_builtin(tool_name, args)
+        from_skill = self._check_skill_safety(tool_name, args)
+        if from_skill is None:
+            return base
+        if _RISK_ORDER[from_skill.risk_level.value] > _RISK_ORDER[base.risk_level.value]:
+            return from_skill
+        return base
+
+    def _classify_builtin(self, tool_name: str, args: Dict) -> SafetyCheckResult:
+        """The framework's own classification, before skill constraints."""
         if tool_name == "run_command":
             return self._classify_command(args.get("command", ""))
         elif tool_name in ("write_file", "write_config"):

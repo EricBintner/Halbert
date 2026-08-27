@@ -3,6 +3,12 @@
 """Role-scoped skills: domain expertise bundled with retrieval scope,
 safety constraints, model tier, and context budget."""
 
+from .composer import (
+    ComposedSkills,
+    compose,
+    compose_matches,
+    reallocate_budget,
+)
 from .loader import load_skills, default_skill_dirs
 from .matcher import SkillMatch, SkillMatcher, current_platform
 from .parser import (
@@ -22,4 +28,5 @@ __all__ = [
     "load_skills", "default_skill_dirs",
     "SkillRegistry",
     "SkillMatcher", "SkillMatch", "current_platform",
+    "ComposedSkills", "compose", "compose_matches", "reallocate_budget",
 ]

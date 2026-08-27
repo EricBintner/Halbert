@@ -344,12 +344,48 @@ class SourcePrepAdapter:
             )
         self._default_k = default_k
 
-    async def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def _route(self, query: str, *, scope: Optional[str] = None,
+               role: Optional[str] = None) -> Optional[str]:
+        """Decide the scope for this query: skill role, skill scope, heuristic.
+
+        A skill that named a role wins, because it is the most specific thing
+        anyone has said about the query. Only when no skill is active does the
+        T-H1.3 keyword heuristic pick between the host config tree and the
+        per-platform knowledge corpus; ambiguous stays unscoped.
+        """
+        if role:
+            try:
+                resolved = self._backend.resolve_role(role)
+            except Exception:  # pragma: no cover - routing must never block
+                resolved = None
+            if resolved:
+                return resolved
+            logger.debug("role %r resolved to no scope; falling back", role)
+
+        if scope:
+            return scope
+
+        try:
+            from ..integrations.sourceprep_retrieval_backend import scope_for_query
+            return scope_for_query(query)
+        except Exception:  # pragma: no cover - routing must never block retrieval
+            return None
+
+    async def search(self, query: str, limit: int = 5, *,
+                     scope: Optional[str] = None,
+                     role: Optional[str] = None) -> List[Dict[str, Any]]:
         """Search SourcePrep asynchronously.
 
         Args:
             query: Natural language search query.
             limit: Maximum results (mapped to SourcePrep's k parameter).
+            scope: Explicit scope id, from an active skill. Overrides the
+                keyword heuristic below.
+            role: Skill role, resolved locally to whichever scope carries it.
+                Takes precedence over `scope`, and is why the role scopes
+                (storage_admin, network_admin, service_admin) are reachable at
+                all — scope_for_query() can only ever return None, "host", or
+                "knowledge_<platform>".
 
         Returns:
             List of documents with 'content', 'metadata', 'source', 'score'.
@@ -359,13 +395,7 @@ class SourcePrepAdapter:
             return []
 
         k = limit or self._default_k
-        # T-H1.3: route the query to the right SourcePrep scope (host config
-        # tree vs per-platform knowledge corpus). Ambiguous → unscoped union.
-        try:
-            from ..integrations.sourceprep_retrieval_backend import scope_for_query
-            scope = scope_for_query(query)
-        except Exception:  # pragma: no cover - routing must never block retrieval
-            scope = None
+        scope = self._route(query, scope=scope, role=role)
         try:
             results = await asyncio.to_thread(
                 self._backend.search, query, k=k, figure_id=scope

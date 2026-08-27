@@ -1064,20 +1064,40 @@ Decisions taken during implementation:
 - **Matching never fails a turn.** A broken skill file or a throwing matcher
   costs the turn its expertise prompt and role scope, not its answer.
 
-### Phase 2 — Composer, context, and safety *(was Phase 2 + Phase 3)*
+### Phase 2 — Composer, context, and safety ✅ *done* *(was Phase 2 + Phase 3)*
 
-| Task | Est. lines | Files |
-|------|-----------|-------|
-| `skills/composer.py` — merge prompts, union scopes, intersect safety, max-appetite budget | 120 | new |
-| `context/assembler.py` — accept `active_skills`; reallocate within `ContextBudget` total | 50 | modified |
-| `context/adapters.py` — scope from active skills instead of `scope_for_query()` | 20 | modified |
-| Skill safety rules compiled into `ToolSafetyFramework.classify()` (§7.3) | 80 | modified |
-| `model/client.py` — model tier from active skills | 20 | modified |
-| Tests: composer, budget invariant, scope routing, safety compilation | 250 | new |
+| Task | Status | Files |
+|------|--------|-------|
+| `skills/composer.py` — merge prompts, pick scope, intersect safety, max-appetite budget | **done** | new |
+| `context/assembler.py` — accept `active_skills`; reallocate within `ContextBudget` total | **done** | modified |
+| `context/adapters.py` — scope/role from active skills, heuristic as fallback | **done** | modified |
+| Skill safety compiled into `ToolSafetyFramework.classify()` (§7.3) | **done** | modified |
+| Model tier from active skills — in `intake/pipeline.py`, not `model/client.py` | **done** | modified |
+| Tests | **done** (30 pass) | `tests/test_skills_composer.py` |
 
 **Deliverable:** Active skills shape retrieval scope, context budget, model
 selection, **and enforced safety** — in one step, through the existing
 `ToolExecutor` → `ApprovalEngine` chain.
+
+Decisions taken during implementation:
+
+- **Model tier lives in `intake/pipeline.py`, not `model/client.py`.** §9.2
+  proposed `get_configured_model()` consult active skills, which would mean a
+  module-level function reading hidden turn state. The pipeline already picks
+  the tier from complexity, so the skill override belongs at that same seam.
+  A skill can only reach a slot the user has actually configured — it cannot
+  route a turn to a specialist that was never set up — and images still win
+  over any skill's preference.
+- **Skills only tighten safety.** `classify()` computes the built-in verdict
+  and the skill verdict and takes the stricter, so a skill cannot make a
+  CRITICAL built-in command safe.
+- **Budget reallocation, verified.** On the specialist tier: retrieval
+  600 → 889 and discovery 400 → 592, funded from conversation, memory, and
+  observations, with `system_identity`/`user_rules` untouched and `total`
+  exactly preserved at 4000.
+- **Retrieval sources that take no scope still work.** `_search_retrieval()`
+  retries without the scope keywords on `TypeError`, so an older adapter
+  loses its scope rather than the turn losing retrieval.
 
 ### Phase 3 — Built-in skills + SourcePrep role scopes
 

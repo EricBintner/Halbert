@@ -109,6 +109,7 @@ class ContextAssembler:
         use_compression: bool = True,
         intake: Any = None,
         session_id: Optional[str] = None,
+        active_skills: Any = None,
     ) -> AssembledContext:
         """Assemble context within token budget.
 
@@ -121,6 +122,10 @@ class ContextAssembler:
             use_compression: Whether to apply compression cascade
             session_id: Session this turn belongs to, so the memory source can
                 leave out interactions the caller is already sending verbatim
+            active_skills: Optional ComposedSkills from skills.composer. When
+                provided, its role/scope routes retrieval and its budget
+                appetite reshuffles the per-category split. Falls back to
+                intake.active_skills when not passed explicitly.
             intake: Optional Phase 3 MessageIntake. When provided:
                 - max_tokens is overridden by intake.context_budget.total
                 - retrieval is gated by intake.needs_retrieval
@@ -159,6 +164,24 @@ class ContextAssembler:
         else:
             budgets = self._allocate_budget(max_tokens, conversation, active_sources)
 
+        composed = self._composed_skills(active_skills, intake)
+        if composed is not None and composed.budget_appetite:
+            # Skills bid for a share of the same total, never a bigger one:
+            # ContextBudget's fields sum to `total`, so a multiplier would
+            # overrun the tier's window rather than deepen retrieval.
+            from ..skills.composer import reallocate_budget
+
+            reallocated = reallocate_budget(
+                getattr(intake, "context_budget", None), composed.budget_appetite
+            )
+            if reallocated is not None and reallocated is not getattr(
+                intake, "context_budget", None
+            ):
+                budgets = self._allocate_budget_from_intake(
+                    reallocated, conversation, active_sources
+                )
+                logger.debug("skills reshuffled the budget: %s", budgets)
+
         logger.debug(f"Context budgets: {budgets}")
         
         # 1. Conversation history (highest priority, synchronous)
@@ -182,7 +205,12 @@ class ContextAssembler:
         logger.info(f"Active sources: {active_sources}, budgets: {budgets}")
 
         if "retrieval" in active_sources and self.retrieval:
-            retrieval_tasks.append(("retrieval", self._retrieve_retrieval(query, budgets.get("retrieval", 0))))
+            retrieval_tasks.append((
+                "retrieval",
+                self._retrieve_retrieval(
+                    query, budgets.get("retrieval", 0), composed=composed
+                ),
+            ))
         
         if "memory" in active_sources and self.memory:
             retrieval_tasks.append(("memory", self._retrieve_memory(
@@ -451,7 +479,47 @@ class ContextAssembler:
         
         return "\n".join(lines), tokens
     
-    async def _retrieve_retrieval(self, query: str, max_tokens: int) -> Dict:
+    async def _search_retrieval(self, query: str, composed: Any) -> List[Dict]:
+        """Call the retrieval source, scoping it when a skill said how.
+
+        Not every retrieval source accepts a scope — the RAG and Chroma
+        adapters do not — so a source that rejects the keywords is called
+        again without them rather than losing retrieval for the turn.
+        """
+        role = getattr(composed, "role", None) if composed else None
+        scope = getattr(composed, "scope", None) if composed else None
+        if role or scope:
+            try:
+                return await self.retrieval.search(query, limit=5, scope=scope, role=role)
+            except TypeError:
+                logger.debug("retrieval source takes no scope; querying unscoped")
+        return await self.retrieval.search(query, limit=5)
+
+    @staticmethod
+    def _composed_skills(active_skills: Any, intake: Any) -> Any:
+        """Normalize whatever the caller passed into a ComposedSkills.
+
+        Accepts an already-composed object, a list of SkillMatch from the
+        matcher, or nothing — falling back to intake.active_skills so a caller
+        that already ran intake does not have to thread skills separately.
+        """
+        candidate = active_skills
+        if candidate is None:
+            candidate = getattr(intake, "active_skills", None)
+        if not candidate:
+            return None
+        if hasattr(candidate, "budget_appetite"):
+            return candidate
+        try:
+            from ..skills.composer import compose_matches
+
+            return compose_matches(candidate)
+        except Exception:  # pragma: no cover - skills must never break assembly
+            logger.debug("skill composition failed; continuing", exc_info=True)
+            return None
+
+    async def _retrieve_retrieval(self, query: str, max_tokens: int,
+                                  composed: Any = None) -> Dict:
         """Retrieve and format retrieval results (SourcePrep)."""
         logger.info(f"_retrieve_retrieval called with query='{query[:50]}...', max_tokens={max_tokens}")
         if max_tokens <= 0:
@@ -460,7 +528,7 @@ class ContextAssembler:
 
         try:
             logger.info("Calling retrieval search...")
-            results = await self.retrieval.search(query, limit=5)
+            results = await self._search_retrieval(query, composed)
             logger.info(f"Retrieval search returned {len(results)} results")
             
             lines = ["## Relevant Documents"]

@@ -30,6 +30,27 @@ _WEB_SEARCH_RE = re.compile(
 )
 
 
+def _skill_model_tier(active_skills: Sequence[Any]) -> Optional[str]:
+    """The model tier the active skills ask for, if any.
+
+    Skill frontmatter names the models.yml slots (chat / specialist / vision),
+    not the legacy orchestrator triple. An explicit "provider:model" string is
+    not a tier and is left for the model layer to resolve.
+    """
+    if not active_skills:
+        return None
+    try:
+        from ..skills.composer import compose_matches
+
+        model = compose_matches(active_skills).model
+    except Exception:  # pragma: no cover - never block model selection
+        logger.debug("skill tier resolution failed", exc_info=True)
+        return None
+    if model in ("chat", "specialist", "vision"):
+        return model
+    return None
+
+
 # ── Result dataclass ─────────────────────────────────────────────
 
 @dataclass
@@ -121,6 +142,22 @@ class IntakePipeline:
         # ── Stage 2: Complexity ───────────────────────────────────
         complexity = self._router.assess(message, signals)
 
+        # ── Stage 2b: Skills ──────────────────────────────────────
+        # Matched before model selection so an active skill's tier can be
+        # honoured. Matching never fails a turn: a broken skill file or
+        # matcher costs the turn its role scope and expertise prompt, not
+        # its answer.
+        active_skills: List[Any] = []
+        if self._skill_matcher is not None:
+            try:
+                active_skills = list(
+                    self._skill_matcher.match(
+                        message, signals, explicit=explicit_skills
+                    )
+                )
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("skill matching failed; continuing", exc_info=True)
+
         # ── Stage 3: Model selection + budget ─────────────────────
         llm = self._model_config.get("llm_config") or {}
         chat = llm.get("chat_model") or {}
@@ -130,10 +167,22 @@ class IntakePipeline:
         specialist_enabled = bool(specialist.get("enabled")) and bool(specialist.get("model"))
         vision_model_name = vision.get("model", "") if vision.get("enabled") else ""
 
+        skill_tier = _skill_model_tier(active_skills)
+
         if signals.has_images and vision_model_name:
-            # Vision takes priority — image content requires a multimodal model
+            # Vision takes priority — image content requires a multimodal
+            # model, and no skill's tier preference changes that.
             recommended_model_name = "vision"
             model_name = vision_model_name
+        elif skill_tier == "specialist" and specialist_enabled:
+            # An active skill asked for depth. Honoured only when the slot is
+            # actually configured, so a skill cannot route a turn to a model
+            # the user never set up.
+            recommended_model_name = "specialist"
+            model_name = specialist.get("model", "")
+        elif skill_tier == "chat":
+            recommended_model_name = "guide"
+            model_name = chat.get("model", "")
         elif complexity.score >= threshold and specialist_enabled:
             recommended_model_name = "specialist"
             model_name = specialist.get("model", "")
@@ -147,20 +196,6 @@ class IntakePipeline:
         needs_retrieval = not (signals.is_greeting or signals.is_farewell)
         needs_tools = signals.is_troubleshooting and complexity.score >= threshold
         needs_web_search = bool(_WEB_SEARCH_RE.search(message))
-
-        # ── Stage 5: Skills ───────────────────────────────────────
-        # Matching never fails a turn: a broken skill file or matcher costs
-        # the turn its role scope and expertise prompt, not its answer.
-        active_skills: List[Any] = []
-        if self._skill_matcher is not None:
-            try:
-                active_skills = list(
-                    self._skill_matcher.match(
-                        message, signals, explicit=explicit_skills
-                    )
-                )
-            except Exception:  # pragma: no cover - defensive
-                logger.warning("skill matching failed; continuing", exc_info=True)
 
         return MessageIntake(
             # Signals
