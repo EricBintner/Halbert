@@ -23,12 +23,15 @@ def test_ingestion_pipeline_redact_validate_write(tmp_path):
         "type": "log",
         "subsystem": "test",
         "severity": "info",
-        "message": "user me@example.com from 10.0.0.1",
+        "message": "user me@example.com from 93.184.216.34 via 10.0.0.1",
         "data": {"identifier": "pytest", "unit": None},
         "tags": ["log"],
     }
     red = redact_event(evt)
     assert "<email>" in red["message"] and "<ip>" in red["message"]
+    # Public address redacted, RFC1918 kept: see redaction._EXEMPT_NETWORKS.
+    assert "93.184.216.34" not in red["message"]
+    assert "10.0.0.1" in red["message"]
     assert v.validate(red) is True
 
     # Write to tmp raw dir
