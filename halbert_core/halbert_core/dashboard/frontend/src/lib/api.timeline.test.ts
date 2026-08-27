@@ -147,3 +147,40 @@ describe('api.redactMessage', () => {
     expect(init.method).toBe('POST')
   })
 })
+
+describe('the redaction marker block', () => {
+  /**
+   * conversation_sqlite.redact_message leaves one marker block behind for a
+   * row that had tool calls: {tool, args, result, exit: null, redacted: true}.
+   * Dropping the flag here left the page with a block that has no exit code
+   * and no status — the shape that renders as a green "✓ Success".
+   */
+  it('carries the store\'s redacted flag through to the page', async () => {
+    mockFetch({
+      has_more: false,
+      current_thread: null,
+      turns: [
+        {
+          turn_id: 't-9',
+          thread_id: 'th-1',
+          timestamp: 1_700_000_000,
+          origin: 'human',
+          user: { message_id: 1, content: '[redacted by admin]', timestamp: 1_700_000_000, status: 'complete' },
+          assistant: null,
+          blocks: [
+            { tool: '[redacted by admin]', args: {}, result: '[redacted by admin]', exit: null, redacted: true },
+            { tool: 'run_command', args: { command: 'ls' }, result: 'ok', exit: 0 },
+          ],
+          terminal_block_ids: [],
+          diff_proposals: [],
+        },
+      ],
+    })
+
+    const page = await api.getTimeline({})
+    expect(page.turns[0].blocks[0].redacted).toBe(true)
+    // An ordinary block carries no flag at all, so `toEqual` shapes elsewhere
+    // in this file keep matching.
+    expect(page.turns[0].blocks[1].redacted).toBeUndefined()
+  })
+})

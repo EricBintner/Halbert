@@ -10,8 +10,9 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { Timeline, executionFromBlock } from './Timeline'
+import { Timeline, executionFromBlock, REDACTED } from './Timeline'
 import { groupByDay } from '../../hooks/useTimeline'
+import { lastAlert, lastAnnouncement } from '../../lib/announce'
 import { terminalSessionStore } from '../../hooks/useTerminalSessions'
 import type { TimelineToolBlock, TimelineTurn } from '../../types/timeline'
 
@@ -231,6 +232,27 @@ describe('Timeline — Forget this', () => {
     return fetchMock
   }
 
+  /** The control is guarded (it cannot be undone), so agreeing takes two clicks. */
+  async function forget(opener: HTMLElement) {
+    await userEvent.click(opener)
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, forget this turn' }))
+  }
+
+  it('asks before it forgets, and touches nothing when the answer is no', async () => {
+    const fetchMock = redactFetch()
+    render(<Timeline byDay={groupByDay(TURNS, NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />)
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Forget this turn' })[0])
+    // The first click only opens the question: nothing is destroyed yet.
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Yes, forget this turn' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel forgetting this turn' }))
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.getByText('is samba running?')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Forget this turn' })).toHaveLength(2)
+  })
+
   it('redacts both stored rows and replaces the turn with the marker', async () => {
     const fetchMock = redactFetch()
     render(<Timeline byDay={groupByDay(TURNS, NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />)
@@ -238,9 +260,11 @@ describe('Timeline — Forget this', () => {
     // Both fixture turns are stored (server ids 1/2 and 5), so both offer it.
     const buttons = screen.getAllByRole('button', { name: 'Forget this turn' })
     expect(buttons).toHaveLength(2)
-    await userEvent.click(buttons[0])
+    await forget(buttons[0])
 
-    await waitFor(() => expect(screen.getAllByText('[redacted by admin]')).toHaveLength(2))
+    // The user words, the tool card and the assistant words — the same three
+    // markers the next page load will read back off disk.
+    await waitFor(() => expect(screen.getAllByText(REDACTED)).toHaveLength(3))
     const calls = fetchMock.mock.calls.map(([url, init]) => [String(url), (init as RequestInit).method])
     expect(calls).toEqual([
       ['/api/agent/message/1/redact', 'POST'],
@@ -249,11 +273,33 @@ describe('Timeline — Forget this', () => {
     expect(screen.queryByText('is samba running?')).not.toBeInTheDocument()
     expect(screen.queryByText('Answer to is samba running?')).not.toBeInTheDocument()
     expect(screen.queryByText('run_command')).not.toBeInTheDocument()
+    // A forgotten tool call is not a successful one.
+    expect(screen.queryByText('Success')).not.toBeInTheDocument()
+    expect(screen.getByText('Forgotten')).toBeInTheDocument()
     // Terminal ids are not part of the redaction; the ended chip stays.
     expect(screen.getByText('terminal · ended')).toBeInTheDocument()
     // The row is never deleted: the article and its id remain.
     expect(screen.getAllByRole('article')[0]).toHaveAttribute('data-turn-id', 't-1')
     expect(screen.getAllByRole('button', { name: 'Forget this turn' })).toHaveLength(1)
+    // The marker replaces text in place, which nothing reads out on its own.
+    expect(lastAnnouncement()).toBe('Turn forgotten')
+  })
+
+  it('renders a stored marker block exactly as the clicked turn does', async () => {
+    // What the server leaves on disk for a redacted row that had tool calls
+    // (conversation_sqlite.redact_message) and hands back on the next load.
+    const reloaded = turn('t-1', OLD, REDACTED, {
+      user: { messageId: 1, content: REDACTED, timestamp: OLD, status: 'complete' },
+      assistant: { messageId: 2, content: REDACTED, timestamp: OLD, status: 'complete' },
+      blocks: [{ tool: REDACTED, args: {}, result: REDACTED, exit: null, redacted: true }],
+    })
+    render(<Timeline byDay={groupByDay([reloaded], NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />)
+
+    expect(screen.getByText('Forgotten')).toBeInTheDocument()
+    // The block has no exit code and no status, which is the shape that used
+    // to fall through to the default and paint a green ✓ Success.
+    expect(screen.queryByText('Success')).not.toBeInTheDocument()
+    expect(screen.queryByText('✓')).not.toBeInTheDocument()
   })
 
   it('offers no control for rows without a server id, and keeps the turn when the server refuses', async () => {
@@ -274,9 +320,64 @@ describe('Timeline — Forget this', () => {
     expect(buttons).toHaveLength(1)
     expect(buttons[0].closest('article')).toHaveAttribute('data-turn-id', 't-1')
 
-    await userEvent.click(buttons[0])
+    await forget(buttons[0])
     await waitFor(() => expect(warn).toHaveBeenCalled())
     expect(screen.getByText('is samba running?')).toBeInTheDocument()
-    expect(screen.queryByText('[redacted by admin]')).not.toBeInTheDocument()
+    expect(screen.queryByText(REDACTED)).not.toBeInTheDocument()
+    // A console warning is invisible in the product; the admin is told.
+    expect(lastAlert()).toBe('Could not forget that turn')
+  })
+
+  it('marks only the rows that landed when the server refuses one of them', async () => {
+    // The route answers 500 for a redaction that did not land in full
+    // (routes/agent.py). Promise.all would abandon the sibling request and
+    // report the whole turn unchanged while row 1 is already scrubbed.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        String(url).endsWith('/message/1/redact')
+          ? { ok: true, status: 200, text: async () => '', json: async () => ({ ok: true }) }
+          : { ok: false, status: 500, text: async () => 'Redaction failed', json: async () => ({}) },
+      ),
+    )
+    render(<Timeline byDay={groupByDay([TURNS[0]], NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />)
+
+    await forget(screen.getByRole('button', { name: 'Forget this turn' }))
+
+    // Row 1 is scrubbed on disk, so the page says so...
+    await waitFor(() => expect(screen.queryByText('is samba running?')).not.toBeInTheDocument())
+    expect(screen.getAllByText(REDACTED)).toHaveLength(1)
+    // ...and row 2 is not, so its words and its tool card still stand.
+    expect(screen.getByText('Answer to is samba running?')).toBeInTheDocument()
+    expect(screen.getByText('run_command')).toBeInTheDocument()
+    expect(warn).toHaveBeenCalled()
+    expect(lastAlert()).toBe('Part of that turn could not be forgotten')
+    // The control stays, so the row that failed can be tried again.
+    expect(screen.getByRole('button', { name: 'Forget this turn' })).toBeInTheDocument()
+  })
+
+  it('cannot be fired twice while the first redaction is in flight', async () => {
+    let release: (() => void) | null = null
+    const inFlight = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const fetchMock = vi.fn(async () => {
+      await inFlight
+      return { ok: true, status: 200, text: async () => '', json: async () => ({ ok: true }) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<Timeline byDay={groupByDay([TURNS[0]], NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Forget this turn' }))
+    const yes = screen.getByRole('button', { name: 'Yes, forget this turn' })
+    await userEvent.click(yes)
+    expect(yes).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancel forgetting this turn' })).toBeDisabled()
+
+    release!()
+    await waitFor(() => expect(screen.getAllByText(REDACTED)).toHaveLength(3))
+    // One POST per row, not one per click.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

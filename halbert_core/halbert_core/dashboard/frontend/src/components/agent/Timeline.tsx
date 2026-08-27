@@ -17,12 +17,13 @@
  * and one `role="article"` per turn.
  */
 
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTerminalSessions } from '../../hooks/useTerminalSessions';
 import type { ToolExecution } from '../../hooks/useAgentStream';
 import type { TimelineDay } from '../../hooks/useTimeline';
 import type { TimelineToolBlock, TimelineTurn } from '../../types/timeline';
 import { api } from '../../lib/api';
+import { announce } from '../../lib/announce';
 import { ToolExecutionCard } from './ToolExecutionCard';
 import { DiffBlock } from './DiffBlock';
 import { InlineTerminals } from './InlineTerminals';
@@ -73,6 +74,12 @@ interface TimelineProps {
  *
  * Only an older, pre-status row with no exit code at all reaches the last
  * default, where unknown reads as success.
+ *
+ * A redacted block never reaches any of this: `isRedactedBlock` answers it at
+ * the render site first. The marker the store leaves behind for a forgotten
+ * row carries neither an exit code nor a status, so it would land on that
+ * same default and paint a green ✓ Success on a turn an admin asked to
+ * forget — the one thing this whole ordering exists to prevent.
  */
 export function executionFromBlock(block: TimelineToolBlock, fallbackId: string): ToolExecution {
   const exit = block.exit;
@@ -129,6 +136,20 @@ function TurnTerminals({ ids }: { ids: string[] }) {
 /** What a forgotten row reads as — the same marker the server stores. */
 export const REDACTED = '[redacted by admin]';
 
+/**
+ * What the store leaves in `blocks_json` for a forgotten row that had tool
+ * calls: one marker block (conversation_sqlite.redact_message). Rendering
+ * this on click is what makes the turn an admin just forgot and the turn the
+ * next page load hands back identical — the reload gets this exact block.
+ */
+const REDACTED_BLOCK: TimelineToolBlock = {
+  tool: REDACTED,
+  args: {},
+  result: REDACTED,
+  exit: null,
+  redacted: true,
+};
+
 /** Stored rows have server ids; a turn appended live carries -1 until the next load. */
 export function redactableIds(turn: TimelineTurn): number[] {
   return [turn.user?.messageId, turn.assistant?.messageId].filter(
@@ -136,11 +157,44 @@ export function redactableIds(turn: TimelineTurn): number[] {
   );
 }
 
+/**
+ * A block the store has scrubbed. It must be answered before
+ * `executionFromBlock`: the marker carries no exit code and no status, so
+ * that function's last default would call it a success and paint a green ✓
+ * on a tool call whose name and output are the redaction marker.
+ */
+function isRedactedBlock(block: TimelineToolBlock): boolean {
+  return block.redacted === true;
+}
+
+/** A forgotten tool call: something ran here, and its record is gone. */
+function RedactedToolCard() {
+  return (
+    <div className="rounded-lg border border-hairline bg-canvas-subtle overflow-hidden">
+      <div className="flex items-center gap-2 p-2">
+        <span className="text-ink-tertiary text-sm" aria-hidden="true">▪</span>
+        <div>
+          <div className="font-mono text-ink-secondary text-xs">{REDACTED}</div>
+          <div className="text-[10px] text-ink-tertiary">Forgotten</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface TurnArticleProps {
   turn: TimelineTurn;
-  /** True once "Forget this" went through: the words and the blocks are the marker. */
-  forgotten: boolean;
-  onForget?: (turn: TimelineTurn) => void;
+  /** True once the user row has been redacted server-side. */
+  userForgotten: boolean;
+  /**
+   * True once the assistant row has been. It is tracked apart from the user
+   * row because a redaction can half-land: the two rows are two writes, and
+   * the article must never show the marker over words another row still
+   * holds on disk.
+   */
+  assistantForgotten: boolean;
+  /** Resolves when every row that could be redacted has been tried. */
+  onForget?: (turn: TimelineTurn) => Promise<void> | void;
   onRunCommand?: RunCommand;
 }
 
@@ -149,18 +203,57 @@ interface TurnArticleProps {
  * turn object itself changes (or when it is forgotten). Callers should pass a
  * stable `onRunCommand` and `onForget` (useCallback) or the memo buys nothing.
  */
-const TurnArticle = memo(function TurnArticle({ turn, forgotten, onForget, onRunCommand }: TurnArticleProps) {
+const TurnArticle = memo(function TurnArticle({
+  turn,
+  userForgotten,
+  assistantForgotten,
+  onForget,
+  onRunCommand,
+}: TurnArticleProps) {
+  // Forgetting cannot be undone — content, blocks, diffs, the FTS row, the
+  // thread's entity sets and (for a founding row) the thread title all go —
+  // so the control asks first and stays busy until the server has answered.
+  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState(false);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (confirming) confirmRef.current?.focus();
+  }, [confirming]);
+
   // Redaction replaces content and blocks_json (spec §5); the terminal ids
-  // are not part of it, so the "ended" chips stay.
-  const blocks = forgotten ? [] : turn.blocks;
-  const diffs = forgotten ? [] : turn.diffProposals;
+  // are not part of it, so the "ended" chips stay. Blocks and diffs follow
+  // the ASSISTANT row: it is the row that carries them (ThreadManager stores
+  // the user row with neither), and tying them to the wrong row would either
+  // hide output that is still stored or leave scrubbed output on screen.
+  const blocks = assistantForgotten
+    ? turn.blocks.length > 0
+      ? [REDACTED_BLOCK]
+      : []
+    : turn.blocks;
+  const diffs = assistantForgotten ? [] : turn.diffProposals;
   const hasAssistantSide =
     turn.assistant !== null ||
     blocks.length > 0 ||
     turn.terminalBlockIds.length > 0 ||
     diffs.length > 0;
-  const label = forgotten ? REDACTED : turn.user ? turn.user.content.slice(0, 80) : turn.origin;
-  const canForget = !forgotten && onForget !== undefined && redactableIds(turn).length > 0;
+  const label = userForgotten ? REDACTED : turn.user ? turn.user.content.slice(0, 80) : turn.origin;
+  // A half-landed redaction leaves one row still readable, so the control
+  // stays until every stored row of this turn is forgotten.
+  const canForget =
+    onForget !== undefined &&
+    ((turn.user !== null && turn.user.messageId >= 0 && !userForgotten) ||
+      (turn.assistant !== null && turn.assistant.messageId >= 0 && !assistantForgotten));
+
+  const confirm = async () => {
+    if (pending) return;
+    setPending(true);
+    try {
+      await onForget?.(turn);
+    } finally {
+      setPending(false);
+      setConfirming(false);
+    }
+  };
 
   return (
     <article
@@ -173,7 +266,9 @@ const TurnArticle = memo(function TurnArticle({ turn, forgotten, onForget, onRun
       {turn.user && (
         <div className="flex justify-end">
           <div className="max-w-[80%] bg-primary text-primary-foreground px-4 py-2 rounded-lg">
-            <p className="text-sm whitespace-pre-wrap break-words">{forgotten ? REDACTED : turn.user.content}</p>
+            <p className="text-sm whitespace-pre-wrap break-words">
+              {userForgotten ? REDACTED : turn.user.content}
+            </p>
           </div>
         </div>
       )}
@@ -185,12 +280,16 @@ const TurnArticle = memo(function TurnArticle({ turn, forgotten, onForget, onRun
       {hasAssistantSide && (
         <div className="flex justify-start">
           <div className="max-w-[85%] bg-muted/50 border border-border/50 rounded-lg p-4 space-y-3">
-            {blocks.map((block, i) => (
-              <ToolExecutionCard
-                key={block.executionId ?? `${turn.turnId}-block-${i}`}
-                execution={executionFromBlock(block, `${turn.turnId}-block-${i}`)}
-              />
-            ))}
+            {blocks.map((block, i) =>
+              isRedactedBlock(block) ? (
+                <RedactedToolCard key={block.executionId ?? `${turn.turnId}-block-${i}`} />
+              ) : (
+                <ToolExecutionCard
+                  key={block.executionId ?? `${turn.turnId}-block-${i}`}
+                  execution={executionFromBlock(block, `${turn.turnId}-block-${i}`)}
+                />
+              ),
+            )}
 
             {turn.terminalBlockIds.length > 0 && <TurnTerminals ids={turn.terminalBlockIds} />}
 
@@ -211,7 +310,7 @@ const TurnArticle = memo(function TurnArticle({ turn, forgotten, onForget, onRun
 
             {turn.assistant && (
               <div className="text-sm text-foreground">
-                {forgotten ? (
+                {assistantForgotten ? (
                   <p className="font-mono text-ink-tertiary">{REDACTED}</p>
                 ) : (
                   <MessageContent content={turn.assistant.content} onRunCommand={onRunCommand} />
@@ -226,22 +325,58 @@ const TurnArticle = memo(function TurnArticle({ turn, forgotten, onForget, onRun
         </div>
       )}
 
-      {canForget && (
+      {canForget && !confirming && (
         <div className="flex justify-end">
           <button
             type="button"
             aria-label="Forget this turn"
             title="Replace this turn's words and tool output with a redaction marker, everywhere it is stored"
-            onClick={() => onForget?.(turn)}
+            onClick={() => setConfirming(true)}
             className="rounded px-1 text-[11px] font-mono text-ink-tertiary hover:text-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
           >
             Forget this
           </button>
         </div>
       )}
+
+      {canForget && confirming && (
+        <div
+          className="flex flex-wrap items-center justify-end gap-2 text-[11px] font-mono text-ink-tertiary"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && !pending) setConfirming(false);
+          }}
+        >
+          <span id={`forget-warning-${turn.turnId}`}>
+            Forget this turn? Its words and tool output are replaced wherever they are stored, and cannot be
+            brought back.
+          </span>
+          <button
+            ref={confirmRef}
+            type="button"
+            aria-label="Yes, forget this turn"
+            aria-describedby={`forget-warning-${turn.turnId}`}
+            disabled={pending}
+            onClick={confirm}
+            className="rounded border border-hairline px-1.5 py-0.5 text-ink-secondary hover:text-ink disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          >
+            {pending ? 'Forgetting…' : 'Forget'}
+          </button>
+          <button
+            type="button"
+            aria-label="Cancel forgetting this turn"
+            disabled={pending}
+            onClick={() => setConfirming(false)}
+            className="rounded px-1.5 py-0.5 hover:text-ink-secondary disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </article>
   );
 });
+
+const NO_IDS: ReadonlySet<number> = new Set();
 
 export function Timeline({
   byDay,
@@ -252,18 +387,60 @@ export function Timeline({
   onLoadLatest,
   onRunCommand,
 }: TimelineProps) {
-  const [forgotten, setForgotten] = useState<ReadonlySet<string>>(() => new Set());
+  // Message ids, not turn ids: the two rows of a turn are two server writes
+  // and either can fail on its own.
+  const [forgotten, setForgotten] = useState<ReadonlySet<number>>(NO_IDS);
+  // The same set, readable inside the handler without making it depend on
+  // (and re-identify with) the state it just wrote.
+  const forgottenRef = useRef<ReadonlySet<number>>(NO_IDS);
 
-  // "Forget this": both stored rows are redacted server-side first; the
-  // article shows the marker once the server has agreed, never before, so
+  // "Forget this": every row is redacted server-side first; the article
+  // shows the marker only for the rows the server has agreed to forget, so
   // the page never claims something is forgotten that is still on disk.
   const handleForget = useCallback(async (turn: TimelineTurn) => {
-    try {
-      await Promise.all(redactableIds(turn).map((id) => api.redactMessage(id)));
-      setForgotten((prev) => new Set(prev).add(turn.turnId));
-    } catch (err) {
-      console.warn('[TIMELINE] forget failed; the turn is unchanged:', err);
+    const ids = redactableIds(turn).filter((id) => !forgottenRef.current.has(id));
+    if (ids.length === 0) return;
+
+    // One row at a time, recording each. Promise.all rejects on the FIRST
+    // failure and neither cancels nor rolls back its siblings, so a turn
+    // whose user row returned 200 and whose assistant row returned 500 (the
+    // route's "Redaction failed" / "receipt still holds the original text"
+    // answers) was reported unchanged while half of it was already scrubbed.
+    const landed: number[] = [];
+    const failures: unknown[] = [];
+    for (const id of ids) {
+      try {
+        await api.redactMessage(id);
+        landed.push(id);
+      } catch (err) {
+        // Keep going: forgetting as much as the store will forget is the
+        // point, and the rows that refuse are named to the admin below.
+        failures.push(err);
+      }
     }
+
+    if (landed.length > 0) {
+      const next = new Set(forgottenRef.current);
+      landed.forEach((id) => next.add(id));
+      forgottenRef.current = next;
+      setForgotten(next);
+    }
+
+    if (failures.length === 0) {
+      // The marker replaces text in place; nothing else would say so.
+      announce('Turn forgotten');
+      return;
+    }
+    // A console warning is invisible in the product, and a privacy promise
+    // that did not land is precisely what the person has to hear.
+    console.warn(
+      `[TIMELINE] forget: ${failures.length} of ${ids.length} rows refused:`,
+      failures[0],
+    );
+    announce(
+      landed.length > 0 ? 'Part of that turn could not be forgotten' : 'Could not forget that turn',
+      { assertive: true },
+    );
   }, []);
 
   if (byDay.length === 0 && !hasMore) return null;
@@ -295,7 +472,8 @@ export function Timeline({
             <TurnArticle
               key={turn.turnId}
               turn={turn}
-              forgotten={forgotten.has(turn.turnId)}
+              userForgotten={turn.user !== null && forgotten.has(turn.user.messageId)}
+              assistantForgotten={turn.assistant !== null && forgotten.has(turn.assistant.messageId)}
               onForget={handleForget}
               onRunCommand={onRunCommand}
             />

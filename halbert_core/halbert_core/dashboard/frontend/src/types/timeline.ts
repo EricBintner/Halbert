@@ -28,6 +28,15 @@ export interface TimelineToolBlock {
   status?: string;
   /** Set alongside status === "error"; the failure message. */
   error?: string;
+  /**
+   * True for the marker block `redact_message` leaves behind for a forgotten
+   * row (conversation_sqlite.py: `{tool: "[redacted by admin]", args: {},
+   * result: "[redacted by admin]", exit: null, redacted: true}`). It carries
+   * no exit code and no status, which is exactly the shape a pass/fail
+   * heuristic reads as a success — a renderer must check this first and show
+   * the block as forgotten, not as a tool that ran and worked.
+   */
+  redacted?: boolean;
 }
 
 export type TimelineOrigin =
@@ -113,6 +122,9 @@ export function blockFromServer(raw: unknown): TimelineToolBlock {
       : typeof r.executionId === 'string' ? r.executionId : undefined,
     status: typeof r.status === 'string' ? r.status : undefined,
     error: typeof r.error === 'string' ? r.error : undefined,
+    // Only ever `true` or absent: an ordinary block keeps the exact shape
+    // the rest of this file's consumers (and their `toEqual`s) expect.
+    redacted: r.redacted === true ? true : undefined,
   };
 }
 
