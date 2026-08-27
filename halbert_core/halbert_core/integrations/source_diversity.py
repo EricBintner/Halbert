@@ -122,22 +122,53 @@ def source_directory(source_path: Any) -> Optional[str]:
     * ``knowledge/linux/man-pages`` and ``knowledge/macos/man-pages`` stay
       distinct, because they are distinct corpora.
 
+    A **trailing slash** means the path already is the directory, so it keys to
+    itself rather than to its parent: ``knowledge/linux/arch-wiki/`` gives
+    ``knowledge/linux/arch-wiki``, the same key its files get. Walking one
+    level up instead collapsed every topic directory under a platform into a
+    single ``knowledge/linux`` bucket — the silent over-filter direction.
+
+    ``.`` and ``..`` segments are resolved lexically, so
+    ``knowledge/linux/../macos/man-pages/x.md`` keys the same as
+    ``knowledge/macos/man-pages/x.md``.
+
     Returning ``None`` rather than ``""`` for an unkeyable path is the point of
     this function's contract. A path with no directory component — empty,
     missing, a bare filename, a non-string — carries **no evidence** that the
     chunk shares a source with any other chunk. Bucketing them all under ``""``
     would let one malformed path collapse an entire result set to a single
     chunk. Callers must treat ``None`` as "unique, do not cap".
+
+    A path whose ``..`` segments escape the corpus root is unkeyable for the
+    same reason: its real location is unknown, so it is evidence of nothing.
+    That errs toward under-filtering, which is the safe direction here.
     """
     if not isinstance(source_path, str):
         return None
-    # Normalise away leading/trailing and duplicated separators so that
-    # "/etc/ssh/x", "etc/ssh/x" and "etc//ssh/x" agree on one key.
-    cleaned = "/".join(segment for segment in source_path.strip().split("/") if segment)
-    cut = cleaned.rfind("/")
-    if cut < 1:
+
+    text = source_path.strip()
+    # A trailing separator marks a directory, so there is no filename to drop.
+    is_directory = text.endswith("/")
+
+    segments: List[str] = []
+    for segment in text.split("/"):
+        # Skips leading/trailing and duplicated separators too, so "/etc/ssh/x",
+        # "etc/ssh/x" and "etc//ssh/x" agree on one key.
+        if not segment or segment == ".":
+            continue
+        if segment == "..":
+            if not segments:
+                return None  # escapes the corpus root — location unknown
+            segments.pop()
+            continue
+        segments.append(segment)
+
+    if not is_directory and segments:
+        segments.pop()  # drop the filename
+
+    if not segments:
         return None
-    return cleaned[:cut]
+    return "/".join(segments)
 
 
 #: Sentinel rank for a chunk carrying no usable score. Below every real

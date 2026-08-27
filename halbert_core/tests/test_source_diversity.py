@@ -78,6 +78,50 @@ class TestSourceDirectory:
             == "knowledge/linux/arch-wiki"
         )
 
+    def test_a_directory_shaped_path_keys_to_itself_not_its_parent(self):
+        # A trailing slash means the path already IS the directory. Treating
+        # its last segment as a filename walked one level too far up, and
+        # collapsed every topic directory under a platform into one bucket —
+        # the silent over-filter direction.
+        assert (
+            source_directory("knowledge/linux/arch-wiki/")
+            == "knowledge/linux/arch-wiki"
+        )
+
+    def test_two_directory_shaped_paths_do_not_collapse_together(self):
+        assert source_directory("knowledge/linux/arch-wiki/") != source_directory(
+            "knowledge/linux/webserver-docs/"
+        )
+
+    def test_a_directory_shaped_path_agrees_with_its_files_key(self):
+        assert source_directory("knowledge/linux/arch-wiki/") == source_directory(
+            "knowledge/linux/arch-wiki/arch_wiki_01.md"
+        )
+
+    def test_dot_segments_are_resolved(self):
+        assert (
+            source_directory("knowledge/./linux/arch-wiki/a.md")
+            == "knowledge/linux/arch-wiki"
+        )
+
+    def test_dotdot_segments_are_resolved(self):
+        assert (
+            source_directory("knowledge/linux/../macos/man-pages/x.md")
+            == "knowledge/macos/man-pages"
+        )
+
+    def test_a_resolved_path_keys_the_same_as_the_direct_one(self):
+        assert source_directory(
+            "knowledge/linux/../macos/man-pages/x.md"
+        ) == source_directory("knowledge/macos/man-pages/x.md")
+
+    def test_a_path_escaping_the_corpus_root_is_unkeyable(self):
+        # Nothing is known about where this actually lives, so it carries no
+        # evidence of a shared source. None means "never cap" — the safe
+        # direction, which can only under-filter.
+        for bad in ["../etc/passwd", "..", "../..", "knowledge/../../x/y.md"]:
+            assert source_directory(bad) is None, bad
+
     def test_unkeyable_paths_return_none(self):
         # No directory component means no evidence of a shared source.
         for bad in ["", "   ", "README.md", "/", "///", None, 17, [], {"a": 1}]:
