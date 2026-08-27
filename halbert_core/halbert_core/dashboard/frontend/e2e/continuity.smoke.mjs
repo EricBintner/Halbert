@@ -17,10 +17,21 @@
  * Needs the `playwright` package, which is NOT a project dependency:
  *   npm i --no-save playwright && npx playwright install chromium
  * Without it the script prints the manual checklist and exits 0.
+ *
+ * Exit code: 0 unless the UI regressed. Lines the model's own choices can
+ * decide — whether it ran a command at all — print as [SKIP] and leave the
+ * exit code alone, so a red run is always worth investigating.
+ *
+ * Timeouts: HALBERT_SMOKE_TURN_TIMEOUT_MS (default 180s) covers waiting for a
+ * model to answer; HALBERT_SMOKE_SETTLE_TIMEOUT_MS (default 30s) covers
+ * everything else — navigation, stored history, rendering.
  */
 
 const BASE = process.argv[2] ?? process.env.HALBERT_UI_URL ?? 'http://localhost:5173'
 const TURN_TIMEOUT_MS = Number(process.env.HALBERT_SMOKE_TURN_TIMEOUT_MS ?? 180_000)
+// Everything that is not "wait for a model to answer": the navigation, the
+// stored history landing, the feed committing. Seconds, not minutes.
+const SETTLE_TIMEOUT_MS = Number(process.env.HALBERT_SMOKE_SETTLE_TIMEOUT_MS ?? 30_000)
 
 const MESSAGE_1 = 'Please run `uname -a` and tell me the kernel version.'
 const MESSAGE_2 = 'Unrelated: what is 2 + 2?'
@@ -64,6 +75,16 @@ function log(step, ok, detail = '') {
   if (!ok) process.exitCode = 1
 }
 
+/**
+ * A check that could not be made, for a reason that is not a regression —
+ * the model choosing to answer from memory rather than running a command.
+ * Deliberately does NOT touch the exit code: a red run has to mean the UI
+ * broke, otherwise nobody can trust it enough to act on it.
+ */
+function skip(step, detail = '') {
+  console.log(`[SKIP] ${step}${detail ? ` — ${detail}` : ''}`)
+}
+
 let chromium
 try {
   ;({ chromium } = await import('playwright'))
@@ -94,6 +115,53 @@ async function articleCount() {
   return (await page.locator('[role="feed"]').count()) === 0 ? 0 : articles().count()
 }
 
+/**
+ * Load (or reload) the surface and wait for the stored conversation to be on
+ * screen. Both halves of that are load-bearing.
+ *
+ * `waitUntil: 'networkidle'` is unusable anywhere on this surface. The
+ * engaged shell opens an EventSource on mount — HostShell -> ContextStage ->
+ * ProactiveEventsBadge -> useBeingEvents -> `/api/being/events` — and that
+ * backend route is an endless generator with a 15s keepalive. One held-open
+ * stream keeps the in-flight request count above zero for as long as the page
+ * lives, so the idle state never arrives and every navigation would die on
+ * the navigation timeout before a single assertion ran.
+ *
+ * Waiting for the composer is not a substitute: it renders immediately while
+ * `useTimeline` is still fetching, and `Timeline` renders nothing at all
+ * until its first page has landed. Reading the article count in that window
+ * yields 0 for a conversation that has plenty of history, which then makes
+ * `sendAndWait(..., before + 1)` return the instant the history lands rather
+ * than when the turn finishes — every later assertion would be measured
+ * mid-turn.
+ *
+ * The timeline response is the signal that covers both cases: once it has
+ * landed, a conversation with anything stored renders `[role="feed"]` and
+ * drops `aria-busy`, and a brand new install renders no feed at all, ever.
+ */
+async function navigateAndSettle(navigate) {
+  const timelinePage = page
+    .waitForResponse((res) => res.url().includes('/api/agent/timeline'), {
+      timeout: SETTLE_TIMEOUT_MS,
+    })
+    .catch(() => null)
+  await navigate()
+  await page.waitForSelector('textarea[placeholder^="Ask Halbert"]', { timeout: SETTLE_TIMEOUT_MS })
+  const response = await timelinePage
+  const body = response ? await response.json().catch(() => null) : null
+  // No body means the request never landed or was not JSON — the backend is
+  // not answering, so expect the feed and let the wait below fail loudly
+  // rather than walking a conversation that never loaded.
+  const expectsFeed = body
+    ? (Array.isArray(body.turns) && body.turns.length > 0) || !!body.has_more
+    : true
+  if (expectsFeed) {
+    // React commits the page after the response resolves; the feed only drops
+    // aria-busy on that commit, so this is the end of the load, not the wire.
+    await page.waitForSelector('[role="feed"][aria-busy="false"]', { timeout: SETTLE_TIMEOUT_MS })
+  }
+}
+
 async function sendAndWait(text, expectedArticles) {
   await composer().fill(text)
   await composer().press('Enter')
@@ -108,8 +176,9 @@ async function sendAndWait(text, expectedArticles) {
 }
 
 try {
-  await page.goto(BASE, { waitUntil: 'networkidle' })
-  await page.waitForSelector('textarea[placeholder^="Ask Halbert"]', { timeout: 30_000 })
+  await navigateAndSettle(() =>
+    page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: SETTLE_TIMEOUT_MS }),
+  )
   log('engaged surface loads', true, BASE)
 
   log('no conversation dropdown', (await page.getByText('New Conversation').count()) === 0)
@@ -120,8 +189,18 @@ try {
   await sendAndWait(MESSAGE_1, before + 1)
   log('turn 1 folded into the timeline', (await articleCount()) === before + 1)
   log('day divider is an h2', (await page.locator('header.thread-divider h2').count()) > 0)
+  // Whether a command ran at all is the model's call, not the UI's. Treating
+  // "answered from memory" as a failure would make a red run ambiguous, so it
+  // is a SKIP: a non-zero exit from this script means the UI regressed.
   const hadTerminal = (await tileOrChip().count()) > 0
-  log('turn 1 opened a terminal (tile or chip)', hadTerminal, hadTerminal ? '' : 'model did not run a command — the reload check below is skipped for the tile')
+  if (hadTerminal) {
+    log('turn 1 opened a terminal (tile or chip)', true)
+  } else {
+    skip(
+      'turn 1 opened a terminal (tile or chip)',
+      'the model answered without running a command — the tile checks below are skipped, not failed',
+    )
+  }
   const topic = await page.getByTestId('current-topic').textContent().catch(() => '')
   log('sticky topic label present', !!topic && topic.trim().length > 0, topic ?? '')
 
@@ -132,8 +211,10 @@ try {
     log('tile from turn 1 survives turn 2', (await tileOrChip().count()) > 0)
   }
 
-  await page.reload({ waitUntil: 'networkidle' })
-  await page.waitForSelector('[role="feed"] article', { timeout: 30_000 })
+  await navigateAndSettle(() =>
+    page.reload({ waitUntil: 'domcontentloaded', timeout: SETTLE_TIMEOUT_MS }),
+  )
+  await page.waitForSelector('[role="feed"] article', { timeout: SETTLE_TIMEOUT_MS })
   const after = await articleCount()
   log('both turns are back after reload', after >= before + 2, `${after} articles`)
   log('turn 1 text persisted', (await page.getByText('uname -a').count()) > 0)
