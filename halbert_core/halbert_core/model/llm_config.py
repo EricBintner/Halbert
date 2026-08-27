@@ -693,6 +693,23 @@ def _probe_ollama(url: str, timeout: float) -> bool:
         return False
 
 
+# Choosing a model for the user is off unless they ask for it. Halbert's
+# picker exists to give an operator control over which model answers, and a
+# machine that quietly picks one on their behalf — by a VRAM heuristic that
+# cannot say anything useful about a hosted model — is the opposite of that.
+# Set `first_run: {auto_select_model: true}` in models.yml to opt in.
+AUTO_SELECT_KEY = "first_run"
+
+
+def auto_select_enabled() -> bool:
+    """True when the operator has opted into first-run model selection."""
+    try:
+        block = load_file().get(AUTO_SELECT_KEY) or {}
+    except ConfigUnreadableError:
+        return False
+    return bool(isinstance(block, dict) and block.get("auto_select_model"))
+
+
 def ensure_local_ollama_endpoint(timeout: float = 2.0) -> bool:
     """Fresh install helper: with no endpoints saved, add Local Ollama if :11434 answers."""
     if load_global()["saved_endpoints"]:

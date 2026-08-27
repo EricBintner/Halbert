@@ -176,8 +176,13 @@ def _editor_payload(session_id: Optional[str] = None) -> Dict[str, Any]:
 
 @router.get("/llm/config")
 def get_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
-    """The global layer, the layer an edit writes to. On a fresh install, adds
-    Local Ollama when it answers and gives it a model that fits the hardware.
+    """The global layer, the layer an edit writes to.
+
+    On a fresh install this registers Local Ollama when it answers, so the
+    endpoint list is not empty. It does **not** choose a model: which model
+    answers is the operator's decision, and Quick-setup offers a hardware-fitted
+    suggestion they can take or ignore. Opting in with
+    ``first_run: {auto_select_model: true}`` makes it choose one for them.
 
     ``ensure_local_ollama_endpoint`` returns True only when the saved list was
     empty and :11434 answered, which is the one moment nobody's choice can be
@@ -186,7 +191,7 @@ def get_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
     from . import settings as settings_routes
 
     try:
-        if llm_store.ensure_local_ollama_endpoint():
+        if llm_store.ensure_local_ollama_endpoint() and llm_store.auto_select_enabled():
             settings_routes.configure_first_run_model()
     except llm_store.ConfigUnreadableError as e:
         # Reading still works (the store serves defaults), so show the picker
