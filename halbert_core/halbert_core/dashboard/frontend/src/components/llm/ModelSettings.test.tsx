@@ -12,9 +12,8 @@
  *  - the LEG-MOD-02 cloud disclosure gate carried over from the deleted
  *    EndpointManager: a cloud-provider endpoint must not be saved until the
  *    user accepts, a local one needs no gate at all
- *  - the "add a provider" control this file adds, since neither
- *    ModelSettingsDrawer nor RoleAssignmentRow offers a way to add a cloud
- *    endpoint that was not auto-discovered on the local machine
+ *  - the "add a provider" control this file hands the drawer, since the
+ *    package auto-offers only the engines it discovered on this machine
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
