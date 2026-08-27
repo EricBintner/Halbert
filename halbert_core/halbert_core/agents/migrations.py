@@ -17,6 +17,16 @@ recall can find it. Idempotent: each source path is recorded in a
 ``migrations_done`` table once its thread is fully written and is never read
 again. Files that fail to parse are skipped (WARNING), not recorded, and
 retried on the next boot. Counts only successful saves.
+
+A thread is written across several store calls, so a run can die between
+them (SQLITE_BUSY at boot, a full disk, ``kill -9``). The ``migrations_done``
+row is therefore written ``partial`` *before* the thread and flipped to
+``done`` only once the thread is complete: a half-written thread is deleted
+on the spot when the failure is catchable, and the surviving ``partial`` row
+tells the next run to drop whatever is left under that id and import the
+file again. Without that marker the next run would find a truncated, still
+**open** thread, mistake it for a live conversation, and record the file as
+done forever (A12a review finding 1).
 """
 
 from __future__ import annotations
@@ -43,6 +53,12 @@ LEGACY_JSON_DIR = Path.home() / ".config" / "halbert" / "conversations"
 
 _ROLE_ORIGIN = {"user": "human", "assistant": "assistant", "system": "system"}
 
+#: ``migrations_done.state`` values. ``_PARTIAL`` is written before the thread
+#: exists and means "this file's thread may be half-written, repair it";
+#: ``_DONE`` means the file is finished with, forever.
+_PARTIAL = "partial"
+_DONE = "done"
+
 
 # ---------------------------------------------------------------------------
 # migrations_done bookkeeping (private store handle; same package)
@@ -63,30 +79,68 @@ def _ensure_migrations_table(store: SqliteConversationStore) -> bool:
                     "CREATE TABLE IF NOT EXISTS migrations_done ("
                     "source_path TEXT PRIMARY KEY, "
                     "thread_id   TEXT, "
-                    "migrated_at REAL NOT NULL)"
+                    "migrated_at REAL NOT NULL, "
+                    f"state       TEXT NOT NULL DEFAULT '{_DONE}')"
                 )
+                # A table written by a build that predates the partial/done
+                # marker has no ``state`` column. Every row it holds was
+                # written only after a thread was complete, so the column
+                # default backfills them all as ``done`` correctly.
+                columns = {
+                    row[1]
+                    for row in conn.execute("PRAGMA table_info(migrations_done)").fetchall()
+                }
+                if "state" not in columns:
+                    conn.execute(
+                        "ALTER TABLE migrations_done ADD COLUMN "
+                        f"state TEXT NOT NULL DEFAULT '{_DONE}'"
+                    )
         return True
     except Exception as e:
         logger.warning(f"migrations_done table unavailable: {e}")
         return False
 
 
-def _already_done(store: SqliteConversationStore, source_path: str) -> bool:
+def _migration_row(
+    store: SqliteConversationStore, source_path: str
+) -> Optional[Dict[str, Any]]:
+    """``{"thread_id", "state"}`` for an already-seen source file, else None."""
     with _lock_of(store):
         row = store._conn.execute(
-            "SELECT 1 FROM migrations_done WHERE source_path = ?", (source_path,)
+            "SELECT thread_id, state FROM migrations_done WHERE source_path = ?",
+            (source_path,),
         ).fetchone()
-    return row is not None
+    if row is None:
+        return None
+    return {"thread_id": row[0], "state": row[1] or _DONE}
 
 
-def _mark_done(store: SqliteConversationStore, source_path: str, thread_id: str) -> None:
+def _record(
+    store: SqliteConversationStore, source_path: str, thread_id: str, state: str
+) -> None:
     with _lock_of(store):
         with store._conn:
             store._conn.execute(
                 "INSERT OR REPLACE INTO migrations_done "
-                "(source_path, thread_id, migrated_at) VALUES (?, ?, ?)",
-                (source_path, thread_id, time.time()),
+                "(source_path, thread_id, migrated_at, state) VALUES (?, ?, ?, ?)",
+                (source_path, thread_id, time.time(), state),
             )
+
+
+def _discard_partial(store: SqliteConversationStore, thread_id: Optional[str]) -> None:
+    """Drop the thread a previous, interrupted run left half-written.
+
+    Safe to delete: this id is only ever recorded ``partial`` after the run
+    that recorded it proved no thread was using it, and new threads take
+    ``uuid4().hex`` ids, so nothing else can have claimed it since.
+    """
+    if not thread_id or store.get_thread(thread_id) is None:
+        return
+    logger.warning(
+        f"migration: discarding the half-written thread {thread_id} left by an "
+        "interrupted run and importing its source file again"
+    )
+    store.delete(thread_id)
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +228,29 @@ def _normalise(data: Any, file_mtime: float) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def _write_thread(store: SqliteConversationStore, rec: Dict[str, Any]) -> bool:
+    """Write one thread, deleting it again if any step refuses.
+
+    Returns False (after a WARNING) if any store call refused or raised. The
+    caller proved this id was free immediately before calling, so anything
+    written under it here is ours: dropping it keeps a transient failure from
+    stranding a truncated, still-open, unrecallable thread — which
+    ``current_open_thread()`` would then hand to the very next turn.
+    """
+    tid = rec["thread_id"]
+    try:
+        if _build_thread(store, rec):
+            return True
+    except Exception as e:
+        logger.warning(f"migration: writing thread {tid} raised {e}")
+    if store.get_thread(tid) is not None and not store.delete(tid):
+        logger.error(
+            f"migration: could not remove the half-written thread {tid}; its "
+            "source file stays recorded partial so the next run repairs it"
+        )
+    return False
+
+
+def _build_thread(store: SqliteConversationStore, rec: Dict[str, Any]) -> bool:
     """Create the thread row, append every message, close it, index its
     receipt. Returns False (after a WARNING) if any store call refused."""
     tid = rec["thread_id"]
@@ -253,8 +330,14 @@ def _migrate_dir(store: SqliteConversationStore, directory: Path) -> int:
     for file_path in sorted(directory.glob("*.json")):
         source = str(file_path.resolve())
         try:
-            if _already_done(store, source):
+            seen = _migration_row(store, source)
+            if seen is not None and seen["state"] == _DONE:
                 continue
+            if seen is not None:
+                # An earlier run died between recording this file and
+                # finishing its thread. Clear what it left before the
+                # "already exists" check below can mistake it for a live one.
+                _discard_partial(store, seen["thread_id"])
             with open(file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             rec = _normalise(data, file_path.stat().st_mtime)
@@ -262,20 +345,24 @@ def _migrate_dir(store: SqliteConversationStore, directory: Path) -> int:
                 logger.warning(f"migration skipped {file_path}: unrecognised shape")
                 continue
             if not rec["messages"]:
-                _mark_done(store, source, rec["thread_id"])
+                _record(store, source, rec["thread_id"], _DONE)
                 continue
             if store.get_thread(rec["thread_id"]) is not None:
                 logger.info(
                     f"migration: thread {rec['thread_id']} already exists, "
                     f"leaving it and recording {file_path.name} as done"
                 )
-                _mark_done(store, source, rec["thread_id"])
+                _record(store, source, rec["thread_id"], _DONE)
                 continue
+            _record(store, source, rec["thread_id"], _PARTIAL)
             if _write_thread(store, rec):
-                _mark_done(store, source, rec["thread_id"])
+                _record(store, source, rec["thread_id"], _DONE)
                 migrated += 1
             else:
-                logger.warning(f"migration of {file_path} did not complete; retrying next boot")
+                logger.warning(
+                    f"migration of {file_path} did not complete; it stays "
+                    "recorded partial and is imported again on the next run"
+                )
         except Exception as e:
             logger.warning(f"migration skipped {file_path}: {e}")
     return migrated

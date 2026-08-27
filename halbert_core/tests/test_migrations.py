@@ -205,6 +205,54 @@ class TestRobustness:
         assert t["title"] == "why is /var filling up on this box"
         assert t["title_source"] == "provisional"
 
+    def test_unrecognised_shapes_are_skipped(self, store, tmp_path):
+        agent_dir = tmp_path / "a"
+        agent_dir.mkdir()
+        # a bare list, and a dict with neither `conversation_id` nor `id`
+        (agent_dir / "a-list.json").write_text(json.dumps([{"role": "user", "content": "hi"}]))
+        (agent_dir / "b-stray.json").write_text(json.dumps({"foo": "bar", "messages": []}))
+        counts = migrate_legacy_conversations(
+            store, agent_dir=agent_dir, legacy_dir=tmp_path / "none"
+        )
+        assert counts == {"agent_json": 0, "legacy_json": 0}
+        assert store.list_conversations() == []
+
+    def test_block_list_content_is_flattened_to_text(self, store, tmp_path):
+        agent_dir = tmp_path / "a"
+        agent_dir.mkdir()
+        (agent_dir / "blocks.json").write_text(json.dumps(dict(
+            AGENT_CONV,
+            conversation_id="blocks-1",
+            messages=[
+                {"role": "user", "content": "restart the samba share",
+                 "timestamp": 1720000000.0},
+                {"role": "assistant", "timestamp": 1720000060.0, "content": [
+                    {"type": "text", "text": "Restarting smbd."},
+                    {"type": "tool_use", "name": "run_command",
+                     "input": {"command": "systemctl restart smbd"}},
+                ]},
+            ],
+        )))
+        migrate_legacy_conversations(store, agent_dir=agent_dir, legacy_dir=tmp_path / "none")
+        rows = store.recent_messages("blocks-1", limit=12)
+        assert rows[1]["content"].startswith("Restarting smbd.")
+        assert "run_command" in rows[1]["content"]
+
+    def test_iso_timestamps_with_an_offset_are_converted(self, store, tmp_path):
+        legacy_dir = tmp_path / "l"
+        legacy_dir.mkdir()
+        (legacy_dir / "offset.json").write_text(json.dumps(dict(
+            LEGACY_CONV,
+            id="offset-1",
+            messages=[dict(LEGACY_CONV["messages"][1],
+                           timestamp="2026-07-14T12:01:00+02:00")],
+        )))
+        migrate_legacy_conversations(store, agent_dir=tmp_path / "none", legacy_dir=legacy_dir)
+        rows = store.recent_messages("offset-1", limit=12)
+        assert rows[0]["timestamp"] == datetime.fromisoformat(
+            "2026-07-14T10:01:00+00:00"
+        ).timestamp()
+
     def test_store_without_connection_is_a_noop(self, dirs):
         agent_dir, legacy_dir = dirs
         dead = SqliteConversationStore(str(agent_dir / "x" / "y" / "z" / "not-creatable.db"))
@@ -212,3 +260,63 @@ class TestRobustness:
         assert migrate_legacy_conversations(
             dead, agent_dir=agent_dir, legacy_dir=legacy_dir
         ) == {"agent_json": 0, "legacy_json": 0}
+
+
+class TestPartialWrites:
+    """A thread is several store calls; a failure between them must not leave
+    a truncated, still-open thread behind (review finding 1)."""
+
+    @staticmethod
+    def _fail_second_append(store, monkeypatch):
+        real = store.append_message
+        calls = {"n": 0}
+
+        def flaky(*args, **kwargs):
+            calls["n"] += 1
+            return None if calls["n"] == 2 else real(*args, **kwargs)
+
+        monkeypatch.setattr(store, "append_message", flaky)
+
+    def test_failed_write_leaves_no_open_truncated_thread(self, store, dirs, monkeypatch):
+        agent_dir, legacy_dir = dirs
+        self._fail_second_append(store, monkeypatch)
+
+        counts = migrate_legacy_conversations(
+            store, agent_dir=agent_dir, legacy_dir=legacy_dir
+        )
+        # agent-1 refused half way; the other file still migrated
+        assert counts == {"agent_json": 0, "legacy_json": 1}
+        assert store.get_thread("agent-1") is None
+        assert store.current_open_thread() is None
+
+        # and the retry really happens on the next run
+        monkeypatch.undo()
+        counts = migrate_legacy_conversations(
+            store, agent_dir=agent_dir, legacy_dir=legacy_dir
+        )
+        assert counts == {"agent_json": 1, "legacy_json": 0}
+        assert store.get_thread("agent-1")["status"] == "closed"
+        assert len(store.recent_messages("agent-1", limit=50)) == 2
+        assert [h["thread_id"] for h in store.search_receipts("journalctl")] == ["agent-1"]
+
+    def test_interrupted_run_repairs_the_half_written_thread(self, store, dirs, monkeypatch):
+        agent_dir, legacy_dir = dirs
+        self._fail_second_append(store, monkeypatch)
+        # the run dies before it can clean up after itself (kill -9, power cut)
+        monkeypatch.setattr(store, "delete", lambda *a, **k: False)
+
+        migrate_legacy_conversations(store, agent_dir=agent_dir, legacy_dir=legacy_dir)
+        half = store.get_thread("agent-1")
+        assert half is not None and half["status"] == "open"
+        assert len(store.recent_messages("agent-1", limit=50)) == 1
+
+        monkeypatch.undo()
+        counts = migrate_legacy_conversations(
+            store, agent_dir=agent_dir, legacy_dir=legacy_dir
+        )
+        assert counts == {"agent_json": 1, "legacy_json": 0}
+        assert store.get_thread("agent-1")["status"] == "closed"
+        assert [r["content"][:6] for r in store.recent_messages("agent-1", limit=50)] == [
+            "why is", "journa"
+        ]
+        assert store.current_open_thread() is None
