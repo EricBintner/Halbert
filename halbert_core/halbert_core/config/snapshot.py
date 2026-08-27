@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Any
 from .manifest import Manifest
 from .parser import parse as parse_config
-from ..ingestion.redaction import redact_text
+from ..ingestion.redaction import redact_lines, redact_parsed, redact_text
 from ..utils.paths import data_subdir
 from ..obs.tracing import trace_call
 
@@ -26,6 +26,40 @@ SNAP_DIR = data_subdir("config", "snapshots")
 
 def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
+
+
+# The canonical JSON carries the same file twice over -- once parsed into
+# `sections`/`tree`, once as a full-text `lines` array -- so writing it
+# verbatim put every credential the raw sink had just redacted back on disk
+# one line later. CANON_DIR is not staged into a searchable scope, so this was
+# never an index leak, but it is plaintext credentials written by the pipeline
+# whose stated job includes removing them, and drift.py and edge_extractor.py
+# both read it.
+#
+# `path`, `hash` and `kind` are addressing, not content, and are left alone.
+# `hash` especially: parser.parse() computes it over the *original* bytes and
+# drift.py compares it to decide whether a file changed at all. A hash taken
+# over redacted content would still be self-consistent, so drift would keep
+# working while comparing the wrong thing -- the failure would be invisible.
+
+
+def _redact_canon(canon: Dict[str, Any]) -> Dict[str, Any]:
+    """Redact a parsed config's values, leaving its shape and hash intact."""
+    out = dict(canon)
+    for field in ("sections", "tree"):
+        if field in out:
+            out[field] = redact_parsed(out[field])
+    lines = out.get("lines")
+    if isinstance(lines, list):
+        # Rejoined and redacted as one document, because the shapes that
+        # matter here span lines -- a plist's `<key>` and its `<string>`, a
+        # YAML block scalar's body. `redact_lines` guarantees the count, so
+        # each record keeps the `n` that edge_extractor.py and citations use.
+        texts = redact_lines([str(ln.get("text", "")) for ln in lines])
+        out["lines"] = [
+            {**ln, "text": text} for ln, text in zip(lines, texts)
+        ]
+    return out
 
 @trace_call("config.snapshot")
 def snapshot(manifest_path: str) -> List[Dict[str, Any]]:
@@ -53,7 +87,7 @@ def snapshot(manifest_path: str) -> List[Dict[str, Any]]:
                     f.write(safe_txt)
             if h:
                 with open(os.path.join(CANON_DIR, f"{h}.json"), "w", encoding="utf-8") as f:
-                    json.dump(canon, f, ensure_ascii=False, indent=2)
+                    json.dump(_redact_canon(canon), f, ensure_ascii=False, indent=2)
             out.append({"ts": ts, "path": p, "hash": h, "kind": canon.get("kind", "text")})
         except Exception as e:
             out.append({"ts": ts, "path": p, "error": str(e)})

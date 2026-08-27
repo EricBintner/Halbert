@@ -24,7 +24,7 @@ question -- where does this value end? -- was being answered with `\\S+`.
 from __future__ import annotations
 import ipaddress
 import re
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 SECRET = "<secret>"
 # Inside XML a literal `<secret>` reads as an unknown element and breaks the
@@ -1197,6 +1197,99 @@ def redact_text(text: str, *, prose: bool = False) -> str:
     text = PEM_RE.sub("<pem_block>", text)
     text = LKDC_RE.sub("<lkdc_realm>", text)
     return text
+
+
+# --- Text that has already been parsed --------------------------------------
+#
+# Everything above reads a *document*: it finds a value by finding the key
+# next to it on the page. `config/parser.py` produces something else -- a
+# parsed structure, where the key is a dict key and the value is a separate
+# object, and a list of line records that has to keep its numbering. Neither
+# shape can be handed to `redact_text` as-is, so each gets one entry point
+# here rather than a private reimplementation at each call site.
+
+
+def _collapse_pem_blocks(text: str) -> str:
+    """Replace each PEM block with the marker plus its own newlines.
+
+    `PEM_RE` is the *only* pattern in this module whose match can span lines,
+    and `redact_text` replaces the whole block with a single `<pem_block>`.
+    That is right for a text sink and wrong for a line-numbered one: it moves
+    every line below the block up by the block's height. Keeping the newlines
+    empties the block's interior instead, so the marker sits on the block's
+    first line and nothing below it is renumbered.
+    """
+    return PEM_RE.sub(
+        lambda m: "<pem_block>" + "\n" * m.group(0).count("\n"), text
+    )
+
+
+def redact_lines(lines: Sequence[str], *, prose: bool = False) -> List[str]:
+    """Redact a file given as a list of lines, preserving the line count.
+
+    Redacting each line on its own would lose every shape that spans lines,
+    and those are the ones the line pass exists for: a plist's `<key>` and its
+    `<string>` are two lines, a YAML block scalar's body is many, and a
+    next-line scalar is by definition not on its key's line. So the lines are
+    rejoined and redacted as one document.
+
+    The count is preserved by construction, not by hope. `redact_text`'s
+    passes are all line-local except `PEM_RE`, which is collapsed first by
+    `_collapse_pem_blocks` and so finds nothing left to match. The guard below
+    exists because that invariant is an argument about the passes rather than
+    a property the type system carries: if some later pass gains a multi-line
+    replacement, this raises where the caller can see it instead of silently
+    renumbering a file that other code cites by line.
+    """
+    out = redact_text(_collapse_pem_blocks("\n".join(lines)), prose=prose).split("\n")
+    if len(out) != len(lines):
+        raise ValueError(
+            f"redaction changed the line count ({len(lines)} -> {len(out)}); "
+            "a pass with a multi-line replacement needs handling in "
+            "_collapse_pem_blocks before line numbers can be trusted"
+        )
+    return out
+
+
+def redact_parsed(value: Any) -> Any:
+    """Redact a parsed config structure -- nested dicts, lists and scalars.
+
+    Two rules, and the first is the one that matters:
+
+    * A value reached under a **secret key** is a credential, whatever its
+      type and however deep it sits. Its whole subtree goes. This is
+      deliberately blunt in the same way `_redact_plist_container` is, and for
+      the same reason: a container named by a secret key holds secret things,
+      and a leaked credential is worse than a lost inventory. Keys and nesting
+      are preserved, so the record still says which settings exist.
+    * Every other **string** leaf goes through `redact_text`, which catches
+      the credential that is *inside* a value rather than being one --
+      systemd's `Environment=DB_PASS=hunter2`, a `scheme://user:pass@host`
+      URL, a PEM block, an email address, a routable IP.
+
+    Keys are never rewritten. They are the shape `drift.py` diffs on, and a
+    key name is not a credential -- `_is_secret_key` exists precisely because
+    the name is the evidence about the value.
+
+    `None` under a secret key stays `None`: a key with no value has no value
+    to leak, and inventing one would report a credential that is not set as
+    though it were.
+    """
+
+    def walk(node: Any, secret: bool) -> Any:
+        if isinstance(node, dict):
+            return {
+                k: walk(v, secret or _is_secret_key(str(k)))
+                for k, v in node.items()
+            }
+        if isinstance(node, (list, tuple)):
+            walked = [walk(v, secret) for v in node]
+            return tuple(walked) if isinstance(node, tuple) else walked
+        if secret:
+            return node if node is None else SECRET
+        return redact_text(node) if isinstance(node, str) else node
+
+    return walk(value, False)
 
 
 def redact_event(evt: Dict[str, Any]) -> Dict[str, Any]:
