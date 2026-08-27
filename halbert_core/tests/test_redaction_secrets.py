@@ -941,3 +941,93 @@ def test_redaction_is_idempotent():
     ):
         once = redact_text(text)
         assert redact_text(once) == once, f"not idempotent: {text!r}"
+
+
+# --- Separators inside a credential are not sibling directives -------------
+#
+# `_iter_pairs` offers a candidate pair for every `=`/`:` on the line,
+# including the ones that sit *inside* a value. Counting those as directives
+# flipped a single-directive line out of whole-line mode, and the value then
+# ended at the first space -- so every credential containing a `:` or an `=`
+# leaked from its second word onwards.
+
+
+def test_secret_with_a_colon_in_it_is_redacted_whole():
+    out = redact_text("psk=my:pass phrase\n")
+    assert "phrase" not in out
+    assert out == "<secret>\n"
+
+
+def test_secret_with_an_equals_in_it_is_redacted_whole():
+    out = redact_text("psk=a=b more words\n")
+    assert "more words" not in out
+    assert out == "<secret>\n"
+
+
+def test_colon_separated_directive_with_a_colon_in_the_value():
+    out = redact_text("password: my:pass phrase here\n")
+    assert "phrase here" not in out
+    assert out == "<secret>\n"
+
+
+def test_spaced_separator_with_a_colon_in_the_value():
+    out = redact_text("password = correct:horse battery\n")
+    assert "battery" not in out
+    assert out == "<secret>\n"
+
+
+def test_base64_secret_ending_in_padding_is_redacted_whole():
+    """WireGuard keys are base64 and routinely end in `=` or `==`."""
+    out = redact_text("PrivateKey = aB3+xY/zQ== more\n")
+    assert "more" not in out
+    assert out == "<secret>\n"
+
+
+def test_value_with_several_separators_is_redacted_whole():
+    out = redact_text("psk=a:b=c:d more\n")
+    assert "more" not in out
+    assert "a:b=c:d" not in out
+    assert out == "<secret>\n"
+
+
+def test_quoted_value_containing_a_separator_ends_at_its_quote():
+    """The quote is the boundary: what follows it is not part of the value."""
+    out = redact_text('password = "correct:horse battery" trailing\n')
+    assert "correct:horse" not in out
+    assert out == "<secret> trailing\n"
+
+
+def test_secret_without_a_separator_in_it_still_redacts_whole():
+    """Control: the single-directive shape this must keep working."""
+    assert redact_text("psk=my pass phrase\n") == "<secret>\n"
+
+
+def test_a_comma_delimited_sibling_is_still_a_sibling():
+    """Control for the fix: in fstab the next key follows a comma that is
+    *outside* the previous value, so it is a genuine second directive and the
+    option list must survive."""
+    line = "//srv/share /mnt cifs username=alice,password=x,uid=1000,gid=1000 0 0\n"
+    out = redact_text(line)
+    assert out == "//srv/share /mnt cifs username=alice,<secret>,uid=1000,gid=1000 0 0\n"
+
+
+def test_networkmanager_keyfile_psk_with_punctuation_does_not_leak():
+    """End-to-end shape: this is what staging writes for a real WiFi profile."""
+    nm = (
+        "[wifi-security]\n"
+        "key-mgmt=wpa-psk\n"
+        "psk=hunter2 LEAKME\n"
+        "psk=hunter2:LEAKME extra\n"
+    )
+    out = redact_text(nm)
+    assert "LEAKME" not in out
+    assert "hunter2" not in out
+    assert "key-mgmt=wpa-psk" in out
+
+
+def test_a_secret_key_inside_another_value_is_still_redacted():
+    """Demoting a phantom pair must not demote the redaction with it: a
+    systemd `Environment=` line carries its own `KEY=VALUE` inside quotes."""
+    out = redact_text('Environment="DB_PASS=hunter2" "OTHER=y"\n')
+    assert "hunter2" not in out
+    assert "OTHER=y" in out

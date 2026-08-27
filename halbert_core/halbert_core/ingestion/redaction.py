@@ -524,12 +524,14 @@ def _value_end(line: str, value_start: int, whole_line_value: bool) -> Optional[
       entirely (None) and its members are classified on their own terms --
       better than redacting to end of line, which would leave an unbalanced
       brace and orphan the members' text.
-    * An **unquoted** value on a line that carries exactly one pair, starting
-      the line, runs to end of line. That is the config-file shape -- one
-      directive, and everything after the separator is its value -- and it is
-      what redacts `psk=correct horse battery staple` in full.
+    * An **unquoted** value on a line that carries exactly one *directive*,
+      starting the line, runs to end of line. That is the config-file shape --
+      one directive, and everything after the separator is its value -- and it
+      is what redacts `psk=correct horse battery staple` in full. Which
+      candidate pairs count as directives is `_directive_pairs`' question, not
+      this one's.
     * Otherwise the value ends at the next delimiter, comma or whitespace. A
-      line with several pairs is an option list or a log message, not a
+      line with several directives is an option list or a log message, not a
       single-valued directive. This is what keeps `uid=1000,gid=1000` in an
       /etc/fstab cifs line instead of destroying the mount, and what keeps a
       log message readable enough for the email/address substitutions to still
@@ -562,14 +564,69 @@ def _value_end(line: str, value_start: int, whole_line_value: bool) -> Optional[
     return end
 
 
+def _directive_pairs(
+    line: str, pairs: List[Tuple[int, str, int, int]]
+) -> List[Tuple[int, str, int, int]]:
+    """The candidates from `_iter_pairs` that are genuinely sibling directives.
+
+    `_iter_pairs` offers a pair for every `=`/`:` on the line, including the
+    ones that sit *inside* a value. Counting those as directives is what made
+    a credential containing punctuation leak: `psk=my:pass phrase` looked like
+    two pairs, so the line lost single-directive status, and `_value_end`'s
+    multi-pair branch cut the value at the first space -- yielding
+    `<secret> phrase`. Every secret with a `:` or an `=` in it leaked from its
+    second word onwards, which for base64 (WireGuard keys end in `=`) and for
+    passphrases is the common case rather than the exotic one.
+
+    The test is positional: a candidate whose key begins before the end of the
+    previous directive's value is inside that value, not beside it. The
+    previous value's extent is measured with the *conservative* multi-pair
+    rule, because whether the line is single-directive is exactly what is
+    being decided here -- and that direction of error is the safe one. It can
+    only admit a phantom, never reject a real sibling.
+
+    That is what separates the fstab case from the leaks:
+
+        username=alice,password=x,uid=1000     `alice` ends at the comma, so
+                                               `password` starts outside it
+                                               -- a real sibling.
+        psk=my:pass phrase                     `my:pass` runs to the space, so
+                                               `pass` starts inside it -- a
+                                               phantom.
+
+    Only the *count* is affected. `_redact_inline` still visits every
+    candidate, because a phantom can carry a real credential of its own:
+    systemd's `Environment="DB_PASS=hunter2"` puts a genuine `KEY=VALUE`
+    inside another directive's quoted value, and demoting the pair must not
+    demote the redaction with it.
+    """
+    kept: List[Tuple[int, str, int, int]] = []
+    guard = 0
+    for pair in pairs:
+        key_start, _key, _sep, value_start = pair
+        if key_start < guard:
+            continue
+        kept.append(pair)
+        if value_start >= len(line):
+            continue  # key with no value: nothing of it extends along the line
+        end = _value_end(line, value_start, False)
+        # A container that opens here and closes on a later line covers the
+        # whole remainder of this one.
+        guard = max(guard, len(line) if end is None else end)
+    return kept
+
+
 def _redact_inline(line: str) -> str:
     """Redact every inline `key<sep>value` pair whose key is a credential."""
     pairs = list(_iter_pairs(line))
     if not pairs:
         return line
-    # "One pair, and it starts the line" is the single-directive shape that
-    # earns end-of-line value extent; see `_value_end`.
-    whole_line_value = len(pairs) == 1 and pairs[0][0] == len(_leading_ws(line))
+    # "One directive, and it starts the line" is the single-directive shape
+    # that earns end-of-line value extent; see `_value_end`.
+    directives = _directive_pairs(line, pairs)
+    whole_line_value = (
+        len(directives) == 1 and directives[0][0] == len(_leading_ws(line))
+    )
     out: List[str] = []
     cursor = 0
     for key_start, key_text, _sep, value_start in pairs:
