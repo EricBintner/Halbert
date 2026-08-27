@@ -97,6 +97,14 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
     t.loadAddon(new WebLinksAddon());
     t.open(containerRef.current!);
     fit.fit();
+    // Replay what the store already holds. A tile mounted after its session
+    // started — a reloaded page, a timeline turn scrolled back into view, an
+    // undock — would otherwise open empty, and the incremental writer below
+    // would then repaint the whole buffer on the next chunk.
+    if (session.output) {
+      t.write(session.output);
+    }
+    writtenRef.current = session.droppedChars + session.output.length;
     term = t;
     termRef.current = t;
     fitRef.current = fit;

@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import uuid
+from contextlib import aclosing
 from typing import Any, Callable, Dict, List, NamedTuple, Optional
 
 try:
@@ -36,15 +37,28 @@ else:
 # -----------------------------------------------------------------------------
 
 class SendMessageRequest(BaseModel):
-    """Request to send a message to the agent."""
+    """Request to send a message to the agent.
+
+    There is deliberately no client-chosen conversation id. The server picks
+    the thread (Plan A, spec §4): a session id names one turn, not a
+    conversation, and the read-only thread id the UI needs comes back on the
+    ``turn_persisted`` event and from ``GET /thread/current``. A field the
+    client could set and nothing could read would be a live-looking parameter
+    that silently does nothing.
+    """
     message: str = Field(..., description="User message")
     session_id: Optional[str] = Field(None, description="Session ID (auto-generated if not provided)")
-    conversation_id: Optional[str] = Field(None, description="Conversation ID for history")
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
     # Phase 4: Vision/image support (ported from chat.py)
     images: Optional[List[str]] = Field(None, description="Base64-encoded images for vision model")
     # Performance tweaks - sent from frontend Settings > AI > Performance Tweaks
-    max_tokens: Optional[int] = Field(8192, description="Max tokens for LLM response")
+    # Bounded (spec §7 follow-up): num_ctx_for_model's per-model cache only
+    # grows, so an unbounded value here would let one request pin the
+    # process-global num_ctx at the ceiling for that model forever. 32768
+    # matches both the cache's own default ceiling and the frontend's actual
+    # maximum Performance Tweaks option (Settings.tsx), so this rejects only
+    # the pathological/malicious case, not any value the UI already offers.
+    max_tokens: Optional[int] = Field(8192, ge=1, le=32768, description="Max tokens for LLM response")
     temperature: Optional[float] = Field(0.7, description="LLM temperature (0.0-1.0)")
     # In-chat model picker: the pill and the /model command send these.
     model: Optional[str] = Field(None, description="Exact model pinned for this turn; bypasses the complexity router")
@@ -265,6 +279,61 @@ def _attach_images(messages: List[Dict[str, Any]], images: Optional[List[str]]) 
             return
 
 
+def _thread_manager():
+    """The process-wide ThreadManager, or None when the store is unavailable.
+
+    Module-level so tests can monkeypatch it; every thread endpoint degrades
+    to an empty answer when this returns None (spec §12).
+    """
+    try:
+        from ...agents.threads import get_thread_manager
+        return get_thread_manager()
+    except Exception as e:
+        logger.warning(f"Thread manager unavailable (non-fatal): {e}")
+        return None
+
+
+def _thread_summary(thread: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """{thread_id, title, status} for the timeline's current_thread."""
+    if not thread:
+        return None
+    return {
+        "thread_id": thread.get("id") or thread.get("thread_id"),
+        "title": thread.get("title") or "",
+        "status": thread.get("status") or "open",
+    }
+
+
+def _active_ctx(session_id: str):
+    """The live StateContext for ``session_id``, without building the agent."""
+    if _agent_instance is None:
+        return None
+    return _agent_instance.active_sessions.get(session_id)
+
+
+def _find_stored_diff(tm, diff_id: str):
+    """Locate a persisted diff proposal by id (spec §8).
+
+    Returns ``(message_id, proposals, index)`` where ``proposals`` is the
+    assistant row's full diff list, or None. Scans the newest 200 turns;
+    older diffs are not actionable from the UI.
+    """
+    if tm is None:
+        return None
+    try:
+        turns = tm.store.list_turns(limit=200)
+    except Exception as e:
+        logger.warning(f"Diff lookup failed (non-fatal): {e}")
+        return None
+    for turn in reversed(turns):
+        proposals = list(turn.get("diff_proposals") or [])
+        for index, proposal in enumerate(proposals):
+            if isinstance(proposal, dict) and proposal.get("diff_id") == diff_id:
+                message_id = (turn.get("assistant") or {}).get("message_id")
+                return None if message_id is None else (message_id, proposals, index)
+    return None
+
+
 class TurnModel(NamedTuple):
     """The concrete model chosen for one turn, plus why."""
     model: str
@@ -449,10 +518,80 @@ class LLMClientAdapter:
         # Performance tweaks - can be set per-request from frontend settings
         self.max_tokens = 8192
         self.temperature = 0.7
-    
+
+    @property
+    def tools_supported(self) -> Optional[bool]:
+        """False only when every model this adapter routes to has rejected tool
+        schemas this process; None while any of them might still call one
+        (spec §7). The state machine passes it to the prompt builder.
+
+        Resolved per read rather than latched on ``self``: one adapter is
+        shared by every concurrent request, so anything stored here leaks
+        across sessions (E-2), and a model swapped in through Settings starts
+        out unknown again instead of inheriting the last one's verdict.
+
+        Deliberately not one flag either. ``chat`` routes between a guide and a
+        specialist model, so a specialist that cannot call tools would
+        otherwise mute the "call recall_thread / new_thread" instruction for
+        every later turn, including the simple ones routed back to a guide
+        model that can call them -- the continuity feature would go quietly
+        uninstructed for the rest of the process (review: Plan A / A9d).
+        """
+        try:
+            from ...model.client import (
+                get_configured_model, get_specialist_model, model_supports_tools,
+            )
+            candidates = [
+                m for m in (get_configured_model(), get_specialist_model()[0]) if m
+            ]
+        except Exception as e:
+            logger.warning(f"Could not resolve the configured models: {e}")
+            return None
+        if not candidates:
+            return None  # nothing configured yet: unknown
+        if all(model_supports_tools(m) is False for m in candidates):
+            return False
+        return None
+
+    def tools_supported_for(
+        self,
+        model_override: Optional[str] = None,
+        tier_override: Optional[str] = None,
+        endpoint_id: Optional[str] = None,
+    ) -> Optional[bool]:
+        """``tools_supported`` narrowed to the model ONE turn will use.
+
+        The property above answers for the configured slots, which is the
+        right answer for an unpinned turn and the wrong one for a pinned one:
+        a pin bypasses routing entirely (see ``_resolve_turn_model``), so a
+        pinned model that rejected tool schemas is muted by nothing — ``all()``
+        over the guide and the specialist still says "unknown" and the state
+        machine goes on instructing a model that cannot call a tool to call
+        one (review: merge seam, P3 x A9d).
+
+        A method rather than more state on ``self``: one adapter is shared by
+        every concurrent request, so the pin arrives as an argument and leaves
+        with the call. Resolution goes through ``_resolve_turn_model`` so a
+        *tier* pin lands on the same model the answering turn will land on,
+        fallbacks included, instead of this re-deriving it.
+        """
+        if not model_override and not tier_override:
+            return self.tools_supported
+        try:
+            from ...model.client import model_supports_tools
+            turn = _resolve_turn_model(
+                "", None, None, model_override, tier_override, endpoint_id,
+            )
+        except Exception as e:
+            # No model configured, a malformed models.yml: the configured
+            # answer is a better guess than a wrong one.
+            logger.warning(f"Could not resolve this turn's model for tools: {e}")
+            return self.tools_supported
+        return model_supports_tools(turn.model)
+
     async def chat(self, messages, tools=None, intake_result=None, images=None,
                    model_override=None, tier_override=None, endpoint_id=None,
-                   on_model_selected=None):
+                   on_model_selected=None, routing_prompt=None):
         """Call LLM with messages, routing to specialist for complex queries.
 
         Tool schemas are forwarded to the model and any tool calls come back on
@@ -474,6 +613,8 @@ class LLMClientAdapter:
             endpoint_id: Saved-endpoint id the pinned model came from.
             on_model_selected: Called once with the model that actually
                 produced the content, after any fallback has settled.
+            routing_prompt: The text the complexity router should score. The
+                caller's question, not the message it ends up inside.
 
         Every override is a parameter, never instance state: one adapter is
         shared by all concurrent requests, so anything stored on ``self``
@@ -481,8 +622,17 @@ class LLMClientAdapter:
         """
         from ...model.client import call_llm_chat
 
-        # Get the prompt from messages
-        prompt = messages[-1].get("content", "") if messages else ""
+        # What the router scores. ``messages[-1]`` is the fallback for callers
+        # that send a bare question, but it is no longer the question: since
+        # D1 the continuity hint is glued to the front of the final user
+        # message, and scoring that decided which model answered on ~46 words
+        # the user never wrote — "hi" scored 0.00 alone and 0.70 with a hint,
+        # over a 0.50 threshold. The route sizes the history budget from the
+        # bare message (``_answering_model``), so this is also what keeps the
+        # budget and the answering model talking about the same turn.
+        prompt = routing_prompt if routing_prompt is not None else (
+            messages[-1].get("content", "") if messages else ""
+        )
         # Every system message, not only messages[0]: the loop below drops any
         # it does not hoist, so reading one position silently deleted the rest
         # the moment the callers started sending a real multi-turn array.
@@ -554,7 +704,11 @@ class LLMClientAdapter:
                 provider=provider,
                 stream=False,
                 timeout=300,
-                options={"num_predict": 2048, "temperature": 0.7},
+                # PLANNING answers are a tool call or a short plan: 1024 is
+                # plenty and keeps num_ctx (and the model reload) small --
+                # num_ctx is sized as prompt + 512 + num_predict, so 2048
+                # inflates every planning window by a kilotoken (A10).
+                options={"num_predict": 1024, "temperature": 0.7},
                 tools=tools,
             )
             _report_model(on_model_selected, turn, requested)
@@ -580,6 +734,9 @@ class LLMClientAdapter:
                 provider=guide.provider,
                 stream=False,
                 timeout=180,
+                # Explicit rather than left to the client default, so the
+                # stand-in plans in the same window as the call it replaces.
+                options={"num_predict": 1024, "temperature": 0.7},
                 tools=tools,
             )
             _report_model(on_model_selected, guide, requested)
@@ -590,7 +747,7 @@ class LLMClientAdapter:
     
     async def stream(self, messages, intake_result=None, images=None,
                      model_override=None, tier_override=None, endpoint_id=None,
-                     on_model_selected=None):
+                     on_model_selected=None, routing_prompt=None):
         """Stream response from LLM with true incremental streaming.
 
         This — not chat() — is the production response path: the state machine
@@ -609,14 +766,22 @@ class LLMClientAdapter:
         ``on_model_selected`` is called once, with the model whose bytes the
         user is about to read — a callback rather than a return value because
         an ``async for`` never sees a generator's return.
+
+        ``routing_prompt`` is the text the complexity router scores: the
+        caller's question, not the message it ends up inside. See ``chat``.
         """
-        # Use instance variables for performance tweaks
-        max_tokens = self.max_tokens
-        temperature = self.temperature
+        # Use instance variables for performance tweaks. The defaults stand
+        # in for a turn that set neither (a /confirm resumes without them):
+        # the num_ctx arithmetic in _stream_turn cannot take None.
+        max_tokens = self.max_tokens or 8192
+        temperature = self.temperature if self.temperature is not None else 0.7
         logger.info(f"LLM streaming with max_tokens={max_tokens}, temperature={temperature}")
 
-        # Get the prompt from messages
-        prompt = messages[-1].get("content", "") if messages else ""
+        # The question the router scores, not the message it travels in — the
+        # continuity hint rides the front of that message since D1. See chat().
+        prompt = routing_prompt if routing_prompt is not None else (
+            messages[-1].get("content", "") if messages else ""
+        )
 
         turn = _resolve_turn_model(
             prompt, intake_result, images, model_override, tier_override,
@@ -682,6 +847,7 @@ class LLMClientAdapter:
         import aiohttp
         from ...model.client import (
             OPENAI_COMPATIBLE_PROVIDERS, _api_url, api_key_for,
+            estimate_prompt_tokens, num_ctx_for_model,
         )
 
         model, endpoint, provider = turn.model, turn.endpoint, turn.provider
@@ -746,11 +912,37 @@ class LLMClientAdapter:
             else:
                 wire = "ollama"
                 url = f"{(endpoint or '').rstrip('/')}/api/chat"
+                # A10, re-applied here on purpose: stream() builds its own
+                # request rather than going through call_llm_chat, and this
+                # is the production response path. Without a num_ctx sized
+                # from the prompt, Ollama uses its small default window and
+                # silently drops the HEAD of the prompt -- which is
+                # messages[0], the instructions and the thread receipt.
+                prompt_tokens = estimate_prompt_tokens(messages, None)
+                num_ctx = num_ctx_for_model(model, prompt_tokens, max_tokens)
+                # The reply has to fit what is left of the window after the
+                # prompt (spec §7: max_tokens is subordinate to
+                # num_ctx - prompt). _do_llm_call has no equivalent step
+                # because it is not streaming a bounded answer back.
+                num_predict = max(256, min(max_tokens, num_ctx - prompt_tokens - 512))
+                if prompt_tokens + 512 > num_ctx:
+                    # num_ctx was clamped (model_max, or the 32768 default
+                    # ceiling) below what this prompt needs. Ollama truncates
+                    # the head of the prompt with nothing logged, so say so.
+                    logger.warning(
+                        f"Prompt for {model} is ~{prompt_tokens} tokens "
+                        f"but num_ctx={num_ctx}; Ollama will truncate "
+                        "the head of the prompt."
+                    )
                 payload = {
                     "model": model,
                     "messages": messages,
                     "stream": True,
-                    "options": {"num_predict": max_tokens, "temperature": temperature}
+                    "options": {
+                        "num_predict": num_predict,
+                        "temperature": temperature,
+                        "num_ctx": num_ctx,
+                    },
                 }
 
             timeout = aiohttp.ClientTimeout(total=600)  # 10 minute timeout
@@ -946,12 +1138,14 @@ class MockLLMClient:
 
 
 # -----------------------------------------------------------------------------
-# Conversation memory (E-3)
+# Per-turn model and budget resolution (E-3, merge decision D4)
+#
+# The route resolves the model that will answer and the tokens the turn may
+# spend on remembered ones, and hands both to process(); the state machine
+# never reaches back into route or store code to work them out. What is
+# remembered, and which hidden thread it belongs to, is the ThreadManager's
+# business (Plan A, spec §4) -- there is no conversation store here any more.
 # -----------------------------------------------------------------------------
-
-# Which conversation each live session is writing to, so a turn that pauses for
-# a confirmation and finishes through /confirm still lands in the same history.
-_session_conversations: Dict[str, str] = {}
 
 
 def _answering_model(
@@ -1009,85 +1203,43 @@ def _history_budget(model_name: Optional[str]) -> int:
         return DEFAULT_CONVERSATION_TOKENS
 
 
-def _load_history(conversation_id: str, query: str, budget: int) -> List[Dict[str, str]]:
-    """Budget-trimmed prior turns, or none. Never fails a turn."""
-    try:
-        from ...agents.conversation import get_conversation_store
-        from ...context.assembler import build_conversation_window
-
-        conversation = get_conversation_store().get(conversation_id)
-        if conversation is None:
-            return []
-        window = build_conversation_window(
-            conversation, query=query, max_tokens=budget
-        )
-        logger.info(
-            f"Loaded {len(window)} remembered messages for "
-            f"conversation {conversation_id} (budget {budget} tokens)"
-        )
-        return window
-    except Exception as e:
-        # A turn answered without memory is worse than one with it, and far
-        # better than one that 500s because a stored conversation is unreadable.
-        logger.warning(f"Could not load conversation history (non-fatal): {e}")
-        return []
-
-
-def _persist_turn(
-    conversation_id: str,
-    user_message: Optional[str],
-    assistant_text: str,
-) -> None:
-    """Append a finished turn to the store.
-
-    Called from a ``finally``: a turn that errored or was cancelled half-way
-    still has to be written, or the next turn reads a history with a hole in it
-    and answers as if the user never asked.
-    """
-    if not user_message and not assistant_text.strip():
-        return
-    try:
-        from ...agents.conversation import get_conversation_store
-
-        store = get_conversation_store()
-        conversation = store.get_or_create(conversation_id)
-        if user_message:
-            conversation.add_message("user", user_message)
-        if assistant_text.strip():
-            conversation.add_message("assistant", assistant_text)
-        store.save(conversation)
-    except Exception as e:
-        logger.error(f"Could not persist turn to conversation store: {e}")
-
-
 # -----------------------------------------------------------------------------
 # API Endpoints
 # -----------------------------------------------------------------------------
 
 if FASTAPI_AVAILABLE:
-    
+
     @router.post("/message")
     async def send_message(request: SendMessageRequest, req: Request):
         """
         Send message to agent with SSE streaming response.
-        
-        Returns Server-Sent Events with state changes, tool executions, and response chunks.
+
+        A second message during a live turn queues on the state machine's turn
+        lock (spec §12). Nothing here takes a lock of its own and nothing here
+        resets the machine any more: a route that held the lock and then called
+        a ``process()`` that takes it again is a non-reentrant self-deadlock,
+        and the machine's own bounded acquire supersedes a stranded turn far
+        better than a force-write of the shared state ever did.
+
+        Everything model-owned is resolved before the turn starts -- the pin,
+        the model that will answer, the tokens it may spend on history -- and
+        handed to ``process()`` as parameters (D4/D5). Which hidden thread the
+        turn belongs to is the server's choice, made inside the state machine
+        through the ThreadManager (D6); the client does not get to name one.
         """
         try:
             agent = get_agent()
         except Exception as e:
             raise HTTPException(500, f"Agent initialization failed: {e}")
-        
-        from ...agents.states import AgentState
 
-        # A turn needs a stable id to be remembered under, and the agent
-        # generates its own session id when the client sends none — which the
-        # route would never learn, so the turn could not be written back.
+        # A turn needs a stable id to be reported and cancelled under, and the
+        # agent generates its own when the client sends none -- which the route
+        # would never learn, so an error raised out here would carry an id no
+        # client could correlate.
         session_id = request.session_id or str(uuid.uuid4())
-        conversation_id = request.conversation_id or session_id
 
-        # In-chat picker selection for this turn. "auto" means "no pin" — it is
-        # the absence of an override, not a third mode.
+        # In-chat model picker for this turn. "auto" means "no pin" -- it is the
+        # absence of an override, not a third mode.
         tier_override = request.tier if request.tier in ("guide", "specialist", "vision") else None
         model_override = request.model or None
         if model_override or tier_override:
@@ -1096,100 +1248,52 @@ if FASTAPI_AVAILABLE:
                 f"tier={tier_override!r} endpoint_id={request.endpoint_id!r}"
             )
 
+        # The budget belongs to the model that will actually answer, resolved
+        # through the same path the answering turn takes (D4). Reading it from
+        # the picker's pin meant a constant for every unpinned turn, which is
+        # every turn by default.
+        history_budget = _history_budget(_answering_model(
+            request.message,
+            model_override=model_override,
+            tier_override=tier_override,
+            endpoint_id=request.endpoint_id,
+            images=request.images,
+        ))
+
+        # Plan A: the state machine persists the turn and resolves the hidden
+        # thread itself (begin_turn under its lock); the route only hands over
+        # the manager. None means "no store": the turn still runs.
+        thread_manager = _thread_manager()
+
         async def event_stream():
             """Generate SSE events from agent processing."""
             from ...agents.events import StreamEvent
 
-            # Everything below reads or writes state shared by every request —
-            # the agent's context, the adapter's tweaks, one conversation file —
-            # so a second turn queues here instead of interleaving with this one.
-            # It is held for the whole stream on purpose, not by oversight: see
-            # AgentStateMachine.turn_lock for why nothing narrower is safe until
-            # the turn's state stops living on the shared agent. /cancel is
-            # deliberately outside it, or stop could never reach a running turn.
-            async with agent.turn_lock:
-                _session_conversations[session_id] = conversation_id
-
-                # Holding the lock means no other turn is in flight, so a
-                # session left mid-state is the wreckage of a paused or crashed
-                # one and is safe to reset — which is what the old force-write
-                # of current_state was reaching for without the lock to make it
-                # true.
-                if (session_id in agent.active_sessions
-                        and agent.current_state != AgentState.IDLE):
-                    logger.warning(
-                        f"Session {session_id} left in {agent.current_state}; "
-                        "resetting before this turn"
-                    )
-                    agent.current_state = AgentState.IDLE
-                agent.cancelled[session_id] = False
-
-                # Per-request tweaks live on the shared adapter instance, so
-                # they are only safe to set once this turn owns it.
-                if hasattr(agent.llm, 'max_tokens'):
-                    agent.llm.max_tokens = request.max_tokens or 8192
-                    agent.llm.temperature = request.temperature or 0.7
-                    logger.info(
-                        f"Set LLM tweaks: max_tokens={agent.llm.max_tokens}, "
-                        f"temperature={agent.llm.temperature}"
-                    )
-
-                history = _load_history(
-                    conversation_id,
-                    request.message,
-                    _history_budget(_answering_model(
-                        request.message,
-                        model_override=model_override,
-                        tier_override=tier_override,
-                        endpoint_id=request.endpoint_id,
-                        images=request.images,
-                    )),
-                )
-                answer: List[str] = []
-                final: Optional[str] = None
-
-                try:
-                    async for event in agent.process(
-                        query=request.message,
-                        session_id=session_id,
-                        conversation_history=history,
-                        images=request.images,
-                        model_override=model_override,
-                        tier_override=tier_override,
-                    ):
-                        if event.type == "response_chunk":
-                            answer.append(event.data.get("content", ""))
-                        elif event.type == "response_complete":
-                            final = event.data.get("content")
-
-                        # Raised by cancel_session() from the concurrent
-                        # /cancel request; this is the only thread that can
-                        # stop the generator.
-                        if agent.cancelled.get(session_id):
-                            yield StreamEvent.cancelled(session_id).to_sse()
-                            return
-
+            try:
+                # aclosing, not a bare `async for`: Starlette drops this
+                # generator when the client disconnects, and process() holds
+                # the agent's turn lock across every yield. Closing it
+                # explicitly runs its finally -- releasing the lock and
+                # settling the machine -- instead of leaving that to the event
+                # loop's async-generator finalizer.
+                async with aclosing(agent.process(
+                    query=request.message,
+                    session_id=session_id,
+                    images=request.images,
+                    thread_manager=thread_manager,
+                    model_override=model_override,
+                    tier_override=tier_override,
+                    max_tokens=request.max_tokens,
+                    temperature=request.temperature,
+                    history_budget=history_budget,
+                )) as stream:
+                    async for event in stream:
                         yield event.to_sse()
-
-                except Exception as e:
-                    logger.error(f"Agent processing error: {e}")
-                    yield StreamEvent.error(
-                        session_id,
-                        str(e),
-                        recoverable=False
-                    ).to_sse()
-                finally:
-                    _persist_turn(
-                        conversation_id,
-                        request.message,
-                        final if final is not None else "".join(answer),
-                    )
-                    if session_id not in agent.active_sessions:
-                        _session_conversations.pop(session_id, None)
-                        # Nothing else prunes this dict, so a long-lived
-                        # process would keep one entry per session ever seen.
-                        agent.cancelled.pop(session_id, None)
-                    logger.info(f"Event stream completed for session {session_id}")
+            except Exception as e:
+                logger.error(f"Agent processing error: {e}")
+                yield StreamEvent.error(session_id, str(e), recoverable=False).to_sse()
+            finally:
+                logger.info(f"Event stream completed for session {session_id}")
 
         return StreamingResponse(
             event_stream(),
@@ -1201,7 +1305,7 @@ if FASTAPI_AVAILABLE:
                 "Access-Control-Allow-Origin": "*",
             }
         )
-    
+
     @router.post("/confirm/{session_id}")
     async def confirm_action(
         session_id: str,
@@ -1210,56 +1314,56 @@ if FASTAPI_AVAILABLE:
     ):
         """
         Confirm or reject a high-risk action.
-        
+
         Returns SSE stream of continued processing.
         """
         try:
             agent = get_agent()
         except Exception as e:
             raise HTTPException(500, f"Agent not available: {e}")
-        
+
         if session_id not in agent.active_sessions:
             raise HTTPException(404, "Session not found")
-        
+
+        # A confirmation resumes a turn that is already half-run, so the pin and
+        # the budget are read back off its context rather than re-resolved: the
+        # request carries neither, and re-resolving could hand the second half
+        # of a turn to a different model than answered the first. Which thread
+        # it lands in is not the route's business either -- the machine holds
+        # the TurnContext and ends the turn through it, so there is no
+        # session-to-conversation map here to keep in step.
+        ctx = agent.active_sessions[session_id]
+        model_override = getattr(ctx, "model_override", None)
+        tier_override = getattr(ctx, "tier_override", None)
+        history_budget = getattr(ctx, "history_budget", None) or None
+
         async def event_stream():
-            # Same lock as /message: this resumes a turn and writes the same
-            # per-agent context a new turn would.
-            async with agent.turn_lock:
-                conversation_id = _session_conversations.get(session_id, session_id)
-                answer: List[str] = []
-                final: Optional[str] = None
-                try:
-                    async for event in agent.confirm_action(
-                        session_id,
-                        request.action_id,
-                        request.confirmed
-                    ):
-                        if event.type == "response_chunk":
-                            answer.append(event.data.get("content", ""))
-                        elif event.type == "response_complete":
-                            final = event.data.get("content")
+            try:
+                # See send_message: confirm_action also holds the turn lock
+                # across its yields, so the generator is closed explicitly.
+                # max_tokens / temperature are deliberately not passed -- a
+                # confirmation carries no Performance Tweaks of its own, and
+                # the paused turn keeps the ones it started under.
+                async with aclosing(agent.confirm_action(
+                    session_id,
+                    request.action_id,
+                    request.confirmed,
+                    model_override=model_override,
+                    tier_override=tier_override,
+                    history_budget=history_budget,
+                )) as stream:
+                    async for event in stream:
                         yield event.to_sse()
-                except Exception as e:
-                    logger.error(f"Confirmation error: {e}")
-                    from ...agents.events import StreamEvent
-                    yield StreamEvent.error(session_id, str(e)).to_sse()
-                finally:
-                    # Only the reply: the question was already written when the
-                    # turn paused, and writing it twice would have the agent
-                    # remember the user asking once and itself answering twice.
-                    _persist_turn(
-                        conversation_id,
-                        None,
-                        final if final is not None else "".join(answer),
-                    )
-                    if session_id not in agent.active_sessions:
-                        _session_conversations.pop(session_id, None)
-        
+            except Exception as e:
+                logger.error(f"Confirmation error: {e}")
+                from ...agents.events import StreamEvent
+                yield StreamEvent.error(session_id, str(e)).to_sse()
+
         return StreamingResponse(
             event_stream(),
             media_type="text/event-stream"
         )
-    
+
     @router.get("/state/{session_id}")
     async def get_state(session_id: str, req: Request) -> AgentStateResponse:
         """Get current state of an agent session."""
@@ -1389,117 +1493,278 @@ if FASTAPI_AVAILABLE:
         except Exception as e:
             raise HTTPException(500, str(e))
     
-    @router.get("/conversations")
-    async def list_conversations(user_id: str = None, limit: int = 50):
-        """List conversations."""
-        try:
-            from ...agents.conversation import get_conversation_store
-            store = get_conversation_store()
-            return {"conversations": store.list_conversations(user_id, limit)}
-        except Exception as e:
-            raise HTTPException(500, str(e))
-    
-    @router.get("/conversations/{conversation_id}")
-    async def get_conversation(conversation_id: str):
-        """Get a specific conversation."""
-        try:
-            from ...agents.conversation import get_conversation_store
-            store = get_conversation_store()
-            conv = store.get(conversation_id)
-            if conv is None:
-                raise HTTPException(404, "Conversation not found")
-            return conv.to_dict()
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(500, str(e))
-    
-    @router.delete("/conversations/{conversation_id}")
-    async def delete_conversation(conversation_id: str):
-        """Delete a conversation."""
-        try:
-            from ...agents.conversation import get_conversation_store
-            store = get_conversation_store()
-            if store.delete(conversation_id):
-                return {"deleted": True}
-            raise HTTPException(404, "Conversation not found")
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(500, str(e))
-    
     # -------------------------------------------------------------------------
     # Diff Apply/Reject Endpoints (Cascade-style)
+    #
+    # Live session first, then the store (messages.diff_proposals_json,
+    # spec §8): active_sessions is evicted at the end of the turn, so a diff
+    # proposed a moment ago is usually only on disk by the time the admin
+    # clicks Apply. A turn paused on AWAITING_CONFIRMATION is the one moment
+    # when both copies exist at once, so a decision always settles every copy
+    # -- see _diff_copies.
     # -------------------------------------------------------------------------
-    
+
+    def _require_pending(diff: Dict[str, Any], diff_id: str) -> None:
+        """Refuse a proposal that has already been applied or rejected.
+
+        A stored proposal stays addressable by id for as long as it is on the
+        timeline, so without this an old ``new_content`` (a whole-file
+        replacement) could be written over a file the admin has edited since
+        -- or a rejected change could be applied after the fact. A missing
+        status counts as pending: rows written before this column existed.
+        """
+        status = diff.get("status") or "pending"
+        if status != "pending":
+            raise HTTPException(400, f"Diff {diff_id} was already {status}")
+
+    def _diff_copies(session_id: str, diff_id: str):
+        """Every copy of ``diff_id``, plus the handle that writes the store back.
+
+        Returns ``(copies, stored)``. ``copies`` holds every dict that carries
+        this proposal's status -- the live sessions' copies first (the session
+        the request named leading, when it holds one), the persisted proposal
+        last -- and is empty when the diff is nowhere to be found. ``stored``
+        is ``(tm, message_id, proposals)`` for writing the persisted list
+        back, or None when the turn is not (yet) on disk.
+
+        The live side scans *every* active session rather than only
+        ``session_id``: a diff card rendered from the timeline has no session
+        id to send (the persisted turn dicts carry none), so a request can
+        name a session that never held the diff while the session that does
+        is still paused on AWAITING_CONFIRMATION. Diff ids are unique, so the
+        scan is both cheap and unambiguous -- and it is what lets a decision
+        settle the copy the request did not route to.
+        """
+        contexts: List[Any] = []
+        if _agent_instance is not None:
+            try:
+                contexts = list(_agent_instance.active_sessions.values())
+            except Exception as e:
+                logger.warning(f"Live sessions unavailable (non-fatal): {e}")
+        named = _active_ctx(session_id)
+        if named is not None:
+            contexts = [named] + [ctx for ctx in contexts if ctx is not named]
+        copies: List[Dict[str, Any]] = []
+        for ctx in contexts:
+            pending = getattr(ctx, "pending_diffs", None)
+            diff = pending.get(diff_id) if isinstance(pending, dict) else None
+            if isinstance(diff, dict):
+                copies.append(diff)
+        tm = _thread_manager()
+        found = _find_stored_diff(tm, diff_id)
+        stored = None
+        if found is not None:
+            message_id, proposals, index = found
+            copies.append(proposals[index])
+            stored = (tm, message_id, proposals)
+        return copies, stored
+
+    def _settle_diff(copies: List[Dict[str, Any]], stored, status: str) -> bool:
+        """Record the decision on every copy; False when the store refused it.
+
+        Settling only the copy the request happened to route to leaves the
+        other one reading "pending", and ``new_content`` is a whole-file
+        replacement: the second decision would then silently discard whatever
+        the admin edited in between.
+        """
+        for diff in copies:
+            diff["status"] = status
+        if stored is None:
+            return True
+        tm, message_id, proposals = stored
+        try:
+            tm.store.update_message(message_id, diff_proposals=proposals)
+            return True
+        except Exception as e:
+            logger.warning(f"Could not persist diff status (non-fatal): {e}")
+            return False
+
+    def _apply_target(diff: Dict[str, Any]):
+        """The ``(file_path, new_content)`` an apply would write, or a 400."""
+        file_path = diff.get("file_path")
+        new_content = diff.get("new_content")
+        if not file_path or new_content is None:
+            raise HTTPException(400, "Diff has no file path or content to apply; use the editor flow")
+        return file_path, new_content
+
+    def _write_file(file_path: str, new_content: str, diff_id: str) -> None:
+        import os
+        try:
+            os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
+            with open(file_path, "w") as f:
+                f.write(new_content)
+        except Exception as e:
+            logger.error(f"Failed to apply diff {diff_id} (it stays settled as applied): {e}")
+            raise HTTPException(500, f"Failed to apply diff: {e}")
+        logger.info(f"Applied diff {diff_id} to {file_path}")
+
     @router.post("/diff/{session_id}/{diff_id}/apply")
     async def apply_diff(session_id: str, diff_id: str):
-        """
-        Apply a proposed file change.
-        
-        Writes the proposed content to disk and emits diff_applied event.
-        """
-        try:
-            agent = get_agent()
-        except Exception as e:
-            raise HTTPException(500, f"Agent not available: {e}")
-        
-        if session_id not in agent.active_sessions:
-            raise HTTPException(404, "Session not found")
-        
-        ctx = agent.active_sessions[session_id]
-        
-        # Find the diff proposal in pending_diffs
-        if not hasattr(ctx, 'pending_diffs') or diff_id not in ctx.pending_diffs:
+        """Apply a proposed file change (live session, else the store)."""
+        copies, stored = _diff_copies(session_id, diff_id)
+        if not copies:
             raise HTTPException(404, "Diff not found")
-        
-        diff = ctx.pending_diffs[diff_id]
-        
-        try:
-            # Write file to disk
-            import os
-            file_path = diff.get('file_path')
-            new_content = diff.get('new_content')
-            
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            
-            with open(file_path, 'w') as f:
-                f.write(new_content)
-            
-            # Mark as applied
-            diff['status'] = 'applied'
-            
-            logger.info(f"Applied diff {diff_id} to {file_path}")
-            return {"applied": True, "diff_id": diff_id, "file_path": file_path}
-            
-        except Exception as e:
-            logger.error(f"Failed to apply diff: {e}")
-            raise HTTPException(500, f"Failed to apply diff: {e}")
-    
+        for diff in copies:
+            _require_pending(diff, diff_id)
+        file_path, new_content = _apply_target(copies[0])
+        # Settle before touching disk. A proposal marked applied by a write
+        # that then failed costs the admin one re-ask; a write that succeeded
+        # while the proposal stayed pending is replayable over their next
+        # edit, and takes that edit with it.
+        persisted = _settle_diff(copies, stored, "applied")
+        _write_file(file_path, new_content, diff_id)
+        result: Dict[str, Any] = {"applied": True, "diff_id": diff_id, "file_path": file_path}
+        if not persisted:
+            # The store still says "pending": tell the caller rather than
+            # showing a clean tick over a decision that dies with the process.
+            result["status_persisted"] = False
+        return result
+
     @router.post("/diff/{session_id}/{diff_id}/reject")
     async def reject_diff(session_id: str, diff_id: str):
-        """
-        Reject a proposed file change.
-        
-        Marks the diff as rejected without writing to disk.
-        """
-        try:
-            agent = get_agent()
-        except Exception as e:
-            raise HTTPException(500, f"Agent not available: {e}")
-        
-        if session_id not in agent.active_sessions:
-            raise HTTPException(404, "Session not found")
-        
-        ctx = agent.active_sessions[session_id]
-        
-        # Find the diff proposal
-        if not hasattr(ctx, 'pending_diffs') or diff_id not in ctx.pending_diffs:
+        """Reject a proposed file change without writing to disk."""
+        copies, stored = _diff_copies(session_id, diff_id)
+        if not copies:
             raise HTTPException(404, "Diff not found")
-        
-        # Mark as rejected
-        ctx.pending_diffs[diff_id]['status'] = 'rejected'
-        
+        for diff in copies:
+            _require_pending(diff, diff_id)
+        persisted = _settle_diff(copies, stored, "rejected")
         logger.info(f"Rejected diff {diff_id}")
-        return {"rejected": True, "diff_id": diff_id}
+        result: Dict[str, Any] = {"rejected": True, "diff_id": diff_id}
+        if not persisted:
+            result["status_persisted"] = False
+        return result
+
+    # -------------------------------------------------------------------------
+    # Timeline and threads (Plan A, spec §11)
+    # -------------------------------------------------------------------------
+
+    _EMPTY_TIMELINE: Dict[str, Any] = {"turns": [], "has_more": False, "current_thread": None}
+
+    @router.get("/timeline")
+    async def get_timeline(before: Optional[str] = None, around: Optional[str] = None, limit: int = 50):
+        """One page of the timeline, newest-last, grouped by turn.
+
+        ``before`` pages backwards from a turn id; ``around`` centres on one
+        (a chip click). Degrades to an empty page, never a 500 (spec §12).
+        """
+        tm = _thread_manager()
+        if tm is None:
+            return dict(_EMPTY_TIMELINE)
+        try:
+            page = max(1, min(int(limit), 200))
+            if around and not before:
+                # ``before`` still wins when both are given, as the store does.
+                # ``around`` is already a centred window, so the +1/trim trick
+                # below would drop the anchor itself whenever the store tops
+                # the window up forwards (an anchor with nothing older than
+                # it -- exactly the "jump to the start of an old thread"
+                # case). Ask for the page as-is and probe for older turns.
+                turns = tm.store.list_turns(around_turn_id=around, limit=page)
+                has_more = bool(turns) and bool(
+                    tm.store.list_turns(before_turn_id=turns[0]["turn_id"], limit=1)
+                )
+            else:
+                # Newest-last: one extra turn off the old end tells us whether
+                # a `before=` fetch would find anything, then it is trimmed.
+                turns = tm.store.list_turns(before_turn_id=before or None, limit=page + 1)
+                has_more = len(turns) > page
+                if has_more:
+                    turns = turns[-page:]
+            return {"turns": turns, "has_more": has_more, "current_thread": _thread_summary(tm.current())}
+        except Exception as e:
+            logger.warning(f"Timeline unavailable (non-fatal): {e}")
+            return dict(_EMPTY_TIMELINE)
+
+    @router.get("/thread/current")
+    async def get_current_thread():
+        """The open thread as a dict (plus ``thread_id``), or null."""
+        tm = _thread_manager()
+        if tm is None:
+            return None
+        try:
+            thread = tm.current()
+        except Exception as e:
+            logger.warning(f"Current thread unavailable (non-fatal): {e}")
+            return None
+        if not thread:
+            return None
+        body = dict(thread)
+        body["thread_id"] = thread.get("id") or thread.get("thread_id")
+        return body
+
+    @router.delete("/thread/{thread_id}/recall/{recalled_thread_id}")
+    async def retract_recall(thread_id: str, recalled_thread_id: str):
+        """Mark a pulled-in thread as retracted on ``thread_id`` (spec §6)."""
+        tm = _thread_manager()
+        if tm is None:
+            return {"ok": False}
+        try:
+            return {"ok": bool(tm.retract_recall(thread_id, recalled_thread_id))}
+        except Exception as e:
+            logger.warning(f"retract_recall failed (non-fatal): {e}")
+            return {"ok": False}
+
+    def _refresh_thread_receipt(tm, thread_id: str) -> None:
+        """Regenerate a thread's receipt after a redaction (spec §5)."""
+        refresh = getattr(tm, "refresh_receipt", None) or getattr(tm, "_refresh_receipt", None)
+        if callable(refresh):
+            refresh(thread_id)
+            return
+        from ...agents.receipt import build_receipt
+        thread = tm.store.get_thread(thread_id)
+        if thread is None:
+            return
+        receipt = build_receipt(thread, tm.store.list_messages(thread_id))
+        tm.store.upsert_receipt(thread_id, thread.get("title") or "", receipt)
+
+    def _blank_stale_receipt(store, thread_id: str) -> bool:
+        """Drop a receipt that could not be regenerated after a redaction."""
+        try:
+            return bool(store.upsert_receipt(thread_id, "", ""))
+        except Exception as e:
+            logger.error(f"Blanking the stale receipt for {thread_id} failed: {e}")
+            return False
+
+    @router.post("/message/{message_id}/redact")
+    async def redact_message(message_id: int):
+        """"Forget this" for one row (spec §5): content and blocks become
+        "[redacted by admin]", and every derived copy the row left behind goes
+        with it -- its FTS index row, the thread title it founded, the
+        thread's entity sets -- before the receipt is regenerated from what is
+        left. Rows are never deleted.
+
+        404 only ever means "there is no such row". A store that is down
+        answers 503 and a redaction that did not land in full answers 500: a
+        person who asked to forget something must never be told "nothing to
+        forget", or "done", while the words are still readable somewhere
+        (A11b review findings 1 and 2).
+        """
+        from ...agents.conversation_sqlite import RedactionFailed
+
+        tm = _thread_manager()
+        store = getattr(tm, "store", None) if tm is not None else None
+        if store is None or not getattr(store, "connected", True):
+            raise HTTPException(503, "Thread store unavailable")
+        try:
+            thread_id = store.redact_message(message_id)
+        except RedactionFailed as e:
+            logger.error(f"Redaction of message {message_id} did not land: {e}")
+            raise HTTPException(500, "Redaction failed; the message is unchanged")
+        if thread_id is None:
+            raise HTTPException(404, "Message not found")
+        try:
+            _refresh_thread_receipt(tm, thread_id)
+        except Exception as e:
+            # The row is scrubbed, but `conversations.receipt` / `receipts_fts`
+            # still quote it -- and that copy is what recall reads back into
+            # later prompts as `retrieved_context`. Blank the stale receipt
+            # rather than leave the words standing, and never report the
+            # redaction as clean: the next `end_turn` rebuilds the summary.
+            logger.error(f"Receipt refresh after redacting {message_id} failed: {e}")
+            if not _blank_stale_receipt(store, thread_id):
+                raise HTTPException(
+                    500, "Message redacted, but its thread receipt still holds the original text"
+                )
+            return {"ok": True, "thread_id": thread_id, "receipt_refreshed": False}
+        return {"ok": True, "thread_id": thread_id}

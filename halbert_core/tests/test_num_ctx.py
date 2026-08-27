@@ -1,0 +1,279 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+"""Plan A / A10: options.num_ctx is set on every Ollama call, sized from the
+prompt, computed once per model per process (spec §7)."""
+
+import json
+import logging
+import pytest
+from unittest.mock import MagicMock, patch
+
+import halbert_core.model.client as mc
+from halbert_core.model.client import compute_num_ctx, num_ctx_for_model, estimate_prompt_tokens, call_llm_chat
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    mc._NUM_CTX_CACHE.clear()
+    yield
+    mc._NUM_CTX_CACHE.clear()
+
+
+def _response(payload):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = payload
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+def test_compute_num_ctx_clamps_and_rounds():
+    assert compute_num_ctx(10, 100, None) == 4096            # floor
+    assert compute_num_ctx(3000, 1024, None) == 5120         # 4536 -> 5120
+    assert compute_num_ctx(4096, 1536, None) == 6144         # exact multiple stays
+    assert compute_num_ctx(100_000, 1024, None) == 32768     # default ceiling
+    assert compute_num_ctx(100_000, 1024, 8192) == 8192      # model_max caps
+    assert compute_num_ctx(10, 10, 2048) == 4096             # floor beats a tiny model_max
+
+
+def test_per_model_cache_grows_but_never_shrinks():
+    assert num_ctx_for_model("m:7b", 3000, 1024) == 5120
+    assert num_ctx_for_model("m:7b", 10, 10) == 5120
+    assert num_ctx_for_model("m:7b", 9000, 1024) == 11264
+    assert num_ctx_for_model("m:7b", 10, 10) == 11264
+    assert num_ctx_for_model("other", 10, 10) == 4096
+
+
+def test_estimate_counts_messages_and_tools():
+    msgs = [{"role": "user", "content": "x" * 400}]
+    tools = [{"type": "function", "function": {"name": "t", "parameters": {}}}]
+    assert estimate_prompt_tokens(msgs, None) == 100
+    assert estimate_prompt_tokens(msgs, tools) == 100 + len(json.dumps(tools)) // 4
+    assert estimate_prompt_tokens([{"role": "user", "content": [{"type": "text", "text": "abcd" * 10}]}], None) > 0
+
+
+def test_estimate_counts_images_and_tool_calls():
+    """Review finding (A10): a text-only estimate ignores the ``images`` a
+    vision call attaches to a message and the ``tool_calls`` an assistant
+    turn attaches instead of ``content`` — both carry real prompt tokens
+    that must not silently estimate to zero."""
+    baseline = estimate_prompt_tokens([{"role": "user", "content": "caption this"}], None)
+    one_image = estimate_prompt_tokens(
+        [{"role": "user", "content": "caption this", "images": ["base64..."]}], None
+    )
+    two_images = estimate_prompt_tokens(
+        [{"role": "user", "content": "caption this", "images": ["a", "b"]}], None
+    )
+    assert one_image - baseline == mc._NUM_CTX_IMAGE_TOKENS
+    assert two_images - baseline == 2 * mc._NUM_CTX_IMAGE_TOKENS
+
+    empty_content = estimate_prompt_tokens([{"role": "assistant", "content": None}], None)
+    with_tool_calls = estimate_prompt_tokens(
+        [{
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "1", "function": {"name": "search", "arguments": '{"q": "x" * 200}'}}],
+        }],
+        None,
+    )
+    assert with_tool_calls > empty_content
+
+
+def test_ollama_chat_payload_carries_num_ctx():
+    with patch("halbert_core.model.client.requests.post", return_value=_response({"message": {"content": "hi"}})) as post:
+        call_llm_chat(endpoint="http://localhost:11434", model="example-model:latest",
+                      messages=[{"role": "user", "content": "hi"}])
+    opts = post.call_args.kwargs["json"]["options"]
+    assert opts == {"num_predict": 1024, "temperature": 0.7, "num_ctx": 4096}
+
+    with patch("halbert_core.model.client.requests.post", return_value=_response({"message": {"content": "hi"}})) as post:
+        call_llm_chat(endpoint="http://localhost:11434", model="example-model:latest",
+                      messages=[{"role": "user", "content": "y" * 40_000}], options={"num_predict": 1024})
+    assert post.call_args.kwargs["json"]["options"]["num_ctx"] == 12288   # 10000+512+1024 -> 12288
+
+    with patch("halbert_core.model.client.requests.post", return_value=_response({"message": {"content": "hi"}})) as post:
+        call_llm_chat(endpoint="http://localhost:11434", model="example-model:latest",
+                      messages=[{"role": "user", "content": "hi"}], options={"num_ctx": 8192})
+    assert post.call_args.kwargs["json"]["options"]["num_ctx"] == 8192   # explicit override wins
+
+
+def test_ollama_chat_warns_when_ceiling_clamp_still_leaves_prompt_over_num_ctx(caplog):
+    """Review finding (A10): once the prompt is so large that even the 32768
+    default ceiling can't hold it, num_ctx_for_model silently returns the
+    ceiling instead of what the prompt needs. Ollama then truncates the head
+    of the prompt with nothing logged. _do_llm_call must warn in that case."""
+    with caplog.at_level(logging.WARNING, logger="halbert.model.client"):
+        with patch("halbert_core.model.client.requests.post",
+                   return_value=_response({"message": {"content": "hi"}})):
+            call_llm_chat(endpoint="http://localhost:11434", model="huge-prompt-model:latest",
+                          messages=[{"role": "user", "content": "y" * 200_000}])
+    assert any(
+        "huge-prompt-model:latest" in r.getMessage() and "num_ctx" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_ollama_chat_payload_num_ctx_accounts_for_images():
+    """Same review finding, through the real Ollama call path: a vision
+    prompt with an image must size num_ctx larger than the identical prompt
+    without one, or the image inflates the true prompt with nothing counted
+    for it — the exact silent head-truncation A10 exists to prevent."""
+    # Enough images to clear the 4096 floor both with and without the fix
+    # would otherwise sit under (a single image's 768-token allowance still
+    # rounds back down to the floor), so the comparison actually exercises
+    # the fix instead of two floored values that happen to be equal.
+    with patch("halbert_core.model.client.requests.post", return_value=_response({"message": {"content": "hi"}})) as post:
+        call_llm_chat(endpoint="http://localhost:11434", model="vision-model:latest",
+                      messages=[{"role": "user", "content": "describe", "images": ["x" * 4000] * 6}])
+    with_image_ctx = post.call_args.kwargs["json"]["options"]["num_ctx"]
+
+    mc._NUM_CTX_CACHE.clear()
+    with patch("halbert_core.model.client.requests.post", return_value=_response({"message": {"content": "hi"}})) as post:
+        call_llm_chat(endpoint="http://localhost:11434", model="vision-model:latest",
+                      messages=[{"role": "user", "content": "describe"}])
+    without_image_ctx = post.call_args.kwargs["json"]["options"]["num_ctx"]
+
+    assert with_image_ctx > without_image_ctx
+
+
+def test_openai_payload_has_no_options():
+    with patch("halbert_core.model.client.requests.post",
+               return_value=_response({"choices": [{"message": {"content": "ok"}}]})) as post:
+        call_llm_chat(endpoint="https://api.example.test", model="hosted",
+                      messages=[{"role": "user", "content": "hi"}], provider="openai")
+    assert "options" not in post.call_args.kwargs["json"]
+
+
+# --- streaming payloads (OllamaClient and the dashboard adapter) -------------
+
+class _Lines:
+    def __init__(self, lines):
+        self._lines = list(lines)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._lines:
+            raise StopAsyncIteration
+        return self._lines.pop(0)
+
+
+class _FakeResp:
+    status = 200
+
+    def __init__(self):
+        # Content and the done flag on separate lines: the dashboard adapter
+        # breaks on ``done`` before appending that line's content, so a
+        # single done:true line would yield nothing.
+        self.content = _Lines([
+            b'{"message":{"content":"hi"},"done":false}\n',
+            b'{"message":{"content":""},"done":true}\n',
+        ])
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+    async def text(self):
+        return ""
+
+    async def json(self):
+        return {"message": {"content": "hi"}}
+
+
+class _FakeSession:
+    captured = {}
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    def post(self, url, json=None, **k):
+        _FakeSession.captured["json"] = json
+        return _FakeResp()
+
+
+@pytest.fixture
+def fake_aiohttp(monkeypatch):
+    _FakeSession.captured.clear()
+    monkeypatch.setattr("aiohttp.ClientSession", _FakeSession)
+    return _FakeSession.captured
+
+
+@pytest.mark.asyncio
+async def test_ollama_client_chat_and_stream_carry_num_ctx(fake_aiohttp):
+    from halbert_core.agents.llm_client import OllamaClient
+    client = OllamaClient(model="example-model:latest")
+    assert [c async for c in client.stream([{"role": "user", "content": "hi"}])] == ["hi"]
+    assert fake_aiohttp["json"]["options"] == {"temperature": 0.7, "num_predict": 2048, "num_ctx": 4096}
+    await client.chat([{"role": "user", "content": "hi"}])
+    assert fake_aiohttp["json"]["options"]["num_ctx"] == 4096
+
+
+fastapi = pytest.importorskip("fastapi")
+
+
+@pytest.fixture
+def adapter(monkeypatch):
+    monkeypatch.setattr("halbert_core.model.client.get_configured_model", lambda: "example-model:latest")
+    monkeypatch.setattr("halbert_core.model.client.get_ollama_endpoint", lambda: "http://localhost:11434")
+    monkeypatch.setattr("halbert_core.model.client.get_specialist_model", lambda: (None, None, None))
+    monkeypatch.setattr("halbert_core.model.client.get_vision_model", lambda: (None, "http://localhost:11434"))
+    from halbert_core.dashboard.routes.agent import LLMClientAdapter
+    return LLMClientAdapter()
+
+
+@pytest.mark.asyncio
+async def test_adapter_stream_has_num_ctx_and_bounded_num_predict(adapter, fake_aiohttp):
+    adapter.max_tokens = 8192
+    assert "".join([c async for c in adapter.stream([{"role": "user", "content": "hi"}])]) == "hi"
+    opts = fake_aiohttp["json"]["options"]
+    assert opts["num_ctx"] >= 4096 and opts["num_ctx"] % 1024 == 0
+    assert opts["num_predict"] <= opts["num_ctx"] - 512 and opts["num_predict"] <= 8192
+
+
+@pytest.mark.asyncio
+async def test_adapter_stream_warns_when_ceiling_clamp_still_leaves_prompt_over_num_ctx(adapter, fake_aiohttp, caplog):
+    """Same review finding as above, for the dashboard adapter's stream
+    payload, which computes num_ctx independently of _do_llm_call."""
+    with caplog.at_level(logging.WARNING, logger="halbert.dashboard.routes.agent"):
+        result = "".join([c async for c in adapter.stream([{"role": "user", "content": "y" * 200_000}])])
+    assert result == "hi"
+    assert any("num_ctx" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_adapter_planning_chat_uses_num_predict_1024(adapter):
+    with patch("halbert_core.model.client.call_llm_chat") as chat:
+        chat.return_value = {"content": "ok", "tool_calls": []}
+        await adapter.chat([{"role": "user", "content": "plan"}], tools=[])
+    assert chat.call_args.kwargs["options"]["num_predict"] == 1024
+
+
+def test_send_message_request_bounds_max_tokens():
+    """Review finding (A10): num_ctx_for_model's per-model cache only grows
+    and is process-global, so an unbounded max_tokens field would let one
+    request pin num_ctx at the ceiling for that model for the rest of the
+    process's life. The request boundary must reject that, while still
+    allowing every value the frontend's own Performance Tweaks control
+    offers (up to 32768 — see Settings.tsx)."""
+    import pydantic
+    from halbert_core.dashboard.routes.agent import SendMessageRequest
+
+    SendMessageRequest(message="hi", max_tokens=32768)  # the UI's own max: allowed
+    SendMessageRequest(message="hi")  # default: allowed
+    with pytest.raises(pydantic.ValidationError):
+        SendMessageRequest(message="hi", max_tokens=1_000_000)
+    with pytest.raises(pydantic.ValidationError):
+        SendMessageRequest(message="hi", max_tokens=0)

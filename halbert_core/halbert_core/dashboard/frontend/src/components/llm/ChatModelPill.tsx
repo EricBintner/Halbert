@@ -34,7 +34,19 @@ export interface ChatModelPillProps {
   onSelected?: (selection: ModelSelection) => void
   onOpenSettings?: () => void
   className?: string
+  /**
+   * Where the popover sits relative to the pill. Defaults to opening downward,
+   * which is right for a pill at the top of a panel. The composer footer needs
+   * the upward variant (`bottom-full mb-1`): this popover is 384px wide and up
+   * to `max-h-96` tall, so downward from the footer is off the bottom of the
+   * window. Only the position half of the class list is overridden — the
+   * surface (background, border, scroll, padding) is not a caller's business.
+   */
+  popoverClassName?: string
 }
+
+/** Downward from a pill near the top of the panel. */
+const DEFAULT_POPOVER_POSITION = 'absolute right-0 top-full mt-1 w-96 z-50'
 
 const STATUS_STYLE: Record<ModelPillState['status'], string> = {
   ready: 'text-success',
@@ -61,6 +73,7 @@ export function ChatModelPill({
   onSelected,
   onOpenSettings,
   className,
+  popoverClassName,
 }: ChatModelPillProps) {
   const triggerRef = useRef<HTMLButtonElement>(null)
 
@@ -125,7 +138,7 @@ export function ChatModelPill({
         onOpenSettings={onOpenSettings}
         triggerRef={triggerRef}
         className={cn(
-          'absolute right-0 top-full mt-1 w-96 z-50',
+          popoverClassName ?? DEFAULT_POPOVER_POSITION,
           'bg-muted border border-border rounded-lg shadow-xl',
           'max-h-96 overflow-y-auto p-2 text-sm',
         )}

@@ -2,10 +2,10 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * AgentChat Component
- * 
+ *
  * Cascade-style chat that renders structured agent events.
  * Based on research2.md state machine workflow.
- * 
+ *
  * Phase 59: Enhanced with Chat feature parity:
  * - @mention autocomplete
  * - Vision/image support (drag/drop/paste)
@@ -14,22 +14,19 @@
  * - Model loading status
  */
 
-import { useState, useRef, useEffect } from 'react';
-import { 
-  Send, 
-  StopCircle, 
-  RotateCcw, 
-  AtSign, 
+import { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  Send,
+  StopCircle,
+  RotateCcw,
+  AtSign,
   Terminal,
   Image as ImageIcon,
   X as XIcon,
   Camera,
-  Plus,
-  ChevronDown,
-  MessageSquare,
-  Trash2,
 } from 'lucide-react';
-import { useAgentStream } from '../../hooks/useAgentStream';
+import { useAgentStream, type AgentSession } from '../../hooks/useAgentStream';
+import { useTimeline } from '../../hooks/useTimeline';
 import { StateBadge } from './StateBadge';
 import { PlanChecklist } from './PlanChecklist';
 import { ToolExecutionCard } from './ToolExecutionCard';
@@ -45,14 +42,19 @@ import { useModelPicker, matchModels, providerDescriptor } from '@halbert/model-
 import { HALBERT_MODEL_ROLES, CHAT_ROLE_ID, modelPickerTransport } from '@/lib/halbertModelRoles';
 import { parseModelCommand, formatModelStatus, type ModelStatusLines } from '@/lib/slashCommands';
 import { ScanBlock } from './ScanBlock';
-import { ContextBar } from './ContextBar';
+import { ContextBar, type ContextItem, type ContextType } from './ContextBar';
 import { DiffBlock } from './DiffBlock';
-import { CodeBlock } from '../domain/CodeBlock';
 import { HostGreeting } from './HostGreeting';
 import { InlineTerminals } from './InlineTerminals';
+import { MessageContent } from './MessageContent';
+import { Timeline } from './Timeline';
+import { CurrentTopicLabel } from './CurrentTopicLabel';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
 import { subscribeHost } from '../../lib/hostConversation';
+import { announce } from '../../lib/announce';
+import { turnFromSession } from '../../lib/turnFromSession';
+import type { TimelineTurn } from '../../types/timeline';
 
 interface UserMessage {
   id: string;
@@ -85,14 +87,6 @@ interface Mentionable {
   mention: string;
   name: string;
   type: string;
-}
-
-interface AgentConversation {
-  conversation_id: string;
-  title: string;
-  created_at: number;
-  updated_at: number;
-  message_count?: number;
 }
 
 interface AgentChatProps {
@@ -150,62 +144,22 @@ function parsePathRef(ref: string): { path?: string } {
   return { path: ref };
 }
 
-// Helper to render message content with code blocks
-function MessageContent({ 
-  content, 
-  onRunCommand 
-}: { 
-  content: string;
-  onRunCommand?: (cmd: string) => Promise<{output?: string, error?: string, exit_code?: number}>;
-}) {
-  const parts: Array<{ type: 'text' | 'code', content: string, lang?: string }> = [];
-  const codeBlockRegex = /```(\w+)?\n?([\s\S]*?)```/g;
-  let lastIndex = 0;
-  let match;
-  
-  while ((match = codeBlockRegex.exec(content)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push({ type: 'text', content: content.slice(lastIndex, match.index) });
-    }
-    let codeContent = match[2].trim();
-    codeContent = codeContent.replace(/^`+|`+$/g, '').trim();
-    parts.push({ type: 'code', content: codeContent, lang: match[1] || 'bash' });
-    lastIndex = match.index + match[0].length;
+/** Where a context_loaded item came from -> which chip to draw. */
+function contextTypeFor(source: string): ContextType {
+  switch (source) {
+    case 'file': return 'file';
+    case 'memory': return 'memory';
+    case 'thread': return 'thread';
+    default: return 'search';
   }
-  
-  if (lastIndex < content.length) {
-    parts.push({ type: 'text', content: content.slice(lastIndex) });
-  }
-  
-  if (parts.length === 0) {
-    parts.push({ type: 'text', content });
-  }
-  
-  return (
-    <div className="space-y-2 min-w-0 overflow-hidden">
-      {parts.map((part, i) => {
-        if (part.type === 'code') {
-          return (
-            <CodeBlock 
-              key={i} 
-              code={part.content} 
-              lang={part.lang || 'bash'} 
-              onRun={onRunCommand}
-              compact
-            />
-          );
-        } else {
-          return (
-            <span key={i} className="whitespace-pre-wrap break-words">{part.content}</span>
-          );
-        }
-      })}
-    </div>
-  );
 }
 
 export function AgentChat({ className, onRunCommand, onOpenModelSettings }: AgentChatProps) {
-  const [userMessages, setUserMessages] = useState<UserMessage[]>([]);
+  // The turn in flight. Once it finishes it is appended to the timeline
+  // (turnFromSession) and this goes back to null — never both at once.
+  const [liveUser, setLiveUser] = useState<UserMessage | null>(null);
+  const cancelledRef = useRef(false);
+  const appendedRef = useRef<string | null>(null);
   // The per-turn model pin. Deliberately component state and never persisted:
   // a pin governs this conversation only, while the settings drawer is what
   // changes the stored default.
@@ -223,7 +177,6 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   const [agentError, setAgentError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const conversationDropdownRef = useRef<HTMLDivElement>(null);
 
   /**
    * Drain requests parked by the dashboard bridge.
@@ -241,28 +194,38 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     }
     inputRef.current?.focus();
   }), []);
-  
-  // Phase 59: Conversation management
-  const [conversations, setConversations] = useState<AgentConversation[]>([]);
-  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
-  const [showConversationList, setShowConversationList] = useState(false);
-  const [conversationTitle, setConversationTitle] = useState('New Conversation');
-  
+
+  // One conversation, stored server-side; paged here.
+  const {
+    turns,
+    hasMore,
+    loading: timelineLoading,
+    loadOlder,
+    loadAround,
+    loadLatest,
+    anchored,
+    appendLive,
+    loadFailed,
+    currentThread,
+    setCurrentThread,
+    byDay,
+  } = useTimeline();
+
   // Phase 59: @mention autocomplete
   const [mentionables, setMentionables] = useState<Mentionable[]>([]);
   const [showMentions, setShowMentions] = useState(false);
   const [mentionFilter, setMentionFilter] = useState('');
-  
+
   // Phase 59: Vision/image support
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const [isDraggingImage, setIsDraggingImage] = useState(false);
-  
+
   // Phase 59: Message queue (type while busy)
   const [messageQueue, setMessageQueue] = useState<string[]>([]);
 
   // Phase 8 / T8a.3: modules expanded from provenance WhyChip clicks
   const [expandedProvenanceModules, setExpandedProvenanceModules] = useState<ExpandedProvenanceModule[]>([]);
-  
+
   const {
     session,
     isStreaming,
@@ -277,6 +240,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     rejectDiff,
     cancel,
     reset,
+    dismissContextItem,
   } = useAgentStream({
     onStateChange: (state, prev) => {
       console.log('State:', prev, '->', state);
@@ -290,7 +254,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     },
   });
 
-  // Load mentionables and conversations on mount
+  // Load mentionables on mount
   useEffect(() => {
     const loadMentionables = async () => {
       try {
@@ -301,81 +265,127 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
       }
     };
     loadMentionables();
-    loadConversations();
   }, []);
-  
-  // Load conversations list
-  const loadConversations = async () => {
-    try {
-      const data = await api.listAgentConversations();
-      setConversations(data.conversations || []);
-    } catch (error) {
-      console.error('Failed to load conversations:', error);
-    }
-  };
-  
-  // Load a specific conversation
-  const loadConversation = async (convId: string) => {
-    try {
-      const data = await api.getAgentConversation(convId);
-      if (data) {
-        setCurrentConversationId(convId);
-        setConversationTitle(data.title || 'Conversation');
-        // Convert stored messages to UserMessage format
-        const msgs: UserMessage[] = (data.messages || []).map((m: {role: string, content: string, timestamp?: number}, idx: number) => ({
-          id: `loaded-${idx}`,
-          content: m.content,
-          timestamp: m.timestamp || Date.now(),
-        })).filter((m: UserMessage) => m.content);
-        setUserMessages(msgs);
-        setShowConversationList(false);
-        reset(); // Reset agent session for loaded conversation
-      }
-    } catch (error) {
-      console.error('Failed to load conversation:', error);
-    }
-  };
-  
-  // Start new conversation
-  const startNewConversation = () => {
-    setCurrentConversationId(null);
-    setConversationTitle('New Conversation');
-    setUserMessages([]);
-    setShowConversationList(false);
-    reset();
-  };
-  
-  // Delete conversation
-  const deleteConversation = async (convId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    try {
-      await api.deleteAgentConversation(convId);
-      setConversations(prev => prev.filter(c => c.conversation_id !== convId));
-      if (currentConversationId === convId) {
-        startNewConversation();
-      }
-    } catch (error) {
-      console.error('Failed to delete conversation:', error);
-    }
-  };
 
-  // Click outside to close conversation dropdown
+  // Everything the fold below needs, one assignment fresh. The fold runs
+  // from three places and one of them (the queued-send timeout) reads a
+  // closure that is a render behind, so it must not read those values
+  // directly. Declared ABOVE the fold effect so this refresh runs first in
+  // the same commit.
+  const foldInputs = useRef<{
+    liveUser: UserMessage | null;
+    session: AgentSession | null;
+    response: string;
+    anchored: boolean;
+    appendLive: (turn: TimelineTurn) => void;
+    loadLatest: () => Promise<void>;
+  }>({ liveUser, session, response, anchored, appendLive, loadLatest });
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (conversationDropdownRef.current && !conversationDropdownRef.current.contains(e.target as Node)) {
-        setShowConversationList(false);
-      }
-    };
-    if (showConversationList) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+    foldInputs.current = { liveUser, session, response, anchored, appendLive, loadLatest };
+  });
+
+  // Put the turn that is on screen into the transcript, as it stands.
+  //
+  // Idempotent (`appendedRef`), so the three callers cannot double-append:
+  // the effect below when a turn simply finishes, and handleSend / the
+  // queued-send timeout before a new turn takes liveUser's place. That last
+  // pair is not belt-and-braces. A turn parked on an undecided proposal
+  // keeps liveUser; the next question replaces it and sendMessage starts a
+  // fresh session, taking session.diffProposals with it — so without this
+  // the question, the reply and the proposal all left the page at once,
+  // with no decision recorded anywhere the admin can see. Folding it first
+  // keeps the exchange, with the proposal recorded read-only as what it is:
+  // proposed, never answered.
+  const foldLiveTurn = useCallback(() => {
+    const { liveUser: live, session: current, response: text, anchored: away } = foldInputs.current;
+    if (!live || !current) return;
+    const turn = turnFromSession(current, live, text, { cancelled: cancelledRef.current });
+    if (appendedRef.current === turn.turnId) return;
+    appendedRef.current = turn.turnId;
+    if (away) {
+      // appendLive is a documented no-op on an anchored window (the turn
+      // would assert an adjacency that is false), so appending here would
+      // simply lose the exchange the admin just had until they found the
+      // "Back to latest" button. Go back to the tail instead: the turn is
+      // already stored, and the newest page has it.
+      void foldInputs.current.loadLatest();
+    } else {
+      foldInputs.current.appendLive(turn);
     }
-  }, [showConversationList]);
+  }, []);
+
+  // The finished turn becomes a stored turn. Guarded so a turn still waiting
+  // on the admin is not folded away early, and so one turn is appended once.
+  //
+  // Two things park a turn. A confirmation prompt (stream closed, session
+  // waiting) is the obvious one. A diff the agent proposed and nobody has
+  // answered is the same situation: the timeline renders stored diffs
+  // read-only (Timeline.tsx), because a past turn must not act on a session
+  // that no longer exists — so folding a pending proposal in would degrade
+  // Apply/Reject to the word "proposed" the instant the reply finished, with
+  // the backend still perfectly willing to carry out the decision. It stays
+  // live until applyDiff/rejectDiff resolves it, and this effect re-runs.
+  useEffect(() => {
+    if (isStreaming || !liveUser || !session) return;
+    if (session.pendingConfirmation || session.state === 'awaiting_confirmation') return;
+    if (session.diffProposals.some((diff) => diff.status === 'pending')) return;
+    foldLiveTurn();
+    setLiveUser(null);
+    cancelledRef.current = false;
+  }, [isStreaming, liveUser, session, response, foldLiveTurn]);
+
+  // Thread identity is the server's; the label and the live region follow.
+  useEffect(() => {
+    const thread = session?.thread;
+    if (!thread) return;
+    if (currentThread && currentThread.threadId !== thread.threadId) {
+      announce('New subject');
+    }
+    if (!currentThread || currentThread.threadId !== thread.threadId || currentThread.title !== thread.title) {
+      setCurrentThread({ threadId: thread.threadId, title: thread.title, status: 'open' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.thread]);
 
   useEffect(() => {
+    const recalled = session?.recalled;
+    if (!recalled) return;
+    announce(`Pulled in earlier work: ${recalled.title}`);
+  }, [session?.recalled]);
+
+  // Dropping the thread chip retracts the recall server-side too, so the
+  // next turn's hint does not pull it straight back in.
+  const handleRemoveContextItem = useCallback((id: string) => {
+    if (id.startsWith('thread:') && currentThread) {
+      api.retractRecall(currentThread.threadId, id.slice('thread:'.length)).catch((err) => {
+        console.warn('retract recall failed:', err);
+      });
+    }
+    dismissContextItem(id);
+  }, [currentThread, dismissContextItem]);
+
+  // The thread chip is a real control (spec §6): a click scrolls the
+  // timeline to where that subject last happened — the page around its last
+  // turn. Other chips have nowhere to go yet.
+  const handleContextItemClick = useCallback((item: ContextItem) => {
+    if (item.type !== 'thread') return;
+    const lastTurnId = session?.recalled?.lastTurnId;
+    if (lastTurnId) void loadAround(lastTurnId);
+  }, [session?.recalled, loadAround]);
+
+  // Follow the conversation — but only when it actually grew at the bottom.
+  // `turns.length` changes for two other reasons, and both of them are the
+  // admin deliberately reading somewhere else: "Load earlier" prepends a
+  // page (useTimeline.mergeOlder), and a thread chip jump replaces the page
+  // with a window around an earlier turn, which useTimeline has just
+  // centred. Scrolling to the newest message on either one answers a
+  // question nobody asked and undoes the navigation that was asked for.
+  const tailTurnId = turns.length > 0 ? turns[turns.length - 1].turnId : null;
+  useEffect(() => {
+    if (anchored) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [userMessages, response, session?.toolExecutions]);
-  
+  }, [tailTurnId, anchored, liveUser, response, session?.toolExecutions]);
+
   // Process queued messages when streaming completes
   useEffect(() => {
     if (!isStreaming && messageQueue.length > 0) {
@@ -384,20 +394,32 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
       setInput(nextMessage);
       // Auto-send after a brief delay
       setTimeout(() => {
+        // `/model` typed while the agent was streaming is still a command,
+        // not a question. handleSend guards it; this path did not, so the
+        // command reached the backend as ordinary text — harmless while a
+        // session was thrown away each turn, but every turn is persisted
+        // now, so it would be written into the transcript and read back in
+        // the thread receipt. Guarded first: nothing else has happened yet,
+        // so there is nothing to unwind.
+        if (handleModelCommand(nextMessage)) return;
         const userMsg: UserMessage = {
           id: 'user-' + Date.now(),
           content: nextMessage,
           timestamp: Date.now(),
         };
-        setUserMessages(prev => [...prev, userMsg]);
-        sendMessage(nextMessage, currentConversationId ?? undefined, picker.selection);
+        // Same as handleSend: whatever is still on screen goes into the
+        // transcript before this turn takes its place.
+        foldLiveTurn();
+        cancelledRef.current = false;
+        setLiveUser(userMsg);
+        sendMessage(nextMessage, undefined, picker.selection);
         setInput('');
       }, 100);
     }
   }, [isStreaming, messageQueue]);
-  
+
   // Filter mentionables based on input
-  const filteredMentionables = mentionables.filter(m => 
+  const filteredMentionables = mentionables.filter(m =>
     m.mention.toLowerCase().includes(mentionFilter.toLowerCase()) ||
     m.name.toLowerCase().includes(mentionFilter.toLowerCase())
   ).slice(0, 8);
@@ -439,10 +461,10 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingImage(false);
-    
+
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
     if (files.length === 0) return;
-    
+
     try {
       const newImages = await Promise.all(files.map(processImageFile));
       setAttachedImages(prev => [...prev, ...newImages]);
@@ -454,11 +476,11 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   const handlePaste = async (e: React.ClipboardEvent) => {
     const items = Array.from(e.clipboardData.items);
     const imageItems = items.filter(item => item.type.startsWith('image/'));
-    
+
     if (imageItems.length === 0) return;
-    
+
     e.preventDefault();
-    
+
     for (const item of imageItems) {
       const file = item.getAsFile();
       if (file) {
@@ -475,7 +497,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   const removeAttachedImage = (id: string) => {
     setAttachedImages(prev => prev.filter(img => img.id !== id));
   };
-  
+
   // Input handling with @mention detection
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
@@ -663,13 +685,23 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
       images: imageData.length > 0 ? imageData : undefined,
     };
 
-    setUserMessages(prev => [...prev, userMsg]);
+    // A turn parked on an undecided proposal (or a confirmation) is still
+    // liveUser and is about to lose both its slot and its session. Record
+    // it first — folding reads cancelledRef, so it happens before the reset
+    // below, which exists because a parked turn never reached the effect
+    // that normally clears it: a Stop pressed two turns ago must not follow
+    // this one into the transcript as "cancelled".
+    foldLiveTurn();
+    cancelledRef.current = false;
+    setLiveUser(userMsg);
     setAgentError(null);
     setAttachedImages([]);
     setExpandedProvenanceModules([]);
 
     // TODO: Pass images to agent backend when vision support is added
-    sendMessage(input.trim(), currentConversationId ?? undefined, picker.selection);
+    // No conversation id: the server resolves the subject. A session id
+    // names one turn, so the hook mints a fresh one per send.
+    sendMessage(input.trim(), undefined, picker.selection);
     setInput('');
   };
 
@@ -681,7 +713,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
       setShowMentions(false);
     }
   };
-  
+
   // Auto-resize textarea
   const autoResizeTextarea = () => {
     const textarea = inputRef.current;
@@ -690,126 +722,98 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
       textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
     }
   };
-  
+
   useEffect(() => {
     if (!input && inputRef.current) {
       inputRef.current.style.height = 'auto';
     }
   }, [input]);
 
+  // Retry after an error clears the live state only; stored turns stay.
   const handleReset = () => {
     reset();
     setAgentError(null);
     setExpandedProvenanceModules([]);
+    setLiveUser(null);
   };
 
   return (
     <div className={cn('flex flex-col h-full bg-background', className)}>
-      {/* Conversation Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-background/50">
-        <div className="relative" ref={conversationDropdownRef}>
-          <button
-            onClick={() => setShowConversationList(!showConversationList)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-muted rounded-lg transition-colors"
-          >
-            <MessageSquare className="h-4 w-4 text-muted-foreground" />
-            <span className="max-w-[180px] truncate">{conversationTitle}</span>
-            <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", showConversationList && "rotate-180")} />
-          </button>
-          
-          {/* Conversation Dropdown */}
-          {showConversationList && (
-            <div className="absolute left-0 top-full mt-1 w-72 bg-muted border border-border rounded-lg shadow-xl z-50 max-h-80 overflow-y-auto">
-              <div className="p-2 border-b border-border">
-                <button
-                  onClick={startNewConversation}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted rounded-lg transition-colors"
-                >
-                  <Plus className="h-4 w-4 text-info" />
-                  New Conversation
-                </button>
-              </div>
-              
-              {conversations.length === 0 ? (
-                <div className="p-4 text-center text-xs text-muted-foreground">
-                  No saved conversations
-                </div>
-              ) : (
-                <div className="p-2 space-y-1">
-                  {conversations.map((conv) => (
-                    <button
-                      key={conv.conversation_id}
-                      onClick={() => loadConversation(conv.conversation_id)}
-                      className={cn(
-                        "w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors group",
-                        currentConversationId === conv.conversation_id
-                          ? "bg-info/20 text-info"
-                          : "text-foreground hover:bg-muted"
-                      )}
-                    >
-                      <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <span className="flex-1 truncate text-left">{conv.title || 'Untitled'}</span>
-                      <button
-                        onClick={(e) => deleteConversation(conv.conversation_id, e)}
-                        className="p-1 opacity-0 group-hover:opacity-100 hover:bg-error/20 rounded transition-all"
-                        title="Delete conversation"
-                      >
-                        <Trash2 className="h-3 w-3 text-error" />
-                      </button>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        
-        <div className="flex items-center gap-1">
-          <ChatModelPill
-            picker={picker}
-            open={pickerOpen}
-            onOpenChange={(next) => {
-              setPickerOpen(next);
-              if (!next) setPickerQuery(undefined);
-            }}
-            initialQuery={pickerQuery}
-            onOpenSettings={onOpenModelSettings}
-          />
-          <button
-            onClick={startNewConversation}
-            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
-            title="New conversation"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-      
+      <CurrentTopicLabel thread={currentThread} />
+
       {session?.contextItems && session.contextItems.length > 0 && (
         <ContextBar
           items={session.contextItems.map(ci => ({
             id: ci.id,
-            type: ci.source === 'rag' ? 'search' : ci.source === 'file' ? 'file' : ci.source === 'memory' ? 'memory' : 'search',
+            type: contextTypeFor(ci.source),
             label: ci.label,
             tokens: ci.tokens,
+            // The thread chip's "why now": the terms that matched (spec §6).
+            hint:
+              ci.source === 'thread' && session.recalled && session.recalled.matchTerms.length > 0
+                ? `matched: ${session.recalled.matchTerms.join(', ')}`
+                : undefined,
           }))}
-          onRemoveItem={() => {}}
+          onRemoveItem={handleRemoveContextItem}
+          onItemClick={handleContextItemClick}
         />
       )}
-      
+
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {/* Empty state: the host introduces itself (not a generic assistant) */}
-        {userMessages.length === 0 && <HostGreeting onPrompt={setInput} />}
-        
-        {userMessages.map((msg, idx) => (
-          <div key={msg.id} className="space-y-3">
+        {/* Empty state: the host introduces itself — only when there is
+            nothing stored and nothing in flight. `loadFailed` is the rest of
+            that condition: an empty timeline because the request could not
+            reach a restarting backend is not an empty timeline because this
+            is the first time we have spoken, and greeting over someone's
+            real conversation is the worse of the two mistakes. */}
+        {turns.length === 0 && !liveUser && !timelineLoading && !loadFailed && (
+          <HostGreeting onPrompt={setInput} />
+        )}
+
+        {/* The other half of that condition, said out loud. useTimeline
+            only warns to the console, and an empty page renders nothing, so
+            an admin whose backend was mid-restart was shown a blank
+            conversation with no explanation and no way back short of
+            restarting the app. `loadFailed` is only ever cleared by a
+            successful load, and nothing schedules one — so the way back has
+            to be offered here. */}
+        {loadFailed && (
+          <div className="flex justify-center" role="status">
+            <div className="flex items-center gap-2 rounded-lg border border-hairline bg-canvas-subtle px-3 py-1.5 text-[11px] font-mono text-ink-secondary">
+              <span>Could not load the stored conversation</span>
+              <button
+                type="button"
+                onClick={() => { void loadLatest(); }}
+                disabled={timelineLoading}
+                className="rounded border border-hairline px-1.5 py-0.5 text-ink-secondary hover:text-ink disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              >
+                {timelineLoading ? 'Trying…' : 'Try again'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Every turn that has finished, oldest first, grouped by day. */}
+        <Timeline
+          byDay={byDay}
+          hasMore={hasMore}
+          loading={timelineLoading}
+          anchored={anchored}
+          onLoadOlder={loadOlder}
+          onLoadLatest={loadLatest}
+          onRunCommand={onRunCommand}
+        />
+
+        {/* The turn in flight: the live assistant block, exactly as before. */}
+        {liveUser && (
+          <div className="space-y-3" data-live-turn={session?.turnId ?? liveUser.id}>
             <div className="flex justify-end">
               <div className="max-w-[80%] bg-primary text-primary-foreground px-4 py-2 rounded-lg">
-                <p className="text-sm">{msg.content}</p>
+                <p className="text-sm whitespace-pre-wrap break-words">{liveUser.content}</p>
               </div>
             </div>
-            
-            {idx === userMessages.length - 1 && session && (
+
+            {session && (
               <div className="flex justify-start">
                 <div className="max-w-[85%] bg-muted/50 border border-border/50 rounded-lg p-4 space-y-3">
                   <div className="flex items-center gap-2">
@@ -818,11 +822,11 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
                       <span className="text-xs text-muted-foreground">Loop {session.loopCount}</span>
                     )}
                   </div>
-                  
+
                   {session.plan.length > 0 && (
                     <PlanChecklist plan={session.plan} currentStep={session.currentStep} />
                   )}
-                  
+
                   {/* Active Scan Visualization */}
                   {session.activeScan && (
                     <ScanBlock
@@ -833,7 +837,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
                       resultsCount={session.activeScan.results}
                     />
                   )}
-                  
+
                   {session.toolExecutions.map((exec) => (
                     <ToolExecutionCard key={exec.executionId} execution={exec} />
                   ))}
@@ -841,7 +845,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
                   {/* Terminals Halbert opened for this turn, flowing in the
                       conversation; they dock to the right column on scroll. */}
                   <InlineTerminals sessionIds={session.terminalSessions ?? []} />
-                  
+
                   {/* Diff Proposals */}
                   {session.diffProposals.map((diff) => (
                     <DiffBlock
@@ -856,11 +860,21 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
                       onReject={() => rejectDiff(diff.id)}
                     />
                   ))}
-                  
+
+                  {/* What answered, when that is not what was asked for — an
+                      escalation or a fallback. Rendered here while the turn
+                      is live, and again below once it is not: this block
+                      unmounts the moment `liveUser` goes null and Timeline
+                      stores no model, so a paid-for escalation would
+                      otherwise flash for a few milliseconds and be gone.
+                      `liveUser` gates the two slots apart, so it is never on
+                      screen twice. (The durable fix is to persist the
+                      answering model on the turn row and let Timeline render
+                      it — a spec change, not a merge decision.) */}
                   {turnModel && <TurnModelNotice turn={turnModel} />}
 
                   {thinking && <ThinkingPanel thinking={thinking} isStreaming={isStreaming} />}
-                  
+
                   {session.confidence > 0 && (
                     <ConfidenceIndicator
                       confidence={session.confidence}
@@ -868,63 +882,68 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
                       size="sm"
                     />
                   )}
-                  
+
                   {response && (
                     <div className="text-sm text-foreground">
                       <MessageContent content={response} onRunCommand={onRunCommand} />
-                      {isStreaming && <span className="inline-block w-2 h-4 bg-muted animate-pulse ml-0.5" />}
-                      {/* Phase 8: Provenance chips */}
-                      {!isStreaming && provenance.length > 0 && (
-                        <div className="mt-2">
-                          <WhyChip provenance={provenance} onExpand={handleProvenanceExpand} />
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Phase 8: Module invocations rendered inline */}
-                  {!isStreaming && moduleInvocations.length > 0 && (
-                    <div className="mt-3 space-y-3">
-                      {moduleInvocations.map((inv, i) => (
-                        <ModuleRenderer key={i} module={inv.module} props={inv.props} />
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Phase 8: Provenance-expanded sources (WhyChip onExpand) */}
-                  {expandedProvenanceModules.length > 0 && (
-                    <div className="mt-3 space-y-3">
-                      {expandedProvenanceModules.map((m) => (
-                        <div key={m.key} className="relative">
-                          <button
-                            onClick={() => dismissExpandedModule(m.key)}
-                            className="absolute right-2 top-2 z-10 p-1 rounded bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                            title="Close"
-                          >
-                            <XIcon className="h-3 w-3" />
-                          </button>
-                          <ModuleRenderer module={m.module} props={m.props} />
-                        </div>
-                      ))}
+                      {isStreaming && <span className="inline-block w-2 h-4 bg-muted animate-pulse motion-reduce:animate-none ml-0.5" />}
                     </div>
                   )}
                 </div>
               </div>
             )}
           </div>
-        ))}
-        
+        )}
+
+        {/* Phase 8 extras for the turn that just finished: what answered,
+            provenance chips, module invocations, and sources expanded from a
+            chip. They belong to the last reply and clear on the next send. */}
+        {!liveUser && !isStreaming && (turnModel || provenance.length > 0 || moduleInvocations.length > 0 || expandedProvenanceModules.length > 0) && (
+          <div className="flex justify-start">
+            <div className="max-w-[85%] space-y-3">
+              {turnModel && <TurnModelNotice turn={turnModel} />}
+              {provenance.length > 0 && (
+                <WhyChip provenance={provenance} onExpand={handleProvenanceExpand} />
+              )}
+              {moduleInvocations.length > 0 && (
+                <div className="space-y-3">
+                  {moduleInvocations.map((inv, i) => (
+                    <ModuleRenderer key={i} module={inv.module} props={inv.props} />
+                  ))}
+                </div>
+              )}
+              {expandedProvenanceModules.length > 0 && (
+                <div className="space-y-3">
+                  {expandedProvenanceModules.map((m) => (
+                    <div key={m.key} className="relative">
+                      <button
+                        type="button"
+                        aria-label="Close expanded source"
+                        onClick={() => dismissExpandedModule(m.key)}
+                        className="absolute right-2 top-2 z-10 p-1 rounded bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <XIcon className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                      <ModuleRenderer module={m.module} props={m.props} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {agentError && !isStreaming && (
           <div className="flex justify-center">
             <div className="bg-error/10 border border-error/30 rounded-lg px-4 py-2 flex items-center gap-2">
               <span className="text-sm text-error">{agentError}</span>
-              <button onClick={handleReset} className="p-1 hover:bg-error/20 rounded">
-                <RotateCcw className="h-4 w-4 text-error" />
+              <button type="button" aria-label="Retry" onClick={handleReset} className="p-1 hover:bg-error/20 rounded">
+                <RotateCcw className="h-4 w-4 text-error" aria-hidden="true" />
               </button>
             </div>
           </div>
         )}
-        
+
         {systemNotices.map(notice => (
           <div key={notice.id} className="text-xs">
             {notice.status ? (
@@ -947,7 +966,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
 
         <div ref={messagesEndRef} />
       </div>
-      
+
       {/* Mention Autocomplete */}
       {showMentions && filteredMentionables.length > 0 && (
         <div className="mx-4 mb-1 bg-muted border border-border rounded-md shadow-lg max-h-48 overflow-y-auto">
@@ -968,8 +987,8 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
           ))}
         </div>
       )}
-      
-      <div 
+
+      <div
         className={cn(
           "border-t border-border p-4 transition-colors",
           isDraggingImage && "bg-info/10 border-info"
@@ -983,8 +1002,8 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
           <div className="flex gap-2 mb-2 flex-wrap">
             {attachedImages.map(img => (
               <div key={img.id} className="relative group">
-                <img 
-                  src={img.dataUrl} 
+                <img
+                  src={img.dataUrl}
                   alt={img.name}
                   className="h-12 w-12 object-cover rounded border border-border"
                 />
@@ -998,7 +1017,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
             ))}
           </div>
         )}
-        
+
         {/* Drop indicator */}
         {isDraggingImage && (
           <div className="mb-2 p-2 border-2 border-dashed border-info rounded text-center text-xs text-info">
@@ -1006,7 +1025,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
             Drop image here
           </div>
         )}
-        
+
         {/* Message Queue */}
         {messageQueue.length > 0 && (
           <div className="mb-2 space-y-1">
@@ -1023,7 +1042,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
             ))}
           </div>
         )}
-        
+
         <div className="flex items-end gap-2">
           <div className="flex-1 relative">
             <textarea
@@ -1049,10 +1068,15 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
               <Camera className="h-4 w-4" />
             </button>
           </div>
-          
+
           {isStreaming ? (
-            <button onClick={cancel} className="p-2 bg-error hover:bg-error rounded-lg transition-colors flex-shrink-0">
-              <StopCircle className="h-5 w-5 text-white" />
+            <button
+              type="button"
+              aria-label="Stop"
+              onClick={() => { cancelledRef.current = true; cancel(); }}
+              className="p-2 bg-error hover:bg-error rounded-lg transition-colors flex-shrink-0"
+            >
+              <StopCircle className="h-5 w-5 text-white" aria-hidden="true" />
             </button>
           ) : (
             <button
@@ -1064,13 +1088,26 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
             </button>
           )}
         </div>
-        
-        <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
+
+        {/* The pill sits where the session id used to: the composer footer is
+            the only place left that belongs to the next turn rather than to
+            the transcript. Its popover therefore has to open upward. */}
+        <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
           <span>{isStreaming ? 'Agent working... type to queue' : 'Press Enter to send'}</span>
-          {session && <span>Session: {session.sessionId.slice(0, 8)}...</span>}
+          <ChatModelPill
+            picker={picker}
+            open={pickerOpen}
+            onOpenChange={(next) => {
+              setPickerOpen(next);
+              if (!next) setPickerQuery(undefined);
+            }}
+            initialQuery={pickerQuery}
+            onOpenSettings={onOpenModelSettings}
+            popoverClassName="absolute right-0 bottom-full mb-1 w-96 z-50"
+          />
         </div>
       </div>
-      
+
       {session?.pendingConfirmation && (
         <ConfirmationDialog
           confirmation={session.pendingConfirmation}

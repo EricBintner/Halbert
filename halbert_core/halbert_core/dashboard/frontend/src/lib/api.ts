@@ -10,6 +10,12 @@
  */
 
 import { apiBase, apiUrl } from './apiBase'
+import {
+  pageFromServer,
+  threadFromServer,
+  type TimelineCurrentThread,
+  type TimelinePage,
+} from '../types/timeline'
 
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${apiBase()}${path}`, {
@@ -89,48 +95,6 @@ export const api = {
 
   getBackupHistory(backupName: string, limit = 50) {
     return request(`/api/discoveries/backup/${encodeURIComponent(backupName)}/history?limit=${limit}`)
-  },
-
-  // -----------------------------------------------------------------
-  // Conversations
-  // -----------------------------------------------------------------
-  listConversations() {
-    return request('/api/conversations')
-  },
-
-  createConversation(name?: string) {
-    return request('/api/conversations', {
-      method: 'POST',
-      body: JSON.stringify({ name }),
-    })
-  },
-
-  getConversation(id: string) {
-    return request(`/api/conversations/${encodeURIComponent(id)}`)
-  },
-
-  renameConversation(id: string, name: string) {
-    return request(`/api/conversations/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ name }),
-    })
-  },
-
-  deleteConversation(id: string) {
-    return request(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' })
-  },
-
-  addMessageToConversation(
-    conversationId: string,
-    role: string,
-    content: string,
-    mentions: string[] = [],
-    reasoning?: string,
-  ) {
-    return request(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({ role, content, mentions, reasoning }),
-    })
   },
 
   // -----------------------------------------------------------------
@@ -352,21 +316,36 @@ export const api = {
     })
   },
 
-  // -----------------------------------------------------------------
-  // Agent conversations (Phase 36 agent path)
-  // -----------------------------------------------------------------
-  listAgentConversations() {
-    return request('/api/agent/conversations')
+  // -----------------------------------------------------------------------
+  // Timeline (continuous conversation, Plan A): one conversation, paged.
+  // -----------------------------------------------------------------------
+  getTimeline(params: { before?: string; around?: string; limit?: number } = {}): Promise<TimelinePage> {
+    const qs = new URLSearchParams()
+    if (params.before) qs.set('before', params.before)
+    if (params.around) qs.set('around', params.around)
+    if (params.limit) qs.set('limit', String(params.limit))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request(`/api/agent/timeline${suffix}`).then(pageFromServer)
   },
 
-  getAgentConversation(conversationId: string) {
-    return request(`/api/agent/conversations/${encodeURIComponent(conversationId)}`)
+  getCurrentThread(): Promise<TimelineCurrentThread | null> {
+    return request('/api/agent/thread/current').then(threadFromServer)
   },
 
-  deleteAgentConversation(conversationId: string) {
-    return request(`/api/agent/conversations/${encodeURIComponent(conversationId)}`, {
-      method: 'DELETE',
-    })
+  retractRecall(threadId: string, recalledThreadId: string): Promise<{ ok: boolean }> {
+    return request(
+      `/api/agent/thread/${encodeURIComponent(threadId)}/recall/${encodeURIComponent(recalledThreadId)}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  /**
+   * "Forget this": the server replaces the row's content and tool blocks
+   * with "[redacted by admin]", rewrites its FTS row and regenerates the
+   * thread's receipt (spec §5). Rows are never deleted.
+   */
+  redactMessage(messageId: number): Promise<{ ok: boolean }> {
+    return request(`/api/agent/message/${encodeURIComponent(String(messageId))}/redact`, { method: 'POST' })
   },
 
   // -----------------------------------------------------------------

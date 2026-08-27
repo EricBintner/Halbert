@@ -309,3 +309,69 @@ class TestStateMachineForwarding:
         params = inspect.signature(CRAGEvaluator.evaluate).parameters
         assert "model_override" in params
         assert "tier_override" in params
+
+
+#: The continuity preamble + a plausible hint, as ``_build_messages`` glues
+#: them to the front of the final user message since merge decision D1.
+HINT_TAIL = (
+    "You have one continuous conversation with the admin. Your working "
+    "context is the current subject. Earlier subjects listed below may "
+    "matter; call `recall_thread` when one does. Call `new_thread` when the "
+    "subject changes; a question you can answer in one reply does not need a "
+    "new thread.\n\n"
+    "<continuity>\nThread: \"nightly backup job\" · you were diagnosing "
+    "why last night's run failed and analysing the journal.\n</continuity>"
+)
+
+
+class TestTheRouterScoresTheQuestion:
+    """Which model answers must not be decided by text the user never wrote.
+
+    D1 put the continuity hint at the front of the final user message, and the
+    adapter scored ``messages[-1]``. The route sizes the history budget from
+    the bare message (``_answering_model``), so the same turn was routed on one
+    text and budgeted on another.
+    """
+
+    def test_the_hint_alone_crosses_the_escalation_threshold(self):
+        """The defect is real, not theoretical: the tail carries the score."""
+        from halbert_core.model.client import score_query_complexity
+        assert score_query_complexity(TRIVIAL) < 0.5
+        assert score_query_complexity(f"{HINT_TAIL}\n\n{TRIVIAL}") >= 0.5
+
+    @pytest.mark.parametrize("method", ["chat", "stream"])
+    def test_both_adapter_methods_take_the_routing_prompt(self, method):
+        import inspect
+        params = inspect.signature(
+            getattr(agent_routes.LLMClientAdapter, method)).parameters
+        assert "routing_prompt" in params
+        assert params["routing_prompt"].default is None
+
+    @pytest.mark.asyncio
+    async def test_a_hinted_turn_routes_where_its_bare_question_routes(self, slots):
+        adapter = agent_routes.LLMClientAdapter()
+        messages = [
+            {"role": "system", "content": "INSTRUCTIONS"},
+            {"role": "user", "content": f"{HINT_TAIL}\n\n{TRIVIAL}"},
+        ]
+        answered = []
+
+        def _fake_call(**kwargs):
+            answered.append(kwargs["model"])
+            return {"content": "ok"}
+
+        with patch("halbert_core.model.client.call_llm_chat", _fake_call):
+            await adapter.chat(messages, routing_prompt=TRIVIAL)
+        assert answered == [GUIDE[0]]
+
+        # Without it, the hint alone escalates the turn.
+        answered.clear()
+        with patch("halbert_core.model.client.call_llm_chat", _fake_call):
+            await adapter.chat(messages)
+        assert answered == [SPECIALIST[0]]
+
+    def test_the_budget_and_the_answering_model_describe_one_turn(self, slots):
+        """``_answering_model`` budgets from the bare message, so the
+        answering path has to score the same text for the two to agree."""
+        assert agent_routes._answering_model(TRIVIAL) == GUIDE[0]
+        assert agent_routes._answering_model(COMPLEX) == SPECIALIST[0]

@@ -335,46 +335,6 @@ Triggers a fresh system discovery scan.
 
 ---
 
-## Conversations API
-
-### List Conversations
-
-```
-GET /api/conversations
-```
-
-### Create Conversation
-
-```
-POST /api/conversations
-Content-Type: application/json
-
-{"name": "Troubleshooting disk", "persona": "guide"}
-```
-
-### Get Conversation
-
-```
-GET /api/conversations/{id}
-```
-
-### Delete Conversation
-
-```
-DELETE /api/conversations/{id}
-```
-
-### Add Message
-
-```
-POST /api/conversations/{id}/messages
-Content-Type: application/json
-
-{"role": "user", "content": "Message text", "mentions": []}
-```
-
----
-
 ## Settings API
 
 ### Endpoints

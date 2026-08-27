@@ -62,7 +62,13 @@ function route(ollamaRunning = true) {
 
 
 /** Mirrors how AgentChat owns the picker and hands it to the pill. */
-function Harness({ onSelected }: { onSelected?: (s: ModelSelection) => void }) {
+function Harness({
+  onSelected,
+  popoverClassName,
+}: {
+  onSelected?: (s: ModelSelection) => void
+  popoverClassName?: string
+}) {
   const picker = useModelPicker({
     transport: modelPickerTransport,
     roles: HALBERT_MODEL_ROLES,
@@ -80,6 +86,7 @@ function Harness({ onSelected }: { onSelected?: (s: ModelSelection) => void }) {
         open={open}
         onOpenChange={setOpen}
         onSelected={onSelected}
+        popoverClassName={popoverClassName}
       />
     </>
   )
@@ -146,6 +153,38 @@ describe('ChatModelPill', () => {
 
     await userEvent.click(await screen.findByRole('option', { name: /model-b/ }))
     await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'))
+  })
+
+  it('opens downward by default', async () => {
+    render(<Harness />)
+    const trigger = await screen.findByRole('combobox')
+    await userEvent.click(trigger)
+    const popover = await waitFor(() => {
+      const el = document.querySelector('[data-model-picker-popover]')
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
+    expect(popover.className).toContain('top-full')
+    expect(popover.className).toContain('bg-muted')
+  })
+
+  it('lets the composer flip the popover upward without losing the surface', async () => {
+    // The pill sits in the composer footer, where a 384x384 popover opening
+    // downward is off the bottom of the window. Only the position half is a
+    // caller's to override — the background, border, scroll and padding are
+    // the component's.
+    render(<Harness popoverClassName="absolute right-0 bottom-full mb-1 w-96 z-50" />)
+    const trigger = await screen.findByRole('combobox')
+    await userEvent.click(trigger)
+    const popover = await waitFor(() => {
+      const el = document.querySelector('[data-model-picker-popover]')
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
+    expect(popover.className).toContain('bottom-full')
+    expect(popover.className).not.toContain('top-full')
+    expect(popover.className).toContain('bg-muted')
+    expect(popover.className).toContain('overflow-y-auto')
   })
 })
 

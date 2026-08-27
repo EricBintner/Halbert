@@ -19,6 +19,7 @@ from .blocks import content_to_text
 from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep, ConversationStatus
 from .events import StreamEvent
 from ..streaming.terminal_bridge import get_terminal_event_bus
+from ..tools.safety import THREAD_META_TOOLS
 
 if TYPE_CHECKING:
     from ..tools.safety import ToolSafetyFramework
@@ -40,6 +41,29 @@ def _subagent_terminal(status: str) -> bool:
 # from crowding out everything else before that budgeting happens.
 _TOOL_RESULT_CHARS = 2000
 
+# Per-receipt ceiling for the recalled-subjects block appended to the PLANNING
+# prompt. Tighter than RESPONDING's (which renders a receipt whole, up to
+# threads.RECEIPT_ROW_MAX): the block is appended after the assembler has
+# already spent its budget, so it is overspend by construction, and PLANNING
+# only has to decide whether an earlier subject is worth searching or
+# answering from — the whole receipt still reaches the answer prompt.
+_PLANNING_RECEIPT_CHARS = 700
+
+
+def _recalled_block_name() -> str:
+    """The name of the prompt block the recalled receipts are rendered in.
+
+    recall_thread's observation points the model at that block, so the name is
+    read from the renderer's own header rather than typed twice: reworded on
+    one side only, the sentence would send the model looking for a section
+    that no longer exists — the failure this whole fix is about.
+    """
+    try:
+        from ..prompts.agent_prompts import RECALLED_SECTION_HEADER
+    except Exception:  # pragma: no cover - import cycle guard
+        return "Earlier subjects recalled"
+    return RECALLED_SECTION_HEADER.lstrip("#").strip()
+
 
 def _merge_adjacent(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Fold consecutive same-role messages into one.
@@ -55,6 +79,47 @@ def _merge_adjacent(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
         merged.append(dict(msg))
     return merged
+
+
+def _defang_system_row(text: str) -> str:
+    """One history row's text, neutralised for the instructions it folds into.
+
+    ``_build_messages`` concatenates any non-user/assistant row straight into
+    ``messages[0]``. That text is untrusted — a thread receipt is built from
+    command stdout, file names and log lines — and in that position an
+    unfenced ``</continuity>`` or a line starting ``##`` reads as a prompt
+    delimiter or a section heading the admin never wrote. Plan A closed that
+    hole inside ``_history_section``; the array replaced the call site, so the
+    fence moves here rather than disappearing.
+
+    The cap is the thread receipt's own producer-side ceiling
+    (``threads.RECEIPT_ROW_MAX``), so the bounded scan matches the row this
+    actually guards. Failure to import the builder is not a reason to send the
+    text through unguarded, so the raw ``<continuity>`` tags are stripped
+    inline as a floor.
+    """
+    text = str(text)
+    try:
+        from ..prompts.agent_prompts import defang_system_text
+        from .threads import RECEIPT_ROW_MAX
+    except Exception:  # pragma: no cover - import cycle guard
+        return re.sub(r"</?\s*continuity\s*>", " ", text, flags=re.IGNORECASE)
+    return defang_system_text(text, RECEIPT_ROW_MAX)
+
+
+def _default_conversation_tokens() -> int:
+    """The conversation bucket a turn gets when the route did not name one.
+
+    Imported inside the function, like every other reach into ``..context``
+    from this module: ``context.assembler`` imports the agent package's
+    ``blocks``/``threads`` helpers, so a module-level import here closes a
+    cycle for no benefit.
+    """
+    try:
+        from ..context.assembler import DEFAULT_CONVERSATION_TOKENS
+    except Exception:  # pragma: no cover - import cycle guard
+        return 800
+    return DEFAULT_CONVERSATION_TOKENS
 
 
 def _format_tool_observation(name: str, args: Any, result: Any) -> str:
@@ -94,7 +159,9 @@ class AgentStateMachine:
         AgentState.PLANNING: [
             AgentState.SEARCHING, AgentState.READING,
             AgentState.EXECUTING, AgentState.REFLECTING,
-            AgentState.RESPONDING, AgentState.ERROR
+            AgentState.RESPONDING, AgentState.ERROR,
+            # Re-entry after an inline thread meta-tool (Plan A, spec §7).
+            AgentState.PLANNING,
         ],
         AgentState.SEARCHING: [AgentState.OBSERVING, AgentState.ERROR],
         AgentState.READING: [AgentState.OBSERVING, AgentState.ERROR],
@@ -111,6 +178,28 @@ class AgentStateMachine:
         AgentState.AWAITING_CONFIRMATION: [AgentState.EXECUTING, AgentState.PLANNING],
         AgentState.ERROR: [AgentState.PLANNING, AgentState.RESPONDING, AgentState.IDLE],
     }
+
+    # How long a queued turn waits for ``turn_lock`` before it gives up with
+    # a visible error. Spec §12 queues a second message behind the running
+    # turn; it does not promise an unbounded wait. The lock is held across
+    # every yield of process(), so a turn that wedges (a model call with no
+    # timeout, or a release missed because a consumer was torn down without
+    # closing the generator) would otherwise hang every later message
+    # forever behind nothing but a "waiting" badge, recoverable only by
+    # restarting the process. Generous enough for a real turn (several
+    # model calls and a long command); overridable per instance in tests.
+    TURN_LOCK_TIMEOUT_S: float = 600.0
+
+    # How many times an inline thread meta-tool may re-enter PLANNING in one
+    # turn. Meta-tools are handled inline and deliberately do not raise
+    # loop_count, so max_loops never ends a PLANNING→PLANNING chain, and
+    # _already_called only stops the *identical* call: a run of meta-tools
+    # with differing arguments would otherwise keep re-planning (a model
+    # round-trip each time) until the oscillation guard fired and ended the
+    # turn with a user-visible error. Two is enough for a legitimate
+    # sequence (recall then resume); the call after that is still handled,
+    # it just answers instead of planning again.
+    MAX_META_TOOL_REENTRIES: int = 2
     
     def __init__(
         self,
@@ -178,10 +267,18 @@ class AgentStateMachine:
         # Cancellation tracking for session interruption
         self.cancelled: Dict[str, bool] = {}
 
-        # Serialises turns — see the turn_lock property.
+        # One turn at a time (spec §12): held for the whole of process() and
+        # confirm_action(), including their cleanup, so a second /message
+        # during a turn waits here instead of the route force-resetting the
+        # machine. Only the *slots* are initialised: the Lock itself is built
+        # lazily by the ``turn_lock`` property below, against the loop that is
+        # actually running. Binding a Lock to ``turn_lock`` here as well would
+        # write through a read-only property and raise ``AttributeError: can't
+        # set attribute 'turn_lock'`` at construction — the process could not
+        # start at all.
         self._turn_lock: Optional[asyncio.Lock] = None
         self._turn_lock_loop = None
-    
+
     @property
     def turn_lock(self) -> asyncio.Lock:
         """One turn at a time.
@@ -193,10 +290,12 @@ class AgentStateMachine:
 
         The whole turn, deliberately, and not just the ``self.ctx`` assignment:
         every handler reads ``self.ctx`` and writes ``self.current_state``
-        across its own awaits, and the route sets ``max_tokens``/
-        ``temperature`` on the one shared LLM adapter, so a lock released
-        before RESPONDING finishes would let the next turn clobber all of it
-        exactly as if there were no lock. The cost is real — a slow turn blocks
+        across its own awaits, and ``_apply_generation_params`` sets
+        ``max_tokens``/``temperature`` on the one shared LLM adapter, so a lock
+        released before RESPONDING finishes would let the next turn clobber all
+        of it exactly as if there were no lock. Those two tweaks are applied
+        here rather than in the route precisely because this lock is what makes
+        writing to the shared adapter safe (merge D5). The cost is real — a slow turn blocks
         every other request until the model times out — and the fix is not a
         narrower lock but per-turn state: pass the ``StateContext`` (and the
         state, and the adapter tweaks) through the handlers instead of hanging
@@ -246,83 +345,591 @@ class AgentStateMachine:
         user_id: str = None,
         conversation_history: List[Dict] = None,
         images: List[str] = None,
+        thread_id: str = None,
+        continuity: str = "",
+        thread_manager=None,
+        *,
         model_override: str = None,
         tier_override: str = None,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        history_budget: Optional[int] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Process a user query through the state machine.
-        
+
         Yields StreamEvents for real-time frontend updates.
-        
+
         Args:
             query: User's question/request
             session_id: Optional session ID (generated if not provided)
             user_id: Optional user ID
-            conversation_history: Previous messages in conversation
-            images: Base64-encoded image attachments
+            conversation_history: Previous messages in conversation. Only a
+                fallback: with a ThreadManager wired ``_begin_turn`` replaces
+                it with the thread's own windowed rows.
+            images: Optional base64 images for the vision model
+            thread_id: Hidden thread this turn belongs to (Plan A); the
+                ThreadManager overrides it when one is wired
+            continuity: The <continuity> hint for this turn ("" when none)
+            thread_manager: ThreadManager that persists the turn (may be None)
             model_override: Exact model name pinned for this turn; bypasses
                 the complexity router
             tier_override: "guide" | "specialist" | "vision" — force a tier
                 without naming a model
-            
+            max_tokens: Generation ceiling for this turn, applied to the
+                shared LLM adapter once this turn owns the lock
+            temperature: Sampling temperature for this turn, same placement
+            history_budget: Conversation-bucket tokens this turn may spend on
+                the thread receipt plus the prior turns. Resolved by the
+                route from the model that will actually answer (a pinned
+                turn's budget is not the default model's), so the state
+                machine never has to import route or picker code to know it.
+
         Yields:
             StreamEvent objects for each state change, tool call, etc.
         """
         session_id = session_id or str(uuid.uuid4())
         request_id = str(uuid.uuid4())
-        
-        # Initialize context
-        self.ctx = StateContext(
-            session_id=session_id,
-            request_id=request_id,
-            user_query=query,
-            user_id=user_id,
-            conversation_history=conversation_history or [],
-            max_loops=self.max_loops,
-            images=images,
-            model_override=model_override,
-            tier_override=tier_override,
+
+        # A second /message during a live turn queues on the lock (the
+        # route no longer force-resets the machine, A11). Tell the UI it
+        # is waiting before blocking (spec §12: "emits conversation_status:
+        # waiting"); the status is the plain string the badge expects.
+        queued = self.turn_lock.locked()
+        if queued:
+            logger.info(f"Session {session_id} waiting for the current turn to finish")
+            yield StreamEvent.conversation_status(
+                session_id, "waiting", waiting_for="previous turn"
+            )
+
+        # One turn at a time (spec §12). Everything below, including the
+        # finally, runs under the lock; asyncio.Lock is not task-bound, so
+        # releasing it from the generator's cleanup is fine whichever task
+        # drives the last step. The wait is bounded (TURN_LOCK_TIMEOUT_S) so
+        # a wedged turn surfaces as an error the user can retry instead of
+        # queueing every later message behind a badge that never changes.
+        if not await self._acquire_turn_lock(session_id):
+            for event in self._turn_lock_timeout_events(session_id):
+                yield event
+            return
+
+        try:
+            # Generation params live on the one shared LLM adapter, so they
+            # are only safe to write once this turn owns it. The route used
+            # to set them under its own lock for exactly that reason; the
+            # machine's lock covers the whole turn, so this placement is
+            # strictly tighter. (The model/tier overrides are different —
+            # they ride on the StateContext below, never on the adapter.)
+            self._apply_generation_params(max_tokens, temperature)
+
+            # A stale flag from an earlier turn on the same session id would
+            # otherwise cancel this one before it began.
+            self.cancelled.pop(session_id, None)
+
+            self._supersede_paused_turn(session_id)
+
+            # Initialize context
+            self.ctx = StateContext(
+                session_id=session_id,
+                request_id=request_id,
+                user_query=query,
+                user_id=user_id,
+                conversation_history=conversation_history or [],
+                max_loops=self.max_loops,
+                images=images,
+                thread_id=thread_id,
+                continuity_hint=continuity or "",
+                thread_manager=thread_manager,
+                model_override=model_override,
+                tier_override=tier_override,
+                history_budget=history_budget or _default_conversation_tokens(),
+            )
+
+            # Phase 3: Run intake pipeline before cognitive tick
+            if self.intake is not None:
+                try:
+                    self.ctx.intake = self.intake.analyze(query)
+                    logger.info(
+                        f"Intake: intent={self.ctx.intake.intent}, "
+                        f"complexity={self.ctx.intake.complexity_score}, "
+                        f"model={self.ctx.intake.recommended_model}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Intake pipeline failed (non-fatal): {e}")
+
+            # Phase D: Inject persona cognition if tick is wired
+            if self.cognition_tick is not None:
+                try:
+                    from ..integrations.cognition_wiring import get_cognition
+                    self.ctx.persona_cognition = get_cognition()
+                except Exception as e:
+                    logger.warning(f"Could not inject persona cognition: {e}")
+
+            # Track active session
+            self.active_sessions[session_id] = self.ctx
+
+            logger.info(f"Starting agent processing: session={session_id}, query={query[:100]}")
+
+            yield StreamEvent.session_started(session_id, request_id)
+
+            # Plan A: persist the user row and resolve the thread before any
+            # model call (spec §4.1-§4.4), under the lock so thread
+            # resolve/open/pause never races another turn.
+            async for event in self._begin_turn():
+                yield event
+
+            try:
+                # A queued caller was told "waiting" before it blocked, and
+                # nothing else on the normal turn path clears that badge —
+                # the frontend reducer just keeps the last status string, so
+                # without this the turn would read "waiting" while it plans,
+                # runs commands and streams, and only flip at the very end.
+                if queued:
+                    yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
+
+                # Inside the try (spec §12): an invalid transition, an
+                # exception in a handler or a consumer that goes away
+                # mid-turn must all reach the cleanup below, otherwise the
+                # machine is stranded mid-state and the next turn cannot
+                # start.
+                yield await self._transition(AgentState.PLANNING)
+                async for event in self._drive():
+                    yield event
+            finally:
+                # end_turn before the state reset: the status is derived
+                # from where the machine stopped (spec §4.7, §12).
+                self._end_turn(self._turn_status(session_id))
+                self._settle_turn(session_id)
+        finally:
+            # _begin_turn() runs before the inner try, so a consumer that goes
+            # away while it is still yielding (stop button, disconnect) never
+            # reaches the finally that ends the turn: the user row would stay
+            # in_progress with no assistant row until the next turn's
+            # mark_interrupted() healed it. End it here instead. This is a
+            # no-op for a turn the inner finally already ended (_end_turn
+            # clears ctx.turn_context) and for one merely paused on a
+            # confirmation (_end_turn returns while AWAITING_CONFIRMATION).
+            # The status cannot come from _turn_status: the machine is still
+            # IDLE at this point, which there means "ran to the end".
+            self._end_turn("interrupted")
+            # Settle before releasing so the next queued turn sees a settled
+            # machine. Repeating _settle_turn is idempotent and it also covers
+            # the sliver between registering the session and entering the try
+            # above: a consumer that goes away exactly there would otherwise
+            # leave the session registered.
+            self._settle_turn(session_id)
+            self.turn_lock.release()
+
+    def _supersede_paused_turn(self, session_id: str) -> None:
+        """A new message while a turn waits on a confirmation abandons it.
+
+        The route used to force-reset the machine (routes/agent.py); now the
+        machine settles itself. The staged HIGH-risk action is never run;
+        when the paused turn was persisted (it carries a TurnContext) it is
+        ended as ``cancelled`` with one block recording the action as
+        "not run — superseded" so the receipt's Commands line carries it
+        (spec §5). Any session left in active_sessions by a previous turn
+        is evicted with it.
+        """
+        if self.current_state == AgentState.IDLE and not self.active_sessions:
+            return
+        for sid in list(self.active_sessions):
+            old_ctx = self.active_sessions.pop(sid, None)
+            if sid != session_id:
+                logger.info(
+                    f"Superseding session {sid} left in "
+                    f"{self.current_state.value} by a new message"
+                )
+            self._record_superseded_turn(old_ctx)
+        self.current_state = AgentState.IDLE
+
+    def _record_superseded_turn(self, old_ctx: Optional[StateContext]) -> None:
+        """End a superseded, persisted turn so its receipt records what the
+        turn did and the action it never ran (spec §5).
+
+        ``ThreadManager.end_turn`` is the only writer of the assistant row —
+        nothing persists blocks as they happen — so everything the abandoned
+        turn already did has to be written here too. A turn that ran ``ls``,
+        spawned a terminal and then paused on ``systemctl restart sshd``
+        keeps the ``ls``, its terminal id and any proposed diff on the
+        receipt; only the staged action is recorded as "not run — superseded".
+
+        No manager or no TurnContext: nothing to do. Never raises.
+        """
+        if old_ctx is None:
+            return
+        tm = getattr(old_ctx, "thread_manager", None)
+        turn = getattr(old_ctx, "turn_context", None)
+        if tm is None or turn is None:
+            return
+        old_ctx.turn_context = None   # ended here, never again
+        pending = old_ctx.pending_confirmation or {}
+        calls = list(old_ctx.tool_calls or [])
+        # The staged call is the one the confirmation names; it is still
+        # status="pending" because it never ran.
+        staged = next((tc for tc in calls if tc.id == pending.get("action_id")), None)
+        if staged is None and pending and calls:
+            staged = calls[-1]
+        blocks: List[Dict[str, Any]] = [
+            self._tool_block(tc)
+            for tc in calls
+            if tc is not staged
+            and tc.status not in ("pending", "running")
+            and tc.name not in THREAD_META_TOOLS
+        ]
+        if pending:
+            args = pending.get("args")
+            if not isinstance(args, dict):
+                args = staged.args if staged is not None and isinstance(staged.args, dict) else {}
+            blocks.append({
+                "tool": str(pending.get("tool", "")),
+                "args": args,
+                "result": "not run — superseded",
+                "exit": None,
+                "status": "superseded",
+            })
+        try:
+            tm.end_turn(
+                turn,
+                assistant_text="".join(old_ctx.response_chunks or []),
+                blocks=blocks,
+                terminal_session_ids=list(old_ctx.terminal_session_ids or []),
+                diff_proposals=[
+                    {"diff_id": diff_id,
+                     **(diff if isinstance(diff, dict) else {"value": diff})}
+                    for diff_id, diff in (old_ctx.pending_diffs or {}).items()
+                ],
+                status="cancelled",
+            )
+        except Exception as e:
+            logger.warning(f"end_turn for a superseded turn failed (non-fatal): {e}")
+
+    def _apply_generation_params(
+        self, max_tokens: Optional[int], temperature: Optional[float]
+    ) -> None:
+        """Write this turn's generation ceiling onto the shared LLM adapter.
+
+        Called only from inside the turn lock. One ``LLMClientAdapter`` is
+        shared by every request, so these are the two per-request tweaks that
+        genuinely cannot live on the ``StateContext`` yet — everything else
+        that varies per turn (the model and tier overrides) already does, and
+        moving these across is a follow-up, not part of this seam.
+
+        ``None`` means "the caller did not say", which keeps whatever the
+        adapter already holds rather than resetting it to a default the
+        caller never chose.
+        """
+        llm = self.llm
+        if llm is None or not hasattr(llm, "max_tokens"):
+            return
+        if max_tokens is not None:
+            llm.max_tokens = max_tokens
+        if temperature is not None:
+            llm.temperature = temperature
+        logger.debug(
+            f"LLM tweaks for this turn: max_tokens={getattr(llm, 'max_tokens', None)}, "
+            f"temperature={getattr(llm, 'temperature', None)}"
         )
 
-        # Phase 3: Run intake pipeline before cognitive tick
-        if self.intake is not None:
-            try:
-                self.ctx.intake = self.intake.analyze(query)
-                logger.info(
-                    f"Intake: intent={self.ctx.intake.intent}, "
-                    f"complexity={self.ctx.intake.complexity_score}, "
-                    f"model={self.ctx.intake.recommended_model}"
-                )
-            except Exception as e:
-                logger.warning(f"Intake pipeline failed (non-fatal): {e}")
+    async def _acquire_turn_lock(self, session_id: str) -> bool:
+        """Take ``turn_lock`` for a turn, bounded by TURN_LOCK_TIMEOUT_S.
 
-        # Phase D: Inject persona cognition if tick is wired
-        if self.cognition_tick is not None:
-            try:
-                from ..integrations.cognition_wiring import get_cognition
-                self.ctx.persona_cognition = get_cognition()
-            except Exception as e:
-                logger.warning(f"Could not inject persona cognition: {e}")
-        
-        # Track active session
-        self.active_sessions[session_id] = self.ctx
-        
-        logger.info(f"Starting agent processing: session={session_id}, query={query[:100]}")
-        
-        yield StreamEvent.session_started(session_id, request_id)
-        
-        # Start processing
-        yield await self._transition(AgentState.PLANNING)
-        
+        True once the lock is held; the caller then owns the release. False
+        when the wait timed out: the caller streams
+        ``_turn_lock_timeout_events()`` and returns without touching the turn
+        that is still running.
+
+        Both entry points wait here, so both are bounded. An unbounded wait
+        in either one hangs the request with no error and no stream close,
+        recoverable only by restarting the process.
+        """
         try:
-            async for event in self._drive():
-                yield event
-        finally:
-            # Cleanup — but keep a paused (awaiting-confirmation) session so
-            # confirm_action() can find it.
-            if (session_id in self.active_sessions
-                    and self.current_state != AgentState.AWAITING_CONFIRMATION):
-                del self.active_sessions[session_id]
+            await asyncio.wait_for(
+                self.turn_lock.acquire(), timeout=self.TURN_LOCK_TIMEOUT_S
+            )
+            return True
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Session {session_id} gave up waiting for the turn lock after "
+                f"{self.TURN_LOCK_TIMEOUT_S:.0f}s (state={self.current_state.value})"
+            )
+            return False
+
+    def _turn_lock_timeout_events(self, session_id: str) -> List[StreamEvent]:
+        """The stream a caller that never got the lock sees: a terminal
+        status for its own badge, a recoverable error, and a closed session.
+
+        The status is the bare factory, deliberately not
+        ``_set_conversation_status``: that one writes through ``self.ctx``,
+        which here still belongs to the turn that is running and holding the
+        lock. Without it the badge would stay on the "waiting" this caller
+        emitted before blocking — the frontend reducer keeps the last status
+        string and neither ``error`` nor ``session_ended`` touches it.
+        """
+        return [
+            StreamEvent.conversation_status(session_id, "error"),
+            StreamEvent.error(
+                session_id,
+                "The previous turn is still running. Try that again in a moment.",
+                recoverable=True,
+            ),
+            StreamEvent.session_ended(session_id, 0, 0),
+        ]
+
+    def _settle_turn(self, session_id: str) -> None:
+        """Cleanup shared by process() and confirm_action().
+
+        A turn paused on AWAITING_CONFIRMATION keeps its session so
+        confirm_action() can find it. Anything else is over: the machine
+        returns to IDLE (also after a mid-turn exception or disconnect,
+        which used to strand it in PLANNING and break the next turn) and
+        the session is evicted.
+        """
+        if self.current_state == AgentState.AWAITING_CONFIRMATION:
+            return
+        self.current_state = AgentState.IDLE
+        self.active_sessions.pop(session_id, None)
+        self.cancelled.pop(session_id, None)
+
+    async def _begin_turn(self) -> AsyncIterator[StreamEvent]:
+        """Persist the user message and resolve the thread (spec §4.1-§4.4).
+
+        Seeds ``ctx`` from the TurnContext: thread id, hint, history
+        (receipt + last raw turns) and any deterministic recall, whose
+        receipt goes in as ``retrieved_context[0]`` with ``source="thread"``.
+        A store failure emits ``thread_store_error`` once and the turn
+        carries on without persistence.
+
+        This is also where the history is *shaped*, exactly once per turn.
+        ``ThreadManager.begin_turn`` returns at most ``HISTORY_ROWS`` (12)
+        rows, but that number is a bound on the store read — so a 4k-row
+        thread is not materialised only to be trimmed — and not the window
+        decision. The window is a token budget, not a row count: six long
+        turns overflow a small local model where twenty short ones do not.
+        The receipt row the manager prefixes is split off here, fitted to
+        its own allowance and parked on ``ctx.thread_receipt_block`` (it is
+        context *about* the conversation, so it belongs in the leading
+        instructions, not mid-array); what is left of the bucket buys the
+        raw turns. ``_build_messages`` does no budgeting of its own: it is
+        called once per LLM call site, twice in a normal turn, and paying
+        for the window twice would be both slower and inconsistent between
+        the two halves of one turn.
+        """
+        tm = self.ctx.thread_manager
+        if tm is None:
+            return
+        sid = self.ctx.session_id
+        try:
+            from ..intake.signals import analyze_message
+            signals = analyze_message(self.ctx.user_query)
+            turn = tm.begin_turn(self.ctx.user_query, signals, sid)
+        except Exception as e:
+            logger.warning(f"begin_turn failed (non-fatal): {e}")
+            yield StreamEvent.thread_store_error(sid, f"begin_turn: {e}")
+            return
+
+        self.ctx.turn_context = turn
+        self.ctx.thread_id = turn.thread_id
+        self.ctx.continuity_hint = turn.hint or ""
+        self.ctx.recalled_threads = list(turn.recalled or [])
+
+        # Function-local, like every other reach into ``..context`` from this
+        # module: context/assembler.py imports the agent package's blocks and
+        # thread helpers, so a module-level import here would close a cycle
+        # to save nothing.
+        from ..context.assembler import (
+            RECEIPT_HEADER,
+            build_conversation_window,
+            fit_receipt,
+            receipt_allowance,
+            split_receipt_row,
+        )
+        from ..context.tokens import TokenCounter
+
+        counter = TokenCounter()
+        # ``process()`` always sets a budget; a directly constructed context
+        # (tests, out-of-tree callers) leaves the field at its 0 default, and
+        # taking that literally would spend nothing and silently send the
+        # model a turn with no history at all.
+        budget = self.ctx.history_budget or _default_conversation_tokens()
+        receipt, turns = split_receipt_row(list(turn.history or []))
+        # Any *other* leading system row the ThreadManager wrote — today that
+        # is the soft landing's '[Previous subject "X", kept for one turn
+        # only; it is not the current task]' note (threads.py
+        # ``_soft_landing``), which labels the six old-subject rows that
+        # follow it. It cannot travel in the window: every path out of
+        # ``build_conversation_window`` opens on a *user* row, so a leading
+        # system row is always discarded, and the six rows it was labelling
+        # then read to the model as the current subject. It goes where the
+        # receipt goes — ``messages[0]`` — for the same reason: it is context
+        # *about* the conversation, not a line anyone said.
+        # Defanged like any other row that lands in the instructions: the
+        # soft landing's own note is built from a fenced title, but this loop
+        # takes whatever leading system row the store hands over.
+        notes: List[str] = []
+        while turns and turns[0].get("role") not in ("user", "assistant"):
+            note = _defang_system_row(
+                content_to_text(turns[0].get("content", ""))
+            ).strip()
+            if note:
+                notes.append(note)
+            turns = turns[1:]
+        self.ctx.thread_receipt_block = ""
+        if receipt:
+            # The receipt and the turns share one bucket and the turns are
+            # what the model is answering, so the receipt may only spend what
+            # they leave — floored so a long history cannot evict it outright.
+            # The −2 is the blank line the header costs once joined.
+            allowance = receipt_allowance(turns, budget, counter)
+            body = fit_receipt(
+                receipt, allowance - counter.count(RECEIPT_HEADER) - 2, counter
+            )
+            if body:
+                self.ctx.thread_receipt_block = RECEIPT_HEADER + body
+        if notes:
+            # After the receipt, never before it: the receipt block owns the
+            # start of what ``_build_messages`` appends (its own '## Earlier
+            # in this subject' heading), and the note is a caveat on the rows
+            # that follow, not a heading of its own. Its cost comes out of the
+            # same bucket, so the window below sees a smaller budget.
+            self.ctx.thread_receipt_block = "\n\n".join(
+                p for p in [self.ctx.thread_receipt_block, *notes] if p
+            )
+        self.ctx.conversation_history = build_conversation_window(
+            turns,
+            query=self.ctx.user_query,
+            max_tokens=max(
+                0, budget - counter.count(self.ctx.thread_receipt_block)
+            ),
+            token_counter=counter,
+        )
+
+        for r in self.ctx.recalled_threads:
+            rid = str(r.get("thread_id", ""))
+            rtitle = str(r.get("title", ""))
+            rdate = str(r.get("date", ""))
+            self.ctx.add_context(
+                source="thread",
+                content=str(r.get("receipt", "")),
+                metadata={
+                    "thread_id": rid, "title": rtitle, "date": rdate,
+                    "match_terms": list(r.get("match_terms") or []),
+                },
+            )
+            yield StreamEvent.thread_recalled(
+                sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="auto",
+                last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
+            )
+
+        yield StreamEvent.turn_persisted(sid, turn.thread_id, turn.turn_id)
+
+    def _turn_status(self, session_id: str) -> str:
+        """``complete`` | ``cancelled`` | ``interrupted`` for the turn ending now.
+
+        Runs before ``_settle_turn`` resets the state: IDLE *after the turn
+        started* means ``_drive`` ran to the end; anything else (an
+        exception, the consumer going away) is an interrupted turn.
+
+        ``self.cancelled`` is load-bearing again, not legacy. The stop button
+        reaches a running turn on a *different* request, and the only thing
+        it can safely touch there is the flag: writing the turn from
+        ``cancel_session`` would persist a truncated record and make this
+        finally's own ``end_turn`` a no-op. ``_drive`` polls the flag between
+        handler steps and between events, so the flag is what ends the turn
+        and what names it here. ``ctx.conversation_status`` carries the same
+        cancellation for the badge and is checked too, because a caller
+        outside this machine may set only that.
+        """
+        cancelled = bool(self.cancelled.get(session_id))
+        try:
+            cancelled = cancelled or (
+                self.ctx.conversation_status.current() == ConversationStatus.CANCELLED
+            )
+        except Exception:
+            pass
+        if cancelled:
+            return "cancelled"
+        if self.current_state == AgentState.IDLE:
+            # IDLE is also the state *before* the first transition, so on
+            # its own it does not mean "ran to the end". The queued
+            # caller's conversation_status is yielded from inside the try
+            # while the machine is still IDLE; a consumer that goes away on
+            # exactly that event would otherwise persist an empty turn as
+            # ``complete`` — and a row that is no longer ``in_progress`` is
+            # one boot's ``mark_interrupted()`` can never heal, unlike the
+            # plain abandonment this would be mistaken for. Every
+            # ``_transition`` appends to ``state_history``, so it is empty
+            # only for a turn that never started.
+            started = bool(getattr(self.ctx, "state_history", None))
+            return "complete" if started else "interrupted"
+        return "interrupted"
+
+    @staticmethod
+    def _tool_block(tc: ToolCall) -> Dict[str, Any]:
+        """One persisted tool block (spec §8 messages.blocks_json)."""
+        result = tc.result
+        if not isinstance(result, (str, int, float, bool, dict, list, type(None))):
+            result = str(result)
+        if isinstance(result, str) and len(result) > 4000:
+            result = result[:4000] + "…"
+        exit_code: Optional[int] = None
+        if tc.name == "run_command":
+            text = tc.result if isinstance(tc.result, str) else ""
+            m = re.match(r"Exit code (-?\d+)", text)
+            if m:
+                exit_code = int(m.group(1))
+            elif tc.status == "success":
+                exit_code = 0
+        return {
+            "tool": tc.name,
+            "args": tc.args if isinstance(tc.args, dict) else {"value": str(tc.args)},
+            "result": result,
+            "exit": exit_code,
+            "execution_id": tc.id,
+            "status": tc.status,
+            "error": tc.error,
+        }
+
+    def _end_turn(self, status: str) -> None:
+        """Hand the finished turn to the ThreadManager (spec §4.7).
+
+        Skipped while the turn is merely paused on a confirmation (the
+        TurnContext stays on ctx; confirm_action's finally ends it).
+        Thread meta-tool calls are not blocks. Never raises, and calling it
+        twice for one turn is a no-op (the TurnContext is cleared before the
+        write), so process()'s outer finally can safely end a turn that was
+        abandoned before the inner try was ever entered.
+        """
+        if self.current_state == AgentState.AWAITING_CONFIRMATION:
+            return
+        ctx = self.ctx
+        if ctx is None:
+            return
+        tm = ctx.thread_manager
+        turn = ctx.turn_context
+        if tm is None or turn is None:
+            return
+        ctx.turn_context = None
+        blocks = [
+            self._tool_block(tc) for tc in ctx.tool_calls
+            if tc.name not in THREAD_META_TOOLS
+        ]
+        diffs = [
+            {"diff_id": diff_id, **(diff if isinstance(diff, dict) else {"value": diff})}
+            for diff_id, diff in ctx.pending_diffs.items()
+        ]
+        try:
+            tm.end_turn(
+                turn,
+                assistant_text="".join(ctx.response_chunks),
+                blocks=blocks,
+                terminal_session_ids=list(ctx.terminal_session_ids),
+                diff_proposals=diffs,
+                status=status,
+                thread_id_override=ctx.thread_id if ctx.thread_switched else None,
+            )
+        except Exception as e:
+            logger.warning(f"end_turn failed (non-fatal): {e}")
 
     async def _drive(self) -> AsyncIterator[StreamEvent]:
         """Run the state machine from ``self.current_state`` until it settles.
@@ -332,13 +939,29 @@ class AgentStateMachine:
         otherwise confirming an action executes the tool and then goes quiet
         (no observation, no answer, no ``session_ended``).
 
-        Ends on IDLE (turn finished) or on AWAITING_CONFIRMATION (turn paused,
-        session deliberately left in ``active_sessions``). Caller owns session
-        eviction.
+        Ends on IDLE (turn finished), on AWAITING_CONFIRMATION (turn paused,
+        session deliberately left in ``active_sessions``), or on the stop
+        button. Caller owns session eviction.
+
+        The cancellation poll lives here rather than in the route because
+        this is the only loop that sees both seams: between handler *steps*
+        (a turn stopped during a long command must not go on to plan and
+        answer) and between the events one handler yields (a turn stopped
+        mid-stream must stop mid-stream). The route used to poll only the
+        latter, so a route that no longer wraps the turn — and a caller that
+        is not a route at all — lost the stop button entirely. Returning here
+        leaves the write to ``process()``'s finally, which has the text and
+        blocks the turn actually finished with; ``_turn_status`` reads the
+        same flag and names the turn ``cancelled``.
         """
         session_id = self.ctx.session_id
 
         while self.current_state != AgentState.IDLE:
+            if self.cancelled.get(session_id):
+                logger.info(f"Session {session_id} cancelled between steps")
+                yield StreamEvent.cancelled(session_id)
+                return
+
             if self.current_state == AgentState.AWAITING_CONFIRMATION:
                 # Blocking state: end this SSE stream and keep the session
                 # in active_sessions so confirm_action() can resume it.
@@ -380,6 +1003,15 @@ class AgentStateMachine:
                 try:
                     async for event in handler():
                         yield event
+                        # Between events, so the stop button can cut a
+                        # response that is still streaming rather than only
+                        # one that has finished.
+                        if self.cancelled.get(session_id):
+                            logger.info(
+                                f"Session {session_id} cancelled mid-{self.current_state.value}"
+                            )
+                            yield StreamEvent.cancelled(session_id)
+                            return
                 except Exception as e:
                     logger.error(f"Handler error in {self.current_state}: {e}")
                     self.ctx.error = str(e)
@@ -417,7 +1049,13 @@ class AgentStateMachine:
         self,
         session_id: str,
         action_id: str,
-        confirmed: bool
+        confirmed: bool,
+        *,
+        model_override: str = None,
+        tier_override: str = None,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        history_budget: Optional[int] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Handle user confirmation for high-risk actions.
@@ -432,94 +1070,148 @@ class AgentStateMachine:
             session_id: Session ID
             action_id: Action execution ID
             confirmed: Whether user confirmed the action
+            model_override: Same per-turn overrides ``process()`` takes. The
+                confirmation is a separate HTTP request, so the route has to
+                resolve them again and hand them back; anything left unsaid
+                keeps what the paused turn already decided rather than
+                silently reverting the resumed half to a default.
+            tier_override: See ``model_override``
+            max_tokens: Generation ceiling, applied to the shared adapter
+                once this call owns the turn lock
+            temperature: Sampling temperature, same placement
+            history_budget: Conversation-bucket tokens; only relevant if a
+                later re-plan reshapes the window
 
         Yields:
             StreamEvent objects
         """
-        if session_id not in self.active_sessions:
-            yield StreamEvent.error(session_id, "Session not found", recoverable=False)
-            return
-        
-        self.ctx = self.active_sessions[session_id]
-        
-        if not self.ctx.pending_confirmation:
-            yield StreamEvent.error(session_id, "No pending confirmation")
-            return
-        
-        if self.ctx.pending_confirmation.get("action_id") != action_id:
-            yield StreamEvent.error(session_id, "Action ID mismatch")
-            return
-        
-        try:
-            if confirmed:
-                # Execute the confirmed action
-                self.ctx.pending_confirmation["confirmed"] = True
-                # Approval granted: resume working (A2c)
-                yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
-                yield await self._transition(AgentState.EXECUTING)
-            else:
-                # User rejected - go back to planning
-                self.ctx.pending_confirmation = None
-                # Settle the rejected call and name it in the observation.
-                # A bare "User rejected the action" told the next PLANNING pass
-                # nothing about *what* was refused, and left the call at
-                # status="pending" so _already_called() could not stop the model
-                # proposing the identical command again.
-                rejected = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
-                if rejected is not None and rejected.id == action_id:
-                    rejected.status = "error"
-                    rejected.error = "rejected by user"
-                    self.ctx.add_observation(
-                        f"The user refused to run {rejected.name}({rejected.args}). "
-                        "Do not propose it again; answer without it or suggest "
-                        "a different approach."
-                    )
-                else:
-                    self.ctx.add_observation("User rejected the action")
-                # Rejection resumes the conversation (the agent re-plans and still
-                # responds), so this is IN_PROGRESS, not a terminal CANCELLED.
-                # True cancellation is cancel_session() below. (A2c)
-                yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
-                yield await self._transition(AgentState.PLANNING)
-
-            # Resume the turn. Running only _handle_executing() here stopped
-            # the machine dead at OBSERVING: the tool ran but the user never
-            # got an answer, and the stream never closed. _drive() is the same
-            # loop process() uses, so a resumed turn finishes like any other.
-            async for event in self._drive():
+        # Bounded acquire + explicit release rather than ``async with``: the
+        # UI aborts the paused turn's SSE and POSTs /confirm immediately, so
+        # that generator may still be closing (and holding the lock) when we
+        # arrive. That is normally milliseconds, but a wedged turn must not
+        # make /confirm hang forever with nothing to show for it.
+        if not await self._acquire_turn_lock(session_id):
+            for event in self._turn_lock_timeout_events(session_id):
                 yield event
+            return
+
+        # The adapter is shared, so this waits for the lock like everything
+        # else that writes to it.
+        self._apply_generation_params(max_tokens, temperature)
+
+        try:
+            if session_id not in self.active_sessions:
+                yield StreamEvent.error(session_id, "Session not found", recoverable=False)
+                return
+
+            self.ctx = self.active_sessions[session_id]
+            # Only what the caller actually named: the resumed turn keeps the
+            # model it was already answering with otherwise.
+            if model_override is not None:
+                self.ctx.model_override = model_override
+            if tier_override is not None:
+                self.ctx.tier_override = tier_override
+            if history_budget:
+                self.ctx.history_budget = history_budget
+            # A stop pressed while the confirmation dialog was open must not
+            # cancel the turn the user has just approved.
+            self.cancelled.pop(session_id, None)
+
+            if not self.ctx.pending_confirmation:
+                yield StreamEvent.error(session_id, "No pending confirmation")
+                return
+
+            if self.ctx.pending_confirmation.get("action_id") != action_id:
+                yield StreamEvent.error(session_id, "Action ID mismatch")
+                return
+
+            try:
+                if confirmed:
+                    # Execute the confirmed action
+                    self.ctx.pending_confirmation["confirmed"] = True
+                    # Approval granted: resume working (A2c)
+                    yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
+                    yield await self._transition(AgentState.EXECUTING)
+                else:
+                    # User rejected - go back to planning
+                    self.ctx.pending_confirmation = None
+                    # Settle the rejected call and name it in the observation.
+                    # A bare "User rejected the action" told the next PLANNING pass
+                    # nothing about *what* was refused, and left the call at
+                    # status="pending" so _already_called() could not stop the model
+                    # proposing the identical command again.
+                    rejected = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
+                    if rejected is not None and rejected.id == action_id:
+                        rejected.status = "error"
+                        rejected.error = "rejected by user"
+                        self.ctx.add_observation(
+                            f"The user refused to run {rejected.name}({rejected.args}). "
+                            "Do not propose it again; answer without it or suggest "
+                            "a different approach."
+                        )
+                    else:
+                        self.ctx.add_observation("User rejected the action")
+                    # Rejection resumes the conversation (the agent re-plans and still
+                    # responds), so this is IN_PROGRESS, not a terminal CANCELLED.
+                    # True cancellation is cancel_session() below. (A2c)
+                    yield self._set_conversation_status(ConversationStatus.IN_PROGRESS)
+                    yield await self._transition(AgentState.PLANNING)
+
+                # Resume the turn. Running only _handle_executing() here stopped
+                # the machine dead at OBSERVING: the tool ran but the user never
+                # got an answer, and the stream never closed. _drive() is the same
+                # loop process() uses, so a resumed turn finishes like any other.
+                async for event in self._drive():
+                    yield event
+            finally:
+                # end_turn before the state reset: the status is derived
+                # from where the machine stopped (spec §4.7, §12).
+                self._end_turn(self._turn_status(session_id))
+                self._settle_turn(session_id)
         finally:
-            # The paused session was kept in active_sessions only so this
-            # method could find it. Evict it now unless the machine paused
-            # again on another confirmation.
-            if (session_id in self.active_sessions
-                    and self.current_state != AgentState.AWAITING_CONFIRMATION):
-                del self.active_sessions[session_id]
-    
+            self.turn_lock.release()
+
     def cancel_session(self, session_id: str) -> bool:
         """Cancel an active session.
 
-        Raising the ``cancelled`` flag is what actually stops the turn: this
-        runs on a *different* request while the SSE handler is mid-stream, and
-        that handler polls the flag between events. Evicting the session alone
-        left the stream running to completion — the user pressed stop and the
-        model kept answering.
+        Raising the ``cancelled`` flag is what actually stops a *running*
+        turn: this runs on a different request while the turn is mid-flight,
+        and ``_drive`` polls the flag between handler steps and between the
+        events one handler yields. Evicting the session instead left the
+        stream running to completion — the user pressed stop and the model
+        kept answering — and writing the turn from here would persist a
+        truncated record and make ``process()``'s own ``end_turn`` a no-op.
+        So for a running turn this raises the flag and touches nothing else:
+        ``process()``'s finally ends the turn ``cancelled`` and settles the
+        machine, with the text, blocks and terminal ids it really finished
+        with.
+
+        A turn paused on a confirmation is the exception, and the reason
+        there is any teardown here at all. Its SSE stream has already closed,
+        so no finally will ever run for it again: dropping the session
+        without ending the turn left the persisted user row ``in_progress``
+        forever — ``confirm_action`` is never called for it, and the next
+        message's ``_supersede_paused_turn`` can no longer find the session
+        to end it. It is ended exactly as a superseded pause is (cancelled,
+        with the staged action recorded as never run, spec §5).
         """
-        if session_id in self.active_sessions:
-            ctx = self.active_sessions[session_id]
-            self.cancelled[session_id] = True
-            # User-facing status: cancelled (A2c). Guard against an already-
-            # terminal conversation (e.g. already SUCCESS/ERROR).
-            if not ctx.conversation_status.is_terminal():
-                try:
-                    ctx.conversation_status.transition(ConversationStatus.CANCELLED)
-                except ValueError:
-                    pass
+        if session_id not in self.active_sessions:
+            return False
+        ctx = self.active_sessions[session_id]
+        self.cancelled[session_id] = True
+        # User-facing status: cancelled (A2c). Guard against an already-
+        # terminal conversation (e.g. already SUCCESS/ERROR).
+        if not ctx.conversation_status.is_terminal():
+            try:
+                ctx.conversation_status.transition(ConversationStatus.CANCELLED)
+            except ValueError:
+                pass
+        if self.current_state == AgentState.AWAITING_CONFIRMATION:
+            self._record_superseded_turn(ctx)
             del self.active_sessions[session_id]
             self.current_state = AgentState.IDLE
-            return True
-        return False
-    
+        return True
+
     def _detect_oscillation(self) -> bool:
         """Detect A→B→A→B pattern indicating infinite loop."""
         h = self.ctx.state_history
@@ -590,6 +1282,10 @@ class AgentStateMachine:
             approval_request_id=block.approval_request_id,
             action_id=block.action_id,
             reflection_id=block.reflection_id,
+            # Somatic blocks are tagged with the hidden thread (spec §8);
+            # the event's session_id stays per turn for routing. Before a
+            # thread exists (no manager) the turn's session id stands in.
+            thread_id=self.ctx.thread_id or self.ctx.session_id,
         )
         try:
             from ..proactive.events import ProactiveEvent, get_event_bus
@@ -597,7 +1293,10 @@ class AgentStateMachine:
                 type="somatic_block",
                 severity="info",
                 title=f"Block {event.data['block_type']}: {event.data['status']}",
-                body=f"session={block.session_id} block={block.id}",
+                body=(
+                    f"session={block.session_id} "
+                    f"thread={self.ctx.thread_id or self.ctx.session_id} block={block.id}"
+                ),
             )
             await get_event_bus().publish(pe)
         except Exception as e:
@@ -686,7 +1385,7 @@ class AgentStateMachine:
     # State Handlers
     # -------------------------------------------------------------------------
     
-    def _build_messages(self, prompt: str) -> List[Dict[str, Any]]:
+    def _build_messages(self, prompt: str, tail: str = "") -> List[Dict[str, Any]]:
         """Instructions, then the prior turns, then the new question.
 
         Conversation lives in this array and nowhere else: the context
@@ -695,24 +1394,103 @@ class AgentStateMachine:
         into ``prompt`` would send earlier turns twice — once as prose and once
         as messages — for no extra meaning.
 
-        A summary of turns the budget dropped arrives with role ``system``; it
-        is folded into the leading instructions rather than left mid-array,
-        because it is context about the conversation and not a line anyone
-        said, and because one system message at the front is the only shape
-        every provider path agrees on.
+        ``ctx.thread_receipt_block`` — the "Earlier in this subject" summary
+        of the turns this thread's window could not afford — joins the
+        leading instructions rather than sitting mid-array, because it is
+        context *about* the conversation and not a line anyone said, and
+        because one system message at the front is the only shape every
+        provider path agrees on. A ``system`` row that survives on
+        ``conversation_history`` (a resumed subject's receipt, a summary from
+        an older store) is folded in the same way, as a safety net — and
+        defanged on the way in. That row is untrusted text (a receipt is built
+        from command stdout and log lines) and it is being concatenated into
+        the instructions, which is precisely the position
+        ``AgentPromptBuilder._defang_continuity`` /
+        ``_defang_line_markers`` exist to protect; before the merge they
+        guarded it inside ``_history_section``, which this array replaced.
+
+        ``tail`` is the continuity hint, and it is glued to the front of the
+        final user message instead of being built into ``prompt``. A10 put it
+        at the tail of the prose for a reason — a local model whose context
+        window is too small drops the *head* of what it is sent — and array
+        position now serves that purpose better than prose position: the hint
+        travels with the question, which is the one thing the model must
+        still see. Note the order: ``_merge_adjacent`` runs *after* the glue,
+        so a stranded unanswered user turn folds in ahead of the hint. That
+        is correct — the hint stays adjacent to the query it qualifies.
         """
         messages: List[Dict[str, Any]] = [{"role": "system", "content": prompt}]
+        if self.ctx.thread_receipt_block:
+            messages[0]["content"] += "\n\n" + self.ctx.thread_receipt_block
         for msg in (self.ctx.conversation_history or []):
             content = content_to_text(msg.get("content", ""))
             if not content.strip():
                 continue
             role = msg.get("role", "user")
             if role not in ("user", "assistant"):
-                messages[0]["content"] += "\n\n" + content
+                messages[0]["content"] += "\n\n" + _defang_system_row(content)
                 continue
             messages.append({"role": role, "content": content})
-        messages.append({"role": "user", "content": self.ctx.user_query})
+        query = self.ctx.user_query
+        messages.append({
+            "role": "user",
+            "content": f"{tail}\n\n{query}" if tail else query,
+        })
         return _merge_adjacent(messages)
+
+    def _tools_supported(self) -> Optional[bool]:
+        """Whether the model answering THIS turn can call tools (A9d + P3).
+
+        ``self.llm.tools_supported`` answers for the models the adapter routes
+        to *by configuration* — the guide and the specialist. A per-turn pin
+        is neither: it is resolved from ``StateContext``, where every other
+        per-turn override lives (E-2), and the shared adapter must not be told
+        about it, because one adapter serves every concurrent request. So a
+        pinned model that had rejected tool schemas still read as "unknown"
+        and the preamble went on telling it to call ``recall_thread`` —
+        exactly the instruction A9d exists to withhold.
+
+        The narrowing is asked of the adapter (``tools_supported_for``), not
+        computed here: which model a *tier* pin resolves to is the route's
+        answer to give (D4), and a client without the hook — every test
+        double, MockLLMClient — falls back to the plain property.
+        """
+        supported = getattr(self.llm, "tools_supported", None)
+        if not self.ctx:
+            return supported
+        pin = self.ctx.model_override or self.ctx.tier_override
+        narrow = getattr(self.llm, "tools_supported_for", None)
+        if not pin or not callable(narrow):
+            return supported
+        try:
+            return narrow(
+                model_override=self.ctx.model_override,
+                tier_override=self.ctx.tier_override,
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug(f"Per-turn tool support unavailable: {e}")
+            return supported
+
+    def _continuity_tail(self) -> str:
+        """This turn's continuity hint as the tail of the final user message.
+
+        Empty when there is no hint or no prompt builder. The builder still
+        owns the wording (voice preamble + hint, and the no-tools variant of
+        the preamble when the client fell back); only where it lands changed.
+        ``_continuity_section`` returns the two parts as a list, never a
+        string.
+        """
+        if not self.prompts or not self.ctx.continuity_hint:
+            return ""
+        try:
+            parts = self.prompts._continuity_section(
+                self.ctx.continuity_hint,
+                self._tools_supported(),
+            )
+        except Exception as e:  # pragma: no cover - builder without the hook
+            logger.debug(f"Continuity section unavailable: {e}")
+            return ""
+        return "\n\n".join(parts) if parts else ""
 
     async def _handle_planning(self) -> AsyncIterator[StreamEvent]:
         """
@@ -739,30 +1517,57 @@ class AgentStateMachine:
                 len(assembled.sources),
                 assembled.total_tokens
             )
-        
-        # Build prompt
+
+        # The receipts recall_thread put on the retrieved context reach
+        # RESPONDING through build_response_prompt, but ContextAssembler.assemble
+        # takes no parameter that carries them — so the PLANNING pass the
+        # re-entry pays for saw the recalled subjects' names next to an
+        # observation telling the model their receipts were "in the available
+        # context", and, with no assembler wired, next to a literal
+        # "Available context: (none)" (review: Plan A / A9b). Appended here,
+        # after the assembled content and on both prompt paths, so that
+        # sentence is true of the prompt the model actually reads.
+        receipt_block = self._receipt_block(_PLANNING_RECEIPT_CHARS)
+        if receipt_block:
+            context_content = (
+                f"{context_content}\n\n{receipt_block}" if context_content else receipt_block
+            )
+
+        # Build prompt. The continuity hint is deliberately NOT passed in:
+        # it rides the last message of the array instead (see
+        # _build_messages), so it is adjacent to the question rather than
+        # buried in a prose block that a small context window may cut.
         if self.prompts:
             prompt = self.prompts.build_planning_prompt(
                 query=self.ctx.user_query,
                 context=context_content,
-                plan=[p.to_dict() for p in self.ctx.plan]
+                plan=[p.to_dict() for p in self.ctx.plan],
+                # False once the client fell back to a no-tools retry (spec
+                # §7): the preamble then omits the tool instruction. Narrowed
+                # to this turn's pinned model where there is one (see
+                # ``_tools_supported``).
+                tools_supported=self._tools_supported(),
             )
         else:
             prompt = self._build_simple_planning_prompt(context_content)
-        
+
         # Call LLM
         tool_schemas = self.tools.get_schemas() if self.tools else []
-        
+
         # ``images`` is threaded here as well as in RESPONDING: without it the
         # two halves of one turn resolve different models, so the planner
         # decides what to do about a picture it cannot see.
         response = await self.llm.chat(
-            messages=self._build_messages(prompt),
+            messages=self._build_messages(prompt, tail=self._continuity_tail()),
             tools=tool_schemas,
             intake_result=self.ctx.intake if self.ctx else None,
             images=self.ctx.images if self.ctx else None,
             model_override=self.ctx.model_override if self.ctx else None,
             tier_override=self.ctx.tier_override if self.ctx else None,
+            # What the complexity router scores. The final message is the
+            # question with the continuity hint glued to its front (D1), and
+            # routing on that picked the specialist for "hi".
+            routing_prompt=self.ctx.user_query if self.ctx else "",
         )
         
         # Parse plan if present
@@ -777,17 +1582,22 @@ class AgentStateMachine:
             )
         
         # CRAG evaluation if we have retrieved context
-        if self.crag and self.ctx.retrieved_context:
+        crag_documents = self._retrieval_documents()
+        if self.crag and crag_documents:
+            # ``crag_documents``, not ``retrieved_context``: thread receipts
+            # are continuity, not retrieval, and scoring them switched CRAG
+            # on for turns that had retrieved nothing. The overrides ride
+            # along so the evaluator uses the same model the turn does.
             crag_result = await self.crag.evaluate(
                 self.ctx.user_query,
-                self.ctx.retrieved_context,
+                crag_documents,
                 self.ctx.observations,
                 model_override=self.ctx.model_override,
                 tier_override=self.ctx.tier_override,
             )
             self.ctx.confidence = crag_result.confidence
             self.ctx.crag_action = CRAGAction(crag_result.action.value)
-            
+
             yield StreamEvent.confidence_update(
                 self.ctx.session_id,
                 crag_result.confidence,
@@ -799,6 +1609,51 @@ class AgentStateMachine:
             tool_call = response.tool_calls[0]
             tool_name = tool_call.function.name
             tool_args = tool_call.function.arguments
+
+            if tool_name in THREAD_META_TOOLS:
+                # Handled inline (spec §7): mutate the context, emit
+                # thread_started / thread_recalled, run PLANNING once more
+                # with the new hint. No tool card, no loop increment. The
+                # identical call twice in a turn teaches the model nothing,
+                # so it reflects instead; MAX_META_TOOL_REENTRIES bounds the
+                # re-entries that differing calls would otherwise run up.
+                if self._already_called(tool_name, tool_args):
+                    logger.info(f"PLANNING: {tool_name} already handled this turn")
+                    self.ctx.add_observation(
+                        f"{tool_name} was already handled this turn; answer with what you have."
+                    )
+                    yield await self._transition(AgentState.REFLECTING)
+                    return
+                # _handle_meta_tool records exactly one tool call when it did
+                # something. Count the records rather than reading back the
+                # last one's name: a no-op new_thread leaves the *earlier*
+                # new_thread record at index -1, so a name check would call
+                # the no-op a success and re-plan on nothing.
+                recorded_before = len(self.ctx.tool_calls)
+                async for event in self._handle_meta_tool(tool_name, tool_args or {}):
+                    yield event
+                if len(self.ctx.tool_calls) == recorded_before:
+                    # Nothing recorded: the call was a no-op (a second
+                    # new_thread), so there is nothing new to plan on.
+                    yield await self._transition(AgentState.REFLECTING)
+                    return
+                self.ctx.meta_tool_reentries += 1
+                if self.ctx.meta_tool_reentries > self.MAX_META_TOOL_REENTRIES:
+                    # Budget spent. The call above still took effect; we just
+                    # stop paying for another PLANNING round-trip, so the turn
+                    # ends on its own instead of through the oscillation guard.
+                    logger.info(
+                        "PLANNING: thread meta-tool re-entry budget spent "
+                        f"({self.ctx.meta_tool_reentries}), reflecting"
+                    )
+                    self.ctx.add_observation(
+                        "Enough thread bookkeeping for this turn; answer the "
+                        "question with what you have."
+                    )
+                    yield await self._transition(AgentState.REFLECTING)
+                    return
+                yield await self._transition(AgentState.PLANNING)
+                return
 
             if self._already_called(tool_name, tool_args):
                 # Same tool, same arguments, already run this turn. Re-running
@@ -859,6 +1714,268 @@ class AgentStateMachine:
             and tc.status in ("success", "error")
             for tc in self.ctx.tool_calls
         )
+
+    def _thread_receipts(self) -> List[Dict[str, Any]]:
+        """The thread receipts on the retrieved context, oldest first.
+
+        ``source="thread"`` entries are the receipts of *other* subjects
+        recall_thread (and A9c's auto-recall) pulled in this turn. They are
+        rendered in their own prompt block — see ``_retrieval_documents`` for
+        why they are kept out of the retrieval list.
+        """
+        return [
+            c for c in self.ctx.retrieved_context
+            if (c or {}).get("source") == "thread"
+        ]
+
+    def _retrieval_documents(self) -> List[Dict[str, Any]]:
+        """The retrieved context minus the thread receipts: what this turn
+        actually retrieved.
+
+        Thread receipts are conversation continuity, not retrieval: what an
+        earlier subject was about says nothing about whether the host
+        knowledge needed to answer *this* question was found.
+
+        Letting them count as retrieval broke twice over. CRAG scored them,
+        which switched CRAG on for turns that had retrieved nothing, and a
+        CORRECT verdict then sent PLANNING straight to REFLECTING — the turn
+        answered off a thread receipt and never searched at all. And every
+        prompt/provenance site slices the first five entries, while recall
+        appends up to three receipts during PLANNING, *before* SEARCHING
+        appends a single hit — so three of those five slots went to
+        continuity and real retrieval was dropped from the answer (review:
+        Plan A / A9b). The receipts still reach the prompt, in their own
+        block; they just do not vote on retrieval quality or spend the
+        retrieval budget.
+        """
+        return [
+            c for c in self.ctx.retrieved_context
+            if (c or {}).get("source") != "thread"
+        ]
+
+    def _receipt_block(self, max_chars: Optional[int] = None) -> str:
+        """The recalled subjects' receipts as a prompt block, "" when none.
+
+        One renderer for every prompt that shows them (RESPONDING's builder
+        uses the same function), so the block's header — which recall_thread's
+        observation points the model at — cannot drift between prompts.
+        """
+        receipts = self._thread_receipts()
+        if not receipts:
+            return ""
+        try:
+            from ..prompts.agent_prompts import render_recalled_receipts
+        except Exception as e:  # pragma: no cover - import cycle guard
+            logger.debug(f"receipt block unavailable (non-fatal): {e}")
+            return ""
+        return render_recalled_receipts(receipts, max_chars=max_chars)
+
+    def _last_turn_id(self, thread_id: Optional[str]) -> Optional[str]:
+        """The newest turn_id of ``thread_id``, for thread_recalled (spec §6:
+        the chip click scrolls the timeline to it). None without a store,
+        without rows, or when the store fails.
+
+        Asks the store for that one id (``last_turn_id``, a tail read off
+        ``idx_messages_conv``). Reading it with ``list_messages`` instead
+        materialised the whole recalled thread — every row built, its four
+        JSON columns decoded, all under the store lock — to look at one
+        column of one row: ~30 ms on a 4k-row thread, paid up to three times
+        per recall_thread and once per turn under A9c's auto-recall (review:
+        Plan A / A9b; ``pending_notes`` records the same measurement for the
+        same reason). ``list_messages(limit=N)`` is no help — its LIMIT takes
+        the OLDEST N rows — so the scan below stays only as the fallback for
+        a store that predates the method.
+        """
+        store = getattr(self.ctx.thread_manager, "store", None)
+        if store is None or not thread_id:
+            return None
+        indexed = getattr(store, "last_turn_id", None)
+        if callable(indexed):
+            try:
+                found = indexed(thread_id)
+            except Exception as e:
+                logger.debug(f"last turn lookup for {thread_id} failed (non-fatal): {e}")
+                return None
+            return str(found) if found else None
+        try:
+            rows = store.list_messages(thread_id)
+        except Exception as e:
+            logger.debug(f"last turn lookup for {thread_id} failed (non-fatal): {e}")
+            return None
+        for row in reversed(list(rows or [])):
+            turn_id = row.get("turn_id") if isinstance(row, dict) else None
+            if turn_id:
+                return str(turn_id)
+        return None
+
+    async def _handle_meta_tool(
+        self, tool_name: str, tool_args: Dict[str, Any]
+    ) -> AsyncIterator[StreamEvent]:
+        """Handle new_thread / recall_thread / resume_thread inline (spec §7).
+
+        Records the call on ``ctx.tool_calls`` (status success, no event) so
+        PLANNING's repeat guard can see it. A ``new_thread`` after the turn
+        already switched is a no-op and records nothing.
+        """
+        tm = self.ctx.thread_manager
+        sid = self.ctx.session_id
+        args = dict(tool_args or {})
+
+        def _record() -> None:
+            self.ctx.add_tool_call(ToolCall(
+                id=str(uuid.uuid4())[:8], name=tool_name, args=args,
+                status="success", result="handled inline",
+                started_at=time.time(), completed_at=time.time(),
+            ))
+
+        if tool_name == "new_thread":
+            if self.ctx.thread_switched:
+                self.ctx.add_observation(
+                    "new_thread was already handled this turn; continue with the current subject."
+                )
+                return
+            title = " ".join(str(args.get("title") or "").split())[:60]
+            if not title:
+                title = " ".join(self.ctx.user_query.split())[:60] or "Untitled"
+            reason = str(args.get("reason") or "")
+            previous = self.ctx.thread_id
+            new_id: Optional[str] = None
+            if tm is not None:
+                try:
+                    new_id = tm.new_thread(title, reason, from_thread_id=previous)
+                except Exception as e:
+                    logger.warning(f"new_thread store failure (non-fatal): {e}")
+                    yield StreamEvent.thread_store_error(sid, f"new_thread: {e}")
+            if not new_id:
+                # No store (or it failed): the turn still switches subject
+                # in memory so the model's decision is honoured.
+                new_id = str(uuid.uuid4())
+            self.ctx.thread_id = new_id
+            self.ctx.thread_switched = True
+            self.ctx.conversation_history = []
+            # …and the receipt of the subject we just left, which _begin_turn
+            # fitted into the leading instructions. A new subject has no
+            # "Earlier in this subject", and leaving the old one standing
+            # would answer the new question out of the old thread's summary.
+            self.ctx.thread_receipt_block = ""
+            self.ctx.continuity_hint = (
+                f'<continuity>\nThread: "{title}" · opened just now.\n</continuity>'
+            )
+            self.ctx.add_observation(f'Started a new subject: "{title}".')
+            _record()
+            yield StreamEvent.thread_started(
+                sid, new_id, title, reason=reason, previous_thread_id=previous
+            )
+            return
+
+        if tool_name == "recall_thread":
+            query = str(args.get("query") or "").strip() or None
+            thread_id = str(args.get("thread_id") or "").strip() or None
+            results: List[Dict[str, Any]] = []
+            if tm is not None:
+                try:
+                    results = list(tm.recall(
+                        query=query, thread_id=thread_id, exclude_thread_id=self.ctx.thread_id,
+                    ) or [])
+                except Exception as e:
+                    logger.warning(f"recall_thread store failure (non-fatal): {e}")
+                    yield StreamEvent.thread_store_error(sid, f"recall_thread: {e}")
+            _record()
+            if not results:
+                self.ctx.add_observation("No earlier thread matched.")
+                return
+            names = []
+            for r in results[:3]:
+                rid = str(r.get("thread_id", ""))
+                rtitle = str(r.get("title", ""))
+                rdate = str(r.get("date", ""))
+                self.ctx.recalled_threads.append(r)
+                self.ctx.add_context(
+                    source="thread",
+                    content=str(r.get("receipt", "")),
+                    metadata={
+                        "thread_id": rid, "title": rtitle, "date": rdate,
+                        "match_terms": list(r.get("match_terms") or []),
+                        "matching_messages": list(r.get("matching_messages") or []),
+                    },
+                )
+                names.append(f'"{rtitle}" ({rdate})')
+                yield StreamEvent.thread_recalled(
+                    sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="tool",
+                    last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
+                )
+            self.ctx.add_observation(
+                "Recalled earlier subjects: " + "; ".join(names)
+                + f'. Their receipts are in the available context, under '
+                  f'"{_recalled_block_name()}".'
+            )
+            return
+
+        if tool_name == "resume_thread":
+            target = str(args.get("thread_id") or "").strip()
+            ok = False
+            if tm is not None and target:
+                try:
+                    ok = bool(tm.resume_thread(target, from_thread_id=self.ctx.thread_id))
+                except Exception as e:
+                    logger.warning(f"resume_thread store failure (non-fatal): {e}")
+                    yield StreamEvent.thread_store_error(sid, f"resume_thread: {e}")
+            if not ok:
+                _record()
+                self.ctx.add_observation(
+                    f"Could not resume thread {target or '(none)'}; continuing with the current subject."
+                )
+                return
+            previous = self.ctx.thread_id
+            title, receipt = "", ""
+            try:
+                found = list(tm.recall(thread_id=target) or [])
+            except Exception as e:
+                logger.warning(f"recall after resume failed (non-fatal): {e}")
+                found = []
+            if found:
+                title = str(found[0].get("title", ""))
+                receipt = str(found[0].get("receipt", ""))
+            self.ctx.thread_id = target
+            self.ctx.thread_switched = True
+            # The resumed subject's receipt IS the current subject's history,
+            # so it goes in the conversation's receipt slot — the one the
+            # assembler splits back off and budgets (context/assembler.py
+            # `_split_receipt_row`), and the one `_history_section` renders in
+            # RESPONDING. It used to be copied onto retrieved_context as well,
+            # where it looked like retrieval and got rendered a second time in
+            # the answer prompt (review: Plan A / A9b). One place only; a
+            # `source="thread"` entry now means "a receipt of ANOTHER subject,
+            # recalled this turn".
+            # Fenced exactly the way threads.py `_history` fences the row it
+            # writes for the same slot: same producer, same reader, so it may
+            # not be the one that hands the fold an unfenced receipt. Without
+            # this the receipt's own brackets and any `<continuity>` tag in it
+            # survive into `messages[0]` (review: merge seam).
+            from .threads import RECEIPT_ROW_MAX, RECEIPT_ROW_PREFIX, _fence
+            self.ctx.conversation_history = (
+                [{
+                    "role": "system",
+                    "content": (
+                        f"{RECEIPT_ROW_PREFIX} "
+                        f"{_fence(receipt, RECEIPT_ROW_MAX, keep_lines=True)}]"
+                    ),
+                }] if receipt else []
+            )
+            # The block _begin_turn rendered belongs to the subject we just
+            # left. This row replaces it: _build_messages folds any non-
+            # user/assistant row into the leading instructions, which is the
+            # same place the block would have landed.
+            self.ctx.thread_receipt_block = ""
+            self.ctx.continuity_hint = (
+                f'<continuity>\nThread: "{title or target}" · resumed just now.\n</continuity>'
+            )
+            self.ctx.add_observation(f'Resumed the earlier subject "{title or target}".')
+            _record()
+            yield StreamEvent.thread_started(
+                sid, target, title, reason="resumed", previous_thread_id=previous
+            )
+            return
 
     # Word-count ceilings for the retrieval skip (see _intake_is_greeting).
     _GREETING_MAX_WORDS = 5            # "hey halbert, good morning!"
@@ -1057,6 +2174,14 @@ class AgentStateMachine:
             )
         return None
 
+    def _note_terminal_payload(self, payload: Dict[str, Any]) -> None:
+        """Remember every terminal this turn spawned (persisted at end_turn)."""
+        if payload.get("kind") != "spawn":
+            return
+        terminal_id = str(payload.get("terminal_session_id", ""))
+        if terminal_id and terminal_id not in self.ctx.terminal_session_ids:
+            self.ctx.terminal_session_ids.append(terminal_id)
+
     async def _run_tool_streaming(
         self,
         tool_name: str,
@@ -1090,7 +2215,9 @@ class AgentStateMachine:
                     {task, getter}, return_when=asyncio.FIRST_COMPLETED
                 )
                 if getter in done:
-                    event = self._terminal_event(self.ctx.session_id, getter.result())
+                    payload = getter.result()
+                    self._note_terminal_payload(payload)
+                    event = self._terminal_event(self.ctx.session_id, payload)
                     if event is not None:
                         yield event
                     continue
@@ -1100,7 +2227,9 @@ class AgentStateMachine:
 
             # Flush whatever the tool published on its way out.
             while not queue.empty():
-                event = self._terminal_event(self.ctx.session_id, queue.get_nowait())
+                payload = queue.get_nowait()
+                self._note_terminal_payload(payload)
+                event = self._terminal_event(self.ctx.session_id, payload)
                 if event is not None:
                     yield event
 
@@ -1222,15 +2351,18 @@ class AgentStateMachine:
         logger.info(f"OBSERVING: {len(self.ctx.observations)} observations")
         
         # CRAG evaluation
-        if self.crag and self.ctx.retrieved_context:
+        crag_documents = self._retrieval_documents()
+        if self.crag and crag_documents:
+            # Receipts are dropped here too — see the note at PLANNING's
+            # evaluation site.
             crag_result = await self.crag.evaluate(
                 self.ctx.user_query,
-                self.ctx.retrieved_context,
+                crag_documents,
                 self.ctx.observations,
                 model_override=self.ctx.model_override,
                 tier_override=self.ctx.tier_override,
             )
-            
+
             self.ctx.confidence = crag_result.confidence
             self.ctx.crag_action = CRAGAction(crag_result.action.value)
             
@@ -1241,7 +2373,7 @@ class AgentStateMachine:
             )
         else:
             # No CRAG, estimate based on context
-            if self.ctx.retrieved_context:
+            if crag_documents:
                 self.ctx.confidence = 0.6
                 self.ctx.crag_action = CRAGAction.AMBIGUOUS
             else:
@@ -1349,21 +2481,35 @@ class AgentStateMachine:
         """
         logger.info(f"RESPONDING: confidence={self.ctx.confidence:.2f}")
         
-        # Build response prompt
+        # Build response prompt. Neither ``history`` nor ``continuity`` is
+        # passed any more:
+        #   * the prior turns are the messages array (_build_messages), and
+        #     rendering them into the prose as well sent every earlier turn
+        #     twice — once as "## Earlier in this conversation", once as real
+        #     messages — for one budget's worth of meaning;
+        #   * the continuity hint rides the last user message, next to the
+        #     question it qualifies.
+        # The receipts of subjects recalled *this* turn are a different
+        # mechanism and are untouched: build_response_prompt still renders
+        # them from ``context``, and _receipt_block still feeds the
+        # no-builder path below.
         if self.prompts:
             prompt = self.prompts.build_response_prompt(
                 query=self.ctx.user_query,
                 context=self.ctx.retrieved_context,
-                observations=self.ctx.observations
+                observations=self.ctx.observations,
+                tools_supported=getattr(self.llm, "tools_supported", None),
             )
             logger.info("Using AgentPromptBuilder for response prompt")
         else:
             prompt = self._build_simple_response_prompt()
             logger.info("Using simple response prompt (no prompt builder)")
-        
+
         # DEBUG: Log the prompt to verify markdown instructions are included
         logger.debug(f"Response prompt (first 500 chars): {prompt[:500]}")
-        
+
+        tail = self._continuity_tail()
+
         # The turn's model is announced from here and nowhere else. PLANNING
         # resolves separately and can land on a different tier — it scores a
         # different prompt — so naming its choice would credit the answer to a
@@ -1376,12 +2522,14 @@ class AgentStateMachine:
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
             chunk_count = 0
             async for chunk in self.llm.stream(
-                messages=self._build_messages(prompt),
+                messages=self._build_messages(prompt, tail=tail),
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,
                 tier_override=self.ctx.tier_override if self.ctx else None,
                 on_model_selected=selected.append,
+                # The question, not the hint that rides in front of it (D1).
+                routing_prompt=self.ctx.user_query if self.ctx else "",
             ):
                 if selected and not announced:
                     announced = True
@@ -1396,12 +2544,14 @@ class AgentStateMachine:
         else:
             # Non-streaming fallback
             response = await self.llm.chat(
-                messages=self._build_messages(prompt),
+                messages=self._build_messages(prompt, tail=tail),
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,
                 tier_override=self.ctx.tier_override if self.ctx else None,
                 on_model_selected=selected.append,
+                # The question, not the hint that rides in front of it (D1).
+                routing_prompt=self.ctx.user_query if self.ctx else "",
             )
             if selected:
                 announced = True
@@ -1433,13 +2583,10 @@ class AgentStateMachine:
             logger.debug(f"Module invocation parsing skipped: {e}")
             module_invocations, clean_response = [], full_response
 
-        # Store interaction in memory (clean text, no invocation JSON)
-        if self.memory:
-            await self.memory.store_interaction(
-                query=self.ctx.user_query,
-                response=clean_response,
-                session_id=self.ctx.session_id
-            )
+        # Not stored in memory here any more (spec §7): thread receipts, and
+        # the Haloysius line written when a thread closes, replace
+        # memory.store_interaction. Storing every Q/A made each turn a global
+        # memory that leaked into unrelated threads.
 
         # Commit the stripped text as the session's final response text
         self.ctx.response_chunks.clear()
@@ -1551,7 +2698,10 @@ class AgentStateMachine:
     
     def _build_simple_planning_prompt(self, context: str) -> str:
         """Build a simple planning prompt when no prompt builder available."""
-        parts = [
+        parts = []
+        if self.ctx.continuity_hint:
+            parts.extend([self.ctx.continuity_hint, ""])
+        parts += [
             f"User query: {self.ctx.user_query}",
             "",
             "Available context:",
@@ -1682,7 +2832,10 @@ class AgentStateMachine:
         # 2. Create provenance from retrieved context sources.
         # ctx.retrieved_context items carry {source, content, metadata}.
         # Only emit refs that can actually validate — never fabricated ids.
-        for ctx in self.ctx.retrieved_context[:5]:
+        # Thread receipts are skipped before the slice, not inside the loop:
+        # they can never produce a ref, so counting them against these five
+        # entries only thinned the citations (see _retrieval_documents).
+        for ctx in self._retrieval_documents()[:5]:
             source = ctx.get('source', '')
             content = ctx.get('content', '') or ''
             meta = ctx.get('metadata') or {}
@@ -1723,18 +2876,50 @@ class AgentStateMachine:
         packaged = attach_provenance("", refs)
         return packaged['provenance']
 
+    def _fallback_identity(self) -> str:
+        """Who the answer is from when the prompt builder failed to wire.
+
+        This path is reached exactly when something is already wrong, and
+        before the merge it answered as a generic assistant — so a wiring
+        failure quietly changed who the admin was talking to. Main fixed that
+        on ``handlers/responding.py``; the handlers package left with Plan A
+        and took the fix and its three tests with it, so the fix moves onto
+        the path that survived (P6: superseded tests are rewritten, and a
+        rewrite needs something true to assert).
+        """
+        try:
+            from ..prompts.agent_prompts import AgentPromptBuilder
+            identity = AgentPromptBuilder()._get_identity()
+            if identity and identity.strip():
+                return identity.strip()
+        except Exception as e:  # pragma: no cover - broken prompts package
+            logger.warning(f"Identity unavailable for the fallback prompt: {e}")
+        return (
+            "You are Halbert. You live on this machine — not as a chatbot "
+            "that happens to run here, but as the system itself. Speak from "
+            "what you actually observe about it, be concise and practical, "
+            "and cite sources when available."
+        )
+
     def _build_simple_response_prompt(self) -> str:
         """Build a simple response prompt when no prompt builder available."""
+        # Receipts are rendered in their own block, so continuity cannot spend
+        # the five retrieval slots (see _retrieval_documents).
         context_text = "\n".join([
             f"[{c.get('source', 'unknown')}]: {c.get('content', '')[:500]}"
-            for c in self.ctx.retrieved_context[:5]
+            for c in self._retrieval_documents()[:5]
         ])
-        
-        obs_text = "\n".join([f"- {obs}" for obs in self.ctx.observations])
-        
-        return f"""Answer this question: {self.ctx.user_query}
+        receipt_block = self._receipt_block()
+        if receipt_block:
+            receipt_block = f"{receipt_block}\n\n"
 
-Available Information:
+        obs_text = "\n".join([f"- {obs}" for obs in self.ctx.observations])
+
+        return f"""{self._fallback_identity()}
+
+Answer this question: {self.ctx.user_query}
+
+{receipt_block}Available Information:
 {context_text}
 
 What I've done:

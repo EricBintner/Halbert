@@ -43,6 +43,13 @@ class SafetyCheckResult:
     matched_rule: Optional[str] = None
 
 
+# Thread meta-tools (Plan A, spec §7). PLANNING handles them inline; they
+# never reach the executor's handler path, but they are registered so the
+# model sees their schemas and the safety framework never treats them as
+# unknown (MEDIUM) tools.
+THREAD_META_TOOLS = ("new_thread", "recall_thread", "resume_thread")
+
+
 class ToolSafetyFramework:
     """
     Classifies tool operations by risk level.
@@ -313,6 +320,13 @@ class ToolSafetyFramework:
                 allowed=True,
                 requires_confirmation=False,
                 reason="Search operation"
+            )
+        elif tool_name in THREAD_META_TOOLS:
+            return SafetyCheckResult(
+                risk_level=RiskLevel.SAFE,
+                allowed=True,
+                requires_confirmation=False,
+                reason="Conversation thread operation (handled inline)"
             )
         else:
             # Unknown tools get MEDIUM by default

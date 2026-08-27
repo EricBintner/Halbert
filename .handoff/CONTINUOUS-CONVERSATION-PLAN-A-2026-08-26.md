@@ -10,71 +10,37 @@
 
 **Worktree:** `~/.config/superpowers/worktrees/Halbert/continuous-conversation` (branch `feat/continuous-conversation`). Baseline at `01ed50c`: backend 1119 passed with 4 pre-existing failures in `test_tool_calling_bridge.py` / `test_phase_d_integration.py` (model-client vision fallback — leave them); frontend 45/45; `tsc --noEmit` clean.
 
-**Verification status of this plan:** an independent verifier applied every task below to a scratch copy of the worktree by exact text anchors and ran them: backend 1265 passed / 5 failed (the 4 pre-existing + one plan-fixture bug listed in the amendments), frontend 17 files / 88 tests green, `tsc` clean, literal-colour counts unchanged. The amendments in the next section are therefore small and known; apply them while executing the task they name.
+**Task order (33 tasks):** A1 → A1b → A2 → A3 → A4 → A5 → A6 → A6b → A6c → A6d → A7 → A8 → A8b → A9a → A9b → A9c → A9d → A10 → A11 → A11b → A12a → A12b → A12c → A12d → A13 → A14 → A15 → A16 → A17 → A17b → A18 → A19 → A20. Each task commits on its own; never move to the next task with a red test that was green before.
 
 ---
 
-## Amendments before execution (from the verifier, 2026-08-26)
+## Verification status of this plan
 
-Apply each item when you reach the task it names. The first is blocking; the rest are expectation/anchor corrections and spec-coverage additions. The "coverage gaps" are Plan-A-scoped spec items the contracts under-covered — implement each as a small extra step inside the named task (or as a suffix task, e.g. A6c) before moving on:
+**First pass (27 tasks).** An independent verifier applied every task to a scratch copy of the worktree by exact text anchors and ran them: backend 1265 passed / 5 failed (the 4 pre-existing + one plan-fixture bug), frontend 17 files / 88 tests green, `tsc` clean, literal-colour counts unchanged. Its verdict is kept verbatim at `.handoff/plan-a-exec/plan-a-verifier-verdict.md`.
 
-- A6c (new, after A6b): `ThreadManager.merge_back(new_thread_id)` — within the grace window, move the new thread's rows back to its paused predecessor, mark it `merged`/`merged_into`, reopen the predecessor, refresh its receipt, drop its `receipts_fts` row; `resume_thread` calls it when the target is the grace-window predecessor. Tests: rows move, status merged, `search_receipts` excludes merged, resume-within-grace merges, resume-after-grace reopens.
-- A6d (new): `retract_recall` appends a `system`-origin, `visible_in_timeline=0` row "admin retracted recall of '<title>'"; `begin_turn` collects such rows newer than the last human row into `TurnContext.notes`; `build_hint` renders them as `Note: …` lines.
-- A1: also create `compact_boundaries(thread_id, trigger, pre_tokens, post_tokens, preserved_message_ids, summary_message_id, created_at)` — no writers in Plan A.
-- A4: add `scanner` to the network domain keywords.
-- A8b (new, after A8): raise `intake/budget.py` conversation bucket (MEDIUM 800→1600, LARGE 1700→2400, keep tier totals); `context/assembler.py::_format_conversation` renders a leading `role=system` "[Earlier in this subject: …]" row as its own block outside the newest-first walk and skips `should_summarize` when it is present.
-- A9a: `_supersede_paused_turn` must call `thread_manager.end_turn(..., blocks=[{tool, args, result: "not run — superseded", status: "superseded"}], status="cancelled")` so the receipt records the superseded command; emit `conversation_status` "waiting" before awaiting a held `turn_lock`; somatic blocks use `ctx.thread_id` when set; note that `self.cancelled` is legacy and `conversation_status` is the live path.
-- A8/A9: when the LLM client fell back to a no-tools retry, set `tools_supported=False` on it and select the `CONTINUITY_PREAMBLE` variant without the "call recall_thread / new_thread" sentence.
-- A7/A11/A15/A16: `thread_recalled` gains `last_turn_id`; the chip's click loads `timeline?around=<last_turn_id>` and scrolls to `[data-turn-id]`; its `title` shows "matched: <terms>"; `thread_started` clears the chip.
-- A11b (new): `POST /api/agent/message/{message_id}/redact` → `store.redact_message` (content + blocks_json → "[redacted by admin]", FTS rewritten, receipt refreshed); A17b (new): per-turn "Forget this" button calling `api.redactMessage`.
-- A17: add the assertive `role="alert"` region for blocked-on-approval (announced from the confirmation event); `CurrentTopicLabel` needs no voice rendering (a title has no pronouns).
-- Deferred to Plan B/C (not gaps): live terminal sessions keeping a thread open; the inbound secret scrubber; task notifications in the hint.
+**Second pass (this text).** Every issue and coverage gap in that verdict is now **folded into the task text below** — there is no separate amendments section to apply while executing. What changed:
 
-Verifier's issue list, verbatim:
+| Change | Where |
+|---|---|
+| BLOCKING fixture fix — `_FakeResp` emits content and `done` on separate lines | A10 |
+| Red/green expectations corrected (`7 failed, 13 passed`; `154 passed`; frontend 15 files / 95 tests at A18, 17 / 101 at A19) | A1b, A6b, A18, A19 |
+| `compact_boundaries` table (spec §8/§14, ships default-off, no writers) | A1 |
+| `scanner` added to the network domain keywords | A4 |
+| **New:** `ThreadManager.merge_back` + grace-window `resume_thread` merge (spec §5 "Merge") | A6c |
+| **New:** retraction notes — hidden system rows the next turn's hint surfaces | A6d |
+| **New:** conversation budget bucket for six raw turns + receipt slot in the assembler (spec §7) | A8b |
+| **New:** `tools_supported` on the LLM clients; the continuity preamble drops the "call recall_thread" sentence when the model rejected tool schemas (spec §7) | A9d |
+| **New:** `POST /api/agent/message/{id}/redact` + `store.redact_message` (spec §5 "Forget") | A11b |
+| **New:** per-turn "Forget this" button in the timeline | A17b |
+| Superseded pending confirmation recorded in the receipt; `conversation_status: waiting` on a held turn lock; somatic blocks use `ctx.thread_id` | A9a |
+| `thread_recalled.last_turn_id` → chip click jumps the timeline, `matched: <terms>` title, chip expiry on `thread_started` | A7, A11, A15, A16, A18 |
+| Assertive `role="alert"` live region for blocked-on-approval | A17 |
+| Legacy `listAgentConversations`/`getAgentConversation`/`deleteAgentConversation` deleted in A18 instead of A14, so every commit typechecks | A14, A18 |
+| Line-number references dropped in favour of the exact text anchors; `_find_config_registry` no longer re-listed; A15 test header fixed | A7, A12b, A14, A15 |
 
-OK: False
+The six new tasks (A6c, A6d, A8b, A9d, A11b, A17b) carry full code and tests but were written **after** the sandbox dry-run, so their code is not yet dry-run-verified — treat their expected outputs as targets, not measurements, and trust the test runs over the numbers printed here.
 
-#### ISSUES
-- [A10 (test_num_ctx.py::test_adapter_stream_has_num_ctx_and_bounded_num_predict)] BLOCKING. The test cannot pass as written. `_FakeResp.content` emits ONE Ollama line `{"message":{"content":"hi"},"done":true}`. `LLMClientAdapter.stream` (routes/agent.py, the Ollama branch: `content = data.get("message",{}).get("content",""); if data.get("done"): break`) breaks on `done` BEFORE appending that line's content to the think-filter buffer, so the adapter yields '' and `assert "".join([...]) == "hi"` fails. Verified by executing the whole plan in a sandbox: 1265 passed, 5 failed = the 4 baseline failures + this one; the captured payload itself was correct (num_ctx 9216, num_predict 8192). The OllamaClient test in the same file passes because agents/llm_client.py yields the content of the done line.
-  FIX: Change the fixture so the content and the done flag arrive on separate lines: `self.content = _Lines([b'{"message":{"content":"hi"},"done":false}\n', b'{"message":{"content":""},"done":true}\n'])`. Verified: with that one change test_num_ctx.py is 8 passed (OllamaClient chat/stream and both adapter tests). A10 step 7's expected output is otherwise correct.
-- [A1b (red-step expectation)] Non-blocking. Step says `6 failed, 14 passed`; the appended TestThreadReaders class has 7 tests and every one of them (including test_mark_in_progress_interrupted, which calls store.create_thread first) raises AttributeError before A1b is implemented, so the real red run is 7 failed, 13 passed.
-  FIX: Change the expected line to `7 failed, 13 passed` (AttributeError: ... 'create_thread' / 'list_turns' / 'recent_messages' / 'list_messages').
-- [A6b (green-step expectation)] Non-blocking. Step says `183 passed (16 threads, 16, 29, 10, 50, 20, 13)`; those seven counts sum to 154, and the sandbox run of exactly those seven files gives 154 passed.
-  FIX: Change `183 passed` to `154 passed`.
-- [A18 step 9 (frontend count expectation)] Non-blocking. Step says `Test Files 14 passed (14), Tests 84 passed (84)`. At A18 the tree has 7 baseline + 2 (A14) + 1 (A15) + 1 (A16) + 2 (A17) + 2 (A18) = 15 files / 45+14+5+4+8+6 = 82 tests; after A19 it is 17 files / 88 tests (verified: 17 passed, 88 passed in the sandbox).
-  FIX: Change to `Test Files 15 passed (15)`, `Tests 82 passed (82)` for A18, and note A19 brings it to 17 / 88. The '(45 baseline + ... = 82, plus the 2 counted inside A14's second file)' arithmetic note should be deleted; 82 is already the correct A18 total.
-- [A15 (useAgentStream.thread.test.ts header)] Non-blocking. Line 2 of the test file reads `// Copyright (C) 2024-2026 Eric Bintner andÜhalbert Contributors` (mangled 'and Halbert').
-  FIX: Use the standard header line `// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors`.
-- [A12b step 3 (app.py insertion)] Non-blocking ambiguity. The snippet to 'insert' re-lists the existing `_find_config_registry` function above `run_conversation_boot_hooks`; an engineer pasting it verbatim duplicates `_find_config_registry`.
-  FIX: Reword: 'immediately after the existing `_find_config_registry` (ends with `return None`), insert ONLY the `run_conversation_boot_hooks` function' and drop `_find_config_registry` from the snippet.
-- [A14 step 4 / A12c step 5 (api.ts line numbers)] Non-blocking. A12c (earlier in the order) deletes api.ts lines 94-135, so by A14 the 'Agent conversations' block is at ~313-328, not 355-370. The text anchor (`// Agent conversations (Phase 36 agent path)` through `deleteAgentConversation`) is exact and the patch applied cleanly by text in the sandbox.
-  FIX: Drop the line numbers in A14 step 4 and keep only the text anchor.
-- [A7 executor.py line references] Non-blocking. `_register_builtins` ends at line 198 (not 189) and the unknown-tool return is at 242-247 (not 230). Text anchors are exact; every A7-A11 anchor matched the worktree files exactly when applied programmatically.
-  FIX: Update the numbers or drop them; nothing else to change.
-- [A14-A17 ordering hazard (tsc)] Disclosed but worth flagging: A14 removes `listAgentConversations/getAgentConversation/deleteAgentConversation` while AgentChat.tsx still calls them until A18, so `npx tsc --noEmit` is red for the A14, A15, A16 and A17 commits (A14 says so; A16/A17 deliberately skip tsc). Every test in those tasks still passes because vitest does not typecheck. Final tree after A19 is tsc-clean (verified).
-  FIX: Either accept (already documented in A14 step 5) or move the deletion of the three wrappers plus the 'removed wrappers' test block into A18 so each commit typechecks.
-- [A9a/A11 (`self.cancelled` dead after A11)] Informational. After A11 removes the route force-reset, nothing writes `AgentStateMachine.cancelled[...]` any more; `_turn_status` still resolves 'cancelled' through `ctx.conversation_status.current() == CANCELLED` (cancel_session sets it), and test_cancelled_and_interrupted_statuses passes. `_settle_turn` pops a key that is never set.
-  FIX: No change required for Plan A; optionally note in A9c that the `self.cancelled` check is legacy and the conversation_status check is the live path.
-- [A5/A6 vs spec §4.7 and §5 (pending confirmation at switch)] Spec §5: a staged HIGH-risk command in AWAITING_CONFIRMATION is auto-rejected when its thread pauses and recorded in the receipt as 'not run — superseded'. A9a's `_supersede_paused_turn` evicts the paused session silently and A6's receipt never learns about it (the old thread's user row stays in_progress until the next boot marks it interrupted).
-  FIX: If in Plan A scope: in `_supersede_paused_turn`, when the evicted ctx has `turn_context`, call `thread_manager.end_turn(turn, assistant_text="", blocks=[{'tool': pending['tool'], ..., 'status': 'superseded'}], ..., status='cancelled')` so the receipt's Commands line can carry '(not run — superseded)'. Otherwise list it under Plan B/C deferred.
-- [INFO — verification method] All four parts were applied to a scratch copy of the worktree by exact-text anchors (every anchor in A7-A12d and A14-A19 matched once), then executed: Part S 85/85; Part M+D+A13 all green; full backend suite 1265 passed / 5 failed (4 pre-existing + the A10 fixture above); frontend vitest 17 files / 88 tests green, `tsc --noEmit` clean, literal-colour counts unchanged per file (ContextBar 8→8, TerminalTile 3→3, new files 0). Cross-part names/signatures checked by running the real pieces together (A13 e2e over AgentStateMachine + ThreadManager + SqliteConversationStore; A11 routes over ThreadManager; F mappers over the exact JSON the A1b/A11 store emits). No signature mismatches between S, M, D and F were found; the 'Contract additions' of each part are consistent with what the other parts call (ThreadManager.store, update_message(thread_id=), append_message(visible_in_timeline=), TurnContext.session_id/previous_thread_id, decide() query expansion, thread dicts carrying both id and thread_id, list_turns limit+1 paging, recall() result shape, StateContext.terminal_session_ids/turn_context, THREAD_META_TOOLS, GET /thread/current mirrored thread_id).
-  FIX: None.
-
-## COVERAGE GAPS
-- Spec §5 'Merge: same topic within the grace window moves the new thread's turns back and marks the new one merged' has no task (only the `merged` status value exists; search_receipts excludes it). §13 also lists a 'merge' test.
-- Spec §5 'Live terminal sessions spawned by a thread keep it from auto-closing' — ThreadManager.tick() (A6b) closes on time/turn count only.
-- Spec §5 'Pending confirmation at switch: auto-rejected and recorded as not run — superseded' — see issue on A9a/A11; no task records it.
-- Spec §5 'Forget / redact per turn (content and blocks_json replaced, FTS row rewritten, receipt regenerated)' has no task; only the `ephemeral` flag is honoured (search_receipts/refresh_receipt).
-- Spec §6 alias/keyword list adds 'scanner' to the domain keywords; contract §3 and A4 omit it (harmless for the e2e, but 'scanner' never becomes an entity).
-- Spec §6 chip behaviour: click scrolls the timeline to that day and hover shows the match terms as 'why now'; A16/A18 render the chip as a button but wire no onClick/scroll and no match-terms title. Chip expiry when the open thread pauses also has no task.
-- Spec §6 'a retracted recall ... adds a system-origin observation the next PLANNING sees' — retract_recall (A6b/A11) only flips the status; nothing feeds an observation into the next turn.
-- Spec §7 'The instruction to call tools is omitted when the model has rejected tool schemas' — CONTINUITY_PREAMBLE (A8) always includes the recall_thread/new_thread instruction.
-- Spec §7 budget items: raise the conversation bucket in intake/budget.py so 6 raw turns fit at MEDIUM, bypass the assembler's should_summarize when a receipt is supplied, and give the receipt its own slot — no task; the context assembler still re-summarises ctx.conversation_history on its own.
-- Spec §8/§14: the `compact_boundaries` table 'ships in Plan A, default off' — no task creates it (only terminal_blocks/terminal_sessions are correctly deferred to Plan B).
-- Spec §8: thread_id used for somatic blocks (session_somatic_blocks) and the Haloysius line tags — no task threads ctx.thread_id into the somatic store.
-- Spec §11: one `role="alert"` live region for blocked-on-approval — only the polite `role="status"` region is created (A17).
-- Spec §11: 'the sticky label follows the voice setting' — CurrentTopicLabel (A17) renders the raw title regardless of voice.
-- Spec §12: a second /message during a turn 'emits conversation_status: waiting' — the turn lock (A9a) queues silently; no waiting status event is emitted.
+**Deferred to Plan B/C (not gaps):** live terminal sessions keeping a thread open; the inbound secret scrubber; task notifications in the hint.
 
 ---
 
@@ -135,6 +101,11 @@ class TestSchema:
         sql = store._conn.execute("SELECT sql FROM sqlite_master WHERE name = 'messages_fts'").fetchone()[0]
         assert "porter unicode61" in sql
         assert store._conn.execute("SELECT name FROM sqlite_master WHERE name = 'receipts_fts'").fetchone() is not None
+        # compact_boundaries ships in Plan A with no writers (spec §8, §14: default off)
+        ccols = {r[1] for r in store._conn.execute("PRAGMA table_info(compact_boundaries)")}
+        assert {"thread_id", "trigger", "pre_tokens", "post_tokens", "preserved_message_ids",
+                "summary_message_id", "created_at"} <= ccols
+        assert store._conn.execute("SELECT COUNT(*) FROM compact_boundaries").fetchone()[0] == 0
 
     def test_legacy_db_migrates_in_place(self, tmp_path):
         path = tmp_path / "legacy.db"
@@ -154,6 +125,7 @@ class TestSchema:
         assert s._conn.execute("SELECT origin, status FROM messages").fetchone()[:] == ("human", "complete")
         assert s._conn.execute("SELECT rowid FROM messages_fts").fetchall()[0][0] == 1
         assert s._conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+        assert s._conn.execute("SELECT name FROM sqlite_master WHERE name = 'compact_boundaries'").fetchone() is not None
         assert s.search("smb.conf") == ["old"]
         s.close()
         # Reopening is idempotent
@@ -474,6 +446,24 @@ class SqliteConversationStore:
                 )
                 cur.execute(
                     "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+                )
+                # Opt-in LLM summaries (spec §8, §14): the table ships in Plan A
+                # with no writers — compaction stays default-off until a later plan.
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS compact_boundaries (
+                        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                        thread_id             TEXT NOT NULL,
+                        trigger               TEXT NOT NULL,
+                        pre_tokens            INTEGER,
+                        post_tokens           INTEGER,
+                        preserved_message_ids TEXT NOT NULL DEFAULT '[]',
+                        summary_message_id    INTEGER,
+                        created_at            REAL NOT NULL
+                    )"""
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_compact_thread "
+                    "ON compact_boundaries(thread_id)"
                 )
                 self._add_missing_columns(cur, "conversations", _THREAD_COLUMNS)
                 self._add_missing_columns(cur, "messages", _MESSAGE_COLUMNS)
@@ -1050,7 +1040,9 @@ def migrate_json_conversations_to_sqlite(
   messages_fts is rebuilt with porter unicode61 and rowid == messages.id.
   append_message is the only message write path (one transaction incl. FTS,
   None on failure); save() upserts the thread row only. FTS queries are
-  tokenised and quoted so smb.conf / what's cannot abort a MATCH."
+  tokenised and quoted so smb.conf / what's cannot abort a MATCH.
+  compact_boundaries (opt-in LLM summaries, spec §8/§14) is created with no
+  writers: compaction stays default-off in Plan A."
   ```
 
 ### Task A1b: Thread and turn readers on the store
@@ -1161,7 +1153,7 @@ class TestThreadReaders:
 
 - [ ] **Run it, expect failure:**
   `cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_thread_store.py -q -p no:cacheprovider`
-  Expected: `6 failed, 14 passed` — failures are `AttributeError: 'SqliteConversationStore' object has no attribute 'create_thread'` (and `list_turns` / `recent_messages` / `list_messages`).
+  Expected: `7 failed, 13 passed` — every `TestThreadReaders` test fails (including `test_mark_in_progress_interrupted`, which calls `create_thread` first) with `AttributeError: 'SqliteConversationStore' object has no attribute 'create_thread'` (and `list_turns` / `recent_messages` / `list_messages`).
 
 - [ ] **Implement.** In `conversation_sqlite.py`, insert this block immediately after the line `_MESSAGE_JSON_COLUMNS = {"blocks_json", "terminal_block_ids", "diff_proposals_json", "metadata"}`:
 
@@ -2117,7 +2109,7 @@ class TestCanonicalEntities:
 
     def test_phrase_alias(self):
         ents = canonical_entities("set up a windows share for the scanner")
-        assert {"samba", "share"} <= ents
+        assert {"samba", "share", "scanner"} <= ents
 
     def test_smb_conf_token_and_path(self):
         assert {"samba", "/etc/samba/smb.conf"} <= canonical_entities("edit /etc/samba/smb.conf please.")
@@ -2164,6 +2156,8 @@ class TestThreadCues:
         assert "storage" in analyze_message("zpool status").detected_domains
         assert "service" in analyze_message("edit the crontab").detected_domains
         assert "network" in analyze_message("is the vpn up").detected_domains
+        s = analyze_message("the scanner is offline")
+        assert "network" in s.detected_domains and "scanner" in s.entities
 
     def test_defaults(self):
         s = MessageSignals()
@@ -2180,7 +2174,7 @@ class TestThreadCues:
   2. In `_DOMAIN_KEYWORDS`: `"storage"` list — change `"hdd", "space", "full", "lvm", "df",` to `"hdd", "space", "full", "lvm", "df", "zpool", "smart", "smartctl",` (`zfs` is already present); `"service"` list — change `"apache", "docker", "container", "journalctl",` to `"apache", "docker", "container", "journalctl", "cron", "crontab",` (`systemd`/`journalctl` already present); `"network"` list — change `"iptables", "nftables", "netstat", "ss",` to
      ```python
              "iptables", "nftables", "netstat", "ss", "samba", "smb", "nfs",
-             "cups", "wireguard", "vpn", "share",
+             "cups", "wireguard", "vpn", "share", "scanner",
      ```
   3. Immediately after the `_FILE_PATH_RE = re.compile(...)` statement (line 77) insert:
 
@@ -2309,7 +2303,9 @@ def canonical_entities(text: str) -> set[str]:
 
   ENTITY_ALIASES maps smb/cifs/smbd/nmbd/'file share' to samba, vpn/wg to
   wireguard, certbot/letsencrypt/acme to tls, zpool to zfs. canonical_entities
-  returns alias hits, non-generic domain keywords, and file paths.
+  returns alias hits, non-generic domain keywords, and file paths. Domain
+  keywords gain samba/smb/nfs/cups/wireguard/vpn/share/scanner (network),
+  zpool/smart/smartctl (storage) and cron/crontab (service).
   MessageSignals gains entities, past_reference, and anaphora (bare that/it
   counts only when no entity or domain is present)."
   ```
@@ -3379,7 +3375,11 @@ class TestSingleton:
         return self._open_new_thread(clean, "model", self._now(), from_thread_id=from_thread_id, reason=reason)
 
     def tick(self) -> List[str]:
-        """Close paused threads past the grace window; returns the closed ids."""
+        """Close paused threads past the grace window; returns the closed ids.
+
+        Plan B adds the live-terminal guard: never close while a terminal
+        session of this thread is open (spec §5 "Stale").
+        """
         now = self._now()
         closed: List[str] = []
         for t in self.store.list_threads(status="paused", limit=200):
@@ -3484,7 +3484,7 @@ def get_thread_manager() -> ThreadManager:
 
 - [ ] **Run tests, expect PASS:**
   `cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_threads.py tests/test_thread_signals.py tests/test_thread_store.py tests/test_receipt.py tests/test_intake_signals.py tests/test_conversation_sqlite.py tests/test_session_affinity.py -q -p no:cacheprovider`
-  Expected: `183 passed` (16 threads, 16, 29, 10, 50, 20, 13). Then run the full suite: `/Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests -q -p no:cacheprovider` — expected: 4 pre-existing failures only (test_tool_calling_bridge, test_phase_d_integration), everything else passes.
+  Expected: `154 passed` (16 threads, 16, 29, 10, 50, 20, 13). Then run the full suite: `/Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests -q -p no:cacheprovider` — expected: 4 pre-existing failures only (test_tool_calling_bridge, test_phase_d_integration), everything else passes.
 
 - [ ] **Commit:**
   ```
@@ -3498,6 +3498,566 @@ def get_thread_manager() -> ThreadManager:
   automatic re-recall. get_thread_manager() serves the process."
   ```
 
+### Task A6c: ThreadManager — merge_back and the grace-window resume
+
+**Files:**
+- Modify: `halbert_core/halbert_core/agents/conversation_sqlite.py` (add `merge_thread` after `search_snippets`, before the `# session_somatic_blocks (C1 link)` section)
+- Modify: `halbert_core/halbert_core/agents/threads.py` (`begin_turn` reopen branch; replace `resume_thread`; add `merge_back`; add `_reopen_thread` / `_predecessor_id` / `_paused_predecessor` / `_within_grace` before `_close_thread`)
+- Test: `halbert_core/tests/test_thread_store.py` (append), `halbert_core/tests/test_threads.py` (one edit + append)
+
+Spec §5 "Merge": "same topic" within the grace window moves the new thread's turns back into the previous thread and marks the new one `merged` (rows stay, receipt dropped). Two paths reopen a paused thread and they differ on purpose:
+- **`resume_thread`** (the model's tool, i.e. the admin said "no, same topic"): when `from_thread_id` was opened *from* `thread_id` and the grace window is still open (`turns_since_pause < GRACE_TURNS` on the new thread and `paused_at` newer than `GRACE_MINUTES`), the split was spurious → `merge_back`. Otherwise it is a plain reopen that pauses `from_thread_id`.
+- **Auto-reopen on a strong match** (`begin_turn`, decision `reopen`): always a plain reopen. The open thread was a real subject of its own (the admin is jumping back, not correcting a split), so it is paused beside the target, never merged.
+
+- [ ] **Write the failing tests.** Append to `halbert_core/tests/test_thread_store.py`:
+
+```python
+
+# ---------------------------------------------------------------------------
+# Merge-back: merge_thread (A6c)
+# ---------------------------------------------------------------------------
+
+class TestMergeThread:
+    def test_merge_moves_rows_fts_and_flags(self, store):
+        store.create_thread("prev", "Samba share")
+        store.update_thread("prev", status="paused", paused_at=10.0)
+        store.upsert_receipt("prev", "Samba share", "Title: Samba share\nEntities: samba")
+        store.create_thread("new", "Scanner share")
+        store.upsert_receipt("new", "Scanner share", "Title: Scanner share\nEntities: scanner")
+        a = store.append_message("prev", "user", "add the samba share", turn_id="t1")
+        b = store.append_message("new", "user", "now the scanner share", turn_id="t2")
+        c = store.append_message("new", "assistant", "scanner share added", origin="assistant", turn_id="t2")
+        assert store.merge_thread("new", "prev", now=50.0) == 2
+        assert [m["message_id"] for m in store.list_messages("prev")] == [a, b, c]
+        assert store.list_messages("new") == []
+        assert [r[0] for r in store._conn.execute(
+            "SELECT conversation_id FROM messages_fts WHERE messages_fts MATCH '\"scanner\"' ORDER BY rowid"
+        ).fetchall()] == ["prev", "prev"]
+        new = store.get_thread("new")
+        assert (new["status"], new["merged_into"], new["receipt"], new["paused_at"]) == ("merged", "prev", "", None)
+        assert store._conn.execute("SELECT COUNT(*) FROM receipts_fts WHERE thread_id = 'new'").fetchone()[0] == 0
+        prev = store.get_thread("prev")
+        assert (prev["status"], prev["paused_at"], prev["turns_since_pause"], prev["updated_at"]) == ("open", None, 0, 50.0)
+        assert store.search_receipts("scanner") == []
+        assert store.search_snippets("prev", "scanner") and store.search_snippets("new", "scanner") == []
+
+    def test_merge_refuses_missing_or_same_thread(self, store):
+        store.create_thread("prev", "P")
+        assert store.merge_thread("nope", "prev") is None
+        assert store.merge_thread("prev", "prev") is None
+        assert store.get_thread("prev")["status"] == "open"
+```
+
+  In `halbert_core/tests/test_threads.py` replace the opening of `test_resume_thread`
+  ```python
+      def test_resume_thread(self, tm):
+          t1 = _turn(tm, "add a samba share for the media folder")
+          tm.clock.advance(3 * 3600)
+          t2 = _turn(tm, "check the disk space on /var")
+          assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is True
+  ```
+  with
+  ```python
+      def test_resume_thread(self, tm):
+          t1 = _turn(tm, "add a samba share for the media folder")
+          tm.clock.advance(3 * 3600)
+          t2 = _turn(tm, "check the disk space on /var")
+          tm.clock.advance(GRACE_MINUTES * 60)  # past the grace window: plain reopen (merge cases: TestMergeBack)
+          assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is True
+  ```
+  (the rest of the method is unchanged) and append at the end of the file:
+
+```python
+
+class TestMergeBack:
+    def test_merge_moves_rows_and_marks_merged(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder", assistant="Added [media].")
+        new_id = tm.new_thread("Scanner share", "different device", from_thread_id=t1.thread_id)
+        t2 = _turn(tm, "now the scanner share too", assistant="Added [scanner].")
+        assert t2.thread_id == new_id
+        assert tm.merge_back(new_id) == t1.thread_id
+        rows = tm.store.list_messages(t1.thread_id)
+        assert [r["content"] for r in rows] == ["add a samba share for the media folder", "Added [media].",
+                                                "now the scanner share too", "Added [scanner]."]
+        assert tm.store.list_messages(new_id) == []
+        merged = tm.store.get_thread(new_id)
+        assert (merged["status"], merged["merged_into"], merged["receipt"]) == ("merged", t1.thread_id, "")
+        prev = tm.store.get_thread(t1.thread_id)
+        assert prev["status"] == "open" and prev["paused_at"] is None and prev["turns_since_pause"] == 0
+        assert "successor" not in prev["metadata"] and prev["metadata"]["merged_from"] == [new_id]
+        assert prev["entities_json"] == ["samba", "scanner", "share"] and prev["last_active"] == NOW
+        assert "· 2 turns" in prev["receipt"] and "Last said: Added [scanner]." in prev["receipt"]
+        assert tm.current()["thread_id"] == t1.thread_id
+        assert tm.store._conn.execute(
+            "SELECT COUNT(*) FROM receipts_fts WHERE thread_id = ?", (new_id,)).fetchone()[0] == 0
+
+    def test_merged_thread_excluded_from_search_and_recall(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        _turn(tm, "now the scanner share too")
+        assert tm.store.search_receipts("scanner")[0]["thread_id"] == new_id
+        assert tm.merge_back(new_id) == t1.thread_id
+        assert [h["thread_id"] for h in tm.store.search_receipts("scanner")] == [t1.thread_id]
+        hits = tm.recall("scanner share")
+        assert [r["thread_id"] for r in hits] == [t1.thread_id] and hits[0]["matching_messages"]
+
+    def test_merge_back_refused_outside_grace_or_without_predecessor(self, tm):
+        first = _turn(tm, "add a samba share for the media folder")
+        assert tm.merge_back(first.thread_id) is None  # nothing to merge into
+        assert tm.merge_back("nope") is None
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id=first.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+        assert tm.merge_back(new_id) is None  # time window elapsed
+        assert tm.store.get_thread(new_id)["status"] == "open"
+        assert tm.store.get_thread(first.thread_id)["status"] == "paused"
+        assert tm.tick() == [first.thread_id]
+        # GRACE_TURNS turns on the successor also end the window
+        third_id = tm.new_thread("Printer", "x", from_thread_id=new_id)
+        for i in range(GRACE_TURNS):
+            _turn(tm, f"printer step {i}")
+        assert tm.merge_back(third_id) is None
+        assert tm.store.get_thread(new_id)["status"] == "paused"
+
+    def test_resume_within_grace_merges(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Scanner share", "model guessed a new subject", from_thread_id=t1.thread_id)
+        _turn(tm, "now the scanner share too")
+        assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is True
+        assert tm.store.get_thread(new_id)["status"] == "merged"
+        assert tm.current()["thread_id"] == t1.thread_id
+        assert len(tm.store.list_messages(t1.thread_id)) == 4
+        assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is False  # already open
+
+    def test_resume_after_grace_reopens_without_merging(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        _turn(tm, "now the scanner share too")
+        tm.clock.advance(GRACE_MINUTES * 60)
+        assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is True
+        paused = tm.store.get_thread(new_id)
+        assert paused["status"] == "paused" and paused["metadata"]["successor"] == t1.thread_id
+        assert len(tm.store.list_messages(t1.thread_id)) == 2 and len(tm.store.list_messages(new_id)) == 2
+        assert tm.current()["thread_id"] == t1.thread_id
+
+    def test_auto_reopen_on_strong_match_never_merges(self, tm):
+        t1 = _turn(tm, "swap the failing nvme in the zfs pool", assistant="Resilver running.")
+        new_id = tm.new_thread("Samba share", "x", from_thread_id=t1.thread_id)
+        _turn(tm, "add a samba share for the media folder")
+        text = "the zfs resilver on the nvme finished"
+        turn = tm.begin_turn(text, analyze_message(text), "s3")
+        assert turn.decision.action == "reopen" and turn.thread_id == t1.thread_id
+        assert tm.store.get_thread(new_id)["status"] == "paused"
+        assert len(tm.store.list_messages(new_id)) == 2
+```
+
+- [ ] **Run it, expect failure:**
+  `cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_threads.py tests/test_thread_store.py -q -p no:cacheprovider`
+  Expected: `6 failed, 47 passed` — `AttributeError: 'ThreadManager' object has no attribute 'merge_back'` (3 tests), `AssertionError: assert 'paused' == 'merged'` (`test_resume_within_grace_merges`), and `AttributeError: 'SqliteConversationStore' object has no attribute 'merge_thread'` (both `TestMergeThread` tests). `test_resume_after_grace_reopens_without_merging`, `test_auto_reopen_on_strong_match_never_merges` and the edited `test_resume_thread` already pass against the A6b code.
+
+- [ ] **Implement the store side.** In `conversation_sqlite.py`, insert immediately after the end of `search_snippets` (its last lines are `logger.warning(f"search_snippets {thread_id} failed: {e}")` / `return []`), before the `# session_somatic_blocks (C1 link)` comment block:
+
+```python
+
+    # ------------------------------------------------------------------
+    # Merge-back (spec §5 "Merge")
+    # ------------------------------------------------------------------
+
+    def merge_thread(
+        self, src_thread_id: str, dst_thread_id: str, *, now: Optional[float] = None
+    ) -> Optional[int]:
+        """Fold thread ``src`` into thread ``dst`` in one transaction.
+
+        Moves every message row (and its ``messages_fts`` row) of ``src`` onto
+        ``dst``; marks ``src`` ``merged`` (``merged_into = dst``, receipt
+        dropped, ``receipts_fts`` row deleted); reopens ``dst`` (status open,
+        ``paused_at`` cleared, ``turns_since_pause`` reset). Returns the number
+        of rows moved, or ``None`` when either thread is missing or the write
+        failed (nothing is left half-done).
+        """
+        if self._conn is None or not src_thread_id or src_thread_id == dst_thread_id:
+            return None
+        ts = float(now) if now is not None else time.time()
+        try:
+            with self._lock, self._conn:
+                present = self._conn.execute(
+                    "SELECT COUNT(*) FROM conversations WHERE id IN (?, ?)",
+                    (src_thread_id, dst_thread_id),
+                ).fetchone()[0]
+                if int(present) != 2:
+                    return None
+                cur = self._conn.execute(
+                    "UPDATE messages SET conversation_id = ? WHERE conversation_id = ?",
+                    (dst_thread_id, src_thread_id),
+                )
+                moved = int(cur.rowcount or 0)
+                if self._fts_ok:
+                    self._conn.execute(
+                        "UPDATE messages_fts SET conversation_id = ? WHERE conversation_id = ?",
+                        (dst_thread_id, src_thread_id),
+                    )
+                    self._conn.execute(
+                        "DELETE FROM receipts_fts WHERE thread_id = ?", (src_thread_id,)
+                    )
+                self._conn.execute(
+                    """UPDATE conversations
+                       SET status = 'merged', merged_into = ?, receipt = '',
+                           receipt_updated_at = NULL, paused_at = NULL, updated_at = ?
+                       WHERE id = ?""",
+                    (dst_thread_id, ts, src_thread_id),
+                )
+                self._conn.execute(
+                    """UPDATE conversations
+                       SET status = 'open', paused_at = NULL, stale = 0,
+                           turns_since_pause = 0, updated_at = ?
+                       WHERE id = ?""",
+                    (ts, dst_thread_id),
+                )
+            return moved
+        except Exception as e:
+            logger.warning(f"merge_thread {src_thread_id} -> {dst_thread_id} failed: {e}")
+            return None
+```
+
+- [ ] **Implement the manager side** — edit `halbert_core/halbert_core/agents/threads.py`:
+
+  1. In `begin_turn`, replace the reopen branch
+     ```python
+             elif decision.action == "reopen" and decision.target_thread_id:
+                 if self.resume_thread(decision.target_thread_id, from_thread_id=previous_id):
+                     thread_id = decision.target_thread_id
+                 else:
+                     thread_id = previous_id
+     ```
+     with
+     ```python
+             elif decision.action == "reopen" and decision.target_thread_id:
+                 # Auto-reopen on a strong match is always a plain reopen: the open
+                 # thread was a real subject of its own, so it is paused, not merged.
+                 target = self.store.get_thread(decision.target_thread_id)
+                 if target is not None and self._reopen_thread(target, previous_id, now):
+                     thread_id = decision.target_thread_id
+                 else:
+                     thread_id = previous_id
+     ```
+  2. Replace the whole `resume_thread` method
+     ```python
+         def resume_thread(self, thread_id: str, *, from_thread_id: Optional[str]) -> bool:
+             """Reopen a paused thread and pause ``from_thread_id``."""
+             now = self._now()
+             target = self.store.get_thread(thread_id)
+             if target is None or target.get("status") != "paused":
+                 return False
+             if from_thread_id and from_thread_id != thread_id:
+                 self._pause_thread(from_thread_id, now, successor=thread_id)
+             meta = dict(target.get("metadata") or {})
+             meta.pop("successor", None)
+             return self.store.update_thread(
+                 thread_id, status="open", paused_at=None, stale=False,
+                 turns_since_pause=0, metadata=meta, updated_at=now,
+             )
+     ```
+     with
+
+```python
+    def resume_thread(self, thread_id: str, *, from_thread_id: Optional[str]) -> bool:
+        """Reopen a paused thread from ``from_thread_id`` (the model's ``resume_thread``).
+
+        When ``from_thread_id`` was opened *from* ``thread_id`` and the grace
+        window is still open, the split was spurious ("no, same topic"): the
+        young thread is merged back (spec §5 "Merge") instead of being paused
+        beside its predecessor. Otherwise this is a plain reopen that pauses
+        ``from_thread_id``.
+        """
+        now = self._now()
+        target = self.store.get_thread(thread_id)
+        if target is None or target.get("status") != "paused":
+            return False
+        if from_thread_id and from_thread_id != thread_id:
+            source = self.store.get_thread(from_thread_id)
+            if source is not None and source.get("status") == "open":
+                prev = self._paused_predecessor(source)
+                if prev is not None and prev["thread_id"] == thread_id and self._within_grace(prev, source, now):
+                    return self.merge_back(from_thread_id) == thread_id
+        return self._reopen_thread(target, from_thread_id, now)
+
+    def merge_back(self, new_thread_id: str) -> Optional[str]:
+        """Fold a young open thread back into its paused predecessor (spec §5 "Merge").
+
+        Applies only while the grace window is open (fewer than ``GRACE_TURNS``
+        turns on the new thread and the predecessor's ``paused_at`` newer than
+        ``GRACE_MINUTES``). Moves the new thread's rows onto the predecessor,
+        marks the new thread ``merged`` (``merged_into`` set, receipt dropped,
+        receipts_fts row deleted), reopens the predecessor and refreshes its
+        receipt. Returns the predecessor id, or ``None`` when nothing merged.
+        """
+        now = self._now()
+        new = self.store.get_thread(new_thread_id)
+        if new is None or new.get("status") != "open":
+            return None
+        prev = self._paused_predecessor(new)
+        if prev is None or not self._within_grace(prev, new, now):
+            return None
+        prev_id = prev["thread_id"]
+        if self.store.merge_thread(new_thread_id, prev_id, now=now) is None:
+            return None
+        meta = dict(prev.get("metadata") or {})
+        meta.pop("successor", None)
+        meta["merged_from"] = list(meta.get("merged_from") or []) + [new_thread_id]
+        recalled = list(prev.get("recalled_json") or [])
+        seen = {e.get("thread_id") for e in recalled}
+        recalled.extend(e for e in (new.get("recalled_json") or []) if e.get("thread_id") not in seen)
+        last_active = max(float(prev.get("last_active") or 0.0), float(new.get("last_active") or 0.0))
+        self.store.update_thread(
+            prev_id,
+            metadata=meta,
+            recalled_json=recalled,
+            topic_domains=sorted(set(prev.get("topic_domains") or []) | set(new.get("topic_domains") or [])),
+            entities_json=sorted(set(prev.get("entities_json") or []) | set(new.get("entities_json") or [])),
+            last_active=last_active or None,
+            updated_at=now,
+        )
+        self._refresh_receipt(prev_id)
+        logger.info(f"thread {new_thread_id} merged back into {prev_id}")
+        return prev_id
+```
+
+  3. Insert immediately before the `_close_thread` method (i.e. after `_pause_thread`):
+
+```python
+    def _reopen_thread(self, target: Dict[str, Any], from_thread_id: Optional[str], now: float) -> bool:
+        """Plain reopen: ``target`` becomes open and ``from_thread_id`` is paused beside it."""
+        thread_id = target["thread_id"]
+        if target.get("status") != "paused":
+            return False
+        if from_thread_id and from_thread_id != thread_id:
+            self._pause_thread(from_thread_id, now, successor=thread_id)
+        meta = dict(target.get("metadata") or {})
+        meta.pop("successor", None)
+        return self.store.update_thread(
+            thread_id, status="open", paused_at=None, stale=False,
+            turns_since_pause=0, metadata=meta, updated_at=now,
+        )
+
+    @staticmethod
+    def _predecessor_id(thread: Dict[str, Any]) -> Optional[str]:
+        """The thread this one was opened from (``_open_new_thread`` records it)."""
+        meta = thread.get("metadata") or {}
+        return meta.get("previous_thread_id") or thread.get("parent_thread_id") or None
+
+    def _paused_predecessor(self, thread: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The paused thread ``thread`` was opened from; else the most recently paused one."""
+        prev_id = self._predecessor_id(thread)
+        prev = self.store.get_thread(prev_id) if prev_id else None
+        if prev is None:
+            paused = [
+                t for t in self.store.list_threads(status="paused", limit=50)
+                if t.get("paused_at") is not None and t["thread_id"] != thread["thread_id"]
+            ]
+            prev = max(paused, key=lambda t: float(t["paused_at"]), default=None)
+        if prev is None or prev.get("status") != "paused":
+            return None
+        return prev
+
+    @staticmethod
+    def _within_grace(paused: Dict[str, Any], successor: Dict[str, Any], now: float) -> bool:
+        """True while ``paused`` may still be merged into (the inverse of ``tick``'s close rule)."""
+        paused_at = paused.get("paused_at")
+        if paused_at is None:
+            return False
+        turns = int(successor.get("turns_since_pause") or 0)
+        return turns < GRACE_TURNS and (float(now) - float(paused_at)) < GRACE_MINUTES * 60
+
+```
+
+- [ ] **Run tests, expect PASS:**
+  `cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_threads.py tests/test_thread_store.py -q -p no:cacheprovider`
+  Expected: `53 passed` (22 threads, 31 store).
+
+- [ ] **Commit:**
+  ```
+  cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/agents/conversation_sqlite.py halbert_core/halbert_core/agents/threads.py halbert_core/tests/test_thread_store.py halbert_core/tests/test_threads.py && git commit -m "feat(agents): merge a spurious thread split back within the grace window
+
+  SqliteConversationStore.merge_thread moves a thread's rows and FTS entries
+  onto another thread in one transaction, marks the source merged
+  (merged_into, receipt dropped, receipts_fts row deleted) and reopens the
+  target. ThreadManager.merge_back applies it to a young thread and its
+  paused predecessor while the grace window is open (< GRACE_TURNS turns,
+  paused_at < GRACE_MINUTES), merging domains/entities/recalls and
+  refreshing the receipt. resume_thread merges instead of reopening when the
+  thread it is called from was opened from the target inside the window;
+  the strong-match auto-reopen in begin_turn stays a plain reopen."
+  ```
+
+### Task A6d: Retraction notes — hidden system rows the next turn's hint surfaces
+
+**Files:**
+- Modify: `halbert_core/halbert_core/agents/threads.py` (`TurnContext`; `begin_turn`; `retract_recall`; `_history`; new `_pending_notes`)
+- Test: `halbert_core/tests/test_threads.py` (append)
+- `halbert_core/halbert_core/agents/thread_signals.py` is **not** touched here: A5 already ships `build_hint(..., notes=...)` and its tests (see the step below).
+
+Spec §6: "a retracted recall is excluded from compaction and adds a system-origin observation the next PLANNING sees". A6b's `retract_recall` only flips the `recalled_json` status. Here it also appends a hidden system row (`origin='system'`, `visible_in_timeline=0`, content `admin retracted recall of '<title>'`) to the thread; `begin_turn` collects such rows newer than the last human row into `TurnContext.notes`, which `build_hint` (already shipped, A5) renders as `Note: …` lines inside `<continuity>`. Hidden rows never enter the timeline (`list_turns` filters `visible_in_timeline`), the history (`recent_messages` keeps human/assistant only) or the receipt's turn count.
+
+- [ ] **Write the failing tests.** Append to `halbert_core/tests/test_threads.py`:
+
+```python
+
+class TestRetractionNotes:
+    def _retracted(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder", assistant="Added [media] at /srv/media.")
+        tm.clock.advance(3 * 3600)
+        t2 = _turn(tm, "check the disk space on /var")
+        tm.clock.advance(31 * 60)
+        assert tm.tick() == [t1.thread_id]
+        text = "add another share like we did for the media one"
+        turn3 = _turn(tm, text)
+        assert turn3.recalled[0]["thread_id"] == t1.thread_id
+        assert tm.retract_recall(t2.thread_id, t1.thread_id) is True
+        return t1, t2, text
+
+    def test_retract_appends_hidden_system_row(self, tm):
+        t1, t2, _ = self._retracted(tm)
+        rows = tm.store.list_messages(t2.thread_id)
+        note = rows[-1]
+        assert (note["role"], note["origin"], note["visible_in_timeline"]) == ("system", "system", False)
+        assert note["content"] == "admin retracted recall of 'Add samba'" and note["timestamp"] == tm.clock.t
+        assert all(t["origin"] != "system" for t in tm.store.list_turns())
+        assert all(r["origin"] != "system" for r in tm.store.recent_messages(t2.thread_id))
+        assert tm.retract_recall(t2.thread_id, t1.thread_id) is False
+        assert len(tm.store.list_messages(t2.thread_id)) == len(rows)
+
+    def test_begin_turn_collects_notes_until_next_human_row(self, tm):
+        t1, t2, text = self._retracted(tm)
+        turn4 = tm.begin_turn(text, analyze_message(text), "s4")
+        assert turn4.thread_id == t2.thread_id and turn4.recalled == []
+        assert turn4.notes == ["admin retracted recall of 'Add samba'"]
+        assert "\nNote: admin retracted recall of 'Add samba'\n" in turn4.hint and "Pulled in" not in turn4.hint
+        assert turn4.history[0]["role"] == "user"  # hidden rows never enter the history
+        tm.end_turn(turn4, assistant_text="ok", blocks=[], terminal_session_ids=[], diff_proposals=[])
+        turn5 = tm.begin_turn("continue", analyze_message("continue"), "s5")
+        assert turn5.notes == [] and "Note:" not in turn5.hint
+```
+
+  **Nothing is inserted into `halbert_core/tests/test_thread_signals.py`.** A5's review round already added `test_notes_line` — the exact test this task specified — plus `test_notes_sit_between_the_recall_lines_and_the_notifications`, `test_hostile_notes_are_flattened` and `test_notes_never_cost_the_notification_or_the_recall_heads`, and all four pass against the shipped `build_hint`. Leave that file untouched.
+
+- [ ] **Run it, expect failure:**
+  `cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_threads.py tests/test_thread_signals.py -q -p no:cacheprovider`
+  Expected: exactly **2 failures**, both of them the `test_threads.py` additions above — `test_retract_appends_hidden_system_row` (`'assistant' != 'system'`: the last row is still the assistant row) and `test_begin_turn_collects_notes_until_next_human_row` (`AttributeError: 'TurnContext' object has no attribute 'notes'`). `test_notes_line` passes already: A5 ships the `notes` keyword. (Counts are a target, not a measurement — trust the run.)
+
+- [x] **`build_hint` notes — already implemented, do NOT re-apply.** `halbert_core/halbert_core/agents/thread_signals.py` shipped this in A5 (its review round): `build_hint(open_thread, decision, recalled, notifications, voice="first_person", *, now=None, notes: Optional[List[str]] = None)` renders each note as a `Note: <text>` line after the recall / "Earlier work" lines and before `Waiting for you`, and a fresh thread carrying only notes no longer returns `""`.
+
+  The string replacements this task originally carried are **stale and harmful**: their anchors (`if turns == 0 and not recalled and not weak and not notifications:`, the `lines.append("Earlier work that may matter: " ...)` / `if notifications:` pair) no longer exist — notification assembly moved above the early return, and the body is composed from `head_line` / `recall_lines` / `weak_line` / `note_lines` / `notif_line`. Appending `Note:` lines straight into `lines` would also bypass the priority budget (`body_budget` / `free`), push the body past `HINT_MAX_CHARS` and hit the tail-truncation backstop that eats the `Waiting for you` line.
+
+  What is in the tree instead: each note is capped at `NOTE_ITEM_MAX = 180` then rendered through `NOTE_LINE_MAX = 200`; at most `NOTES_MAX = 3` lines render, within a `NOTES_TOTAL_MAX = 300` char allowance; and the allowance is taken *after* reserving `RECALL_LINE_MIN + 1` per recall (or weak) line, so notes never cost a recall line its head or the notification line its place. Notes that do not fit are dropped whole rather than truncating the block.
+
+- [ ] **Implement the manager side** — edit `halbert_core/halbert_core/agents/threads.py`:
+
+  1. In `TurnContext`, after `    entities: List[str] = field(default_factory=list)` add:
+     ```python
+         #: system-origin rows newer than the last human row (e.g. a retracted recall)
+         notes: List[str] = field(default_factory=list)
+     ```
+  2. In `begin_turn`, replace
+     ```python
+             if not history:
+                 history = self._history(thread)
+             try:
+                 hint = build_hint(thread, decision, recalled, [], now=now)
+     ```
+     with
+     ```python
+             if not history:
+                 history = self._history(thread)
+             notes = self._pending_notes(thread_id)
+             try:
+                 hint = build_hint(thread, decision, recalled, [], now=now, notes=notes)
+     ```
+     and, in the `return TurnContext(...)` at the end of `begin_turn`, replace
+     ```python
+                 domains=list(signals.detected_domains or []),
+                 entities=sorted(signals.entities or ()),
+             )
+     ```
+     with
+     ```python
+                 domains=list(signals.detected_domains or []),
+                 entities=sorted(signals.entities or ()),
+                 notes=notes,
+             )
+     ```
+  3. In `retract_recall`, replace the tail
+     ```python
+             if not changed:
+                 return False
+             return self.store.update_thread(thread_id, recalled_json=recalled)
+     ```
+     with
+     ```python
+             if not changed:
+                 return False
+             if not self.store.update_thread(thread_id, recalled_json=recalled):
+                 return False
+             title = next(
+                 (e.get("title") or "" for e in recalled if e.get("thread_id") == recalled_thread_id), ""
+             )
+             # Hidden system row: the next begin_turn surfaces it as a "Note:" line
+             # (spec §6 "adds a system-origin observation the next PLANNING sees").
+             self.store.append_message(
+                 thread_id, "system", f"admin retracted recall of '{title or recalled_thread_id}'",
+                 origin="system", status="complete", timestamp=now, visible_in_timeline=False,
+             )
+             return True
+     ```
+  4. Replace the whole `_history` method
+     ```python
+         def _history(self, thread: Dict[str, Any]) -> List[Dict[str, Any]]:
+             rows = self.store.recent_messages(thread["thread_id"], limit=HISTORY_ROWS)
+             history = [{"role": r["role"], "content": r["content"]} for r in rows]
+             receipt = thread.get("receipt") or ""
+             if receipt and int(thread.get("message_count") or 0) > len(rows):
+                 history.insert(0, {"role": "system", "content": f"[Earlier in this subject: {receipt}]"})
+             return history
+     ```
+     with (hidden rows count in `message_count`, so "older turns exist" is now decided from the human/assistant rows themselves):
+     ```python
+         def _history(self, thread: Dict[str, Any]) -> List[Dict[str, Any]]:
+             rows = self.store.recent_messages(thread["thread_id"], limit=HISTORY_ROWS + 1)
+             older = len(rows) > HISTORY_ROWS
+             history = [{"role": r["role"], "content": r["content"]} for r in rows[-HISTORY_ROWS:]]
+             receipt = thread.get("receipt") or ""
+             if receipt and older:
+                 history.insert(0, {"role": "system", "content": f"[Earlier in this subject: {receipt}]"})
+             return history
+
+         def _pending_notes(self, thread_id: str) -> List[str]:
+             """System-origin rows newer than the thread's last human row, oldest-first."""
+             notes: List[str] = []
+             for m in reversed(self.store.list_messages(thread_id)):
+                 if m["origin"] == "human":
+                     break
+                 if m["origin"] == "system" and m.get("content"):
+                     notes.append(m["content"])
+             notes.reverse()
+             return notes
+     ```
+
+- [ ] **Run tests, expect PASS:**
+  `cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_threads.py tests/test_thread_signals.py -q -p no:cacheprovider`
+  Expected: `58 passed` (24 threads, 34 signals — A5 closed at 34 after its review round; counts are targets, trust the run). Then the whole S set:
+  `/Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_threads.py tests/test_thread_signals.py tests/test_thread_store.py tests/test_receipt.py tests/test_intake_signals.py tests/test_conversation_sqlite.py tests/test_session_affinity.py -q -p no:cacheprovider`
+  Expected: `182 passed` (24 threads, 34 signals, 31, 10, 50, 20, 13 — targets, trust the run). Then the full suite: `/Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests -q -p no:cacheprovider` — expected: 4 pre-existing failures only (test_tool_calling_bridge, test_phase_d_integration), everything else passes.
+
+- [ ] **Commit:**
+  ```
+  cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/agents/threads.py halbert_core/tests/test_threads.py && git commit -m "feat(agents): surface a retracted recall to the next turn as a hidden note
+
+  retract_recall appends a system-origin row (visible_in_timeline=0,
+  'admin retracted recall of <title>') to the thread; begin_turn collects
+  system rows newer than the last human row into TurnContext.notes, which
+  build_hint (already shipped in A5) renders as 'Note:' lines. Hidden rows
+  never reach the timeline, the model history or the receipt turn count;
+  _history now decides 'older turns exist' from human/assistant rows only."
+  ```
+
 **Contract additions (planner S — verifier please propagate):**
 - `SqliteConversationStore`: new `create_thread(thread_id, title, *, status="open", title_source="provisional", created_at=None, parent_thread_id=None, metadata=None) -> bool`; `list_messages(thread_id, *, limit=None) -> list[dict]` (full rows: message_id, thread_id, role, content, timestamp, origin, status, turn_id, session_id, blocks, terminal_block_ids, diff_proposals, metadata, visible_in_timeline); `search_snippets(thread_id, query, limit=5) -> list[str]`; `mark_in_progress_interrupted() -> int`; `append_message` gains trailing kwarg `visible_in_timeline: bool = True`; `update_message` also accepts `thread_id` (moves the row and its FTS entry); `save()` returns `bool`; `SCHEMA_VERSION = 2` module constant. Thread dicts (`get_thread`/`list_threads`/`current_open_thread`) carry both `thread_id` and `id`, plus `message_count` and `turn_count`; flags (`stale`/`ephemeral`/`unread`) come back as 0/1 ints. `list_turns` returns exactly `limit` turns; the route (A11) should call with `limit + 1` to compute `has_more`.
 - `search_receipts` score = `min(1, matched_terms / min(len(query_terms), 3))` (0.25 for an FTS hit with no verifiable term); stopwords are dropped from receipt queries (`_QUERY_STOPWORDS`); `decide()` passes `query + " " + sorted(entities)` so aliases apply at query time.
@@ -3506,14 +4066,20 @@ def get_thread_manager() -> ThreadManager:
 - `thread_signals.py`: `STRONG_MIN_SCORE = 0.5`, `HINT_MAX_CHARS = 900`, `relative_time(ts, now=None)`, `format_date(ts, now=None)`; `build_hint` gains keyword-only `now: float | None = None`. Extra rule: bare anaphora with no entities/domains makes the most recent paused/closed thread a strong candidate when its `last_active` ≥ the open thread's (paused → reopen, closed → stay + inject).
 - `threads.py`: `TurnContext` gains `session_id: str = ""`, `previous_thread_id: str | None = None`, `domains: list[str]`, `entities: list[str]`; `ThreadManager.on_thread_closed: list[Callable[[dict], None]]`; paused threads record their successor in `metadata["successor"]`, new threads record `metadata["reason"]`/`metadata["previous_thread_id"]`; one-turn soft landing after a switch prepends a system row plus the previous thread's last 6 rows to `history`; the singleton reads `conversation_sqlite._DEFAULT_DB` at call time (monkeypatchable via `threads._cs`).
 - `agents/session_affinity.py` is left untouched: `decide()` does not reuse its keyword scoring (it scores receipts, not messages). It is dead code on the thread path — Plan C cleanup candidate (its tests still pass against the updated fixture).
-
+- (A1) `_ensure_schema` also creates `compact_boundaries(id INTEGER PK, thread_id TEXT, trigger TEXT, pre_tokens INTEGER, post_tokens INTEGER, preserved_message_ids TEXT json '[]', summary_message_id INTEGER, created_at REAL)` + `idx_compact_thread`. No writer exists in Plan A (spec §14: ships default-off); the tick hook for LLM compaction is a later plan.
+- (A4) the `network` keyword list also contains `scanner`, so `scanner` is a canonical entity and a network-domain hit (spec §6). Titles like "Scanner share" are unaffected (titles are never re-analysed).
+- (A6c) `SqliteConversationStore.merge_thread(src_thread_id, dst_thread_id, *, now=None) -> int | None`: one transaction — moves `messages` + `messages_fts` rows, deletes `src`'s `receipts_fts` row, sets `src` to `status='merged', merged_into=dst, receipt=''`, and reopens `dst` (`status='open', paused_at=NULL, stale=0, turns_since_pause=0`). Returns rows moved; `None` when a thread is missing / src == dst / the write failed.
+- (A6c) `ThreadManager.merge_back(new_thread_id) -> str | None` folds an *open* thread into its paused predecessor while the grace window is open (`turns_since_pause < GRACE_TURNS` on the new thread and `now - paused_at < GRACE_MINUTES * 60`; the exact complement of `tick()`'s close rule). Predecessor lookup: `metadata["previous_thread_id"]` (what `_open_new_thread` records) → `parent_thread_id` column → the most recently paused thread. Domains, entities and `recalled_json` of the merged thread fold into the predecessor; `metadata["merged_from"]` lists merged ids; `last_active` becomes the newer of the two; the predecessor's receipt is rebuilt.
+- (A6c) `ThreadManager.resume_thread(thread_id, *, from_thread_id)` (the model's tool) now **merges** when `from_thread_id` is open, was opened from `thread_id`, and the window is open; otherwise it is the plain reopen (pause `from_thread_id` with `metadata["successor"]`, reopen the target). The strong-match auto-reopen in `begin_turn` uses the internal `_reopen_thread` and never merges. Planner M: after a merging `resume_thread` returns `True`, the from-thread is `merged` and its rows — including the in-flight user row — already live on the target; setting `ctx.thread_id = target` and calling `end_turn(..., thread_id_override=target)` stays correct (`update_message(thread_id=target)` on an already-moved row is a no-op move).
+- (A6d) `retract_recall` additionally appends a hidden row to the thread: `role='system', origin='system', status='complete', visible_in_timeline=0`, content `admin retracted recall of '<title>'`. `TurnContext.notes: list[str]` carries system-origin rows newer than the last human row (oldest-first); `build_hint(..., notes: list[str] | None = None)` — **shipped in A5, not in this task** — renders each as `Note: <text>` after the recall / "Earlier work" lines and before `Waiting for you`, capped (`NOTE_ITEM_MAX = 180`, `NOTE_LINE_MAX = 200`, `NOTES_MAX = 3` lines, `NOTES_TOTAL_MAX = 300` chars) and budgeted before the recall lines so they cannot cost the notification line its place; a fresh thread with notes no longer yields an empty hint. `_history` decides "older turns exist" from `recent_messages(limit=HISTORY_ROWS + 1)` rather than `message_count`, so hidden rows never trigger the receipt system row.
+- (A6b) `tick()` closes on time/turn count only; the spec §5 "live terminal sessions keep a thread from auto-closing" guard is Plan B (noted in the docstring).
 ### Task A7: Thread events, StateContext thread fields, meta-tool schemas, SAFE classification
 
 **Files:**
 - Modify: `halbert_core/halbert_core/agents/events.py` (insert after `terminal_complete`, line 514, before `heartbeat`)
 - Modify: `halbert_core/halbert_core/agents/states.py` (StateContext, after the `images` field, line 192)
 - Modify: `halbert_core/halbert_core/tools/safety.py` (constant after `SafetyCheckResult` line 44; `classify` lines 307-320)
-- Modify: `halbert_core/halbert_core/tools/executor.py` (import line 19; end of `_register_builtins` line 189; `execute` after the unknown-tool check line 230)
+- Modify: `halbert_core/halbert_core/tools/executor.py` (the `from .safety import ...` line; the end of `_register_builtins`, after the `list_directory` registration; `execute`, directly after the unknown-tool `return ExecutionResult(...)` block)
 - Test: `halbert_core/tests/test_thread_events_and_tools.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -3554,6 +4120,14 @@ class TestThreadEvents:
         assert d["type"] == "thread_recalled" and d["thread_id"] == "t9"
         assert d["title"] == "Samba media share" and d["date"] == "2026-07-14"
         assert d["match_terms"] == ["samba", "share"] and d["mode"] == "auto"
+        assert d["last_turn_id"] is None
+        json.dumps(d)
+
+    def test_thread_recalled_carries_last_turn_id(self):
+        d = StreamEvent.thread_recalled(
+            "s1", "t9", "Samba media share", "2026-07-14", [], "tool", last_turn_id="turn-77"
+        ).to_dict()
+        assert d["last_turn_id"] == "turn-77" and d["mode"] == "tool"
         json.dumps(d)
 
     def test_thread_store_error_and_turn_persisted(self):
@@ -3660,11 +4234,14 @@ Expected: `ImportError: cannot import name 'THREAD_META_TOOLS' from 'halbert_cor
         date: str,
         match_terms: List[str],
         mode: str,
+        last_turn_id: Optional[str] = None,
     ) -> 'StreamEvent':
         """An earlier thread's receipt was pulled into this turn.
 
         ``mode`` is ``"auto"`` (deterministic strong match at turn start) or
-        ``"tool"`` (the model called ``recall_thread``).
+        ``"tool"`` (the model called ``recall_thread``). ``last_turn_id`` is
+        the recalled thread's newest turn so the chip can scroll the timeline
+        to it (spec §6); None when the store could not say.
         """
         return cls(
             type="thread_recalled",
@@ -3675,6 +4252,7 @@ Expected: `ImportError: cannot import name 'THREAD_META_TOOLS' from 'halbert_cor
                 "date": date,
                 "match_terms": list(match_terms or []),
                 "mode": mode,
+                "last_turn_id": last_turn_id,
             },
         )
 
@@ -3738,11 +4316,11 @@ and in `classify`, directly before the final `else:` (after the `"Search operati
             )
 ```
 
-- [ ] **Step 6: Schemas + execute stub** — in `tools/executor.py` change line 19 to
+- [ ] **Step 6: Schemas + execute stub** — in `tools/executor.py` change the `from .safety import ...` line to
 ```python
 from .safety import ToolSafetyFramework, RiskLevel, SafetyCheckResult, THREAD_META_TOOLS
 ```
-At the end of `_register_builtins` (after the `list_directory` registration closes, line 189) add:
+At the end of `_register_builtins` (after the `list_directory` registration closes) add:
 ```python
 
         # Thread meta-tools (Plan A, spec §7). The schemas are what the model
@@ -3828,8 +4406,8 @@ Expected: `test_thread_events_and_tools.py` and `test_state_machine.py` PASS; `t
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/agents/events.py halbert_core/halbert_core/agents/states.py halbert_core/halbert_core/tools/safety.py halbert_core/halbert_core/tools/executor.py halbert_core/tests/test_thread_events_and_tools.py && git commit -m "feat(agents): thread events, context fields, and inline meta-tool schemas
 
-thread_started / thread_recalled / thread_store_error / turn_persisted
-factories on StreamEvent; StateContext carries thread_id, continuity
+thread_started / thread_recalled (carrying the recalled thread's
+last_turn_id) / thread_store_error / turn_persisted factories on StreamEvent; StateContext carries thread_id, continuity
 hint, recalled threads, spawned terminal ids and the turn context;
 new_thread / recall_thread / resume_thread are registered as SAFE tools
 whose executor path is a no-op stub (PLANNING handles them inline)."
@@ -3838,7 +4416,7 @@ whose executor path is a no-op stub (PLANNING handles them inline)."
 ### Task A8: Continuity hint and thread history in the agent prompts
 
 **Files:**
-- Modify: `halbert_core/halbert_core/prompts/agent_prompts.py` (constant + helpers after `LAYER_3_CONSTRAINTS` line 89; `build_planning_prompt` lines 194-251 replaced; `build_response_prompt` signature line 253-259 and the `prompt = f"""## Task` line 303 edited)
+- Modify: `halbert_core/halbert_core/prompts/agent_prompts.py` (constants + helpers after `LAYER_3_CONSTRAINTS` line 89; `build_planning_prompt` lines 194-251 replaced; `build_response_prompt` signature line 253-259 and the `prompt = f"""## Task` line 303 edited)
 - Test: `halbert_core/tests/test_agent_prompts_continuity.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -3869,6 +4447,29 @@ class TestPlanningPrompt:
         assert "recall_thread" in pre and "new_thread" in pre
         p2 = AgentPromptBuilder(voice="the_computer").build_planning_prompt(query="q", context="", continuity=HINT)
         assert AgentPromptBuilder.CONTINUITY_PREAMBLE["the_computer"] in p2 and pre not in p2
+
+    def test_preamble_drops_the_tool_instruction_when_tools_are_rejected(self):
+        # spec §7: "The instruction to call tools is omitted when the model has
+        # rejected tool schemas" — the client reports that as tools_supported=False.
+        b = AgentPromptBuilder(voice="first_person")
+        p = b.build_planning_prompt(query="q", context="", continuity=HINT, tools_supported=False)
+        no_tools = AgentPromptBuilder.CONTINUITY_PREAMBLE_NO_TOOLS["first_person"]
+        assert no_tools in p and HINT in p and p.index(no_tools) < p.index(HINT)
+        assert "recall_thread" not in p and "new_thread" not in p
+        assert "one continuous conversation" in no_tools
+        # None (unknown) and True keep the full preamble
+        for supported in (None, True):
+            p2 = b.build_planning_prompt(query="q", context="", continuity=HINT, tools_supported=supported)
+            assert AgentPromptBuilder.CONTINUITY_PREAMBLE["first_person"] in p2
+        r = b.build_response_prompt(query="q", context=[], observations=[], continuity=HINT, tools_supported=False)
+        assert no_tools in r and "recall_thread" not in r
+        for voice in ("first_person", "the_computer", "hybrid"):
+            assert "recall_thread" not in AgentPromptBuilder.CONTINUITY_PREAMBLE_NO_TOOLS[voice]
+            assert "new_thread" not in AgentPromptBuilder.CONTINUITY_PREAMBLE_NO_TOOLS[voice]
+        p3 = AgentPromptBuilder(voice="the_computer").build_planning_prompt(
+            query="q", context="", continuity=HINT, tools_supported=False
+        )
+        assert AgentPromptBuilder.CONTINUITY_PREAMBLE_NO_TOOLS["the_computer"] in p3 and no_tools not in p3
 
     def test_no_continuity_means_no_preamble_and_sections_precede_task(self):
         p = AgentPromptBuilder().build_planning_prompt(
@@ -3958,16 +4559,48 @@ Expected: `TypeError: AgentPromptBuilder.build_planning_prompt() got an unexpect
         ),
     }
 
+    # The same component for a model that has rejected tool schemas
+    # (model/client.py falls back to a no-tools retry and the client sets
+    # tools_supported=False, A9d): the instruction to call recall_thread /
+    # new_thread is omitted (spec §7) — the model cannot call anything.
+    CONTINUITY_PREAMBLE_NO_TOOLS = {
+        "first_person": (
+            "You have one continuous conversation with the admin. Your working "
+            "context is the current subject. Earlier subjects listed below may "
+            "matter; use them when they do."
+        ),
+        "the_computer": (
+            "This system has one continuous conversation with the admin. The "
+            "working context is the current subject. Earlier subjects listed "
+            "below may matter; use them when they do."
+        ),
+        "hybrid": (
+            "You have one continuous conversation with the admin. Your working "
+            "context is the current subject. Earlier subjects listed below may "
+            "matter; use them when they do."
+        ),
+    }
+
     # Longest single history line rendered into the RESPONDING prompt.
     _HISTORY_LINE_CHARS = 500
 
-    def _continuity_section(self, continuity: str) -> List[str]:
-        """The voice preamble + the hint as prompt lines; [] when no hint."""
+    def _continuity_section(
+        self, continuity: str, tools_supported: Optional[bool] = None
+    ) -> List[str]:
+        """The voice preamble + the hint as prompt lines; [] when no hint.
+
+        ``tools_supported`` is the client's flag: False (the model rejected
+        tool schemas) selects the preamble without the tool instruction;
+        None (unknown) and True keep the full one.
+        """
         if not continuity or not continuity.strip():
             return []
-        preamble = self.CONTINUITY_PREAMBLE.get(
-            self.voice, self.CONTINUITY_PREAMBLE["first_person"]
+        table = (
+            self.CONTINUITY_PREAMBLE_NO_TOOLS
+            if tools_supported is False
+            else self.CONTINUITY_PREAMBLE
         )
+        preamble = table.get(self.voice, table["first_person"])
         return [preamble, continuity.strip()]
 
     @classmethod
@@ -4010,6 +4643,7 @@ Expected: `TypeError: AgentPromptBuilder.build_planning_prompt() got an unexpect
         plan: List[Dict] = None,
         observations: List[str] = None,
         continuity: str = "",
+        tools_supported: Optional[bool] = None,
     ) -> str:
         """
         Build prompt for PLANNING state.
@@ -4019,6 +4653,8 @@ Expected: `TypeError: AgentPromptBuilder.build_planning_prompt() got an unexpect
         task moved from the head to the tail on purpose (spec §7): if the
         prompt is ever truncated it is the head that goes, and the query and
         the hint are the two things the model must still see.
+        ``tools_supported=False`` drops the tool instruction from the
+        continuity preamble (spec §7).
         """
         parts: List[str] = []
 
@@ -4056,7 +4692,7 @@ Expected: `TypeError: AgentPromptBuilder.build_planning_prompt() got an unexpect
                 parts.append(f"{i+1}. {status_icon} {step_text}")
             parts.append("")
 
-        section = self._continuity_section(continuity)
+        section = self._continuity_section(continuity, tools_supported)
         if section:
             parts.extend(section)
             parts.append("")
@@ -4077,6 +4713,7 @@ to
         confidence: float = None,
         history: Optional[List[Dict[str, Any]]] = None,
         continuity: str = "",
+        tools_supported: Optional[bool] = None,
     ) -> str:
 ```
 and replace the line `        prompt = f"""## Task` with:
@@ -4088,7 +4725,7 @@ and replace the line `        prompt = f"""## Task` with:
         history_text = self._history_section(history)
         if history_text:
             preface_parts.append(history_text)
-        preface_parts.extend(self._continuity_section(continuity))
+        preface_parts.extend(self._continuity_section(continuity, tools_supported))
         preface = ("\n\n".join(preface_parts) + "\n\n") if preface_parts else ""
 
         prompt = f"""{preface}## Task
@@ -4111,13 +4748,283 @@ build_planning_prompt(continuity=) renders the voice preamble plus the
 <continuity> hint immediately before '## Current Task', which now closes
 the prompt; build_response_prompt(history=, continuity=) renders the
 thread history and the hint right before the query. Ollama truncates the
-head of a long prompt, so the query and hint live at the tail (spec §7)."
+head of a long prompt, so the query and hint live at the tail (spec §7).
+tools_supported=False selects CONTINUITY_PREAMBLE_NO_TOOLS, the preamble
+without the recall_thread / new_thread instruction (spec §7)."
+```
+
+### Task A8b: Conversation bucket for six raw turns, receipt slot in the assembler
+
+**Files:**
+- Modify: `halbert_core/halbert_core/intake/budget.py` (the `ModelTier.MEDIUM` and `ModelTier.LARGE` entries of `CONTEXT_BUDGETS`)
+- Modify: `halbert_core/halbert_core/context/assembler.py` (`_format_conversation` replaced; two helpers inserted directly above it)
+- Test: `halbert_core/tests/test_conversation_budget_receipt_slot.py`
+
+Context for the engineer: spec §7 asks for three budget changes. (1) The conversation bucket at MEDIUM must hold six raw turns (12 rows of ~100 tokens); today it is 800 tokens and `should_summarize` (threshold: more than 10 non-system rows) compresses them anyway. (2) When the ThreadManager supplies a receipt, it arrives as the first history row, `{"role": "system", "content": "[Earlier in this subject: <receipt>]"}` (A6 `_history`). The assembler must render it as its own `## Earlier in this subject` block before the recent turns, outside the newest-first walk, and must not run `should_summarize` / `compress_conversation_history` over the remaining rows — those rows are the thread's last turns, already chosen by the manager, and summarising them again would only lose the detail the receipt was built to keep. (3) `num_ctx` is A10. The tier totals do not change: the other MEDIUM/LARGE buckets shrink to pay for the conversation bucket (`test_intake_budget.py::TestBudgetIntegrity` asserts the fields sum to the total).
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+"""Plan A / A8b: the conversation bucket fits six raw turns at MEDIUM, and
+the assembler renders a thread receipt in its own slot instead of
+re-summarising the history it was already built from (spec §7)."""
+
+from halbert_core.context.assembler import ContextAssembler
+from halbert_core.intake.budget import CONTEXT_BUDGETS, ModelTier
+
+RECEIPT = (
+    "Title: Samba media share\nWhen: 2026-07-14..2026-07-14, 3 turns\n"
+    "Started with: set up the samba share\nLast said: restarted smbd.\n"
+    "Open loop: verify the mount."
+)
+RECEIPT_ROW = {"role": "system", "content": f"[Earlier in this subject: {RECEIPT}]"}
+PAD = "and the samba config " * 18   # ~380 chars: a realistic ~100-token row
+
+
+def _turns(n, pad=""):
+    rows = []
+    for i in range(n):
+        rows.append({"role": "user", "content": f"user message number {i} about the share {pad}".strip()})
+        rows.append({"role": "assistant", "content": f"assistant reply number {i} about the share {pad}".strip()})
+    return rows
+
+
+def _raw_lines(out):
+    return [l for l in out.splitlines() if l.startswith("**user**") or l.startswith("**assistant**")]
+
+
+class TestBudget:
+    def test_medium_and_large_conversation_buckets(self):
+        medium = CONTEXT_BUDGETS[ModelTier.MEDIUM]
+        large = CONTEXT_BUDGETS[ModelTier.LARGE]
+        assert medium.conversation == 1600 and medium.total == 2000
+        assert large.conversation == 2400 and large.total == 4000
+
+    def test_six_raw_turns_and_the_receipt_fit_at_medium(self):
+        budget = CONTEXT_BUDGETS[ModelTier.MEDIUM].conversation
+        out, tokens = ContextAssembler()._format_conversation([RECEIPT_ROW] + _turns(6, PAD), budget)
+        assert len(_raw_lines(out)) == 12, out
+        assert tokens <= budget
+        # the old 800-token bucket could not hold them
+        out_old, _ = ContextAssembler()._format_conversation([RECEIPT_ROW] + _turns(6, PAD), 800)
+        assert len(_raw_lines(out_old)) < 12
+
+
+class TestReceiptSlot:
+    def test_receipt_row_renders_as_its_own_block_before_the_turns(self):
+        out, tokens = ContextAssembler()._format_conversation([RECEIPT_ROW] + _turns(2), 4000)
+        assert out.startswith("## Earlier in this subject\n"), out
+        assert "Title: Samba media share" in out and "Open loop: verify the mount." in out
+        assert "[Earlier in this subject:" not in out
+        assert out.index("## Earlier in this subject") < out.index("## Recent Conversation")
+        assert "**system**" not in out
+        assert len(_raw_lines(out)) == 4 and tokens > 0
+
+    def test_receipt_bypasses_summarisation_for_the_remaining_rows(self):
+        rows = _turns(6)  # 12 rows: above should_summarize's threshold of 10
+        out_with, _ = ContextAssembler()._format_conversation([RECEIPT_ROW] + rows, 8000)
+        out_without, _ = ContextAssembler()._format_conversation(rows, 8000)
+        assert len(_raw_lines(out_with)) == 12              # every row raw, oldest first
+        assert _raw_lines(out_with)[0].startswith("**user**: user message number 0")
+        assert len(_raw_lines(out_without)) < 12            # the old path still compresses
+        assert "## Earlier in this subject" not in out_without
+
+    def test_receipt_is_cut_to_fit_a_tiny_budget(self):
+        out, tokens = ContextAssembler()._format_conversation([RECEIPT_ROW], 30)
+        assert out.startswith("## Earlier in this subject\n")
+        assert "Title: Samba" in out
+        assert tokens <= 30
+
+    def test_no_receipt_row_is_byte_identical_to_before(self):
+        rows = _turns(2)
+        out, tokens = ContextAssembler()._format_conversation(rows, 4000)
+        assert out.startswith("## Recent Conversation\n")
+        assert len(_raw_lines(out)) == 4 and tokens > 0
+        assert ContextAssembler()._format_conversation([], 4000) == ("", 0)
+        assert ContextAssembler()._format_conversation(rows, 0) == ("", 0)
+```
+
+- [ ] **Step 2: Run it, expect failures**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_conversation_budget_receipt_slot.py -q -p no:cacheprovider
+```
+Expected: `4 failed, 1 passed` — `assert medium.conversation == 1600` fails (it is 800), `test_six_raw_turns_and_the_receipt_fit_at_medium` fails on `len(_raw_lines(out)) == 12` (the 12 rows are summarised to 6 and the receipt row is rendered as `**system**: …`), the three `TestReceiptSlot` receipt tests fail on `out.startswith("## Earlier in this subject\n")`; `test_no_receipt_row_is_byte_identical_to_before` passes.
+
+- [ ] **Step 3: Budget** — in `intake/budget.py` replace the two entries
+
+```python
+    ModelTier.MEDIUM: ContextBudget(
+        tier=ModelTier.MEDIUM, total=2000,
+        system_identity=100, user_rules=100, retrieval=300,
+        memory=225, discovery=200, conversation=800, observations=275,
+    ),
+    ModelTier.LARGE: ContextBudget(
+        tier=ModelTier.LARGE, total=4000,
+        system_identity=150, user_rules=150, retrieval=600,
+        memory=450, discovery=400, conversation=1700, observations=550,
+    ),
+```
+with
+```python
+    # Plan A (spec §7): the conversation bucket holds six raw turns (12 rows
+    # of ~100 tokens) at MEDIUM and LARGE. Tier totals are unchanged; the
+    # other buckets pay for it. The thread receipt lives inside this bucket
+    # too (context/assembler.py renders it in its own slot).
+    ModelTier.MEDIUM: ContextBudget(
+        tier=ModelTier.MEDIUM, total=2000,
+        system_identity=75, user_rules=50, retrieval=100,
+        memory=50, discovery=50, conversation=1600, observations=75,
+    ),
+    ModelTier.LARGE: ContextBudget(
+        tier=ModelTier.LARGE, total=4000,
+        system_identity=125, user_rules=100, retrieval=400,
+        memory=275, discovery=250, conversation=2400, observations=450,
+    ),
+```
+(75+50+100+50+50+1600+75 = 2000; 125+100+400+275+250+2400+450 = 4000.)
+
+- [ ] **Step 4: Receipt slot** — in `context/assembler.py` replace the whole of `_format_conversation` (from `    def _format_conversation(` through `        return result, tokens + header_tokens`) with the two helpers and the new method:
+
+```python
+    # The ThreadManager hands the thread receipt over as the leading system
+    # row of the history (agents/threads.py _history). Plan A, spec §7.
+    _RECEIPT_ROW_PREFIX = "[Earlier in this subject:"
+
+    def _split_receipt_row(self, conversation: List[Dict]) -> tuple[str, List[Dict]]:
+        """(receipt text, remaining rows).
+
+        The text is empty unless the first row is the ThreadManager's
+        ``[Earlier in this subject: …]`` system row.
+        """
+        if not conversation:
+            return "", []
+        first = conversation[0]
+        if not isinstance(first, dict) or first.get("role") != "system":
+            return "", list(conversation)
+        text = content_to_text(first.get("content", ""))
+        if not text.startswith(self._RECEIPT_ROW_PREFIX):
+            return "", list(conversation)
+        receipt = text[len(self._RECEIPT_ROW_PREFIX):].strip()
+        if receipt.endswith("]"):
+            receipt = receipt[:-1].rstrip()
+        return receipt, list(conversation[1:])
+
+    def _fit_to_tokens(self, text: str, max_tokens: int) -> str:
+        """Shorten ``text`` (by characters) until it counts within ``max_tokens``."""
+        if max_tokens <= 0:
+            return ""
+        while text and self.tokens.count(text) > max_tokens:
+            text = text[: max(0, int(len(text) * 0.8))].rstrip()
+        return text
+
+    def _format_conversation(
+        self,
+        conversation: List[Dict],
+        max_tokens: int
+    ) -> tuple[str, int]:
+        """Format conversation history within budget.
+
+        Uses hierarchical summarization for long conversations (Phase 72):
+        - Last 6 messages kept as raw text
+        - Older messages summarized via extractive summary
+
+        Plan A (spec §7): when the ThreadManager supplied a receipt as the
+        leading ``[Earlier in this subject: …]`` system row, the receipt is
+        rendered as its own ``## Earlier in this subject`` block before the
+        recent turns, outside the newest-first walk, and the remaining rows
+        are rendered raw: they are the thread's last turns, already chosen
+        by the manager, and summarising them again would only lose the
+        detail the receipt was built to keep.
+        """
+        if max_tokens <= 0:
+            return "", 0
+
+        receipt, conversation = self._split_receipt_row(conversation)
+        receipt_block = ""
+        receipt_tokens = 0
+        if receipt:
+            receipt_header = "## Earlier in this subject\n"
+            body = self._fit_to_tokens(
+                receipt, max_tokens - self.tokens.count(receipt_header) - 2
+            )
+            if body:
+                receipt_block = receipt_header + body
+                receipt_tokens = self.tokens.count(receipt_block)
+        else:
+            # Phase 72: Use conversation summarization for long chats
+            try:
+                from ..conversation.summarization import should_summarize, compress_conversation_history
+                if should_summarize(conversation):
+                    compressed_msgs, summary = compress_conversation_history(conversation)
+                    if summary:
+                        # Use compressed messages with summary prefix
+                        conversation = compressed_msgs
+            except ImportError:
+                pass  # Fall back to simple truncation if summarization unavailable
+
+        lines = []
+        tokens = 0
+        header = "## Recent Conversation\n"
+        header_tokens = self.tokens.count(header)
+        walk_budget = max_tokens - receipt_tokens
+
+        # Work backwards from most recent
+        for msg in reversed(conversation):
+            role = msg.get("role", "user")
+            # content may be a string (legacy) or a list of content blocks (A1)
+            content = content_to_text(msg.get("content", ""))
+
+            # Truncate very long messages
+            if len(content) > 1000:
+                content = content[:1000] + "..."
+
+            line = f"**{role}**: {content}"
+            line_tokens = self.tokens.count(line) + 1  # +1 for newline
+
+            if tokens + line_tokens + header_tokens > walk_budget:
+                break
+
+            lines.insert(0, line)
+            tokens += line_tokens
+
+        if not lines and not receipt_block:
+            return "", 0
+
+        parts: List[str] = []
+        if receipt_block:
+            parts.append(receipt_block)
+        if lines:
+            parts.append(header + "\n".join(lines))
+            tokens += header_tokens
+        return "\n\n".join(parts), tokens + receipt_tokens
+```
+
+- [ ] **Step 5: Run the tests**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_conversation_budget_receipt_slot.py tests/test_intake_budget.py tests/test_intake_pipeline.py tests/test_agent_integration.py tests/test_conversation_status_wiring.py -q -p no:cacheprovider
+```
+Expected: all PASS (`5 passed` from the new file; `TestBudgetIntegrity::test_fields_sum_to_total` still passes for every tier).
+
+- [ ] **Step 6: Commit**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/intake/budget.py halbert_core/halbert_core/context/assembler.py halbert_core/tests/test_conversation_budget_receipt_slot.py && git commit -m "feat(context): six raw turns at MEDIUM and a receipt slot in the assembler
+
+The conversation bucket is 1600 tokens at MEDIUM and 2400 at LARGE (tier
+totals unchanged). When the ThreadManager supplies a receipt as the
+leading '[Earlier in this subject: …]' system row, the assembler renders
+it as its own block before the recent turns, outside the newest-first
+walk, and skips should_summarize for the remaining rows (spec §7)."
 ```
 
 ### Task A9a: Turn lock, PLANNING inside the try, terminal ids on ctx, no memory.store_interaction
 
 **Files:**
-- Modify: `halbert_core/halbert_core/agents/state_machine.py` (`__init__` after line 161; `process` lines 191-262 replaced; `confirm_action` body lines 371-438; `_handle_planning` prompt call lines 648-652; `_run_tool_streaming` lines 958-1005; `_handle_responding` prompt call lines 1247-1251 and memory block lines 1301-1307; `_build_simple_planning_prompt` lines 1417-1421)
+- Modify: `halbert_core/halbert_core/agents/state_machine.py` (`__init__` after line 161; `process` lines 191-262 replaced; `confirm_action` body lines 371-438; `_emit_somatic_block` lines 510-537; `_handle_planning` prompt call lines 648-652; `_run_tool_streaming` lines 958-1005; `_handle_responding` prompt call lines 1247-1251 and memory block lines 1301-1307; `_build_simple_planning_prompt` lines 1417-1421)
 - Test: `halbert_core/tests/test_state_machine_turn_lock.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -4125,13 +5032,17 @@ head of a long prompt, so the query and hint live at the tail (spec §7)."
 ```python
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-"""Plan A / A9a: the turn lock serialises process() calls, the initial
-PLANNING transition is inside the try (a dead consumer or a bad transition
-still cleans up), terminal spawn ids land on the context, prompts receive
-continuity/history, and memory.store_interaction is gone."""
+"""Plan A / A9a: the turn lock serialises process() calls (a queued caller
+sees conversation_status=waiting first), the initial PLANNING transition is
+inside the try (a dead consumer or a bad transition still cleans up), a
+superseded confirmation is ended as cancelled with a "not run — superseded"
+block, terminal spawn ids land on the context, somatic events carry the
+thread id, prompts receive continuity/history/tools_supported, and
+memory.store_interaction is gone."""
 
 import asyncio
 import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from halbert_core.agents.states import AgentState, StateContext
@@ -4176,6 +5087,21 @@ def _high_risk_llm():
     return llm
 
 
+class _RecordingThreadManager:
+    """Only end_turn: what _supersede_paused_turn needs from a ThreadManager."""
+
+    def __init__(self):
+        self.ended = []
+
+    def end_turn(self, turn, *, assistant_text, blocks, terminal_session_ids, diff_proposals,
+                 status="complete", thread_id_override=None):
+        self.ended.append(dict(
+            turn=turn, assistant_text=assistant_text, blocks=blocks,
+            terminal_session_ids=terminal_session_ids, diff_proposals=diff_proposals,
+            status=status, thread_id_override=thread_id_override,
+        ))
+
+
 class TestTurnLock:
     @pytest.mark.asyncio
     async def test_two_concurrent_process_calls_serialise(self):
@@ -4214,6 +5140,65 @@ class TestTurnLock:
         assert "session_ended" in types and "error" not in types
         assert "first" not in agent.active_sessions
         assert agent.current_state == AgentState.IDLE
+
+    @pytest.mark.asyncio
+    async def test_superseded_confirmation_is_recorded_on_the_receipt(self):
+        # spec §5: a staged HIGH-risk command is auto-rejected when its turn is
+        # superseded and the receipt records it as "not run — superseded".
+        agent = _agent(_high_risk_llm())
+        async for _ in agent.process("restart sshd", session_id="first"):
+            pass
+        assert agent.current_state == AgentState.AWAITING_CONFIRMATION
+        paused = agent.active_sessions["first"]
+        tm = _RecordingThreadManager()
+        paused.thread_manager = tm
+        paused.turn_context = object()   # what begin_turn hands back (A9c)
+
+        agent.llm = _SlowLLM([], delay=0)
+        async for _ in agent.process("something else", session_id="second"):
+            pass
+        assert len(tm.ended) == 1
+        end = tm.ended[0]
+        assert end["status"] == "cancelled" and end["assistant_text"] == ""
+        assert end["terminal_session_ids"] == [] and end["diff_proposals"] == []
+        assert end["thread_id_override"] is None
+        assert end["blocks"] == [{
+            "tool": "run_command", "args": {"command": "systemctl restart sshd"},
+            "result": "not run — superseded", "exit": None, "status": "superseded",
+        }]
+        assert paused.turn_context is None          # ended once, never again
+        assert "first" not in agent.active_sessions
+
+    @pytest.mark.asyncio
+    async def test_second_caller_sees_waiting_status_before_the_lock(self):
+        # spec §12: a second /message during a turn is queued and emits
+        # conversation_status: waiting.
+        agent = _agent(_SlowLLM([], delay=0.2))
+        first = agent.process("one", session_id="A")
+        opened = await first.__anext__()
+        assert opened.type == "session_started" and agent.turn_lock.locked()
+
+        second_events = []
+
+        async def run_b():
+            async for e in agent.process("two", session_id="B"):
+                second_events.append(e)
+
+        task = asyncio.ensure_future(run_b())
+        await asyncio.sleep(0.02)
+        assert second_events, "B yielded nothing while A held the lock"
+        assert second_events[0].type == "conversation_status"
+        assert second_events[0].session_id == "B"
+        assert second_events[0].data["status"] == "waiting"
+        assert len(second_events) == 1              # nothing else until A releases the lock
+
+        async for _ in first:
+            pass
+        await asyncio.wait_for(task, timeout=5)
+        types = [e.type for e in second_events]
+        assert types[:2] == ["conversation_status", "session_started"]
+        assert "session_ended" in types and "error" not in types
+        assert not agent.turn_lock.locked()
 
     @pytest.mark.asyncio
     async def test_state_resets_to_idle_when_the_consumer_disconnects(self):
@@ -4259,9 +5244,24 @@ class TestPromptWiring:
         ):
             pass
         assert prompts.build_planning_prompt.call_args.kwargs["continuity"] == "<continuity>hint</continuity>"
+        assert prompts.build_planning_prompt.call_args.kwargs["tools_supported"] is None
         rk = prompts.build_response_prompt.call_args.kwargs
         assert rk["continuity"] == "<continuity>hint</continuity>"
         assert rk["history"] == history
+        assert rk["tools_supported"] is None
+
+    @pytest.mark.asyncio
+    async def test_prompts_receive_tools_supported_from_the_client(self):
+        prompts = MagicMock()
+        prompts.build_planning_prompt = MagicMock(return_value="plan")
+        prompts.build_response_prompt = MagicMock(return_value="respond")
+        llm = _SlowLLM([], delay=0)
+        llm.tools_supported = False   # set by the client after a no-tools fallback (A9d)
+        agent = _agent(llm, prompt_builder=prompts)
+        async for _ in agent.process("now", session_id="ts"):
+            pass
+        assert prompts.build_planning_prompt.call_args.kwargs["tools_supported"] is False
+        assert prompts.build_response_prompt.call_args.kwargs["tools_supported"] is False
 
     def test_simple_planning_prompt_carries_the_hint(self):
         agent = _agent(_SlowLLM([], delay=0))
@@ -4305,6 +5305,25 @@ class TestNoMemoryStoreInteraction:
             pass
         memory.store_interaction.assert_not_awaited()
         assert agent.ctx.response_chunks == ["done"]
+
+
+class TestSomaticThreadId:
+    @pytest.mark.asyncio
+    async def test_somatic_block_event_carries_thread_id_or_session_id(self):
+        # spec §8: somatic blocks are tagged with the hidden thread; the SSE
+        # session_id stays per turn for routing.
+        agent = _agent(_SlowLLM([], delay=0))
+        block = SimpleNamespace(
+            block_type="finding", id="blk-1", status="active", session_id="som",
+            finding_id="f1", proposal_id=None, approval_request_id=None,
+            action_id=None, reflection_id=None,
+        )
+        agent.ctx = StateContext(session_id="som", request_id="r", user_query="q", thread_id="t-42")
+        event = await agent._emit_somatic_block(block)
+        assert event.type == "somatic_block" and event.session_id == "som"
+        assert event.data["thread_id"] == "t-42" and event.data["block_id"] == "blk-1"
+        agent.ctx.thread_id = None
+        assert (await agent._emit_somatic_block(block)).data["thread_id"] == "som"
 ```
 
 - [ ] **Step 2: Run it, expect failures**
@@ -4312,7 +5331,7 @@ class TestNoMemoryStoreInteraction:
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_state_machine_turn_lock.py -q -p no:cacheprovider
 ```
-Expected: `AttributeError: 'AgentStateMachine' object has no attribute 'turn_lock'`, `TypeError: process() got an unexpected keyword argument 'thread_id'`, `ValueError: Invalid transition: AgentState.AWAITING_CONFIRMATION → AgentState.PLANNING`, and `assert_not_awaited` failing.
+Expected: `AttributeError: 'AgentStateMachine' object has no attribute 'turn_lock'`, `TypeError: process() got an unexpected keyword argument 'thread_id'`, `ValueError: Invalid transition: AgentState.AWAITING_CONFIRMATION → AgentState.PLANNING`, `KeyError: 'tools_supported'`, `KeyError: 'thread_id'` (somatic), and `assert_not_awaited` failing.
 
 - [ ] **Step 3: Create the lock in `__init__`** — after `self.cancelled: Dict[str, bool] = {}` add:
 ```python
@@ -4355,6 +5374,16 @@ Expected: `AttributeError: 'AgentStateMachine' object has no attribute 'turn_loc
         """
         session_id = session_id or str(uuid.uuid4())
         request_id = str(uuid.uuid4())
+
+        # A second /message during a live turn queues on the lock (the
+        # route no longer force-resets the machine, A11). Tell the UI it
+        # is waiting before blocking (spec §12: "emits conversation_status:
+        # waiting"); the status is the plain string the badge expects.
+        if self.turn_lock.locked():
+            logger.info(f"Session {session_id} waiting for the current turn to finish")
+            yield StreamEvent.conversation_status(
+                session_id, "waiting", waiting_for="previous turn"
+            )
 
         # One turn at a time (spec §12). Everything below, including the
         # finally, runs under the lock; asyncio.Lock is not task-bound, so
@@ -4420,20 +5449,61 @@ Expected: `AttributeError: 'AgentStateMachine' object has no attribute 'turn_loc
         """A new message while a turn waits on a confirmation abandons it.
 
         The route used to force-reset the machine (routes/agent.py); now the
-        machine settles itself. The staged HIGH-risk action is simply never
-        run (spec §5: "not run — superseded"). Any session left in
-        active_sessions by a previous turn is evicted with it.
+        machine settles itself. The staged HIGH-risk action is never run;
+        when the paused turn was persisted (it carries a TurnContext) it is
+        ended as ``cancelled`` with one block recording the action as
+        "not run — superseded" so the receipt's Commands line carries it
+        (spec §5). Any session left in active_sessions by a previous turn
+        is evicted with it.
         """
         if self.current_state == AgentState.IDLE and not self.active_sessions:
             return
         for sid in list(self.active_sessions):
+            old_ctx = self.active_sessions.pop(sid, None)
             if sid != session_id:
                 logger.info(
                     f"Superseding session {sid} left in "
                     f"{self.current_state.value} by a new message"
                 )
-            self.active_sessions.pop(sid, None)
+            self._record_superseded_turn(old_ctx)
         self.current_state = AgentState.IDLE
+
+    def _record_superseded_turn(self, old_ctx: Optional[StateContext]) -> None:
+        """End a superseded, persisted turn so its receipt records the
+        staged action (spec §5). No manager or no TurnContext: nothing to do.
+        Never raises."""
+        if old_ctx is None:
+            return
+        tm = getattr(old_ctx, "thread_manager", None)
+        turn = getattr(old_ctx, "turn_context", None)
+        if tm is None or turn is None:
+            return
+        old_ctx.turn_context = None   # ended here, never again
+        pending = old_ctx.pending_confirmation or {}
+        blocks: List[Dict[str, Any]] = []
+        if pending:
+            args = pending.get("args")
+            if not isinstance(args, dict):
+                last = old_ctx.tool_calls[-1] if old_ctx.tool_calls else None
+                args = last.args if last is not None and isinstance(last.args, dict) else {}
+            blocks.append({
+                "tool": str(pending.get("tool", "")),
+                "args": args,
+                "result": "not run — superseded",
+                "exit": None,
+                "status": "superseded",
+            })
+        try:
+            tm.end_turn(
+                turn,
+                assistant_text="",
+                blocks=blocks,
+                terminal_session_ids=[],
+                diff_proposals=[],
+                status="cancelled",
+            )
+        except Exception as e:
+            logger.warning(f"end_turn for a superseded turn failed (non-fatal): {e}")
 
     def _settle_turn(self, session_id: str) -> None:
         """Cleanup shared by process() and confirm_action().
@@ -4467,13 +5537,16 @@ with
                 self._settle_turn(session_id)
 ```
 
-- [ ] **Step 6: Pass the hint/history to the prompts** — in `_handle_planning` change the `build_planning_prompt(` call to
+- [ ] **Step 6: Pass the hint/history/tools_supported to the prompts** — `tools_supported` is the client's flag (None until a model rejects tool schemas; A9d sets it to False on `LLMClientAdapter` and `OllamaClient`), read with `getattr` so any client works. In `_handle_planning` change the `build_planning_prompt(` call to
 ```python
             prompt = self.prompts.build_planning_prompt(
                 query=self.ctx.user_query,
                 context=context_content,
                 plan=[p.to_dict() for p in self.ctx.plan],
                 continuity=self.ctx.continuity_hint,
+                # False once the client fell back to a no-tools retry (spec
+                # §7): the preamble then omits the tool instruction.
+                tools_supported=getattr(self.llm, "tools_supported", None),
             )
 ```
 in `_handle_responding` change the `build_response_prompt(` call to
@@ -4484,6 +5557,7 @@ in `_handle_responding` change the `build_response_prompt(` call to
                 observations=self.ctx.observations,
                 history=self.ctx.conversation_history,
                 continuity=self.ctx.continuity_hint,
+                tools_supported=getattr(self.llm, "tools_supported", None),
             )
 ```
 and in `_build_simple_planning_prompt` replace
@@ -4556,6 +5630,43 @@ with
                 event = self._terminal_event(self.ctx.session_id, payload)
 ```
 
+- [ ] **Step 8b: Somatic blocks carry the thread id** — in `_emit_somatic_block` replace
+```python
+            action_id=block.action_id,
+            reflection_id=block.reflection_id,
+        )
+        try:
+            from ..proactive.events import ProactiveEvent, get_event_bus
+            pe = ProactiveEvent.create(
+                type="somatic_block",
+                severity="info",
+                title=f"Block {event.data['block_type']}: {event.data['status']}",
+                body=f"session={block.session_id} block={block.id}",
+            )
+```
+with
+```python
+            action_id=block.action_id,
+            reflection_id=block.reflection_id,
+            # Somatic blocks are tagged with the hidden thread (spec §8);
+            # the event's session_id stays per turn for routing. Before a
+            # thread exists (no manager) the turn's session id stands in.
+            thread_id=self.ctx.thread_id or self.ctx.session_id,
+        )
+        try:
+            from ..proactive.events import ProactiveEvent, get_event_bus
+            pe = ProactiveEvent.create(
+                type="somatic_block",
+                severity="info",
+                title=f"Block {event.data['block_type']}: {event.data['status']}",
+                body=(
+                    f"session={block.session_id} "
+                    f"thread={self.ctx.thread_id or self.ctx.session_id} block={block.id}"
+                ),
+            )
+```
+(`StreamEvent.somatic_block` passes extra kwargs through into `data`, so no factory change is needed. `SqliteConversationStore.add_somatic_block` / `session_somatic_blocks` has no caller anywhere in the worktree — `grep -rn "add_somatic_block(" halbert_core/halbert_core` prints only its definition — so there is no call site to repoint; when one is added it must pass `ctx.thread_id or ctx.session_id` as the first argument.)
+
 - [ ] **Step 9: Run the tests**
 
 ```
@@ -4573,8 +5684,12 @@ the initial PLANNING transition is inside the try so a disconnect or a
 bad transition still returns the machine to IDLE; a new message
 supersedes a turn paused on confirmation instead of the route forcing a
 reset; spawn payloads on the terminal bridge are recorded on
-ctx.terminal_session_ids; prompts receive the continuity hint and the
-thread history; memory.store_interaction is removed from the agent path."
+ctx.terminal_session_ids; prompts receive the continuity hint, the
+thread history and the client's tools_supported flag; a queued second
+message emits conversation_status=waiting before blocking; a superseded
+confirmation is ended as cancelled with a 'not run — superseded' block;
+somatic block events carry the thread id; memory.store_interaction is
+removed from the agent path."
 ```
 
 ### Task A9b: Inline meta-tools in PLANNING (new_thread / recall_thread / resume_thread)
@@ -4599,9 +5714,20 @@ from halbert_core.agents.llm_client import LLMResponse, ToolCall, FunctionCall
 from halbert_core.tools import ToolExecutor, ToolSafetyFramework
 
 
+class _FakeStore:
+    """Only list_messages: what _last_turn_id needs from the store."""
+
+    def __init__(self, rows_by_thread):
+        self.rows = rows_by_thread
+
+    def list_messages(self, thread_id, *, limit=None):
+        return list(self.rows.get(thread_id, []))
+
+
 class _FakeThreadManager:
-    def __init__(self, recall_results=None, resume_ok=True):
+    def __init__(self, recall_results=None, resume_ok=True, store=None):
         self.calls, self.recall_results, self.resume_ok = [], recall_results or [], resume_ok
+        self.store = store
 
     def new_thread(self, title, reason, *, from_thread_id):
         self.calls.append(("new_thread", title, reason, from_thread_id))
@@ -4708,18 +5834,36 @@ async def test_store_failure_emits_thread_store_error_and_still_switches():
 
 @pytest.mark.asyncio
 async def test_recall_injects_receipt_emits_thread_recalled_and_repeat_reflects():
-    tm = _FakeThreadManager(recall_results=[RECALLED])
+    tm = _FakeThreadManager(
+        recall_results=[RECALLED],
+        store=_FakeStore({"t-9": [{"turn_id": "turn-a"}, {"turn_id": "turn-b"}, {"turn_id": None}]}),
+    )
     agent = _planning(_ScriptedLLM([_call("recall_thread", query="samba share"), _call("recall_thread", query="samba share")]), tm)
     events = [e async for e in agent._handle_planning()]
     assert [e.type for e in events] == ["thread_recalled", "state_change"]
     assert events[0].data["thread_id"] == "t-9" and events[0].data["mode"] == "tool"
     assert events[0].data["match_terms"] == ["samba", "share"]
+    assert events[0].data["last_turn_id"] == "turn-b"   # newest row with a turn_id
     assert tm.calls == [("recall", "samba share", None, "t-open")]
     assert agent.ctx.retrieved_context[0]["source"] == "thread" and "testparm" in agent.ctx.retrieved_context[0]["content"]
     assert agent.ctx.recalled_threads[0]["thread_id"] == "t-9"
     assert agent.ctx.loop_count == 0 and agent.ctx.thread_switched is False
     second = [e async for e in agent._handle_planning()]
     assert second[-1].data["state"] == "reflecting" and len(tm.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_recall_without_a_store_has_no_last_turn_id():
+    tm = _FakeThreadManager(recall_results=[RECALLED])          # no .store
+    agent = _planning(_ScriptedLLM([_call("recall_thread", query="samba share")]), tm)
+    events = [e async for e in agent._handle_planning()]
+    assert events[0].type == "thread_recalled" and events[0].data["last_turn_id"] is None
+    # a recall result that already names its last turn wins over the store
+    tm2 = _FakeThreadManager(recall_results=[dict(RECALLED, last_turn_id="turn-given")],
+                             store=_FakeStore({"t-9": [{"turn_id": "turn-store"}]}))
+    agent2 = _planning(_ScriptedLLM([_call("recall_thread", query="samba share")]), tm2)
+    events2 = [e async for e in agent2._handle_planning()]
+    assert events2[0].data["last_turn_id"] == "turn-given"
 
 
 @pytest.mark.asyncio
@@ -4811,9 +5955,27 @@ with
             if self._already_called(tool_name, tool_args):
 ```
 
-- [ ] **Step 5: Add `_handle_meta_tool`** directly after `_already_called`:
+- [ ] **Step 5: Add `_last_turn_id` and `_handle_meta_tool`** directly after `_already_called`:
 
 ```python
+    def _last_turn_id(self, thread_id: Optional[str]) -> Optional[str]:
+        """The newest turn_id of ``thread_id``, for thread_recalled (spec §6:
+        the chip click scrolls the timeline to it). None without a store,
+        without rows, or when the store fails."""
+        store = getattr(self.ctx.thread_manager, "store", None)
+        if store is None or not thread_id:
+            return None
+        try:
+            rows = store.list_messages(thread_id)
+        except Exception as e:
+            logger.debug(f"last turn lookup for {thread_id} failed (non-fatal): {e}")
+            return None
+        for row in reversed(list(rows or [])):
+            turn_id = row.get("turn_id") if isinstance(row, dict) else None
+            if turn_id:
+                return str(turn_id)
+        return None
+
     async def _handle_meta_tool(
         self, tool_name: str, tool_args: Dict[str, Any]
     ) -> AsyncIterator[StreamEvent]:
@@ -4903,6 +6065,7 @@ with
                 names.append(f'"{rtitle}" ({rdate})')
                 yield StreamEvent.thread_recalled(
                     sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="tool",
+                    last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
                 )
             self.ctx.add_observation(
                 "Recalled earlier subjects: " + "; ".join(names)
@@ -4971,7 +6134,8 @@ cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversat
 new_thread / recall_thread / resume_thread mutate the context, emit
 thread_started / thread_recalled (or thread_store_error) and re-enter
 PLANNING once with the new hint: no tool card, no loop increment. The
-same call twice in a turn reflects instead of re-entering."
+same call twice in a turn reflects instead of re-entering. thread_recalled
+carries the recalled thread's newest turn_id so the chip can scroll to it."
 ```
 
 ### Task A9c: begin_turn / end_turn wiring (turn_persisted, auto-recall, persistence in finally)
@@ -5067,7 +6231,8 @@ async def test_context_seeded_turn_persisted_and_auto_recall():
         hint='<continuity>Thread: "Scanner share"</continuity>',
         history=[{"role": "user", "content": "earlier"}],
         recalled=[{"thread_id": "t-9", "title": "Samba media share", "date": "2026-07-14",
-                   "receipt": "Title: Samba media share", "match_terms": ["samba"]}],
+                   "receipt": "Title: Samba media share", "match_terms": ["samba"],
+                   "last_turn_id": "turn-old"}],
     )
     agent = _agent(_LLM())
     events = [e async for e in agent.process("add a share", session_id="s1", thread_manager=tm)]
@@ -5076,6 +6241,7 @@ async def test_context_seeded_turn_persisted_and_auto_recall():
     assert next(e for e in events if e.type == "turn_persisted").data == {"thread_id": "t-open", "turn_id": "turn-1"}
     rec = next(e for e in events if e.type == "thread_recalled").data
     assert rec["thread_id"] == "t-9" and rec["mode"] == "auto"
+    assert rec["last_turn_id"] == "turn-old"
     assert tm.begun[0][0] == "add a share" and tm.begun[0][2] == "s1"
     assert tm.begun[0][1].detected_domains is not None   # a MessageSignals
     assert agent.ctx.thread_id == "t-open" and agent.ctx.continuity_hint.startswith("<continuity>")
@@ -5257,7 +6423,8 @@ and replace the try's `finally:` in `process()` **and** the one in `confirm_acti
                 },
             )
             yield StreamEvent.thread_recalled(
-                sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="auto"
+                sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="auto",
+                last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
             )
 
         yield StreamEvent.turn_persisted(sid, turn.thread_id, turn.turn_id)
@@ -5268,6 +6435,11 @@ and replace the try's `finally:` in `process()` **and** the one in `confirm_acti
         Runs before ``_settle_turn`` resets the state: IDLE means ``_drive``
         ran to the end; anything else (an exception, the consumer going
         away) is an interrupted turn.
+
+        ``self.cancelled`` is legacy: after A11 removes the route's
+        force-reset nothing writes it any more. The live path is
+        ``ctx.conversation_status`` (``cancel_session`` transitions it to
+        CANCELLED); the dict check stays only for out-of-tree callers.
         """
         cancelled = bool(self.cancelled.get(session_id))
         try:
@@ -5365,6 +6537,365 @@ thread_recalled mode=auto and turn_persisted), and ends the turn in its
 finally with the assistant text, tool blocks with exit codes, spawned
 terminal ids, diff proposals and a complete/cancelled/interrupted
 status. A turn paused on confirmation is ended by confirm_action."
+```
+
+### Task A9d: tools_supported on the LLM clients (once-per-model no-tools fallback)
+
+**Files:**
+- Modify: `halbert_core/halbert_core/model/client.py` (registry directly above `def _call_with_tool_fallback(`; the `except requests.HTTPError` branch of `_call_with_tool_fallback`)
+- Modify: `halbert_core/halbert_core/agents/llm_client.py` (`OllamaClient.__init__` after `self.timeout = timeout`; `OllamaClient.chat` request block)
+- Modify: `halbert_core/halbert_core/dashboard/routes/agent.py` (`LLMClientAdapter.__init__`; both `call_llm_chat(` call sites in `LLMClientAdapter.chat`; new `_note_tools_support`)
+- Test: `halbert_core/tests/test_tools_supported.py`
+
+Context for the engineer: `_call_with_tool_fallback` (model/client.py) already retries without tools when Ollama answers a `tools` payload with 400/404/422/501, but it logs every time and nothing downstream learns about it. Spec §7: the fallback "logs once per model", and the continuity preamble omits the instruction to call tools for such a model. A8 added `CONTINUITY_PREAMBLE_NO_TOOLS` and A9a passes `getattr(self.llm, "tools_supported", None)` into the prompt builder; this task makes the clients set that flag. `None` means unknown (never proven either way), `False` means the model rejected tool schemas this process. A10 edits the same three files (payload `options`), at different anchors: the ones below stay intact for A10.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+"""Plan A / A9d: a model that rejects tool schemas is remembered once per
+process; the clients expose tools_supported=False so the prompt layer can
+drop the tool instruction from the continuity preamble (spec §7)."""
+
+import logging
+import pytest
+import requests
+from unittest.mock import MagicMock, patch
+
+import halbert_core.model.client as mc
+from halbert_core.model.client import call_llm_chat, model_supports_tools
+
+TOOLS = [{"type": "function", "function": {"name": "t", "parameters": {"type": "object", "properties": {}}}}]
+MSGS = [{"role": "user", "content": "hi"}]
+
+
+@pytest.fixture(autouse=True)
+def _clear_registry():
+    mc._TOOLS_REJECTED.clear()
+    yield
+    mc._TOOLS_REJECTED.clear()
+
+
+def _ok(payload):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = payload
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+def _rejecting(status):
+    resp = MagicMock()
+    resp.status_code = status
+    resp.raise_for_status.side_effect = requests.HTTPError(f"HTTP {status}", response=resp)
+    return resp
+
+
+class TestRegistry:
+    def test_unknown_until_a_rejection(self):
+        assert model_supports_tools("m:7b") is None
+
+    def test_rejection_marks_model_retries_without_tools_and_logs_once(self, caplog):
+        caplog.set_level(logging.WARNING, logger="halbert.model.client")
+        with patch("halbert_core.model.client.requests.post",
+                   side_effect=[_rejecting(400), _ok({"message": {"content": "a"}}),
+                                _rejecting(400), _ok({"message": {"content": "b"}})]) as post:
+            first = call_llm_chat(endpoint="http://localhost:11434", model="m:7b", messages=MSGS, tools=TOOLS)
+            second = call_llm_chat(endpoint="http://localhost:11434", model="m:7b", messages=MSGS, tools=TOOLS)
+        assert first["content"] == "a" and second["content"] == "b"
+        assert model_supports_tools("m:7b") is False
+        assert model_supports_tools("other") is None
+        payloads = [c.kwargs["json"] for c in post.call_args_list]
+        assert "tools" in payloads[0] and "tools" not in payloads[1]
+        assert "tools" in payloads[2] and "tools" not in payloads[3]
+        warnings = [r for r in caplog.records if "rejected tool schemas" in r.getMessage()]
+        assert len(warnings) == 1
+
+    def test_other_http_errors_still_raise(self):
+        with patch("halbert_core.model.client.requests.post", side_effect=[_rejecting(500)]):
+            with pytest.raises(requests.HTTPError):
+                call_llm_chat(endpoint="http://localhost:11434", model="m:7b", messages=MSGS, tools=TOOLS)
+        assert model_supports_tools("m:7b") is None
+
+
+# --- OllamaClient (aiohttp) --------------------------------------------------
+
+class _Resp:
+    def __init__(self, status, payload):
+        self.status, self._payload = status, payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    def raise_for_status(self):
+        if self.status >= 400:
+            raise RuntimeError(f"HTTP {self.status}")
+
+    async def json(self):
+        return self._payload
+
+
+class _Session:
+    posted = []
+    responses = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    def post(self, url, json=None, **k):
+        _Session.posted.append(json)
+        return _Session.responses.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_ollama_client_retries_without_tools_and_sets_the_flag(monkeypatch):
+    from halbert_core.agents.llm_client import OllamaClient
+    monkeypatch.setattr("aiohttp.ClientSession", _Session)
+    _Session.posted.clear()
+    _Session.responses[:] = [_Resp(400, {}), _Resp(200, {"message": {"content": "plain"}})]
+    client = OllamaClient(model="m:7b")
+    assert client.tools_supported is None
+    out = await client.chat(MSGS, tools=TOOLS)
+    assert out.content == "plain" and client.tools_supported is False
+    assert "tools" in _Session.posted[0] and "tools" not in _Session.posted[1]
+    # a plain call afterwards does not reset the flag
+    _Session.responses[:] = [_Resp(200, {"message": {"content": "again"}})]
+    assert (await client.chat(MSGS)).content == "again"
+    assert client.tools_supported is False
+
+
+# --- LLMClientAdapter (dashboard) -------------------------------------------
+
+fastapi = pytest.importorskip("fastapi")
+
+
+@pytest.fixture
+def adapter(monkeypatch):
+    monkeypatch.setattr("halbert_core.model.client.get_configured_model", lambda: "m:7b")
+    monkeypatch.setattr("halbert_core.model.client.get_ollama_endpoint", lambda: "http://localhost:11434")
+    monkeypatch.setattr("halbert_core.model.client.get_specialist_model", lambda: (None, None, None))
+    monkeypatch.setattr("halbert_core.model.client.get_vision_model", lambda: (None, "http://localhost:11434"))
+    from halbert_core.dashboard.routes.agent import LLMClientAdapter
+    return LLMClientAdapter()
+
+
+@pytest.mark.asyncio
+async def test_adapter_learns_tools_supported_from_the_fallback(adapter):
+    assert adapter.tools_supported is None
+    with patch("halbert_core.model.client.requests.post", side_effect=[_ok({"message": {"content": "ok"}})]):
+        await adapter.chat(MSGS, tools=TOOLS)
+    assert adapter.tools_supported is None          # accepted: still unknown
+    with patch("halbert_core.model.client.requests.post",
+               side_effect=[_rejecting(422), _ok({"message": {"content": "ok"}})]):
+        r = await adapter.chat(MSGS, tools=TOOLS)
+    assert r.content == "ok" and adapter.tools_supported is False
+    # a later call without tools does not flip it back
+    with patch("halbert_core.model.client.requests.post", side_effect=[_ok({"message": {"content": "ok"}})]):
+        await adapter.chat(MSGS, tools=None)
+    assert adapter.tools_supported is False
+```
+
+- [ ] **Step 2: Run it, expect failures**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_tools_supported.py -q -p no:cacheprovider
+```
+Expected: `ImportError: cannot import name 'model_supports_tools' from 'halbert_core.model.client'`.
+
+- [ ] **Step 3: Registry and once-per-model logging in `model/client.py`** — insert directly above `def _call_with_tool_fallback(`:
+
+```python
+# ── Tool-schema rejection registry (Plan A, spec §7) ─────────────
+#
+# Models without tool calling answer a ``tools`` payload with a 4xx. The
+# fallback below retries without tools and records the model here, so the
+# warning is logged once per model per process and the clients can expose
+# tools_supported=False: the prompt layer then drops the "call
+# recall_thread / new_thread" instruction from the continuity preamble
+# (AgentPromptBuilder.CONTINUITY_PREAMBLE_NO_TOOLS) for a model that
+# cannot call anything.
+
+_TOOLS_REJECTED: Dict[str, bool] = {}
+
+
+def model_supports_tools(model: str) -> Optional[bool]:
+    """False once ``model`` rejected tool schemas this process; None
+    otherwise (unknown: nothing has proven it either way)."""
+    return False if _TOOLS_REJECTED.get(model) else None
+
+
+```
+and in `_call_with_tool_fallback` replace
+```python
+    except requests.HTTPError as e:
+        status = getattr(e.response, "status_code", None)
+        if status not in (400, 404, 422, 501):
+            raise
+        logger.warning(
+            f"Model {model} rejected tool schemas (HTTP {status}); "
+            "retrying without tools"
+        )
+        return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
+```
+with
+```python
+    except requests.HTTPError as e:
+        status = getattr(e.response, "status_code", None)
+        if status not in (400, 404, 422, 501):
+            raise
+        if not _TOOLS_REJECTED.get(model):
+            # Once per model per process (spec §7); later fallbacks are silent.
+            logger.warning(
+                f"Model {model} rejected tool schemas (HTTP {status}); "
+                "retrying without tools"
+            )
+        _TOOLS_REJECTED[model] = True
+        return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
+```
+
+- [ ] **Step 4: `OllamaClient` in `agents/llm_client.py`** — in `__init__` replace
+```python
+        self.model = model
+        self.endpoint = endpoint.rstrip('/')
+        self.timeout = timeout
+```
+with
+```python
+        self.model = model
+        self.endpoint = endpoint.rstrip('/')
+        self.timeout = timeout
+        # Plan A (spec §7): False once this model rejected tool schemas and
+        # chat() fell back to a no-tools retry; None until then. The state
+        # machine passes it to the prompt builder.
+        self.tools_supported: Optional[bool] = None
+```
+and in `chat` replace
+```python
+                ) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+```
+(the 20-space-indented one inside `OllamaClient.chat`; `AnthropicClient` has a 16-space one) with
+```python
+                ) as resp:
+                    if tools and resp.status in (400, 404, 422, 501):
+                        # No tool calling on this model (spec §7): retry
+                        # without the schemas, remember it, log once.
+                        if self.tools_supported is not False:
+                            logger.warning(
+                                f"Model {payload['model']} rejected tool schemas "
+                                f"(HTTP {resp.status}); retrying without tools"
+                            )
+                        self.tools_supported = False
+                        payload.pop("tools", None)
+                        async with session.post(
+                            f"{self.endpoint}/api/chat",
+                            json=payload,
+                            timeout=aiohttp.ClientTimeout(total=self.timeout)
+                        ) as retry:
+                            retry.raise_for_status()
+                            return self._parse_response(await retry.json())
+                    resp.raise_for_status()
+                    data = await resp.json()
+```
+
+- [ ] **Step 5: `LLMClientAdapter` in `dashboard/routes/agent.py`** — in `__init__` replace
+```python
+        self.max_tokens = 8192
+        self.temperature = 0.7
+```
+with (the whitespace-only line and `async def chat(...)` that follow stay as they are)
+```python
+        self.max_tokens = 8192
+        self.temperature = 0.7
+        # Plan A (spec §7): False once the model rejected tool schemas and
+        # call_llm_chat fell back to a no-tools retry; None until then. The
+        # state machine passes it to the prompt builder.
+        self.tools_supported: Optional[bool] = None
+
+    def _note_tools_support(self, model: str, tools) -> None:
+        """Remember when ``model`` fell back to a no-tools retry (spec §7)."""
+        from ...model.client import model_supports_tools
+        if tools and model_supports_tools(model) is False:
+            if self.tools_supported is not False:
+                logger.info(
+                    f"Model {model} answers without tools; the continuity "
+                    "preamble drops the tool instruction"
+                )
+            self.tools_supported = False
+```
+In `chat`, after the main call replace
+```python
+                tools=tools,
+            )
+            return LLMResponse(
+                content=result.get("content", ""),
+                tool_calls=_as_tool_calls(result.get("tool_calls")),
+            )
+        except Exception as e:
+            logger.error(f"LLM call failed: {e}")
+```
+with
+```python
+                tools=tools,
+            )
+            self._note_tools_support(model, tools)
+            return LLMResponse(
+                content=result.get("content", ""),
+                tool_calls=_as_tool_calls(result.get("tool_calls")),
+            )
+        except Exception as e:
+            logger.error(f"LLM call failed: {e}")
+```
+and in the guide fallback replace
+```python
+                    tools=tools,
+                )
+                return LLMResponse(
+                    content=result.get("content", ""),
+                    tool_calls=_as_tool_calls(result.get("tool_calls")),
+                )
+            raise
+```
+with
+```python
+                    tools=tools,
+                )
+                self._note_tools_support(guide_model, tools)
+                return LLMResponse(
+                    content=result.get("content", ""),
+                    tool_calls=_as_tool_calls(result.get("tool_calls")),
+                )
+            raise
+```
+
+- [ ] **Step 6: Run the tests**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_tools_supported.py tests/test_state_machine_turn_lock.py tests/test_agent_prompts_continuity.py tests/test_tool_calling_bridge.py tests/test_phase_d_integration.py -q -p no:cacheprovider
+```
+Expected: `test_tools_supported.py` (`6 passed`), `test_state_machine_turn_lock.py` and `test_agent_prompts_continuity.py` PASS; `test_tool_calling_bridge.py` still exactly its 3 baseline `TestLLMClientAdapterTools` failures; `test_phase_d_integration.py` only its baseline `test_get_configured_model_returns_string` failure.
+
+- [ ] **Step 7: Commit**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/model/client.py halbert_core/halbert_core/agents/llm_client.py halbert_core/halbert_core/dashboard/routes/agent.py halbert_core/tests/test_tools_supported.py && git commit -m "feat(model): remember once per model that tool schemas were rejected
+
+_call_with_tool_fallback records the model in _TOOLS_REJECTED and logs
+the fallback once; model_supports_tools() exposes it. OllamaClient and
+the dashboard LLMClientAdapter set tools_supported=False after a
+no-tools retry so the continuity preamble can omit the instruction to
+call recall_thread / new_thread (spec §7)."
 ```
 
 ### Task A10: num_ctx on every Ollama call (compute_num_ctx, per-model cache, PLANNING num_predict 1024)
@@ -5476,7 +7007,13 @@ class _FakeResp:
     status = 200
 
     def __init__(self):
-        self.content = _Lines([b'{"message":{"content":"hi"},"done":true}\n'])
+        # Content and the done flag on separate lines: the dashboard adapter
+        # breaks on ``done`` before appending that line's content, so a
+        # single done:true line would yield nothing.
+        self.content = _Lines([
+            b'{"message":{"content":"hi"},"done":false}\n',
+            b'{"message":{"content":""},"done":true}\n',
+        ])
 
     async def __aenter__(self):
         return self
@@ -6180,6 +7717,230 @@ persisted proposal when the session is gone; the /agent/conversations
 endpoints are deleted."
 ```
 
+### Task A11b: POST /api/agent/message/{message_id}/redact ("forget this" for one row)
+
+**Files:**
+- Modify: `halbert_core/halbert_core/agents/conversation_sqlite.py` (constant + `redact_message` directly after `mark_in_progress_interrupted`, above the `# session_somatic_blocks (C1 link)` banner)
+- Modify: `halbert_core/halbert_core/dashboard/routes/agent.py` (helper + endpoint appended after `retract_recall`, at the end of the file)
+- Test: `halbert_core/tests/test_agent_routes_redact.py`
+
+Context for the engineer: spec §5 "Forget / redact": per turn, "forget this" replaces `content` and `blocks_json` with `[redacted by admin]`, rewrites the FTS row and regenerates the receipt; rows are never deleted (the Haloysius retraction event is not in Plan A — no Haloysius line is written in Plan A at all). `blocks_json` must stay valid JSON (`_loads` in the readers falls back to `[]` otherwise), so it becomes a one-element list holding a marker block when the row had blocks, and `[]` when it had none. The receipt refresh goes through the ThreadManager when it offers `refresh_receipt` (public) or `_refresh_receipt` (A6's private name), else `build_receipt` + `upsert_receipt` directly.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+"""Plan A / A11b: POST /api/agent/message/{id}/redact forgets one row —
+content and blocks replaced, FTS rewritten, receipt regenerated (spec §5)."""
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from halbert_core.agents.conversation_sqlite import SqliteConversationStore
+from halbert_core.agents.threads import ThreadManager
+from halbert_core.intake.signals import analyze_message
+import halbert_core.dashboard.routes.agent as agent_routes
+
+REDACTED = "[redacted by admin]"
+
+
+@pytest.fixture
+def tm(tmp_path):
+    store = SqliteConversationStore(str(tmp_path / "threads.db"))
+    manager = ThreadManager(store)
+    yield manager
+    store.close()
+
+
+@pytest.fixture
+def client(monkeypatch, tm):
+    monkeypatch.setattr(agent_routes, "_thread_manager", lambda: tm)
+    monkeypatch.setattr(agent_routes, "_agent_instance", None)
+    app = FastAPI()
+    app.include_router(agent_routes.router)
+    return TestClient(app)
+
+
+def _seed(tm, query, answer, blocks=None):
+    turn = tm.begin_turn(query, analyze_message(query), "sess-redact")
+    tm.end_turn(turn, assistant_text=answer, blocks=blocks or [], terminal_session_ids=[], diff_proposals=[])
+    return turn
+
+
+def test_redact_replaces_content_blocks_fts_and_receipt(client, tm):
+    turn = _seed(
+        tm, "set up the samba media share", "added [media] to smb.conf and ran testparm",
+        blocks=[{"tool": "run_command", "args": {"command": "testparm"},
+                 "result": "Loaded services file OK.", "exit": 0}],
+    )
+    tid = turn.thread_id
+    assistant_id = tm.store.list_turns(limit=5)[-1]["assistant"]["message_id"]
+    assert "testparm" in tm.store.get_thread(tid)["receipt"]
+    assert tm.store.search("testparm", None, 5) == [tid]
+
+    r = client.post(f"/api/agent/message/{assistant_id}/redact")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ok": True, "thread_id": tid}
+
+    row = tm.store.list_turns(limit=5)[-1]
+    assert row["assistant"]["content"] == REDACTED
+    assert row["blocks"] == [{"tool": REDACTED, "args": {}, "result": REDACTED, "exit": None, "redacted": True}]
+    assert row["user"]["content"] == "set up the samba media share"      # only the one row
+    assert tm.store.search("testparm", None, 5) == []                     # FTS row rewritten
+    receipt = tm.store.get_thread(tid)["receipt"]
+    assert "testparm" not in receipt and REDACTED in receipt              # receipt regenerated
+    assert tm.store.search("samba", None, 5) == [tid]                     # the user row is untouched
+    assert tm.store.list_messages(tid)[-1]["metadata"]["redacted"] is True
+
+
+def test_redact_a_row_without_blocks_keeps_blocks_empty(client, tm):
+    turn = _seed(tm, "hello there", "hi!")
+    user_id = tm.store.list_turns(limit=5)[-1]["user"]["message_id"]
+    assert client.post(f"/api/agent/message/{user_id}/redact").json() == {"ok": True, "thread_id": turn.thread_id}
+    row = tm.store.list_turns(limit=5)[-1]
+    assert row["user"]["content"] == REDACTED and row["assistant"]["content"] == "hi!"
+    assert row["blocks"] == []
+    # idempotent: redacting twice is still ok
+    assert client.post(f"/api/agent/message/{user_id}/redact").status_code == 200
+
+
+def test_redact_unknown_row_is_404_and_no_store_is_503(client, tm, monkeypatch):
+    assert client.post("/api/agent/message/999999/redact").status_code == 404
+    monkeypatch.setattr(agent_routes, "_thread_manager", lambda: None)
+    assert client.post("/api/agent/message/1/redact").status_code == 503
+
+
+def test_store_redact_message_returns_none_for_missing_row_or_no_connection(tm, tmp_path):
+    assert tm.store.redact_message(424242) is None
+    dead = SqliteConversationStore(str(tmp_path / "x" / "y" / "z" / "not-creatable.db"))
+    dead._conn = None
+    assert dead.redact_message(1) is None
+```
+
+- [ ] **Step 2: Run it, expect failures**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_agent_routes_redact.py -q -p no:cacheprovider
+```
+Expected: `assert 404 == 200` for the two redact tests (the route does not exist), `AttributeError: 'SqliteConversationStore' object has no attribute 'redact_message'` for the store test; `test_redact_unknown_row_is_404_and_no_store_is_503` fails on `assert 404 == 503`.
+
+- [ ] **Step 3: Store method** — in `agents/conversation_sqlite.py`, directly after `mark_in_progress_interrupted` (its last lines are `logger.warning(f"mark_in_progress_interrupted failed: {e}")` / `return 0`) and above the `# ------` banner that precedes `# session_somatic_blocks (C1 link)`, insert:
+
+```python
+    # ------------------------------------------------------------------
+    # Forget / redact (spec §5)
+    # ------------------------------------------------------------------
+
+    REDACTED = "[redacted by admin]"
+
+    def redact_message(self, message_id: int) -> Optional[str]:
+        """"Forget this" for one row: content and blocks become the
+        redaction marker, diff proposals are dropped, metadata gains
+        ``redacted``, and the FTS row is rewritten so the original words are
+        unsearchable. The row itself is never deleted. Returns the thread id,
+        or None when the row does not exist or the write failed (WARNING).
+        The caller refreshes the thread's receipt.
+        """
+        if self._conn is None:
+            return None
+        try:
+            with self._lock, self._conn:
+                row = self._conn.execute(
+                    "SELECT conversation_id, blocks_json, metadata FROM messages WHERE id = ?",
+                    (int(message_id),),
+                ).fetchone()
+                if row is None:
+                    return None
+                thread_id = row["conversation_id"]
+                # blocks_json stays valid JSON: one marker block when the row
+                # had blocks (the timeline still shows that something ran),
+                # an empty list when it had none.
+                blocks = (
+                    [{"tool": self.REDACTED, "args": {}, "result": self.REDACTED,
+                      "exit": None, "redacted": True}]
+                    if _loads(row["blocks_json"], []) else []
+                )
+                metadata = _loads(row["metadata"], {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                metadata["redacted"] = True
+                self._conn.execute(
+                    """UPDATE messages
+                       SET content = ?, blocks_json = ?, diff_proposals_json = '[]', metadata = ?
+                       WHERE id = ?""",
+                    (self.REDACTED, json.dumps(blocks), json.dumps(metadata), int(message_id)),
+                )
+                if self._fts_ok:
+                    self._conn.execute(
+                        "DELETE FROM messages_fts WHERE rowid = ?", (int(message_id),)
+                    )
+                    self._conn.execute(
+                        "INSERT INTO messages_fts(rowid, conversation_id, content) "
+                        "VALUES (?, ?, ?)",
+                        (int(message_id), thread_id, self.REDACTED),
+                    )
+            return thread_id
+        except Exception as e:
+            logger.warning(f"redact_message {message_id} failed: {e}")
+            return None
+
+```
+
+- [ ] **Step 4: Endpoint** — in `dashboard/routes/agent.py`, directly after the `retract_recall` endpoint (the file currently ends with its `return {"ok": False}`), append:
+
+```python
+
+    def _refresh_thread_receipt(tm, thread_id: str) -> None:
+        """Regenerate a thread's receipt after a redaction (spec §5)."""
+        refresh = getattr(tm, "refresh_receipt", None) or getattr(tm, "_refresh_receipt", None)
+        if callable(refresh):
+            refresh(thread_id)
+            return
+        from ...agents.receipt import build_receipt
+        thread = tm.store.get_thread(thread_id)
+        if thread is None:
+            return
+        receipt = build_receipt(thread, tm.store.list_messages(thread_id))
+        tm.store.upsert_receipt(thread_id, thread.get("title") or "", receipt)
+
+    @router.post("/message/{message_id}/redact")
+    async def redact_message(message_id: int):
+        """"Forget this" for one row (spec §5): content and blocks become
+        "[redacted by admin]", the FTS row is rewritten and the thread's
+        receipt is regenerated. Rows are never deleted."""
+        tm = _thread_manager()
+        if tm is None:
+            raise HTTPException(503, "Thread store unavailable")
+        thread_id = tm.store.redact_message(message_id)
+        if thread_id is None:
+            raise HTTPException(404, "Message not found")
+        try:
+            _refresh_thread_receipt(tm, thread_id)
+        except Exception as e:
+            logger.warning(f"Receipt refresh after redaction failed (non-fatal): {e}")
+        return {"ok": True, "thread_id": thread_id}
+```
+
+- [ ] **Step 5: Run the tests**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core && /Volumes/4TB-BAD/Halbert/.venv/bin/python -m pytest tests/test_agent_routes_redact.py tests/test_agent_routes_timeline.py tests/test_conversation_sqlite.py tests/test_threads.py -q -p no:cacheprovider
+```
+Expected: all PASS (`4 passed` from the new file).
+
+- [ ] **Step 6: Commit**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/agents/conversation_sqlite.py halbert_core/halbert_core/dashboard/routes/agent.py halbert_core/tests/test_agent_routes_redact.py && git commit -m "feat(dashboard): redact one message row on request
+
+POST /api/agent/message/{id}/redact replaces the row's content and
+blocks with '[redacted by admin]', drops its diff proposals, rewrites
+the messages_fts row and regenerates the thread receipt through the
+ThreadManager. Rows are never deleted (spec §5)."
+```
+
 ---
 
 **Contract additions (planner M), for the verifier to propagate:**
@@ -6192,6 +7953,16 @@ endpoints are deleted."
 - `ThreadManager` must expose its store as `self.store` (routes use `tm.store.list_turns`, `tm.store.update_message`, `tm.store.update_thread`, `tm.store.get_thread`); `update_thread(recalled_json=<list>)` accepts a Python list (json-encoded by the store); `TurnContext.recalled` entries have the `recall()` result shape; the A6 test file is assumed to be `tests/test_threads.py`.
 - `routes/agent.py` helpers: `_thread_manager()`, `_thread_summary(thread)`, `_active_ctx(session_id)`, `_find_stored_diff(tm, diff_id)`; `GET /api/agent/thread/current` returns the thread dict with a mirrored `thread_id`, or JSON `null`.
 - `recall_thread` results are appended to `ctx.recalled_threads` and injected as `retrieved_context` entries with `source="thread"`; `resume_thread` resets `conversation_history` to one system row `[Earlier in this subject: <receipt>]`.
+- `StreamEvent.thread_recalled(session_id, thread_id, title, date, match_terms, mode, last_turn_id=None)` — `data.last_turn_id` is the recalled thread's newest `turn_id` (from a `last_turn_id` key on the recall result if the S part supplies one, else `AgentStateMachine._last_turn_id(thread_id)` reading `thread_manager.store.list_messages`); None without a store. Planner F may use it to scroll the timeline on chip click.
+- `process()` yields `StreamEvent.conversation_status(session_id, "waiting", waiting_for="previous turn")` before it blocks on `turn_lock` when the lock is already held (spec §12). The status string is `"waiting"` (not a `ConversationStatus` member).
+- `_supersede_paused_turn` → `_record_superseded_turn(old_ctx)`: an evicted AWAITING_CONFIRMATION session that has a `turn_context` is ended via `thread_manager.end_turn(turn, assistant_text="", blocks=[{tool, args, result: "not run — superseded", exit: None, status: "superseded"}], terminal_session_ids=[], diff_proposals=[], status="cancelled")`; `build_receipt` (A2) should render such a block on its Commands line as `<cmd> (not run — superseded)`.
+- `_emit_somatic_block` passes `thread_id=ctx.thread_id or ctx.session_id` into the `somatic_block` event data; nothing calls `SqliteConversationStore.add_somatic_block` today.
+- `AgentPromptBuilder.CONTINUITY_PREAMBLE_NO_TOOLS: dict[voice, str]`; `build_planning_prompt(..., tools_supported: Optional[bool] = None)` and `build_response_prompt(..., tools_supported: Optional[bool] = None)`; the state machine passes `getattr(self.llm, "tools_supported", None)`.
+- `model/client.py`: `_TOOLS_REJECTED: Dict[str, bool]`, `model_supports_tools(model) -> Optional[bool]`; `LLMClientAdapter.tools_supported` and `OllamaClient.tools_supported` (`Optional[bool]`, default None, False after a no-tools fallback).
+- `intake/budget.py`: MEDIUM `conversation=1600` (others 75/50/100/50/50/75), LARGE `conversation=2400` (others 125/100/400/275/250/450); totals unchanged. `ContextAssembler._format_conversation` renders a leading `{"role": "system", "content": "[Earlier in this subject: …]"}` row as its own `## Earlier in this subject` block and skips `should_summarize` for the remaining rows.
+- `SqliteConversationStore.redact_message(message_id: int) -> Optional[str]` (returns the thread id; `REDACTED = "[redacted by admin]"` class constant); `POST /api/agent/message/{message_id}/redact -> {ok, thread_id}` (404 unknown row, 503 no store); the route calls `ThreadManager.refresh_receipt` / `_refresh_receipt` when present, else `build_receipt` + `upsert_receipt`.
+
+---
 
 ### Task A12a: `agents/migrations.py` — both legacy JSON shapes become closed threads
 
@@ -6864,20 +8635,9 @@ Expected: `4 failed`, each with `AttributeError: module 'halbert_core.dashboard.
 
 - [ ] **Step 3: Write the implementation**
 
-In `halbert_core/halbert_core/dashboard/app.py`, after `_find_config_registry` (current lines 46–54 end with `    return None`), insert the module-level function:
+In `halbert_core/halbert_core/dashboard/app.py`, immediately after the existing `_find_config_registry` function (it ends with `    return None`), insert ONLY the `run_conversation_boot_hooks` function below — do not re-paste `_find_config_registry`:
 
 ```python
-def _find_config_registry():
-    """Locate config/config-registry.yml. Returns a Path or None."""
-    candidates = [Path.cwd() / "config" / "config-registry.yml"]
-    for parent in Path(__file__).resolve().parents:
-        candidates.append(parent / "config" / "config-registry.yml")
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    return None
-
-
 def run_conversation_boot_hooks() -> dict:
     """Plan A boot hooks for the one continuous conversation (spec §8, §12).
 
@@ -7915,7 +9675,7 @@ cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversat
 **Files:**
 - Create: `halbert_core/halbert_core/dashboard/frontend/src/types/timeline.ts`
 - Create: `halbert_core/halbert_core/dashboard/frontend/src/hooks/useTimeline.ts`
-- Modify: `halbert_core/halbert_core/dashboard/frontend/src/lib/api.ts` (lines 12 import block; lines 355-370 replaced)
+- Modify: `halbert_core/halbert_core/dashboard/frontend/src/lib/api.ts` (the import line; a timeline block inserted above the legacy `// Agent conversations (Phase 36 agent path)` wrappers, which stay until A18)
 - Test: `halbert_core/halbert_core/dashboard/frontend/src/lib/api.timeline.test.ts`
 - Test: `halbert_core/halbert_core/dashboard/frontend/src/hooks/useTimeline.test.ts`
 
@@ -8017,23 +9777,16 @@ describe('api.retractRecall', () => {
     expect(init.method).toBe('DELETE')
   })
 })
-
-describe('removed wrappers', () => {
-  it('no longer exposes the per-conversation list endpoints', () => {
-    const legacy = api as unknown as Record<string, unknown>
-    expect(legacy.listAgentConversations).toBeUndefined()
-    expect(legacy.getAgentConversation).toBeUndefined()
-    expect(legacy.deleteAgentConversation).toBeUndefined()
-  })
-})
 ```
+
+(The legacy `listAgentConversations` / `getAgentConversation` / `deleteAgentConversation` wrappers are deleted in A18, together with the `AgentChat` code that still calls them, so that every commit typechecks; the "removed wrappers" assertion lives there.)
 
 - [ ] **Step 2: Run it, watch it fail**
 
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/lib/api.timeline.test.ts
 ```
-Expected: `TypeError: api.getTimeline is not a function` (and the "removed wrappers" test fails with `expected [Function] to be undefined`).
+Expected: 5 failures — `TypeError: api.getTimeline is not a function` (three), `api.getCurrentThread is not a function`, `api.retractRecall is not a function`.
 
 - [ ] **Step 3: Create `src/types/timeline.ts`**
 
@@ -8217,11 +9970,7 @@ export function pageFromServer(raw: unknown): TimelinePage {
 
 - [ ] **Step 4: Edit `src/lib/api.ts`**
 
-Replace line 12:
-```ts
-import { apiBase, apiUrl } from './apiBase'
-```
-with:
+Replace the import line `import { apiBase, apiUrl } from './apiBase'` (the file's only import) with:
 ```ts
 import { apiBase, apiUrl } from './apiBase'
 import {
@@ -8232,12 +9981,11 @@ import {
 } from '../types/timeline'
 ```
 
-Replace lines 355-370 (from the `// Agent conversations (Phase 36 agent path)` comment block through the closing `},` of `deleteAgentConversation`) with:
+Immediately above the three-line comment block that starts with `  // -----` and reads `  // Agent conversations (Phase 36 agent path)` on its middle line, insert the block below. Leave `listAgentConversations`, `getAgentConversation` and `deleteAgentConversation` in place: `AgentChat.tsx` still calls them, and A18 deletes the callers and the wrappers in the same commit so `tsc` is green at every step.
 
 ```ts
   // -----------------------------------------------------------------------
-  // Timeline (continuous conversation, Plan A). The per-conversation
-  // list/get/delete endpoints are gone: there is one conversation.
+  // Timeline (continuous conversation, Plan A): one conversation, paged.
   // -----------------------------------------------------------------------
   getTimeline(params: { before?: string; around?: string; limit?: number } = {}): Promise<TimelinePage> {
     const qs = new URLSearchParams()
@@ -8265,7 +10013,12 @@ Replace lines 355-370 (from the `// Agent conversations (Phase 36 agent path)` c
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/lib/api.timeline.test.ts
 ```
-Expected: `Tests  6 passed (6)`. (`npx tsc --noEmit -p .` will now fail on `AgentChat.tsx:275/285/317` — expected until A18; do not run tsc as a gate in this task.)
+Expected: `Tests  5 passed (5)`.
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx tsc --noEmit -p .
+```
+Expected: no output, exit 0 (everything in this task is additive).
 
 - [ ] **Step 6: Write the failing hook test**
 
@@ -8276,7 +10029,9 @@ Expected: `Tests  6 passed (6)`. (`npx tsc --noEmit -p .` will now fail on `Agen
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * The stored conversation: first page on mount, older pages on demand, the
- * finished live turn appended, and everything grouped by local day.
+ * finished live turn appended, a jump to the window around one turn (the
+ * thread chip) and back to the newest page, and everything grouped by
+ * local day.
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest'
@@ -8442,6 +10197,62 @@ describe('useTimeline', () => {
     expect(result.current.turns).toEqual([])
     expect(warn).toHaveBeenCalled()
   })
+
+  it('loadAround replaces the page with the window around a turn and scrolls to it', async () => {
+    const fetchMock = fetchPages(
+      page([rawTurn('t-9', 1_784_000_900, 'nine')], true),
+      page(
+        [rawTurn('t-1', 1_784_000_000, 'one'), rawTurn('t-2', 1_784_000_100, 'two'), rawTurn('t-3', 1_784_000_200, 'three')],
+        true,
+      ),
+    )
+    // jsdom has no layout: record which element was asked to scroll.
+    const scrolled: Element[] = []
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this)
+    }
+    const article = document.createElement('article')
+    article.setAttribute('data-turn-id', 't-2')
+    document.body.appendChild(article)
+
+    const { result } = renderHook(() => useTimeline())
+    await waitFor(() => expect(result.current.turns).toHaveLength(1))
+    expect(result.current.anchored).toBe(false)
+
+    await act(async () => {
+      await result.current.loadAround('t-2')
+    })
+
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/agent/timeline?around=t-2&limit=50')
+    expect(result.current.turns.map((t) => t.turnId)).toEqual(['t-1', 't-2', 't-3'])
+    expect(result.current.hasMore).toBe(true)
+    expect(result.current.anchored).toBe(true)
+    expect(scrolled).toEqual([article])
+    article.remove()
+  })
+
+  it('loadLatest returns to the newest page and clears the anchor', async () => {
+    const fetchMock = fetchPages(
+      page([rawTurn('t-9', 1_784_000_900, 'nine')], true),
+      page([rawTurn('t-2', 1_784_000_100, 'two')], true),
+      page([rawTurn('t-9', 1_784_000_900, 'nine')], true),
+    )
+    const { result } = renderHook(() => useTimeline())
+    await waitFor(() => expect(result.current.turns).toHaveLength(1))
+
+    await act(async () => {
+      await result.current.loadAround('t-2')
+    })
+    expect(result.current.anchored).toBe(true)
+
+    await act(async () => {
+      await result.current.loadLatest()
+    })
+
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/agent/timeline?limit=50')
+    expect(result.current.turns.map((t) => t.turnId)).toEqual(['t-9'])
+    expect(result.current.anchored).toBe(false)
+  })
 })
 ```
 
@@ -8463,8 +10274,10 @@ Expected: `Error: Failed to resolve import "./useTimeline"`.
  * One conversation. The first page (newest 50 turns) loads on mount; older
  * pages are fetched with `before=<oldest turn id>` and prepended; the turn
  * that just finished streaming is appended locally so the page does not have
- * to refetch to show what it just watched happen. Turns are grouped by local
- * calendar day for the dividers.
+ * to refetch to show what it just watched happen. A thread chip click loads
+ * the window `around=<turn id>` instead (replacing the page and scrolling to
+ * that turn); `loadLatest` returns to the newest page. Turns are grouped by
+ * local calendar day for the dividers.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -8483,9 +10296,18 @@ export interface TimelineDay {
 export interface UseTimelineReturn {
   turns: TimelineTurn[];
   hasMore: boolean;
-  /** True during the first load and while an older page is in flight. */
+  /** True during the first load and while any page is in flight. */
   loading: boolean;
   loadOlder: () => Promise<void>;
+  /**
+   * Replace the page with the window around `turnId` (a thread chip click)
+   * and scroll to that turn once it is rendered. Sets `anchored`.
+   */
+  loadAround: (turnId: string) => Promise<void>;
+  /** Back to the newest page after a `loadAround`. Clears `anchored`. */
+  loadLatest: () => Promise<void>;
+  /** True while the page is a window around an earlier turn, not the newest page. */
+  anchored: boolean;
   appendLive: (turn: TimelineTurn) => void;
   currentThread: TimelineCurrentThread | null;
   setCurrentThread: Dispatch<SetStateAction<TimelineCurrentThread | null>>;
@@ -8533,12 +10355,20 @@ function mergeOlder(older: TimelineTurn[], current: TimelineTurn[]): TimelineTur
   return [...older.filter((t) => !seen.has(t.turnId)), ...current];
 }
 
+/** Attribute selector for a turn article; ids are uuids but quote anyway. */
+function turnSelector(turnId: string): string {
+  return `[data-turn-id="${turnId.replace(/"/g, '\\"')}"]`;
+}
+
 export function useTimeline(pageSize = 50): UseTimelineReturn {
   const [turns, setTurns] = useState<TimelineTurn[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [anchored, setAnchored] = useState(false);
   const [currentThread, setCurrentThread] = useState<TimelineCurrentThread | null>(null);
   const inFlight = useRef(false);
+  // Turn to scroll to once the page that contains it has rendered.
+  const scrollTarget = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -8565,6 +10395,17 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
     };
   }, [pageSize]);
 
+  // After a loadAround the target article exists only once React has
+  // committed the new page, so the scroll waits for that commit.
+  useEffect(() => {
+    const target = scrollTarget.current;
+    if (!target) return;
+    const el = document.querySelector(turnSelector(target));
+    if (!el) return;
+    scrollTarget.current = null;
+    el.scrollIntoView({ block: 'center' });
+  }, [turns]);
+
   const loadOlder = useCallback(async () => {
     if (inFlight.current || !hasMore || turns.length === 0) return;
     inFlight.current = true;
@@ -8581,6 +10422,43 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
     }
   }, [hasMore, turns, pageSize]);
 
+  const loadAround = useCallback(async (turnId: string) => {
+    if (inFlight.current || !turnId) return;
+    inFlight.current = true;
+    setLoading(true);
+    try {
+      const page = await api.getTimeline({ around: turnId, limit: pageSize });
+      if (page.turns.length === 0) return; // unknown id: keep what is on screen
+      scrollTarget.current = turnId;
+      setTurns(page.turns);
+      setHasMore(page.hasMore);
+      setAnchored(true);
+    } catch (err) {
+      console.warn('[TIMELINE] around page failed:', err);
+    } finally {
+      inFlight.current = false;
+      setLoading(false);
+    }
+  }, [pageSize]);
+
+  const loadLatest = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setLoading(true);
+    try {
+      const page = await api.getTimeline({ limit: pageSize });
+      setTurns(page.turns);
+      setHasMore(page.hasMore);
+      setCurrentThread(page.currentThread);
+      setAnchored(false);
+    } catch (err) {
+      console.warn('[TIMELINE] latest page failed:', err);
+    } finally {
+      inFlight.current = false;
+      setLoading(false);
+    }
+  }, [pageSize]);
+
   const appendLive = useCallback((turn: TimelineTurn) => {
     setTurns((prev) => {
       const idx = prev.findIndex((t) => t.turnId === turn.turnId);
@@ -8593,7 +10471,19 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
 
   const byDay = useMemo(() => groupByDay(turns), [turns]);
 
-  return { turns, hasMore, loading, loadOlder, appendLive, currentThread, setCurrentThread, byDay };
+  return {
+    turns,
+    hasMore,
+    loading,
+    loadOlder,
+    loadAround,
+    loadLatest,
+    anchored,
+    appendLive,
+    currentThread,
+    setCurrentThread,
+    byDay,
+  };
 }
 
 export default useTimeline;
@@ -8604,20 +10494,27 @@ export default useTimeline;
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/hooks/useTimeline.test.ts src/lib/api.timeline.test.ts
 ```
-Expected: `Test Files  2 passed (2)`, `Tests  14 passed (14)`.
+Expected: `Test Files  2 passed (2)`, `Tests  15 passed (15)`.
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx tsc --noEmit -p .
+```
+Expected: no output, exit 0.
 
 - [ ] **Step 10: Commit**
 
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/dashboard/frontend/src/types/timeline.ts halbert_core/halbert_core/dashboard/frontend/src/hooks/useTimeline.ts halbert_core/halbert_core/dashboard/frontend/src/hooks/useTimeline.test.ts halbert_core/halbert_core/dashboard/frontend/src/lib/api.ts halbert_core/halbert_core/dashboard/frontend/src/lib/api.timeline.test.ts && git commit -m "feat(dashboard): timeline types, api wrappers and useTimeline
 
-One conversation, paged: GET /api/agent/timeline replaces the per-
-conversation list/get/delete wrappers. Wire timestamps are seconds; the
-client is milliseconds from the mapper outward. Day grouping is local
-calendar days: Today, Yesterday, then absolute."
+One conversation, paged: GET /api/agent/timeline (before= for older
+pages, around= for the window a thread chip jumps to, loadLatest to come
+back). The legacy per-conversation wrappers stay until AgentChat stops
+calling them. Wire timestamps are seconds; the client is milliseconds
+from the mapper outward. Day grouping is local calendar days: Today,
+Yesterday, then absolute."
 ```
 
-### Task A15: `useAgentStream` thread events, `dismissContextItem`, and a `reset()` that keeps terminals
+### Task A15: `useAgentStream` thread events (chip with `lastTurnId`, expiry on a new subject), `dismissContextItem`, and a `reset()` that keeps terminals
 
 **Files:**
 - Modify: `halbert_core/halbert_core/dashboard/frontend/src/hooks/useAgentStream.ts` (lines 98-118 interface; 140-153 return type; 236-254 initSession; 505-509 switch tail; 718-732 reset; 766-779 return)
@@ -8630,14 +10527,16 @@ calendar days: Today, Yesterday, then absolute."
 
 ```ts
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2024-2026 Eric Bintner andÜhalbert Contributors
+// Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * Thread events on the agent stream (Plan A).
  *
  * The server owns thread identity; the hook only mirrors what it is told:
  * which subject the turn landed in, what earlier subject was pulled in (one
- * chip, never two), and the persisted turn id. A store failure is a warning,
- * not an error state — the turn still answers.
+ * chip, never two, carrying the recalled thread's last turn id so the chip
+ * can jump there; it expires when a new subject starts), and the persisted
+ * turn id. A store failure is a warning, not an error state — the turn
+ * still answers.
  */
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
@@ -8709,9 +10608,9 @@ describe('useAgentStream — thread events', () => {
 
   it('keeps exactly one thread chip across repeated recalls', async () => {
     streamFetch([
-      ev('thread_recalled', { thread_id: 'th-0', title: 'ZFS scrub', date: '2026-07-14', match_terms: ['zfs'], mode: 'auto' }),
+      ev('thread_recalled', { thread_id: 'th-0', title: 'ZFS scrub', date: '2026-07-14', match_terms: ['zfs'], mode: 'auto', last_turn_id: 't-3' }),
       ev('context_loaded', { source: 'file', label: '/etc/fstab', count: 1 }),
-      ev('thread_recalled', { thread_id: 'th-9', title: 'WireGuard tunnel', date: '2026-07-02', match_terms: ['wg'], mode: 'tool' }),
+      ev('thread_recalled', { thread_id: 'th-9', title: 'WireGuard tunnel', date: '2026-07-02', match_terms: ['wg'], mode: 'tool', last_turn_id: 't-7' }),
       ev('response_complete', { content: 'done' }),
     ])
 
@@ -8736,7 +10635,42 @@ describe('useAgentStream — thread events', () => {
       title: 'WireGuard tunnel',
       date: '2026-07-02',
       matchTerms: ['wg'],
+      lastTurnId: 't-7',
     })
+  })
+
+  it('stores the recalled thread\'s last turn id, null when the server has none', async () => {
+    streamFetch([
+      ev('thread_recalled', { thread_id: 'th-0', title: 'ZFS scrub', date: '2026-07-14', match_terms: ['zfs'], mode: 'auto' }),
+      ev('response_complete', { content: 'done' }),
+    ])
+
+    const { result } = renderHook(() => useAgentStream())
+    act(() => {
+      result.current.sendMessage('hi', 'turn-1')
+    })
+
+    await waitFor(() => expect(result.current.isStreaming).toBe(false))
+    expect(result.current.session?.recalled?.lastTurnId).toBeNull()
+  })
+
+  it('clears the chip when a new subject starts (the pulled-in thread expires with the paused one)', async () => {
+    streamFetch([
+      ev('thread_recalled', { thread_id: 'th-0', title: 'ZFS scrub', date: '2026-07-14', match_terms: ['zfs'], mode: 'auto', last_turn_id: 't-3' }),
+      ev('context_loaded', { source: 'file', label: '/etc/fstab', count: 1 }),
+      ev('thread_started', { thread_id: 'th-2', title: 'Scanner share', reason: 'new subject' }),
+      ev('response_complete', { content: 'done' }),
+    ])
+
+    const { result } = renderHook(() => useAgentStream())
+    act(() => {
+      result.current.sendMessage('now something else', 'turn-1')
+    })
+
+    await waitFor(() => expect(result.current.isStreaming).toBe(false))
+    expect(result.current.session?.thread).toEqual({ threadId: 'th-2', title: 'Scanner share' })
+    expect(result.current.session?.recalled).toBeNull()
+    expect(result.current.session?.contextItems.map((i) => i.source)).toEqual(['file'])
   })
 
   it('dismissContextItem drops the chip and clears the recall', async () => {
@@ -8809,7 +10743,7 @@ describe('useAgentStream — thread events', () => {
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/hooks/useAgentStream.thread.test.ts
 ```
-Expected: 5 failures — `expected undefined to be 't-42'`, `expected [] to have a length of 1`, `TypeError: result.current.dismissContextItem is not a function`, `expected "warn" to be called 1 times, but got 0 times`, `expected undefined to be 'tick'`.
+Expected: 7 failures — `expected undefined to be 't-42'`, `expected [] to have a length of 1`, `expected undefined to be null` (lastTurnId), `expected undefined to deeply equal { threadId: 'th-2', … }`, `TypeError: result.current.dismissContextItem is not a function`, `expected "warn" to be called 1 times, but got 0 times`, `expected undefined to be 'tick'`.
 
 - [ ] **Step 3: Edit `useAgentStream.ts`**
 
@@ -8818,8 +10752,17 @@ Expected: 5 failures — `expected undefined to be 't-42'`, `expected [] to have
 ```ts
   /** Subject the server put this turn in (thread_started). */
   thread?: { threadId: string; title: string } | null;
-  /** Earlier subject pulled into this turn (thread_recalled), one at most. */
-  recalled?: { threadId: string; title: string; date: string; matchTerms: string[] } | null;
+  /**
+   * Earlier subject pulled into this turn (thread_recalled), one at most.
+   * `lastTurnId` is that thread's most recent turn — where the chip jumps.
+   */
+  recalled?: {
+    threadId: string;
+    title: string;
+    date: string;
+    matchTerms: string[];
+    lastTurnId: string | null;
+  } | null;
   /** Server turn id once the user row is stored (turn_persisted). */
   turnId?: string | null;
 ```
@@ -8853,12 +10796,17 @@ let storeErrorWarned = false;
         // Plan A continuity: the server owns thread identity. The hook only
         // mirrors what it was told so the label and the chip can follow.
         case 'thread_started': {
+          // A new subject pauses the previous one, and whatever was pulled
+          // into the previous one expires with it (spec §6): no thread chip
+          // survives a thread_started.
           return {
             ...prev,
             thread: {
               threadId: event.thread_id as string,
               title: (event.title as string) ?? '',
             },
+            recalled: null,
+            contextItems: prev.contextItems.filter((item) => item.source !== 'thread'),
           };
         }
 
@@ -8867,11 +10815,13 @@ let storeErrorWarned = false;
           const title = (event.title as string) ?? '';
           const date = (event.date as string) ?? '';
           const matchTerms = Array.isArray(event.match_terms) ? (event.match_terms as string[]) : [];
+          const lastTurnId =
+            typeof event.last_turn_id === 'string' && event.last_turn_id ? event.last_turn_id : null;
           // Max one thread chip: a second recall replaces the first.
           const others = prev.contextItems.filter((item) => item.source !== 'thread');
           return {
             ...prev,
-            recalled: { threadId, title, date, matchTerms },
+            recalled: { threadId, title, date, matchTerms, lastTurnId },
             contextItems: [
               ...others,
               { id: `thread:${threadId}`, source: 'thread', label: `pulled in: ${title} · ${date}`, count: 1 },
@@ -8927,25 +10877,32 @@ let storeErrorWarned = false;
   };
 ```
 
-- [ ] **Step 4: Run the new test plus the existing terminal test**
+- [ ] **Step 4: Run the new test plus the existing terminal test, then typecheck**
 
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/hooks/useAgentStream.thread.test.ts src/hooks/useAgentStream.terminal.test.ts
 ```
-Expected: `Tests  12 passed (12)`.
+Expected: `Tests  14 passed (14)` (7 new + 7 existing).
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx tsc --noEmit -p .
+```
+Expected: no output, exit 0.
 
 - [ ] **Step 5: Commit**
 
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/dashboard/frontend/src/hooks/useAgentStream.ts halbert_core/halbert_core/dashboard/frontend/src/hooks/useAgentStream.thread.test.ts && git commit -m "feat(dashboard): mirror thread events on the agent stream
 
-thread_started, thread_recalled (one chip, ever), turn_persisted and
-thread_store_error (warn once, never an error state). reset() no longer
-clears the terminal store: there is one conversation and the tiles
-belong to it, not to a session."
+thread_started (which also expires any pulled-in chip: the previous
+subject paused), thread_recalled (one chip, ever, carrying the recalled
+thread's last turn id), turn_persisted and thread_store_error (warn
+once, never an error state). reset() no longer clears the terminal
+store: there is one conversation and the tiles belong to it, not to a
+session."
 ```
 
-### Task A16: ContextBar `thread` chip on telemetry tokens; ContextPill as a button; `status.*-line` aliases
+### Task A16: ContextBar `thread` chip on telemetry tokens; ContextPill as a button with a "why now" title; `status.*-line` aliases
 
 **Files:**
 - Modify: `halbert_core/halbert_core/dashboard/frontend/tailwind.config.js` (lines 75-84)
@@ -8963,8 +10920,9 @@ Token names used (from `/shared-tokens/tokens.css` lines 184-195, aliased in tai
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * A context chip is a control, not a styled div: it has a name a screen
- * reader can say, a separate remove button with its own name, and the
- * thread chip sits on the telemetry tokens rather than a palette colour.
+ * reader can say, a separate remove button with its own name, a title that
+ * says why it is here (the match terms), and the thread chip sits on the
+ * telemetry tokens rather than a palette colour.
  */
 
 import { render, screen } from '@testing-library/react'
@@ -8993,6 +10951,15 @@ describe('ContextPill', () => {
     expect(pill.className).toContain('border-status-telemetry-line')
     expect(pill.className).not.toMatch(/\b(?:bg|text|border)-(?:blue|purple|violet|indigo|sky)-\d+\b/)
     expect(pill.className).toContain('text-[11px]')
+  })
+
+  it('shows its hint as the title — the chip\'s "why now" — and no title without one', () => {
+    render(<ContextPill item={{ ...THREAD, hint: 'matched: samba, share' }} onClick={() => {}} />)
+    expect(screen.getByRole('button', { name: /^earlier subject:/ })).toHaveAttribute('title', 'matched: samba, share')
+
+    render(<ContextPill item={{ ...THREAD, id: 'thread:th-1' }} onClick={() => {}} />)
+    const plain = screen.getAllByRole('button', { name: /^earlier subject:/ })[1]
+    expect(plain).not.toHaveAttribute('title')
   })
 
   it('offers a sibling remove button with its own name', async () => {
@@ -9039,7 +11006,7 @@ describe('ContextBar', () => {
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/components/agent/ContextBar.test.tsx
 ```
-Expected: 4 failures, first is `TypeError: Cannot read properties of undefined (reading 'icon')` (no `thread` entry in TYPE_CONFIG).
+Expected: 5 failures, first is `TypeError: Cannot read properties of undefined (reading 'icon')` (no `thread` entry in TYPE_CONFIG).
 
 - [ ] **Step 3: Add the line aliases to `tailwind.config.js`**
 
@@ -9079,6 +11046,8 @@ export interface ContextItem {
   path?: string;
   preview?: string;
   tokens?: number;
+  /** Why this is here, shown on hover — a thread chip's match terms ("matched: samba, share"). */
+  hint?: string;
 }
 
 interface ContextPillProps {
@@ -9113,6 +11082,7 @@ export function ContextPill({ item, onRemove, onClick, isExpanded: _isExpanded }
       <button
         type="button"
         aria-label={`${config.noun}: ${item.label}`}
+        title={item.hint}
         onClick={onClick}
         className="inline-flex items-center gap-1 px-1.5 py-0.5 hover:opacity-80 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
       >
@@ -9193,12 +11163,17 @@ export function ContextBar({ items, onRemoveItem, onItemClick, className = '' }:
 
 (`ContextPreview` at lines 119-158 is unchanged.)
 
-- [ ] **Step 5: Run the test and the ratchet**
+- [ ] **Step 5: Run the test, the ratchet and the typecheck**
 
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/components/agent/ContextBar.test.tsx
 ```
-Expected: `Tests  4 passed (4)`.
+Expected: `Tests  5 passed (5)`.
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx tsc --noEmit -p .
+```
+Expected: no output, exit 0 (`ContextType` only widened; `hint` is optional).
 
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && python3 scripts/check_literal_colors.py --check
@@ -9210,13 +11185,13 @@ Expected: a line starting `OK:` (ContextBar.tsx keeps the same count of palette 
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/dashboard/frontend/tailwind.config.js halbert_core/halbert_core/dashboard/frontend/src/components/agent/ContextBar.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/ContextBar.test.tsx && git commit -m "feat(dashboard): thread context chip on telemetry tokens
 
-ContextPill is a button with an accessible name and a sibling labelled
-remove button; the new 'thread' type uses the telemetry tokens only, via
-the status.*-line Tailwind aliases that were missing. Minimum chip text
-is 11px."
+ContextPill is a button with an accessible name, an optional title that
+says why the chip is here, and a sibling labelled remove button; the new
+'thread' type uses the telemetry tokens only, via the status.*-line
+Tailwind aliases that were missing. Minimum chip text is 11px."
 ```
 
-### Task A17: `Timeline`, `CurrentTopicLabel`, `MessageContent` extraction, `announce()` + `LiveRegion` in HostShell, read-only `DiffBlock`
+### Task A17: `Timeline`, `CurrentTopicLabel`, `MessageContent` extraction, `announce()` + the two `LiveRegion`s in HostShell (polite status + assertive alert), read-only `DiffBlock`
 
 **Files:**
 - Create: `halbert_core/halbert_core/dashboard/frontend/src/components/agent/MessageContent.tsx`
@@ -9228,8 +11203,12 @@ is 11px."
 - Modify: `halbert_core/halbert_core/dashboard/frontend/src/components/agent/DiffBlock.tsx` (lines 13-35 props; 127-144 buttons)
 - Modify: `halbert_core/halbert_core/dashboard/frontend/src/components/shell/HostShell.tsx` (lines 15-17 imports; 33-35 root)
 - Modify: `halbert_core/halbert_core/dashboard/frontend/src/components/agent/index.ts` (append exports)
+- Modify: `halbert_core/halbert_core/dashboard/frontend/src/hooks/useAgentStream.ts` (the `tool_confirmation_required` path speaks through the alert region)
 - Test: `halbert_core/halbert_core/dashboard/frontend/src/components/agent/Timeline.test.tsx`
 - Test: `halbert_core/halbert_core/dashboard/frontend/src/components/shell/LiveRegion.test.tsx`
+- Test: `halbert_core/halbert_core/dashboard/frontend/src/hooks/useAgentStream.thread.test.ts` (one test appended)
+
+Voice note: spec §11 says "the `<continuity>` text and the sticky label follow the voice setting". The continuity text is prose with pronouns and is voice-rendered server-side (A8). `CurrentTopicLabel` shows a thread **title** ("Samba share setup") — a noun phrase with no pronouns — so there is nothing for a voice to change; it renders the title as stored and needs no voice branch.
 
 Token classes used (all backed by `/shared-tokens/tokens.css` via `tailwind.config.js` lines 55-90): `text-ink-secondary`, `text-ink-tertiary` (`--color-ink-secondary`, `--color-ink-tertiary`), `bg-hairline`, `border-hairline`, `border-hairline-subtle` (`--color-line`, `--color-line-subtle`), `bg-canvas-subtle`, `bg-canvas-muted` (`--color-surface-subtle`, `--color-surface-muted`), `tracking-label` (`--tracking-label`), `ring-focus` (`--color-focus-ring`). The user/assistant bubble surfaces reuse the exact classes AgentChat already uses (`bg-primary text-primary-foreground`, `bg-muted/50 border-border/50`) so live and stored turns look identical.
 
@@ -9351,6 +11330,20 @@ describe('Timeline', () => {
     const { container } = render(<Timeline byDay={[]} hasMore={false} loading={false} onLoadOlder={() => {}} />)
     expect(container).toBeEmptyDOMElement()
   })
+
+  it('offers "Back to latest" only while anchored on an earlier window', async () => {
+    const onLoadLatest = vi.fn()
+    const { rerender } = render(
+      <Timeline byDay={groupByDay(TURNS, NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} onLoadLatest={onLoadLatest} />,
+    )
+    expect(screen.queryByRole('button', { name: 'Back to latest' })).not.toBeInTheDocument()
+
+    rerender(
+      <Timeline byDay={groupByDay(TURNS, NOW)} hasMore={false} loading={false} anchored onLoadOlder={() => {}} onLoadLatest={onLoadLatest} />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Back to latest' }))
+    expect(onLoadLatest).toHaveBeenCalledTimes(1)
+  })
 })
 ```
 
@@ -9362,16 +11355,18 @@ describe('Timeline', () => {
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * One polite live region for the shell. announce() is a module-level
- * function so a hook deep in the conversation can speak without threading a
- * callback through five components; the region clears and re-sets so the
- * same sentence said twice is announced twice.
+ * Two live regions for the shell (design §11): a polite status region for
+ * "Pulled in earlier work" / "New subject", and an assertive alert region
+ * used for exactly one thing — blocked on approval. announce() is a
+ * module-level function so a hook deep in the conversation can speak
+ * without threading a callback through five components; each region clears
+ * and re-sets so the same sentence said twice is announced twice.
  */
 
 import { render, screen, waitFor, act } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import { LiveRegion } from './LiveRegion'
-import { announce, subscribeAnnouncements, lastAnnouncement } from '../../lib/announce'
+import { announce, subscribeAnnouncements, lastAnnouncement, lastAlert } from '../../lib/announce'
 
 describe('LiveRegion', () => {
   it('is a visually hidden polite status region', () => {
@@ -9383,6 +11378,25 @@ describe('LiveRegion', () => {
     expect(region).toHaveTextContent('')
   })
 
+  it('also has a visually hidden assertive alert region, empty by default', () => {
+    render(<LiveRegion />)
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveAttribute('aria-live', 'assertive')
+    expect(alert).toHaveAttribute('aria-atomic', 'true')
+    expect(alert.className).toContain('sr-only')
+    expect(alert).toHaveTextContent('')
+  })
+
+  it('routes an assertive announcement to the alert region only', async () => {
+    render(<LiveRegion />)
+    act(() => {
+      announce('Waiting for your approval', { assertive: true })
+    })
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Waiting for your approval'))
+    expect(screen.getByRole('status')).toHaveTextContent('')
+    expect(lastAlert()).toBe('Waiting for your approval')
+  })
+
   it('speaks what announce() is given', async () => {
     render(<LiveRegion />)
     act(() => {
@@ -9392,6 +11406,7 @@ describe('LiveRegion', () => {
       expect(screen.getByRole('status')).toHaveTextContent('Pulled in earlier work: Samba share setup'),
     )
     expect(lastAnnouncement()).toBe('Pulled in earlier work: Samba share setup')
+    expect(screen.getByRole('alert')).toHaveTextContent('')
   })
 
   it('re-announces an identical sentence by clearing first', async () => {
@@ -9624,19 +11639,38 @@ interface TimelineProps {
   byDay: TimelineDay[];
   hasMore: boolean;
   loading: boolean;
+  /** True while the page is a window around an earlier turn (a chip jump). */
+  anchored?: boolean;
   onLoadOlder: () => void;
+  /** Back to the newest page; rendered as a control only while `anchored`. */
+  onLoadLatest?: () => void;
   onRunCommand?: RunCommand;
 }
 
-/** A stored tool block in the shape the card renders. Exit 0 (or unknown) reads as success. */
+/**
+ * A stored tool block in the shape the card renders. `block.status` is the
+ * backend's own verdict (spec §8 messages.blocks_json / state_machine.py
+ * _tool_block) and is authoritative when present: `exit` is only ever set
+ * for `run_command` (state_machine.py:614-638), so a failed non-run_command
+ * tool, or a call superseded before it ran (~line 446, `{exit: null, status:
+ * "superseded"}`), would otherwise render as a green "success" card under
+ * the exit-only heuristic. Only when the backend sent no status at all
+ * (older, pre-status rows) does this fall back to that heuristic: exit 0 or
+ * unknown reads as success.
+ */
 export function executionFromBlock(block: TimelineToolBlock, fallbackId: string): ToolExecution {
   const exit = block.exit;
+  const status: ToolExecution['status'] =
+    block.status === 'success' ? 'success'
+    : block.status === 'error' || block.status === 'superseded' ? 'error'
+    : exit == null || exit === 0 ? 'success' : 'error';
   return {
     executionId: block.executionId ?? fallbackId,
     tool: block.tool,
     args: block.args ?? {},
-    status: exit == null || exit === 0 ? 'success' : 'error',
+    status,
     result: block.result,
+    error: block.error,
   };
 }
 
@@ -9727,7 +11761,15 @@ function TurnArticle({ turn, liveIds, onRunCommand }: TurnArticleProps) {
   );
 }
 
-export function Timeline({ byDay, hasMore, loading, onLoadOlder, onRunCommand }: TimelineProps) {
+export function Timeline({
+  byDay,
+  hasMore,
+  loading,
+  anchored = false,
+  onLoadOlder,
+  onLoadLatest,
+  onRunCommand,
+}: TimelineProps) {
   const { sessions } = useTerminalSessions();
   const liveIds = new Set(sessions.map((s) => s.id));
 
@@ -9761,6 +11803,22 @@ export function Timeline({ byDay, hasMore, loading, onLoadOlder, onRunCommand }:
           ))}
         </section>
       ))}
+
+      {/* A chip jump replaced the page with an earlier window; the turns
+          between that window and now are not on screen, so say so and offer
+          the way back rather than letting the live turn append after a gap. */}
+      {anchored && onLoadLatest && (
+        <div className="flex justify-center pt-2">
+          <button
+            type="button"
+            onClick={onLoadLatest}
+            disabled={loading}
+            className="rounded-full border border-hairline bg-canvas-subtle px-3 py-1 text-[11px] font-mono text-ink-secondary hover:bg-canvas-muted disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          >
+            Back to latest
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -9778,6 +11836,11 @@ export default Timeline;
  * scroll. One quiet line; it is a bearing, not a control. Changes are
  * announced through the shell's live region (announce('New subject')), so
  * this element itself is aria-live="off".
+ *
+ * No voice rendering here: a title ("Samba share setup") has no pronouns,
+ * so first-person / the-computer / hybrid would all print the same thing.
+ * The voice setting applies to the <continuity> prose, which is rendered
+ * server-side.
  */
 
 interface CurrentTopicLabelProps {
@@ -9807,22 +11870,35 @@ export default CurrentTopicLabel;
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * announce — speak one short sentence through the shell's live region.
+ * announce — speak one short sentence through the shell's live regions.
  *
  * Module-level on purpose, like hostConversation.ts: the thing that knows a
  * subject changed is a hook several components below the shell, and a live
- * region only works when there is exactly one of it. Subscribers are the
- * region (LiveRegion.tsx) and tests.
+ * region only works when there is exactly one of each kind. Two kinds
+ * (design §11): polite (the default — "Pulled in earlier work: …", "New
+ * subject", "<command> finished, exit 0") and assertive, reserved for the
+ * one thing that blocks the admin: waiting for their approval. Subscribers
+ * are the regions (LiveRegion.tsx) and tests.
  */
 
-type Listener = (text: string) => void
+export interface AnnounceOptions {
+  /** Interrupt what is being read. Only for blocked-on-approval. */
+  assertive?: boolean
+}
+
+type Listener = (text: string, options: AnnounceOptions) => void
 
 const listeners = new Set<Listener>()
-let last = ''
+let lastPolite = ''
+let lastAssertive = ''
 
-export function announce(text: string): void {
-  last = text
-  listeners.forEach((listener) => listener(text))
+export function announce(text: string, options: AnnounceOptions = {}): void {
+  if (options.assertive) {
+    lastAssertive = text
+  } else {
+    lastPolite = text
+  }
+  listeners.forEach((listener) => listener(text, options))
 }
 
 export function subscribeAnnouncements(listener: Listener): () => void {
@@ -9832,9 +11908,14 @@ export function subscribeAnnouncements(listener: Listener): () => void {
   }
 }
 
-/** The most recent sentence, for tests and debugging. */
+/** The most recent polite sentence, for tests and debugging. */
 export function lastAnnouncement(): string {
-  return last
+  return lastPolite
+}
+
+/** The most recent assertive sentence, for tests and debugging. */
+export function lastAlert(): string {
+  return lastAssertive
 }
 ```
 
@@ -9844,11 +11925,13 @@ export function lastAnnouncement(): string {
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * LiveRegion — the shell's single polite status region (design §11).
+ * LiveRegion — the shell's two live regions (design §11): one polite
+ * `role="status"` for the running commentary, one assertive `role="alert"`
+ * for blocked-on-approval only.
  *
  * Visually hidden; fed by lib/announce. Assistive tech only speaks a live
  * region when its content CHANGES, so the same sentence twice ("New subject"
- * after "New subject") would be silent the second time. The region empties
+ * after "New subject") would be silent the second time. Each region empties
  * first and fills a beat later, which makes every announcement a change.
  */
 
@@ -9858,25 +11941,38 @@ import { subscribeAnnouncements } from '../../lib/announce';
 const REFILL_MS = 50;
 
 export function LiveRegion() {
-  const [text, setText] = useState('');
+  const [status, setStatus] = useState('');
+  const [alertText, setAlertText] = useState('');
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const unsubscribe = subscribeAnnouncements((next) => {
-      setText('');
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => setText(next), REFILL_MS);
+    const timers: Record<'status' | 'alert', ReturnType<typeof setTimeout> | null> = {
+      status: null,
+      alert: null,
+    };
+    const unsubscribe = subscribeAnnouncements((next, { assertive }) => {
+      const key = assertive ? 'alert' : 'status';
+      const set = assertive ? setAlertText : setStatus;
+      set('');
+      const pending = timers[key];
+      if (pending) clearTimeout(pending);
+      timers[key] = setTimeout(() => set(next), REFILL_MS);
     });
     return () => {
       unsubscribe();
-      if (timer) clearTimeout(timer);
+      if (timers.status) clearTimeout(timers.status);
+      if (timers.alert) clearTimeout(timers.alert);
     };
   }, []);
 
   return (
-    <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-      {text}
-    </div>
+    <>
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {status}
+      </div>
+      <div role="alert" aria-live="assertive" aria-atomic="true" className="sr-only">
+        {alertText}
+      </div>
+    </>
   );
 }
 
@@ -9896,7 +11992,8 @@ Replace lines 33-35:
 ```tsx
   return (
     <div className="flex h-full min-h-0 min-w-0">
-      {/* One polite live region for the whole shell (design §11). */}
+      {/* One polite status region and one assertive alert region for the
+          whole shell (design §11). */}
       <LiveRegion />
       {/* Conversation spine */}
 ```
@@ -9912,12 +12009,98 @@ export { MessageContent } from './MessageContent'
 export { StaticTerminalChip } from './StaticTerminalChip'
 ```
 
-- [ ] **Step 13: Run the tests and the ratchet**
+- [ ] **Step 12b: Speak "Waiting for your approval" through the alert region**
+
+Today `tool_confirmation_required` (in `handleEvent`'s `switch`, `useAgentStream.ts`) builds a `ConfirmationRequest`, calls `options.onConfirmationRequired`, and stores it as `pendingConfirmation`; `AgentChat` renders `ConfirmationDialog` from that. Nothing is said to assistive tech. The hook has no access to the onboarding name (`display_name` lives in `useHostIdentity`'s module store, which is not exported and must not be polled from an event handler), so the sentence is the name-free "Waiting for your approval" — it is the one assertive announcement in the app.
+
+First the test. Append to `src/hooks/useAgentStream.thread.test.ts`, inside the `describe('useAgentStream — thread events', …)` block, after the `reset()` test (before the block's closing `})`):
+
+```ts
+  it('says "Waiting for your approval" assertively when a confirmation is required', async () => {
+    streamFetch([
+      ev('tool_confirmation_required', {
+        execution_id: 'x1',
+        tool: 'run_command',
+        description: 'rm -rf /tmp/scratch',
+        risk_level: 'high',
+      }),
+    ])
+
+    const { result } = renderHook(() => useAgentStream())
+    act(() => {
+      result.current.sendMessage('clean up', 'turn-1')
+    })
+
+    await waitFor(() => expect(result.current.session?.pendingConfirmation?.actionId).toBe('x1'))
+    expect(lastAlert()).toBe('Waiting for your approval')
+    expect(lastAnnouncement()).not.toBe('Waiting for your approval')
+  })
+```
+
+and add to that file's imports (after the `terminalSessionStore` import line):
+
+```ts
+import { lastAlert, lastAnnouncement } from '../lib/announce'
+```
+
+Run it, watch it fail:
 
 ```
-cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/components/agent/Timeline.test.tsx src/components/shell/LiveRegion.test.tsx
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/hooks/useAgentStream.thread.test.ts
 ```
-Expected: `Test Files  2 passed (2)`, `Tests  8 passed (8)`.
+Expected: 1 failure — `expected '' to be 'Waiting for your approval'`.
+
+Then in `src/hooks/useAgentStream.ts`, after the import line `import { terminalSessionStore } from './useTerminalSessions';` add:
+
+```ts
+import { announce } from '@/lib/announce';
+```
+
+and in `handleEvent`, replace
+
+```ts
+      applyTerminalEvent(event);
+    }
+
+    setSession(prev => {
+      if (!prev) return prev;
+```
+
+with
+
+```ts
+      applyTerminalEvent(event);
+    }
+
+    // Blocked on approval is the one thing said assertively (design §11).
+    // Outside the updater: updaters must stay pure (StrictMode runs them
+    // twice), and this must be said exactly once.
+    if (event.type === 'tool_confirmation_required') {
+      announce('Waiting for your approval', { assertive: true });
+    }
+
+    setSession(prev => {
+      if (!prev) return prev;
+```
+
+Run the hook tests again:
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/hooks/useAgentStream.thread.test.ts src/hooks/useAgentStream.terminal.test.ts
+```
+Expected: `Tests  15 passed (15)`.
+
+- [ ] **Step 13: Run the tests, the ratchet and the typecheck**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/components/agent/Timeline.test.tsx src/components/shell/LiveRegion.test.tsx src/hooks/useAgentStream.thread.test.ts
+```
+Expected: `Test Files  3 passed (3)`, `Tests  19 passed (19)` (6 + 5 + 8).
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx tsc --noEmit -p .
+```
+Expected: no output, exit 0 (`DiffBlock.readOnly` and the `Timeline` extras are optional props; the hook change is additive).
 
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && python3 scripts/check_literal_colors.py --check
@@ -9927,22 +12110,422 @@ Expected: `OK: …` (the new files contain no palette classes).
 - [ ] **Step 14: Commit**
 
 ```
-cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/dashboard/frontend/src/components/agent/MessageContent.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/StaticTerminalChip.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/Timeline.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/Timeline.test.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/CurrentTopicLabel.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/DiffBlock.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/index.ts halbert_core/halbert_core/dashboard/frontend/src/lib/announce.ts halbert_core/halbert_core/dashboard/frontend/src/components/shell/LiveRegion.tsx halbert_core/halbert_core/dashboard/frontend/src/components/shell/LiveRegion.test.tsx halbert_core/halbert_core/dashboard/frontend/src/components/shell/HostShell.tsx && git commit -m "feat(dashboard): timeline, current-topic label and the shell live region
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/dashboard/frontend/src/components/agent/MessageContent.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/StaticTerminalChip.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/Timeline.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/Timeline.test.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/CurrentTopicLabel.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/DiffBlock.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/index.ts halbert_core/halbert_core/dashboard/frontend/src/lib/announce.ts halbert_core/halbert_core/dashboard/frontend/src/components/shell/LiveRegion.tsx halbert_core/halbert_core/dashboard/frontend/src/components/shell/LiveRegion.test.tsx halbert_core/halbert_core/dashboard/frontend/src/components/shell/HostShell.tsx halbert_core/halbert_core/dashboard/frontend/src/hooks/useAgentStream.ts halbert_core/halbert_core/dashboard/frontend/src/hooks/useAgentStream.thread.test.ts && git commit -m "feat(dashboard): timeline, current-topic label and the shell live regions
 
 Stored turns render with roles: day dividers as h2 + time, one article
 per turn, static tool cards from the stored exit code, an 'ended' chip
-for terminals the store no longer has, read-only diffs. MessageContent
-moves out of AgentChat so live and stored replies share one renderer.
-announce() feeds one polite status region mounted in HostShell."
+for terminals the store no longer has, read-only diffs, and a 'Back to
+latest' control while the page is a window around an earlier turn.
+MessageContent moves out of AgentChat so live and stored replies share
+one renderer. announce() feeds two regions mounted in HostShell: a
+polite status region, and an assertive alert region that says only
+'Waiting for your approval' when a confirmation is required."
 ```
 
-### Task A18: Rewire `AgentChat` onto the timeline
+### Task A17b: Per-turn "Forget this" — `api.redactMessage` and the redaction marker in `Timeline`
+
+**Files:**
+- Modify: `halbert_core/halbert_core/dashboard/frontend/src/lib/api.ts` (one method inserted after `retractRecall`)
+- Modify: `halbert_core/halbert_core/dashboard/frontend/src/components/agent/Timeline.tsx` (created in A17: imports, and everything from `interface TurnArticleProps {` to the end of the file)
+- Test: `halbert_core/halbert_core/dashboard/frontend/src/lib/api.timeline.test.ts` (one describe appended)
+- Test: `halbert_core/halbert_core/dashboard/frontend/src/components/agent/Timeline.test.tsx` (one describe appended)
+
+Spec §5: per turn, "forget this" replaces `content` and `blocks_json` with `[redacted by admin]`, rewrites the FTS row and regenerates the receipt; rows are never deleted. The page side of that: a small control on each stored turn that POSTs `/api/agent/message/{message_id}/redact` for the user row and the assistant row, and — once both calls have succeeded — shows the marker in place of the words and the tool cards. A turn appended live in this page load carries `messageId: -1` (see `turnFromSession`, A18) until the next load, so it gets no control. Backend route: `POST /api/agent/message/{message_id}/redact -> {"ok": true}` (contract listed at the end of this part for the backend planner).
+
+- [ ] **Step 1: Write the failing API test**
+
+Append to `src/lib/api.timeline.test.ts`:
+
+```ts
+describe('api.redactMessage', () => {
+  it('POSTs the redact route for one stored row', async () => {
+    const fetchMock = mockFetch({ ok: true })
+    await api.redactMessage(7)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/agent/message/7/redact')
+    expect(init.method).toBe('POST')
+  })
+})
+```
+
+- [ ] **Step 2: Write the failing Timeline test**
+
+In `src/components/agent/Timeline.test.tsx`, replace the first two import lines
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, it, expect, vi } from 'vitest'
+```
+
+with
+
+```tsx
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+```
+
+and append at the end of the file:
+
+```tsx
+describe('Timeline — Forget this', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  function redactFetch() {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '',
+      json: async () => ({ ok: true }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('redacts both stored rows and replaces the turn with the marker', async () => {
+    const fetchMock = redactFetch()
+    render(<Timeline byDay={groupByDay(TURNS, NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />)
+
+    // Both fixture turns are stored (server ids 1/2 and 5), so both offer it.
+    const buttons = screen.getAllByRole('button', { name: 'Forget this turn' })
+    expect(buttons).toHaveLength(2)
+    await userEvent.click(buttons[0])
+
+    await waitFor(() => expect(screen.getAllByText('[redacted by admin]')).toHaveLength(2))
+    const calls = fetchMock.mock.calls.map(([url, init]) => [String(url), (init as RequestInit).method])
+    expect(calls).toEqual([
+      ['/api/agent/message/1/redact', 'POST'],
+      ['/api/agent/message/2/redact', 'POST'],
+    ])
+    expect(screen.queryByText('is samba running?')).not.toBeInTheDocument()
+    expect(screen.queryByText('Answer to is samba running?')).not.toBeInTheDocument()
+    expect(screen.queryByText('run_command')).not.toBeInTheDocument()
+    // Terminal ids are not part of the redaction; the ended chip stays.
+    expect(screen.getByText('terminal · ended')).toBeInTheDocument()
+    // The row is never deleted: the article and its id remain.
+    expect(screen.getAllByRole('article')[0]).toHaveAttribute('data-turn-id', 't-1')
+    expect(screen.getAllByRole('button', { name: 'Forget this turn' })).toHaveLength(1)
+  })
+
+  it('offers no control for rows without a server id, and keeps the turn when the server refuses', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 500, text: async () => 'locked', json: async () => ({}) }),
+    )
+    const local = turn('local-1', TODAY, 'not stored yet', {
+      user: { messageId: -1, content: 'not stored yet', timestamp: TODAY, status: 'complete' },
+      assistant: { messageId: -1, content: 'ok', timestamp: TODAY, status: 'complete' },
+    })
+    render(
+      <Timeline byDay={groupByDay([TURNS[0], local], NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />,
+    )
+
+    const buttons = screen.getAllByRole('button', { name: 'Forget this turn' })
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].closest('article')).toHaveAttribute('data-turn-id', 't-1')
+
+    await userEvent.click(buttons[0])
+    await waitFor(() => expect(warn).toHaveBeenCalled())
+    expect(screen.getByText('is samba running?')).toBeInTheDocument()
+    expect(screen.queryByText('[redacted by admin]')).not.toBeInTheDocument()
+  })
+})
+```
+
+- [ ] **Step 3: Run both, watch them fail**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/lib/api.timeline.test.ts src/components/agent/Timeline.test.tsx
+```
+Expected: `TypeError: api.redactMessage is not a function`; and twice `Unable to find an accessible element with the role "button" and name "Forget this turn"`.
+
+- [ ] **Step 4: Add `api.redactMessage`**
+
+In `src/lib/api.ts`, immediately after the `retractRecall` method (the `},` that follows `{ method: 'DELETE' },` / `)`), insert:
+
+```ts
+  /**
+   * "Forget this": the server replaces the row's content and tool blocks
+   * with "[redacted by admin]", rewrites its FTS row and regenerates the
+   * thread's receipt (spec §5). Rows are never deleted.
+   */
+  redactMessage(messageId: number): Promise<{ ok: boolean }> {
+    return request(`/api/agent/message/${encodeURIComponent(String(messageId))}/redact`, { method: 'POST' })
+  },
+```
+
+- [ ] **Step 5: Edit `src/components/agent/Timeline.tsx`**
+
+Replace the first import line
+
+```tsx
+import { useTerminalSessions } from '../../hooks/useTerminalSessions';
+```
+
+with
+
+```tsx
+import { useCallback, useState } from 'react';
+import { useTerminalSessions } from '../../hooks/useTerminalSessions';
+```
+
+After `import type { TimelineToolBlock, TimelineTurn } from '../../types/timeline';` add:
+
+```tsx
+import { api } from '../../lib/api';
+```
+
+Then replace everything from `interface TurnArticleProps {` to the end of the file with:
+
+```tsx
+/** What a forgotten row reads as — the same marker the server stores. */
+export const REDACTED = '[redacted by admin]';
+
+/** Stored rows have server ids; a turn appended live carries -1 until the next load. */
+export function redactableIds(turn: TimelineTurn): number[] {
+  return [turn.user?.messageId, turn.assistant?.messageId].filter(
+    (id): id is number => typeof id === 'number' && id >= 0,
+  );
+}
+
+interface TurnArticleProps {
+  turn: TimelineTurn;
+  liveIds: Set<string>;
+  /** True once "Forget this" went through: the words and the blocks are the marker. */
+  forgotten: boolean;
+  onForget?: (turn: TimelineTurn) => void;
+  onRunCommand?: RunCommand;
+}
+
+function TurnArticle({ turn, liveIds, forgotten, onForget, onRunCommand }: TurnArticleProps) {
+  const liveTerminals = turn.terminalBlockIds.filter((id) => liveIds.has(id));
+  const endedTerminals = turn.terminalBlockIds.filter((id) => !liveIds.has(id));
+  // Redaction replaces content and blocks_json (spec §5); the terminal ids
+  // are not part of it, so the "ended" chips stay.
+  const blocks = forgotten ? [] : turn.blocks;
+  const diffs = forgotten ? [] : turn.diffProposals;
+  const hasAssistantSide =
+    turn.assistant !== null ||
+    blocks.length > 0 ||
+    turn.terminalBlockIds.length > 0 ||
+    diffs.length > 0;
+  const label = forgotten ? REDACTED : turn.user ? turn.user.content.slice(0, 80) : turn.origin;
+  const canForget = !forgotten && onForget !== undefined && redactableIds(turn).length > 0;
+
+  return (
+    <article
+      role="article"
+      aria-label={label}
+      data-turn-id={turn.turnId}
+      data-thread-id={turn.threadId}
+      className="space-y-3"
+    >
+      {turn.user && (
+        <div className="flex justify-end">
+          <div className="max-w-[80%] bg-primary text-primary-foreground px-4 py-2 rounded-lg">
+            <p className="text-sm whitespace-pre-wrap break-words">{forgotten ? REDACTED : turn.user.content}</p>
+          </div>
+        </div>
+      )}
+
+      {turn.user?.status === 'interrupted' && (
+        <p className="text-center text-[11px] font-mono text-ink-tertiary">(Halbert restarted here)</p>
+      )}
+
+      {hasAssistantSide && (
+        <div className="flex justify-start">
+          <div className="max-w-[85%] bg-muted/50 border border-border/50 rounded-lg p-4 space-y-3">
+            {blocks.map((block, i) => (
+              <ToolExecutionCard
+                key={block.executionId ?? `${turn.turnId}-block-${i}`}
+                execution={executionFromBlock(block, `${turn.turnId}-block-${i}`)}
+              />
+            ))}
+
+            {liveTerminals.length > 0 && <InlineTerminals sessionIds={liveTerminals} />}
+
+            {endedTerminals.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {endedTerminals.map((id) => (
+                  <StaticTerminalChip key={id} id={id} />
+                ))}
+              </div>
+            )}
+
+            {diffs.map((diff) => (
+              <DiffBlock
+                key={diff.id}
+                filePath={diff.filePath}
+                oldContent={diff.oldContent}
+                newContent={diff.newContent}
+                additions={diff.additions}
+                deletions={diff.deletions}
+                status={diff.status}
+                readOnly
+                onApply={() => {}}
+                onReject={() => {}}
+              />
+            ))}
+
+            {turn.assistant && (
+              <div className="text-sm text-foreground">
+                {forgotten ? (
+                  <p className="font-mono text-ink-tertiary">{REDACTED}</p>
+                ) : (
+                  <MessageContent content={turn.assistant.content} onRunCommand={onRunCommand} />
+                )}
+              </div>
+            )}
+
+            {turn.assistant?.status === 'cancelled' && (
+              <p className="text-[11px] font-mono text-ink-tertiary">cancelled</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {canForget && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            aria-label="Forget this turn"
+            title="Replace this turn's words and tool output with a redaction marker, everywhere it is stored"
+            onClick={() => onForget?.(turn)}
+            className="rounded px-1 text-[11px] font-mono text-ink-tertiary hover:text-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          >
+            Forget this
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
+
+export function Timeline({
+  byDay,
+  hasMore,
+  loading,
+  anchored = false,
+  onLoadOlder,
+  onLoadLatest,
+  onRunCommand,
+}: TimelineProps) {
+  const { sessions } = useTerminalSessions();
+  const liveIds = new Set(sessions.map((s) => s.id));
+  const [forgotten, setForgotten] = useState<ReadonlySet<string>>(() => new Set());
+
+  // "Forget this": both stored rows are redacted server-side first; the
+  // article shows the marker once the server has agreed, never before, so
+  // the page never claims something is forgotten that is still on disk.
+  const handleForget = useCallback(async (turn: TimelineTurn) => {
+    try {
+      await Promise.all(redactableIds(turn).map((id) => api.redactMessage(id)));
+      setForgotten((prev) => new Set(prev).add(turn.turnId));
+    } catch (err) {
+      console.warn('[TIMELINE] forget failed; the turn is unchanged:', err);
+    }
+  }, []);
+
+  if (byDay.length === 0 && !hasMore) return null;
+
+  return (
+    <div role="feed" aria-label="Conversation" aria-busy={loading} className="space-y-2">
+      {hasMore && (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={onLoadOlder}
+            disabled={loading}
+            className="rounded-full border border-hairline bg-canvas-subtle px-3 py-1 text-[11px] font-mono text-ink-secondary hover:bg-canvas-muted disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          >
+            {loading ? 'Loading…' : 'Load earlier'}
+          </button>
+        </div>
+      )}
+
+      {byDay.map((day) => (
+        <section key={day.dayKey} aria-label={day.label} className="space-y-4">
+          <header className="thread-divider flex items-center gap-3 pt-2">
+            <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
+            <h2 className="text-[11px] font-mono uppercase tracking-label text-ink-tertiary">{day.label}</h2>
+            <time dateTime={day.dayKey} className="sr-only">{day.dayKey}</time>
+            <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
+          </header>
+          {day.turns.map((turn) => (
+            <TurnArticle
+              key={turn.turnId}
+              turn={turn}
+              liveIds={liveIds}
+              forgotten={forgotten.has(turn.turnId)}
+              onForget={handleForget}
+              onRunCommand={onRunCommand}
+            />
+          ))}
+        </section>
+      ))}
+
+      {/* A chip jump replaced the page with an earlier window; the turns
+          between that window and now are not on screen, so say so and offer
+          the way back rather than letting the live turn append after a gap. */}
+      {anchored && onLoadLatest && (
+        <div className="flex justify-center pt-2">
+          <button
+            type="button"
+            onClick={onLoadLatest}
+            disabled={loading}
+            className="rounded-full border border-hairline bg-canvas-subtle px-3 py-1 text-[11px] font-mono text-ink-secondary hover:bg-canvas-muted disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          >
+            Back to latest
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default Timeline;
+```
+
+- [ ] **Step 6: Run the tests, the ratchet and the typecheck**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/lib/api.timeline.test.ts src/components/agent/Timeline.test.tsx
+```
+Expected: `Test Files  2 passed (2)`, `Tests  14 passed (14)` (6 + 8).
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && python3 scripts/check_literal_colors.py --check
+```
+Expected: `OK: …` (only token classes were added).
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx tsc --noEmit -p .
+```
+Expected: no output, exit 0.
+
+- [ ] **Step 7: Commit**
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/dashboard/frontend/src/lib/api.ts halbert_core/halbert_core/dashboard/frontend/src/lib/api.timeline.test.ts halbert_core/halbert_core/dashboard/frontend/src/components/agent/Timeline.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/Timeline.test.tsx && git commit -m "feat(dashboard): per-turn 'Forget this' on the timeline
+
+Each stored turn offers one small control that POSTs the redact route
+for its user and assistant rows; once the server has agreed, the words
+and the tool cards read '[redacted by admin]' and the article keeps its
+place (rows are never deleted, spec §5). A turn appended live in this
+page load has no server ids yet and gets no control."
+```
+
+### Task A18: Rewire `AgentChat` onto the timeline (thread chip click jumps the timeline; legacy wrappers deleted)
 
 **Files:**
 - Create: `halbert_core/halbert_core/dashboard/frontend/src/lib/turnFromSession.ts`
-- Modify: `halbert_core/halbert_core/dashboard/frontend/src/components/agent/AgentChat.tsx` (deletions: 17-49 imports; 71-77; 132-184; 187 and 192; 211-215; 269; 272-338; 566-570; 574-640; 642-652; 654-781; 885-903)
+- Modify: `halbert_core/halbert_core/dashboard/frontend/src/components/agent/AgentChat.tsx` (deletions, line numbers from the worktree before this part; the text anchors are authoritative: 17-49 imports; 71-77; 132-184; 187 and 192; 211-215; 269; 272-338; 566-570; 574-640; 642-652; 654-781; 885-903)
+- Modify: `halbert_core/halbert_core/dashboard/frontend/src/lib/api.ts` (delete `listAgentConversations` / `getAgentConversation` / `deleteAgentConversation` — their last callers go in this task, so this is the commit where `tsc` allows it)
 - Test: `halbert_core/halbert_core/dashboard/frontend/src/lib/turnFromSession.test.ts`
 - Test: `halbert_core/halbert_core/dashboard/frontend/src/components/agent/AgentChat.test.tsx`
+- Test: `halbert_core/halbert_core/dashboard/frontend/src/lib/api.timeline.test.ts` (the "removed wrappers" describe appended)
 
 - [ ] **Step 1: Write the failing `turnFromSession` test**
 
@@ -10036,16 +12619,33 @@ describe('turnFromSession', () => {
 /**
  * One conversation: AgentChat mounts the stored timeline and the current
  * topic label, and the dropdown / "New Conversation" / "Session:" footer
- * are gone. The greeting shows only when there is nothing to show.
+ * are gone. The greeting shows only when there is nothing to show. The
+ * thread chip is a real control: its title says why it is here and a click
+ * loads the timeline around the recalled thread's last turn.
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { AgentChat } from './AgentChat'
 
 vi.mock('./TerminalTile', () => ({
   TerminalTile: ({ session }: { session: { id: string } }) => <div data-testid="live-tile">{session.id}</div>,
 }))
+
+/** One SSE body: every event as a `data:` line, delivered in one chunk. */
+function sseBody(events: Array<Record<string, unknown>>) {
+  const text = events.map((e) => `data: ${JSON.stringify(e)}\n`).join('')
+  const chunks = [new TextEncoder().encode(text)]
+  return {
+    getReader: () => ({
+      read: async () => {
+        const value = chunks.shift()
+        return value ? { done: false, value } : { done: true, value: undefined }
+      },
+    }),
+  }
+}
 
 const PAGE = {
   has_more: false,
@@ -10067,9 +12667,12 @@ const PAGE = {
 
 const EMPTY = { has_more: false, current_thread: null, turns: [] }
 
-function routeFetch(timeline: unknown) {
+function routeFetch(timeline: unknown, events: Array<Record<string, unknown>> = []) {
   const fetchMock = vi.fn().mockImplementation((url: string) => {
     const path = String(url)
+    if (path.includes('/api/agent/message')) {
+      return Promise.resolve({ ok: true, status: 200, statusText: 'OK', body: sseBody(events) })
+    }
     if (path.includes('/api/agent/timeline')) {
       return Promise.resolve({ ok: true, status: 200, text: async () => '', json: async () => timeline })
     }
@@ -10125,15 +12728,60 @@ describe('AgentChat', () => {
     expect(screen.queryByRole('feed')).not.toBeInTheDocument()
     expect(screen.queryByTestId('current-topic')).not.toBeInTheDocument()
   })
+
+  it('the thread chip shows its match terms and a click loads the timeline around the recalled turn', async () => {
+    const fetchMock = routeFetch(PAGE, [
+      {
+        type: 'thread_recalled',
+        session_id: 's',
+        timestamp: 0,
+        thread_id: 'th-0',
+        title: 'ZFS scrub',
+        date: '2026-07-14',
+        match_terms: ['zfs'],
+        mode: 'auto',
+        last_turn_id: 't-7',
+      },
+      { type: 'response_complete', session_id: 's', timestamp: 0, content: 'It did.' },
+    ])
+    render(<AgentChat />)
+    await screen.findByRole('feed')
+
+    await userEvent.type(screen.getByPlaceholderText(/^Ask Halbert/), 'did that scrub work?{Enter}')
+
+    const chip = await screen.findByRole('button', { name: 'earlier subject: pulled in: ZFS scrub · 2026-07-14' })
+    expect(chip).toHaveAttribute('title', 'matched: zfs')
+
+    await userEvent.click(chip)
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([url]) => String(url))).toContain('/api/agent/timeline?around=t-7&limit=50'),
+    )
+  })
 })
 ```
 
-- [ ] **Step 3: Run both, watch them fail**
+- [ ] **Step 2b: Write the failing "removed wrappers" test**
+
+Append to `src/lib/api.timeline.test.ts`:
+
+```ts
+describe('removed wrappers', () => {
+  it('no longer exposes the per-conversation list endpoints', () => {
+    const legacy = api as unknown as Record<string, unknown>
+    expect(legacy.listAgentConversations).toBeUndefined()
+    expect(legacy.getAgentConversation).toBeUndefined()
+    expect(legacy.deleteAgentConversation).toBeUndefined()
+  })
+})
+```
+
+- [ ] **Step 3: Run all three, watch them fail**
 
 ```
-cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/lib/turnFromSession.test.ts src/components/agent/AgentChat.test.tsx
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/lib/turnFromSession.test.ts src/components/agent/AgentChat.test.tsx src/lib/api.timeline.test.ts
 ```
-Expected: `Failed to resolve import "./turnFromSession"`; AgentChat test: `Unable to find role="feed"` (and console errors from `api.listAgentConversations is not a function`).
+Expected: `Failed to resolve import "./turnFromSession"`; AgentChat test: `Unable to find role="feed"` (and console errors from `api.listAgentConversations is not a function`); api.timeline: one failure, `expected [Function] to be undefined`.
 
 - [ ] **Step 4: Create `src/lib/turnFromSession.ts`**
 
@@ -10233,7 +12881,7 @@ import { WhyChip, type ProvenanceRef } from '../WhyChip';
 import { ModuleRenderer } from '../ModuleRenderer';
 import { ConfidenceIndicator } from './ConfidenceIndicator';
 import { ScanBlock } from './ScanBlock';
-import { ContextBar, type ContextType } from './ContextBar';
+import { ContextBar, type ContextItem, type ContextType } from './ContextBar';
 import { DiffBlock } from './DiffBlock';
 import { HostGreeting } from './HostGreeting';
 import { InlineTerminals } from './InlineTerminals';
@@ -10288,6 +12936,9 @@ Replace lines 211-215 (the `// Phase 59: Conversation management` block with its
     hasMore,
     loading: timelineLoading,
     loadOlder,
+    loadAround,
+    loadLatest,
+    anchored,
     appendLive,
     currentThread,
     setCurrentThread,
@@ -10347,6 +12998,15 @@ Delete lines 272-338 (`loadConversations`, `loadConversation`, `startNewConversa
     }
     dismissContextItem(id);
   }, [currentThread, dismissContextItem]);
+
+  // The thread chip is a real control (spec §6): a click scrolls the
+  // timeline to where that subject last happened — the page around its last
+  // turn. Other chips have nowhere to go yet.
+  const handleContextItemClick = useCallback((item: ContextItem) => {
+    if (item.type !== 'thread') return;
+    const lastTurnId = session?.recalled?.lastTurnId;
+    if (lastTurnId) void loadAround(lastTurnId);
+  }, [session?.recalled, loadAround]);
 ```
 
 Replace the scroll effect (was lines 340-342):
@@ -10387,8 +13047,14 @@ Replace everything from `{/* Conversation Header */}` (was line 574) through the
             type: contextTypeFor(ci.source),
             label: ci.label,
             tokens: ci.tokens,
+            // The thread chip's "why now": the terms that matched (spec §6).
+            hint:
+              ci.source === 'thread' && session.recalled && session.recalled.matchTerms.length > 0
+                ? `matched: ${session.recalled.matchTerms.join(', ')}`
+                : undefined,
           }))}
           onRemoveItem={handleRemoveContextItem}
+          onItemClick={handleContextItemClick}
         />
       )}
 
@@ -10402,7 +13068,9 @@ Replace everything from `{/* Conversation Header */}` (was line 574) through the
           byDay={byDay}
           hasMore={hasMore}
           loading={timelineLoading}
+          anchored={anchored}
           onLoadOlder={loadOlder}
+          onLoadLatest={loadLatest}
           onRunCommand={onRunCommand}
         />
 
@@ -10560,6 +13228,18 @@ Replace the footer (was lines 900-903) with:
         </div>
 ```
 
+- [ ] **Step 8b: Delete the legacy wrappers from `src/lib/api.ts`**
+
+Their last callers (`loadConversations`, `loadConversation`, `deleteConversation`) were deleted in Step 7, so this commit is the first in which `tsc` allows it. Delete the block that starts with the three-line comment
+
+```ts
+  // -----------------------------------------------------------------
+  // Agent conversations (Phase 36 agent path)
+  // -----------------------------------------------------------------
+```
+
+through the closing `},` of `deleteAgentConversation` (the three methods `listAgentConversations`, `getAgentConversation`, `deleteAgentConversation`; nothing else). The timeline block inserted in A14 and `redactMessage` from A17b stay. Verify: `grep -c "AgentConversation" src/lib/api.ts` prints `0`; `grep -rn "AgentConversation" src --include=*.ts --include=*.tsx | grep -v api.timeline.test.ts` prints nothing.
+
 - [ ] **Step 9: Typecheck, then run the whole frontend suite**
 
 ```
@@ -10570,7 +13250,7 @@ Expected: no output, exit 0. If tsc reports an unused import (`noUnusedLocals`),
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run
 ```
-Expected: `Test Files  14 passed (14)`, `Tests  84 passed (84)` (45 baseline + 14 A14 + 5 A15 + 4 A16 + 8 A17 + 3 + 3 A18 = 82, plus the 2 counted inside A14's second file — read the printed total and record it in the commit body).
+Expected: `Test Files  15 passed (15)`, `Tests  95 passed (95)` — at least 95: 45 baseline (7 files) + api.timeline 7 + useTimeline 10 + useAgentStream.thread 8 + ContextBar 5 + Timeline 8 + LiveRegion 5 + turnFromSession 3 + AgentChat 4. Read the printed total and record it in the commit body. A19 adds two files and six tests, bringing the suite to 17 files / 101 tests.
 
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && python3 scripts/check_literal_colors.py --check
@@ -10580,14 +13260,18 @@ Expected: `OK: …` (AgentChat lost `placeholder-zinc-500`? No — untouched; co
 - [ ] **Step 10: Commit**
 
 ```
-cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/dashboard/frontend/src/components/agent/AgentChat.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/AgentChat.test.tsx halbert_core/halbert_core/dashboard/frontend/src/lib/turnFromSession.ts halbert_core/halbert_core/dashboard/frontend/src/lib/turnFromSession.test.ts && git commit -m "feat(dashboard): AgentChat is one conversation on the timeline
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation && git add halbert_core/halbert_core/dashboard/frontend/src/components/agent/AgentChat.tsx halbert_core/halbert_core/dashboard/frontend/src/components/agent/AgentChat.test.tsx halbert_core/halbert_core/dashboard/frontend/src/lib/turnFromSession.ts halbert_core/halbert_core/dashboard/frontend/src/lib/turnFromSession.test.ts halbert_core/halbert_core/dashboard/frontend/src/lib/api.ts halbert_core/halbert_core/dashboard/frontend/src/lib/api.timeline.test.ts && git commit -m "feat(dashboard): AgentChat is one conversation on the timeline
 
 The dropdown, New Conversation, the per-conversation loaders and the
-Session footer are deleted. The stored timeline renders above the live
-block; when the in-flight turn finishes it is folded into a TimelineTurn
+Session footer are deleted, and with their last callers gone so are the
+listAgentConversations/getAgentConversation/deleteAgentConversation
+wrappers. The stored timeline renders above the live block; when the
+in-flight turn finishes it is folded into a TimelineTurn
 (turnFromSession) and appended, so nothing is shown twice and nothing is
 refetched. Thread events move the sticky label and speak through the
-shell's live region; dropping the thread chip retracts the recall."
+shell's live region; the thread chip shows its match terms and jumps
+the timeline to the recalled thread's last turn; dropping it retracts
+the recall."
 ```
 
 ### Task A19: `TerminalTile` replays on mount; `InlineTerminals` never drops an id
@@ -10833,12 +13517,17 @@ export function InlineTerminals({ sessionIds }: InlineTerminalsProps) {
 }
 ```
 
-- [ ] **Step 6: Run the tests, typecheck**
+- [ ] **Step 6: Run the tests, typecheck, then the whole suite**
 
 ```
 cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run src/components/agent/TerminalTile.test.tsx src/components/agent/InlineTerminals.test.tsx && npx tsc --noEmit -p .
 ```
 Expected: `Tests  6 passed (6)`; tsc silent, exit 0.
+
+```
+cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversation/halbert_core/halbert_core/dashboard/frontend && npx vitest run
+```
+Expected: `Test Files  17 passed (17)`, `Tests  101 passed (101)` — at least 101 (the 95 of A18 step 9 plus these six).
 
 - [ ] **Step 7: Commit**
 
@@ -10912,6 +13601,14 @@ Manual continuity check (playwright not installed):
        region (VoiceOver/NVDA) says "Pulled in earlier work: …" — only when
        the earlier subject had already been paused. Not a failure if absent.
   7. Tab to a live tile, press Ctrl+\` — focus leaves the terminal.
+  8. Click the "pulled in: …" chip (when one appeared): the timeline jumps
+     to the recalled subject's last turn and a "Back to latest" control
+     appears at the bottom; hovering the chip shows "matched: …".
+  9. On any stored turn, "Forget this": both bubbles read
+     "[redacted by admin]" and the turn keeps its place.
+ 10. Ask for something that needs confirmation (a HIGH-risk command): the
+     screen reader says "Waiting for your approval" at once (the alert
+     region), and the dialog opens.
 `
 
 function log(step, ok, detail = '') {
@@ -11000,7 +13697,8 @@ try {
     log('terminal from turn 1 is a tile or an ended chip after reload', chip + tile > 0)
   }
   log('sticky topic label back after reload', (await page.getByTestId('current-topic').count()) > 0)
-  log('live region exists', (await page.locator('[role="status"][aria-live="polite"]').count()) === 1)
+  log('polite live region exists', (await page.locator('[role="status"][aria-live="polite"]').count()) === 1)
+  log('assertive alert region exists', (await page.locator('[role="alert"][aria-live="assertive"]').count()) === 1)
 
   log('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
 } catch (err) {
@@ -11036,20 +13734,23 @@ cd /Users/ericbintner/.config/superpowers/worktrees/Halbert/continuous-conversat
 
 Walks two turns and a reload against a live backend: the first turn and
 its terminal survive the second and the reload, dividers are headings,
-the topic label and the live region exist. Uses playwright when it is
+the topic label and both live regions exist. Uses playwright when it is
 installed and prints the manual checklist otherwise; never part of
 npm test."
 ```
 
 **Contract additions (planner F)** — for the verifier to propagate:
 - `FE/types/timeline.ts` also exports `TimelineMessage`, `TimelineMessageStatus`, `TimelineOrigin`, `TimelineCurrentThread`, and the wire mappers `toMillis`, `blockFromServer`, `diffFromServer`, `turnFromServer`, `threadFromServer`, `pageFromServer` (server seconds → client ms; `thread_id | conversation_id | id` accepted as the thread id; stored diffs accepted in both the `pending_diffs` shape `{file_path, edit_blocks[{search,replace}], status}` and the `diff_proposal` event shape).
-- `useTimeline` also returns `loading: boolean`; `setCurrentThread` is a React `Dispatch<SetStateAction<TimelineCurrentThread | null>>`; exports `TimelineDay`, `dayKeyOf`, `dayLabel`, `groupByDay`.
+- `useTimeline` also returns `loading: boolean`, `loadAround(turnId): Promise<void>` (fetches `?around=<turnId>&limit=50`, replaces the page, sets `anchored`, scrolls to `[data-turn-id=<turnId>]` once rendered), `loadLatest(): Promise<void>` (first page again, clears `anchored`) and `anchored: boolean`; `setCurrentThread` is a React `Dispatch<SetStateAction<TimelineCurrentThread | null>>`; exports `TimelineDay`, `dayKeyOf`, `dayLabel`, `groupByDay`.
+- `AgentSession.recalled` carries `lastTurnId: string | null` (from the event's `last_turn_id`); a `thread_started` event clears `recalled` and removes any `source: 'thread'` context item (chip expiry on pause).
 - `UseAgentStreamReturn.dismissContextItem(id: string)` — removes a context chip locally and clears `session.recalled` when it was the thread chip.
+- `FE/lib/api.ts` also exports `redactMessage(messageId: number): Promise<{ ok: boolean }>` → `POST /api/agent/message/{id}/redact`. The legacy `listAgentConversations` / `getAgentConversation` / `deleteAgentConversation` are deleted in A18 (not A14), the commit that removes their last callers.
 - `FE/lib/turnFromSession.ts`: `turnFromSession(session, userMessage: {id, content, timestamp}, response, opts?: {cancelled?: boolean}): TimelineTurn` (turnId falls back to `local-${sessionId}`; status `cancelled | interrupted | complete`).
 - `FE/components/agent/MessageContent.tsx` (extracted verbatim from AgentChat; exports `MessageContent`, `RunCommand`).
 - `FE/components/agent/StaticTerminalChip.tsx`: `StaticTerminalChip({ id, label? })` renders `terminal · ended` with `data-session-id`; used by `Timeline` and `InlineTerminals`.
 - `DiffBlock` gains `readOnly?: boolean` (pending diff shows `proposed`, no Apply/Reject).
-- `Timeline` props: `{ byDay, hasMore, loading, onLoadOlder, onRunCommand? }`; exports `executionFromBlock(block, fallbackId): ToolExecution`.
-- `FE/lib/announce.ts` exports `announce`, `subscribeAnnouncements`, `lastAnnouncement`; `FE/components/shell/LiveRegion.tsx` is the single `role="status" aria-live="polite" aria-atomic="true"` region mounted first inside HostShell's root.
-- ContextBar `TYPE_CONFIG` entries gain `noun`; the pill's accessible name is `"<noun>: <label>"` (thread noun: `earlier subject`); the collapse control is labelled `Collapse context` / `Expand context` with `aria-expanded`.
-- Backend expectation used here: `GET /api/agent/thread/current` may return the raw row (with `conversation_id`); `thread_started` events carry `thread_id` and `title`; `thread_recalled` carry `thread_id`, `title`, `date`, `match_terms`; `turn_persisted` carries `turn_id`; `thread_store_error` carries `message` — all at the top level of the SSE JSON like every existing event.
+- `Timeline` props: `{ byDay, hasMore, loading, anchored?, onLoadOlder, onLoadLatest?, onRunCommand? }`; exports `executionFromBlock(block, fallbackId): ToolExecution`, `REDACTED` (`'[redacted by admin]'`) and `redactableIds(turn): number[]`. Each stored turn with a server message id renders a `Forget this` button (`aria-label="Forget this turn"`) that calls `api.redactMessage` for the user and assistant rows and then shows `REDACTED` in place of the words and tool cards (terminal chips stay). A `Back to latest` button renders while `anchored`.
+- `FE/lib/announce.ts` exports `announce(text, { assertive? })`, `subscribeAnnouncements((text, options) => …)`, `lastAnnouncement()` (last polite) and `lastAlert()` (last assertive); `FE/components/shell/LiveRegion.tsx` renders both regions — `role="status" aria-live="polite" aria-atomic="true"` and `role="alert" aria-live="assertive" aria-atomic="true"` — mounted first inside HostShell's root. `useAgentStream` announces `Waiting for your approval` assertively on `tool_confirmation_required` (outside the reducer; name-free because the hook has no access to the onboarding `display_name`).
+- ContextBar `TYPE_CONFIG` entries gain `noun`; the pill's accessible name is `"<noun>: <label>"` (thread noun: `earlier subject`); `ContextItem.hint?: string` renders as the pill button's `title` (AgentChat sets `matched: <terms>` on the thread chip); the collapse control is labelled `Collapse context` / `Expand context` with `aria-expanded`.
+- `CurrentTopicLabel` renders the stored title verbatim — no voice branch (a title has no pronouns; spec §11's "follows the voice setting" is satisfied by the server-rendered continuity text).
+- Backend expectation used here: `GET /api/agent/thread/current` may return the raw row (with `conversation_id`); `thread_started` events carry `thread_id` and `title`; `thread_recalled` carry `thread_id`, `title`, `date`, `match_terms` **and `last_turn_id`** (the recalled thread's most recent turn id, or null — the backend planner adds it to `StreamEvent.thread_recalled` and to both emission sites: `ThreadManager.recall()` results and the auto-recall loop in `_begin_turn`); `turn_persisted` carries `turn_id`; `thread_store_error` carries `message` — all at the top level of the SSE JSON like every existing event. New backend route required by A17b: `POST /api/agent/message/{message_id}/redact -> {"ok": true}`, which replaces the row's `content` and `blocks_json` with `[redacted by admin]`, rewrites its `messages_fts` row and regenerates the thread receipt (spec §5); 404 → `{"ok": false}` is acceptable, a 500 is not.

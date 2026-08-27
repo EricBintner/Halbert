@@ -326,6 +326,28 @@ def call_llm_chat(
         )
 
 
+# ── Tool-schema rejection registry (Plan A, spec §7) ─────────────
+#
+# Models without tool calling answer a ``tools`` payload with a 4xx. The
+# fallback below retries without tools and, once that retry has actually
+# answered, records the model here, so the warning is logged once per model
+# per process and the clients can expose tools_supported=False: the prompt
+# layer then drops the "call recall_thread / new_thread" instruction from
+# the continuity preamble (AgentPromptBuilder.CONTINUITY_PREAMBLE_NO_TOOLS)
+# for a model that cannot call anything.
+#
+# The entry is keyed by model and is evidence, not a latch: a later call
+# whose schemas the model accepts clears it again.
+
+_TOOLS_REJECTED: Dict[str, bool] = {}
+
+
+def model_supports_tools(model: str) -> Optional[bool]:
+    """False once ``model`` rejected tool schemas this process; None
+    otherwise (unknown: nothing has proven it either way)."""
+    return False if _TOOLS_REJECTED.get(model) else None
+
+
 def _call_with_tool_fallback(
     endpoint: str,
     model: str,
@@ -355,7 +377,7 @@ def _call_with_tool_fallback(
         )
 
     try:
-        return _do_llm_call(
+        result = _do_llm_call(
             endpoint, model, messages, provider, stream, timeout, options,
             tools, api_key,
         )
@@ -363,14 +385,32 @@ def _call_with_tool_fallback(
         status = getattr(e.response, "status_code", None)
         if status not in (400, 404, 422, 501):
             raise
-        logger.warning(
-            f"Model {model} rejected tool schemas (HTTP {status}); "
-            "retrying without tools"
-        )
-        return _do_llm_call(
+        already_known = bool(_TOOLS_REJECTED.get(model))
+        # Retry before recording anything. These statuses cover plenty of
+        # causes that have nothing to do with tool schemas — Ollama answers
+        # 404 for a model that simply is not pulled, 400 for an oversized
+        # payload — and only a retry that succeeds *without* the schemas
+        # proves the schemas were the problem. A retry that fails too raises
+        # from here and leaves the registry untouched, so an unpulled model
+        # is not durably remembered as tool-blind (review: Plan A / A9d).
+        retried = _do_llm_call(
             endpoint, model, messages, provider, stream, timeout, options,
             None, api_key,
         )
+        if not already_known:
+            # Once per model per process (spec §7); later fallbacks are silent.
+            logger.warning(
+                f"Model {model} rejected tool schemas (HTTP {status}); "
+                "retried without tools"
+            )
+        _TOOLS_REJECTED[model] = True
+        return retried
+
+    # The schemas were accepted: forget any earlier rejection, so a 4xx that
+    # came from an unrelated cause cannot mute the tool instruction for the
+    # rest of the process once the model is answering tool calls again.
+    _TOOLS_REJECTED.pop(model, None)
+    return result
 
 
 def _normalise_tool_calls(raw_calls: list) -> list:
@@ -587,12 +627,35 @@ def _call_ollama(
     }
     if tools:
         payload["tools"] = tools
-    if options:
-        payload["options"] = {
-            "num_predict": options.get("num_predict", options.get("max_tokens", 1024)),
-            "temperature": options.get("temperature", 0.7),
-        }
-    logger.info(f"Calling Ollama API: {url} model={model}")
+    options = options or {}
+    num_predict = options.get("num_predict", options.get("max_tokens", 1024))
+    prompt_tokens = estimate_prompt_tokens(messages, tools)
+    # Always present (spec §7): without it Ollama truncates the head.
+    num_ctx = options.get("num_ctx") or num_ctx_for_model(
+        model, prompt_tokens, num_predict, options.get("num_ctx_max"),
+    )
+    if prompt_tokens + _NUM_CTX_HEADROOM > num_ctx:
+        # The clamp (model_max or the 32768 default ceiling) capped num_ctx
+        # below what the prompt actually needs. Ollama truncates the HEAD of
+        # the prompt silently in this case, and the head of the array is
+        # messages[0] — the instruction sheet plus the thread receipt — so
+        # make it loud. (The continuity hint itself no longer rides the head:
+        # it is appended to the *last* user message by
+        # AgentStateMachine._build_messages, so array position, not prose
+        # position, is what keeps it out of the truncated region.)
+        logger.warning(
+            f"Prompt for {model} is ~{prompt_tokens} tokens but num_ctx="
+            f"{num_ctx}; Ollama will truncate the head of the prompt."
+        )
+    payload["options"] = {
+        "num_predict": num_predict,
+        "temperature": options.get("temperature", 0.7),
+        "num_ctx": num_ctx,
+    }
+    logger.info(
+        f"Calling Ollama API: {url} model={model} num_ctx={num_ctx} "
+        f"prompt_tokens={prompt_tokens}"
+    )
     response = requests.post(url, json=payload, timeout=timeout)
     response.raise_for_status()
     data = response.json()
@@ -603,6 +666,78 @@ def _call_ollama(
         "tool_calls": _normalise_tool_calls(message.get("tool_calls")),
         "raw": data,
     }
+
+
+# ── num_ctx sizing (Plan A, spec §7) ─────────────────────────
+#
+# Ollama's default context window is small and silently truncates the HEAD
+# of the prompt. Every local call now sets options.num_ctx from the prompt
+# size. The value is cached per model and only ever grows: Ollama reloads a
+# model whenever num_ctx changes, so recomputing it per turn would thrash
+# the GPU on every message.
+
+_NUM_CTX_MIN = 4096
+_NUM_CTX_DEFAULT_MAX = 32768
+_NUM_CTX_HEADROOM = 512
+_NUM_CTX_CACHE: Dict[str, int] = {}
+# Vision models spend several hundred tokens encoding each image; a
+# text-only estimate over a captioning message (short text, one big
+# image) undercounts to near zero, which pins num_ctx at the floor and
+# reproduces exactly the silent head-truncation this module exists to
+# prevent. This is a rough per-image budget, not a model-specific one.
+_NUM_CTX_IMAGE_TOKENS = 768
+
+
+def compute_num_ctx(
+    prompt_tokens_estimate: int, num_predict: int, model_max: Optional[int]
+) -> int:
+    """clamp(round_up(prompt + 512 + num_predict, 1024), 4096, model_max or 32768)."""
+    need = int(prompt_tokens_estimate) + _NUM_CTX_HEADROOM + int(num_predict)
+    rounded = ((need + 1023) // 1024) * 1024
+    ceiling = int(model_max) if model_max else _NUM_CTX_DEFAULT_MAX
+    return max(_NUM_CTX_MIN, min(rounded, ceiling))
+
+
+def num_ctx_for_model(
+    model: str,
+    prompt_tokens_estimate: int,
+    num_predict: int,
+    model_max: Optional[int] = None,
+) -> int:
+    """Per-model num_ctx: computed once, grown only when a prompt needs more."""
+    wanted = compute_num_ctx(prompt_tokens_estimate, num_predict, model_max)
+    cached = _NUM_CTX_CACHE.get(model)
+    if cached is not None and cached >= wanted:
+        return cached
+    if cached is not None:
+        logger.info(f"num_ctx for {model} grows {cached} -> {wanted}")
+    _NUM_CTX_CACHE[model] = wanted
+    return wanted
+
+
+def estimate_prompt_tokens(messages: list, tools: Optional[list]) -> int:
+    """~4 chars/token over every message's content, plus the tool schemas,
+    an allowance for any ``images`` payload, and any ``tool_calls`` a prior
+    assistant turn attached (those carry real prompt tokens even when
+    ``content`` is empty/None, as in the agentic tool-calling loop)."""
+    total = 0
+    for m in messages or []:
+        if isinstance(m, dict):
+            content = m.get("content", "")
+            images = m.get("images")
+            if images:
+                total += len(images) * _NUM_CTX_IMAGE_TOKENS
+            tool_calls = m.get("tool_calls")
+            if tool_calls:
+                total += len(json.dumps(tool_calls, default=str)) // 4
+        else:
+            content = m
+        if not isinstance(content, str):
+            content = json.dumps(content, default=str)
+        total += len(content) // 4
+    if tools:
+        total += len(json.dumps(tools, default=str)) // 4
+    return total
 
 
 def _do_llm_call(

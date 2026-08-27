@@ -21,3 +21,8 @@ export { AgentChat } from './AgentChat';
 
 export { TerminalTile } from './TerminalTile'
 export { TerminalAccordionDock } from './TerminalAccordionDock'
+
+export { Timeline } from './Timeline'
+export { CurrentTopicLabel } from './CurrentTopicLabel'
+export { MessageContent } from './MessageContent'
+export { StaticTerminalChip } from './StaticTerminalChip'

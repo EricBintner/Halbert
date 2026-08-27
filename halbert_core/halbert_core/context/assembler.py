@@ -10,18 +10,45 @@ Based on research5.md Part 13.
 from __future__ import annotations
 import asyncio
 import logging
-import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, TYPE_CHECKING
+from typing import Dict, List, Any, Optional, Tuple, TYPE_CHECKING
 
 from .tokens import TokenCounter
 from .watermark import ContextWatermark
 from ..agents.blocks import content_to_text
+from ..agents.receipt import (
+    CUT_MARKER,
+    ONE_LINER_LABELS,
+    OPEN_LOOP_LABEL,
+    receipt_one_liner,
+)
+from ..agents.threads import RECEIPT_ROW_PREFIX
+from ..intake.budget import CONTEXT_BUDGETS, ModelTier
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger('halbert.context.assembler')
+
+#: Heading of the prose conversation block. Module level since Plan A / A8b,
+#: when ``receipt_allowance`` measured rendered rows too and the two measurers
+#: could not be allowed to disagree. Since the merge the receipt's consumer is
+#: ``build_conversation_window``, so ``receipt_allowance`` bills with
+#: ``_history_tokens`` instead and this heading is the prose walk's alone.
+_CONVERSATION_HEADER = "## Recent Conversation\n"
+
+
+def _conversation_line(msg: Dict) -> str:
+    """The rendered ``**role**: content`` line for one history row."""
+    role = msg.get("role", "user")
+    # content may be a string (legacy) or a list of content blocks (A1)
+    content = content_to_text(msg.get("content", ""))
+
+    # Truncate very long messages
+    if len(content) > 1000:
+        content = content[:1000] + "..."
+
+    return f"**{role}**: {content}"
 
 
 @dataclass
@@ -369,13 +396,26 @@ class ContextAssembler:
         Uses hierarchical summarization for long conversations (Phase 72):
         - Last 6 messages kept as raw text
         - Older messages summarized via extractive summary
+
+        The agent no longer arrives here. Since E-3 it carries its history in
+        the ``messages[]`` array and passes no ``conversation`` to
+        ``assemble``, and since Plan A the thread receipt is split off and
+        rendered by the state machine into ``messages[0]`` with
+        ``split_receipt_row`` / ``fit_receipt`` / ``receipt_allowance`` below.
+        What is left is the prose path behind ``assemble(conversation=...)``,
+        which nothing in the shipping tree passes today — the agent was its
+        only production caller. It is kept, rather than deleted with the
+        source it serves, because ``assemble`` still advertises a
+        ``conversation`` source; if that source goes, this goes with it. Do
+        not read its presence as coverage of the summarisation branch below.
         """
         if max_tokens <= 0:
             return "", 0
 
         # One compaction trigger across the codebase: the token watermark, not
         # a message count. A count fires on twenty one-line turns that fit
-        # easily and stays quiet on six that do not.
+        # easily and stays quiet on six that do not. (main fd9d7fd; the merge
+        # reverted this hunk to the pre-E-3 count and it is restored here.)
         try:
             from ..conversation.summarization import compress_conversation_history
             cost = sum(
@@ -392,20 +432,12 @@ class ContextAssembler:
 
         lines = []
         tokens = 0
-        header = "## Recent Conversation\n"
+        header = _CONVERSATION_HEADER
         header_tokens = self.tokens.count(header)
 
         # Work backwards from most recent
         for msg in reversed(conversation):
-            role = msg.get("role", "user")
-            # content may be a string (legacy) or a list of content blocks (A1)
-            content = content_to_text(msg.get("content", ""))
-
-            # Truncate very long messages
-            if len(content) > 1000:
-                content = content[:1000] + "..."
-
-            line = f"**{role}**: {content}"
+            line = _conversation_line(msg)
             line_tokens = self.tokens.count(line) + 1  # +1 for newline
 
             if tokens + line_tokens + header_tokens > max_tokens:
@@ -419,7 +451,24 @@ class ContextAssembler:
 
         result = header + "\n".join(lines)
         return result, tokens + header_tokens
-    
+
+    def _log_budget_drop(self, section: str, dropped: int, max_tokens: int) -> None:
+        """Record a source that produced nothing because nothing fitted.
+
+        A bucket smaller than one length-capped item is real at the tighter
+        tiers — MEDIUM keeps 75 tokens for observations against a 500-char
+        cap (~134 tokens), so one `systemctl status` falls out whole — and
+        until now the agent simply stopped seeing that source with nothing
+        on the record to say why. This does not decide the budget trade
+        (that is spec §7 / A10, not the assembler's call); it makes it
+        visible (review: Plan A / A8b).
+        """
+        if dropped:
+            logger.info(
+                "%s: %d item(s) dropped, none fit in %d tokens",
+                section, dropped, max_tokens,
+            )
+
     def _format_observations(
         self,
         observations: List[str],
@@ -447,6 +496,7 @@ class ContextAssembler:
             tokens += line_tokens
         
         if len(lines) == 1:
+            self._log_budget_drop("observations", len(observations), max_tokens)
             return "", 0
         
         return "\n".join(lines), tokens
@@ -482,6 +532,7 @@ class ContextAssembler:
                 items += 1
             
             if items == 0:
+                self._log_budget_drop("retrieval", len(results), max_tokens)
                 return {}
             
             return {
@@ -534,6 +585,7 @@ class ContextAssembler:
                 items += 1
             
             if items == 0:
+                self._log_budget_drop("memory", len(results), max_tokens)
                 return {}
             
             return {
@@ -572,6 +624,7 @@ class ContextAssembler:
                 items += 1
             
             if items == 0:
+                self._log_budget_drop("discovery", len(results), max_tokens)
                 return {}
             
             return {
@@ -611,6 +664,7 @@ class ContextAssembler:
                 items += 1
             
             if items == 0:
+                self._log_budget_drop(source_name, len(results), max_tokens)
                 return {}
             
             return {
@@ -768,7 +822,11 @@ class ContextAssembler:
 
 # The conversation budget is a per-tier line in intake.budget.ContextBudget;
 # this is the MEDIUM tier's value, for callers that cannot name the model.
-DEFAULT_CONVERSATION_TOKENS = 800
+# Derived rather than copied: Plan A raised MEDIUM's conversation bucket to
+# 1600 and LARGE's to 2400 (spec §7), and a literal here would have gone on
+# starving the one case a starved window is hardest to diagnose in — the turn
+# whose answering model models.yml could not resolve.
+DEFAULT_CONVERSATION_TOKENS = CONTEXT_BUDGETS[ModelTier.MEDIUM].conversation
 
 
 def _history_tokens(messages: List[Dict], counter: TokenCounter) -> int:
@@ -817,32 +875,239 @@ def _trim_to_budget(
     return messages[start:]
 
 
+# -----------------------------------------------------------------------------
+# The thread receipt (Plan A, spec §7)
+# -----------------------------------------------------------------------------
+#
+# The ThreadManager hands the thread receipt over as the leading system row of
+# the history (agents/threads.py ``_history``). Its prefix is imported from
+# there, never re-typed: the producer and this reader are one contract, and a
+# reword on one side alone would fail no test while quietly dropping the
+# receipt back into the history as an ordinary '**system**:' row (review: A8b).
+#
+# These are module-level functions taking an explicit ``counter`` rather than
+# methods on ContextAssembler, because since the merge their caller is the
+# state machine: it splits the row off in ``_begin_turn``, fits it, and puts
+# the rendered block on ``messages[0]`` beside the instructions. The prose
+# ``_format_conversation`` walk above no longer sees a receipt at all.
+
+#: Heading of the rendered receipt block.
+RECEIPT_HEADER = "## Earlier in this subject\n"
+
+#: The receipt and the recent turns share one bucket (intake/budget.py
+#: ``conversation``) and the turns are what the model is answering, so the
+#: receipt may only spend what the turns leave unspent. Given the bucket first
+#: instead, a producer-max receipt (1500 chars ~= 376 tokens,
+#: threads.RECEIPT_ROW_MAX) evicted *every* turn at TINY and SMALL and one of
+#: the six at MEDIUM — the exact inversion of the old code, where the receipt
+#: row was the oldest entry of the newest-first walk and so its first casualty
+#: (review: Plan A / A8b). A long history would otherwise evict the receipt
+#: just as completely, so it keeps a floor of this fraction of the bucket,
+#: itself capped — always — at what still leaves room for the newest turn.
+_RECEIPT_MIN_SHARE = 6
+
+
+def split_receipt_row(rows: List[Dict]) -> Tuple[str, List[Dict]]:
+    """(receipt text, remaining rows).
+
+    The text is empty unless the first row is the ThreadManager's
+    ``[Earlier in this subject: …]`` system row.
+    """
+    if not rows:
+        return "", []
+    first = rows[0]
+    if not isinstance(first, dict) or first.get("role") != "system":
+        return "", list(rows)
+    text = content_to_text(first.get("content", ""))
+    if not text.startswith(RECEIPT_ROW_PREFIX):
+        return "", list(rows)
+    receipt = text[len(RECEIPT_ROW_PREFIX):].strip()
+    if receipt.endswith("]"):
+        receipt = receipt[:-1].rstrip()
+    return receipt, list(rows[1:])
+
+
+def _cut_to_tokens(text: str, max_tokens: int, counter: TokenCounter) -> str:
+    """Shorten one line by characters until it counts within ``max_tokens``.
+
+    The last resort, for the one case whole lines cannot serve: a single line
+    longer than the whole allowance. ``build_receipt`` ends the same way for
+    the same reason, and like it this marks the cut.
+    """
+    if max_tokens <= 0 or not text:
+        return ""
+    if counter.count(text) <= max_tokens:
+        return text
+    while text:
+        text = text[: max(0, int(len(text) * 0.8))].rstrip()
+        if not text:
+            return ""
+        if counter.count(text + CUT_MARKER) <= max_tokens:
+            return text + CUT_MARKER
+    return ""
+
+
+def fit_receipt(receipt: str, max_tokens: int, counter: TokenCounter) -> str:
+    """Cut ``receipt`` down to ``max_tokens`` a whole line at a time.
+
+    A receipt is nine labelled lines and *which* of them survive is an
+    operational question, not a cosmetic one. The character tail-cut this
+    replaced deleted ``Open loop:`` — the line ``build_receipt`` reserves
+    precisely because it is the last and most important one — and stopped
+    mid-string inside ``Commands:`` / ``Files written:``, turning
+    ``rm -rf /srv/media/tmp-old-transcodes`` into ``rm -rf /srv/media``:
+    valid, different, and with nothing to say it had been shortened. That is
+    the same failure ``threads._fence`` substitutes brackets to avoid
+    (review: Plan A / A8b). So:
+
+    * whole lines only, so no path or command is ever half-quoted;
+    * ``Open loop:`` reserved, as ``build_receipt`` reserves it;
+    * ``agents.receipt.receipt_one_liner``'s digest — the same three lines the
+      recall hint shows — when a leading run of lines would fill the room with
+      ``Title``/``When``/``Domains``/``Entities`` and say nothing about what
+      actually happened;
+    * the producer's ``…`` on its own line wherever content was dropped, so
+      the model, and anyone reading the prompt, can see the cut.
+    """
+    if max_tokens <= 0:
+        return ""
+    lines = [ln.rstrip() for ln in receipt.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    flat = "\n".join(lines)
+    if counter.count(flat) <= max_tokens:
+        return flat
+
+    # Reserve the open-loop line (the last one, where the producer puts it);
+    # every other line stays a candidate in its original order.
+    reserved: List[str] = []
+    head = lines
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].startswith(OPEN_LOOP_LABEL):
+            reserved = [lines[i]]
+            head = lines[:i] + lines[i + 1:]
+            break
+
+    # Whole lines from the top, stopping at the first that does not fit rather
+    # than skipping it: the receipt's order is its priority order, and a prefix
+    # is predictable where a sieve is not. Room for the marker and the reserved
+    # line is held back from the first iteration, and the loop stops at the
+    # overrun, so this is not O(every line).
+    kept: List[str] = []
+    for line in head:
+        trial = kept + [line, CUT_MARKER] + reserved
+        if counter.count("\n".join(trial)) > max_tokens:
+            break
+        kept.append(line)
+
+    if not any(ln.startswith(ONE_LINER_LABELS) for ln in kept):
+        # The prefix is down to the metadata half. The digest says what
+        # happened, how it ended and what is open, in the same room.
+        digest = receipt_one_liner(flat)
+        marked = f"{CUT_MARKER}\n{digest}"
+        if digest and counter.count(marked) <= max_tokens:
+            return marked
+
+    if kept or reserved:
+        block = "\n".join(kept + [CUT_MARKER] + reserved)
+        if counter.count(block) <= max_tokens:
+            return block
+    # No room even for the marker beside the reserved line. A whole line beats
+    # a mangled one plus a notice that it was mangled, so the line goes in
+    # unmarked while it still fits; below that it is cut, marked, the way
+    # `build_receipt` ends when `max_chars` cannot hold it either.
+    return _cut_to_tokens(reserved[0] if reserved else flat, max_tokens, counter)
+
+
+def receipt_allowance(
+    rows: List[Dict], max_tokens: int, counter: TokenCounter
+) -> int:
+    """Tokens the receipt block may take out of the shared bucket.
+
+    What the remaining turns leave unspent — floored at
+    ``1 / _RECEIPT_MIN_SHARE`` of the bucket so a long history cannot evict
+    the receipt outright, and capped so the receipt can never evict the newest
+    turn. With no turn to protect (none supplied, or the newest one too big
+    for the bucket either way) the receipt may have all of it.
+
+    ``rows`` is the history *after* ``split_receipt_row`` has taken the receipt
+    row off it: the allowance is measured against the turns the receipt has to
+    leave room for, never against a list that still counts the receipt itself.
+
+    The rows are billed with ``_history_tokens``' per-row formula — the one
+    ``build_conversation_window`` actually spends the rest of the bucket with —
+    and NOT with the prose ``_conversation_line`` walk. Before the merge those
+    were the same measurer, because ``_format_conversation`` was the consumer;
+    afterwards the consumer became the array builder, and the prose line caps
+    content at 1000 chars where the array charges it whole. One 4900-char turn
+    is ~260 prose tokens and 1243 real ones, so the prose reading handed the
+    receipt an allowance that left less room than the newest turn needs and
+    ``build_conversation_window`` returned nothing at all — the one thing the
+    cap below exists to make impossible.
+    """
+    if not rows:
+        return max_tokens
+    # Newest-first, and stop once the turns have overrun the bucket: the floor
+    # applies from there on however far over they go, and the walk that spends
+    # the rest stops at the same point, so neither is O(whole history).
+    #
+    # ``newest`` is the newest whole *turn*, not the newest row: the window is
+    # cut in front of a user message (``_trim_to_budget``), so an answer whose
+    # question the budget cannot afford leaves with it. Reserving room for the
+    # assistant row alone reserves room for nothing that survives.
+    needed = 2  # ``_history_tokens``' per-array overhead
+    newest = 0
+    protecting = True
+    for msg in reversed(rows):
+        needed += counter.count(content_to_text(msg.get("content", ""))) + 4
+        if protecting:
+            newest = needed
+            if msg.get("role") == "user":
+                protecting = False
+        elif needed > max_tokens:
+            break
+    if protecting or newest > max_tokens:
+        # No user row to open a window on, or the newest turn does not fit the
+        # bucket with or without a receipt: there is nothing to protect.
+        return max_tokens
+    return min(
+        max(max_tokens - needed, max_tokens // _RECEIPT_MIN_SHARE),
+        max_tokens - newest,
+    )
+
+
 def build_conversation_window(
-    conversation: Any,
+    conversation: List[Dict[str, Any]],
     query: str = "",
     max_tokens: int = DEFAULT_CONVERSATION_TOKENS,
     watermark: Optional[ContextWatermark] = None,
     token_counter: Optional[TokenCounter] = None,
     now: Optional[float] = None,
 ) -> List[Dict[str, str]]:
-    """Prior turns of ``conversation`` as ``{role, content}`` within budget.
+    """The prior turns in ``conversation`` as ``{role, content}`` within budget.
 
-    This is the only place the agent decides how much history a turn carries,
-    so the trigger lives here too: the token watermark, never a message count —
-    six long turns overflow a small local model's window while twenty short
-    ones do not.
+    ``conversation`` is a plain list of ``{role, content}`` rows — since Plan A
+    the ThreadManager decides *which* rows a turn gets (the thread is resolved
+    server-side, and there is no conversation object to ask), and this decides
+    only how many of them the budget can afford.
 
-    Below the watermark the history is sent verbatim. At or above it, a summary
-    of the older turns replaces them when ContextWatermark's gates allow;
-    when they don't, the oldest turns are simply dropped, because the budget is
-    a ceiling even on a turn that has not earned a fresh compaction.
+    Below the watermark the history is sent verbatim. At or above it the oldest
+    turns are dropped, because the budget is a ceiling. There is deliberately
+    no summarisation branch here any more: the thread receipt is that summary
+    and a better one — built by the ThreadManager from the whole subject rather
+    than from whatever happens to be overflowing — and the state machine has
+    already put it on ``messages[0]`` (see ``fit_receipt`` above).
 
-    Every path returns either nothing or a window whose first ``user``/
-    ``assistant`` entry is a user one: since E-3 this list becomes the caller's
-    ``messages[]`` array, and the Anthropic Messages API rejects an array that
-    opens on an assistant message.
+    ``query`` and ``now`` no longer gate anything. They are kept so existing
+    call sites and tests read the same, and because the temporal/topic gates
+    they fed belong to the compaction branch this function no longer has.
+
+    Every path returns either nothing or a window whose first entry is a user
+    one: since E-3 this list becomes part of the caller's ``messages[]`` array,
+    and the Anthropic Messages API rejects an array that opens on an assistant
+    message.
     """
-    if max_tokens <= 0 or conversation is None:
+    if max_tokens <= 0 or not conversation:
         return []
 
     wm = watermark or ContextWatermark()
@@ -850,13 +1115,13 @@ def build_conversation_window(
 
     raw = [
         {"role": m.get("role", "user"), "content": m.get("content", "")}
-        for m in conversation.get_history()
+        for m in conversation
     ]
-    # A no-op on anything the conversation store holds today: it records
-    # ``content`` as a plain string, and micro_compact only caps tool_result
-    # blocks inside a block-typed content list. Kept so the cap is already in
-    # place if block-typed turns are ever persisted, since an uncapped tool
-    # result would eat the whole budget before it is measured.
+    # A no-op on anything the thread store holds today: it records ``content``
+    # as a plain string, and micro_compact only caps tool_result blocks inside
+    # a block-typed content list. Kept so the cap is already in place if
+    # block-typed turns are ever persisted, since an uncapped tool result would
+    # eat the whole budget before it is measured.
     wm.micro_compact(raw)
 
     history = [
@@ -871,37 +1136,6 @@ def build_conversation_window(
     if used < wm.watermark * max_tokens:
         return _from_first_user(history)
 
-    previous_query = next(
-        (m["content"] for m in reversed(history) if m["role"] == "user"), None
-    )
-    stamp = time.time() if now is None else now
-    metadata = getattr(conversation, "metadata", None)
-    last_compaction = (metadata or {}).get("last_compaction_ts", 0.0)
-
-    if wm.should_compact(
-        used,
-        max_tokens,
-        last_compaction_ts=last_compaction,
-        topic_changed=wm.detect_topic_change(query, previous_query),
-        now=stamp,
-    ):
-        if metadata is not None:
-            metadata["last_compaction_ts"] = stamp
-        window = [
-            {"role": m.get("role", "user"),
-             "content": content_to_text(m.get("content", ""))}
-            for m in conversation.get_context_window(max_tokens)
-        ]
-        window = [m for m in window if m["content"].strip()]
-        # get_context_window keeps the most recent turns whole whatever they
-        # cost, so the ceiling is enforced here instead: the summary standing in
-        # for everything it dropped goes first, and the verbatim tail is trimmed
-        # to fit around it.
-        summary = [m for m in window if m["role"] not in ("user", "assistant")]
-        turns = [m for m in window if m["role"] in ("user", "assistant")]
-        headroom = max_tokens - _history_tokens(summary, counter) if summary else max_tokens
-        if headroom <= 0:
-            summary, headroom = [], max_tokens
-        return summary + _trim_to_budget(turns, headroom, counter)
-
+    # _trim_to_budget only ever opens the window at a user message, so a
+    # stranded answer leaves with the question it answered.
     return _trim_to_budget(history, max_tokens, counter)
