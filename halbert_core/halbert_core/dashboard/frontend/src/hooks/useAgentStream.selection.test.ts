@@ -9,7 +9,7 @@
  * These assert the body itself.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { renderHook, act, waitFor } from '@testing-library/react'
 import { useAgentStream, type ModelSelection } from './useAgentStream'
 
 function sseResponse() {
@@ -88,6 +88,21 @@ describe('sendMessage model selection', () => {
 })
 
 
+/**
+ * Continuity is the server's job now, not the client's (Plan A).
+ *
+ * The stable session id and the `conversation_id` beside it were an interim
+ * client-side fix for an agent that could not remember the previous message.
+ * The server resolves the subject thread itself (ThreadManager) and reports
+ * what it chose (thread_started / turn_persisted), so there is no conversation
+ * left for the client to name — and naming one is worse than useless. The
+ * reader it was written for is gone (tests/test_legacy_conversations_removed.py
+ * keeps get_conversation_store deleted), and a stable id actively corrupts the
+ * transcript: lib/turnFromSession falls back to `local-${sessionId}` for any
+ * turn the server never persisted, so two turns sharing an id collide there.
+ *
+ * A session id names ONE TURN.
+ */
 describe('conversation continuity', () => {
   async function sendTwice() {
     const { result } = renderHook(() => useAgentStream())
@@ -99,38 +114,70 @@ describe('conversation continuity', () => {
     return { result, bodies }
   }
 
-  it('keeps one session id across consecutive sends', async () => {
-    // Every send used to mint a fresh id, so the backend keyed each turn on a
-    // different conversation and loaded an empty history — the agent could not
-    // remember the previous message however well the backend was wired.
+  it('gives each send its own session id, because a session names one turn', async () => {
+    // Not an oversight and not the old bug returning: the server threads the
+    // turns together, and the timeline derives a turn's fallback id from the
+    // session id, so two turns sharing one would overwrite each other in the
+    // transcript instead of appending.
     const { bodies } = await sendTwice()
     expect(bodies).toHaveLength(2)
-    expect(bodies[0].session_id).toBe(bodies[1].session_id)
+    expect(bodies[0].session_id).not.toBe(bodies[1].session_id)
   })
 
-  it('sends conversation_id alongside session_id so the two cannot drift', async () => {
+  it('sends no conversation_id: the server chooses the thread', async () => {
+    // Nothing reads it any more — test_legacy_conversations_removed.py keeps
+    // the conversation store deleted, so a client-supplied id has no reader.
     const { bodies } = await sendTwice()
-    expect(bodies[0].conversation_id).toBe(bodies[0].session_id)
+    expect(bodies[0]).not.toHaveProperty('conversation_id')
   })
 
-  it('starts a new conversation after reset', async () => {
-    const { result, bodies } = await sendTwice()
-    await act(async () => { result.current.reset() })
-    await act(async () => { result.current.sendMessage('third') })
-    const all = fetchMock.mock.calls
-      .filter(([url]) => String(url).includes('/api/agent/message'))
-      .map(([, init]) => JSON.parse(String((init as RequestInit).body)))
-    expect(all[2].session_id).not.toBe(bodies[0].session_id)
-  })
-
-  it('continues an explicitly named conversation', async () => {
+  it('honours an explicit session id for the turn it names', async () => {
+    // The parameter is still live — it names the one turn being sent, which is
+    // what confirm/cancel and the terminal tiles key on.
     const { result } = renderHook(() => useAgentStream())
     await act(async () => { result.current.sendMessage('first', 'conv-42') })
-    await act(async () => { result.current.sendMessage('second') })
     const bodies = fetchMock.mock.calls
       .filter(([url]) => String(url).includes('/api/agent/message'))
       .map(([, init]) => JSON.parse(String((init as RequestInit).body)))
     expect(bodies[0].session_id).toBe('conv-42')
-    expect(bodies[1].session_id).toBe('conv-42')
+  })
+
+  it('reset() clears the live turn, not the conversation', async () => {
+    // There is no "New Conversation" any more, so reset means only: drop the
+    // turn on screen and the model that answered it. The terminal half of this
+    // — that the tiles survive a reset — is held by
+    // useAgentStream.thread.test.ts ('never forgets the terminals a turn
+    // opened'), which owns the store.
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (!String(url).includes('/api/agent/message')) {
+        return { ok: true, status: 200, statusText: 'OK', json: async () => ({}) } as unknown as Response
+      }
+      const text = [
+        { type: 'model_selected', session_id: 's', timestamp: 0, model: 'model-b', endpoint: 'local', provider: 'p', tier: 'specialist', pinned: true, escalated: false, reason: '' },
+        { type: 'response_complete', session_id: 's', timestamp: 0, content: 'done' },
+      ].map((e) => `data: ${JSON.stringify(e)}\n`).join('')
+      const chunks = [new TextEncoder().encode(text)]
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body: { getReader: () => ({ read: async () => {
+          const value = chunks.shift()
+          return value ? { done: false, value } : { done: true, value: undefined }
+        } }) },
+      } as unknown as Response
+    }))
+
+    const { result } = renderHook(() => useAgentStream())
+    act(() => { result.current.sendMessage('hello') })
+    await waitFor(() => expect(result.current.isStreaming).toBe(false))
+    expect(result.current.session).not.toBeNull()
+    expect(result.current.turnModel?.model).toBe('model-b')
+
+    act(() => { result.current.reset() })
+
+    expect(result.current.session).toBeNull()
+    expect(result.current.turnModel).toBeNull()
+    expect(result.current.response).toBe('')
   })
 })

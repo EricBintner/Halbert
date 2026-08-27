@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, Callable, List, TYPE_CHECKING
 
-from .safety import ToolSafetyFramework, RiskLevel, SafetyCheckResult
+from .safety import ToolSafetyFramework, RiskLevel, SafetyCheckResult, THREAD_META_TOOLS
 from ..streaming.terminal_bridge import (
     current_agent_session, publish_terminal_event, terminal_stream_wanted,
 )
@@ -196,7 +196,63 @@ class ToolExecutor:
                 }
             }
         )
-    
+
+        # Thread meta-tools (Plan A, spec §7). The schemas are what the model
+        # sees; PLANNING handles the calls inline and never dispatches them
+        # here, so the handler is a stub (see execute()). Descriptions stay
+        # under 60 characters on purpose.
+        self.register(
+            "new_thread",
+            self._meta_tool_inline,
+            {
+                "name": "new_thread",
+                "description": "Start a new subject; pauses the current one",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Short title for the new subject"},
+                        "reason": {"type": "string", "description": "Why the subject changed"},
+                    },
+                    "required": ["title", "reason"],
+                },
+            },
+        )
+        self.register(
+            "recall_thread",
+            self._meta_tool_inline,
+            {
+                "name": "recall_thread",
+                "description": "Find earlier subjects by query or thread id",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Words to search earlier subjects for"},
+                        "thread_id": {"type": "string", "description": "A specific earlier thread id"},
+                    },
+                    "required": [],
+                },
+            },
+        )
+        self.register(
+            "resume_thread",
+            self._meta_tool_inline,
+            {
+                "name": "resume_thread",
+                "description": "Return to a paused earlier subject",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "thread_id": {"type": "string", "description": "The paused thread to reopen"},
+                    },
+                    "required": ["thread_id"],
+                },
+            },
+        )
+
+    async def _meta_tool_inline(self, args: Dict) -> str:
+        """Stub for the thread meta-tools; the state machine handles them."""
+        return "handled inline"
+
     def register(self, name: str, handler: Callable, schema: Dict):
         """
         Register a tool.
@@ -245,7 +301,21 @@ class ToolExecutor:
                 error=f"Unknown tool: {tool_name}",
                 execution_time_ms=0
             )
-        
+
+        # Thread meta-tools never run here: PLANNING handles them inline
+        # (spec §7). Reaching this branch means a caller bypassed PLANNING;
+        # answer as a side-effect-free success with no audit entry.
+        if tool_name in THREAD_META_TOOLS:
+            logger.warning(
+                f"{tool_name} reached the executor; PLANNING should have handled it inline"
+            )
+            return ExecutionResult(
+                success=True,
+                result="handled inline",
+                execution_time_ms=0,
+                risk_level=RiskLevel.SAFE,
+            )
+
         # Classify risk
         safety_result = self.safety.classify(tool_name, args)
         

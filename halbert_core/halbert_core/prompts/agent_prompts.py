@@ -9,8 +9,25 @@ Based on research5.md Part 14.
 
 from typing import Dict, List, Any, Optional
 import logging
+import re
 
 logger = logging.getLogger('halbert.prompts.agent')
+
+#: Header of the block that carries the receipts of subjects recalled this
+#: turn. ``state_machine`` appends the same block, rendered by the same
+#: function, to the PLANNING context, so the two prompts name the block
+#: identically and recall_thread's observation ("their receipts are in the
+#: available context") is true of both.
+RECALLED_SECTION_HEADER = "## Earlier subjects recalled"
+
+#: How many receipts that block renders. ``recall_thread`` injects at most
+#: three (state_machine._handle_meta_tool), so this is the same ceiling seen
+#: from the prompt side rather than a second, independent policy.
+RECALLED_MAX = 3
+
+#: Ceiling for the title and date rendered on a receipt's header line. Both
+#: come from the thread record, which the admin's own words seeded.
+_RECALLED_TITLE_CHARS = 120
 
 
 class AgentPromptBuilder:
@@ -87,6 +104,262 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
 - Admit uncertainty when appropriate
 - Respect user privacy and system security
 - One action at a time - wait for results before proceeding"""
+
+    # Continuity component (spec §7), one preamble per voice. Rendered with
+    # the <continuity> hint at the TAIL of the PLANNING message and right
+    # before the query in RESPONDING: Ollama truncates the head of an
+    # over-long prompt, so the newest, most specific context goes last.
+    CONTINUITY_PREAMBLE = {
+        "first_person": (
+            "You have one continuous conversation with the admin. Your working "
+            "context is the current subject. Earlier subjects listed below may "
+            "matter; call `recall_thread` when one does. Call `new_thread` when "
+            "the subject changes; a question you can answer in one reply does "
+            "not need a new thread."
+        ),
+        "the_computer": (
+            "This system has one continuous conversation with the admin. The "
+            "working context is the current subject. Earlier subjects listed "
+            "below may matter; call `recall_thread` when one does. Call "
+            "`new_thread` when the subject changes; a question you can answer "
+            "in one reply does not need a new thread."
+        ),
+        "hybrid": (
+            "You have one continuous conversation with the admin. Your working "
+            "context is the current subject. Earlier subjects listed below may "
+            "matter; call `recall_thread` when one does. Call `new_thread` when "
+            "the subject changes; a question you can answer in one reply does "
+            "not need a new thread."
+        ),
+    }
+
+    # The same component for a model that has rejected tool schemas
+    # (model/client.py falls back to a no-tools retry and the client sets
+    # tools_supported=False, A9d): the instruction to call recall_thread /
+    # new_thread is omitted (spec §7) — the model cannot call anything.
+    CONTINUITY_PREAMBLE_NO_TOOLS = {
+        "first_person": (
+            "You have one continuous conversation with the admin. Your working "
+            "context is the current subject. Earlier subjects listed below may "
+            "matter; use them when they do."
+        ),
+        "the_computer": (
+            "This system has one continuous conversation with the admin. The "
+            "working context is the current subject. Earlier subjects listed "
+            "below may matter; use them when they do."
+        ),
+        "hybrid": (
+            "You have one continuous conversation with the admin. Your working "
+            "context is the current subject. Earlier subjects listed below may "
+            "matter; use them when they do."
+        ),
+    }
+
+    # Longest single history line rendered into the RESPONDING prompt for a
+    # user/assistant row. Read only by `_history_section`, which has had no
+    # production caller since the merge (see there).
+    _HISTORY_LINE_CHARS = 500
+
+    # Fallback ceiling for a `system` history row (threads.py's pre-window
+    # receipt summary), used if `threads.RECEIPT_ROW_MAX` cannot be imported.
+    # Two readers take that fallback: `_history_section`, which nothing in
+    # production calls any more, and `render_recalled_receipts`, which the
+    # state machine calls on every PLANNING and RESPONDING turn
+    # (`_receipt_block`) — so this constant is live, whatever happens to the
+    # history helper. Pinned by a test to stay >= the
+    # real constant: threads.py already bounds the row to that many
+    # characters via `_fence(..., keep_lines=True)` before it ever reaches
+    # this helper — a truncation that itself reserves the receipt's final
+    # "Open loop:" line — so re-capping below it here would silently delete
+    # exactly what that truncation protected (review: Plan A / A8, round 2;
+    # a hand-copied ceiling with nothing pinning it to RECEIPT_ROW_MAX
+    # silently reintroduces that same bug if the two ever drift apart,
+    # review: Plan A / A8, round 3).
+    _SYSTEM_LINE_CHARS = 1500
+
+    # Collapses literal `<continuity>` / `</continuity>` sequences found in
+    # untrusted text. `<continuity>` is this module's own hint delimiter (see
+    # CONTINUITY_PREAMBLE above), so text that contains the literal tag — a
+    # command's stdout, a scanned log line, or the admin pasting it — could
+    # otherwise forge a second, indistinguishable continuity block ahead of
+    # the genuine hint. Mirrors threads.py's `_fence`, which neutralises the
+    # same tag for the one row it controls; applied to every role because
+    # `content_to_text` flattens `ToolResultBlock`s, so command output and
+    # file/log text from a scanned system reach this text too, not just the
+    # admin's own words (review: Plan A / A8, round 2).
+    #
+    # Three surfaces reach it. Two are live: `defang_system_text`, which the
+    # state machine runs over every non-user/assistant row it folds into
+    # `messages[0]` (`_defang_system_row`), and `render_recalled_receipts`,
+    # which renders the receipts recall_thread pulled in. The third,
+    # `_history_section`, is the pre-merge prose path and has no production
+    # caller — the guard did not disappear with it, it moved.
+    _CONTINUITY_TAG_RE = re.compile(r"</?\s*continuity\s*>", re.IGNORECASE)
+
+    # How much of a row `_defang_continuity` scans before it caps the result,
+    # mirroring threads.py's `_SCAN_MIN` / `_SCAN_FACTOR` (`_fence` clips to
+    # exactly this shape before its own identical fixpoint loop, "so the
+    # fixpoint below stays cheap on a pathological field"). Without this, the
+    # round-2 fix defanged the FULL, unbounded row before truncating it,
+    # which made a single untrusted row — command stdout, a log line, a
+    # pasted file, exactly what this module's own comments name — cost 7s at
+    # 130KB and 28s at 260KB of nested `</continuity>` payload (review: Plan
+    # A / A8, round 3). The hot path the round-3 finding named was the
+    # RESPONDING prose row; since the merge it is `defang_system_text` (every
+    # folded system row, both LLM calls of every turn) and
+    # `render_recalled_receipts` (up to three receipts per turn), so the
+    # bound matters more than it did, not less.
+    _DEFANG_SCAN_MIN = 4096
+    _DEFANG_SCAN_FACTOR = 4
+
+    @classmethod
+    def _defang_continuity(cls, text: str, cap: int) -> str:
+        """Neutralise ``<continuity>``/``</continuity>`` in untrusted text.
+
+        ``cap`` is the caller's truncation limit for this row (500 for
+        user/assistant, the system ceiling for system, ``RECEIPT_ROW_MAX``
+        for a receipt); ``text`` is clipped to
+        ``max(_DEFANG_SCAN_MIN, cap * _DEFANG_SCAN_FACTOR)`` BEFORE the
+        fixpoint loop below runs, same as threads.py::_fence, so the loop's
+        cost is bounded by the cap rather than by an attacker-chosen row
+        length.
+
+        THE CLIP IS A TRUNCATION, not only a scan bound. That is free for
+        every caller as things stand — ``_history_section``,
+        ``render_recalled_receipts`` and (since the fold gained a cap of its
+        own) ``defang_system_text``'s caller all re-cap the result at ``cap``,
+        and the clip point is always >= ``cap``, so the clip never reaches
+        text the caller would have kept. It stops being free the moment a
+        caller keeps the whole return value: anything past the clip point is
+        gone, silently. Do not add one without capping on the way out.
+
+        Substitutes to a fixpoint, not once: a single pass over a nested
+        payload like ``"</</continuity>continuity>"`` would leave behind
+        ``"</ continuity>"``, itself a closing tag under the same regex (see
+        threads.py::_fence for the identical reasoning). Every pass replaces
+        at least one full tag with a single space, so the string strictly
+        shrinks and the loop terminates.
+        """
+        text = text[: max(cls._DEFANG_SCAN_MIN, cap * cls._DEFANG_SCAN_FACTOR)]
+        while cls._CONTINUITY_TAG_RE.search(text):
+            text = cls._CONTINUITY_TAG_RE.sub(" ", text)
+        return text
+
+    # Neutralises a leading `#`/`*` run at the start of any line of a
+    # `system` history row. A `system` row keeps its own line structure
+    # (round 2 fix) rather than being flattened to one line, because the
+    # receipt it carries is genuinely multi-line — but that also means a
+    # line inside it that starts with `##` or `**` renders exactly like a
+    # markdown section header or this module's own `**role**: ` turn marker,
+    # indistinguishable from a real prompt section or a turn the admin never
+    # wrote. Substituted with a fullwidth lookalike, never deleted — same
+    # convention threads.py uses for the row's own brackets — so the line
+    # stays legible instead of silently losing its leading characters
+    # (review: Plan A / A8, round 3). Not applied to user/assistant rows:
+    # those are flattened to one line by the whitespace join a few lines
+    # below, so a line-start marker never survives to the rendered prompt.
+    _LEADING_MARKER_RE = re.compile(r"^([ \t]*)([#*]+)", re.MULTILINE)
+    _MARKER_SUB = {ord("#"): "＃", ord("*"): "＊"}
+
+    @classmethod
+    def _defang_line_markers(cls, text: str) -> str:
+        """Neutralise a leading ``#``/``*`` run at the start of any line."""
+        return cls._LEADING_MARKER_RE.sub(
+            lambda m: m.group(1) + m.group(2).translate(cls._MARKER_SUB), text
+        )
+
+    def _continuity_section(
+        self, continuity: str, tools_supported: Optional[bool] = None
+    ) -> List[str]:
+        """The voice preamble + the hint as prompt lines; [] when no hint.
+
+        ``tools_supported`` is the client's flag: False (the model rejected
+        tool schemas) selects the preamble without the tool instruction;
+        None (unknown) and True keep the full one.
+        """
+        if not continuity or not continuity.strip():
+            return []
+        table = (
+            self.CONTINUITY_PREAMBLE_NO_TOOLS
+            if tools_supported is False
+            else self.CONTINUITY_PREAMBLE
+        )
+        preamble = table.get(self.voice, table["first_person"])
+        return [preamble, continuity.strip()]
+
+    @classmethod
+    def _history_section(cls, history: Optional[List[Dict[str, Any]]]) -> str:
+        """Thread history as one line per row, oldest first (spec §4.5).
+
+        NOTHING IN PRODUCTION CALLS THIS. Its only call site is the
+        ``history`` branch of ``build_response_prompt`` below, and the state
+        machine stopped passing ``history`` at the merge: the prior turns are
+        real ``messages[]`` entries now (``_build_messages``), and rendering
+        them into the prose as well sent every earlier turn twice for one
+        budget's worth of meaning. The two guarantees this helper carried
+        moved rather than vanished — the fence on untrusted system text is
+        ``defang_system_text`` (state_machine ``_defang_system_row``), and the
+        receipt block is ``render_recalled_receipts``. What is left here is
+        the ``**role**: `` prose rendering itself, which nothing wants.
+
+        It is kept because ``build_response_prompt(history=...)`` is still in
+        the signature and an out-of-tree caller could pass it; if that
+        parameter goes, this goes with it, and so do
+        ``TestHistorySystemRowAndInjection`` and the
+        ``_history_section``-shaped cases of ``TestRound3ReviewFindings``.
+        Do not read those tests as coverage of the shipping defang path —
+        ``TestLiveDefangEntryPoint`` is.
+
+        RESPONDING never saw the conversation before Plan A. Block-typed
+        content is flattened. A ``user``/``assistant`` row is capped at
+        ``_HISTORY_LINE_CHARS`` (500). A ``system`` row is different: it is
+        threads.py::_history's pre-window receipt summary, already bounded
+        to ``threads.RECEIPT_ROW_MAX`` chars by ``_fence(..., keep_lines=True)``
+        — a truncation that itself reserves the receipt's final "Open loop:"
+        line (see receipt.py::build_receipt's comment on why). Re-flattening
+        that row to one line and re-capping it at 500 chars here deleted
+        exactly what that truncation protected, on any thread whose history
+        exceeds HISTORY_ROWS (review: Plan A / A8, round 2) — so a system
+        row keeps its own line structure and its own, larger ceiling
+        instead, imported from threads.py itself (falling back to the
+        hand-copied ``_SYSTEM_LINE_CHARS`` only if that import fails) so the
+        two ceilings cannot silently drift apart (review: Plan A / A8,
+        round 3).
+        """
+        if not history:
+            return ""
+        try:
+            from ..agents.blocks import content_to_text
+        except Exception:  # pragma: no cover - import cycle guard
+            def content_to_text(content: Any) -> str:
+                return content if isinstance(content, str) else str(content)
+        try:
+            from ..agents.threads import RECEIPT_ROW_MAX as system_cap
+        except Exception:  # pragma: no cover - import cycle guard
+            system_cap = cls._SYSTEM_LINE_CHARS
+        lines = ["## Earlier in this conversation"]
+        for row in history:
+            if not isinstance(row, dict):
+                continue
+            role = str(row.get("role", "user"))
+            if role not in ("user", "assistant", "system"):
+                continue
+            content = row.get("content", "")
+            text = content if isinstance(content, str) else content_to_text(content)
+            text = str(text)
+            if role == "system":
+                text = cls._defang_continuity(text, system_cap)
+                text = cls._defang_line_markers(text)
+                text = text.strip()
+                if len(text) > system_cap:
+                    text = text[: system_cap - 1].rstrip() + "…"
+            else:
+                text = cls._defang_continuity(text, cls._HISTORY_LINE_CHARS)
+                text = " ".join(text.split())
+                if len(text) > cls._HISTORY_LINE_CHARS:
+                    text = text[:cls._HISTORY_LINE_CHARS] + "…"
+            lines.append(f"**{role}**: {text}")
+        return "\n".join(lines) if len(lines) > 1 else ""
 
     def __init__(self, base_builder=None, context_injector=None, voice: str = "first_person"):
         """
@@ -197,46 +470,54 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         context: str,
         plan: List[Dict] = None,
         observations: List[str] = None,
+        continuity: str = "",
+        tools_supported: Optional[bool] = None,
     ) -> str:
         """
         Build prompt for PLANNING state.
-        
-        Args:
-            query: User's query
-            context: Assembled context string
-            plan: Current plan steps
-            observations: Previous observations
-            
-        Returns:
-            Planning prompt string
+
+        Section order: context, observations, instructions, plan, then the
+        continuity hint and finally ``## Current Task`` with the query. The
+        task moved from the head to the tail on purpose (spec §7): if the
+        prompt is ever truncated it is the head that goes, and the query and
+        the hint are the two things the model must still see.
+
+        ``continuity`` has no production caller since the merge, so the
+        section between the plan and the task is empty on every shipping
+        prompt. The state machine passes the hint to ``_continuity_section``
+        directly (``_continuity_tail``) and glues the result to the front of
+        the final *user message* instead — same reasoning, better executed:
+        array position beats prose position for surviving a small context
+        window. ``tools_supported`` IS passed, and reaches the same
+        ``_continuity_section`` call, so it is inert here and load-bearing
+        there; it is kept on the signature so the two paths render one hint
+        the same way (spec §7). If ``continuity`` goes, ``tools_supported``
+        goes with it.
         """
-        parts = [
-            "## Current Task",
-            f"User request: {query}",
-        ]
-        
+        parts: List[str] = []
+
         if context:
-            parts.extend(["", "## Available Context", context])
-        
+            parts.extend(["## Available Context", context, ""])
+
         if observations:
             parts.extend([
-                "",
                 "## Previous Observations",
-                "\n".join(f"- {obs}" for obs in observations)
+                "\n".join(f"- {obs}" for obs in observations),
+                "",
             ])
-        
+
         parts.extend([
-            "",
             "## Instructions",
             "1. Analyze what information is needed to answer this request",
             "2. Check if the available context already answers the question",
             "3. If more information is needed, use the appropriate tools",
             "4. Create a concise plan (maximum 5 steps)",
             "5. Execute one step at a time",
+            "",
         ])
-        
+
         if plan:
-            parts.extend(["", "## Current Plan"])
+            parts.append("## Current Plan")
             for i, step in enumerate(plan):
                 status = step.get("status", "pending")
                 step_text = step.get("step", "")
@@ -247,32 +528,75 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
                     "failed": "✗"
                 }.get(status, "○")
                 parts.append(f"{i+1}. {status_icon} {step_text}")
-        
+            parts.append("")
+
+        section = self._continuity_section(continuity, tools_supported)
+        if section:
+            parts.extend(section)
+            parts.append("")
+
+        parts.extend(["## Current Task", f"User request: {query}"])
         return "\n".join(parts)
-    
+
     def build_response_prompt(
         self,
         query: str,
         context: List[Dict],
         observations: List[str],
         confidence: float = None,
+        history: Optional[List[Dict[str, Any]]] = None,
+        continuity: str = "",
+        tools_supported: Optional[bool] = None,
     ) -> str:
         """
         Build prompt for RESPONDING state.
-        
+
         Args:
             query: Original user query
             context: Retrieved context items
             observations: Tool observations
             confidence: CRAG confidence score
-            
+            history: Prior turns in this thread, oldest first (spec §4.5).
+                NO PRODUCTION CALLER since the merge — the turns are real
+                ``messages[]`` entries (state_machine ``_build_messages``),
+                and rendering them here as well sent each one twice. Passing
+                it again reinstates that double-send; see ``_history_section``.
+            continuity: The rendered <continuity> hint, if any (spec §7).
+                NO PRODUCTION CALLER since the merge — the hint rides the
+                front of the final user message instead (state_machine
+                ``_continuity_tail``), next to the question it qualifies.
+            tools_supported: The client's tool-schema-acceptance flag (A9d).
+                Passed by the state machine, but with ``continuity`` empty it
+                only ever selects between two preambles neither of which is
+                rendered; it is the direct ``_continuity_section`` call that
+                acts on it.
+
+        The receipts of subjects recalled this turn are a different mechanism
+        and are live: they arrive on ``context`` with ``source == "thread"``
+        and are rendered by ``render_recalled_receipts`` below.
+
         Returns:
             Response generation prompt
         """
-        # Format context
+        # Format context. Thread receipts are split off first: they are
+        # continuity, not retrieval, and recall_thread appends up to three of
+        # them during PLANNING — before SEARCHING appends a single rag or
+        # memory hit — so slicing [:5] over the whole list gave the first
+        # three of the five slots to receipts and silently dropped real
+        # retrieval from the answer (review: Plan A / A9b). They get their own
+        # block below instead, the way the assembler gives the *current*
+        # subject's receipt its own slot.
+        receipts = [
+            c for c in (context or [])
+            if isinstance(c, dict) and c.get("source") == "thread"
+        ]
+        documents = [
+            c for c in (context or [])
+            if not (isinstance(c, dict) and c.get("source") == "thread")
+        ]
         context_text = "\n".join([
             f"[{c.get('source', 'unknown')}]: {c.get('content', '')[:500]}"
-            for c in (context or [])[:5]
+            for c in documents[:5]
         ])
 
         # Format observations
@@ -300,7 +624,21 @@ The user is asking about your state. Follow these rules:
   {"action": "invoke_module", "module": "vitals", "props": {"timeframe": "1h"}}
 - If there are open findings or config issues, mention them with specifics"""
 
-        prompt = f"""## Task
+        # Thread history, the receipts of any subject recalled this turn,
+        # then the continuity hint, immediately before the query section
+        # (spec §4.5 / §7). Empty when none is supplied so the prompt is
+        # byte-identical to the pre-Plan-A shape.
+        preface_parts: List[str] = []
+        history_text = self._history_section(history)
+        if history_text:
+            preface_parts.append(history_text)
+        recalled_text = render_recalled_receipts(receipts)
+        if recalled_text:
+            preface_parts.append(recalled_text)
+        preface_parts.extend(self._continuity_section(continuity, tools_supported))
+        preface = ("\n\n".join(preface_parts) + "\n\n") if preface_parts else ""
+
+        prompt = f"""{preface}## Task
 Answer this question: {query}
 
 ## Available Information
@@ -473,3 +811,99 @@ Your response:"""
         if tool:
             result += f" (tool: {tool})"
         return result
+
+
+def defang_system_text(text: str, cap: int) -> str:
+    """Neutralise untrusted text that is about to land in a system position.
+
+    The same two passes ``_history_section`` runs over a ``system`` history
+    row — ``<continuity>`` tags collapsed to a fixpoint, a leading ``#``/``*``
+    run substituted with fullwidth lookalikes — exposed at module level
+    because since the merge that row no longer travels through the prose
+    builder. It is folded straight into ``messages[0]`` by
+    ``AgentStateMachine._build_messages``, and that fold is now the boundary
+    the defanging has to sit on: the text is built from command stdout and log
+    lines (``agents/receipt.py`` ``build_receipt``), so an unfenced one could
+    open a ``<continuity>`` block or a ``## Instructions`` heading inside the
+    instructions themselves.
+
+    ``cap`` is forwarded so the fixpoint loop's cost stays bounded by it
+    rather than by an attacker-chosen row length (see ``_defang_continuity``),
+    and — like this module's other two defang callers — the caller applies it
+    as a truncation limit too. ``_defang_system_row`` now caps the result at
+    ``cap`` in ``_fence``'s shape before concatenating it into ``messages[0]``.
+    That cap belongs there rather than here: this function's clip point is
+    ``max(_DEFANG_SCAN_MIN, cap * _DEFANG_SCAN_FACTOR)``, chosen to bound the
+    fixpoint loop, and a position's prompt budget is not a scan window's job to
+    decide. Before the cap existed the fold inherited the clip as a silent
+    truncation at 6000 characters; nothing reached it, because
+    ``threads.py::_fence`` bounds the receipt to ``cap`` (``RECEIPT_ROW_MAX``)
+    a factor of four inside the clip point and ``TestLiveDefangEntryPoint``
+    pins that headroom, but nothing was stopping a producer from doing so.
+    """
+    text = AgentPromptBuilder._defang_continuity(str(text), cap)
+    return AgentPromptBuilder._defang_line_markers(text)
+
+
+def render_recalled_receipts(
+    entries: Optional[List[Dict[str, Any]]],
+    *,
+    max_receipts: int = RECALLED_MAX,
+    max_chars: Optional[int] = None,
+) -> str:
+    """The receipts of subjects recalled this turn as their own prompt block.
+
+    ``entries`` are ``ctx.retrieved_context`` rows with ``source == "thread"``:
+    the receipt of *another* subject ``recall_thread`` (and A9c's auto-recall)
+    pulled in. They are continuity, not retrieval — rendered in the same list
+    as rag and memory hits they spent that list's slots and pushed real
+    retrieval out of the answer (review: Plan A / A9b) — so they are rendered
+    here instead, and the caller keeps its retrieval budget for retrieval.
+
+    A receipt quotes the admin's words, command lines and log text, so each
+    one is neutralised exactly like a ``system`` history row (``<continuity>``
+    tags collapsed, leading ``#``/``*`` runs substituted with their fullwidth
+    lookalikes) and capped at ``max_chars`` — ``threads.RECEIPT_ROW_MAX`` by
+    default, the same ceiling the receipt row in the history already carries.
+    A tighter cap is for the PLANNING prompt, where the block is appended
+    after the assembler has already spent its budget.
+
+    Returns "" when there is nothing to render, so a caller can simply skip
+    the section and leave its prompt unchanged.
+    """
+    if not entries:
+        return ""
+    try:
+        from ..agents.threads import RECEIPT_ROW_MAX as default_cap
+    except Exception:  # pragma: no cover - import cycle guard
+        default_cap = AgentPromptBuilder._SYSTEM_LINE_CHARS
+    cap = int(default_cap if max_chars is None else max_chars)
+    if cap <= 0:
+        return ""
+
+    lines: List[str] = [RECALLED_SECTION_HEADER]
+    for entry in list(entries)[: max(0, int(max_receipts))]:
+        if not isinstance(entry, dict):
+            continue
+        meta = entry.get("metadata") or {}
+        title = AgentPromptBuilder._defang_continuity(
+            str(meta.get("title") or "").strip()
+            or str(meta.get("thread_id") or "").strip()
+            or "Untitled",
+            _RECALLED_TITLE_CHARS,
+        )
+        title = " ".join(title.split())[:_RECALLED_TITLE_CHARS]
+        date = AgentPromptBuilder._defang_continuity(
+            str(meta.get("date") or ""), _RECALLED_TITLE_CHARS
+        )
+        date = " ".join(date.split())[:_RECALLED_TITLE_CHARS]
+        head = f'**"{title}"' + (f" ({date})" if date else "") + "**"
+
+        body = AgentPromptBuilder._defang_continuity(str(entry.get("content") or ""), cap)
+        body = AgentPromptBuilder._defang_line_markers(body).strip()
+        if len(body) > cap:
+            # Same shape as threads.py::_fence, which caps the receipt row.
+            body = body[: cap - 1].rstrip() + "…"
+        lines.append(f"{head}\n{body}" if body else head)
+
+    return "\n\n".join(lines) if len(lines) > 1 else ""

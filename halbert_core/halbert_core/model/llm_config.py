@@ -46,6 +46,7 @@ import os
 import secrets
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
@@ -159,28 +160,126 @@ def _chmod_600(path: Path) -> None:
         pass
 
 
-def _read_raw() -> Optional[Dict[str, Any]]:
+# ── Parse cache ───────────────────────────────────────────────────
+#
+# Every model getter resolves against this store per call, on purpose: one
+# LLMClientAdapter is shared by every concurrent request, so caching a model
+# *decision* anywhere would leak one session's pin into another's turn. The
+# cost of that correctness was 12 full parses of models.yml for a single turn
+# (a pinned turn costs the same again through ``tools_supported_for``) —
+# ~1.3ms each, synchronous, on the event loop, inside the turn lock.
+#
+# What is cached here is the PARSE, never a decision. Every getter still
+# resolves per call and still sees current file contents; it just does not
+# re-read and re-parse the same unchanged bytes a dozen times a turn.
+#
+# Freshness is the file's own identity — path, mtime_ns, size, inode, device —
+# so an edit made while Halbert is running is picked up by the next read, which
+# is existing, relied-on behaviour. ``_CACHE_TTL_SECONDS`` is a backstop, not the
+# mechanism: it bounds staleness on filesystems whose timestamps are coarser
+# than a turn (HFS+ and some network mounts round to the second, where a small
+# same-second edit that happens to preserve the size would otherwise be missed).
+# Locally, mtime_ns was measured to change on every rewrite.
+#
+# A parse FAILURE is never cached, and it drops any cached success with it.
+# "Never overwrite an unreadable models.yml" is the reason _read_raw
+# distinguishes {} from None, and a cached failure could outlive the repair —
+# including one caused by reading the file mid-write, which is exactly when a
+# human is editing it. The mirror image matters just as much: a cached SUCCESS
+# must not outlive the file's health, so the moment a read finds the file
+# unparsable the earlier parse is dropped rather than served on for a TTL.
+#
+# NO WRITER READS THROUGH THIS CACHE. The cache is a read-path optimisation
+# and only ever that: every writer goes through _read_for_write, which passes
+# use_cache=False. "Refuse the write when the file on disk cannot be parsed" is
+# a statement about the bytes on disk at the moment of writing, and a cached
+# success — however fresh — is not evidence about them. update() in particular
+# calls load_global() and then save() microseconds apart, so a write validated
+# against the cache would be validated against a snapshot the filesystem's
+# timestamp resolution cannot even distinguish from the current file: not a
+# narrow race but, on any coarse-timestamp filesystem (NFS/SMB home dirs,
+# HFS+, exFAT), the guarantee gone every single time.
+_CACHE_TTL_SECONDS = 1.0
+_cache: Optional[Tuple[Tuple[Any, ...], float, Dict[str, Any]]] = None
+
+
+def invalidate_cache() -> None:
+    """Drop the cached parse. Called after every write through this module."""
+    global _cache
+    _cache = None
+
+
+def _cache_stamp(path: Path) -> Tuple[Any, ...]:
+    """The file's identity: any change to it changes this."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ("missing", str(path))
+    return (str(path), st.st_mtime_ns, st.st_size, st.st_ino, st.st_dev)
+
+
+def _read_raw(use_cache: bool = True) -> Optional[Dict[str, Any]]:
     """The parsed file, ``{}`` when there is none, or ``None`` when it is broken.
 
     The three cases must stay distinguishable: ``{}`` is a fresh install and is
     safe to write over, ``None`` is a file whose contents we could not
     understand and must not touch.
+
+    ``use_cache=False`` opens and parses the file however fresh the cached
+    parse looks. Every writer takes that path — see the note above the cache:
+    a write is allowed to rest only on the bytes that are on disk now.
+
+    The result is a deep copy: ``save()`` and the migration path mutate what
+    they are handed, and handing out the cached object itself would let one
+    writer's in-place edit become every later reader's truth without ever
+    reaching disk.
     """
+    global _cache
     path = _read_path()
     if path is None:
         return {}
+
+    stamp = _cache_stamp(path)
+    now = time.monotonic()
+    cached = _cache
+    if (
+        use_cache
+        and cached is not None
+        and cached[0] == stamp
+        and now - cached[1] < _CACHE_TTL_SECONDS
+    ):
+        return copy.deepcopy(cached[2])
+
     try:
         with open(path, "r") as f:
             data = yaml.safe_load(f) or {}
     except Exception as e:
         logger.error("Could not read %s: %s", path, e)
+        # This is the file the cache describes, and it has just been found
+        # unparsable: a parse taken before the breakage must not go on being
+        # served (or, worse, written back) for the rest of the TTL.
+        _cache = None
         return None
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        data = {}
+    # Stamp the file as it was BEFORE the read: a write that lands during the
+    # read then leaves a stamp that no longer matches, and the next reader
+    # parses again rather than trusting a half-written parse.
+    _cache = (stamp, now, data)
+    return copy.deepcopy(data)
 
 
 def _read_for_write() -> Dict[str, Any]:
-    """Like :func:`_read_raw`, but refuses to proceed on an unparsable file."""
-    raw = _read_raw()
+    """Like :func:`_read_raw`, but reads the file itself and refuses to proceed
+    on an unparsable one.
+
+    Uncached on purpose, and this is the single site that gives every writer in
+    the module (``save``, ``set_top_level``, the migration rewrite) that
+    property: a write must be refused against the file as it is now, not
+    against a snapshot taken microseconds earlier by the ``load_global()`` that
+    built the payload being written.
+    """
+    raw = _read_raw(use_cache=False)
     if raw is None:
         path = _read_path()
         try:
@@ -206,6 +305,10 @@ def _write_raw(data: Dict[str, Any]) -> None:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
         os.replace(tmp, path)
         _chmod_600(path)
+        # The file this module reads from may be the file it just wrote; drop
+        # the parse so the next reader sees the new contents even on a
+        # filesystem whose timestamps are too coarse to notice.
+        invalidate_cache()
     except Exception:
         try:
             os.unlink(tmp)
@@ -416,38 +519,55 @@ def normalise_file(raw: Dict[str, Any]) -> Dict[str, Any]:
 # ── Public API ────────────────────────────────────────────────────
 
 
-def load_global_file() -> Dict[str, Any]:
+def load_global_file(use_cache: bool = True) -> Dict[str, Any]:
     """The whole models.yml dict, post-migration — the global layer alone.
 
     Rewrites the file once when migration or id-minting changed something. An
     unparsable file serves defaults for the session and is left untouched.
+
+    ``use_cache=False`` for a read that is about to become a WRITE's payload.
+    ``save()`` validates against the file itself, but validating fresh bytes
+    and then persisting a stale snapshot loses the same edit just as
+    completely — the guard has to cover the payload, not only the check.
     """
-    raw = _read_raw()
+    raw = _read_raw(use_cache)
     if raw is None:
         return normalise_file({})
-    out = normalise_file(raw)
     if needs_rewrite(raw):
+        # The migration branch WRITES, so it may not rest on a cached parse
+        # either: re-read the file itself and rebuild from that, so a rewrite
+        # cannot put a stale snapshot back over someone's edit or over a file
+        # that has become unparsable since the cached read.
         try:
-            _backup_before_rewrite()
-            _write_raw(out)
-            llm = out["llm_config"]
-            logger.info(
-                "Migrated legacy model config: chat=%r specialist=%r vision=%r endpoints=%d",
-                llm["chat_model"]["model"], llm["specialist_model"]["model"],
-                llm["vision_model"]["model"], len(llm["saved_endpoints"]),
-            )
-        except Exception as e:
-            logger.error("Could not rewrite models.yml after migration: %s", e)
-    return out
+            raw = _read_for_write()
+        except ConfigUnreadableError as e:
+            logger.error("Not migrating models.yml: %s", e)
+            return normalise_file({})
+        out = normalise_file(raw)
+        if needs_rewrite(raw):
+            try:
+                _backup_before_rewrite()
+                _write_raw(out)
+                llm = out["llm_config"]
+                logger.info(
+                    "Migrated legacy model config: chat=%r specialist=%r vision=%r endpoints=%d",
+                    llm["chat_model"]["model"], llm["specialist_model"]["model"],
+                    llm["vision_model"]["model"], len(llm["saved_endpoints"]),
+                )
+            except Exception as e:
+                logger.error("Could not rewrite models.yml after migration: %s", e)
+        return out
+    return normalise_file(raw)
 
 
-def load_global() -> Dict[str, Any]:
+def load_global(use_cache: bool = True) -> Dict[str, Any]:
     """The llm_config section of the global file, normalised, unlayered.
 
     Every writer starts here: rebasing a write on the effective config would
     persist a workspace file's or a session's pins into the user's own file.
+    Writers pass ``use_cache=False`` — see :func:`load_global_file`.
     """
-    return load_global_file()["llm_config"]
+    return load_global_file(use_cache)["llm_config"]
 
 
 @dataclass(frozen=True)
@@ -564,7 +684,8 @@ def update(partial: Dict[str, Any]) -> Dict[str, Any]:
     Raises :class:`SlotProviderError` when a slot with a model names an endpoint
     whose provider is not chat-capable — the UI must never save such a slot.
     """
-    current = load_global()
+    # Uncached: this read becomes the saved payload.
+    current = load_global(use_cache=False)
     partial = copy.deepcopy(partial)
     if "saved_endpoints" in partial:
         _carry_forward_api_keys(partial["saved_endpoints"], current)
@@ -662,17 +783,27 @@ def resolve_endpoint_by_id(endpoint_id: str) -> Optional[Tuple[str, str, str]]:
     return None
 
 
-def ensure_ollama_endpoint(url: str = DEFAULT_OLLAMA_URL) -> str:
-    """Id of the Ollama endpoint at ``url``; creates "Local Ollama" if absent."""
-    cfg = load_global()
-    u = url.rstrip("/")
+def ensure_endpoint(url: str, provider: str = "ollama", name: str = "") -> str:
+    """Id of the saved endpoint at (``provider``, ``url``); creates it if absent.
+
+    A caller that needs an endpoint id must get it from here rather than
+    inventing one: a slot whose ``endpoint_id`` names no saved endpoint is
+    disabled by :func:`normalise` on the next read.
+    """
+    cfg = load_global(use_cache=False)  # becomes a write payload
+    u = (url or "").rstrip("/")
     for ep in cfg["saved_endpoints"]:
-        if ep["provider"] == "ollama" and ep["url"] == u:
+        if ep["provider"] == provider and ep["url"] == u:
             return ep["id"]
-    ep = {"id": _new_id(), "name": "Local Ollama", "provider": "ollama", "url": u, "api_key": ""}
+    ep = {"id": _new_id(), "name": name or u, "provider": provider, "url": u, "api_key": ""}
     cfg["saved_endpoints"].append(ep)
     save(cfg)
     return ep["id"]
+
+
+def ensure_ollama_endpoint(url: str = DEFAULT_OLLAMA_URL) -> str:
+    """Id of the Ollama endpoint at ``url``; creates "Local Ollama" if absent."""
+    return ensure_endpoint(url, "ollama", "Local Ollama")
 
 
 def _probe_ollama(url: str, timeout: float) -> bool:
@@ -683,9 +814,26 @@ def _probe_ollama(url: str, timeout: float) -> bool:
         return False
 
 
+# Choosing a model for the user is off unless they ask for it. Halbert's
+# picker exists to give an operator control over which model answers, and a
+# machine that quietly picks one on their behalf — by a VRAM heuristic that
+# cannot say anything useful about a hosted model — is the opposite of that.
+# Set `first_run: {auto_select_model: true}` in models.yml to opt in.
+AUTO_SELECT_KEY = "first_run"
+
+
+def auto_select_enabled() -> bool:
+    """True when the operator has opted into first-run model selection."""
+    try:
+        block = load_file().get(AUTO_SELECT_KEY) or {}
+    except ConfigUnreadableError:
+        return False
+    return bool(isinstance(block, dict) and block.get("auto_select_model"))
+
+
 def ensure_local_ollama_endpoint(timeout: float = 2.0) -> bool:
     """Fresh install helper: with no endpoints saved, add Local Ollama if :11434 answers."""
-    if load_global()["saved_endpoints"]:
+    if load_global(use_cache=False)["saved_endpoints"]:
         return False
     if not _probe_ollama(DEFAULT_OLLAMA_URL, timeout):
         return False

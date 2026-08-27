@@ -16,7 +16,7 @@ likely belongs to (so the agent can load the right history):
 
 Reuses ``intake/signals.analyze_message`` for entity/domain extraction. Works
 with any store exposing ``get(id)`` and ``search(query, user_id, limit)``
-(the SqliteConversationStore or the JSON ConversationStore).
+(the SqliteConversationStore).
 
 See OPUS-HANDOFF §F2.
 """

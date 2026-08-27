@@ -6,6 +6,114 @@ on:
   pull_request:
 
 jobs:
+  # A gate is only worth having if nothing can walk past it. Every other job
+  # below names the suites it runs; this one is the meta-gate that fails when a
+  # test file exists that none of them would ever execute. It is what stops the
+  # next new directory of tests from being green by never having run — the way
+  # the whole root tests/ tree and the model-picker package once were.
+  suite-census:
+    name: Suite census (no test file escapes a gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # Pure stdlib, no install: this must be able to fail before anything
+      # slower has had a chance to look green.
+      #
+      # Adding a job below means adding its suite to GATES here, or this fails.
+      - name: Every test file is behind a gate
+        run: |
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+
+          ROOT = Path(".").resolve()
+          SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist",
+                  "build", ".pytest_cache", ".mypy_cache", "storybook-static"}
+
+          # Every suite CI runs, as (path prefix, the job and command that runs it).
+          GATES = [
+              ("tests/",
+               "job `test` -> pytest tests/"),
+              ("halbert_core/tests/",
+               "job `test` -> pytest tests/ in halbert_core/"),
+              ("halbert_core/halbert_core/dashboard/frontend/src/",
+               "job `dashboard-frontend` -> npm run test"),
+              ("packages/model-picker/src/",
+               "job `model-picker` -> npm test"),
+              ("packages/design-system/src/",
+               "job `design-system` -> npm test"),
+          ]
+
+          # Subtrees a gate's own command excludes again.
+          IGNORED = {"tests/rag/": "--ignore=tests/rag/ on the root pytest run"}
+
+          # Deliberately ungated, each with the reason it cannot be a CI gate.
+          # An entry whose file has gone, or whose file turns out to be gated
+          # after all, fails too: the list may not outlive its exemption.
+          UNGATED = {
+              "tests/rag/test_rag_system.py":
+                  "builds a live embedding index, which downloads a model on first use",
+          }
+
+          def is_test_file(path):
+              name = path.name
+              if path.suffix == ".py":
+                  return name.startswith("test_") or name.endswith("_test.py")
+              if path.suffix in (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"):
+                  parts = name.split(".")
+                  return len(parts) > 2 and parts[-2] in ("test", "spec")
+              return False
+
+          def gate_for(rel):
+              if any(rel.startswith(prefix) for prefix in IGNORED):
+                  return None
+              for prefix, gate in GATES:
+                  if rel.startswith(prefix):
+                      return gate
+              return None
+
+          found = sorted(
+              path.relative_to(ROOT).as_posix()
+              for path in ROOT.rglob("*")
+              if path.is_file()
+              and not any(part in SKIP for part in path.relative_to(ROOT).parts)
+              and is_test_file(path)
+          )
+
+          problems = []
+          for prefix, gate in GATES:
+              if not (ROOT / prefix).is_dir():
+                  problems.append(f"gate root {prefix} does not exist, so {gate} gates nothing")
+          for rel in found:
+              if rel not in UNGATED and gate_for(rel) is None:
+                  problems.append(f"{rel} is run by no CI job -- add it to a gate, or to UNGATED with a reason")
+          for rel in sorted(UNGATED):
+              if not (ROOT / rel).exists():
+                  problems.append(f"UNGATED lists {rel}, which no longer exists -- drop the exemption")
+              elif gate_for(rel) is not None:
+                  problems.append(f"UNGATED lists {rel}, but {gate_for(rel)} already runs it -- drop the exemption")
+
+          by_gate = {}
+          for rel in found:
+              by_gate.setdefault(gate_for(rel) or "NOT RUN BY CI", []).append(rel)
+          for gate in sorted(by_gate):
+              print(f"{len(by_gate[gate]):4d}  {gate}")
+          print(f"{len(found):4d}  test files in the tree")
+          for rel in by_gate.get("NOT RUN BY CI", []):
+              print(f"      exempt: {rel} -- {UNGATED.get(rel, 'NO REASON GIVEN')}")
+          sys.stdout.flush()
+
+          if problems:
+              print("\nTest files have escaped CI:", file=sys.stderr)
+              for line in problems:
+                  print(f"  - {line}", file=sys.stderr)
+              sys.exit(1)
+          print("\nEvery test file is behind a gate or an explained exemption.")
+          PY
+
   design-tokens:
     name: Design tokens (WCAG gate)
     runs-on: ubuntu-latest
@@ -89,6 +197,7 @@ jobs:
       - run: npm run test
 
   test:
+    name: Backend (root + halbert_core suites)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

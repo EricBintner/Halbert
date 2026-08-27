@@ -10,9 +10,11 @@ export const meta = {
 
 const WT = args.worktree
 const PLAN_PATH = args.planPath
+const TASK_DIR = args.taskDir       // one <id>.md per task, split from the plan
 const CONTEXT = args.context
-const TASKS = args.tasks            // [{id, title, text}]
+const TASKS = args.tasks            // [{id, title}] — the text lives in TASK_DIR
 const START_AT = args.startAt || 0  // index into TASKS (for resume after intervention)
+const MECHANICAL = new Set(args.mechanical || [])  // task ids that run on the cheap tier
 
 const IMPL = { type: 'object', required: ['status', 'summary', 'files_changed', 'tests_run', 'base_sha', 'head_sha', 'concerns'], properties: {
   status: { type: 'string', enum: ['DONE', 'DONE_WITH_CONCERNS', 'BLOCKED', 'NEEDS_CONTEXT'] },
@@ -32,16 +34,23 @@ const COMMON = [
   'Baseline known failures that are NOT yours to fix and must not get worse: 4 backend tests in tests/test_tool_calling_bridge.py and tests/test_phase_d_integration.py (model-client vision fallback).',
   'Commit rules: git add ONLY the files you changed (pathspec), commit subject + optional body, NEVER add Co-Authored-By or any bot/generated-with trailer. One commit per plan task step that says "Commit".',
   'Project invariants: never name an AI model in code/copy; canonical design tokens only (no hex, no tailwind palette colours); the engaged surface is labelled with the onboarding ai_name never "Sovereign"; commands are staged never executed by UI buttons.',
+  'The plan is 33 tasks executed in order; its header (top of ' + WT + '/' + PLAN_PATH + ') carries the goal, architecture, task order and the table of amendments already folded into the task text. There is NO separate amendments section to apply. Tasks A6c, A6d, A8b, A9d, A11b and A17b were written after the plan\'s sandbox dry-run, so their stated expected outputs are targets rather than measurements — trust your actual test runs over the printed numbers, and say so in concerns when they differ.',
 ].join('\n')
+
+function taskRef(task) {
+  return [
+    '## Your task text',
+    'The complete task — files, the failing test, the full implementation code, the exact commands with expected output, and the commit message — is in ' + TASK_DIR + '/' + task.id + '.md.',
+    'Read that ENTIRE file before doing anything else. It is long (hundreds of lines); every step matters and the code is meant to be applied as written.',
+    'The same text is the "### Task ' + task.id + ':" section of ' + WT + '/' + PLAN_PATH + '; read neighbouring sections or the contracts at ' + WT + '/.handoff/plan-a-exec/plan-a-contracts.md if you need cross-task names and signatures.',
+  ].join('\n')
+}
 
 function implementerPrompt(task, extra) {
   return [
     'You are implementing ' + task.id + ': ' + task.title + ' from the Plan A implementation plan (' + PLAN_PATH + ').',
-    '',
-    '## Task Description (full text from the plan)',
-    task.text,
-    '',
-    '## Context', CONTEXT, '',
+    '', taskRef(task),
+    '', '## Context', CONTEXT, '',
     '## Rules', COMMON, '',
     '## Your Job',
     '1. Follow the task steps exactly and in order: write the failing test first, run it and confirm it fails for the expected reason, implement, run the tests until green, commit with the given message. If a step\'s expected output differs slightly (counts, line numbers) but the behaviour matches, proceed and note it. If the plan\'s code does not apply cleanly because the file drifted, adapt minimally to achieve the same behaviour and note it.',
@@ -56,8 +65,8 @@ function implementerPrompt(task, extra) {
 function fixerPrompt(task, issues, kind, impl) {
   return [
     'You are fixing review findings on ' + task.id + ': ' + task.title + ' (Plan A, ' + PLAN_PATH + ') in the worktree.',
-    '', '## Original task text', task.text, '',
-    '## What was implemented (implementer report)', impl.summary, 'Files: ' + impl.files_changed.join(', '), 'Commits: ' + impl.base_sha + '..' + impl.head_sha, '',
+    '', taskRef(task),
+    '', '## What was implemented (implementer report)', impl.summary, 'Files: ' + impl.files_changed.join(', '), 'Commits: ' + impl.base_sha + '..' + impl.head_sha, '',
     '## ' + kind + ' review findings to address (address every one; if you disagree with one, explain why in concerns instead of silently skipping it)',
     issues.map((s, i) => (i + 1) + '. ' + s).join('\n'), '',
     '## Rules', COMMON, '',
@@ -68,8 +77,8 @@ function fixerPrompt(task, issues, kind, impl) {
 function specReviewPrompt(task, impl) {
   return [
     'You are reviewing whether an implementation matches its specification. Read the actual code in the worktree; do not trust the report.',
-    '', '## What Was Requested (full task text)', task.text, '',
-    '## What Implementer Claims They Built', impl.summary, 'Files: ' + impl.files_changed.join(', '), 'Tests: ' + impl.tests_run, 'Range: ' + impl.base_sha + '..' + impl.head_sha, '',
+    '', taskRef(task),
+    '', '## What Implementer Claims They Built', impl.summary, 'Files: ' + impl.files_changed.join(', '), 'Tests: ' + impl.tests_run, 'Range: ' + impl.base_sha + '..' + impl.head_sha, '',
     '## Rules', COMMON, '',
     '## Your Job',
     'Run: cd ' + WT + ' && git diff --stat ' + impl.base_sha + '..' + impl.head_sha + ' && git diff ' + impl.base_sha + '..' + impl.head_sha + '. Compare line by line with the task: missing requirements, extra unrequested work, misunderstandings, tests that only test mocks, expected-output steps that were skipped. Re-run the task\'s test commands yourself and confirm they pass. Report compliant=true only if everything matches after code inspection; otherwise list each issue with file:line.',
@@ -79,7 +88,8 @@ function specReviewPrompt(task, impl) {
 function qualityReviewPrompt(task, impl) {
   return [
     'You are reviewing code changes for production readiness (code-quality review, after spec compliance passed).',
-    '', '## What Was Implemented', impl.summary, '', '## Requirements/Plan', task.id + ': ' + task.title + ' from ' + PLAN_PATH, '', task.text, '',
+    '', '## What Was Implemented', impl.summary, '',
+    taskRef(task), '',
     '## Git Range to Review', 'Base: ' + impl.base_sha, 'Head: ' + impl.head_sha, 'Run: cd ' + WT + ' && git diff --stat ' + impl.base_sha + '..' + impl.head_sha + ' && git diff ' + impl.base_sha + '..' + impl.head_sha, '',
     '## Rules', COMMON, '',
     '## Checklist', 'Code quality: separation of concerns, error handling, type safety, DRY, edge cases. Architecture: sound decisions, performance, security (this is a sysadmin agent — command/SQL injection, path handling). Testing: tests test logic not mocks, edge cases, all passing (re-run them). Requirements: matches the task, no scope creep. File discipline: each file one responsibility; did this change create large new files or significantly grow an existing one (flag only what this change contributed). Project invariants: no hex/palette colours (run scripts/check_literal_colors.py if the diff touches frontend files and compare counts per file before/after), no model names, no bot trailers in commit messages (git log --format=%B ' + impl.base_sha + '..' + impl.head_sha + ').',
@@ -87,11 +97,17 @@ function qualityReviewPrompt(task, impl) {
   ].join('\n')
 }
 
+function implOpts(task, label) {
+  const o = { label: label, phase: 'Implement', schema: IMPL }
+  if (MECHANICAL.has(task.id)) o.model = 'sonnet'
+  return o
+}
+
 const results = []
 for (let i = START_AT; i < TASKS.length; i++) {
   const task = TASKS[i]
-  log('▶ ' + task.id + ' ' + task.title + ' (' + (i + 1) + '/' + TASKS.length + ')')
-  let impl = await agent(implementerPrompt(task), { label: 'impl:' + task.id, phase: 'Implement', schema: IMPL })
+  log('▶ ' + task.id + ' ' + task.title.slice(0, 60) + ' (' + (i + 1) + '/' + TASKS.length + ')' + (MECHANICAL.has(task.id) ? ' [cheap tier]' : ''))
+  let impl = await agent(implementerPrompt(task), implOpts(task, 'impl:' + task.id))
   if (!impl) { results.push({ task: task.id, status: 'NO_RESULT' }); return { stoppedAt: i, reason: 'implementer returned nothing', results } }
   if (impl.status === 'BLOCKED' || impl.status === 'NEEDS_CONTEXT') {
     results.push({ task: task.id, status: impl.status, detail: impl })
@@ -104,7 +120,7 @@ for (let i = START_AT; i < TASKS.length; i++) {
     spec = await agent(specReviewPrompt(task, impl), { label: 'spec:' + task.id + (round ? '#' + (round + 1) : ''), phase: 'Review', schema: SPEC })
     if (!spec || spec.compliant) break
     log('  spec issues on ' + task.id + ': ' + spec.issues.length)
-    const fix = await agent(fixerPrompt(task, spec.issues, 'Spec-compliance', impl), { label: 'fix-spec:' + task.id + '#' + (round + 1), phase: 'Implement', schema: IMPL })
+    const fix = await agent(fixerPrompt(task, spec.issues, 'Spec-compliance', impl), implOpts(task, 'fix-spec:' + task.id + '#' + (round + 1)))
     if (!fix || fix.status === 'BLOCKED') { results.push({ task: task.id, status: 'BLOCKED_IN_SPEC_FIX', detail: fix }); return { stoppedAt: i, reason: 'spec fix blocked', results } }
     impl = { ...impl, summary: impl.summary + '\n\nFix round ' + (round + 1) + ': ' + fix.summary, files_changed: Array.from(new Set(impl.files_changed.concat(fix.files_changed))), head_sha: fix.head_sha, tests_run: fix.tests_run, concerns: impl.concerns.concat(fix.concerns) }
   }
@@ -118,7 +134,7 @@ for (let i = START_AT; i < TASKS.length; i++) {
     const must = qual.critical.concat(qual.important)
     if (must.length === 0) break
     log('  quality issues on ' + task.id + ': ' + must.length)
-    const fix = await agent(fixerPrompt(task, must, 'Code-quality', impl), { label: 'fix-quality:' + task.id + '#' + (round + 1), phase: 'Implement', schema: IMPL })
+    const fix = await agent(fixerPrompt(task, must, 'Code-quality', impl), implOpts(task, 'fix-quality:' + task.id + '#' + (round + 1)))
     if (!fix || fix.status === 'BLOCKED') { results.push({ task: task.id, status: 'BLOCKED_IN_QUALITY_FIX', detail: fix }); return { stoppedAt: i, reason: 'quality fix blocked', results } }
     impl = { ...impl, summary: impl.summary + '\n\nQuality fix round ' + (round + 1) + ': ' + fix.summary, files_changed: Array.from(new Set(impl.files_changed.concat(fix.files_changed))), head_sha: fix.head_sha, tests_run: fix.tests_run, concerns: impl.concerns.concat(fix.concerns) }
   }

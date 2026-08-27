@@ -54,6 +54,40 @@ def _find_config_registry():
     return None
 
 
+def run_conversation_boot_hooks() -> dict:
+    """Plan A boot hooks for the one continuous conversation (spec §8, §12).
+
+    1. Migrate the two legacy JSON conversation stores into the SQLite
+       thread store as closed threads (idempotent, counts successful saves).
+    2. Mark every message row still ``in_progress`` from a previous process
+       as ``interrupted`` so the timeline can render "(Halbert restarted here)".
+
+    Runs synchronously at startup, before the background starters. Never
+    raises: a failure here must not stop the dashboard from serving.
+    """
+    result = {"agent_json": 0, "legacy_json": 0, "interrupted": 0}
+    try:
+        from ..agents.threads import get_thread_manager
+        from ..agents.migrations import migrate_legacy_conversations
+
+        tm = get_thread_manager()
+        counts = migrate_legacy_conversations(tm.store)
+        result["agent_json"] = int(counts.get("agent_json", 0))
+        result["legacy_json"] = int(counts.get("legacy_json", 0))
+        try:
+            result["interrupted"] = int(tm.mark_interrupted())
+        except Exception as e:
+            logger.warning(f"Could not mark interrupted turns (non-fatal): {e}")
+        logger.info(
+            "Conversation boot hooks: migrated %d agent JSON + %d dashboard JSON "
+            "conversations, %d interrupted turn(s) marked",
+            result["agent_json"], result["legacy_json"], result["interrupted"],
+        )
+    except Exception as e:
+        logger.warning(f"Conversation boot hooks failed (non-fatal): {e}")
+    return result
+
+
 def get_recent_config_changes(within_hours: int = 24) -> list:
     """Recent config changes recorded by the running ConfigWatcher.
 
@@ -228,7 +262,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, conversations, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -240,7 +274,6 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(terminal.router, prefix="/api/terminal", tags=["terminal"])  # Phase 11
     app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])  # Phase 11
     app.include_router(rag.router, prefix="/api", tags=["rag"])  # Phase 10
-    app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])  # Phase 12
     app.include_router(services.router, prefix="/api/services", tags=["services"])  # Service explanations
     app.include_router(web_search.router, prefix="/api", tags=["web-search"])  # Web grounding
     app.include_router(gpu.router, prefix="/api", tags=["gpu"])  # Phase 14: GPU
@@ -331,6 +364,12 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             logger.info("Indexing state reset on startup")
         except Exception as e:
             logger.warning(f"Failed to reset indexing state: {e}")
+
+        # Plan A: one-time JSON -> SQLite conversation migration, then mark any
+        # turn that was in flight when the last process died as interrupted.
+        # Synchronous on purpose: the first /api/agent/message must see the
+        # migrated threads and no phantom in_progress rows.
+        run_conversation_boot_hooks()
         
         # Bootstrap system identity (if not already done)
         try:

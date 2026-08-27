@@ -201,7 +201,39 @@ class StateContext:
     #                   still resolves the concrete model from models.yml.
     model_override: Optional[str] = None
     tier_override: Optional[str] = None
-    
+
+    # Plan A: hidden threads (spec §4, §7). session_id stays per turn;
+    # thread_id is the hidden working buffer this turn's rows belong to.
+    thread_id: Optional[str] = None
+    continuity_hint: str = ""
+    thread_switched: bool = False
+    thread_manager: Optional[Any] = None
+    recalled_threads: List[Dict[str, Any]] = field(default_factory=list)
+    # How many times an inline thread meta-tool has re-entered PLANNING this
+    # turn (A9b). Inline meta-tools deliberately do not raise loop_count, so
+    # max_loops cannot end a PLANNING→PLANNING chain; this counter does.
+    meta_tool_reentries: int = 0
+    # Terminal sessions this turn's tools spawned (spawn payloads seen on the
+    # terminal bridge); persisted on the assistant row at end_turn.
+    terminal_session_ids: List[str] = field(default_factory=list)
+    # The ThreadManager.TurnContext for this turn (None when no manager is
+    # wired); end_turn needs it back.
+    turn_context: Optional[Any] = None
+
+    # Merge-only: the seam between routes/agent.py, _begin_turn and
+    # _build_messages. Both are read off the context so the state machine
+    # never has to import route or conversation-store code to work them out.
+    #   history_budget:       conversation-bucket tokens for this turn,
+    #                         resolved by routes/agent.py::_history_budget
+    #                         from the answering model and passed through
+    #                         process()/confirm_action().
+    #   thread_receipt_block: the fitted "## Earlier in this subject" block,
+    #                         rendered once in _begin_turn from the receipt
+    #                         row ThreadManager prefixed to the thread rows,
+    #                         and folded into messages[0].
+    history_budget: int = 0
+    thread_receipt_block: str = ""
+
     def add_observation(self, observation: str):
         """Add an observation from tool execution."""
         self.observations.append(observation)

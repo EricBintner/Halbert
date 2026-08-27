@@ -19,8 +19,13 @@ export function TurnModelNotice({ turn }: { turn: TurnModelInfo }) {
 
   if (turn.fallbackFrom) {
     return (
+      // No `role="status"` here, deliberately. This element mounts twice over
+      // one turn (AgentChat renders the live slot, then the settled one), so a
+      // live region of its own would say the same sentence twice — and it
+      // would be a second polite region beside the shell's, which
+      // lib/announce.ts forbids. The sentence is spoken once, from
+      // useAgentStream, where the fact arrives once.
       <div
-        role="status"
         className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs"
       >
         <span aria-hidden="true">⚠️</span>

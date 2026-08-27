@@ -75,12 +75,16 @@ module.exports = {
         status: {
           nominal: "var(--color-status-nominal)",
           "nominal-bg": "var(--color-status-nominal-bg)",
+          "nominal-line": "var(--color-status-nominal-line)",
           warning: "var(--color-status-warning)",
           "warning-bg": "var(--color-status-warning-bg)",
+          "warning-line": "var(--color-status-warning-line)",
           critical: "var(--color-status-critical)",
           "critical-bg": "var(--color-status-critical-bg)",
+          "critical-line": "var(--color-status-critical-line)",
           telemetry: "var(--color-status-telemetry)",
           "telemetry-bg": "var(--color-status-telemetry-bg)",
+          "telemetry-line": "var(--color-status-telemetry-line)",
         },
         hairline: {
           DEFAULT: "var(--color-line)",

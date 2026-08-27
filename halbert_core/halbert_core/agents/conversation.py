@@ -1,18 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
-Conversation Persistence
+Conversation records
 
-Stores and retrieves conversation history for agent sessions.
+``Message`` and ``Conversation`` are the in-memory records used by the
+SQLite thread store (``conversation_sqlite.py``) and by the state machine's
+conversation history. The JSON-backed ``ConversationStore`` / ``SessionStore``
+that used to live here were deleted in Plan A (spec §8): the SQLite store is
+the store of record and ``agents/threads.py`` is the only writer.
 """
 
 from __future__ import annotations
-import json
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
-from pathlib import Path
 
 logger = logging.getLogger('halbert.agents.conversation')
 
@@ -76,10 +78,24 @@ class Conversation:
         """
         Get recent messages that fit within token budget.
         Uses summarization for older messages if needed.
-        
+
         Strategy:
         - Keep recent messages fully
         - Summarize older messages if total exceeds budget
+
+        NOTHING CALLS THIS. Its last caller was
+        ``context/assembler.py::build_conversation_window``, from the
+        compaction branch main added in fd9d7fd; the merged branch rewrote
+        that function to hard-trim instead, because the thread receipt is a
+        better summary than one built from whatever happens to be overflowing
+        (see ``build_conversation_window``'s own docstring). Do not wire it
+        back in without deciding which of the two summaries a turn should get
+        — sending both spends the conversation bucket twice on one meaning.
+
+        It is kept rather than deleted because the same merge carried a real
+        main-side bugfix into it (the ``[:-0]`` case below) that would go with
+        it. ``tests/test_conversation_context_window.py`` is the only thing
+        exercising either; if this method goes, that file goes with it.
         """
         # Estimate ~4 chars per token
         char_budget = max_tokens * 4
@@ -206,343 +222,3 @@ class Conversation:
             summary = summary[:500] + "..."
         
         return summary
-
-
-class ConversationStore:
-    """
-    Persists conversations to disk.
-    
-    Simple JSON-based storage for development.
-    Can be replaced with database backend for production.
-    """
-    
-    def __init__(self, storage_path: str = None):
-        """
-        Initialize conversation store.
-        
-        Args:
-            storage_path: Directory to store conversations
-        """
-        if storage_path:
-            self.storage_path = Path(storage_path)
-        else:
-            # Default to ~/.halbert/conversations
-            self.storage_path = Path.home() / ".halbert" / "conversations"
-        
-        self.storage_path.mkdir(parents=True, exist_ok=True)
-        
-        # In-memory cache
-        self._cache: Dict[str, Conversation] = {}
-    
-    def get(self, conversation_id: str) -> Optional[Conversation]:
-        """Get a conversation by ID."""
-        # Check cache first
-        if conversation_id in self._cache:
-            return self._cache[conversation_id]
-        
-        # Try to load from disk
-        file_path = self.storage_path / f"{conversation_id}.json"
-        if file_path.exists():
-            try:
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
-                conv = Conversation.from_dict(data)
-                self._cache[conversation_id] = conv
-                return conv
-            except Exception as e:
-                logger.error(f"Error loading conversation {conversation_id}: {e}")
-        
-        return None
-    
-    def create(self, conversation_id: str, user_id: str = None) -> Conversation:
-        """Create a new conversation."""
-        conv = Conversation(
-            conversation_id=conversation_id,
-            user_id=user_id
-        )
-        self._cache[conversation_id] = conv
-        self._save(conv)
-        return conv
-    
-    def get_or_create(self, conversation_id: str, user_id: str = None) -> Conversation:
-        """Get existing or create new conversation."""
-        conv = self.get(conversation_id)
-        if conv is None:
-            conv = self.create(conversation_id, user_id)
-        return conv
-    
-    def save(self, conversation: Conversation):
-        """Save a conversation."""
-        self._cache[conversation.conversation_id] = conversation
-        self._save(conversation)
-    
-    def _save(self, conversation: Conversation):
-        """Save conversation to disk."""
-        file_path = self.storage_path / f"{conversation.conversation_id}.json"
-        try:
-            with open(file_path, 'w') as f:
-                json.dump(conversation.to_dict(), f, indent=2)
-        except Exception as e:
-            logger.error(f"Error saving conversation: {e}")
-    
-    def delete(self, conversation_id: str) -> bool:
-        """Delete a conversation."""
-        if conversation_id in self._cache:
-            del self._cache[conversation_id]
-        
-        file_path = self.storage_path / f"{conversation_id}.json"
-        if file_path.exists():
-            try:
-                file_path.unlink()
-                return True
-            except Exception as e:
-                logger.error(f"Error deleting conversation: {e}")
-        
-        return False
-    
-    def list_conversations(
-        self,
-        user_id: str = None,
-        limit: int = 50,
-        offset: int = 0
-    ) -> List[Dict]:
-        """List conversations, optionally filtered by user."""
-        conversations = []
-        
-        for file_path in self.storage_path.glob("*.json"):
-            try:
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
-                
-                if user_id and data.get("user_id") != user_id:
-                    continue
-                
-                conversations.append({
-                    "conversation_id": data.get("conversation_id"),
-                    "title": data.get("title"),
-                    "user_id": data.get("user_id"),
-                    "message_count": len(data.get("messages", [])),
-                    "created_at": data.get("created_at"),
-                    "updated_at": data.get("updated_at"),
-                })
-            except Exception as e:
-                logger.warning(f"Error reading {file_path}: {e}")
-        
-        # Sort by updated_at descending
-        conversations.sort(key=lambda x: x.get("updated_at", 0), reverse=True)
-        
-        return conversations[offset:offset + limit]
-    
-    def search(self, query: str, user_id: str = None, limit: int = 20) -> List[Dict]:
-        """Search conversations by content."""
-        results = []
-        query_lower = query.lower()
-        
-        for file_path in self.storage_path.glob("*.json"):
-            try:
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
-                
-                if user_id and data.get("user_id") != user_id:
-                    continue
-                
-                # Search in title and messages
-                if data.get("title") and query_lower in data["title"].lower():
-                    results.append(data.get("conversation_id"))
-                    continue
-                
-                for msg in data.get("messages", []):
-                    if query_lower in msg.get("content", "").lower():
-                        results.append(data.get("conversation_id"))
-                        break
-                        
-            except Exception:
-                pass
-        
-        return results[:limit]
-
-
-@dataclass
-class Session:
-    """
-    A work session spanning multiple conversations.
-    
-    Used for long-running tasks that may span multiple sessions.
-    """
-    session_id: str
-    user_id: Optional[str] = None
-    title: Optional[str] = None
-    started_at: float = field(default_factory=time.time)
-    last_active: float = field(default_factory=time.time)
-    summary: Optional[str] = None
-    pending_tasks: List[str] = field(default_factory=list)
-    context_files: List[str] = field(default_factory=list)
-    conversation_ids: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def add_conversation(self, conversation_id: str):
-        """Add a conversation to this session."""
-        if conversation_id not in self.conversation_ids:
-            self.conversation_ids.append(conversation_id)
-        self.last_active = time.time()
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "session_id": self.session_id,
-            "user_id": self.user_id,
-            "title": self.title,
-            "started_at": self.started_at,
-            "last_active": self.last_active,
-            "summary": self.summary,
-            "pending_tasks": self.pending_tasks,
-            "context_files": self.context_files,
-            "conversation_ids": self.conversation_ids,
-            "metadata": self.metadata
-        }
-    
-    @classmethod
-    def from_dict(cls, data: Dict) -> 'Session':
-        return cls(
-            session_id=data.get("session_id", ""),
-            user_id=data.get("user_id"),
-            title=data.get("title"),
-            started_at=data.get("started_at", time.time()),
-            last_active=data.get("last_active", time.time()),
-            summary=data.get("summary"),
-            pending_tasks=data.get("pending_tasks", []),
-            context_files=data.get("context_files", []),
-            conversation_ids=data.get("conversation_ids", []),
-            metadata=data.get("metadata", {})
-        )
-
-
-class SessionStore:
-    """
-    Persists sessions to disk.
-    
-    Sessions are stored in ~/.halbert/sessions/
-    """
-    
-    def __init__(self, storage_path: str = None):
-        if storage_path:
-            self.storage_path = Path(storage_path)
-        else:
-            self.storage_path = Path.home() / ".halbert" / "sessions"
-        
-        self.storage_path.mkdir(parents=True, exist_ok=True)
-        self._cache: Dict[str, Session] = {}
-    
-    def get(self, session_id: str) -> Optional[Session]:
-        """Get a session by ID."""
-        if session_id in self._cache:
-            return self._cache[session_id]
-        
-        file_path = self.storage_path / f"{session_id}.json"
-        if file_path.exists():
-            try:
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
-                session = Session.from_dict(data)
-                self._cache[session_id] = session
-                return session
-            except Exception as e:
-                logger.error(f"Error loading session {session_id}: {e}")
-        
-        return None
-    
-    def create(self, session_id: str, user_id: str = None, title: str = None) -> Session:
-        """Create a new session."""
-        session = Session(
-            session_id=session_id,
-            user_id=user_id,
-            title=title
-        )
-        self._cache[session_id] = session
-        self._save(session)
-        return session
-    
-    def get_or_create(self, session_id: str, user_id: str = None, title: str = None) -> Session:
-        """Get existing or create new session."""
-        session = self.get(session_id)
-        if session is None:
-            session = self.create(session_id, user_id, title)
-        return session
-    
-    def save(self, session: Session):
-        """Save a session."""
-        self._cache[session.session_id] = session
-        self._save(session)
-    
-    def _save(self, session: Session):
-        """Save session to disk."""
-        file_path = self.storage_path / f"{session.session_id}.json"
-        try:
-            with open(file_path, 'w') as f:
-                json.dump(session.to_dict(), f, indent=2)
-        except Exception as e:
-            logger.error(f"Error saving session: {e}")
-    
-    def delete(self, session_id: str) -> bool:
-        """Delete a session."""
-        if session_id in self._cache:
-            del self._cache[session_id]
-        
-        file_path = self.storage_path / f"{session.session_id}.json"
-        if file_path.exists():
-            try:
-                file_path.unlink()
-                return True
-            except Exception as e:
-                logger.error(f"Error deleting session: {e}")
-        
-        return False
-    
-    def list_sessions(self, user_id: str = None, limit: int = 50) -> List[Dict]:
-        """List sessions, optionally filtered by user."""
-        sessions = []
-        
-        for file_path in self.storage_path.glob("*.json"):
-            try:
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
-                
-                if user_id and data.get("user_id") != user_id:
-                    continue
-                
-                sessions.append({
-                    "session_id": data.get("session_id"),
-                    "title": data.get("title"),
-                    "user_id": data.get("user_id"),
-                    "started_at": data.get("started_at"),
-                    "last_active": data.get("last_active"),
-                    "conversation_count": len(data.get("conversation_ids", [])),
-                    "pending_tasks": len(data.get("pending_tasks", []))
-                })
-            except Exception as e:
-                logger.warning(f"Error reading {file_path}: {e}")
-        
-        # Sort by last_active descending
-        sessions.sort(key=lambda x: x.get("last_active", 0), reverse=True)
-        
-        return sessions[:limit]
-
-
-# Global instances
-_session_store: Optional[SessionStore] = None
-_conversation_store: Optional[ConversationStore] = None
-
-
-def get_session_store() -> SessionStore:
-    """Get global session store."""
-    global _session_store
-    if _session_store is None:
-        _session_store = SessionStore()
-    return _session_store
-
-
-def get_conversation_store() -> ConversationStore:
-    """Get global conversation store."""
-    global _conversation_store
-    if _conversation_store is None:
-        _conversation_store = ConversationStore()
-    return _conversation_store

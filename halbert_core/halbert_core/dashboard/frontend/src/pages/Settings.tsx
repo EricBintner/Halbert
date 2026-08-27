@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -355,7 +356,46 @@ function BeingSettings() {
   )
 }
 
+/**
+ * The tabs this page has, in the order they are shown. Also the whitelist for
+ * `?tab=`: Radix renders no panel for a value with no trigger, so an
+ * unrecognised one would leave the page showing its tab strip and nothing
+ * else. An unknown tab is not an error worth a message — it is a stale or
+ * mistyped link — so it opens the first tab, which is what a bare /settings
+ * does too.
+ */
+const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'about'] as const
+const DEFAULT_SETTINGS_TAB = SETTINGS_TABS[0]
+
+/** The tab a URL asks for, or the default when it asks for nothing usable. */
+export function settingsTabFromParam(raw: string | null): string {
+  return (SETTINGS_TABS as readonly string[]).includes(raw ?? '')
+    ? (raw as string)
+    : DEFAULT_SETTINGS_TAB
+}
+
 export function Settings() {
+  /**
+   * The URL owns which tab is open, in both directions. Reading it is what
+   * makes the model picker's "All models and endpoints…" link (which points at
+   * `/settings?tab=ai`) land on the tab it names instead of on System; writing
+   * it back is what makes the tab someone is looking at something they can
+   * link, bookmark or reload onto.
+   *
+   * `replace` rather than a push: a back button that walks the user through
+   * every tab they glanced at, instead of back to where they came from, is a
+   * worse back button.
+   */
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab = settingsTabFromParam(searchParams.get('tab'))
+  const selectTab = useCallback((next: string) => {
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current)
+      params.set('tab', next)
+      return params
+    }, { replace: true })
+  }, [setSearchParams])
+
   // Scan context for coordinated system-wide scanning
   const { triggerDeepScan, isDeepScanning } = useScan()
   
@@ -1028,7 +1068,7 @@ export function Settings() {
         hideScanButton
       />
 
-      <Tabs defaultValue="system" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={selectTab} className="space-y-4">
         <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="system" className="flex items-center gap-2">
             <Cpu className="h-4 w-4" />

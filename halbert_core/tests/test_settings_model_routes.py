@@ -87,3 +87,84 @@ def test_apply_recommended_when_nothing_fits_writes_nothing(models_config_dir):
         out = asyncio.run(routes.apply_recommended_config())
     assert out["success"] is False
     assert not (models_config_dir / "models.yml").exists()
+
+
+# ── First run: V-01, a fresh install is usable without visiting Settings ──
+
+
+def _first_run(entries, chooses="model-a"):
+    """(hardware, library) patchers: a stubbed budget and a stubbed engine library."""
+    return patch.multiple(
+        "halbert_core.model.hardware_detector",
+        HardwareDetector=MagicMock(return_value=_budget()),
+        pick_installed_model=MagicMock(return_value={"name": chooses} if chooses else None),
+    ), patch("halbert_core.utils.ollama.list_models_raw", return_value=entries)
+
+
+def test_first_run_picks_a_model_that_fits_the_hardware(models_config_dir):
+    hardware, library = _first_run([{"name": "model-a", "size": 1}])
+    with hardware, library, patch.object(routes, "_detect_hardware_tier", return_value=(3, None)):
+        assert routes.configure_first_run_model() == "model-a"
+    cfg = store.load()
+    assert cfg["chat_model"]["model"] == "model-a" and cfg["chat_model"]["enabled"] is True
+    ep = next(e for e in cfg["saved_endpoints"] if e["id"] == cfg["chat_model"]["endpoint_id"])
+    assert ep["url"] == OLLAMA and ep["provider"] == "ollama"
+    assert store.load_file()["compression"] == {"backend": "lingua", "enabled": True}
+
+
+def test_first_run_matches_what_the_quick_setup_button_would_apply(models_config_dir):
+    """The button and the first run must never disagree about what fits."""
+    hardware, library = _first_run([{"name": "model-a", "size": 1}])
+    with hardware, library, patch.object(routes, "_detect_hardware_tier", return_value=(1, None)):
+        routes.configure_first_run_model()
+        auto = store.load_file()
+    (models_config_dir / "models.yml").unlink()
+    with hardware, patch.object(routes, "_ollama_models", _fake_models([{"name": "model-a", "size": 1}])), \
+         patch.object(routes, "_detect_hardware_tier", return_value=(1, None)):
+        asyncio.run(routes.apply_recommended_config())
+    button = store.load_file()
+    assert auto["llm_config"]["chat_model"]["model"] == button["llm_config"]["chat_model"]["model"]
+    assert auto["compression"] == button["compression"]
+
+
+def test_first_run_never_overwrites_an_existing_choice(models_config_dir):
+    store.save({
+        "saved_endpoints": [{"id": "e1", "name": "Local", "provider": "ollama", "url": OLLAMA}],
+        "chat_model": {"enabled": True, "endpoint_id": "e1", "model": "mine"},
+    })
+    before = (models_config_dir / "models.yml").read_text()
+    hardware, library = _first_run([{"name": "model-a", "size": 1}])
+    with hardware, library, patch.object(routes, "_detect_hardware_tier", return_value=(3, None)):
+        assert routes.configure_first_run_model() is None
+    assert (models_config_dir / "models.yml").read_text() == before
+
+
+def test_first_run_leaves_a_deliberately_cleared_slot_alone(models_config_dir):
+    """Clearing the slot is a choice; the next boot must not undo it."""
+    store.save({
+        "saved_endpoints": [{"id": "e1", "name": "Local", "provider": "ollama", "url": OLLAMA}],
+        "chat_model": {"enabled": False, "endpoint_id": "", "model": ""},
+    })
+    assert store.ensure_local_ollama_endpoint() is False   # endpoints exist → not a fresh install
+
+
+def test_first_run_when_nothing_installed_fits_writes_nothing(models_config_dir):
+    hardware, library = _first_run([{"name": "model-a", "size": 1}], chooses=None)
+    with hardware, library, patch.object(routes, "_detect_hardware_tier", return_value=(1, None)):
+        assert routes.configure_first_run_model() is None
+    assert not (models_config_dir / "models.yml").exists()
+
+
+def test_first_run_when_the_engine_has_no_models_writes_nothing(models_config_dir):
+    hardware, library = _first_run([], chooses=None)
+    with hardware, library, patch.object(routes, "_detect_hardware_tier", return_value=(1, None)):
+        assert routes.configure_first_run_model() is None
+    assert not (models_config_dir / "models.yml").exists()
+
+
+def test_first_run_does_not_break_boot_when_detection_fails(models_config_dir):
+    with patch("halbert_core.model.hardware_detector.HardwareDetector", side_effect=OSError("no /proc")), \
+         patch("halbert_core.utils.ollama.list_models_raw", return_value=[{"name": "model-a"}]), \
+         patch.object(routes, "_detect_hardware_tier", return_value=(1, None)):
+        assert routes.configure_first_run_model() is None
+    assert not (models_config_dir / "models.yml").exists()

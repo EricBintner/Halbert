@@ -18,6 +18,17 @@ exceeds ``tool_result_truncate`` chars (default 200) to a short prefix +
 ``...[truncated N chars]``. Operates on block-typed conversation history (A1),
 tolerating both ToolResultBlock dataclasses and plain dicts.
 
+WHAT OF THIS STILL SHIPS, as of the Plan A merge. ``micro_compact`` and the
+``watermark`` attribute do: ``ContextAssembler.build_conversation_window``
+compares ``used < wm.watermark * max_tokens`` itself and hard-trims. The
+trigger policy does not. ``should_compact``'s only call site in the tree is
+``assembler.py``'s compaction branch, inside ``_format_conversation``, which
+no production caller reaches (see its docstring); ``detect_topic_change`` has
+no caller at all outside ``tests/test_context_watermark.py``. Both are kept —
+they are a coherent, tested policy and the window trimmer is a cruder thing
+than they are — but ``tests/test_context_watermark.py`` passing is not
+evidence that any shipping decision goes through them.
+
 See OPUS-HANDOFF §F4 and STRATEGY-V2-SCRUTINY.md §2 Hidden Dependency 5.
 """
 
@@ -58,7 +69,14 @@ class ContextWatermark:
         topic_changed: bool = False,
         now: Optional[float] = None,
     ) -> bool:
-        """True when the 80% watermark is reached and a gate allows compaction."""
+        """True when the 80% watermark is reached and a gate allows compaction.
+
+        NO PRODUCTION CALLER. The one call site in the tree is
+        ``ContextAssembler._format_conversation``'s compaction branch, and
+        nothing production reaches that function. Nothing in the shipping path
+        compacts on a trigger at all: ``build_conversation_window`` reads
+        ``self.watermark`` directly and trims to fit. See the module docstring.
+        """
         if max_tokens <= 0:
             return False
         if token_count < self.watermark * max_tokens:
@@ -124,6 +142,14 @@ class ContextWatermark:
 
         Returns True when there's no previous query, or the word overlap with
         the previous query falls below ``topic_overlap_threshold``.
+
+        NO CALLER outside ``tests/test_context_watermark.py``. It fed
+        ``should_compact``'s ``topic_changed`` gate, which is itself unreached
+        (above). Note that Plan A's topic segmentation is a different, much
+        richer mechanism — ``agents/thread_signals.py`` decides where one
+        subject ends — so this is not the thing that splits threads today, and
+        wiring it back in would be a second, disagreeing opinion about the same
+        question rather than a missing connection.
         """
         if not prev_query:
             return True

@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 #
-# Test script for new Halbert APIs
-# Run with: ./scripts/test_new_apis.sh
+# Manual smoke of the newer Halbert HTTP APIs against a running dashboard.
+# NOT a test suite: it curls a live server and prints, and no CI job runs it.
+# Run with: ./scripts/smoke_new_apis.sh
 #
 # Prerequisites: Dashboard running (make dev), jq installed
 #

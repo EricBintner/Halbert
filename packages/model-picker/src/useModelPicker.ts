@@ -55,6 +55,14 @@ export interface UseModelPickerResult {
   /** Models valid for a role, after its capability filters. */
   modelsForRole: (roleId: string) => DiscoveredModel[]
   assignmentFor: (roleId: string) => RoleAssignment | undefined
+  /**
+   * The assignment actually in force, which on a layered host can differ from
+   * the editable one. Falls back to {@link assignmentFor} when the host has no
+   * layers, so a caller never needs to know which kind of host it is on.
+   */
+  effectiveAssignmentFor: (roleId: string) => RoleAssignment | undefined
+  /** The layer overriding a role, when one has taken it. */
+  overrideLayerFor: (roleId: string) => string | undefined
   endpointFor: (endpointId: string) => SavedEndpoint | undefined
 
   /** Per-turn pin. Held in memory only — it must not outlive the session. */
@@ -268,6 +276,17 @@ export function useModelPicker(
     [config.assignments],
   )
 
+  const effectiveAssignmentFor = useCallback(
+    (roleId: string) =>
+      config.effectiveAssignments?.[roleId] ?? config.assignments[roleId],
+    [config.effectiveAssignments, config.assignments],
+  )
+
+  const overrideLayerFor = useCallback(
+    (roleId: string) => config.overriddenSlots?.[roleId],
+    [config.overriddenSlots],
+  )
+
   const endpointFor = useCallback(
     (endpointId: string) => config.endpoints.find((e) => e.id === endpointId),
     [config.endpoints],
@@ -445,6 +464,8 @@ export function useModelPicker(
     isChatCapable,
     modelsForRole,
     assignmentFor,
+    effectiveAssignmentFor,
+    overrideLayerFor,
     endpointFor,
     selection,
     setSelection,

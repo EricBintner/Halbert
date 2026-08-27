@@ -19,17 +19,10 @@ from .metrics import (
     AgentMetricsCollector, SessionMetrics,
     get_metrics_collector, reset_metrics,
 )
-from .conversation import (
-    Conversation, Message, ConversationStore,
-    get_conversation_store,
-)
+from .conversation import Conversation, Message
 from .error_recovery import (
     ErrorRecoveryManager, ErrorType, RecoveryStrategy,
     GracefulDegradation, get_recovery_manager,
-)
-from .handlers import (
-    PlanningHandler, SearchingHandler, ReadingHandler,
-    ExecutingHandler, ObservingHandler, RespondingHandler,
 )
 
 __all__ = [
@@ -44,13 +37,9 @@ __all__ = [
     # Metrics
     'AgentMetricsCollector', 'SessionMetrics',
     'get_metrics_collector', 'reset_metrics',
-    # Conversations
-    'Conversation', 'Message', 'ConversationStore',
-    'get_conversation_store',
+    # Conversation records (the SQLite thread store is the store of record)
+    'Conversation', 'Message',
     # Error Recovery
     'ErrorRecoveryManager', 'ErrorType', 'RecoveryStrategy',
     'GracefulDegradation', 'get_recovery_manager',
-    # State Handlers (modular pattern)
-    'PlanningHandler', 'SearchingHandler', 'ReadingHandler',
-    'ExecutingHandler', 'ObservingHandler', 'RespondingHandler',
 ]

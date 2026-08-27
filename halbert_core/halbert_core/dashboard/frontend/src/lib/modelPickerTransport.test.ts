@@ -336,4 +336,53 @@ describe('modelPickerTransport', () => {
       })
     })
   })
+
+  describe('layered configuration', () => {
+    it('maps the effective view alongside the editable one', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ data: {
+        llm_config: {
+          saved_endpoints: [{ id: 'ep1', name: 'Local', provider: 'ollama', url: 'http://h', api_key: '' }],
+          chat_model: { enabled: true, endpoint_id: 'ep1', model: 'model-global' },
+          specialist_model: { enabled: false, endpoint_id: '', model: '' },
+          vision_model: { enabled: false, endpoint_id: '', model: '' },
+        },
+        chat_capable_providers: ['ollama'],
+        effective: {
+          llm_config: {
+            saved_endpoints: [{ id: 'ep1', name: 'Local', provider: 'ollama', url: 'http://h', api_key: '' }],
+            chat_model: { enabled: true, endpoint_id: 'ep1', model: 'model-inforce' },
+            specialist_model: { enabled: false, endpoint_id: '', model: '' },
+            vision_model: { enabled: false, endpoint_id: '', model: '' },
+          },
+          overridden_slots: { chat_model: 'workspace' },
+        },
+      } }))
+
+      const config = await createModelPickerTransport().loadConfig()
+      // The editable layer is what a save rewrites; the effective layer is what
+      // actually answers. Collapsing them is how the drawer used to write a
+      // workspace endpoint into the user's own file.
+      expect(config.assignments.chat_model.model).toBe('model-global')
+      expect(config.effectiveAssignments?.chat_model.model).toBe('model-inforce')
+      expect(config.overriddenSlots).toEqual({ chat_model: 'workspace' })
+    })
+
+    it('leaves the effective view absent when the backend sends none', async () => {
+      // Every user today: no workspace file, no session pin, one layer.
+      fetchMock.mockResolvedValueOnce(jsonResponse({ data: {
+        llm_config: {
+          saved_endpoints: [],
+          chat_model: { enabled: true, endpoint_id: '', model: 'model-a' },
+          specialist_model: { enabled: false, endpoint_id: '', model: '' },
+          vision_model: { enabled: false, endpoint_id: '', model: '' },
+        },
+        chat_capable_providers: ['ollama'],
+      } }))
+
+      const config = await createModelPickerTransport().loadConfig()
+      expect(config.effectiveAssignments).toBeUndefined()
+      expect(config.overriddenSlots).toBeUndefined()
+    })
+  })
+
 })
