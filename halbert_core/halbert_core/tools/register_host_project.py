@@ -211,6 +211,33 @@ def _stage_config_files(paths: List[str], staging_root: Path) -> int:
     return count
 
 
+def stage_role_tree(
+    role: str,
+    staging_root: Path,
+    manifest_path: Optional[str] = None,
+) -> int:
+    """Stage one role's manifest-matched config under staging_root/<role>/.
+
+    Files go through the same redaction path as _stage_config_files — the
+    staging root is SourcePrep-visible, so nothing raw may land here.
+
+    Returns the number of files staged.
+    """
+    from ..config.manifest import Manifest
+    from ..config.roles import manifest_path_for, staging_subdir_for
+
+    man = Manifest.from_file(manifest_path or manifest_path_for(role))
+    paths = man.iter_paths()
+    if not paths:
+        logger.info("Role %s matched no files on this host", role)
+        return 0
+
+    role_root = Path(staging_root) / staging_subdir_for(role)
+    staged = _stage_config_files(paths, role_root)
+    logger.info("Staged %d files for role %s under %s", staged, role, role_root)
+    return staged
+
+
 class HostProjectRegistrar:
     """Register and configure the halbert-host SourcePrep project."""
 

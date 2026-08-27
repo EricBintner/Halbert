@@ -265,3 +265,75 @@ def test_dangling_symlink_in_a_walked_tree_stays_at_debug(tmp_path, caplog):
     assert any("broken.conf" in r.getMessage() for r in caplog.records), (
         "the skip should still be traceable at debug"
     )
+
+
+from halbert_core.tools.register_host_project import stage_role_tree
+
+
+def test_stage_role_tree_writes_under_role_subdir(tmp_path):
+    src = tmp_path / "etc"
+    src.mkdir()
+    (src / "fake.conf").write_text("[Unit]\nDescription=Fake\n")
+
+    man = tmp_path / "role.yml"
+    man.write_text(f"include:\n  - {src}/*.conf\nexclude: []\nparsers: {{}}\n")
+
+    staging = tmp_path / "sourceprep" / "host"
+    count = stage_role_tree("network_admin", staging, manifest_path=str(man))
+
+    assert count == 1
+    assert (staging / "network").exists()
+    staged = list((staging / "network").rglob("fake.conf"))
+    assert len(staged) == 1
+    assert "Description=Fake" in staged[0].read_text()
+
+
+def test_stage_role_tree_redacts(tmp_path):
+    src = tmp_path / "etc"
+    src.mkdir()
+    (src / "wifi.conf").write_text("[wifi-security]\npsk=topsecretvalue\n")
+
+    man = tmp_path / "role.yml"
+    man.write_text(f"include:\n  - {src}/*.conf\nexclude: []\nparsers: {{}}\n")
+
+    staging = tmp_path / "host"
+    stage_role_tree("network_admin", staging, manifest_path=str(man))
+
+    text = "".join(p.read_text() for p in (staging / "network").rglob("*.conf"))
+    assert "topsecretvalue" not in text
+
+
+def test_stage_role_tree_empty_manifest_stages_nothing(tmp_path):
+    man = tmp_path / "role.yml"
+    man.write_text("include:\n  - /nonexistent/**/*.conf\nexclude: []\nparsers: {}\n")
+
+    staging = tmp_path / "host"
+    count = stage_role_tree("storage_admin", staging, manifest_path=str(man))
+
+    assert count == 0
+
+
+def test_stage_role_tree_honours_manifest_excludes(tmp_path):
+    """Bare-credential files are excluded, not redacted — the exclude must hold."""
+    src = tmp_path / "etc"
+    src.mkdir()
+    (src / "keep.conf").write_text("[Unit]\nDescription=keep\n")
+    (src / "drop.conf").write_text("rawsecretmaterial\n")
+
+    man = tmp_path / "role.yml"
+    man.write_text(
+        f"include:\n  - {src}/*.conf\nexclude:\n  - {src}/drop.conf\nparsers: {{}}\n"
+    )
+
+    staging = tmp_path / "host"
+    stage_role_tree("network_admin", staging, manifest_path=str(man))
+
+    # Every staged file, not just *.conf: an excluded file that slipped
+    # through under any name must be caught. `is_file()` is required because
+    # the staged tree mirrors the source's absolute path, so rglob("*") also
+    # yields the intermediate directories, and read_text() raises on those.
+    all_text = "".join(
+        p.read_text() for p in (staging / "network").rglob("*") if p.is_file()
+    )
+    assert "rawsecretmaterial" not in all_text
+    assert "Description=keep" in all_text
