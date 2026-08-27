@@ -390,7 +390,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
           timestamp: Date.now(),
         };
         setUserMessages(prev => [...prev, userMsg]);
-        sendMessage(nextMessage, undefined, picker.selection);
+        sendMessage(nextMessage, currentConversationId ?? undefined, picker.selection);
         setInput('');
       }, 100);
     }
@@ -669,7 +669,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     setExpandedProvenanceModules([]);
 
     // TODO: Pass images to agent backend when vision support is added
-    sendMessage(input.trim(), undefined, picker.selection);
+    sendMessage(input.trim(), currentConversationId ?? undefined, picker.selection);
     setInput('');
   };
 

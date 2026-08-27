@@ -86,3 +86,51 @@ describe('sendMessage model selection', () => {
     expect(body.message).toBe('hello')
   })
 })
+
+
+describe('conversation continuity', () => {
+  async function sendTwice() {
+    const { result } = renderHook(() => useAgentStream())
+    await act(async () => { result.current.sendMessage('first') })
+    await act(async () => { result.current.sendMessage('second') })
+    const bodies = fetchMock.mock.calls
+      .filter(([url]) => String(url).includes('/api/agent/message'))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)))
+    return { result, bodies }
+  }
+
+  it('keeps one session id across consecutive sends', async () => {
+    // Every send used to mint a fresh id, so the backend keyed each turn on a
+    // different conversation and loaded an empty history — the agent could not
+    // remember the previous message however well the backend was wired.
+    const { bodies } = await sendTwice()
+    expect(bodies).toHaveLength(2)
+    expect(bodies[0].session_id).toBe(bodies[1].session_id)
+  })
+
+  it('sends conversation_id alongside session_id so the two cannot drift', async () => {
+    const { bodies } = await sendTwice()
+    expect(bodies[0].conversation_id).toBe(bodies[0].session_id)
+  })
+
+  it('starts a new conversation after reset', async () => {
+    const { result, bodies } = await sendTwice()
+    await act(async () => { result.current.reset() })
+    await act(async () => { result.current.sendMessage('third') })
+    const all = fetchMock.mock.calls
+      .filter(([url]) => String(url).includes('/api/agent/message'))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)))
+    expect(all[2].session_id).not.toBe(bodies[0].session_id)
+  })
+
+  it('continues an explicitly named conversation', async () => {
+    const { result } = renderHook(() => useAgentStream())
+    await act(async () => { result.current.sendMessage('first', 'conv-42') })
+    await act(async () => { result.current.sendMessage('second') })
+    const bodies = fetchMock.mock.calls
+      .filter(([url]) => String(url).includes('/api/agent/message'))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)))
+    expect(bodies[0].session_id).toBe('conv-42')
+    expect(bodies[1].session_id).toBe('conv-42')
+  })
+})

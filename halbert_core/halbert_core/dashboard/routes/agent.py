@@ -10,6 +10,7 @@ Based on research5.md Part 7.
 from __future__ import annotations
 import logging
 import asyncio
+import uuid
 from typing import Any, Callable, Dict, List, NamedTuple, Optional
 
 try:
@@ -254,6 +255,16 @@ def _make_llm_caller():
 _NO_MODEL_MSG = "No model configured — choose one in Settings → AI Models (models.yml)"
 
 
+def _attach_images(messages: List[Dict[str, Any]], images: Optional[List[str]]) -> None:
+    """Hang this turn's images on the last user message, in place."""
+    if not images:
+        return
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            msg["images"] = images
+            return
+
+
 class TurnModel(NamedTuple):
     """The concrete model chosen for one turn, plus why."""
     model: str
@@ -440,7 +451,13 @@ class LLMClientAdapter:
 
         # Get the prompt from messages
         prompt = messages[-1].get("content", "") if messages else ""
-        system = messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
+        # Every system message, not only messages[0]: the loop below drops any
+        # it does not hoist, so reading one position silently deleted the rest
+        # the moment the callers started sending a real multi-turn array.
+        system = "\n\n".join(
+            m.get("content", "") for m in (messages or [])
+            if m.get("role") == "system" and m.get("content")
+        )
 
         turn = _resolve_turn_model(
             prompt, intake_result, images, model_override, tier_override,
@@ -456,16 +473,16 @@ class LLMClientAdapter:
         requested = turn.model
 
         if turn.tier == "vision":
-            # Add images to the last user message
             llm_messages = []
             if system:
                 llm_messages.append({"role": "system", "content": system})
             for msg in messages:
                 if msg.get("role") != "system":
-                    m = dict(msg)
-                    if msg.get("role") == "user" and images:
-                        m["images"] = images
-                    llm_messages.append(m)
+                    llm_messages.append(dict(msg))
+            # This turn's images belong on this turn's question. Attaching them
+            # to every user message re-sends them once per remembered turn;
+            # attaching them to the first hangs them on an old one.
+            _attach_images(llm_messages, images)
             try:
                 result = call_llm_chat(
                     endpoint=turn.endpoint,
@@ -600,11 +617,7 @@ class LLMClientAdapter:
         _report_model(on_model_selected, turn)
 
         if turn.tier == "vision" and images:
-            # Add images to the last user message
-            for msg in messages:
-                if msg.get("role") == "user":
-                    msg["images"] = images
-                    break
+            _attach_images(messages, images)
 
         # State for filtering <think> blocks
         in_think_block = False
@@ -855,6 +868,121 @@ class MockLLMClient:
 
 
 # -----------------------------------------------------------------------------
+# Conversation memory (E-3)
+# -----------------------------------------------------------------------------
+
+# Which conversation each live session is writing to, so a turn that pauses for
+# a confirmation and finishes through /confirm still lands in the same history.
+_session_conversations: Dict[str, str] = {}
+
+
+def _answering_model(
+    prompt: str,
+    model_override: Optional[str] = None,
+    tier_override: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
+    images: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Name of the model that will answer this turn, resolved for budgeting.
+
+    The picker's pin is not the answer: the frontend omits ``model`` unless the
+    user pinned one, so budgeting off the pin sized every ordinary turn's
+    history for the empty string — a constant, whatever model models.yml
+    actually names. This runs the same resolution the answering path runs, so
+    a small local guide gets a small window and a large one gets its own.
+
+    One approximation remains, and it is the cheap half of the trade: intake
+    has not run yet (it runs inside ``agent.process``, after the history it
+    would size is already loaded), so automatic guide-vs-specialist routing
+    falls back to the complexity score rather than intake's verdict. The two
+    agree on ordinary turns and both sit in the same tier far more often than
+    the empty string did.
+
+    Returns ``None`` when nothing can be resolved (no model configured yet, a
+    malformed models.yml), which the caller reads as "use the default": a
+    mis-sized history is a bad turn, a 500 here is no turn at all.
+    """
+    try:
+        return _resolve_turn_model(
+            prompt,
+            images=images,
+            model_override=model_override,
+            tier_override=tier_override,
+            endpoint_id=endpoint_id,
+        ).model
+    except Exception as e:
+        logger.warning(f"Could not resolve the answering model for budgeting: {e}")
+        return None
+
+
+def _history_budget(model_name: Optional[str]) -> int:
+    """Tokens this turn may spend on remembered turns.
+
+    Taken from the model tier's own conversation line rather than a constant:
+    a small local model with a 32k window cannot afford the history a large one
+    can, and a single number would either starve one or overflow the other.
+    """
+    from ...context.assembler import DEFAULT_CONVERSATION_TOKENS
+    try:
+        from ...intake import get_context_budget
+        return get_context_budget(model_name or "").conversation
+    except Exception as e:
+        logger.warning(f"Context budget unavailable, using default: {e}")
+        return DEFAULT_CONVERSATION_TOKENS
+
+
+def _load_history(conversation_id: str, query: str, budget: int) -> List[Dict[str, str]]:
+    """Budget-trimmed prior turns, or none. Never fails a turn."""
+    try:
+        from ...agents.conversation import get_conversation_store
+        from ...context.assembler import build_conversation_window
+
+        conversation = get_conversation_store().get(conversation_id)
+        if conversation is None:
+            return []
+        window = build_conversation_window(
+            conversation, query=query, max_tokens=budget
+        )
+        logger.info(
+            f"Loaded {len(window)} remembered messages for "
+            f"conversation {conversation_id} (budget {budget} tokens)"
+        )
+        return window
+    except Exception as e:
+        # A turn answered without memory is worse than one with it, and far
+        # better than one that 500s because a stored conversation is unreadable.
+        logger.warning(f"Could not load conversation history (non-fatal): {e}")
+        return []
+
+
+def _persist_turn(
+    conversation_id: str,
+    user_message: Optional[str],
+    assistant_text: str,
+) -> None:
+    """Append a finished turn to the store.
+
+    Called from a ``finally``: a turn that errored or was cancelled half-way
+    still has to be written, or the next turn reads a history with a hole in it
+    and answers as if the user never asked.
+    """
+    if not user_message and not assistant_text.strip():
+        return
+    try:
+        from ...agents.conversation import get_conversation_store
+
+        store = get_conversation_store()
+        conversation = store.get_or_create(conversation_id)
+        if user_message:
+            conversation.add_message("user", user_message)
+        if assistant_text.strip():
+            conversation.add_message("assistant", assistant_text)
+        store.save(conversation)
+    except Exception as e:
+        logger.error(f"Could not persist turn to conversation store: {e}")
+
+
+# -----------------------------------------------------------------------------
 # API Endpoints
 # -----------------------------------------------------------------------------
 
@@ -872,22 +1000,14 @@ if FASTAPI_AVAILABLE:
         except Exception as e:
             raise HTTPException(500, f"Agent initialization failed: {e}")
         
-        session_id = request.session_id
-        
-        # Handle concurrent requests: if session exists and not IDLE, force reset
         from ...agents.states import AgentState
-        if session_id and session_id in agent.active_sessions:
-            if agent.current_state != AgentState.IDLE:
-                logger.warning(f"Session {session_id} still active (state={agent.current_state}), forcing reset")
-                # Mark as cancelled
-                agent.cancelled[session_id] = True
-                # Force state to IDLE
-                agent.current_state = AgentState.IDLE
-                # Brief wait for any in-flight processing
-                await asyncio.sleep(0.05)
-                # Clear cancellation flag for new request
-                agent.cancelled[session_id] = False
-        
+
+        # A turn needs a stable id to be remembered under, and the agent
+        # generates its own session id when the client sends none — which the
+        # route would never learn, so the turn could not be written back.
+        session_id = request.session_id or str(uuid.uuid4())
+        conversation_id = request.conversation_id or session_id
+
         # In-chat picker selection for this turn. "auto" means "no pin" — it is
         # the absence of an override, not a third mode.
         tier_override = request.tier if request.tier in ("guide", "specialist", "vision") else None
@@ -898,51 +1018,101 @@ if FASTAPI_AVAILABLE:
                 f"tier={tier_override!r} endpoint_id={request.endpoint_id!r}"
             )
 
-        # Set performance tweaks from request (from frontend Settings > AI > Performance Tweaks)
-        if hasattr(agent.llm, 'max_tokens'):
-            agent.llm.max_tokens = request.max_tokens or 8192
-            agent.llm.temperature = request.temperature or 0.7
-            logger.info(f"Set LLM tweaks: max_tokens={agent.llm.max_tokens}, temperature={agent.llm.temperature}")
-        
         async def event_stream():
-            """Generate SSE events from agent processing with heartbeat."""
+            """Generate SSE events from agent processing."""
             from ...agents.events import StreamEvent
-            import time
-            
-            last_event_time = time.time()
-            heartbeat_interval = 15  # Send heartbeat every 15 seconds
-            
-            try:
-                async for event in agent.process(
-                    query=request.message,
-                    session_id=session_id,
-                    images=request.images,
-                    model_override=model_override,
-                    tier_override=tier_override,
-                ):
-                    # Check if cancelled mid-stream
-                    if session_id and agent.cancelled.get(session_id):
-                        yield StreamEvent.cancelled(session_id).to_sse()
-                        return
-                    
-                    # Yield the event
-                    yield event.to_sse()
-                    last_event_time = time.time()
-                    
-                    # Check if we need to send heartbeats during long gaps
-                    # (This is mainly for between-state gaps, not during streaming)
-                    
-            except Exception as e:
-                logger.error(f"Agent processing error: {e}")
-                yield StreamEvent.error(
-                    session_id or "unknown",
-                    str(e),
-                    recoverable=False
-                ).to_sse()
-            finally:
-                # Ensure we signal completion
-                logger.info(f"Event stream completed for session {session_id}")
-        
+
+            # Everything below reads or writes state shared by every request —
+            # the agent's context, the adapter's tweaks, one conversation file —
+            # so a second turn queues here instead of interleaving with this one.
+            # It is held for the whole stream on purpose, not by oversight: see
+            # AgentStateMachine.turn_lock for why nothing narrower is safe until
+            # the turn's state stops living on the shared agent. /cancel is
+            # deliberately outside it, or stop could never reach a running turn.
+            async with agent.turn_lock:
+                _session_conversations[session_id] = conversation_id
+
+                # Holding the lock means no other turn is in flight, so a
+                # session left mid-state is the wreckage of a paused or crashed
+                # one and is safe to reset — which is what the old force-write
+                # of current_state was reaching for without the lock to make it
+                # true.
+                if (session_id in agent.active_sessions
+                        and agent.current_state != AgentState.IDLE):
+                    logger.warning(
+                        f"Session {session_id} left in {agent.current_state}; "
+                        "resetting before this turn"
+                    )
+                    agent.current_state = AgentState.IDLE
+                agent.cancelled[session_id] = False
+
+                # Per-request tweaks live on the shared adapter instance, so
+                # they are only safe to set once this turn owns it.
+                if hasattr(agent.llm, 'max_tokens'):
+                    agent.llm.max_tokens = request.max_tokens or 8192
+                    agent.llm.temperature = request.temperature or 0.7
+                    logger.info(
+                        f"Set LLM tweaks: max_tokens={agent.llm.max_tokens}, "
+                        f"temperature={agent.llm.temperature}"
+                    )
+
+                history = _load_history(
+                    conversation_id,
+                    request.message,
+                    _history_budget(_answering_model(
+                        request.message,
+                        model_override=model_override,
+                        tier_override=tier_override,
+                        endpoint_id=request.endpoint_id,
+                        images=request.images,
+                    )),
+                )
+                answer: List[str] = []
+                final: Optional[str] = None
+
+                try:
+                    async for event in agent.process(
+                        query=request.message,
+                        session_id=session_id,
+                        conversation_history=history,
+                        images=request.images,
+                        model_override=model_override,
+                        tier_override=tier_override,
+                    ):
+                        if event.type == "response_chunk":
+                            answer.append(event.data.get("content", ""))
+                        elif event.type == "response_complete":
+                            final = event.data.get("content")
+
+                        # Raised by cancel_session() from the concurrent
+                        # /cancel request; this is the only thread that can
+                        # stop the generator.
+                        if agent.cancelled.get(session_id):
+                            yield StreamEvent.cancelled(session_id).to_sse()
+                            return
+
+                        yield event.to_sse()
+
+                except Exception as e:
+                    logger.error(f"Agent processing error: {e}")
+                    yield StreamEvent.error(
+                        session_id,
+                        str(e),
+                        recoverable=False
+                    ).to_sse()
+                finally:
+                    _persist_turn(
+                        conversation_id,
+                        request.message,
+                        final if final is not None else "".join(answer),
+                    )
+                    if session_id not in agent.active_sessions:
+                        _session_conversations.pop(session_id, None)
+                        # Nothing else prunes this dict, so a long-lived
+                        # process would keep one entry per session ever seen.
+                        agent.cancelled.pop(session_id, None)
+                    logger.info(f"Event stream completed for session {session_id}")
+
         return StreamingResponse(
             event_stream(),
             media_type="text/event-stream",
@@ -974,17 +1144,38 @@ if FASTAPI_AVAILABLE:
             raise HTTPException(404, "Session not found")
         
         async def event_stream():
-            try:
-                async for event in agent.confirm_action(
-                    session_id,
-                    request.action_id,
-                    request.confirmed
-                ):
-                    yield event.to_sse()
-            except Exception as e:
-                logger.error(f"Confirmation error: {e}")
-                from ...agents.events import StreamEvent
-                yield StreamEvent.error(session_id, str(e)).to_sse()
+            # Same lock as /message: this resumes a turn and writes the same
+            # per-agent context a new turn would.
+            async with agent.turn_lock:
+                conversation_id = _session_conversations.get(session_id, session_id)
+                answer: List[str] = []
+                final: Optional[str] = None
+                try:
+                    async for event in agent.confirm_action(
+                        session_id,
+                        request.action_id,
+                        request.confirmed
+                    ):
+                        if event.type == "response_chunk":
+                            answer.append(event.data.get("content", ""))
+                        elif event.type == "response_complete":
+                            final = event.data.get("content")
+                        yield event.to_sse()
+                except Exception as e:
+                    logger.error(f"Confirmation error: {e}")
+                    from ...agents.events import StreamEvent
+                    yield StreamEvent.error(session_id, str(e)).to_sse()
+                finally:
+                    # Only the reply: the question was already written when the
+                    # turn paused, and writing it twice would have the agent
+                    # remember the user asking once and itself answering twice.
+                    _persist_turn(
+                        conversation_id,
+                        None,
+                        final if final is not None else "".join(answer),
+                    )
+                    if session_id not in agent.active_sessions:
+                        _session_conversations.pop(session_id, None)
         
         return StreamingResponse(
             event_stream(),

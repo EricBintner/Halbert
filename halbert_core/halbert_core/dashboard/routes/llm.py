@@ -5,8 +5,9 @@ Halbert LLM Router — model picker backend.
 
 Endpoints:
   Config:
-    - GET  /llm/config             — Halbert's llm_config + chat-capable provider list
-    - PUT  /llm/config             — merge-update (whole slots)
+    - GET  /llm/config             — the global layer (what an edit writes to)
+    - PUT  /llm/config             — merge-update the global layer (whole slots)
+    - GET  /llm/config/effective   — read-only merged view + which layer won each slot
 
   LLM Proxy (model listing & testing, all providers):
     - POST /api/llm/proxy/models       — list models from an endpoint
@@ -132,36 +133,81 @@ def is_safe_url(url: str, provider: str) -> bool:
 # ── Config (single owner: halbert_core.model.llm_config) ─────────
 
 from ...model import llm_config as llm_store
+from ...model.config_layers import GLOBAL_LAYER
 
 
 class LLMConfigUpdate(BaseModel):
     llm_config: Dict[str, Any]
 
 
-def _config_payload() -> Dict[str, Any]:
+def _providers() -> List[str]:
     from ...model.client import CHAT_CAPABLE_PROVIDERS
+    return sorted(CHAT_CAPABLE_PROVIDERS)
+
+
+def _effective_block(layered: llm_store.LayeredConfig) -> Dict[str, Any]:
+    """The read-only half: what is in force, and which layer put it there."""
     return {
-        "llm_config": llm_store.load(),
-        "chat_capable_providers": sorted(CHAT_CAPABLE_PROVIDERS),
+        "llm_config": layered.effective,
+        "slot_layers": layered.slot_layers,
+        "layers": layered.layers,
+        "overridden_slots": {
+            slot: name for slot, name in layered.slot_layers.items() if name != GLOBAL_LAYER
+        },
+    }
+
+
+def _editor_payload(session_id: Optional[str] = None) -> Dict[str, Any]:
+    """The global layer to edit, with the effective view attached read-only.
+
+    ``llm_config`` is deliberately the global layer and not the merged one. The
+    drawer is a read-modify-write over HTTP, so serving it the merged view
+    wrote the workspace layer's endpoints and the session's pins into the
+    user's own models.yml the first time anyone opened Settings — the reason
+    ``git config`` makes you say ``--global`` or ``--local``.
+    """
+    layered = llm_store.load_layered(session_id)
+    return {
+        "llm_config": layered.global_config,
+        "chat_capable_providers": _providers(),
+        "effective": _effective_block(layered),
     }
 
 
 @router.get("/llm/config")
-def get_llm_config() -> Dict[str, Any]:
-    """Halbert's model configuration. On a fresh install, adds Local Ollama when it answers."""
+def get_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
+    """The global layer, the layer an edit writes to. On a fresh install, adds
+    Local Ollama when it answers."""
     try:
         llm_store.ensure_local_ollama_endpoint()
     except llm_store.ConfigUnreadableError as e:
         # Reading still works (the store serves defaults), so show the picker
         # rather than an error page — but say why nothing can be saved.
         logger.error("models.yml is unreadable: %s", e)
-        return {"data": {**_config_payload(), "config_error": str(e)}}
-    return {"data": _config_payload()}
+        return {"data": {**_editor_payload(session_id), "config_error": str(e)}}
+    return {"data": _editor_payload(session_id)}
+
+
+@router.get("/llm/config/effective")
+def get_effective_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
+    """Read-only: the merged config a model runtime resolves against.
+
+    There is no PUT beside this one on purpose. An editor must name the layer
+    it edits, and nothing can write to a merged view without copying somebody
+    else's layer into the file it saves.
+    """
+    layered = llm_store.load_layered(session_id)
+    return {"data": {**_effective_block(layered), "chat_capable_providers": _providers()}}
 
 
 @router.put("/llm/config")
-def update_llm_config(body: LLMConfigUpdate):
-    """Deep-merge a partial llm_config (callers send whole slots) and return the saved result."""
+def update_llm_config(body: LLMConfigUpdate, session_id: Optional[str] = None):
+    """Deep-merge a partial llm_config into the *global* layer and return it.
+
+    Callers send whole slots. The write rebases on the global layer, and GET
+    serves that same layer, so neither end of the round trip can carry a
+    workspace endpoint or a session pin into the user's file.
+    """
     try:
         llm_store.update(body.llm_config)
     except llm_store.ConfigUnreadableError as e:
@@ -183,7 +229,7 @@ def update_llm_config(body: LLMConfigUpdate):
                 "message": str(e),
             }},
         )
-    return {"data": _config_payload()}
+    return {"data": _editor_payload(session_id)}
 
 
 # ── Pydantic Request Models ──────────────────────────────────────

@@ -15,6 +15,7 @@ import time
 import uuid
 from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHECKING
 
+from .blocks import content_to_text
 from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep, ConversationStatus
 from .events import StreamEvent
 from ..streaming.terminal_bridge import get_terminal_event_bus
@@ -38,6 +39,22 @@ def _subagent_terminal(status: str) -> bool:
 # budgets and may truncate again. This cap just stops one `cat` of a big file
 # from crowding out everything else before that budgeting happens.
 _TOOL_RESULT_CHARS = 2000
+
+
+def _merge_adjacent(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Fold consecutive same-role messages into one.
+
+    A turn that was cancelled before it answered leaves a user message with no
+    assistant reply, so the next turn would send two user messages in a row —
+    which some providers reject outright.
+    """
+    merged: List[Dict[str, Any]] = []
+    for msg in messages:
+        if merged and merged[-1]["role"] == msg["role"]:
+            merged[-1]["content"] = merged[-1]["content"] + "\n\n" + msg["content"]
+            continue
+        merged.append(dict(msg))
+    return merged
 
 
 def _format_tool_observation(name: str, args: Any, result: Any) -> str:
@@ -160,7 +177,42 @@ class AgentStateMachine:
         
         # Cancellation tracking for session interruption
         self.cancelled: Dict[str, bool] = {}
+
+        # Serialises turns — see the turn_lock property.
+        self._turn_lock: Optional[asyncio.Lock] = None
+        self._turn_lock_loop = None
     
+    @property
+    def turn_lock(self) -> asyncio.Lock:
+        """One turn at a time.
+
+        ``self.ctx`` is a single instance attribute on a process-wide agent, so
+        a second concurrent request overwrites the first turn's context
+        mid-flight — the user gets the other person's plan, observations and
+        answer. Callers hold this for the whole turn.
+
+        The whole turn, deliberately, and not just the ``self.ctx`` assignment:
+        every handler reads ``self.ctx`` and writes ``self.current_state``
+        across its own awaits, and the route sets ``max_tokens``/
+        ``temperature`` on the one shared LLM adapter, so a lock released
+        before RESPONDING finishes would let the next turn clobber all of it
+        exactly as if there were no lock. The cost is real — a slow turn blocks
+        every other request until the model times out — and the fix is not a
+        narrower lock but per-turn state: pass the ``StateContext`` (and the
+        state, and the adapter tweaks) through the handlers instead of hanging
+        them off the agent, at which point no lock is needed at all. Until
+        then this stays wide, and Halbert is single-user.
+
+        The lock is made against the running loop rather than at construction:
+        the agent outlives any one loop, and a lock bound to a dead loop raises
+        instead of locking.
+        """
+        loop = asyncio.get_running_loop()
+        if self._turn_lock is None or self._turn_lock_loop is not loop:
+            self._turn_lock = asyncio.Lock()
+            self._turn_lock_loop = loop
+        return self._turn_lock
+
     # Property aliases for handler compatibility
     @property
     def tool_executor(self):
@@ -445,9 +497,17 @@ class AgentStateMachine:
                 del self.active_sessions[session_id]
     
     def cancel_session(self, session_id: str) -> bool:
-        """Cancel an active session."""
+        """Cancel an active session.
+
+        Raising the ``cancelled`` flag is what actually stops the turn: this
+        runs on a *different* request while the SSE handler is mid-stream, and
+        that handler polls the flag between events. Evicting the session alone
+        left the stream running to completion — the user pressed stop and the
+        model kept answering.
+        """
         if session_id in self.active_sessions:
             ctx = self.active_sessions[session_id]
+            self.cancelled[session_id] = True
             # User-facing status: cancelled (A2c). Guard against an already-
             # terminal conversation (e.g. already SUCCESS/ERROR).
             if not ctx.conversation_status.is_terminal():
@@ -626,6 +686,34 @@ class AgentStateMachine:
     # State Handlers
     # -------------------------------------------------------------------------
     
+    def _build_messages(self, prompt: str) -> List[Dict[str, Any]]:
+        """Instructions, then the prior turns, then the new question.
+
+        Conversation lives in this array and nowhere else: the context
+        assembler is no longer handed the history, and its memory source drops
+        this session's own stored interactions, because either one flattened
+        into ``prompt`` would send earlier turns twice — once as prose and once
+        as messages — for no extra meaning.
+
+        A summary of turns the budget dropped arrives with role ``system``; it
+        is folded into the leading instructions rather than left mid-array,
+        because it is context about the conversation and not a line anyone
+        said, and because one system message at the front is the only shape
+        every provider path agrees on.
+        """
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": prompt}]
+        for msg in (self.ctx.conversation_history or []):
+            content = content_to_text(msg.get("content", ""))
+            if not content.strip():
+                continue
+            role = msg.get("role", "user")
+            if role not in ("user", "assistant"):
+                messages[0]["content"] += "\n\n" + content
+                continue
+            messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": self.ctx.user_query})
+        return _merge_adjacent(messages)
+
     async def _handle_planning(self) -> AsyncIterator[StreamEvent]:
         """
         PLANNING state: Analyze query, create plan, decide next action.
@@ -640,9 +728,9 @@ class AgentStateMachine:
         if self.context:
             assembled = await self.context.assemble(
                 query=self.ctx.user_query,
-                conversation=self.ctx.conversation_history,
                 observations=self.ctx.observations,
                 intake=self.ctx.intake,
+                session_id=self.ctx.session_id,
             )
             context_content = assembled.content
             yield StreamEvent.context_loaded(
@@ -665,10 +753,14 @@ class AgentStateMachine:
         # Call LLM
         tool_schemas = self.tools.get_schemas() if self.tools else []
         
+        # ``images`` is threaded here as well as in RESPONDING: without it the
+        # two halves of one turn resolve different models, so the planner
+        # decides what to do about a picture it cannot see.
         response = await self.llm.chat(
-            messages=[{"role": "user", "content": prompt}],
+            messages=self._build_messages(prompt),
             tools=tool_schemas,
             intake_result=self.ctx.intake if self.ctx else None,
+            images=self.ctx.images if self.ctx else None,
             model_override=self.ctx.model_override if self.ctx else None,
             tier_override=self.ctx.tier_override if self.ctx else None,
         )
@@ -1284,7 +1376,7 @@ class AgentStateMachine:
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
             chunk_count = 0
             async for chunk in self.llm.stream(
-                messages=[{"role": "user", "content": prompt}],
+                messages=self._build_messages(prompt),
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,
@@ -1304,7 +1396,7 @@ class AgentStateMachine:
         else:
             # Non-streaming fallback
             response = await self.llm.chat(
-                messages=[{"role": "user", "content": prompt}],
+                messages=self._build_messages(prompt),
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,

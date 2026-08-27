@@ -18,6 +18,25 @@ Schema (documentation/design/model-picker-independent-2026-08-26.md §4)::
 Callers that change a slot send the whole slot dict (all three keys).
 ``CHAT_CAPABLE_PROVIDERS`` is imported lazily from :mod:`model.client` so the
 two modules do not create a top-level import cycle.
+
+**Layers.** Readers see the effective config —
+``defaults < global file < workspace file < session`` — merged one slot at a
+time by :mod:`model.config_layers`. Writers see the global file alone:
+:func:`load` is what a model runtime should resolve against, :func:`load_global`
+is what an editor must start from, because saving a merged view would copy a
+workspace's or a session's pins into the user's own file. :func:`load_layered`
+serves both in one read, with the name of the layer each slot came from, for a
+picker that has to edit one layer while showing what another put in force.
+
+**Against E-2's per-request overrides.** ``StateContext``'s ``model_override`` /
+``tier_override`` pin *one turn* and are never persisted; the session layer is a
+*server-side default for a session*. The route applies its override after
+resolving against this store, so the full order is::
+
+    request override  >  session layer  >  workspace file  >  global file
+
+Pin a session to one model and a single turn can still be sent elsewhere; pin a
+turn to a *tier* and it uses that session's model for the tier.
 """
 from __future__ import annotations
 
@@ -33,6 +52,7 @@ from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 import yaml
 
+from . import config_layers
 from .config_locator import find_models_config, write_models_config
 
 logger = logging.getLogger("halbert.model.llm_config")
@@ -116,6 +136,15 @@ def _new_id() -> str:
 
 def _read_path() -> Optional[Path]:
     return find_models_config(include_repo=False)
+
+
+def global_config_path() -> Optional[Path]:
+    """The file the global layer is read from, or None on a fresh install.
+
+    Lets a reader that was handed a path ask whether it is the store's own file
+    — and so whether it should be reading the layers instead of parsing it.
+    """
+    return _read_path()
 
 
 def _write_path() -> Path:
@@ -387,8 +416,8 @@ def normalise_file(raw: Dict[str, Any]) -> Dict[str, Any]:
 # ── Public API ────────────────────────────────────────────────────
 
 
-def load_file() -> Dict[str, Any]:
-    """The whole models.yml dict, post-migration.
+def load_global_file() -> Dict[str, Any]:
+    """The whole models.yml dict, post-migration — the global layer alone.
 
     Rewrites the file once when migration or id-minting changed something. An
     unparsable file serves defaults for the session and is left untouched.
@@ -412,9 +441,70 @@ def load_file() -> Dict[str, Any]:
     return out
 
 
-def load() -> Dict[str, Any]:
-    """The llm_config section, normalised."""
-    return load_file()["llm_config"]
+def load_global() -> Dict[str, Any]:
+    """The llm_config section of the global file, normalised, unlayered.
+
+    Every writer starts here: rebasing a write on the effective config would
+    persist a workspace file's or a session's pins into the user's own file.
+    """
+    return load_global_file()["llm_config"]
+
+
+@dataclass(frozen=True)
+class LayeredConfig:
+    """One resolution of the layers: what is in force, and what put it there.
+
+    ``global_config`` is what an editor must edit; ``effective`` is what a
+    runtime resolves against. Handing an editor ``effective`` is what let a
+    read-modify-write copy a workspace's endpoints and a session's pins into
+    the user's own file.
+    """
+
+    effective: Dict[str, Any]
+    global_config: Dict[str, Any]
+    slot_layers: Dict[str, str]
+    layers: List[str]
+
+
+def _layered(global_file: Dict[str, Any], session_id: Optional[str]) -> LayeredConfig:
+    """The global llm_config with the overlay and session layers merged over it."""
+    base = global_file["llm_config"]
+    layers = [config_layers.Layer(config_layers.GLOBAL_LAYER, base)]
+    layers.extend(config_layers.file_overlay_layers(global_file))
+    session = config_layers.session_layer(session_id)
+    if session:
+        layers.append(config_layers.Layer(config_layers.SESSION_LAYER, session))
+    names = [layer.name for layer in layers]
+    if len(layers) == 1:
+        return LayeredConfig(base, base, {s: config_layers.GLOBAL_LAYER for s in SLOTS}, names)
+    merged = config_layers.merge_layers_with_sources(layers, SLOTS)
+    return LayeredConfig(
+        effective=normalise(merged.llm),
+        global_config=base,
+        slot_layers={s: merged.slot_layers.get(s, config_layers.GLOBAL_LAYER) for s in SLOTS},
+        layers=names,
+    )
+
+
+def load_layered(session_id: Optional[str] = None) -> LayeredConfig:
+    """Both views of the config in one read, plus which layer supplied each slot."""
+    return _layered(load_global_file(), session_id)
+
+
+def load_file(session_id: Optional[str] = None) -> Dict[str, Any]:
+    """The whole models.yml dict with every layer applied to ``llm_config``.
+
+    ``session_id`` defaults to the session bound by
+    :func:`config_layers.bind_session`.
+    """
+    out = load_global_file()
+    out["llm_config"] = _layered(out, session_id).effective
+    return out
+
+
+def load(session_id: Optional[str] = None) -> Dict[str, Any]:
+    """The effective llm_config section, normalised."""
+    return load_file(session_id)["llm_config"]
 
 
 def save(llm_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -474,7 +564,7 @@ def update(partial: Dict[str, Any]) -> Dict[str, Any]:
     Raises :class:`SlotProviderError` when a slot with a model names an endpoint
     whose provider is not chat-capable — the UI must never save such a slot.
     """
-    current = load()
+    current = load_global()
     partial = copy.deepcopy(partial)
     if "saved_endpoints" in partial:
         _carry_forward_api_keys(partial["saved_endpoints"], current)
@@ -528,9 +618,9 @@ def resolve_from(file_cfg: Dict[str, Any], slot: str) -> Optional[ResolvedModel]
     return None
 
 
-def resolve(slot: str) -> Optional[ResolvedModel]:
+def resolve(slot: str, session_id: Optional[str] = None) -> Optional[ResolvedModel]:
     """(model, url, provider, api_key) for an enabled slot, else None."""
-    return resolve_from(load_file(), slot)
+    return resolve_from(load_file(session_id), slot)
 
 
 def _endpoints_matching(url: str) -> List[Dict[str, Any]]:
@@ -574,7 +664,7 @@ def resolve_endpoint_by_id(endpoint_id: str) -> Optional[Tuple[str, str, str]]:
 
 def ensure_ollama_endpoint(url: str = DEFAULT_OLLAMA_URL) -> str:
     """Id of the Ollama endpoint at ``url``; creates "Local Ollama" if absent."""
-    cfg = load()
+    cfg = load_global()
     u = url.rstrip("/")
     for ep in cfg["saved_endpoints"]:
         if ep["provider"] == "ollama" and ep["url"] == u:
@@ -595,7 +685,7 @@ def _probe_ollama(url: str, timeout: float) -> bool:
 
 def ensure_local_ollama_endpoint(timeout: float = 2.0) -> bool:
     """Fresh install helper: with no endpoints saved, add Local Ollama if :11434 answers."""
-    if load()["saved_endpoints"]:
+    if load_global()["saved_endpoints"]:
         return False
     if not _probe_ollama(DEFAULT_OLLAMA_URL, timeout):
         return False

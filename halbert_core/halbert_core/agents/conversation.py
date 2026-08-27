@@ -119,14 +119,22 @@ class Conversation:
             
             # If we couldn't include all older messages, summarize the rest
             included_older_count = len(temp_result) - len(recent_messages)
-            remaining_older = older_messages[:-included_older_count] if included_older_count < len(older_messages) else []
+            # ``[:-0]`` is ``[:0]``, so when nothing older fit -- the usual case
+            # once the budget is tight -- this dropped every older turn without
+            # leaving the summary that is supposed to stand in for them.
+            if included_older_count:
+                remaining_older = older_messages[:-included_older_count]
+            else:
+                remaining_older = older_messages
             
             if remaining_older:
+                # The summary is the only trace left of the turns being
+                # dropped. Withholding it because the recent turns already
+                # overflow -- which is exactly when turns get dropped -- lost
+                # them silently; the caller trims to its own ceiling instead.
                 summary = self._summarize_messages(remaining_older)
-                summary_chars = len(summary) + 20
-                if temp_chars + summary_chars <= char_budget:
-                    result.append({"role": "system", "content": f"Previous conversation summary:\n{summary}"})
-                    char_count += summary_chars
+                result.append({"role": "system", "content": f"Previous conversation summary:\n{summary}"})
+                char_count += len(summary) + 20
             
             # Add the included messages
             result.extend(temp_result)
