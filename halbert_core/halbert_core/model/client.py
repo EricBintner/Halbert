@@ -364,6 +364,25 @@ def call_llm_chat(
         )
 
 
+# ── Tool-schema rejection registry (Plan A, spec §7) ─────────────
+#
+# Models without tool calling answer a ``tools`` payload with a 4xx. The
+# fallback below retries without tools and records the model here, so the
+# warning is logged once per model per process and the clients can expose
+# tools_supported=False: the prompt layer then drops the "call
+# recall_thread / new_thread" instruction from the continuity preamble
+# (AgentPromptBuilder.CONTINUITY_PREAMBLE_NO_TOOLS) for a model that
+# cannot call anything.
+
+_TOOLS_REJECTED: Dict[str, bool] = {}
+
+
+def model_supports_tools(model: str) -> Optional[bool]:
+    """False once ``model`` rejected tool schemas this process; None
+    otherwise (unknown: nothing has proven it either way)."""
+    return False if _TOOLS_REJECTED.get(model) else None
+
+
 def _call_with_tool_fallback(
     endpoint: str,
     model: str,
@@ -392,10 +411,13 @@ def _call_with_tool_fallback(
         status = getattr(e.response, "status_code", None)
         if status not in (400, 404, 422, 501):
             raise
-        logger.warning(
-            f"Model {model} rejected tool schemas (HTTP {status}); "
-            "retrying without tools"
-        )
+        if not _TOOLS_REJECTED.get(model):
+            # Once per model per process (spec §7); later fallbacks are silent.
+            logger.warning(
+                f"Model {model} rejected tool schemas (HTTP {status}); "
+                "retrying without tools"
+            )
+        _TOOLS_REJECTED[model] = True
         return _do_llm_call(endpoint, model, messages, provider, stream, timeout, options)
 
 

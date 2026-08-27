@@ -265,6 +265,21 @@ class LLMClientAdapter:
         # Performance tweaks - can be set per-request from frontend settings
         self.max_tokens = 8192
         self.temperature = 0.7
+        # Plan A (spec §7): False once the model rejected tool schemas and
+        # call_llm_chat fell back to a no-tools retry; None until then. The
+        # state machine passes it to the prompt builder.
+        self.tools_supported: Optional[bool] = None
+
+    def _note_tools_support(self, model: str, tools) -> None:
+        """Remember when ``model`` fell back to a no-tools retry (spec §7)."""
+        from ...model.client import model_supports_tools
+        if tools and model_supports_tools(model) is False:
+            if self.tools_supported is not False:
+                logger.info(
+                    f"Model {model} answers without tools; the continuity "
+                    "preamble drops the tool instruction"
+                )
+            self.tools_supported = False
     
     async def chat(self, messages, tools=None, intake_result=None, images=None):
         """Call LLM with messages, routing to specialist for complex queries.
@@ -367,6 +382,7 @@ class LLMClientAdapter:
                 options={"num_predict": 2048, "temperature": 0.7},
                 tools=tools,
             )
+            self._note_tools_support(model, tools)
             return LLMResponse(
                 content=result.get("content", ""),
                 tool_calls=_as_tool_calls(result.get("tool_calls")),
@@ -389,6 +405,7 @@ class LLMClientAdapter:
                     timeout=180,
                     tools=tools,
                 )
+                self._note_tools_support(guide_model, tools)
                 return LLMResponse(
                     content=result.get("content", ""),
                     tool_calls=_as_tool_calls(result.get("tool_calls")),
