@@ -515,6 +515,53 @@ def test_known_non_secret_keys_are_exempt():
         assert redact_text(text) == text
 
 
+def test_launchd_plist_identifier_keys_are_exempt():
+    """Two false positives observed in real staged output on this host.
+
+    `SHAuthorizationRight` names an *authorization right* -- its value is a
+    well-known identifier like `system.preferences`, the same string Apple
+    documents. `SecureSocketWithKey` names the *environment variable* launchd
+    should publish a socket under, so its value is an env-var name such as
+    `DISPLAY`. Both were `[redacted]`: `authorization` and `key` are tier-1
+    substrings, and they fired on a right name and a variable name.
+    """
+    for text in (
+        "<key>SHAuthorizationRight</key>\n<string>system.preferences</string>\n",
+        "<key>SecureSocketWithKey</key>\n<string>DISPLAY</string>\n",
+        "SHAuthorizationRight = system.preferences\n",
+        "SecureSocketWithKey = DISPLAY\n",
+    ):
+        assert redact_text(text) == text, f"redacted {text!r}"
+
+
+def test_a_secret_neighbour_in_the_same_plist_still_redacts():
+    """The exemption is per-key, not a hole in the file."""
+    p = (
+        "<dict>\n"
+        "  <key>SHAuthorizationRight</key>\n"
+        "  <string>system.preferences</string>\n"
+        "  <key>Sockets</key>\n"
+        "  <dict>\n"
+        "    <key>SecureSocketWithKey</key>\n"
+        "    <string>DISPLAY</string>\n"
+        "  </dict>\n"
+        "  <key>APIToken</key>\n"
+        "  <string>sk-live-shouldnotsurvive</string>\n"
+        "</dict>\n"
+    )
+    out = redact_text(p)
+    assert "sk-live-shouldnotsurvive" not in out
+    assert "system.preferences" in out
+    assert "<string>DISPLAY</string>" in out
+    assert out.count("\n") == p.count("\n")
+
+
+def test_the_exemption_is_whole_key_not_substring():
+    """A longer name that merely contains an exempt one must still redact."""
+    out = redact_text("<key>SecureSocketWithKeySecret</key>\n<string>hunter2</string>\n")
+    assert "hunter2" not in out
+
+
 # --- Cost -----------------------------------------------------------------
 
 

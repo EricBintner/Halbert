@@ -84,11 +84,29 @@ _SECRET_WORDS = frozenset(
 
 # Keys that contain a tier-1 substring but are demonstrably not credentials:
 # the NetworkManager/wpa_supplicant security *mode*, the console keymap and
-# keyboard model, and the Kubernetes schema version. Compared by whole-key
-# equality, never as a substring, so a longer name that merely contains one
-# of these (`keymap_secret`) cannot slip through the exemption.
+# keyboard model, the Kubernetes schema version, and two macOS plist keys
+# whose values are well-known identifiers rather than secrets. Compared by
+# whole-key equality, never as a substring, so a longer name that merely
+# contains one of these (`keymap_secret`) cannot slip through the exemption.
+#
+# The two macOS entries were both observed in real staged output on this host:
+#
+#   * `SHAuthorizationRight` names an authorization *right*. Its value is a
+#     documented identifier -- `system.preferences` -- and `authorization`
+#     fired on the name of the right rather than on a credential.
+#   * `SecureSocketWithKey` names the *environment variable* launchd should
+#     publish a socket's file descriptor under, so its value is a variable
+#     name such as `DISPLAY`. `key` fired on an env-var name.
 _NON_SECRET_KEYS = frozenset(
-    {"apiversion", "key-mgmt", "key_mgmt", "keyboard", "keymap"}
+    {
+        "apiversion",
+        "key-mgmt",
+        "key_mgmt",
+        "keyboard",
+        "keymap",
+        "securesocketwithkey",
+        "shauthorizationright",
+    }
 )
 
 # Key normalisation: drop XML element tags, then trim surrounding quotes,
@@ -132,6 +150,29 @@ TOKEN_RE = re.compile(
     r"(?i)(?:%s)[ \t]*[=:][ \t]*\S+"
     % "|".join(sorted((re.escape(s) for s in _SECRET_SUBSTRINGS), key=len, reverse=True))
 )
+
+
+def _redact_token(match: "re.Match[str]") -> str:
+    """TOKEN_RE body: ask the one predicate about the *whole* key.
+
+    TOKEN_RE's match begins at the keyword rather than at the start of the
+    key, so on `SecureSocketWithKey = DISPLAY` it matched `Key = DISPLAY` and
+    the keyword-vs-key distinction `_NON_SECRET_KEYS` exists to draw was
+    invisible to it: the line pass exempted the key and this pass undid it,
+    yielding `SecureSocketWith<secret>`. Scanning back to the key's start over
+    the same delimiters `_iter_pairs` uses puts this path on the same
+    predicate as every other, which is what the module claims to guarantee.
+    """
+    text, head = match.string, match.group(0)
+    start = match.start()
+    while start > 0 and text[start - 1] not in _TOKEN_KEY_STOPS:
+        start -= 1
+    sep = next(i for i, ch in enumerate(head) if ch in "=:")
+    if not _is_secret_key(text[start : match.start()] + head[:sep]):
+        return head
+    return SECRET
+
+
 HOME_RE = re.compile(r"/home/[^/\s]+")
 # The local part is bounded (RFC 5321 caps it at 64) and guarded by a
 # lookbehind that refuses to start in the middle of a local-part run.
@@ -345,6 +386,9 @@ def _is_structure(content: str) -> bool:
 # `_normalize_key`, which is what lets `"password":` and `{"api_key":` be
 # recognised at all.
 _KEY_STOP_CHARS = frozenset(" \t\r,;{}[]()<>=:/|&")
+# `_iter_pairs` works a line at a time and so never meets a newline; the
+# TOKEN_RE backstop runs over the whole text and must stop at one.
+_TOKEN_KEY_STOPS = _KEY_STOP_CHARS | {"\n"}
 
 
 def _iter_pairs(line: str) -> Iterator[Tuple[int, str, int, int]]:
@@ -704,7 +748,7 @@ def redact_text(text: str) -> str:
     # Must run first: TOKEN_RE would otherwise eat the `|` off `password: |`
     # and orphan the block body.
     text = redact_structured_values(text)
-    text = TOKEN_RE.sub(SECRET, text)
+    text = TOKEN_RE.sub(_redact_token, text)
     text = HOME_RE.sub("/home/<user>", text)
     text = EMAIL_RE.sub("<email>", text)
     text = IPV4_RE.sub(lambda m: _redact_address(m, "<ip>"), text)
