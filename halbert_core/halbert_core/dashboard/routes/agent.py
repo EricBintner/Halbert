@@ -1227,19 +1227,50 @@ if FASTAPI_AVAILABLE:
         receipt = build_receipt(thread, tm.store.list_messages(thread_id))
         tm.store.upsert_receipt(thread_id, thread.get("title") or "", receipt)
 
+    def _blank_stale_receipt(store, thread_id: str) -> bool:
+        """Drop a receipt that could not be regenerated after a redaction."""
+        try:
+            return bool(store.upsert_receipt(thread_id, "", ""))
+        except Exception as e:
+            logger.error(f"Blanking the stale receipt for {thread_id} failed: {e}")
+            return False
+
     @router.post("/message/{message_id}/redact")
     async def redact_message(message_id: int):
         """"Forget this" for one row (spec §5): content and blocks become
         "[redacted by admin]", the FTS row is rewritten and the thread's
-        receipt is regenerated. Rows are never deleted."""
+        receipt is regenerated. Rows are never deleted.
+
+        404 only ever means "there is no such row". A store that is down
+        answers 503 and a write that did not land answers 500: a person who
+        asked to forget something must never be told "nothing to forget"
+        while the words are still on disk (A11b review findings 2 and 3).
+        """
+        from ...agents.conversation_sqlite import RedactionFailed
+
         tm = _thread_manager()
-        if tm is None:
+        store = getattr(tm, "store", None) if tm is not None else None
+        if store is None or not getattr(store, "connected", True):
             raise HTTPException(503, "Thread store unavailable")
-        thread_id = tm.store.redact_message(message_id)
+        try:
+            thread_id = store.redact_message(message_id)
+        except RedactionFailed as e:
+            logger.error(f"Redaction of message {message_id} did not land: {e}")
+            raise HTTPException(500, "Redaction failed; the message is unchanged")
         if thread_id is None:
             raise HTTPException(404, "Message not found")
         try:
             _refresh_thread_receipt(tm, thread_id)
         except Exception as e:
-            logger.warning(f"Receipt refresh after redaction failed (non-fatal): {e}")
+            # The row is scrubbed, but `conversations.receipt` / `receipts_fts`
+            # still quote it -- and that copy is what recall reads back into
+            # later prompts as `retrieved_context`. Blank the stale receipt
+            # rather than leave the words standing, and never report the
+            # redaction as clean: the next `end_turn` rebuilds the summary.
+            logger.error(f"Receipt refresh after redacting {message_id} failed: {e}")
+            if not _blank_stale_receipt(store, thread_id):
+                raise HTTPException(
+                    500, "Message redacted, but its thread receipt still holds the original text"
+                )
+            return {"ok": True, "thread_id": thread_id, "receipt_refreshed": False}
         return {"ok": True, "thread_id": thread_id}

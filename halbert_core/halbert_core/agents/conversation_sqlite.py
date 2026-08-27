@@ -196,11 +196,27 @@ def _loads(text: Any, default: Any) -> Any:
     return value if value is not None else default
 
 
+class RedactionFailed(RuntimeError):
+    """A redaction write did not land: the row's original text is still stored.
+
+    The one place this store raises instead of returning a falsy value. A
+    redaction is a privacy promise, and "the write failed" has to be
+    distinguishable from "there is no such row" -- otherwise a rolled-back
+    redaction (disk full, locked database, an FTS error escaping
+    ``_fts_recover``) reaches the caller as a benign 404 "message not found"
+    while the original words are still on disk, and the person who asked to
+    forget something is told nothing needed forgetting (A11b review finding
+    2).
+    """
+
+
 class SqliteConversationStore:
     """SQLite-backed thread/message store with FTS5 search.
 
     Thread-safe (single connection + re-entrant lock). Best-effort: methods
-    log at WARNING and return ``None``/``False``/``[]`` rather than raise.
+    log at WARNING and return ``None``/``False``/``[]`` rather than raise --
+    with one deliberate exception, ``redact_message``, which raises
+    ``RedactionFailed`` when its write does not land.
     """
 
     def __init__(self, db_path: Optional[str] = None):
@@ -443,6 +459,17 @@ class SqliteConversationStore:
         poll this to emit ``thread_store_error`` once instead of finding out
         only when a search silently comes back thin."""
         return self._conn is not None and self._fts_ok
+
+    @property
+    def connected(self) -> bool:
+        """Whether the store has a live connection at all.
+
+        Weaker than ``healthy``, which also demands a working FTS5. A caller
+        that must tell "the store is down" from "that row does not exist" --
+        the redaction route, which owes those two answers different status
+        codes -- wants this one (A11b review finding 2).
+        """
+        return self._conn is not None
 
     def _fts_recover(self) -> bool:
         """Return whether FTS5 is currently usable, retrying table creation
@@ -854,15 +881,31 @@ class SqliteConversationStore:
         redaction marker, diff proposals are dropped, metadata gains
         ``redacted``, and the FTS row is rewritten so the original words are
         unsearchable. The row itself is never deleted. Returns the thread id,
-        or None when the row does not exist or the write failed (WARNING).
-        The caller refreshes the thread's receipt.
+        or None when the row does not exist (or the store has no connection).
+        Raises ``RedactionFailed`` when the write itself did not land, so a
+        caller never reports a privacy action it did not perform. The caller
+        refreshes the thread's receipt.
+
+        A redacted *founding* user row takes the thread title down with it.
+        Spec §5 defines the provisional title as "first user message
+        truncated to 60 characters" and ``ThreadManager._refined_title_fields``
+        draws the refined title's verb from that same row, so the title is a
+        derived copy of exactly the text a person redacts when they have
+        pasted a secret. Leaving it standing kept the words searchable
+        (``search``'s ``lower(title) LIKE`` pass, ``search_receipts``' title
+        column) and, worse, the receipt refresh that follows a redaction
+        re-``INSERT``ed them into ``receipts_fts`` -- the copy recall reads
+        back into later prompts as ``retrieved_context`` (A11b review finding
+        1). ``title_source`` becomes ``redacted`` so nothing re-derives a
+        title from a redacted row later.
         """
         if self._conn is None:
             return None
         try:
             with self._lock, self._conn:
                 row = self._conn.execute(
-                    "SELECT conversation_id, blocks_json, metadata FROM messages WHERE id = ?",
+                    "SELECT conversation_id, role, blocks_json, metadata "
+                    "FROM messages WHERE id = ?",
                     (int(message_id),),
                 ).fetchone()
                 if row is None:
@@ -902,10 +945,27 @@ class SqliteConversationStore:
                         "VALUES (?, ?, ?)",
                         (int(message_id), thread_id, self.REDACTED),
                     )
+                if row["role"] == "user" and self._is_founding_user_row(thread_id, message_id):
+                    self._conn.execute(
+                        "UPDATE conversations SET title = ?, title_source = 'redacted' "
+                        "WHERE id = ?",
+                        (self.REDACTED, thread_id),
+                    )
             return thread_id
         except Exception as e:
             logger.warning(f"redact_message {message_id} failed: {e}")
-            return None
+            raise RedactionFailed(f"redaction of message {message_id} did not land: {e}") from e
+
+    def _is_founding_user_row(self, thread_id: str, message_id: int) -> bool:
+        """Whether ``message_id`` is the earliest user row of its thread --
+        the one every title in the system is derived from. Called from inside
+        ``redact_message``'s open transaction (the lock is re-entrant)."""
+        first = self._conn.execute(
+            "SELECT id FROM messages WHERE conversation_id = ? AND role = 'user' "
+            "ORDER BY id ASC LIMIT 1",
+            (thread_id,),
+        ).fetchone()
+        return first is not None and int(first[0]) == int(message_id)
 
     # ------------------------------------------------------------------
     # Threads
