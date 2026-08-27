@@ -45,6 +45,15 @@ def should_summarize(messages: List[Dict]) -> bool:
     """
     Determine if conversation history should be summarized.
 
+    NO CALLER outside ``tests/test_blocks.py``. ``ContextAssembler`` was the
+    consumer and stopped being one at the Plan A merge — it imports only
+    ``compress_conversation_history`` now, and the conversation window it
+    builds is trimmed to a token budget rather than summarised on a message
+    count. Kept and still exported from ``halbert_core.conversation`` because
+    this is a public surface of that package, not internal scaffolding; the
+    decision to drop it from ``__all__`` is an API decision and wants making
+    deliberately rather than as a side effect of the merge.
+
     Args:
         messages: List of message dicts with 'role' and 'content'
 

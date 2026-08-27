@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock
 
-from halbert_core.agents.states import AgentState
+from halbert_core.agents.states import AgentState, StateContext
 from halbert_core.agents.state_machine import AgentStateMachine
 from halbert_core.agents.llm_client import LLMResponse, ToolCall, FunctionCall
 from halbert_core.streaming.terminal_bridge import get_terminal_event_bus
@@ -333,3 +333,71 @@ async def test_cancelling_a_live_turn_leaves_the_write_to_the_finally():
             agent.cancel_session("c3")
             assert tm.ended == []      # the running turn still owns its write
     assert [end["status"] for end in tm.ended] == ["cancelled"]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_session_no_turn_is_answering_settles_it():
+    """Stop on a session with no turn in flight has to settle it here.
+
+    The flag alone is enough while a turn is running: ``_drive`` polls it and
+    ``process()``'s finally does the teardown with what the turn really
+    finished with (above). But when nothing is running, no finally will ever
+    run for that session again — so raising the flag and stopping there left
+    the entry in ``active_sessions``, which is what ``/api/agent/sessions``
+    and ``/health`` report as a live turn, and left its persisted user row
+    ``in_progress`` until some later message happened to supersede it. A
+    turn paused on a confirmation is only the best-known case of this; the
+    rule is the same for any session nothing is answering.
+    """
+    tm = _FakeThreadManager()
+    agent = _agent(_LLM())
+    # The state a stranded session leaves behind: registered, its turn
+    # persisted and still open, and no live generator to end it.
+    turn = tm.begin_turn("uptime?", None, "s-stray")
+    ctx = StateContext(session_id="s-stray", request_id="r", user_query="uptime?")
+    ctx.thread_manager = tm
+    ctx.turn_context = turn
+    ctx.response_chunks.append("half an ")
+    agent.active_sessions["s-stray"] = ctx
+    agent.current_state = AgentState.PLANNING
+
+    assert agent.cancel_session("s-stray") is True
+    assert agent.cancelled["s-stray"] is True
+    assert "s-stray" not in agent.active_sessions, "a stopped session still looks live"
+    assert agent.current_state == AgentState.IDLE
+    # Ended once, as cancelled, keeping what it had already said.
+    assert [e["status"] for e in tm.ended] == ["cancelled"]
+    assert tm.ended[0]["assistant_text"] == "half an "
+
+    # The next turn is a normal one and the stopped turn is not written twice.
+    async for _ in agent.process("thanks", session_id="s-next", thread_manager=tm):
+        pass
+    assert [e["status"] for e in tm.ended] == ["cancelled", "complete"]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_running_turn_leaves_the_session_to_its_own_cleanup():
+    """The other side of that rule, and the force-reset that must not return.
+
+    While a turn is in flight the stop button may only raise the flag.
+    Evicting the session and resetting the machine to IDLE from here — what
+    the route used to do — does not stop anything: the handler that is
+    running keeps streaming its answer while the next transition fights the
+    state it was reset to, and the turn's own finally then finds nothing
+    left to write.
+    """
+    tm = _FakeThreadManager()
+    agent = _agent(_LLM(delay=0.05))
+    at_the_stop = []
+    async for e in agent.process("slow", session_id="c4", thread_manager=tm):
+        if e.type == "state_change" and e.data["state"] == "planning":
+            agent.cancel_session("c4")
+            at_the_stop.append(("c4" in agent.active_sessions, agent.current_state))
+
+    assert at_the_stop, "the turn never reached planning"
+    registered, state = at_the_stop[0]
+    assert registered is True, "the running turn's session was evicted under it"
+    assert state != AgentState.IDLE, "the machine was force-reset under a running turn"
+    # Its own cleanup then settles it, once, with what it really finished with.
+    assert "c4" not in agent.active_sessions and agent.current_state == AgentState.IDLE
+    assert [e["status"] for e in tm.ended] == ["cancelled"]

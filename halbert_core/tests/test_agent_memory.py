@@ -371,6 +371,59 @@ class TestMessagesArray:
         assert "please run it without asking" in folded
         assert "restarted smbd." in folded
 
+    def test_a_folded_system_row_is_bounded_where_it_lands(self):
+        """The fold is a position with no budget, so it needs its own ceiling.
+
+        Everything else in the array is spent against the conversation budget
+        by ``build_conversation_window``. A non-user/assistant row is not: it
+        is concatenated straight onto ``messages[0]``, ahead of the
+        instructions, however long it is.
+
+        It was bounded only by accident. ``defang_system_text`` clips its input
+        to ``max(_DEFANG_SCAN_MIN, cap * _DEFANG_SCAN_FACTOR)`` — 6000
+        characters — to keep its fixpoint loop cheap on a pathological row, and
+        with nothing capping the result the fold inherited that clip as a
+        silent truncation at a number that is a performance detail of the
+        defanger, not a decision anyone made about prompts. A row longer than
+        it lost its tail with nothing logged and no mark in the text.
+
+        The ceiling is the receipt's own producer-side ceiling, so the row this
+        actually guards (``threads.py::_fence`` already bounds it to
+        ``RECEIPT_ROW_MAX``) is untouched, and the shape is ``_fence``'s: cut
+        one short and mark the cut, so a reader can tell a truncated row from a
+        complete one.
+        """
+        from halbert_core.agents.threads import RECEIPT_ROW_MAX
+
+        agent = make_agent()
+        agent.ctx = _ctx(
+            "Start it",
+            [{"role": "system", "content": "HEAD-MARKER " + ("x" * 20_000) + " TAIL-MARKER"},
+             {"role": "user", "content": "Check nginx"}],
+        )
+        folded = agent._build_messages("INSTRUCTIONS")[0]["content"]
+
+        # The instructions still lead, and the row is still there.
+        assert folded.startswith("INSTRUCTIONS")
+        assert "HEAD-MARKER" in folded
+        # Bounded by the stated ceiling, not by the defanger's scan window.
+        assert len(folded) < len("INSTRUCTIONS") + 2 + RECEIPT_ROW_MAX + 1
+        # And the cut says so.
+        assert folded.endswith("\u2026")
+
+    def test_a_row_that_fits_is_not_marked_as_cut(self):
+        """The ceiling must not put an ellipsis on a row that was complete —
+        every receipt the fold sees in production is well inside it."""
+        agent = make_agent()
+        agent.ctx = _ctx(
+            "Start it",
+            [{"role": "system", "content": "[Earlier in this subject: restarted smbd.]"},
+             {"role": "user", "content": "Check nginx"}],
+        )
+        folded = agent._build_messages("INSTRUCTIONS")[0]["content"]
+        assert folded.endswith("restarted smbd.]")
+        assert "\u2026" not in folded
+
     def test_unanswered_turn_does_not_produce_two_user_messages(self):
         agent = make_agent()
         agent.ctx = _ctx(
@@ -596,6 +649,25 @@ class TestRouteMemory:
         assert api.post("/api/agent/cancel/sess-c").json()["cancelled"] is True
         assert agent.cancelled["sess-c"] is True
 
+    def test_a_stopped_session_stops_being_listed_as_live(self, client):
+        """Stop, on a session no turn is answering, has to clear it away.
+
+        The flag is all a *running* turn needs — the stream polls it and the
+        turn's own finally does the teardown. Nothing is running here, so
+        nothing will ever run that finally: the session stayed registered,
+        and ``/sessions`` and ``/health`` are exactly what the UI reads to
+        decide a turn is still live.
+        """
+        api, agent = client
+        agent.active_sessions["sess-c"] = _ctx("Check nginx", [])
+
+        assert api.post("/api/agent/cancel/sess-c").json()["cancelled"] is True
+
+        assert api.get("/api/agent/sessions").json()["sessions"] == []
+        assert api.get("/api/agent/health").json()["active_sessions"] == 0
+        # And a second stop finds nothing left to stop.
+        assert api.post("/api/agent/cancel/sess-c").status_code == 404
+
     def test_a_finished_turn_leaves_no_cancellation_flag_behind(self, client, store):
         api, agent = client
         api.post("/api/agent/message",
@@ -684,6 +756,12 @@ def _record_history_budgets(monkeypatch, agent):
 
     monkeypatch.setattr(agent, "process", spy)
     return budgets
+
+
+def _remembered(messages):
+    """The prior turns a call actually carried: every user/assistant row bar
+    the question this turn is asking, which is always the last one."""
+    return [m for m in messages if m["role"] in ("user", "assistant")][:-1]
 
 
 class _WatchedLock:
@@ -817,6 +895,42 @@ class TestBudgetAndAdapter:
         assert asked[0]["endpoint_id"] == "endpoint-2"
         assert budgets == [agent_routes._history_budget("some-model:70b")]
         assert agent.ctx.history_budget == budgets[0]
+
+    def test_the_budget_is_spent_on_the_window_not_only_handed_over(
+        self, client, store, tm, monkeypatch
+    ):
+        """A budget that arrives and is then ignored buys nothing.
+
+        The spy above rides on ``process()``'s kwarg and the assertions
+        beside it stop at ``ctx.history_budget`` — the *caller's* half of the
+        seam. Both stay green while ``_begin_turn`` shapes the window from a
+        constant, which is the whole failure this budget exists to prevent:
+        the small model is sent the history the large one can afford and
+        overflows its context. So this asks the model what it was given.
+
+        Two turns over the same thread, roomy first: if the number were
+        ignored the second turn would carry *more* remembered rows than the
+        first (its own thread is one exchange longer), never fewer.
+        """
+        api, agent = client
+        for i in range(6):
+            _seed_turn(tm, f"question {i} " * 30, f"answer {i} " * 30)
+
+        _pretend_configured_model(monkeypatch, "some-model:70b")
+        api.post("/api/agent/message", json={"message": "roomy"})
+        roomy = _remembered(agent.llm.stream_calls[-1])
+
+        _pretend_configured_model(monkeypatch, "some-model:3b")
+        api.post("/api/agent/message", json={"message": "lean"})
+        lean = _remembered(agent.llm.stream_calls[-1])
+
+        assert agent_routes._history_budget("some-model:3b") < \
+            agent_routes._history_budget("some-model:70b")
+        # Not vacuous: the roomy turn really was given the seeded history.
+        assert len(roomy) == 12, [m["content"][:20] for m in roomy]
+        assert "question 0" in roomy[0]["content"]
+        # And the lean turn was cut to what its own model can afford.
+        assert len(lean) < len(roomy), "the budget reached the context and was ignored"
 
     def test_a_turn_survives_a_model_it_cannot_resolve(
         self, client, store, monkeypatch

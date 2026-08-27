@@ -78,10 +78,24 @@ class Conversation:
         """
         Get recent messages that fit within token budget.
         Uses summarization for older messages if needed.
-        
+
         Strategy:
         - Keep recent messages fully
         - Summarize older messages if total exceeds budget
+
+        NOTHING CALLS THIS. Its last caller was
+        ``context/assembler.py::build_conversation_window``, from the
+        compaction branch main added in fd9d7fd; the merged branch rewrote
+        that function to hard-trim instead, because the thread receipt is a
+        better summary than one built from whatever happens to be overflowing
+        (see ``build_conversation_window``'s own docstring). Do not wire it
+        back in without deciding which of the two summaries a turn should get
+        — sending both spends the conversation bucket twice on one meaning.
+
+        It is kept rather than deleted because the same merge carried a real
+        main-side bugfix into it (the ``[:-0]`` case below) that would go with
+        it. ``tests/test_conversation_context_window.py`` is the only thing
+        exercising either; if this method goes, that file goes with it.
         """
         # Estimate ~4 chars per token
         char_budget = max_tokens * 4

@@ -141,7 +141,10 @@ class ContextAssembler:
 
         Args:
             query: User query for retrieval
-            conversation: Conversation history
+            conversation: Conversation history. No production caller passes
+                it — the agent keeps its history in the ``messages[]`` array
+                (E-3) — so the ``conversation`` source and
+                ``_format_conversation`` are test-only surfaces today.
             observations: Tool execution observations
             max_tokens: Maximum tokens for assembled context
             include_sources: Specific sources to include (default: all)
@@ -402,20 +405,41 @@ class ContextAssembler:
         ``assemble``, and since Plan A the thread receipt is split off and
         rendered by the state machine into ``messages[0]`` with
         ``split_receipt_row`` / ``fit_receipt`` / ``receipt_allowance`` below.
-        What is left is the prose path behind ``assemble(conversation=...)``,
-        which nothing in the shipping tree passes today — the agent was its
-        only production caller. It is kept, rather than deleted with the
-        source it serves, because ``assemble`` still advertises a
-        ``conversation`` source; if that source goes, this goes with it. Do
-        not read its presence as coverage of the summarisation branch below.
+
+        UNREACHABLE FROM PRODUCTION. ``assemble`` has exactly one production
+        caller — ``state_machine._handle_planning`` — and it passes no
+        ``conversation``, at which point ``assemble`` drops ``"conversation"``
+        from ``active_sources`` and never enters this method. The only caller
+        left in the tree is a test
+        (``tests/test_agent_integration.py::TestContextAssembly``), plus the
+        direct calls in ``tests/test_conversation_budget_receipt_slot.py``
+        that check this walk never sees a receipt. Nothing outside a test has
+        reached the compression branch below since the merge, in either
+        shape; do not read the tests' presence as coverage of production
+        behaviour.
+
+        It is kept, rather than deleted with the source it serves, because
+        ``assemble`` still advertises a ``conversation`` source and its
+        signature still accepts one; if that source goes, this goes with it,
+        and so do those tests.
         """
         if max_tokens <= 0:
             return "", 0
 
-        # One compaction trigger across the codebase: the token watermark, not
-        # a message count. A count fires on twenty one-line turns that fit
-        # easily and stays quiet on six that do not. (main fd9d7fd; the merge
-        # reverted this hunk to the pre-E-3 count and it is restored here.)
+        # The trigger is the token watermark, not a message count: a count
+        # fires on twenty one-line turns that fit easily and stays quiet on
+        # six that do not. (main fd9d7fd; the merge reverted this hunk to the
+        # pre-E-3 count and it is restored here.)
+        #
+        # It is not, as an earlier wording claimed, "one compaction trigger
+        # across the codebase". This is ``ContextWatermark.should_compact``'s
+        # ONLY call site in the tree, and this method is unreachable from
+        # production (see the docstring), so nothing in the shipping path
+        # compacts at all: ``build_conversation_window`` compares against
+        # ``wm.watermark`` itself and hard-trims, on the grounds that the
+        # thread receipt is the summary. Note also that ``should_summarize``
+        # is not on this path — only ``compress_conversation_history`` is
+        # imported, and it does its own ``keep_recent`` split.
         try:
             from ..conversation.summarization import compress_conversation_history
             cost = sum(

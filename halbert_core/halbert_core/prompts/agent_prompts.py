@@ -156,12 +156,17 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
     }
 
     # Longest single history line rendered into the RESPONDING prompt for a
-    # user/assistant row.
+    # user/assistant row. Read only by `_history_section`, which has had no
+    # production caller since the merge (see there).
     _HISTORY_LINE_CHARS = 500
 
     # Fallback ceiling for a `system` history row (threads.py's pre-window
-    # receipt summary), used only if `_history_section` cannot import
-    # threads.RECEIPT_ROW_MAX (see there). Pinned by a test to stay >= the
+    # receipt summary), used if `threads.RECEIPT_ROW_MAX` cannot be imported.
+    # Two readers take that fallback: `_history_section`, which nothing in
+    # production calls any more, and `render_recalled_receipts`, which the
+    # state machine calls on every PLANNING and RESPONDING turn
+    # (`_receipt_block`) — so this constant is live, whatever happens to the
+    # history helper. Pinned by a test to stay >= the
     # real constant: threads.py already bounds the row to that many
     # characters via `_fence(..., keep_lines=True)` before it ever reaches
     # this helper — a truncation that itself reserves the receipt's final
@@ -172,17 +177,23 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
     # review: Plan A / A8, round 3).
     _SYSTEM_LINE_CHARS = 1500
 
-    # Collapses literal `<continuity>` / `</continuity>` sequences found
-    # INSIDE history content. `<continuity>` is this module's own hint
-    # delimiter (see CONTINUITY_PREAMBLE above), so a history row that
-    # contains the literal tag — a command's stdout, a scanned log line, or
-    # the admin pasting the text — could otherwise forge a second,
-    # indistinguishable continuity block ahead of the genuine hint. Mirrors
-    # threads.py's `_fence`, which neutralises the same tag for the one row
-    # it controls; applied here to every role because `content_to_text`
-    # flattens `ToolResultBlock`s, so command output and file/log text from a
-    # scanned system can reach this text too, not just the admin's own words
-    # (review: Plan A / A8, round 2).
+    # Collapses literal `<continuity>` / `</continuity>` sequences found in
+    # untrusted text. `<continuity>` is this module's own hint delimiter (see
+    # CONTINUITY_PREAMBLE above), so text that contains the literal tag — a
+    # command's stdout, a scanned log line, or the admin pasting it — could
+    # otherwise forge a second, indistinguishable continuity block ahead of
+    # the genuine hint. Mirrors threads.py's `_fence`, which neutralises the
+    # same tag for the one row it controls; applied to every role because
+    # `content_to_text` flattens `ToolResultBlock`s, so command output and
+    # file/log text from a scanned system reach this text too, not just the
+    # admin's own words (review: Plan A / A8, round 2).
+    #
+    # Three surfaces reach it. Two are live: `defang_system_text`, which the
+    # state machine runs over every non-user/assistant row it folds into
+    # `messages[0]` (`_defang_system_row`), and `render_recalled_receipts`,
+    # which renders the receipts recall_thread pulled in. The third,
+    # `_history_section`, is the pre-merge prose path and has no production
+    # caller — the guard did not disappear with it, it moved.
     _CONTINUITY_TAG_RE = re.compile(r"</?\s*continuity\s*>", re.IGNORECASE)
 
     # How much of a row `_defang_continuity` scans before it caps the result,
@@ -190,10 +201,14 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
     # exactly this shape before its own identical fixpoint loop, "so the
     # fixpoint below stays cheap on a pathological field"). Without this, the
     # round-2 fix defanged the FULL, unbounded row before truncating it,
-    # which made a single untrusted RESPONDING row — command stdout, a log
-    # line, a pasted file, exactly what this module's own comments name —
-    # cost 7s at 130KB and 28s at 260KB of nested `</continuity>` payload, on
-    # the once-per-turn RESPONDING hot path (review: Plan A / A8, round 3).
+    # which made a single untrusted row — command stdout, a log line, a
+    # pasted file, exactly what this module's own comments name — cost 7s at
+    # 130KB and 28s at 260KB of nested `</continuity>` payload (review: Plan
+    # A / A8, round 3). The hot path the round-3 finding named was the
+    # RESPONDING prose row; since the merge it is `defang_system_text` (every
+    # folded system row, both LLM calls of every turn) and
+    # `render_recalled_receipts` (up to three receipts per turn), so the
+    # bound matters more than it did, not less.
     _DEFANG_SCAN_MIN = 4096
     _DEFANG_SCAN_FACTOR = 4
 
@@ -201,14 +216,22 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
     def _defang_continuity(cls, text: str, cap: int) -> str:
         """Neutralise ``<continuity>``/``</continuity>`` in untrusted text.
 
-        ``cap`` is the caller's eventual truncation limit for this row (500
-        for user/assistant, the system ceiling for system); ``text`` is
-        clipped to ``max(_DEFANG_SCAN_MIN, cap * _DEFANG_SCAN_FACTOR)``
-        BEFORE the fixpoint loop below runs, same as threads.py::_fence, so
-        the loop's cost is bounded by the cap rather than by an
-        attacker-chosen row length. Content beyond that clip point would be
-        truncated away by the caller's own char cap regardless, since the
-        clip point is always >= that cap.
+        ``cap`` is the caller's truncation limit for this row (500 for
+        user/assistant, the system ceiling for system, ``RECEIPT_ROW_MAX``
+        for a receipt); ``text`` is clipped to
+        ``max(_DEFANG_SCAN_MIN, cap * _DEFANG_SCAN_FACTOR)`` BEFORE the
+        fixpoint loop below runs, same as threads.py::_fence, so the loop's
+        cost is bounded by the cap rather than by an attacker-chosen row
+        length.
+
+        THE CLIP IS A TRUNCATION, not only a scan bound. That is free for
+        every caller as things stand — ``_history_section``,
+        ``render_recalled_receipts`` and (since the fold gained a cap of its
+        own) ``defang_system_text``'s caller all re-cap the result at ``cap``,
+        and the clip point is always >= ``cap``, so the clip never reaches
+        text the caller would have kept. It stops being free the moment a
+        caller keeps the whole return value: anything past the clip point is
+        gone, silently. Do not add one without capping on the way out.
 
         Substitutes to a fixpoint, not once: a single pass over a nested
         payload like ``"</</continuity>continuity>"`` would leave behind
@@ -267,6 +290,25 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
     @classmethod
     def _history_section(cls, history: Optional[List[Dict[str, Any]]]) -> str:
         """Thread history as one line per row, oldest first (spec §4.5).
+
+        NOTHING IN PRODUCTION CALLS THIS. Its only call site is the
+        ``history`` branch of ``build_response_prompt`` below, and the state
+        machine stopped passing ``history`` at the merge: the prior turns are
+        real ``messages[]`` entries now (``_build_messages``), and rendering
+        them into the prose as well sent every earlier turn twice for one
+        budget's worth of meaning. The two guarantees this helper carried
+        moved rather than vanished — the fence on untrusted system text is
+        ``defang_system_text`` (state_machine ``_defang_system_row``), and the
+        receipt block is ``render_recalled_receipts``. What is left here is
+        the ``**role**: `` prose rendering itself, which nothing wants.
+
+        It is kept because ``build_response_prompt(history=...)`` is still in
+        the signature and an out-of-tree caller could pass it; if that
+        parameter goes, this goes with it, and so do
+        ``TestHistorySystemRowAndInjection`` and the
+        ``_history_section``-shaped cases of ``TestRound3ReviewFindings``.
+        Do not read those tests as coverage of the shipping defang path —
+        ``TestLiveDefangEntryPoint`` is.
 
         RESPONDING never saw the conversation before Plan A. Block-typed
         content is flattened. A ``user``/``assistant`` row is capped at
@@ -439,8 +481,18 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         task moved from the head to the tail on purpose (spec §7): if the
         prompt is ever truncated it is the head that goes, and the query and
         the hint are the two things the model must still see.
-        ``tools_supported=False`` drops the tool instruction from the
-        continuity preamble (spec §7).
+
+        ``continuity`` has no production caller since the merge, so the
+        section between the plan and the task is empty on every shipping
+        prompt. The state machine passes the hint to ``_continuity_section``
+        directly (``_continuity_tail``) and glues the result to the front of
+        the final *user message* instead — same reasoning, better executed:
+        array position beats prose position for surviving a small context
+        window. ``tools_supported`` IS passed, and reaches the same
+        ``_continuity_section`` call, so it is inert here and load-bearing
+        there; it is kept on the signature so the two paths render one hint
+        the same way (spec §7). If ``continuity`` goes, ``tools_supported``
+        goes with it.
         """
         parts: List[str] = []
 
@@ -504,9 +556,24 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
             context: Retrieved context items
             observations: Tool observations
             confidence: CRAG confidence score
-            history: Prior turns in this thread, oldest first (spec §4.5)
-            continuity: The rendered <continuity> hint, if any (spec §7)
-            tools_supported: The client's tool-schema-acceptance flag (A9d)
+            history: Prior turns in this thread, oldest first (spec §4.5).
+                NO PRODUCTION CALLER since the merge — the turns are real
+                ``messages[]`` entries (state_machine ``_build_messages``),
+                and rendering them here as well sent each one twice. Passing
+                it again reinstates that double-send; see ``_history_section``.
+            continuity: The rendered <continuity> hint, if any (spec §7).
+                NO PRODUCTION CALLER since the merge — the hint rides the
+                front of the final user message instead (state_machine
+                ``_continuity_tail``), next to the question it qualifies.
+            tools_supported: The client's tool-schema-acceptance flag (A9d).
+                Passed by the state machine, but with ``continuity`` empty it
+                only ever selects between two preambles neither of which is
+                rendered; it is the direct ``_continuity_section`` call that
+                acts on it.
+
+        The receipts of subjects recalled this turn are a different mechanism
+        and are live: they arrive on ``context`` with ``source == "thread"``
+        and are rendered by ``render_recalled_receipts`` below.
 
         Returns:
             Response generation prompt
@@ -760,9 +827,19 @@ def defang_system_text(text: str, cap: int) -> str:
     open a ``<continuity>`` block or a ``## Instructions`` heading inside the
     instructions themselves.
 
-    ``cap`` is the caller's eventual truncation limit, forwarded so the
-    fixpoint loop's cost stays bounded by it rather than by an
-    attacker-chosen row length (see ``_defang_continuity``).
+    ``cap`` is forwarded so the fixpoint loop's cost stays bounded by it
+    rather than by an attacker-chosen row length (see ``_defang_continuity``),
+    and — like this module's other two defang callers — the caller applies it
+    as a truncation limit too. ``_defang_system_row`` now caps the result at
+    ``cap`` in ``_fence``'s shape before concatenating it into ``messages[0]``.
+    That cap belongs there rather than here: this function's clip point is
+    ``max(_DEFANG_SCAN_MIN, cap * _DEFANG_SCAN_FACTOR)``, chosen to bound the
+    fixpoint loop, and a position's prompt budget is not a scan window's job to
+    decide. Before the cap existed the fold inherited the clip as a silent
+    truncation at 6000 characters; nothing reached it, because
+    ``threads.py::_fence`` bounds the receipt to ``cap`` (``RECEIPT_ROW_MAX``)
+    a factor of four inside the clip point and ``TestLiveDefangEntryPoint``
+    pins that headroom, but nothing was stopping a producer from doing so.
     """
     text = AgentPromptBuilder._defang_continuity(str(text), cap)
     return AgentPromptBuilder._defang_line_markers(text)

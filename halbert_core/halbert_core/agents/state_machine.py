@@ -97,6 +97,27 @@ def _defang_system_row(text: str) -> str:
     actually guards. Failure to import the builder is not a reason to send the
     text through unguarded, so the raw ``<continuity>`` tags are stripped
     inline as a floor.
+
+    THE CAP IS APPLIED HERE, not left to the defanger. ``defang_system_text``
+    clips its input to ``max(_DEFANG_SCAN_MIN, cap * _DEFANG_SCAN_FACTOR)``
+    before its fixpoint loop, which bounds that loop's cost on a pathological
+    row — but it is a scan bound, not a policy, and its own docstring says so:
+    "A producer that stops bounding its rows needs a cap at the fold, not a
+    bigger scan window here." Without one, this position inherited the scan
+    bound as a silent truncation at 6000 characters.
+
+    That matters because of where the text lands. Every other row in the array
+    is spent against the conversation budget by ``build_conversation_window``;
+    this one is concatenated onto ``messages[0]`` ahead of the instructions,
+    outside any budget, at whatever length the store hands over. Today nothing
+    reaches the ceiling — ``threads.py::_fence`` bounds the receipt and the
+    soft-landing note to ``RECEIPT_ROW_MAX`` — but "bounded because every
+    current producer happens to bound itself" is not a property this position
+    should rely on.
+
+    The shape is ``_fence``'s, deliberately: cut one character short and mark
+    the cut, so a truncated row is distinguishable from a complete one by
+    anyone reading the prompt back.
     """
     text = str(text)
     try:
@@ -104,7 +125,10 @@ def _defang_system_row(text: str) -> str:
         from .threads import RECEIPT_ROW_MAX
     except Exception:  # pragma: no cover - import cycle guard
         return re.sub(r"</?\s*continuity\s*>", " ", text, flags=re.IGNORECASE)
-    return defang_system_text(text, RECEIPT_ROW_MAX)
+    fenced = defang_system_text(text, RECEIPT_ROW_MAX)
+    if len(fenced) <= RECEIPT_ROW_MAX:
+        return fenced
+    return fenced[: RECEIPT_ROW_MAX - 1].rstrip() + "\u2026"
 
 
 def _default_conversation_tokens() -> int:
@@ -1186,14 +1210,37 @@ class AgentStateMachine:
         machine, with the text, blocks and terminal ids it really finished
         with.
 
-        A turn paused on a confirmation is the exception, and the reason
-        there is any teardown here at all. Its SSE stream has already closed,
-        so no finally will ever run for it again: dropping the session
-        without ending the turn left the persisted user row ``in_progress``
-        forever — ``confirm_action`` is never called for it, and the next
-        message's ``_supersede_paused_turn`` can no longer find the session
-        to end it. It is ended exactly as a superseded pause is (cancelled,
-        with the staged action recorded as never run, spec §5).
+        A session **no turn is answering** is the other half of the rule, and
+        the reason there is any teardown here at all. Nothing will ever run a
+        finally for it again, so raising the flag and stopping there left the
+        entry in ``active_sessions`` — which ``/api/agent/sessions`` and
+        ``/health`` report as a live turn the user has just stopped — and left
+        its persisted user row ``in_progress`` until some later message
+        happened to supersede it. So when no turn is in flight the machine
+        settles the session itself: the turn is ended as a superseded pause is
+        (cancelled, keeping what it already said and recording any staged
+        action as never run, spec §5), the session is evicted and the machine
+        returns to IDLE.
+
+        A turn paused on a confirmation is the best-known case of that: its
+        SSE stream has already closed, ``confirm_action`` is never called for
+        it, and the next message's ``_supersede_paused_turn`` can no longer
+        find the session to end it. It is named explicitly below because the
+        pause can be reached with the stream not yet drained — the generator
+        suspended on its last event, still holding the lock — and a paused
+        turn is not a running one whichever way the lock reads.
+
+        "In flight" is the turn lock, not the state: the lock is held for the
+        whole of ``process()``/``confirm_action()`` including their cleanup,
+        and a turn registers its session under it (``_supersede_paused_turn``
+        evicts everything else first), so a held lock means the session in
+        hand is being answered right now. The state cannot answer the same
+        question — IDLE is also where a turn sits while ``_begin_turn`` is
+        still writing, and tearing down there is exactly the force-reset this
+        method stopped doing: the answer keeps arriving while the next
+        transition fights it. The private slot is read rather than the
+        ``turn_lock`` property because this is a plain sync call: the property
+        wants a running loop and would build a lock just to report it free.
         """
         if session_id not in self.active_sessions:
             return False
@@ -1206,11 +1253,24 @@ class AgentStateMachine:
                 ctx.conversation_status.transition(ConversationStatus.CANCELLED)
             except ValueError:
                 pass
-        if self.current_state == AgentState.AWAITING_CONFIRMATION:
+        paused = self.current_state == AgentState.AWAITING_CONFIRMATION
+        if paused or not self._turn_in_flight():
             self._record_superseded_turn(ctx)
             del self.active_sessions[session_id]
             self.current_state = AgentState.IDLE
         return True
+
+    def _turn_in_flight(self) -> bool:
+        """Whether a turn is running right now, lock in hand.
+
+        Deliberately conservative: an unbuilt or free lock is "nothing is
+        running", and anything else is treated as a live turn whose own
+        cleanup owns the teardown. Reading the slot rather than the
+        ``turn_lock`` property keeps this callable from sync code and from a
+        thread with no loop of its own.
+        """
+        lock = self._turn_lock
+        return bool(lock is not None and lock.locked())
 
     def _detect_oscillation(self) -> bool:
         """Detect A→B→A→B pattern indicating infinite loop."""

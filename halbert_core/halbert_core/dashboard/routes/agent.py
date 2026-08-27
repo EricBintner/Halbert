@@ -52,9 +52,13 @@ class SendMessageRequest(BaseModel):
     # Phase 4: Vision/image support (ported from chat.py)
     images: Optional[List[str]] = Field(None, description="Base64-encoded images for vision model")
     # Performance tweaks - sent from frontend Settings > AI > Performance Tweaks
-    # Bounded (spec §7 follow-up): num_ctx_for_model's per-model cache only
-    # grows, so an unbounded value here would let one request pin the
-    # process-global num_ctx at the ceiling for that model forever. 32768
+    # Bounded (spec §7 follow-up): num_ctx_for_model's per-model cache is a
+    # high-water mark, so an unbounded value here would let one request pin the
+    # process-global num_ctx at the ceiling for that model — not forever any
+    # more (the mark is released once nothing has needed more than half the
+    # window for _NUM_CTX_RELEASE_SECONDS), but for every turn in between,
+    # which is the whole of an ordinary session. The bound is still the right
+    # place to refuse it: releasing late is a recovery, not a defence. 32768
     # matches both the cache's own default ceiling and the frontend's actual
     # maximum Performance Tweaks option (Settings.tsx), so this rejects only
     # the pathological/malicious case, not any value the UI already offers.
@@ -619,6 +623,18 @@ class LLMClientAdapter:
         Every override is a parameter, never instance state: one adapter is
         shared by all concurrent requests, so anything stored on ``self``
         leaks across sessions.
+
+        ``call_llm_chat`` is synchronous — a blocking ``requests`` call under a
+        300s timeout — and this is a coroutine, so every one of the three call
+        sites below goes through ``asyncio.to_thread``. Called inline it stops
+        the event loop for the whole planning call: every other open SSE
+        stream, every other request and every heartbeat waits behind one
+        model's think time, and a slow or wedged endpoint takes the whole
+        dashboard down with it rather than the one turn that asked for it.
+        Nothing here needs the loop while the model works, and ``call_llm_chat``
+        takes all of its inputs as arguments and serialises GPU access through
+        a file lock, so it is safe to run off it. ``_report_model`` stays on
+        this side of the await, in the same order as before.
         """
         from ...model.client import call_llm_chat
 
@@ -666,7 +682,8 @@ class LLMClientAdapter:
             # attaching them to the first hangs them on an old one.
             _attach_images(llm_messages, images)
             try:
-                result = call_llm_chat(
+                result = await asyncio.to_thread(
+                    call_llm_chat,
                     endpoint=turn.endpoint,
                     model=turn.model,
                     messages=llm_messages,
@@ -697,7 +714,8 @@ class LLMClientAdapter:
         
         try:
             # Call LLM using shared model client
-            result = call_llm_chat(
+            result = await asyncio.to_thread(
+                call_llm_chat,
                 endpoint=endpoint,
                 model=model,
                 messages=llm_messages,
@@ -727,7 +745,8 @@ class LLMClientAdapter:
                 f"Model '{model}' unavailable ({e}); falling back to "
                 f"guide model '{guide.model}' for this turn"
             )
-            result = call_llm_chat(
+            result = await asyncio.to_thread(
+                call_llm_chat,
                 endpoint=guide.endpoint,
                 model=guide.model,
                 messages=llm_messages,
@@ -919,7 +938,27 @@ class LLMClientAdapter:
                 # silently drops the HEAD of the prompt -- which is
                 # messages[0], the instructions and the thread receipt.
                 prompt_tokens = estimate_prompt_tokens(messages, None)
-                num_ctx = num_ctx_for_model(model, prompt_tokens, max_tokens)
+                # `endpoint` is the daemon this request is about to go to, and
+                # it is what lets the model's real architecture window be
+                # discovered instead of falling back to the ceiling: without it
+                # a cold process streams the answer -- the call the user
+                # actually reads -- at 32768 tokens of KV cache for a model
+                # whose window may be a quarter of that.
+                #
+                # `on_event_loop` because this is one. Discovery is ordinary
+                # blocking `requests`, and a probe taken here does not merely
+                # slow this turn down: it stops the event loop, so every other
+                # open SSE stream and every other request in the process stops
+                # with it, for up to the probe timeout and longer if DNS hangs
+                # (measured on this tree: a 3.01s probe, a 3.06s gap between
+                # event-loop heartbeats). So this turn is sized from what is
+                # already known -- the picker's listing, the planning call, an
+                # earlier turn -- and anything still unknown is discovered on a
+                # worker thread, for the turns after this one.
+                num_ctx = num_ctx_for_model(
+                    model, prompt_tokens, max_tokens,
+                    endpoint=endpoint, on_event_loop=True,
+                )
                 # The reply has to fit what is left of the window after the
                 # prompt (spec §7: max_tokens is subordinate to
                 # num_ctx - prompt). _do_llm_call has no equivalent step

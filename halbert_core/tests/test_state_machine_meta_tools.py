@@ -45,14 +45,17 @@ class _FakeThreadManager:
 
 class _ScriptedLLM:
     def __init__(self, responses):
-        self.responses, self.prompts = list(responses), []
-        #: The arrays themselves, not only their join. Since the merge the
-        #: instructions (context, receipts) are ``messages[0]`` and the
-        #: question — with the continuity hint glued to its front — is the
-        #: last message, so an assertion that means "in the instructions"
-        #: has to be able to say so: over the flattened join it also matches
-        #: the question, and an ordering assertion across the join compares
-        #: two positions that may be in different messages.
+        self.responses = list(responses)
+        #: The arrays themselves, and deliberately NOT their join. Since the
+        #: merge the instructions (context, receipts) are ``messages[0]`` and
+        #: the question — with the continuity hint glued to its front — is the
+        #: last message, so an assertion that means "in the instructions" has
+        #: to be able to say so: over a flattened join it also matches the
+        #: question, and an ordering assertion across the join compares two
+        #: positions that may be in different messages. A ``prompts`` attribute
+        #: holding that join is what let those assertions pass while the
+        #: instructions had moved; it is gone rather than left unread, so no
+        #: later assertion can reach for it.
         self.arrays = []
 
     def instructions(self, index=0):
@@ -61,7 +64,6 @@ class _ScriptedLLM:
 
     async def chat(self, messages, tools=None, **kwargs):
         self.arrays.append([dict(m) for m in messages])
-        self.prompts.append("\n".join(m["content"] for m in messages))
         return self.responses.pop(0) if self.responses else LLMResponse(content="answer", tool_calls=[], plan=[])
 
     async def stream(self, messages, **kwargs):
@@ -341,6 +343,20 @@ async def test_crag_scores_real_retrieval_and_skips_the_thread_entries():
 
 
 @pytest.mark.asyncio
+async def test_a_turn_with_no_pin_still_names_both_overrides_to_crag():
+    """An unpinned turn passes None for both rather than passing nothing:
+    a stub or evaluator that reads them by keyword must not have to guess
+    whether "absent" meant "unpinned" or "never wired"."""
+    crag = _CragStub(action="CORRECT", confidence=0.95)
+    agent = _crag_planning(_ScriptedLLM([LLMResponse(content="", tool_calls=[], plan=[])]), crag)
+    agent.ctx.add_context(source="rag", content="smb.conf lives in /etc/samba", metadata={})
+
+    [e async for e in agent._handle_planning()]
+
+    assert crag.kwargs == [{"model_override": None, "tier_override": None}]
+
+
+@pytest.mark.asyncio
 async def test_observing_does_not_treat_a_thread_receipt_as_retrieval():
     crag = _CragStub()
     agent = _crag_planning(_ScriptedLLM([]), crag)
@@ -506,6 +522,17 @@ async def test_the_turns_pin_rides_along_to_crag(state):
     ``inspect.signature(CRAGEvaluator.evaluate)`` pins that the parameters
     exist; nothing pinned that the state machine passes them. It does, from
     both evaluation sites — PLANNING's and OBSERVING's.
+
+    What that costs when it is wrong: the evaluator's confidence verdict
+    decides whether the turn searches at all, so a turn pinned to one model
+    can have that decision made by whatever the adapter's own configuration
+    routes to. The overrides ride on the ``StateContext`` (E-2); an override
+    that is not passed through here is silently escaped rather than refused.
+
+    This is the only pin on that seam, and it needs to be: the ``_CragStub``
+    accepted ``**kwargs`` and recorded them, but nothing read what it
+    recorded, so deleting both arguments from both call sites left the entire
+    backend suite green.
     """
     crag = _CragStub(action="CORRECT", confidence=0.95)
     agent = _crag_planning(

@@ -230,6 +230,11 @@ class TestReceiptSlot:
         # turns that fit an 8000-token bucket easily are left whole, and it
         # takes rows that actually fill the bucket to trip it. Either way the
         # walk never sees a receipt — that is what this test is about.
+        #
+        # These four assertions are the only thing left driving the walk
+        # behaviourally, and driving it is all they do: no production caller
+        # reaches `_format_conversation` any more (see its docstring). They
+        # are green because the walk is correct, not because it runs.
         assembler = ContextAssembler()
         out_small, _ = assembler._format_conversation(rows, 8000)
         assert len(_raw_lines(out_small)) == 12       # a count would have fired
