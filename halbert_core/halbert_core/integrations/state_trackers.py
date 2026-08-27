@@ -17,6 +17,53 @@ from typing import List, Optional
 
 logger = logging.getLogger("halbert.integrations.state_trackers")
 
+DEFAULT_PERSONA_ID = "halbert"
+
+
+def _record(ledger, subject: str, predicate: str, obj: str, source: str,
+            thread_id=None) -> None:
+    """Write one state triple, never raising.
+
+    ``StateStore.record_state`` closes the previous triple for the same
+    (subject, predicate) automatically, so callers get supersession and a
+    valid-time history for free.
+
+    StateStore already fails soft; the guard here is defence in depth, because
+    trackers sit on the hot path and ``ledger`` may be any duck-typed object.
+    """
+    if ledger is None:
+        return
+    try:
+        ledger.record_state(subject, predicate, obj, source, thread_id=thread_id)
+    except Exception as e:
+        logger.warning(f"Failed to record {subject}/{predicate}: {e}")
+
+
+def default_ledger_path():
+    """Halbert's own state-ledger db.
+
+    Standalone today; once Plan A merges this table folds into the thread
+    database and ``StateStore(conn=...)`` takes over — no data move.
+    """
+    from ..continuity.state_store import default_state_db_path
+
+    return default_state_db_path()
+
+
+def _default_ledger():
+    """Open Halbert's machine-state ledger, or return None if unavailable.
+
+    Halbert-owned per founder direction D1: Haloysius has no cross-session
+    understanding, so the ledger is not a Haloysius component.
+    """
+    try:
+        from ..continuity.state_store import StateStore
+
+        return StateStore(db_path=str(default_ledger_path()))
+    except Exception as e:
+        logger.warning(f"State ledger unavailable, trackers will not record: {e}")
+        return None
+
 
 class DiskHealthTracker:
     """Tracks disk health state for the persona.
@@ -26,8 +73,9 @@ class DiskHealthTracker:
     sync_to_ledger() writes to the TemporalStateLedger.
     """
 
-    def __init__(self, ledger=None):
+    def __init__(self, ledger=None, persona_id: str = DEFAULT_PERSONA_ID):
         self._ledger = ledger
+        self._persona_id = persona_id
         self._disk_states: dict[str, str] = {}  # device -> health status
 
     @property
@@ -48,25 +96,17 @@ class DiskHealthTracker:
         self.sync_to_ledger()
 
     def sync_to_ledger(self) -> None:
-        if self._ledger is None:
-            return
         for device, status in self._disk_states.items():
-            subject = f"disk:{device}"
-            try:
-                self._ledger.set_state(
-                    subject=subject,
-                    predicate="disk_health",
-                    object=status,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to sync disk health for {device}: {e}")
+            _record(self._ledger, f"disk:{device}", "disk_health", status,
+                    "state_tracker:disk_health")
 
 
 class ServiceStatusTracker:
     """Tracks service status (running, failed, degraded) for the persona."""
 
-    def __init__(self, ledger=None):
+    def __init__(self, ledger=None, persona_id: str = DEFAULT_PERSONA_ID):
         self._ledger = ledger
+        self._persona_id = persona_id
         self._service_states: dict[str, str] = {}
 
     @property
@@ -86,25 +126,17 @@ class ServiceStatusTracker:
         self.sync_to_ledger()
 
     def sync_to_ledger(self) -> None:
-        if self._ledger is None:
-            return
         for service, status in self._service_states.items():
-            subject = f"service:{service}"
-            try:
-                self._ledger.set_state(
-                    subject=subject,
-                    predicate="service_status",
-                    object=status,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to sync service status for {service}: {e}")
+            _record(self._ledger, f"service:{service}", "service_status", status,
+                    "state_tracker:service_status")
 
 
 class SystemResourceTracker:
     """Tracks CPU, memory, and load average for the persona."""
 
-    def __init__(self, ledger=None):
+    def __init__(self, ledger=None, persona_id: str = DEFAULT_PERSONA_ID):
         self._ledger = ledger
+        self._persona_id = persona_id
         self._cpu_percent: float = 0.0
         self._mem_percent: float = 0.0
         self._load_avg: float = 0.0
@@ -128,33 +160,18 @@ class SystemResourceTracker:
         self.sync_to_ledger()
 
     def sync_to_ledger(self) -> None:
-        if self._ledger is None:
-            return
-        try:
-            self._ledger.set_state(
-                subject="system",
-                predicate="cpu_load",
-                object=f"{self._cpu_percent:.0f}%",
-            )
-            self._ledger.set_state(
-                subject="system",
-                predicate="memory_usage",
-                object=f"{self._mem_percent:.0f}%",
-            )
-            self._ledger.set_state(
-                subject="system",
-                predicate="load_average",
-                object=f"{self._load_avg:.2f}",
-            )
-        except Exception as e:
-            logger.warning(f"Failed to sync system resources: {e}")
+        src = "state_tracker:system_resources"
+        _record(self._ledger, "system", "cpu_load", f"{self._cpu_percent:.0f}%", src)
+        _record(self._ledger, "system", "memory_usage", f"{self._mem_percent:.0f}%", src)
+        _record(self._ledger, "system", "load_average", f"{self._load_avg:.2f}", src)
 
 
 class AdminPresenceTracker:
     """Tracks whether an admin is actively interacting (relational state)."""
 
-    def __init__(self, ledger=None):
+    def __init__(self, ledger=None, persona_id: str = DEFAULT_PERSONA_ID):
         self._ledger = ledger
+        self._persona_id = persona_id
         self._admin_present: bool = False
         self._admin_user: str = ""
 
@@ -183,16 +200,9 @@ class AdminPresenceTracker:
         self.sync_to_ledger()
 
     def sync_to_ledger(self) -> None:
-        if self._ledger is None:
-            return
-        try:
-            self._ledger.set_state(
-                subject="user",
-                predicate="admin_presence",
-                object="present" if self._admin_present else "absent",
-            )
-        except Exception as e:
-            logger.warning(f"Failed to sync admin presence: {e}")
+        _record(self._ledger, "user", "admin_presence",
+                "present" if self._admin_present else "absent",
+                "state_tracker:admin_presence")
 
 
 def register_halbert_predicates() -> None:
@@ -252,7 +262,7 @@ def register_halbert_predicates() -> None:
     logger.info("Registered Halbert predicates and subject labels")
 
 
-def register_halbert_state_trackers(ledger=None) -> dict:
+def register_halbert_state_trackers(ledger=None, persona_id: str = DEFAULT_PERSONA_ID) -> dict:
     """Register all Halbert state trackers with Haloysius continuity.
 
     Clears default (human-persona) trackers first, then registers
@@ -274,12 +284,15 @@ def register_halbert_state_trackers(ledger=None) -> dict:
     # Clear human-persona defaults (clothing, location)
     clear_state_trackers()
 
+    if ledger is None:
+        ledger = _default_ledger()
+
     # Create tracker instances
     trackers = {
-        "disk_health": DiskHealthTracker(ledger=ledger),
-        "service_status": ServiceStatusTracker(ledger=ledger),
-        "system_resources": SystemResourceTracker(ledger=ledger),
-        "admin_presence": AdminPresenceTracker(ledger=ledger),
+        "disk_health": DiskHealthTracker(ledger=ledger, persona_id=persona_id),
+        "service_status": ServiceStatusTracker(ledger=ledger, persona_id=persona_id),
+        "system_resources": SystemResourceTracker(ledger=ledger, persona_id=persona_id),
+        "admin_presence": AdminPresenceTracker(ledger=ledger, persona_id=persona_id),
     }
 
     # Register each

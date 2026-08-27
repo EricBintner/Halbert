@@ -3,13 +3,14 @@
 """
 Memory management API routes.
 
-Two backends live behind this router:
-- /stats and /search — Haloysius file-based memory (MemoryRetrieval:
-  core, runtime, personas/* subdirectories).
-- /index/*, /collections*, /query — the ChromaDB collection browser
-  (self_* collections: self_hwmon, self_journald, self_dbus, discoveries,
-  ...). These were moved here from routes/chat.py as part of the chat
-  endpoint retirement (T4b.1); they back the Memory dashboard page.
+The ChromaDB collection browser (self_* collections: self_hwmon, self_journald,
+self_dbus, discoveries, ...) backing the Memory dashboard page. These were moved
+here from routes/chat.py as part of the chat endpoint retirement (T4b.1).
+
+The former /stats and /search endpoints sat on the file-backed MemoryRetrieval,
+which was removed 2026-08-26 (audit F1) -- it could never return anything that
+had been written. Machine state is now the TemporalStateLedger; identity and
+semantic memory are Haloysius memory_v2.
 """
 
 import logging
@@ -21,40 +22,6 @@ from typing import List, Dict, Any, Optional
 logger = logging.getLogger('halbert.dashboard.routes.memory')
 
 router = APIRouter()
-
-
-@router.get("/stats")
-async def get_memory_stats() -> Dict[str, Any]:
-    """Get memory storage statistics."""
-    try:
-        from ...memory.retrieval import MemoryRetrieval
-        
-        retrieval = MemoryRetrieval()
-        stats = retrieval.get_stats()
-        
-        return stats
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/search")
-async def search_memory(
-    subdir: str = Query(..., description="Memory subdirectory (core, runtime, personas/*)"),
-    query: str = Query(..., description="Search query"),
-    limit: int = Query(10, ge=1, le=100, description="Max results")
-) -> List[Dict[str, Any]]:
-    """Search memory entries."""
-    try:
-        from ...memory.retrieval import MemoryRetrieval
-
-        retrieval = MemoryRetrieval()
-        results = retrieval.retrieve_from(subdir, query, k=limit)
-
-        return results
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # -------------------------------------------------------------------------

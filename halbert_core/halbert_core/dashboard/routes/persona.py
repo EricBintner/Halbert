@@ -147,31 +147,6 @@ async def switch_persona(request: PersonaSwitchRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/memory/stats")
-async def get_memory_stats() -> Dict[str, Any]:
-    """
-    Get memory statistics for all personas.
-    
-    Returns:
-        {
-            "core": {"entries": 150, "size_mb": 1.2},
-            "personas": {"entries": 45, "size_mb": 0.5},
-            "shared": {"size_mb": 0.01}
-        }
-    """
-    try:
-        from ...memory.retrieval import MemoryRetrieval
-        
-        retrieval = MemoryRetrieval()
-        stats = retrieval.get_stats()
-        
-        return stats
-    
-    except Exception as e:
-        logger.error(f"Error getting memory stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.post("/memory/purge")
 async def purge_memory(request: MemoryPurgeRequest) -> Dict[str, Any]:
     """
