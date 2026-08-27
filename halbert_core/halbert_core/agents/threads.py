@@ -202,6 +202,10 @@ def _locked(method: Callable) -> Callable:
     the loser is orphaned for good: never selected again, never paused, never
     closed by ``tick()`` (review: Plan A / A6). Every public method that moves
     a thread between statuses belongs behind this lock.
+
+    The unit of exclusion is the status move, not the call that asks for it:
+    ``tick`` sweeps unlocked and takes the lock once per close, so an
+    ``on_thread_closed`` hook never runs inside it (see ``tick``).
     """
 
     @functools.wraps(method)
@@ -411,26 +415,38 @@ class ThreadManager:
             from_thread_id=previous_id, reason=reason,
         )
 
-    @_locked
     def tick(self) -> List[str]:
         """Close paused threads past the grace window; returns the closed ids.
+
+        The lock is taken per close, not around the sweep: ``_close_thread``
+        writes one status move under it and the ``on_thread_closed`` hooks run
+        after it is released. Those hooks are the Haloysius line and LLM
+        summaries in Plan B, and A8 hands the manager to ``process()``, so a
+        hook is a network call of unbounded length; held across the sweep it
+        would serialise every ``begin_turn``/``end_turn`` behind it, and —
+        this being a threading lock reached from the async path — stall the
+        event loop with them. Even with no hooks at all the sweep is up to 200
+        closes, each an unbounded ``list_messages`` plus a full
+        ``build_receipt``, which is no better a thing to hold a turn behind.
+
+        Listing outside the lock can only go stale, and a stale row is a
+        thread that has since been resumed, re-paused or closed by another
+        sweep: ``_close_thread`` re-reads and re-checks it before it writes.
 
         Plan B adds the live-terminal guard: never close while a terminal
         session of this thread is open (spec §5 "Stale").
         """
         now = self._now()
-        closed: List[str] = []
+        closed: List[Dict[str, Any]] = []
         for t in self.store.list_threads(status="paused", limit=200):
-            paused_at = float(t.get("paused_at") or t.get("updated_at") or now)
-            successor_id = (t.get("metadata") or {}).get("successor")
-            successor_turns = 0
-            if successor_id:
-                successor = self.store.get_thread(successor_id) or {}
-                successor_turns = int(successor.get("turns_since_pause") or 0)
-            if (now - paused_at) >= GRACE_MINUTES * 60 or successor_turns >= GRACE_TURNS:
-                self._close_thread(t, now)
-                closed.append(t["thread_id"])
-        return closed
+            if not self._close_due(t, now):
+                continue
+            row = self._close_thread(t["thread_id"], now)
+            if row is not None:
+                closed.append(row)
+        for row in closed:
+            self._fire_thread_closed(row)
+        return [row["thread_id"] for row in closed]
 
     # ------------------------------------------------------------------
     # Recall
@@ -503,13 +519,41 @@ class ThreadManager:
         self.store.update_thread(thread_id, **fields)
         self._refresh_receipt(thread_id)
 
-    def _close_thread(self, t: Dict[str, Any], now: float) -> None:
-        thread_id = t["thread_id"]
+    @_locked
+    def _close_thread(self, thread_id: str, now: float) -> Optional[Dict[str, Any]]:
+        """Close one paused thread; returns the closed row, ``None`` if it moved.
+
+        The row ``tick`` listed is a snapshot taken before the lock: by now
+        ``resume_thread`` may have reopened it, a turn may have re-paused it
+        with a fresh ``paused_at``, or another sweep may have closed it. It is
+        therefore re-read and re-checked here rather than trusted, which is
+        also what makes it safe for ``tick`` to sweep unlocked.
+
+        The ``on_thread_closed`` hooks are deliberately *not* run here — the
+        caller runs them with the lock released.
+        """
+        t = self.store.get_thread(thread_id)
+        if t is None or t.get("status") != "paused" or not self._close_due(t, now):
+            return None
         fields: Dict[str, Any] = {"status": "closed", "updated_at": now}
         fields.update(self._refined_title_fields(t))
         self.store.update_thread(thread_id, **fields)
         self._refresh_receipt(thread_id)
-        closed = self.store.get_thread(thread_id) or t
+        return self.store.get_thread(thread_id) or t
+
+    def _close_due(self, t: Dict[str, Any], now: float) -> bool:
+        """Is this paused row past the grace window — the minutes, or the successor's turns?"""
+        paused_at = float(t.get("paused_at") or t.get("updated_at") or now)
+        if (now - paused_at) >= GRACE_MINUTES * 60:
+            return True
+        successor_id = (t.get("metadata") or {}).get("successor")
+        if not successor_id:
+            return False
+        successor = self.store.get_thread(successor_id) or {}
+        return int(successor.get("turns_since_pause") or 0) >= GRACE_TURNS
+
+    def _fire_thread_closed(self, closed: Dict[str, Any]) -> None:
+        """Run the close hooks, with the manager lock released (see ``tick``)."""
         for hook in list(self.on_thread_closed):
             try:
                 hook(closed)

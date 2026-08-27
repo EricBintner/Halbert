@@ -420,31 +420,41 @@ class TestConcurrency:
         assert len(tm.store.list_threads()) == 2
 
     @staticmethod
-    def _lock_probe(tm, monkeypatch, store_method):
+    def _lock_is_free(tm):
+        """Can a *different* thread take ``tm._lock`` right now?
+
+        Asked without blocking: an ``RLock`` already held refuses it, a free
+        one hands it straight over. From another thread because the owner of
+        an ``RLock`` is always let back in, so asking on this one answers
+        nothing.
+        """
+        taken = []
+
+        def other():
+            got = tm._lock.acquire(blocking=False)
+            taken.append(got)
+            if got:
+                tm._lock.release()
+
+        w = threading.Thread(target=other)
+        w.start()
+        w.join(timeout=10)
+        return taken == [True]
+
+    @classmethod
+    def _lock_probe(cls, tm, monkeypatch, store_method):
         """Record, per ``store_method`` call, whether ``tm._lock`` is held.
 
-        A second thread tries the lock without blocking: an ``RLock`` already
-        held refuses it, a free one hands it straight over. Pins the ``_locked``
-        docstring's invariant — "every public method that moves a thread
-        between statuses belongs behind this lock" — from the outside.
+        Pins the ``_locked`` docstring's invariant — "every public method that
+        moves a thread between statuses belongs behind this lock" — from the
+        outside.
         """
         real = getattr(tm.store, store_method)
         held = []
 
         def probe(*args, **kwargs):
             result = real(*args, **kwargs)
-            taken = []
-
-            def other():
-                got = tm._lock.acquire(blocking=False)
-                taken.append(got)
-                if got:
-                    tm._lock.release()
-
-            w = threading.Thread(target=other)
-            w.start()
-            w.join(timeout=10)
-            held.append(taken == [False])
+            held.append(not cls._lock_is_free(tm))
             return result
 
         monkeypatch.setattr(tm.store, store_method, probe)
@@ -454,16 +464,86 @@ class TestConcurrency:
         "store_method, call",
         [
             ("create_thread", lambda tm, tid: tm.new_thread("Scanner share", "x", from_thread_id=tid)),
-            ("list_threads", lambda tm, tid: tm.tick()),
             ("get_thread", lambda tm, tid: tm.retract_recall(tid, "gone")),
         ],
-        ids=["new_thread", "tick", "retract_recall"],
+        # `tick` moves threads too, but takes the lock once per close rather
+        # than around the sweep — the two tests below.
+        ids=["new_thread", "retract_recall"],
     )
     def test_status_moves_hold_the_manager_lock(self, tm, monkeypatch, store_method, call):
         tid = _turn(tm, "add a samba share for the media folder").thread_id
         held = self._lock_probe(tm, monkeypatch, store_method)
         call(tm, tid)
         assert held and all(held)
+
+    def test_tick_holds_the_lock_for_the_close_but_not_the_hooks(self, tm, monkeypatch):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+        held = self._lock_probe(tm, monkeypatch, "update_thread")
+        free = []
+        tm.on_thread_closed.append(lambda t: free.append(self._lock_is_free(tm)))
+        assert tm.tick() == [t1.thread_id]
+        assert held and all(held)
+        assert free == [True]
+
+    def test_a_close_hook_does_not_block_the_next_turn(self, tm):
+        # Plan B's on_thread_closed hooks are the Haloysius line and LLM
+        # summaries, and A8 hands the manager to process(), so a hook is a
+        # network call of unbounded length. Run inside the manager's lock it
+        # held every begin_turn/end_turn for its whole duration — and, reached
+        # from the async path, the event loop with them.
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+        workers, served = [], []
+
+        def slow_hook(closed):
+            def turn():
+                text = "check the disk space on /var"
+                tm.begin_turn(text, analyze_message(text), "s2")
+
+            w = threading.Thread(target=turn)
+            workers.append(w)
+            w.start()
+            w.join(timeout=5)
+            served.append(not w.is_alive())
+
+        tm.on_thread_closed.append(slow_hook)
+        assert tm.tick() == [t1.thread_id]
+        for w in workers:
+            w.join(timeout=10)
+        assert served == [True]
+
+    def test_tick_re_reads_a_row_before_closing_it(self, tm, monkeypatch):
+        # The sweep lists paused threads outside the lock, so every row it
+        # carries is a snapshot. Trusted, a thread resumed since the listing
+        # was closed anyway: the conversation was left with nothing open.
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.clock.advance(3 * 3600)
+        t2 = _turn(tm, "check the disk space on /var")
+        stale = tm.store.get_thread(t1.thread_id)
+        assert stale["status"] == "paused"
+        assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is True
+        monkeypatch.setattr(tm.store, "list_threads", lambda *a, **k: [stale])
+        tm.clock.advance(GRACE_MINUTES * 60)
+        assert tm.tick() == []
+        assert tm.store.get_thread(t1.thread_id)["status"] == "open"
+
+    def test_tick_does_not_close_a_row_re_paused_since_the_listing(self, tm, monkeypatch):
+        # Same snapshot, one step subtler: still paused, but paused *again*
+        # since the listing, so its grace window restarted.
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.clock.advance(3 * 3600)
+        t2 = _turn(tm, "check the disk space on /var")
+        stale = tm.store.get_thread(t1.thread_id)
+        assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is True
+        tm.clock.advance(GRACE_MINUTES * 60)
+        assert tm.resume_thread(t2.thread_id, from_thread_id=t1.thread_id) is True
+        monkeypatch.setattr(tm.store, "list_threads", lambda *a, **k: [stale])
+        assert tm.tick() == []
+        fresh = tm.store.get_thread(t1.thread_id)
+        assert fresh["status"] == "paused" and fresh["paused_at"] == tm.clock.t
 
     def test_new_thread_cannot_race_a_turn_into_a_second_open_row(self, tm, monkeypatch):
         t1 = _turn(tm, "add a samba share for the media folder")
@@ -523,9 +603,11 @@ class TestConcurrency:
 
         def synced(*args, **kwargs):
             # tick() has read the paused list and is about to close what was on
-            # it. Unlocked, a resume_thread landing here reopened one of those
-            # rows and tick() closed it a moment later anyway: the resume
+            # it. A resume_thread landing exactly here reopened one of those
+            # rows, and the sweep closed it a moment later anyway: the resume
             # answered True and the conversation was left with nothing open.
+            # The close re-reads the row under the lock, so the resume wins and
+            # nothing is closed.
             rows = real(*args, **kwargs)
             entered.set()
             released.wait(timeout=0.5)
@@ -538,9 +620,9 @@ class TestConcurrency:
             closed.extend(tm.tick())
 
         def resume():
-            # Only reachable once tick() is inside the store call, i.e. once it
-            # already holds the lock — so the sweep always goes first and the
-            # outcome is one ordering, not a race.
+            # Only reachable once tick() is inside the listing call, i.e. once
+            # its snapshot of the paused rows is already taken — so the
+            # outcome is one fixed ordering, not a race.
             entered.wait(timeout=10)
             resumed.append(tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id))
             released.set()
@@ -551,9 +633,9 @@ class TestConcurrency:
         for w in workers:
             w.join(timeout=10)
         assert not any(w.is_alive() for w in workers)
-        assert closed == [t1.thread_id] and resumed == [False]
-        assert tm.store.get_thread(t1.thread_id)["status"] == "closed"
-        assert tm.current()["thread_id"] == t2.thread_id
+        assert closed == [] and resumed == [True]
+        assert tm.store.get_thread(t1.thread_id)["status"] == "open"
+        assert tm.current()["thread_id"] == t1.thread_id
 
 
 class TestDegradedStore:
