@@ -140,3 +140,58 @@ def test_role_scope_is_immutable():
 
     assert dataclasses.is_dataclass(RoleScope)
     assert ROLES["network_admin"].__dataclass_params__.frozen
+
+
+# --- Binary files must not enter a text index ----------------------------
+
+
+def test_zpool_cache_is_excluded_not_harvested():
+    """/etc/zfs/zpool.cache is a packed nvlist, not a config file.
+
+    Pool topology is available live from `zpool status`, which is
+    command-output and out of scope for a file manifest.
+    """
+    man = Manifest.from_file(manifest_path_for("storage_admin"))
+    assert "/etc/zfs/zpool.cache" not in man.include
+    assert "/etc/zfs/zpool.cache" in man.exclude
+
+
+def test_a_packed_nvlist_would_index_as_replacement_soup(tmp_path):
+    """Why the exclusion exists, demonstrated against the real parser.
+
+    config/parser.py checks only the `.plist` extension before falling back
+    to a UTF-8 read with errors="replace"; zpool.cache has no extension that
+    branch recognises. The mangled text is what gets hashed, so drift
+    detection compares corruption to corruption -- two genuinely different
+    pools can produce the same hash.
+    """
+    from halbert_core.config.parser import parse as parse_config
+
+    blob = b"\x00\x00\x00\x01\x00\x00\x00\x08version\x00\x00\x00\x1c\xff\xfe\x80"
+    a = tmp_path / "zpool.cache"
+    a.write_bytes(blob)
+    b = tmp_path / "other.cache"
+    b.write_bytes(blob.replace(b"\xff\xfe\x80", b"\xff\xfd\x81"))
+
+    parsed_a, parsed_b = parse_config(str(a)), parse_config(str(b))
+    assert any("�" in ln["text"] for ln in parsed_a["lines"])
+    assert parsed_a["hash"] == parsed_b["hash"], (
+        "if this ever fails the parser learned to see bytes, and the "
+        "exclusion could be revisited"
+    )
+
+
+def test_an_excluded_path_is_really_dropped(tmp_path):
+    """The exclusion is enforced by iter_paths, not just documented."""
+    zfs = tmp_path / "etc" / "zfs"
+    zfs.mkdir(parents=True)
+    (zfs / "zpool.cache").write_bytes(b"\x00\x00\x00\x01nvlist")
+    (zfs / "vdev_id.conf").write_text("alias d1 /dev/disk/by-path/x\n")
+
+    man_file = tmp_path / "storage.yml"
+    man_file.write_text(
+        f"include:\n  - {zfs}/*\nexclude:\n  - {zfs}/zpool.cache\nparsers: {{}}\n"
+    )
+
+    found = Manifest.from_file(str(man_file)).iter_paths()
+    assert [os.path.basename(p) for p in found] == ["vdev_id.conf"]

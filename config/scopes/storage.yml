@@ -51,7 +51,6 @@ include:
   - /etc/lvm/lvm.conf
   - /etc/lvm/profile/*
   - /etc/multipath.conf
-  - /etc/zfs/zpool.cache
   - /etc/zfs/zed.d/*
   - /etc/zfs/vdev_id.conf
 
@@ -75,6 +74,16 @@ include:
   - /etc/synthetic.conf
 
 exclude:
+  # Binary. zpool.cache is a packed (XDR-encoded) nvlist, not text, and it
+  # has no extension the parser's plist branch recognises — so config/parser.py
+  # reads it with errors="replace" and hashes the mangled result. Verified:
+  # the indexed content is U+FFFD soup, and two byte-different caches collapse
+  # to the same text AND the same hash, which makes drift detection compare
+  # corruption to corruption. Pool topology is available live from
+  # `zpool status`, which is command output and out of scope for a file
+  # manifest, so nothing is lost by excluding it.
+  - /etc/zfs/zpool.cache
+
   # LVM's own rolling metadata backups: machine-generated, high-churn, and a
   # duplicate of state that lvm.conf and the live tools already describe.
   - /etc/lvm/archive/**
