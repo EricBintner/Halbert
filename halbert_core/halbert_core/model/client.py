@@ -471,6 +471,60 @@ def _normalise_tool_calls(raw_calls: list) -> list:
     return normalised
 
 
+# ── num_ctx sizing (Plan A, spec §7) ─────────────────────────────
+#
+# Ollama's default context window is small and silently truncates the HEAD
+# of the prompt. Every local call now sets options.num_ctx from the prompt
+# size. The value is cached per model and only ever grows: Ollama reloads a
+# model whenever num_ctx changes, so recomputing it per turn would thrash
+# the GPU on every message.
+
+_NUM_CTX_MIN = 4096
+_NUM_CTX_DEFAULT_MAX = 32768
+_NUM_CTX_HEADROOM = 512
+_NUM_CTX_CACHE: Dict[str, int] = {}
+
+
+def compute_num_ctx(
+    prompt_tokens_estimate: int, num_predict: int, model_max: Optional[int]
+) -> int:
+    """clamp(round_up(prompt + 512 + num_predict, 1024), 4096, model_max or 32768)."""
+    need = int(prompt_tokens_estimate) + _NUM_CTX_HEADROOM + int(num_predict)
+    rounded = ((need + 1023) // 1024) * 1024
+    ceiling = int(model_max) if model_max else _NUM_CTX_DEFAULT_MAX
+    return max(_NUM_CTX_MIN, min(rounded, ceiling))
+
+
+def num_ctx_for_model(
+    model: str,
+    prompt_tokens_estimate: int,
+    num_predict: int,
+    model_max: Optional[int] = None,
+) -> int:
+    """Per-model num_ctx: computed once, grown only when a prompt needs more."""
+    wanted = compute_num_ctx(prompt_tokens_estimate, num_predict, model_max)
+    cached = _NUM_CTX_CACHE.get(model)
+    if cached is not None and cached >= wanted:
+        return cached
+    if cached is not None:
+        logger.info(f"num_ctx for {model} grows {cached} -> {wanted}")
+    _NUM_CTX_CACHE[model] = wanted
+    return wanted
+
+
+def estimate_prompt_tokens(messages: list, tools: Optional[list]) -> int:
+    """~4 chars/token over every message's content plus the tool schemas."""
+    total = 0
+    for m in messages or []:
+        content = m.get("content", "") if isinstance(m, dict) else m
+        if not isinstance(content, str):
+            content = json.dumps(content, default=str)
+        total += len(content) // 4
+    if tools:
+        total += len(json.dumps(tools, default=str)) // 4
+    return total
+
+
 def _do_llm_call(
     endpoint: str,
     model: str,
@@ -516,14 +570,18 @@ def _do_llm_call(
         }
         if tools:
             payload["tools"] = tools
-        if options:
-            payload["options"] = {
-                "num_predict": options.get(
-                    "num_predict", options.get("max_tokens", 1024)
-                ),
-                "temperature": options.get("temperature", 0.7),
-            }
-        logger.info(f"Calling Ollama API: {url} model={model}")
+        options = options or {}
+        num_predict = options.get("num_predict", options.get("max_tokens", 1024))
+        # Always present (spec §7): without it Ollama truncates the head.
+        num_ctx = options.get("num_ctx") or num_ctx_for_model(
+            model, estimate_prompt_tokens(messages, tools), num_predict, options.get("num_ctx_max"),
+        )
+        payload["options"] = {
+            "num_predict": num_predict,
+            "temperature": options.get("temperature", 0.7),
+            "num_ctx": num_ctx,
+        }
+        logger.info(f"Calling Ollama API: {url} model={model} num_ctx={num_ctx}")
         response = requests.post(url, json=payload, timeout=timeout)
         response.raise_for_status()
         data = response.json()

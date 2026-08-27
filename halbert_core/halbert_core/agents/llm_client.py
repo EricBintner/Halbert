@@ -125,16 +125,19 @@ class OllamaClient(BaseLLMClient):
         Returns:
             LLMResponse with content and optional tool calls
         """
+        from ..model.client import num_ctx_for_model, estimate_prompt_tokens
+        model = self._require_model()
         payload = {
-            "model": self._require_model(),
+            "model": model,
             "messages": messages,
             "stream": False,
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": num_ctx_for_model(model, estimate_prompt_tokens(messages, tools), max_tokens),
             }
         }
-        
+
         if tools:
             payload["tools"] = tools
         
@@ -201,16 +204,19 @@ class OllamaClient(BaseLLMClient):
         
         Yields content chunks as they arrive.
         """
+        from ..model.client import num_ctx_for_model, estimate_prompt_tokens
+        model = self._require_model()
         payload = {
-            "model": self._require_model(),
+            "model": model,
             "messages": messages,
             "stream": True,
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": num_ctx_for_model(model, estimate_prompt_tokens(messages, None), max_tokens),
             }
         }
-        
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -219,7 +225,7 @@ class OllamaClient(BaseLLMClient):
                     timeout=aiohttp.ClientTimeout(total=self.timeout)
                 ) as resp:
                     resp.raise_for_status()
-                    
+
                     async for line in resp.content:
                         if not line:
                             continue

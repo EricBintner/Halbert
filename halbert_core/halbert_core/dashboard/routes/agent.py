@@ -415,7 +415,9 @@ class LLMClientAdapter:
                 provider=provider,
                 stream=False,
                 timeout=300,
-                options={"num_predict": 2048, "temperature": 0.7},
+                # PLANNING answers are tool calls or a short plan: 1024 is
+                # plenty and keeps num_ctx (and the model reload) small.
+                options={"num_predict": 1024, "temperature": 0.7},
                 tools=tools,
             )
             self._note_tools_support(model, tools)
@@ -439,6 +441,7 @@ class LLMClientAdapter:
                     provider="ollama",
                     stream=False,
                     timeout=180,
+                    options={"num_predict": 1024, "temperature": 0.7},
                     tools=tools,
                 )
                 self._note_tools_support(guide_model, tools)
@@ -525,12 +528,18 @@ class LLMClientAdapter:
                         "max_tokens": max_tokens,
                     }
                 else:
+                    from ...model.client import num_ctx_for_model, estimate_prompt_tokens
                     url = f"{endpoint}/api/chat"
+                    prompt_tokens = estimate_prompt_tokens(messages, None)
+                    num_ctx = num_ctx_for_model(model, prompt_tokens, max_tokens)
+                    # The reply must fit in what is left after the prompt
+                    # (spec §7: max_tokens subordinate to num_ctx − prompt).
+                    num_predict = max(256, min(max_tokens, num_ctx - prompt_tokens - 512))
                     payload = {
                         "model": model,
                         "messages": messages,
                         "stream": True,
-                        "options": {"num_predict": max_tokens, "temperature": temperature}
+                        "options": {"num_predict": num_predict, "temperature": temperature, "num_ctx": num_ctx},
                     }
                 
                 logger.info(f"Streaming from {url} model={model}")
