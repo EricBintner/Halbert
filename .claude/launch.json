@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "halbert-backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Volumes/4TB-BAD/Halbert/halbert_core && HALBERT_PORT=$PORT arch -arm64 /Volumes/4TB-BAD/Halbert/.venv/bin/python -m halbert_core.dashboard"],
+      "port": 8000,
+      "autoPort": true
+    },
+    {
+      "name": "halbert-frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Volumes/4TB-BAD/Halbert/halbert_core/halbert_core/dashboard/frontend && HALBERT_API_PORT=64864 npm run dev"],
+      "port": 5173
+    }
+  ]
+}

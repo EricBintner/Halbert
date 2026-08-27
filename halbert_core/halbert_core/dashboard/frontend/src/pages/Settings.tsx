@@ -31,8 +31,6 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
-  Link,
-  Terminal,
   Edit3,
   ScanSearch,
   Clock,
@@ -47,7 +45,7 @@ import {
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { PageHeader, ChromaDBSettings, DatasetManager, DataVersionCard } from '@/components/domain'
 import { CompressionSettings } from '@/components/CompressionSettings'
-import { UnifiedLLMSettings } from '@/components/llm'
+import { ModelSettings } from '@/components/llm'
 import { LegalNoticesModal } from '@/components/legal'
 import { apiUrl } from '@/lib/apiBase'
 
@@ -64,19 +62,6 @@ interface AlertRule {
 interface DiscoveryStats {
   total: number
   by_type: Record<string, number>
-}
-
-interface ModelStatus {
-  ollama_connected: boolean
-  model_installed: boolean
-  model_name: string
-  endpoint: string
-  available_models: string[]
-  // Phase 58: Hardware tier detection
-  hardware_tier?: number  // 1=24GB, 2=48GB+, 3=Apple Silicon
-  total_vram_gb?: number | null
-  compression_available?: boolean
-  compression_backend?: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -387,11 +372,6 @@ export function Settings() {
   const [savingPolicy, setSavingPolicy] = useState(false)
   const [clearing, setClearing] = useState(false)
   
-  // Model config state
-  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null)
-  const [loadingStatus, setLoadingStatus] = useState(true)
-  const [hardwareDefaultsMessage, setHardwareDefaultsMessage] = useState<string | null>(null)
-  
   // Persona state
   const [activePersona, setActivePersona] = useState<string>('it_admin')
   const [personaNames, setPersonaNames] = useState<Record<string, string>>({
@@ -661,20 +641,6 @@ export function Settings() {
       }
     } catch (err) {
       console.error('Failed to load policy:', err)
-    }
-    
-    // Load model status (connection + availability)
-    // This may auto-configure Local Ollama on fresh install
-    setLoadingStatus(true)
-    try {
-      const res = await fetch(`${API_BASE}/settings/model/status`)
-      const data = await res.json()
-      setModelStatus(data)
-    } catch (err) {
-      console.error('Failed to load model status:', err)
-      setModelStatus({ ollama_connected: false, model_installed: false, model_name: '', endpoint: 'http://localhost:11434', available_models: [] })
-    } finally {
-      setLoadingStatus(false)
     }
     
     // Load active persona
@@ -1211,187 +1177,7 @@ export function Settings() {
 
         {/* AI Models Tab - includes model config and knowledge sources */}
         <TabsContent value="ai" className="space-y-4">
-          {/* Unified LLM Model Picker (SourcePrep integration) */}
-          <UnifiedLLMSettings />
-
-          {/* Legacy Connection Status Card — will be removed in Step 4 */}
-          <Card className={modelStatus?.ollama_connected 
-            ? (modelStatus?.model_installed ? 'border-success' : 'border-warning') 
-            : 'border-error'
-          }>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Link className="h-5 w-5" />
-                  LLM Connection Status
-                </div>
-                <Button 
-                  variant="ghost" 
-                  size="sm"
-                  onClick={() => loadSettings()}
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {/* Ollama Connection */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm">Ollama Server</span>
-                    <span className="text-xs text-muted-foreground">
-                      ({modelStatus?.endpoint || 'localhost:11434'})
-                    </span>
-                  </div>
-                  {loadingStatus ? (
-                    <Badge variant="secondary">
-                      <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                      Checking...
-                    </Badge>
-                  ) : modelStatus?.ollama_connected ? (
-                    <Badge className="bg-success">
-                      <Check className="h-3 w-3 mr-1" />
-                      Connected
-                    </Badge>
-                  ) : (
-                    <Badge variant="destructive">
-                      <X className="h-3 w-3 mr-1" />
-                      Not Connected
-                    </Badge>
-                  )}
-                </div>
-                
-                {/* Model Availability */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm">Chat Model</span>
-                    {modelStatus?.model_name ? (
-                      <code className="text-xs bg-muted px-1 rounded">
-                        {modelStatus.model_name}
-                      </code>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">(not configured)</span>
-                    )}
-                  </div>
-                  {modelStatus?.model_installed ? (
-                    <Badge className="bg-success">
-                      <Check className="h-3 w-3 mr-1" />
-                      Installed
-                    </Badge>
-                  ) : modelStatus?.ollama_connected && modelStatus?.model_name ? (
-                    <Badge variant="secondary" className="bg-warning-muted text-warning">
-                      <X className="h-3 w-3 mr-1" />
-                      Not Installed
-                    </Badge>
-                  ) : modelStatus?.ollama_connected ? (
-                    <Badge variant="outline">Configure below</Badge>
-                  ) : (
-                    <Badge variant="outline">Unknown</Badge>
-                  )}
-                </div>
-                
-                {/* Hardware Tier Info - Phase 58 */}
-                {modelStatus?.total_vram_gb && (
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">GPU VRAM</span>
-                      <code className="text-xs bg-muted px-1 rounded">
-                        {modelStatus.total_vram_gb}GB
-                      </code>
-                    </div>
-                    <Badge variant="outline" className="text-xs">
-                      {modelStatus.hardware_tier === 2 ? 'Tier 2 (Enthusiast)' : 
-                       modelStatus.hardware_tier === 3 ? 'Tier 3 (Apple Silicon)' : 
-                       'Tier 1 (Power User)'}
-                    </Badge>
-                  </div>
-                )}
-                
-                {/* Context Compression - Phase 72 */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm">Context Compression</span>
-                  </div>
-                  <Badge variant="default" className="text-xs">
-                    Active (3-tier cascade)
-                  </Badge>
-                </div>
-
-                {/* All good message */}
-                {modelStatus?.ollama_connected && modelStatus?.model_installed && (
-                  <div className="pt-2 border-t">
-                    <p className="text-sm text-success flex items-center gap-2">
-                      <Check className="h-4 w-4" />
-                      Ready to chat! Your AI assistant is connected.
-                    </p>
-                  </div>
-                )}
-                
-                {/* Apply Hardware Defaults - Phase 58 */}
-                {modelStatus?.ollama_connected && !modelStatus?.model_installed && (
-                  <div className="pt-2 border-t">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium">Hardware Defaults</p>
-                        <p className="text-xs text-muted-foreground">
-                          Set compression for your {modelStatus?.total_vram_gb ? `${modelStatus.total_vram_gb}GB GPU` : 'hardware'} and use the largest installed model that fits it
-                        </p>
-                      </div>
-                      <Button 
-                        size="sm"
-                        onClick={async () => {
-                          try {
-                            const res = await fetch(`${API_BASE}/settings/model/apply-recommended`, { method: 'POST' })
-                            const data = await res.json()
-                            setHardwareDefaultsMessage(data.message || null)
-                            if (data.success) {
-                              loadSettings()
-                            }
-                          } catch (err) {
-                            console.error('Failed to apply hardware defaults:', err)
-                            setHardwareDefaultsMessage('Failed to apply hardware defaults')
-                          }
-                        }}
-                      >
-                        <Zap className="h-3 w-3 mr-1" />
-                        Apply Hardware Defaults
-                      </Button>
-                    </div>
-                    {hardwareDefaultsMessage && (
-                      <p className="text-xs text-muted-foreground mt-2">{hardwareDefaultsMessage}</p>
-                    )}
-                  </div>
-                )}
-                
-                {/* Not connected help */}
-                {!modelStatus?.ollama_connected && (
-                  <div className="pt-2 border-t">
-                    <p className="text-sm text-muted-foreground">
-                      Ollama is not running. Start it with:
-                    </p>
-                    <div className="flex items-center justify-between mt-1 p-2 bg-muted rounded">
-                      <code className="text-xs font-mono">ollama serve</code>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 hover:bg-primary/10"
-                        onClick={() => {
-                          // Dispatch custom event to send command to terminal
-                          window.dispatchEvent(new CustomEvent('halbert:run-command', {
-                            detail: { command: 'ollama serve' }
-                          }))
-                        }}
-                        title="Run in Terminal"
-                      >
-                        <Terminal className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+          <ModelSettings />
 
           {/* Context Compression - Phase 72 */}
           <CompressionSettings />

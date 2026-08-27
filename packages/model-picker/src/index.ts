@@ -39,4 +39,8 @@ export { ProviderCard } from './primitives/ProviderCard'
 export type { ProviderCardProps } from './primitives/ProviderCard'
 
 export { ModelSettingsDrawer } from './primitives/ModelSettingsDrawer'
-export type { ModelSettingsDrawerProps } from './primitives/ModelSettingsDrawer'
+export type {
+  ModelSettingsDrawerClassNames,
+  ModelSettingsDrawerProps,
+  ProviderGroupId,
+} from './primitives/ModelSettingsDrawer'

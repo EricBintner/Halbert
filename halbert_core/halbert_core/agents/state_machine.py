@@ -1272,6 +1272,13 @@ class AgentStateMachine:
         # DEBUG: Log the prompt to verify markdown instructions are included
         logger.debug(f"Response prompt (first 500 chars): {prompt[:500]}")
         
+        # The turn's model is announced from here and nowhere else. PLANNING
+        # resolves separately and can land on a different tier — it scores a
+        # different prompt — so naming its choice would credit the answer to a
+        # model that never saw the question.
+        selected: List[Dict[str, Any]] = []
+        announced = False
+
         # Stream response
         if hasattr(self.llm, 'stream'):
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
@@ -1282,7 +1289,13 @@ class AgentStateMachine:
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,
                 tier_override=self.ctx.tier_override if self.ctx else None,
+                on_model_selected=selected.append,
             ):
+                if selected and not announced:
+                    announced = True
+                    yield StreamEvent.model_selected(
+                        self.ctx.session_id, **selected[-1]
+                    )
                 chunk_count += 1
                 logger.debug(f"Chunk {chunk_count}: {repr(chunk[:50])}...")
                 self.ctx.response_chunks.append(chunk)
@@ -1296,11 +1309,22 @@ class AgentStateMachine:
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,
                 tier_override=self.ctx.tier_override if self.ctx else None,
+                on_model_selected=selected.append,
             )
+            if selected:
+                announced = True
+                yield StreamEvent.model_selected(
+                    self.ctx.session_id, **selected[-1]
+                )
             content = response.content if hasattr(response, 'content') else str(response)
             self.ctx.response_chunks.append(content)
             yield StreamEvent.response_chunk(self.ctx.session_id, content)
-        
+
+        # A stream that resolved a model and then produced nothing still owes
+        # the user the reason its answer is empty.
+        if selected and not announced:
+            yield StreamEvent.model_selected(self.ctx.session_id, **selected[-1])
+
         # Full (raw) streamed response text
         full_response = "".join(self.ctx.response_chunks)
 

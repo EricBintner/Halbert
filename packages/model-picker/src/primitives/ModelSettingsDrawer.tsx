@@ -1,12 +1,53 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 
-import type { HTMLAttributes } from 'react'
+import type { HTMLAttributes, ReactNode } from 'react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import type { ProviderId } from '../types'
+import { providerDescriptor } from '../types'
+import type {
+  AppRole,
+  EndpointTestResult,
+  ProviderId,
+  SavedEndpoint,
+} from '../types'
 import type { UseModelPickerResult } from '../useModelPicker'
 import { ProviderCard } from './ProviderCard'
 import { RoleAssignmentRow } from './RoleAssignmentRow'
+
+/**
+ * Which half of a grouped provider list something belongs to.
+ */
+export type ProviderGroupId = 'local' | 'cloud'
+
+/**
+ * One key per element a host may need to reach.
+ *
+ * A composite whose only seam is its own root cannot be styled, so the first
+ * host that needed styled rows abandoned it and re-implemented every effect
+ * inside it. These keys exist so the second host does not have to.
+ */
+export interface ModelSettingsDrawerClassNames {
+  root?: string
+  /** Wraps `rolesHeader` and the role grid, for hosts that frame the table. */
+  rolesSection?: string
+  roleGrid?: string
+  roleRow?: string
+  /** The "saved but nothing is using it yet" offer. */
+  assignPrompt?: string
+  providersSection?: string
+  providersTrigger?: string
+  providersRegion?: string
+  /**
+   * Each set of cards: the two `groupProviders` sections, and the offers for
+   * engines running here but not saved.
+   */
+  providerGroup?: string
+  providerGroupHeading?: string
+  providerCard?: string
+  /** Supporting and empty-state lines inside the providers region. */
+  note?: string
+  announcement?: string
+}
 
 export interface ModelSettingsDrawerProps
   extends HTMLAttributes<HTMLDivElement> {
@@ -14,6 +55,34 @@ export interface ModelSettingsDrawerProps
   /** Collapsed by default; opens itself when there are no endpoints yet. */
   providersOpen?: boolean
   onProvidersOpenChange?: (open: boolean) => void
+  /** Applied after any class the drawer sets, so a host always wins. */
+  classNames?: ModelSettingsDrawerClassNames
+  /** Rendered above the role grid; a host's column captions go here. */
+  rolesHeader?: ReactNode
+  /** Forwarded to every row as its `renderStatus`. */
+  renderRoleStatus?: (
+    role: AppRole,
+    result: EndpointTestResult | undefined,
+  ) => ReactNode
+  /** Rendered inside each provider card, beside its title. */
+  renderProviderBadge?: (
+    endpoint: SavedEndpoint | undefined,
+    provider: ProviderId,
+  ) => ReactNode
+  /** Rendered inside each group heading, when `groupProviders` is set. */
+  renderGroupBadge?: (group: ProviderGroupId) => ReactNode
+  /** Replaces the trigger's own label. */
+  renderProvidersLabel?: (open: boolean, count: number) => ReactNode
+  /** Rendered last in the providers region; a host's "add a provider" control. */
+  providersFooter?: ReactNode
+  /** Split the cards into a local-engine section and a cloud section. */
+  groupProviders?: boolean
+}
+
+/** Joins what is present. Host classes come last, so a host always wins. */
+function cx(...values: (string | undefined)[]): string | undefined {
+  const joined = values.filter(Boolean).join(' ')
+  return joined === '' ? undefined : joined
 }
 
 /**
@@ -25,7 +94,21 @@ export interface ModelSettingsDrawerProps
  * there is nothing assigned to look at.
  */
 export function ModelSettingsDrawer(props: ModelSettingsDrawerProps) {
-  const { picker, providersOpen, onProvidersOpenChange, ...rest } = props
+  const {
+    picker,
+    providersOpen,
+    onProvidersOpenChange,
+    classNames,
+    className,
+    rolesHeader,
+    renderRoleStatus,
+    renderProviderBadge,
+    renderGroupBadge,
+    renderProvidersLabel,
+    providersFooter,
+    groupProviders = false,
+    ...rest
+  } = props
 
   const [selfOpen, setSelfOpen] = useState(false)
   const [justAddedId, setJustAddedId] = useState<string | null>(null)
@@ -75,6 +158,8 @@ export function ModelSettingsDrawer(props: ModelSettingsDrawerProps) {
 
   const buttonId = useId()
   const regionId = useId()
+  const localHeadingId = useId()
+  const cloudHeadingId = useId()
 
   const justAdded = justAddedId
     ? endpoints.find((e) => e.id === justAddedId)
@@ -119,16 +204,124 @@ export function ModelSettingsDrawer(props: ModelSettingsDrawerProps) {
     }
   }
 
+  const savedCard = (endpoint: SavedEndpoint) => (
+    <ProviderCard
+      key={endpoint.id}
+      picker={picker}
+      endpoint={endpoint}
+      className={cx(classNames?.providerCard)}
+      renderBadge={renderProviderBadge}
+    />
+  )
+
+  const offerCard = (provider: ProviderId) => (
+    <ProviderCard
+      key={provider}
+      picker={picker}
+      provider={provider}
+      className={cx(classNames?.providerCard)}
+      renderBadge={renderProviderBadge}
+    />
+  )
+
+  const unsavedOffers =
+    unsavedLocal.length > 0 ? (
+      <div
+        role="group"
+        aria-label="Running on this machine"
+        className={cx(classNames?.providerGroup)}
+      >
+        <p className={cx(classNames?.note)}>Running here, not saved yet.</p>
+        {unsavedLocal.map(offerCard)}
+      </div>
+    ) : null
+
+  const localEndpoints = endpoints.filter(
+    (e) => providerDescriptor(e.provider).isLocal,
+  )
+  const cloudEndpoints = endpoints.filter(
+    (e) => !providerDescriptor(e.provider).isLocal,
+  )
+
+  const groupedProviders = (
+    <>
+      <section
+        aria-labelledby={localHeadingId}
+        className={cx(classNames?.providerGroup)}
+      >
+        <h4 id={localHeadingId} className={cx(classNames?.providerGroupHeading)}>
+          Local engines
+          {renderGroupBadge?.('local')}
+        </h4>
+        {localEndpoints.map(savedCard)}
+        {unsavedOffers}
+        {localEndpoints.length === 0 && unsavedLocal.length === 0 ? (
+          <p className={cx(classNames?.note)}>
+            {picker.discovering
+              ? 'Looking for an engine on this machine…'
+              : 'Nothing detected on the standard local ports.'}
+          </p>
+        ) : null}
+      </section>
+
+      <section
+        aria-labelledby={cloudHeadingId}
+        className={cx(classNames?.providerGroup)}
+      >
+        <h4 id={cloudHeadingId} className={cx(classNames?.providerGroupHeading)}>
+          Cloud providers
+          {renderGroupBadge?.('cloud')}
+        </h4>
+        {cloudEndpoints.length > 0 ? (
+          cloudEndpoints.map(savedCard)
+        ) : (
+          <p className={cx(classNames?.note)}>No cloud provider configured.</p>
+        )}
+      </section>
+    </>
+  )
+
+  const flatProviders = (
+    <>
+      {endpoints.map(savedCard)}
+      {unsavedOffers}
+      {endpoints.length === 0 && unsavedLocal.length === 0 ? (
+        <p className={cx(classNames?.note)}>
+          {picker.discovering
+            ? 'Looking for providers on this machine…'
+            : 'No providers configured yet.'}
+        </p>
+      ) : null}
+    </>
+  )
+
   return (
-    <div {...rest}>
-      <div role="group" aria-label="Model assignments">
-        {picker.roles.map((role) => (
-          <RoleAssignmentRow key={role.id} picker={picker} role={role} />
-        ))}
+    <div {...rest} className={cx(className, classNames?.root)}>
+      <div className={cx(classNames?.rolesSection)}>
+        {rolesHeader}
+        <div
+          role="group"
+          aria-label="Model assignments"
+          className={cx(classNames?.roleGrid)}
+        >
+          {picker.roles.map((role) => (
+            <RoleAssignmentRow
+              key={role.id}
+              picker={picker}
+              role={role}
+              className={cx(classNames?.roleRow)}
+              renderStatus={
+                renderRoleStatus
+                  ? (result) => renderRoleStatus(role, result)
+                  : undefined
+              }
+            />
+          ))}
+        </div>
       </div>
 
       {justAdded && emptyRole && (candidate || stillListing) ? (
-        <div>
+        <div className={cx(classNames?.assignPrompt)}>
           <p>
             {justAdded.name} is saved but nothing is using it yet.
           </p>
@@ -149,59 +342,47 @@ export function ModelSettingsDrawer(props: ModelSettingsDrawerProps) {
         </div>
       ) : null}
 
-      <div>
+      <div className={cx(classNames?.providersSection)}>
         <button
           type="button"
           id={buttonId}
           aria-expanded={open}
           aria-controls={regionId}
           onClick={() => setOpen(!open)}
+          className={cx(classNames?.providersTrigger)}
         >
-          <span aria-hidden="true">{open ? '▾' : '▸'}</span>{' '}
-          {endpoints.length > 0 ? `Providers (${endpoints.length})` : 'Providers'}
+          {renderProvidersLabel ? (
+            renderProvidersLabel(open, endpoints.length)
+          ) : (
+            <>
+              <span aria-hidden="true">{open ? '▾' : '▸'}</span>{' '}
+              {endpoints.length > 0
+                ? `Providers (${endpoints.length})`
+                : 'Providers'}
+            </>
+          )}
         </button>
         <div
           id={regionId}
           role="region"
           aria-labelledby={buttonId}
           hidden={!open}
+          className={cx(classNames?.providersRegion)}
         >
           {open ? (
             <>
-              {endpoints.map((endpoint) => (
-                <ProviderCard
-                  key={endpoint.id}
-                  picker={picker}
-                  endpoint={endpoint}
-                />
-              ))}
-
-              {unsavedLocal.length > 0 ? (
-                <div role="group" aria-label="Running on this machine">
-                  <p>Running here, not saved yet.</p>
-                  {unsavedLocal.map((provider) => (
-                    <ProviderCard
-                      key={provider}
-                      picker={picker}
-                      provider={provider}
-                    />
-                  ))}
-                </div>
-              ) : null}
-
-              {endpoints.length === 0 && unsavedLocal.length === 0 ? (
-                <p>
-                  {picker.discovering
-                    ? 'Looking for providers on this machine…'
-                    : 'No providers configured yet.'}
-                </p>
-              ) : null}
+              {groupProviders ? groupedProviders : flatProviders}
+              {providersFooter}
             </>
           ) : null}
         </div>
       </div>
 
-      <div role="status" aria-live="polite">
+      <div
+        role="status"
+        aria-live="polite"
+        className={cx(classNames?.announcement)}
+      >
         {announcement}
       </div>
     </div>

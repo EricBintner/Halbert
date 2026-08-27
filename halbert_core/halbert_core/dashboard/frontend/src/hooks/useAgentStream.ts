@@ -156,6 +156,25 @@ export interface UseAgentStreamOptions {
   onComplete?: () => void;
 }
 
+/**
+ * What actually answered this turn, as reported by the backend.
+ *
+ * The engine's routing decisions used to reach a log line and nothing else, so
+ * an escalation to the specialist — or a pinned model being unreachable and the
+ * guide answering instead — was invisible to the person paying for it.
+ */
+export interface TurnModelInfo {
+  model: string;
+  endpoint: string;
+  provider: string;
+  tier: string;
+  pinned: boolean;
+  escalated: boolean;
+  reason: string;
+  /** The model that was asked for but could not be reached, when one fell back. */
+  fallbackFrom?: string;
+}
+
 export interface UseAgentStreamReturn {
   session: AgentSession | null;
   isStreaming: boolean;
@@ -163,6 +182,8 @@ export interface UseAgentStreamReturn {
   thinking: string;
   provenance: ProvenanceRef[];
   moduleInvocations: ModuleInvocation[];
+  /** Null until the backend reports the model for the current turn. */
+  turnModel: TurnModelInfo | null;
   sendMessage: (message: string, sessionId?: string, selection?: ModelSelection) => void;
   confirmAction: (actionId: string, confirmed: boolean) => void;
   applyDiff: (diffId: string) => void;
@@ -234,6 +255,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
   const [thinking, setThinking] = useState('');
   const [provenance, setProvenance] = useState<ProvenanceRef[]>([]);
   const [moduleInvocations, setModuleInvocations] = useState<ModuleInvocation[]>([]);
+  const [turnModel, setTurnModel] = useState<TurnModelInfo | null>(null);
   
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -307,6 +329,19 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
             };
           }
           return { ...prev, plan: updatedPlan };
+
+        case 'model_selected':
+          setTurnModel({
+            model: event.model as string,
+            endpoint: event.endpoint as string,
+            provider: event.provider as string,
+            tier: event.tier as string,
+            pinned: Boolean(event.pinned),
+            escalated: Boolean(event.escalated),
+            reason: (event.reason as string) || '',
+            fallbackFrom: (event.fallback_from as string) || undefined,
+          });
+          return prev;
 
         case 'confidence_update':
           return { 
@@ -536,6 +571,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     // Reset state
     setIsStreaming(true);
     setResponse('');
+    setTurnModel(null);
     setThinking('');
     setProvenance([]);
     setModuleInvocations([]);
@@ -751,6 +787,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     }
     setSession(null);
     setResponse('');
+    setTurnModel(null);
     setThinking('');
     setProvenance([]);
     setModuleInvocations([]);
@@ -796,6 +833,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     thinking,
     provenance,
     moduleInvocations,
+    turnModel,
     sendMessage,
     confirmAction,
     applyDiff,
