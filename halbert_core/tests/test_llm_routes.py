@@ -70,7 +70,24 @@ def _installed(entries, chooses="model-a"):
     ), patch("halbert_core.utils.ollama.list_models_raw", return_value=entries)
 
 
-def test_fresh_install_arrives_with_a_chat_model(models_config_dir):
+def test_fresh_install_registers_the_endpoint_but_chooses_no_model(models_config_dir):
+    """Registering what is reachable needs no permission; choosing does.
+
+    An earlier version of this test asserted the opposite. Selecting on the
+    user's behalf is off by default: a VRAM heuristic cannot say anything
+    useful about a hosted model, and the picker exists to give an operator
+    control over which model answers.
+    """
+    hardware, library = _installed([{"name": "model-a", "size": 1}])
+    with patch.object(store, "_probe_ollama", return_value=True), hardware, library:
+        data = routes.get_llm_config()["data"]
+    cfg = data["llm_config"]
+    assert cfg["chat_model"]["enabled"] is False
+    assert [e["url"] for e in cfg["saved_endpoints"]] == [OLLAMA]
+
+
+def test_fresh_install_chooses_when_the_operator_opted_in(models_config_dir):
+    store.set_top_level(store.AUTO_SELECT_KEY, {"auto_select_model": True})
     hardware, library = _installed([{"name": "model-a", "size": 1}])
     with patch.object(store, "_probe_ollama", return_value=True), hardware, library:
         data = routes.get_llm_config()["data"]
@@ -79,7 +96,7 @@ def test_fresh_install_arrives_with_a_chat_model(models_config_dir):
     assert cfg["chat_model"]["model"] == "model-a"
     ep = next(e for e in cfg["saved_endpoints"] if e["id"] == cfg["chat_model"]["endpoint_id"])
     assert ep["url"] == OLLAMA
-    # The pill names the effective slot, so the very first response must carry it.
+    # The pill names the effective slot, so the first response must carry it.
     assert data["effective"]["llm_config"]["chat_model"]["model"] == "model-a"
 
 
@@ -99,3 +116,66 @@ def test_second_boot_does_not_reselect(models_config_dir):
     with patch.object(store, "_probe_ollama", return_value=True), hardware, library:
         cfg = routes.get_llm_config()["data"]["llm_config"]
     assert cfg["chat_model"]["enabled"] is False
+
+
+# ── first-run model selection is opt-in ───────────────────────────────
+
+
+def _fresh(models_config_dir):
+    """An empty config: no endpoints, no chat model."""
+    models_config_dir.mkdir(parents=True, exist_ok=True)
+    (models_config_dir / "models.yml").write_text("")
+    return models_config_dir
+
+
+def test_a_fresh_install_does_not_choose_a_model(models_config_dir, monkeypatch):
+    """Which model answers is the operator's decision.
+
+    A VRAM heuristic cannot say anything useful about a hosted model, and
+    picking one silently is the opposite of the control the picker exists to
+    give. Quick-setup offers the same suggestion as something to accept.
+    """
+    from halbert_core.model import llm_config as store
+    from halbert_core.dashboard.routes import llm as route
+
+    _fresh(models_config_dir)
+    monkeypatch.setattr(store, "_probe_ollama", lambda *a, **k: True)
+    chose = []
+    from halbert_core.dashboard.routes import settings as settings_routes
+    monkeypatch.setattr(settings_routes, "configure_first_run_model",
+                        lambda: chose.append(True))
+
+    route.get_llm_config()
+
+    assert chose == []
+    assert store.load_global()["chat_model"]["model"] == ""
+    # The endpoint is still registered — that part needs no permission.
+    assert store.load_global()["saved_endpoints"]
+
+
+def test_opting_in_lets_the_first_run_choose(models_config_dir, monkeypatch):
+    from halbert_core.model import llm_config as store
+    from halbert_core.dashboard.routes import llm as route
+    from halbert_core.dashboard.routes import settings as settings_routes
+
+    _fresh(models_config_dir)
+    store.set_top_level(store.AUTO_SELECT_KEY, {"auto_select_model": True})
+    monkeypatch.setattr(store, "_probe_ollama", lambda *a, **k: True)
+    chose = []
+    monkeypatch.setattr(settings_routes, "configure_first_run_model",
+                        lambda: chose.append(True))
+
+    route.get_llm_config()
+
+    assert chose == [True]
+
+
+def test_auto_select_is_off_when_the_key_is_absent_or_malformed(models_config_dir):
+    from halbert_core.model import llm_config as store
+
+    _fresh(models_config_dir)
+    assert store.auto_select_enabled() is False
+    store.set_top_level(store.AUTO_SELECT_KEY, {"auto_select_model": False})
+    assert store.auto_select_enabled() is False
+    store.set_top_level(store.AUTO_SELECT_KEY, "not-a-mapping")
+    assert store.auto_select_enabled() is False
