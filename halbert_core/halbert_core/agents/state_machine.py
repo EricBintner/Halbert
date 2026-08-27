@@ -78,7 +78,9 @@ class AgentStateMachine:
         AgentState.PLANNING: [
             AgentState.SEARCHING, AgentState.READING,
             AgentState.EXECUTING, AgentState.REFLECTING,
-            AgentState.RESPONDING, AgentState.ERROR
+            AgentState.RESPONDING, AgentState.ERROR,
+            # Re-entry after an inline thread meta-tool (Plan A, spec §7).
+            AgentState.PLANNING,
         ],
         AgentState.SEARCHING: [AgentState.OBSERVING, AgentState.ERROR],
         AgentState.READING: [AgentState.OBSERVING, AgentState.ERROR],
@@ -949,6 +951,30 @@ class AgentStateMachine:
             tool_name = tool_call.function.name
             tool_args = tool_call.function.arguments
 
+            if tool_name in THREAD_META_TOOLS:
+                # Handled inline (spec §7): mutate the context, emit
+                # thread_started / thread_recalled, run PLANNING once more
+                # with the new hint. No tool card, no loop increment. The
+                # identical call twice in a turn teaches the model nothing,
+                # so it reflects instead; that also stops PLANNING→PLANNING
+                # repeating forever.
+                if self._already_called(tool_name, tool_args):
+                    logger.info(f"PLANNING: {tool_name} already handled this turn")
+                    self.ctx.add_observation(
+                        f"{tool_name} was already handled this turn; answer with what you have."
+                    )
+                    yield await self._transition(AgentState.REFLECTING)
+                    return
+                async for event in self._handle_meta_tool(tool_name, tool_args or {}):
+                    yield event
+                if self.ctx.tool_calls and self.ctx.tool_calls[-1].name == tool_name:
+                    yield await self._transition(AgentState.PLANNING)
+                else:
+                    # Nothing recorded: the call was a no-op (a second
+                    # new_thread), so there is nothing new to plan on.
+                    yield await self._transition(AgentState.REFLECTING)
+                return
+
             if self._already_called(tool_name, tool_args):
                 # Same tool, same arguments, already run this turn. Re-running
                 # it cannot teach the model anything new — it just burns a loop
@@ -1008,6 +1034,166 @@ class AgentStateMachine:
             and tc.status in ("success", "error")
             for tc in self.ctx.tool_calls
         )
+
+    def _last_turn_id(self, thread_id: Optional[str]) -> Optional[str]:
+        """The newest turn_id of ``thread_id``, for thread_recalled (spec §6:
+        the chip click scrolls the timeline to it). None without a store,
+        without rows, or when the store fails."""
+        store = getattr(self.ctx.thread_manager, "store", None)
+        if store is None or not thread_id:
+            return None
+        try:
+            rows = store.list_messages(thread_id)
+        except Exception as e:
+            logger.debug(f"last turn lookup for {thread_id} failed (non-fatal): {e}")
+            return None
+        for row in reversed(list(rows or [])):
+            turn_id = row.get("turn_id") if isinstance(row, dict) else None
+            if turn_id:
+                return str(turn_id)
+        return None
+
+    async def _handle_meta_tool(
+        self, tool_name: str, tool_args: Dict[str, Any]
+    ) -> AsyncIterator[StreamEvent]:
+        """Handle new_thread / recall_thread / resume_thread inline (spec §7).
+
+        Records the call on ``ctx.tool_calls`` (status success, no event) so
+        PLANNING's repeat guard can see it. A ``new_thread`` after the turn
+        already switched is a no-op and records nothing.
+        """
+        tm = self.ctx.thread_manager
+        sid = self.ctx.session_id
+        args = dict(tool_args or {})
+
+        def _record() -> None:
+            self.ctx.add_tool_call(ToolCall(
+                id=str(uuid.uuid4())[:8], name=tool_name, args=args,
+                status="success", result="handled inline",
+                started_at=time.time(), completed_at=time.time(),
+            ))
+
+        if tool_name == "new_thread":
+            if self.ctx.thread_switched:
+                self.ctx.add_observation(
+                    "new_thread was already handled this turn; continue with the current subject."
+                )
+                return
+            title = " ".join(str(args.get("title") or "").split())[:60]
+            if not title:
+                title = " ".join(self.ctx.user_query.split())[:60] or "Untitled"
+            reason = str(args.get("reason") or "")
+            previous = self.ctx.thread_id
+            new_id: Optional[str] = None
+            if tm is not None:
+                try:
+                    new_id = tm.new_thread(title, reason, from_thread_id=previous)
+                except Exception as e:
+                    logger.warning(f"new_thread store failure (non-fatal): {e}")
+                    yield StreamEvent.thread_store_error(sid, f"new_thread: {e}")
+            if not new_id:
+                # No store (or it failed): the turn still switches subject
+                # in memory so the model's decision is honoured.
+                new_id = str(uuid.uuid4())
+            self.ctx.thread_id = new_id
+            self.ctx.thread_switched = True
+            self.ctx.conversation_history = []
+            self.ctx.continuity_hint = (
+                f'<continuity>\nThread: "{title}" · opened just now.\n</continuity>'
+            )
+            self.ctx.add_observation(f'Started a new subject: "{title}".')
+            _record()
+            yield StreamEvent.thread_started(
+                sid, new_id, title, reason=reason, previous_thread_id=previous
+            )
+            return
+
+        if tool_name == "recall_thread":
+            query = str(args.get("query") or "").strip() or None
+            thread_id = str(args.get("thread_id") or "").strip() or None
+            results: List[Dict[str, Any]] = []
+            if tm is not None:
+                try:
+                    results = list(tm.recall(
+                        query=query, thread_id=thread_id, exclude_thread_id=self.ctx.thread_id,
+                    ) or [])
+                except Exception as e:
+                    logger.warning(f"recall_thread store failure (non-fatal): {e}")
+                    yield StreamEvent.thread_store_error(sid, f"recall_thread: {e}")
+            _record()
+            if not results:
+                self.ctx.add_observation("No earlier thread matched.")
+                return
+            names = []
+            for r in results[:3]:
+                rid = str(r.get("thread_id", ""))
+                rtitle = str(r.get("title", ""))
+                rdate = str(r.get("date", ""))
+                self.ctx.recalled_threads.append(r)
+                self.ctx.add_context(
+                    source="thread",
+                    content=str(r.get("receipt", "")),
+                    metadata={
+                        "thread_id": rid, "title": rtitle, "date": rdate,
+                        "match_terms": list(r.get("match_terms") or []),
+                        "matching_messages": list(r.get("matching_messages") or []),
+                    },
+                )
+                names.append(f'"{rtitle}" ({rdate})')
+                yield StreamEvent.thread_recalled(
+                    sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="tool",
+                    last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
+                )
+            self.ctx.add_observation(
+                "Recalled earlier subjects: " + "; ".join(names)
+                + ". Their receipts are in the available context."
+            )
+            return
+
+        if tool_name == "resume_thread":
+            target = str(args.get("thread_id") or "").strip()
+            ok = False
+            if tm is not None and target:
+                try:
+                    ok = bool(tm.resume_thread(target, from_thread_id=self.ctx.thread_id))
+                except Exception as e:
+                    logger.warning(f"resume_thread store failure (non-fatal): {e}")
+                    yield StreamEvent.thread_store_error(sid, f"resume_thread: {e}")
+            if not ok:
+                _record()
+                self.ctx.add_observation(
+                    f"Could not resume thread {target or '(none)'}; continuing with the current subject."
+                )
+                return
+            previous = self.ctx.thread_id
+            title, receipt = "", ""
+            try:
+                found = list(tm.recall(thread_id=target) or [])
+            except Exception as e:
+                logger.warning(f"recall after resume failed (non-fatal): {e}")
+                found = []
+            if found:
+                title = str(found[0].get("title", ""))
+                receipt = str(found[0].get("receipt", ""))
+            self.ctx.thread_id = target
+            self.ctx.thread_switched = True
+            self.ctx.conversation_history = (
+                [{"role": "system", "content": f"[Earlier in this subject: {receipt}]"}] if receipt else []
+            )
+            if receipt:
+                self.ctx.add_context(
+                    source="thread", content=receipt,
+                    metadata={"thread_id": target, "title": title, "resumed": True},
+                )
+            self.ctx.continuity_hint = (
+                f'<continuity>\nThread: "{title or target}" · resumed just now.\n</continuity>'
+            )
+            self.ctx.add_observation(f'Resumed the earlier subject "{title or target}".')
+            _record()
+            yield StreamEvent.thread_started(
+                sid, target, title, reason="resumed", previous_thread_id=previous
+            )
+            return
 
     # Word-count ceilings for the retrieval skip (see _intake_is_greeting).
     _GREETING_MAX_WORDS = 5            # "hey halbert, good morning!"
