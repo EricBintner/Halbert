@@ -25,7 +25,7 @@ import {
   X as XIcon,
   Camera,
 } from 'lucide-react';
-import { useAgentStream } from '../../hooks/useAgentStream';
+import { useAgentStream, type AgentSession } from '../../hooks/useAgentStream';
 import { useTimeline } from '../../hooks/useTimeline';
 import { StateBadge } from './StateBadge';
 import { PlanChecklist } from './PlanChecklist';
@@ -48,6 +48,7 @@ import { api } from '../../lib/api';
 import { subscribeHost } from '../../lib/hostConversation';
 import { announce } from '../../lib/announce';
 import { turnFromSession } from '../../lib/turnFromSession';
+import type { TimelineTurn } from '../../types/timeline';
 
 interface UserMessage {
   id: string;
@@ -231,6 +232,53 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
     loadMentionables();
   }, []);
   
+  // Everything the fold below needs, one assignment fresh. The fold runs
+  // from three places and one of them (the queued-send timeout) reads a
+  // closure that is a render behind, so it must not read those values
+  // directly. Declared ABOVE the fold effect so this refresh runs first in
+  // the same commit.
+  const foldInputs = useRef<{
+    liveUser: UserMessage | null;
+    session: AgentSession | null;
+    response: string;
+    anchored: boolean;
+    appendLive: (turn: TimelineTurn) => void;
+    loadLatest: () => Promise<void>;
+  }>({ liveUser, session, response, anchored, appendLive, loadLatest });
+  useEffect(() => {
+    foldInputs.current = { liveUser, session, response, anchored, appendLive, loadLatest };
+  });
+
+  // Put the turn that is on screen into the transcript, as it stands.
+  //
+  // Idempotent (`appendedRef`), so the three callers cannot double-append:
+  // the effect below when a turn simply finishes, and handleSend / the
+  // queued-send timeout before a new turn takes liveUser's place. That last
+  // pair is not belt-and-braces. A turn parked on an undecided proposal
+  // keeps liveUser; the next question replaces it and sendMessage starts a
+  // fresh session, taking session.diffProposals with it — so without this
+  // the question, the reply and the proposal all left the page at once,
+  // with no decision recorded anywhere the admin can see. Folding it first
+  // keeps the exchange, with the proposal recorded read-only as what it is:
+  // proposed, never answered.
+  const foldLiveTurn = useCallback(() => {
+    const { liveUser: live, session: current, response: text, anchored: away } = foldInputs.current;
+    if (!live || !current) return;
+    const turn = turnFromSession(current, live, text, { cancelled: cancelledRef.current });
+    if (appendedRef.current === turn.turnId) return;
+    appendedRef.current = turn.turnId;
+    if (away) {
+      // appendLive is a documented no-op on an anchored window (the turn
+      // would assert an adjacency that is false), so appending here would
+      // simply lose the exchange the admin just had until they found the
+      // "Back to latest" button. Go back to the tail instead: the turn is
+      // already stored, and the newest page has it.
+      void foldInputs.current.loadLatest();
+    } else {
+      foldInputs.current.appendLive(turn);
+    }
+  }, []);
+
   // The finished turn becomes a stored turn. Guarded so a turn still waiting
   // on the admin is not folded away early, and so one turn is appended once.
   //
@@ -246,22 +294,10 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
     if (isStreaming || !liveUser || !session) return;
     if (session.pendingConfirmation || session.state === 'awaiting_confirmation') return;
     if (session.diffProposals.some((diff) => diff.status === 'pending')) return;
-    const turn = turnFromSession(session, liveUser, response, { cancelled: cancelledRef.current });
-    if (appendedRef.current === turn.turnId) return;
-    appendedRef.current = turn.turnId;
-    if (anchored) {
-      // appendLive is a documented no-op on an anchored window (the turn
-      // would assert an adjacency that is false), so appending here would
-      // simply lose the exchange the admin just had until they found the
-      // "Back to latest" button. Go back to the tail instead: the turn is
-      // already stored, and the newest page has it.
-      void loadLatest();
-    } else {
-      appendLive(turn);
-    }
+    foldLiveTurn();
     setLiveUser(null);
     cancelledRef.current = false;
-  }, [isStreaming, liveUser, session, response, appendLive, anchored, loadLatest]);
+  }, [isStreaming, liveUser, session, response, foldLiveTurn]);
 
   // Thread identity is the server's; the label and the live region follow.
   useEffect(() => {
@@ -302,9 +338,18 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
     if (lastTurnId) void loadAround(lastTurnId);
   }, [session?.recalled, loadAround]);
 
+  // Follow the conversation — but only when it actually grew at the bottom.
+  // `turns.length` changes for two other reasons, and both of them are the
+  // admin deliberately reading somewhere else: "Load earlier" prepends a
+  // page (useTimeline.mergeOlder), and a thread chip jump replaces the page
+  // with a window around an earlier turn, which useTimeline has just
+  // centred. Scrolling to the newest message on either one answers a
+  // question nobody asked and undoes the navigation that was asked for.
+  const tailTurnId = turns.length > 0 ? turns[turns.length - 1].turnId : null;
   useEffect(() => {
+    if (anchored) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [turns.length, liveUser, response, session?.toolExecutions]);
+  }, [tailTurnId, anchored, liveUser, response, session?.toolExecutions]);
   
   // Process queued messages when streaming completes
   useEffect(() => {
@@ -319,6 +364,9 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
           content: nextMessage,
           timestamp: Date.now(),
         };
+        // Same as handleSend: whatever is still on screen goes into the
+        // transcript before this turn takes its place.
+        foldLiveTurn();
         cancelledRef.current = false;
         setLiveUser(userMsg);
         sendMessage(nextMessage);
@@ -495,9 +543,13 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
       images: imageData.length > 0 ? imageData : undefined,
     };
 
-    // A turn that was parked (waiting on a diff) never reached the effect
-    // that clears this, so a Stop pressed two turns ago must not follow the
-    // new one into the transcript as "cancelled".
+    // A turn parked on an undecided proposal (or a confirmation) is still
+    // liveUser and is about to lose both its slot and its session. Record
+    // it first — folding reads cancelledRef, so it happens before the reset
+    // below, which exists because a parked turn never reached the effect
+    // that normally clears it: a Stop pressed two turns ago must not follow
+    // this one into the transcript as "cancelled".
+    foldLiveTurn();
     cancelledRef.current = false;
     setLiveUser(userMsg);
     setAgentError(null);
@@ -572,6 +624,29 @@ export function AgentChat({ className, onRunCommand }: AgentChatProps) {
             real conversation is the worse of the two mistakes. */}
         {turns.length === 0 && !liveUser && !timelineLoading && !loadFailed && (
           <HostGreeting onPrompt={setInput} />
+        )}
+
+        {/* The other half of that condition, said out loud. useTimeline
+            only warns to the console, and an empty page renders nothing, so
+            an admin whose backend was mid-restart was shown a blank
+            conversation with no explanation and no way back short of
+            restarting the app. `loadFailed` is only ever cleared by a
+            successful load, and nothing schedules one — so the way back has
+            to be offered here. */}
+        {loadFailed && (
+          <div className="flex justify-center" role="status">
+            <div className="flex items-center gap-2 rounded-lg border border-hairline bg-canvas-subtle px-3 py-1.5 text-[11px] font-mono text-ink-secondary">
+              <span>Could not load the stored conversation</span>
+              <button
+                type="button"
+                onClick={() => { void loadLatest(); }}
+                disabled={timelineLoading}
+                className="rounded border border-hairline px-1.5 py-0.5 text-ink-secondary hover:text-ink disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              >
+                {timelineLoading ? 'Trying…' : 'Try again'}
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Every turn that has finished, oldest first, grouped by day. */}
