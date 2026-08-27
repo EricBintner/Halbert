@@ -1,0 +1,95 @@
+# network_admin — interfaces, DNS, routing, wireless, VPN, name resolution.
+#
+# Owns the files that answer "how does this machine connect": link and address
+# configuration, name resolution, routes, wireless profiles, VPN tunnels.
+#
+# Deliberately NOT here:
+#   * Firewall rule files (nftables / ufw / firewalld / iptables). Those are
+#     primary to a future security_admin — they answer "is this machine
+#     hardened", not "how does this machine connect" — and are aliased back
+#     into this scope at registration time. Aliasing is free: scopes are masks
+#     over one shared index, so a file registered into two scopes is indexed
+#     once. macOS /etc/pf.conf is the one exception kept here, because on a
+#     stock host it is the packet-filter *entry point* rather than a rule set.
+#   * Command-output-only state. `ip`, `ss`, `networksetup`, `scutil --dns`
+#     have no backing file to harvest; that surface belongs to the discovery
+#     scanners, not to this manifest.
+#
+# Bare-credential rule: a file whose ENTIRE content is a credential has no key
+# name for keyword redaction to match on, so it is excluded outright rather
+# than trusted to redaction. See the exclude block.
+#
+# (No `parsers:` block — Manifest.parsers is loaded but never consulted;
+# format dispatch in config/parser.py is purely extension-based.)
+#
+# Design: .handoff/ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md
+
+include:
+  # --- Linux: NetworkManager -------------------------------------------
+  - /etc/NetworkManager/system-connections/*
+  - /etc/NetworkManager/NetworkManager.conf
+  - /etc/NetworkManager/conf.d/*
+  - /etc/NetworkManager/dispatcher.d/*
+
+  # --- Linux: systemd-networkd / resolved -------------------------------
+  - /etc/systemd/network/*.network
+  - /etc/systemd/network/*.netdev
+  - /etc/systemd/network/*.link
+  - /etc/systemd/resolved.conf
+
+  # --- Linux: other interface managers ----------------------------------
+  - /etc/netplan/*.yaml
+  - /etc/network/interfaces
+  - /etc/wpa_supplicant/*.conf
+  - /etc/iwd/main.conf
+  - /etc/netctl/*
+  - /etc/dnsmasq.conf
+  - /etc/openvpn/*.conf
+
+  # --- Linux: distro divergence in the sysconfig tree -------------------
+  # RHEL <= 8 ships ifcfg-* under network-scripts/ (gone in RHEL 9, which
+  # moved to NetworkManager keyfiles). SUSE uses a differently shaped tree
+  # one level up, with routes in a separate file.
+  - /etc/sysconfig/network-scripts/ifcfg-*
+  - /etc/sysconfig/network/ifcfg-*
+  - /etc/sysconfig/network/routes
+
+  # --- Both platforms: name resolution ----------------------------------
+  - /etc/hosts
+  - /etc/hostname
+  - /etc/resolv.conf
+  - /etc/nsswitch.conf
+
+  # --- macOS ------------------------------------------------------------
+  # preferences.plist is XML, world-readable and ~26 KB on a live host: it is
+  # the complete `networksetup` backing store (CurrentSet, every NetworkService
+  # UUID, IPv4/ConfigMethod, DNS, service order).
+  - /Library/Preferences/SystemConfiguration/preferences.plist
+  - /etc/pf.conf
+  - /etc/pf.anchors/*
+  - /etc/networks
+
+exclude:
+  # The WiFi PSK store. Its mode bits read -rw-r--r-- but SIP denies the read
+  # outright (verified: PermissionError, EPERM), so this line changes nothing
+  # operationally today — it is here to document that excluding it is intent,
+  # not oversight. The glob is deliberate: a stale
+  # com.apple.airport.preferences.plist.backup sits beside it (106 KB on this
+  # host) and is the same secret store under a name the exact path misses.
+  - /Library/Preferences/SystemConfiguration/com.apple.airport.preferences.plist*
+
+  # NetworkManager writes *.bak alongside a connection when a profile is
+  # edited: a stale duplicate of a secret-bearing file.
+  - /etc/NetworkManager/system-connections/*.bak
+
+  # Bare-credential files — excluded on principle, never redacted.
+  # Redaction keys off key NAMES; these files have no keys, so there is
+  # nothing for a keyword rule to match and no way to protect them.
+  # None of these are matched by an include above today; they are listed so
+  # that widening the include set later cannot silently pull them in.
+  - /etc/ppp/chap-secrets
+  - /etc/ppp/pap-secrets
+  - /etc/openvpn/*.key
+  - /etc/openvpn/*.pem
+  - /etc/openvpn/*.p12
+  - /etc/openvpn/*auth-user-pass*

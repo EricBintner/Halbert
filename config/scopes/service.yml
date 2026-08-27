@@ -1,0 +1,50 @@
+# service_admin — what runs at boot/login on this machine, and how it is
+# supervised.
+#
+# This is the role where the two platforms invert. macOS is the rich side:
+# launchd is the whole story, and third-party LaunchDaemons/LaunchAgents are
+# the single best answer to "what is running on this machine and why". Linux
+# is deliberately NARROW, because every systemd unit routes to its own
+# subsystem scope first — a `.mount` unit answers a storage question, a
+# `.network` unit a network question — so only the supervisor's own
+# configuration and the units no other role claims belong here.
+#
+# Deliberately NOT here:
+#   * /System/Library/LaunchDaemons and /System/Library/LaunchAgents — roughly
+#     422 Apple stock jobs. They are OS inventory, identical on every Mac, not
+#     host configuration; harvesting them would bury the ~48 third-party jobs
+#     that actually describe this host.
+#   * Per-unit systemd files owned by another role (*.mount, *.automount,
+#     *.swap -> storage_admin; *.network -> network_admin; *.timer ->
+#     scheduling). Registered into this scope as aliases, not staged twice.
+#
+# (No `parsers:` block — Manifest.parsers is loaded but never consulted;
+# format dispatch in config/parser.py is purely extension-based.)
+#
+# Design: .handoff/ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md
+
+include:
+  # --- macOS: launchd (the rich side) -----------------------------------
+  # Measured on a live host with file(1): 100% XML plists, zero binary.
+  - /Library/LaunchDaemons/*.plist
+  - /Library/LaunchAgents/*.plist
+  - ~/Library/LaunchAgents/*.plist
+
+  # --- Linux: the supervisor's own configuration ------------------------
+  - /etc/systemd/system.conf
+  - /etc/systemd/user.conf
+
+  # --- Linux: pre-systemd and non-systemd supervisors -------------------
+  - /etc/init.d/*
+  - /etc/rc.local
+  - /etc/xinetd.d/*
+  - /etc/tmpfiles.d/*.conf
+
+  # --- Linux: OpenRC (Gentoo, Alpine) -----------------------------------
+  - /etc/conf.d/*
+  - /etc/runlevels/*
+
+exclude:
+  # Apple stock jobs: inventory, not host config. See header.
+  - /System/Library/LaunchDaemons/**
+  - /System/Library/LaunchAgents/**

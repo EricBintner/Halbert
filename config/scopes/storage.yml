@@ -1,0 +1,91 @@
+# storage_admin — mount intent, encryption, RAID/LVM/pool config, and backup
+# policy.
+#
+# Owns the files that answer "what is attached, how is it mounted, how is it
+# protected". /etc/fstab is the single largest gap in the codebase today: it
+# is not read anywhere, live or file-based, and the existing flat host scope's
+# /etc/**/*.conf glob structurally cannot match it.
+#
+# Backup policy folds in here rather than into a separate backup_admin: the
+# Linux content is thin, and the question "is this data protected" is the same
+# question as "how is this volume set up".
+#
+# macOS is docs-only for this role by design. There is no fstab, and
+# /etc/synthetic.conf does not exist on a stock host (it appears only if an
+# admin creates one). APFS container layout is correctly command-output-only
+# (`diskutil apfs list`), so there is nothing to harvest. The autofs files
+# below are included because they DO exist on a stock host and are the one
+# real mount-intent surface macOS has; the role is still gated out of staging
+# on Darwin by config/roles.py.
+#
+# Deliberately NOT here:
+#   * /etc/exports and nfs.conf — primary to sharing_admin (they answer "what
+#     does this machine serve", not "what does it mount"), aliased back here.
+#   * /etc/default/grub — primary to boot_admin, though it carries one storage
+#     line (resume=, rd.luks.*) and is aliased into this scope.
+#
+# Bare-credential rule: a file whose ENTIRE content is a credential has no key
+# name for keyword redaction to match on, so it is excluded outright rather
+# than trusted to redaction. See the exclude block.
+#
+# (No `parsers:` block — Manifest.parsers is loaded but never consulted;
+# format dispatch in config/parser.py is purely extension-based.)
+#
+# Design: .handoff/ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md
+
+include:
+  # --- Linux: mount intent and encryption -------------------------------
+  - /etc/fstab
+  - /etc/crypttab
+  - /etc/systemd/system/*.mount
+  - /etc/systemd/system/*.automount
+  - /etc/systemd/system/*.swap
+
+  # --- Linux: RAID (Debian/SUSE path vs RHEL/Arch path) -----------------
+  - /etc/mdadm/mdadm.conf
+  - /etc/mdadm.conf
+
+  # --- Linux: LVM, multipath, ZFS ---------------------------------------
+  - /etc/lvm/lvm.conf
+  - /etc/lvm/profile/*
+  - /etc/multipath.conf
+  - /etc/zfs/zpool.cache
+  - /etc/zfs/zed.d/*
+  - /etc/zfs/vdev_id.conf
+
+  # --- Linux: btrfs snapshot policy -------------------------------------
+  - /etc/snapper/configs/*
+  - /etc/default/snapper
+  - /etc/sysconfig/btrfsmaintenance
+
+  # --- Linux: backup policy ---------------------------------------------
+  - /etc/borgmatic.d/*.yaml
+  - /etc/rsnapshot.conf
+  - /etc/timeshift/timeshift.json
+  - /etc/sanoid/sanoid.conf
+  - /etc/btrbk/btrbk.conf
+
+  # --- macOS: autofs (present on a stock host) --------------------------
+  - /etc/auto_master
+  - /etc/auto_home
+  - /etc/autofs.conf
+  # Only present if an admin created it; harmless when absent.
+  - /etc/synthetic.conf
+
+exclude:
+  # LVM's own rolling metadata backups: machine-generated, high-churn, and a
+  # duplicate of state that lvm.conf and the live tools already describe.
+  - /etc/lvm/archive/**
+  - /etc/lvm/backup/**
+
+  # Bare-credential files — excluded on principle, never redacted.
+  # Redaction keys off key NAMES; these files have no keys, so there is
+  # nothing for a keyword rule to match and no way to protect them.
+  #
+  # /etc/restic/* : restic's --password-file is documented as a file whose
+  #   entire content is the repository password. Nothing structural to match.
+  # /etc/cryptsetup-keys.d/** : systemd's standard LUKS keyfile location.
+  #   The files are raw key material, referenced by path from /etc/crypttab
+  #   (the path is safe to harvest; the key material is not).
+  - /etc/restic/*
+  - /etc/cryptsetup-keys.d/**
