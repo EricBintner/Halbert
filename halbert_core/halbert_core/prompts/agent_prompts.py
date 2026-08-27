@@ -9,6 +9,7 @@ Based on research5.md Part 14.
 
 from typing import Dict, List, Any, Optional
 import logging
+import re
 
 logger = logging.getLogger('halbert.prompts.agent')
 
@@ -138,8 +139,45 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         ),
     }
 
-    # Longest single history line rendered into the RESPONDING prompt.
+    # Longest single history line rendered into the RESPONDING prompt for a
+    # user/assistant row.
     _HISTORY_LINE_CHARS = 500
+
+    # Ceiling for a `system` history row (threads.py's pre-window receipt
+    # summary). Matches threads.py's own RECEIPT_ROW_MAX: that module already
+    # bounds the row to this many characters via `_fence(..., keep_lines=True)`
+    # before it ever reaches this helper, so this is a defensive backstop —
+    # not the primary truncation — for a caller that hands `_history_section`
+    # something threads.py never bounded (review: Plan A / A8, round 2).
+    _SYSTEM_LINE_CHARS = 1500
+
+    # Collapses literal `<continuity>` / `</continuity>` sequences found
+    # INSIDE history content. `<continuity>` is this module's own hint
+    # delimiter (see CONTINUITY_PREAMBLE above), so a history row that
+    # contains the literal tag — a command's stdout, a scanned log line, or
+    # the admin pasting the text — could otherwise forge a second,
+    # indistinguishable continuity block ahead of the genuine hint. Mirrors
+    # threads.py's `_fence`, which neutralises the same tag for the one row
+    # it controls; applied here to every role because `content_to_text`
+    # flattens `ToolResultBlock`s, so command output and file/log text from a
+    # scanned system can reach this text too, not just the admin's own words
+    # (review: Plan A / A8, round 2).
+    _CONTINUITY_TAG_RE = re.compile(r"</?\s*continuity\s*>", re.IGNORECASE)
+
+    @classmethod
+    def _defang_continuity(cls, text: str) -> str:
+        """Neutralise ``<continuity>``/``</continuity>`` in untrusted text.
+
+        Substitutes to a fixpoint, not once: a single pass over a nested
+        payload like ``"</</continuity>continuity>"`` would leave behind
+        ``"</ continuity>"``, itself a closing tag under the same regex (see
+        threads.py::_fence for the identical reasoning). Every pass replaces
+        at least one full tag with a single space, so the string strictly
+        shrinks and the loop terminates.
+        """
+        while cls._CONTINUITY_TAG_RE.search(text):
+            text = cls._CONTINUITY_TAG_RE.sub(" ", text)
+        return text
 
     def _continuity_section(
         self, continuity: str, tools_supported: Optional[bool] = None
@@ -165,7 +203,16 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         """Thread history as one line per row, oldest first (spec §4.5).
 
         RESPONDING never saw the conversation before Plan A. Block-typed
-        content is flattened; each line is capped at 500 characters.
+        content is flattened. A ``user``/``assistant`` row is capped at
+        ``_HISTORY_LINE_CHARS`` (500). A ``system`` row is different: it is
+        threads.py::_history's pre-window receipt summary, already bounded
+        to 1500 chars by ``_fence(..., keep_lines=True)`` — a truncation
+        that itself reserves the receipt's final "Open loop:" line (see
+        receipt.py::build_receipt's comment on why). Re-flattening that row
+        to one line and re-capping it at 500 chars here deleted exactly what
+        that truncation protected, on any thread whose history exceeds
+        HISTORY_ROWS (review: Plan A / A8, round 2) — so a system row keeps
+        its own line structure and its own, larger ceiling instead.
         """
         if not history:
             return ""
@@ -183,9 +230,15 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
                 continue
             content = row.get("content", "")
             text = content if isinstance(content, str) else content_to_text(content)
-            text = " ".join(str(text).split())
-            if len(text) > cls._HISTORY_LINE_CHARS:
-                text = text[:cls._HISTORY_LINE_CHARS] + "…"
+            text = cls._defang_continuity(str(text))
+            if role == "system":
+                text = text.strip()
+                if len(text) > cls._SYSTEM_LINE_CHARS:
+                    text = text[: cls._SYSTEM_LINE_CHARS].rstrip() + "…"
+            else:
+                text = " ".join(text.split())
+                if len(text) > cls._HISTORY_LINE_CHARS:
+                    text = text[:cls._HISTORY_LINE_CHARS] + "…"
             lines.append(f"**{role}**: {text}")
         return "\n".join(lines) if len(lines) > 1 else ""
 
