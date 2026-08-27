@@ -349,23 +349,6 @@ export const api = {
   },
 
   // -----------------------------------------------------------------
-  // Agent conversations (Phase 36 agent path)
-  // -----------------------------------------------------------------
-  listAgentConversations() {
-    return request('/api/agent/conversations')
-  },
-
-  getAgentConversation(conversationId: string) {
-    return request(`/api/agent/conversations/${encodeURIComponent(conversationId)}`)
-  },
-
-  deleteAgentConversation(conversationId: string) {
-    return request(`/api/agent/conversations/${encodeURIComponent(conversationId)}`, {
-      method: 'DELETE',
-    })
-  },
-
-  // -----------------------------------------------------------------
   // "Why" annotations
   // NOTE: no backend endpoint exists for this yet (verified 2026-08-22;
   // the WhyBrain/WhyOverlay UI is live but persistence was never built).

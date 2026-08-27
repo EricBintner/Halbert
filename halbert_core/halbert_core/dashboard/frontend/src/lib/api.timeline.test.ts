@@ -184,3 +184,12 @@ describe('the redaction marker block', () => {
     expect(page.turns[0].blocks[1].redacted).toBeUndefined()
   })
 })
+
+describe('removed wrappers', () => {
+  it('no longer exposes the per-conversation list endpoints', () => {
+    const legacy = api as unknown as Record<string, unknown>
+    expect(legacy.listAgentConversations).toBeUndefined()
+    expect(legacy.getAgentConversation).toBeUndefined()
+    expect(legacy.deleteAgentConversation).toBeUndefined()
+  })
+})
