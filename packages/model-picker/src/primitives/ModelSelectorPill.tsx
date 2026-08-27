@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-import { useCallback, useMemo } from 'react'
+import { forwardRef, useCallback, useMemo } from 'react'
 import type {
   ButtonHTMLAttributes,
   KeyboardEvent as ReactKeyboardEvent,
@@ -124,7 +124,14 @@ export function useModelPillState(
  * The always-visible trigger: what will answer the next turn, and one click to
  * change it.
  */
-export function ModelSelectorPill({
+/**
+ * Forwards its ref to the underlying button so a host can hand the same
+ * element to QuickSwitchPopover's `triggerRef` — the popover returns focus
+ * there on close and points `aria-controls` at its listbox, and the package
+ * has no other way to name the trigger without reaching into a DOM it does
+ * not own.
+ */
+export const ModelSelectorPill = forwardRef<HTMLButtonElement, ModelSelectorPillProps>(function ModelSelectorPill({
   picker,
   activeRoleId,
   open = false,
@@ -133,7 +140,7 @@ export function ModelSelectorPill({
   onClick,
   onKeyDown,
   ...rest
-}: ModelSelectorPillProps) {
+}: ModelSelectorPillProps, ref) {
   const state = useModelPillState(picker, activeRoleId)
 
   const handleClick = useCallback(
@@ -170,6 +177,7 @@ export function ModelSelectorPill({
 
   return (
     <button
+      ref={ref}
       type="button"
       {...rest}
       role="combobox"
@@ -211,4 +219,4 @@ export function ModelSelectorPill({
       )}
     </button>
   )
-}
+})
