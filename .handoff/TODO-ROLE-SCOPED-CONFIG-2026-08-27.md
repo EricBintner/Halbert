@@ -33,7 +33,46 @@ going through `scope_for_query`.
 Nothing is broken by this; the scopes simply never activate. But the feature
 does not deliver its purpose until routing can reach it. See item 0d.
 
-### 0b. `knowledge-*` scopes have been silently unscoped all along
+### 0b. ~~`knowledge-*` scopes have been silently unscoped all along~~ — **RETRACTED**
+
+> **CORRECTION 2026-08-27.** This finding is **wrong**. It was inferred from a
+> code comment; the `feat/role-scoped-skills` branch disproved it against a
+> **live daemon**. See `documentation/design/SCOPE-AXES-RECONCILIATION-2026-08-27.md`
+> §8.1.
+>
+> The naming pipeline is deliberate and three-stage:
+> ```
+> template  id: knowledge-linux   →  daemon display_name  "knowledge-linux"
+>                                 →  daemon id            "knowledge_linux"
+> scope_for_query() emits             "knowledge_linux"    ✓ matches the id
+> ```
+> `resolve_mask()` looks up by **id**, not `display_name`. Live scope listing
+> confirms all four `knowledge_*` ids exist correctly. A direct probe of
+> `scope=knowledge_macos` returned `applied_scope: "knowledge_macos"`, no
+> warning, macOS-only results.
+>
+> The code comment at `sourceprep_retrieval_backend.py:37-38` is accurate —
+> *unrecognized* hyphenated names do fail open — but `knowledge_linux` is the
+> recognized id, so the inference did not follow. The underlying issue was
+> already fixed in `e479c61`, which is why the router emits underscores.
+>
+> **The fix proposed below is actively harmful and must NOT be applied.**
+> `_reconcile_scopes` keys on `display_name`, so renaming the template ids
+> would create four new scopes and orphan the four holding all **71,050
+> indexed chunks**. An independent review
+> (`HANDOFF-SCOPE-FILTER-REVIEW-2026-08-26.md`, F4) reached the same warning
+> from the other direction: *"the same trap that produced `e479c61` — don't
+> 'align' the scope ids."*
+>
+> **What survives:** skills should still declare *underscored* names, because
+> a name a skill invents has no daemon-side `display_name` mapping to save it.
+>
+> Also retracted: the claim that scoped and unscoped responses are
+> "byte-identical". They are not — the daemon returns `applied_scope`,
+> `applied_role` and `scope_warning`. Halbert was **discarding** those fields,
+> which is a different and much cheaper problem to fix. See §0e.
+
+*Original finding, preserved for the record:*
 
 The template registers **hyphenated** ids:
 
@@ -80,6 +119,28 @@ still defensible, but the stated reason is currently false.
 
 The comments in `roles.py` (lines 32, 60, 95, 117) and `sourceprep_setup.py`
 (line 275) should either be corrected or the flag should be landed.
+
+### 0e. What was actually broken — found on `feat/role-scoped-skills`
+
+Two real defects, both verified against the live daemon and both **already
+fixed** on that branch. Neither was found by the reasoning in §0a–0c.
+
+1. **The `host` scope had zero indexed files.** `include_globs: ["host/**"]`
+   matches *directories only* on Python 3.11 — the daemon's interpreter — so
+   all 40 staged host config files were silently excluded from the build while
+   the glob looked correct. Fixed to `host/**/*` in `4266134`. The template
+   and `scripts/staged_knowledge_embed.py` carry the same glob and must stay
+   in sync.
+2. **Scoping was a rank boost, not a filter**, so out-of-scope files outscored
+   in-scope ones: a `knowledge_linux` query returned Homebrew docs, a
+   `knowledge_macos` query returned the Arch wiki — **4 leak probes out of 4**.
+   Sending `scope_mode="hard"` makes the daemon pre-filter via `exclude_paths`.
+   Landed and verified in `4266134`.
+
+The remaining gap of this kind: Halbert discards `applied_scope`,
+`applied_role` and `scope_warning` from the context response. Reading them is
+the cheapest possible fail-open detector and strictly better than inferring
+from result paths. Wired in `2d42aa9`.
 
 ### 0d. Minimum work to make scoping real
 
