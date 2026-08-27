@@ -393,6 +393,7 @@ class ThreadManager:
                     return self.merge_back(from_thread_id) == thread_id
         return self._reopen_thread(target, from_thread_id, now)
 
+    @_locked
     def merge_back(self, new_thread_id: str) -> Optional[str]:
         """Fold a young open thread back into its paused predecessor (spec §5 "Merge").
 
@@ -402,6 +403,16 @@ class ThreadManager:
         marks the new thread ``merged`` (``merged_into`` set, receipt dropped,
         receipts_fts row deleted), reopens the predecessor and refreshes its
         receipt. Returns the predecessor id, or ``None`` when nothing merged.
+
+        Behind ``_locked`` in its own right, not merely because
+        ``resume_thread`` happens to be the only caller today: this moves two
+        threads between statuses at once. Unlocked, a ``begin_turn`` that has
+        already read the open thread appends its in-flight user row to a
+        thread this call has meanwhile marked ``merged`` — a row
+        ``list_messages`` on the surviving thread never returns,
+        ``search_receipts`` excludes and ``tick()`` (paused only) never sweeps
+        (review: Plan A / A6c finding 1). ``_lock`` is re-entrant, so the
+        locked ``resume_thread`` -> ``merge_back`` call still works.
         """
         now = self._now()
         new = self.store.get_thread(new_thread_id)
@@ -589,16 +600,29 @@ class ThreadManager:
         return meta.get("previous_thread_id") or thread.get("parent_thread_id") or None
 
     def _paused_predecessor(self, thread: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """The paused thread ``thread`` was opened from; else the most recently paused one."""
+        """The paused thread ``thread`` was opened *from*, or ``None``.
+
+        Strictly the recorded predecessor, and only while the two still point
+        at each other: ``_open_new_thread`` writes ``previous_thread_id`` on
+        the successor and ``successor`` on the one it pauses, so a genuine
+        split is reciprocal. There is deliberately no "most recently paused
+        thread" fallback — the only caller is ``merge_back``, a merge cannot
+        be undone, and a thread with no recorded predecessor (a store outage
+        during the switch, a migrated row) would otherwise be folded into
+        whatever unrelated subject happened to be paused last. The same
+        fallback was reachable from the model's ``resume_thread`` tool, where
+        naming an unrelated paused thread passed the caller's identity check
+        and turned a plain "go back to that topic" into a destructive merge
+        (review: Plan A / A6c finding 3). No predecessor means no merge, only
+        a reopen.
+        """
         prev_id = self._predecessor_id(thread)
-        prev = self.store.get_thread(prev_id) if prev_id else None
-        if prev is None:
-            paused = [
-                t for t in self.store.list_threads(status="paused", limit=50)
-                if t.get("paused_at") is not None and t["thread_id"] != thread["thread_id"]
-            ]
-            prev = max(paused, key=lambda t: float(t["paused_at"]), default=None)
+        if not prev_id or prev_id == thread.get("thread_id"):
+            return None
+        prev = self.store.get_thread(prev_id)
         if prev is None or prev.get("status") != "paused":
+            return None
+        if (prev.get("metadata") or {}).get("successor") != thread.get("thread_id"):
             return None
         return prev
 

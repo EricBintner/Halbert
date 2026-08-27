@@ -1079,3 +1079,28 @@ class TestMergeThread:
         assert store.merge_thread("nope", "prev") is None
         assert store.merge_thread("prev", "prev") is None
         assert store.get_thread("prev")["status"] == "open"
+
+    def test_merge_recovers_a_stale_fts_flag_instead_of_skipping_the_index(self, store):
+        """A6c review finding 2: gate the FTS half of the merge on
+        ``_fts_recover()``, not on ``self._fts_ok``.
+
+        ``_fts_ok`` goes False on a *transient* connect-time failure while FTS
+        itself is fine. Skipping the index then leaves the moved ``messages``
+        rows pointing at the source thread in ``messages_fts`` forever: the
+        recovery backfill only inserts rows missing from the index, so it can
+        never repair a wrong ``conversation_id``, and the merged content stops
+        being findable under the thread that now owns it.
+        """
+        store.create_thread("prev", "Samba share")
+        store.update_thread("prev", status="paused", paused_at=10.0)
+        store.create_thread("new", "Scanner share")
+        store.upsert_receipt("new", "Scanner share", "Title: Scanner share\nEntities: scanner")
+        store.append_message("new", "user", "now the scanner share", turn_id="t2")
+        store._fts_ok = False  # transient failure at connect time; FTS5 is really there
+        assert store.merge_thread("new", "prev", now=50.0) == 1
+        assert store._fts_ok is True
+        assert store.search_snippets("prev", "scanner")
+        assert store.search_snippets("new", "scanner") == []
+        assert store.search_receipts("scanner") == []
+        assert store._conn.execute(
+            "SELECT COUNT(*) FROM receipts_fts WHERE thread_id = 'new'").fetchone()[0] == 0

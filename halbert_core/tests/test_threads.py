@@ -41,6 +41,26 @@ def _boom(*args, **kwargs):
     raise RuntimeError("segmenter is on fire")
 
 
+def _lock_free_to_another_thread(lock) -> bool:
+    """Could a *different* thread take ``lock`` right now?
+
+    ``ThreadManager._lock`` is an ``RLock``, so asking on the calling thread
+    proves nothing — it re-enters whether the lock is held or not.
+    """
+    got = []
+
+    def probe():
+        acquired = lock.acquire(blocking=False)
+        got.append(acquired)
+        if acquired:
+            lock.release()
+
+    prober = threading.Thread(target=probe)
+    prober.start()
+    prober.join()
+    return got[0]
+
+
 def _turn(tm, text, session="s", **end):
     turn = tm.begin_turn(text, analyze_message(text), session)
     tm.end_turn(turn, assistant_text=end.get("assistant", "ok"), blocks=end.get("blocks", []),
@@ -988,3 +1008,62 @@ class TestMergeBack:
         assert turn.decision.action == "reopen" and turn.thread_id == t1.thread_id
         assert tm.store.get_thread(new_id)["status"] == "paused"
         assert len(tm.store.list_messages(new_id)) == 2
+
+    def test_merge_back_holds_the_manager_lock(self, tm):
+        """A6c review finding 1: ``merge_back`` moves two threads between
+        statuses, so it belongs behind ``_locked`` like every other status
+        move — being reached only through a locked ``resume_thread`` today is
+        not the invariant. Unlocked, a ``begin_turn`` that has already read
+        the open thread appends its in-flight user row to a thread
+        ``merge_back`` has meanwhile marked ``merged``: ``list_messages`` on
+        the open thread never returns it, ``search_receipts`` excludes it and
+        ``tick()`` (paused only) never sweeps it — stranded for good.
+        """
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        _turn(tm, "now the scanner share too")
+        free_to_others = []
+        real_merge = tm.store.merge_thread
+
+        def probe_then_merge(*args, **kwargs):
+            free_to_others.append(_lock_free_to_another_thread(tm._lock))
+            return real_merge(*args, **kwargs)
+
+        tm.store.merge_thread = probe_then_merge
+        assert tm.merge_back(new_id) == t1.thread_id
+        assert free_to_others == [False]
+
+    def test_merge_back_refuses_an_unrelated_paused_thread(self, tm):
+        """A6c review finding 3: no recorded predecessor means no merge.
+
+        Falling back to "the most recently paused thread" folds a thread into
+        somebody else's subject, and there is no unmerge.
+        """
+        certs = _turn(tm, "rotate the tls certs on the reverse proxy")
+        disk_id = tm.new_thread("Disk space", "x", from_thread_id=certs.thread_id)
+        _turn(tm, "check the disk space on /var")
+        meta = dict(tm.store.get_thread(disk_id)["metadata"])
+        meta.pop("previous_thread_id", None)  # a row that no longer knows where it came from
+        tm.store.update_thread(disk_id, metadata=meta)
+        assert tm.merge_back(disk_id) is None
+        assert tm.store.get_thread(disk_id)["status"] == "open"
+        assert len(tm.store.list_messages(disk_id)) == 2
+        assert len(tm.store.list_messages(certs.thread_id)) == 2
+        # ...and the model naming that same paused thread reopens it, never merges
+        assert tm.resume_thread(certs.thread_id, from_thread_id=disk_id) is True
+        assert tm.store.get_thread(disk_id)["status"] == "paused"
+        assert len(tm.store.list_messages(disk_id)) == 2
+
+    def test_merge_back_requires_the_predecessor_to_point_back(self, tm):
+        """A6c review finding 3: the predecessor must still name this thread as
+        its ``successor`` — otherwise it has moved on to a different subject."""
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        _turn(tm, "now the scanner share too")
+        meta = dict(tm.store.get_thread(t1.thread_id)["metadata"])
+        meta["successor"] = "some-other-thread"
+        tm.store.update_thread(t1.thread_id, metadata=meta)
+        assert tm.merge_back(new_id) is None
+        assert tm.store.get_thread(new_id)["status"] == "open"
+        assert tm.store.get_thread(t1.thread_id)["status"] == "paused"
+        assert len(tm.store.list_messages(t1.thread_id)) == 2

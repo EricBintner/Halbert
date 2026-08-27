@@ -1427,7 +1427,16 @@ class SqliteConversationStore:
                     (dst_thread_id, src_thread_id),
                 )
                 moved = int(cur.rowcount or 0)
-                if self._fts_ok:
+                # ``_fts_recover()``, not ``self._fts_ok`` directly: a stale
+                # flag from a transient connect-time failure would skip the
+                # index while the rows move, and the recovery backfill only
+                # inserts rows *missing* from ``messages_fts`` -- it can never
+                # repair a row left pointing at the merged-away thread, so the
+                # merged turns would stop being findable under the thread that
+                # now owns them (A6c review finding 2). Safe here: the write
+                # transaction is already open and ``_fts_recover`` leaves the
+                # commit to this block.
+                if self._fts_recover():
                     self._conn.execute(
                         "UPDATE messages_fts SET conversation_id = ? WHERE conversation_id = ?",
                         (dst_thread_id, src_thread_id),
