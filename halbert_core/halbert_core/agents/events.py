@@ -513,6 +513,76 @@ class StreamEvent:
             },
         )
 
+    # -------------------------------------------------------------------------
+    # Thread events (Plan A: continuous conversation, spec §4/§6/§12)
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    def thread_started(
+        cls,
+        session_id: str,
+        thread_id: str,
+        title: str,
+        reason: str = "",
+        previous_thread_id: Optional[str] = None,
+    ) -> 'StreamEvent':
+        """A new (or resumed) hidden thread became the open one this turn."""
+        return cls(
+            type="thread_started",
+            session_id=session_id,
+            data={
+                "thread_id": thread_id,
+                "title": title,
+                "reason": reason,
+                "previous_thread_id": previous_thread_id,
+            },
+        )
+
+    @classmethod
+    def thread_recalled(
+        cls,
+        session_id: str,
+        thread_id: str,
+        title: str,
+        date: str,
+        match_terms: List[str],
+        mode: str,
+        last_turn_id: Optional[str] = None,
+    ) -> 'StreamEvent':
+        """An earlier thread's receipt was pulled into this turn.
+
+        ``mode`` is ``"auto"`` (deterministic strong match at turn start) or
+        ``"tool"`` (the model called ``recall_thread``). ``last_turn_id`` is
+        the recalled thread's newest turn so the chip can scroll the timeline
+        to it (spec §6); None when the store could not say.
+        """
+        return cls(
+            type="thread_recalled",
+            session_id=session_id,
+            data={
+                "thread_id": thread_id,
+                "title": title,
+                "date": date,
+                "match_terms": list(match_terms or []),
+                "mode": mode,
+                "last_turn_id": last_turn_id,
+            },
+        )
+
+    @classmethod
+    def thread_store_error(cls, session_id: str, message: str) -> 'StreamEvent':
+        """The conversation store failed; the turn continues without it."""
+        return cls(type="thread_store_error", session_id=session_id, data={"message": message})
+
+    @classmethod
+    def turn_persisted(cls, session_id: str, thread_id: str, turn_id: str) -> 'StreamEvent':
+        """The user row for this turn is on disk (status=in_progress)."""
+        return cls(
+            type="turn_persisted",
+            session_id=session_id,
+            data={"thread_id": thread_id, "turn_id": turn_id},
+        )
+
     @classmethod
     def heartbeat(cls, session_id: str = "system") -> 'StreamEvent':
         """Emit periodic heartbeat to keep connection alive.
