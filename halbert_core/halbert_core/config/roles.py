@@ -34,8 +34,11 @@ class RoleScope:
     name: str
     manifest: str
     #: platform.system() values where this role harvests real files.
-    #: A role absent here is docs-only on that platform, not broken —
-    #: e.g. storage_admin on macOS (no fstab, no stock synthetic.conf).
+    #: A role absent here is docs-only on that platform, not broken. No
+    #: wave-one role uses that today: a role whose manifest matches even
+    #: one real file must be listed, because staging nothing produces an
+    #: empty scope and under scope_mode="hard" an empty mask excludes
+    #: everything rather than narrowing.
     file_backed_platforms: tuple = ()
     #: Roles whose primary-owned files are aliased INTO this scope.
     #: Membership is a mask over one shared index, so aliasing costs no
@@ -64,9 +67,14 @@ ROLES: Dict[str, RoleScope] = {
     "storage_admin": RoleScope(
         name="storage_admin",
         manifest="storage.yml",
-        # macOS: no fstab, and /etc/synthetic.conf does not exist on a
-        # stock host. Docs-only there by design.
-        file_backed_platforms=("Linux",),
+        # macOS storage is thin, not absent. There is no fstab and no stock
+        # /etc/synthetic.conf, and APFS container layout is genuinely
+        # command-output-only (`diskutil apfs list`) — but autofs is real
+        # mount intent that lives in files, and /etc/auto_master,
+        # /etc/auto_home and /etc/autofs.conf all exist on a stock host.
+        # Gating Darwin out left the scope empty, and under scope_mode="hard"
+        # an empty mask excludes everything rather than narrowing.
+        file_backed_platforms=("Linux", "Darwin"),
         aliases_from=("sharing_admin",),
     ),
 }

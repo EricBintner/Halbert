@@ -83,10 +83,17 @@ def test_staging_subdir_is_derived_from_role_name():
     assert staging_subdir_for("storage_admin") == "storage"
 
 
-def test_storage_is_docs_only_on_macos():
-    """macOS has no fstab; storage_admin ships docs-only there."""
+def test_storage_is_file_backed_on_macos_too():
+    """macOS storage is thin, not absent: autofs is real mount intent.
+
+    The manifest matches /etc/auto_master, /etc/auto_home and
+    /etc/autofs.conf on a stock host (verified: 3 files). Gating the role
+    out of Darwin left those unstaged and the scope empty, and under
+    scope_mode="hard" an empty mask excludes everything rather than
+    narrowing -- a broken scope, not a thin one.
+    """
     assert ROLES["storage_admin"].file_backed_on("Linux") is True
-    assert ROLES["storage_admin"].file_backed_on("Darwin") is False
+    assert ROLES["storage_admin"].file_backed_on("Darwin") is True
 
 
 def test_network_is_file_backed_on_both_platforms():
@@ -94,12 +101,33 @@ def test_network_is_file_backed_on_both_platforms():
     assert ROLES["network_admin"].file_backed_on("Darwin") is True
 
 
-def test_roles_for_platform_excludes_docs_only_roles():
-    linux = roles_for_platform("Linux")
-    darwin = roles_for_platform("Darwin")
-    assert "storage_admin" in linux
-    assert "storage_admin" not in darwin
-    assert "service_admin" in darwin
+def test_every_wave_one_role_is_file_backed_on_both_platforms():
+    """No wave-one role leaves an empty scope on either platform."""
+    for system in ("Linux", "Darwin"):
+        assert set(roles_for_platform(system)) == set(ROLES), (
+            f"a role is gated out on {system}, which would stage an empty scope"
+        )
+
+
+def test_roles_for_platform_still_drops_a_docs_only_role(monkeypatch):
+    """No role uses the docs-only gate today; it must still work if one does.
+
+    Asserted against an injected role rather than a real one, so the day a
+    role legitimately has no files on a platform the filter is known good.
+    """
+    from halbert_core.config import roles as roles_mod
+
+    monkeypatch.setitem(
+        roles_mod.ROLES,
+        "linux_only_admin",
+        RoleScope(
+            name="linux_only_admin",
+            manifest="storage.yml",
+            file_backed_platforms=("Linux",),
+        ),
+    )
+    assert "linux_only_admin" in roles_for_platform("Linux")
+    assert "linux_only_admin" not in roles_for_platform("Darwin")
 
 
 def test_firewall_files_alias_network_into_security():

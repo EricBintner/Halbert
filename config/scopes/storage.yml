@@ -10,13 +10,15 @@
 # Linux content is thin, and the question "is this data protected" is the same
 # question as "how is this volume set up".
 #
-# macOS is docs-only for this role by design. There is no fstab, and
-# /etc/synthetic.conf does not exist on a stock host (it appears only if an
-# admin creates one). APFS container layout is correctly command-output-only
-# (`diskutil apfs list`), so there is nothing to harvest. The autofs files
-# below are included because they DO exist on a stock host and are the one
-# real mount-intent surface macOS has; the role is still gated out of staging
-# on Darwin by config/roles.py.
+# macOS storage is THIN, not absent. There is no fstab, /etc/synthetic.conf
+# does not exist on a stock host (it appears only if an admin creates one),
+# and APFS container layout is correctly command-output-only (`diskutil apfs
+# list`), so none of that is harvestable. But autofs is genuine mount intent
+# that lives in files: /etc/auto_master, /etc/auto_home and /etc/autofs.conf
+# all exist on a stock host (verified: 3 matches). The role is file-backed on
+# Darwin for exactly those — an earlier revision gated it out, which left the
+# scope empty, and under scope_mode="hard" an empty mask excludes everything
+# rather than narrowing.
 #
 # Deliberately NOT here:
 #   * /etc/exports and nfs.conf — primary to sharing_admin (they answer "what
