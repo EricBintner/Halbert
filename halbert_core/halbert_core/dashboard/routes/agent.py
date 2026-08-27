@@ -1213,3 +1213,33 @@ if FASTAPI_AVAILABLE:
         except Exception as e:
             logger.warning(f"retract_recall failed (non-fatal): {e}")
             return {"ok": False}
+
+    def _refresh_thread_receipt(tm, thread_id: str) -> None:
+        """Regenerate a thread's receipt after a redaction (spec §5)."""
+        refresh = getattr(tm, "refresh_receipt", None) or getattr(tm, "_refresh_receipt", None)
+        if callable(refresh):
+            refresh(thread_id)
+            return
+        from ...agents.receipt import build_receipt
+        thread = tm.store.get_thread(thread_id)
+        if thread is None:
+            return
+        receipt = build_receipt(thread, tm.store.list_messages(thread_id))
+        tm.store.upsert_receipt(thread_id, thread.get("title") or "", receipt)
+
+    @router.post("/message/{message_id}/redact")
+    async def redact_message(message_id: int):
+        """"Forget this" for one row (spec §5): content and blocks become
+        "[redacted by admin]", the FTS row is rewritten and the thread's
+        receipt is regenerated. Rows are never deleted."""
+        tm = _thread_manager()
+        if tm is None:
+            raise HTTPException(503, "Thread store unavailable")
+        thread_id = tm.store.redact_message(message_id)
+        if thread_id is None:
+            raise HTTPException(404, "Message not found")
+        try:
+            _refresh_thread_receipt(tm, thread_id)
+        except Exception as e:
+            logger.warning(f"Receipt refresh after redaction failed (non-fatal): {e}")
+        return {"ok": True, "thread_id": thread_id}

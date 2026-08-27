@@ -844,6 +844,70 @@ class SqliteConversationStore:
             return 0
 
     # ------------------------------------------------------------------
+    # Forget / redact (spec §5)
+    # ------------------------------------------------------------------
+
+    REDACTED = "[redacted by admin]"
+
+    def redact_message(self, message_id: int) -> Optional[str]:
+        """"Forget this" for one row: content and blocks become the
+        redaction marker, diff proposals are dropped, metadata gains
+        ``redacted``, and the FTS row is rewritten so the original words are
+        unsearchable. The row itself is never deleted. Returns the thread id,
+        or None when the row does not exist or the write failed (WARNING).
+        The caller refreshes the thread's receipt.
+        """
+        if self._conn is None:
+            return None
+        try:
+            with self._lock, self._conn:
+                row = self._conn.execute(
+                    "SELECT conversation_id, blocks_json, metadata FROM messages WHERE id = ?",
+                    (int(message_id),),
+                ).fetchone()
+                if row is None:
+                    return None
+                thread_id = row["conversation_id"]
+                # blocks_json stays valid JSON: one marker block when the row
+                # had blocks (the timeline still shows that something ran),
+                # an empty list when it had none.
+                blocks = (
+                    [{"tool": self.REDACTED, "args": {}, "result": self.REDACTED,
+                      "exit": None, "redacted": True}]
+                    if _loads(row["blocks_json"], []) else []
+                )
+                metadata = _loads(row["metadata"], {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                metadata["redacted"] = True
+                self._conn.execute(
+                    """UPDATE messages
+                       SET content = ?, blocks_json = ?, diff_proposals_json = '[]', metadata = ?
+                       WHERE id = ?""",
+                    (self.REDACTED, json.dumps(blocks), json.dumps(metadata), int(message_id)),
+                )
+                # ``_fts_recover()``, not ``self._fts_ok``: a store that came
+                # up with the flag False but whose messages_fts table still
+                # holds this row's *original* words (indexed by an earlier,
+                # healthy process) would otherwise leave them searchable for
+                # good — recovery's backfill only inserts rows that are
+                # missing, never rewrites one that is already there
+                # (A1 review finding 3, and update_message's own gate).
+                if self._fts_recover():
+                    self._conn.execute(
+                        "DELETE FROM messages_fts WHERE rowid = ?", (int(message_id),)
+                    )
+                    self._conn.execute(
+                        "INSERT INTO messages_fts(rowid, conversation_id, content) "
+                        "VALUES (?, ?, ?)",
+                        (int(message_id), thread_id, self.REDACTED),
+                    )
+            return thread_id
+        except Exception as e:
+            logger.warning(f"redact_message {message_id} failed: {e}")
+            return None
+
+    # ------------------------------------------------------------------
     # Threads
     # ------------------------------------------------------------------
 
