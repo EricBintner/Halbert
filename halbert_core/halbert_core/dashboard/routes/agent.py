@@ -1011,8 +1011,44 @@ if FASTAPI_AVAILABLE:
     # clicks Apply.
     # -------------------------------------------------------------------------
 
+    def _require_pending(diff: Dict[str, Any], diff_id: str) -> None:
+        """Refuse a proposal that has already been applied or rejected.
+
+        A stored proposal stays addressable by id for as long as it is on the
+        timeline, so without this an old ``new_content`` (a whole-file
+        replacement) could be written over a file the admin has edited since
+        -- or a rejected change could be applied after the fact. A missing
+        status counts as pending: rows written before this column existed.
+        """
+        status = diff.get("status") or "pending"
+        if status != "pending":
+            raise HTTPException(400, f"Diff {diff_id} was already {status}")
+
+    def _persist_diff_status(diff_id: str, status: str) -> None:
+        """Mirror a live-session decision onto the persisted proposal.
+
+        The assistant row is written when the turn ends, which is before the
+        admin answers an AWAITING_CONFIRMATION pause -- the one state where
+        the session outlives its stored turn. Both copies then exist, and
+        only writing the live one would leave the store saying "pending" and
+        the diff actionable a second time after the session is evicted.
+        """
+        tm = _thread_manager()
+        found = _find_stored_diff(tm, diff_id)
+        if found is None:
+            return
+        message_id, proposals, index = found
+        if proposals[index].get("status") == status:
+            return
+        proposals[index]["status"] = status
+        try:
+            tm.store.update_message(message_id, diff_proposals=proposals)
+        except Exception as e:
+            logger.warning(f"Could not persist diff status (non-fatal): {e}")
+
     def _write_diff(diff: Dict[str, Any], diff_id: str) -> Dict[str, Any]:
         import os
+        _require_pending(diff, diff_id)
         file_path = diff.get("file_path")
         new_content = diff.get("new_content")
         if not file_path or new_content is None:
@@ -1033,7 +1069,9 @@ if FASTAPI_AVAILABLE:
         """Apply a proposed file change (live session, else the store)."""
         ctx = _active_ctx(session_id)
         if ctx is not None and diff_id in getattr(ctx, "pending_diffs", {}):
-            return _write_diff(ctx.pending_diffs[diff_id], diff_id)
+            result = _write_diff(ctx.pending_diffs[diff_id], diff_id)
+            _persist_diff_status(diff_id, "applied")
+            return result
         tm = _thread_manager()
         found = _find_stored_diff(tm, diff_id)
         if found is None:
@@ -1051,7 +1089,9 @@ if FASTAPI_AVAILABLE:
         """Reject a proposed file change without writing to disk."""
         ctx = _active_ctx(session_id)
         if ctx is not None and diff_id in getattr(ctx, "pending_diffs", {}):
+            _require_pending(ctx.pending_diffs[diff_id], diff_id)
             ctx.pending_diffs[diff_id]["status"] = "rejected"
+            _persist_diff_status(diff_id, "rejected")
             logger.info(f"Rejected diff {diff_id}")
             return {"rejected": True, "diff_id": diff_id}
         tm = _thread_manager()
@@ -1059,6 +1099,7 @@ if FASTAPI_AVAILABLE:
         if found is None:
             raise HTTPException(404, "Diff not found")
         message_id, proposals, index = found
+        _require_pending(proposals[index], diff_id)
         proposals[index]["status"] = "rejected"
         try:
             tm.store.update_message(message_id, diff_proposals=proposals)
@@ -1085,12 +1126,24 @@ if FASTAPI_AVAILABLE:
             return dict(_EMPTY_TIMELINE)
         try:
             page = max(1, min(int(limit), 200))
-            turns = tm.store.list_turns(
-                before_turn_id=before or None, around_turn_id=around or None, limit=page + 1,
-            )
-            has_more = len(turns) > page
-            if has_more:
-                turns = turns[-page:]
+            if around and not before:
+                # ``before`` still wins when both are given, as the store does.
+                # ``around`` is already a centred window, so the +1/trim trick
+                # below would drop the anchor itself whenever the store tops
+                # the window up forwards (an anchor with nothing older than
+                # it -- exactly the "jump to the start of an old thread"
+                # case). Ask for the page as-is and probe for older turns.
+                turns = tm.store.list_turns(around_turn_id=around, limit=page)
+                has_more = bool(turns) and bool(
+                    tm.store.list_turns(before_turn_id=turns[0]["turn_id"], limit=1)
+                )
+            else:
+                # Newest-last: one extra turn off the old end tells us whether
+                # a `before=` fetch would find anything, then it is trimmed.
+                turns = tm.store.list_turns(before_turn_id=before or None, limit=page + 1)
+                has_more = len(turns) > page
+                if has_more:
+                    turns = turns[-page:]
             return {"turns": turns, "has_more": has_more, "current_thread": _thread_summary(tm.current())}
         except Exception as e:
             logger.warning(f"Timeline unavailable (non-fatal): {e}")

@@ -112,6 +112,92 @@ def test_diff_apply_and_reject_from_store_when_session_is_dead(client, tm, tmp_p
     assert client.post("/api/agent/diff/dead-session/none/reject").status_code == 404
 
 
+def test_a_decided_diff_is_never_actionable_again(client, tm, tmp_path):
+    """A stored proposal stays addressable by id forever, so apply/reject must
+    settle it once: `new_content` is a whole-file replacement and a re-apply
+    would silently discard every admin edit made since."""
+    target = tmp_path / "smb.conf"
+    _seed_turn(tm, "add two shares", "two diffs", diff_proposals=[
+        {"diff_id": "d1", "file_path": str(target), "new_content": "one\n", "status": "pending"},
+        {"diff_id": "d2", "file_path": str(target), "new_content": "two\n", "status": "pending"},
+    ])
+    assert client.post("/api/agent/diff/dead-session/d1/reject").json() == {"rejected": True, "diff_id": "d1"}
+    assert client.post("/api/agent/diff/dead-session/d1/apply").status_code == 400
+    assert not target.exists()
+
+    assert client.post("/api/agent/diff/dead-session/d2/apply").status_code == 200
+    target.write_text("hand edited by the admin\n")
+    assert client.post("/api/agent/diff/dead-session/d2/apply").status_code == 400
+    assert client.post("/api/agent/diff/dead-session/d2/reject").status_code == 400
+    assert target.read_text() == "hand edited by the admin\n"
+    stored = {d["diff_id"]: d["status"] for d in tm.store.list_turns(limit=10)[-1]["diff_proposals"]}
+    assert stored == {"d1": "rejected", "d2": "applied"}
+
+
+def _live_ctx(monkeypatch, session_id, pending_diffs):
+    ctx = type("Ctx", (), {})()
+    ctx.pending_diffs = pending_diffs
+    agent = type("Agent", (), {})()
+    agent.active_sessions = {session_id: ctx}
+    monkeypatch.setattr(agent_routes, "_agent_instance", agent)
+    return ctx
+
+
+def test_live_session_apply_writes_the_file_and_settles_the_stored_copy(client, tm, tmp_path, monkeypatch):
+    target = tmp_path / "live" / "smb.conf"
+    proposal = {"diff_id": "L1", "file_path": str(target), "new_content": "[live]\n", "status": "pending"}
+    _seed_turn(tm, "add a live share", "diff attached", diff_proposals=[dict(proposal)])
+    ctx = _live_ctx(monkeypatch, "live", {"L1": proposal})
+
+    body = client.post("/api/agent/diff/live/L1/apply").json()
+    assert body["applied"] is True and body["file_path"] == str(target)
+    assert target.read_text() == "[live]\n"
+    assert ctx.pending_diffs["L1"]["status"] == "applied"
+    # The turn row was persisted when the turn ended, so the store holds the
+    # same proposal: it must not still say "pending" once the session is gone.
+    stored = {d["diff_id"]: d["status"] for d in tm.store.list_turns(limit=10)[-1]["diff_proposals"]}
+    assert stored == {"L1": "applied"}
+    target.write_text("hand edited by the admin\n")
+    assert client.post("/api/agent/diff/live/L1/apply").status_code == 400
+    assert target.read_text() == "hand edited by the admin\n"
+
+
+def test_live_session_reject_touches_no_file_and_settles_the_stored_copy(client, tm, tmp_path, monkeypatch):
+    target = tmp_path / "live" / "hosts"
+    proposal = {"diff_id": "L2", "file_path": str(target), "new_content": "nope\n", "status": "pending"}
+    _seed_turn(tm, "edit the hosts file", "diff attached", diff_proposals=[dict(proposal)])
+    ctx = _live_ctx(monkeypatch, "live", {"L2": proposal})
+
+    assert client.post("/api/agent/diff/live/L2/reject").json() == {"rejected": True, "diff_id": "L2"}
+    assert not target.exists()
+    assert ctx.pending_diffs["L2"]["status"] == "rejected"
+    stored = {d["diff_id"]: d["status"] for d in tm.store.list_turns(limit=10)[-1]["diff_proposals"]}
+    assert stored == {"L2": "rejected"}
+    assert client.post("/api/agent/diff/live/L2/apply").status_code == 400
+    assert not target.exists()
+
+
+def test_timeline_around_keeps_the_anchor_on_the_page(client, tm):
+    turns = [_seed_turn(tm, f"message number {i}", f"answer {i}") for i in range(9)]
+
+    def ids(**params):
+        return [t["turn_id"] for t in client.get("/api/agent/timeline", params=params).json()["turns"]]
+
+    # Anchor in the middle: a centred window, four turns wide.
+    assert ids(limit=4, around=turns[5].turn_id) == [t.turn_id for t in turns[3:7]]
+    # Anchor at the oldest end: the window tops up forwards and the anchor
+    # itself must survive -- this is the recall chip's "jump to the start".
+    assert ids(limit=4, around=turns[0].turn_id) == [t.turn_id for t in turns[0:4]]
+    # Anchor at the newest end: tops up backwards, still four wide.
+    assert ids(limit=4, around=turns[8].turn_id) == [t.turn_id for t in turns[5:9]]
+
+    # has_more means "a `before=` fetch from turns[0] would find something".
+    assert client.get("/api/agent/timeline", params={"limit": 4, "around": turns[0].turn_id}).json()["has_more"] is False
+    assert client.get("/api/agent/timeline", params={"limit": 4, "around": turns[5].turn_id}).json()["has_more"] is True
+    assert ids(limit=4, around="no-such-turn") == []
+    assert client.get("/api/agent/timeline", params={"around": "no-such-turn"}).json()["has_more"] is False
+
+
 def test_message_passes_thread_manager_and_never_force_resets(client, tm, monkeypatch):
     from halbert_core.agents.events import StreamEvent
     seen = {}
