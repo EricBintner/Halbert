@@ -572,16 +572,28 @@ def _do_llm_call(
             payload["tools"] = tools
         options = options or {}
         num_predict = options.get("num_predict", options.get("max_tokens", 1024))
+        prompt_tokens = estimate_prompt_tokens(messages, tools)
         # Always present (spec §7): without it Ollama truncates the head.
         num_ctx = options.get("num_ctx") or num_ctx_for_model(
-            model, estimate_prompt_tokens(messages, tools), num_predict, options.get("num_ctx_max"),
+            model, prompt_tokens, num_predict, options.get("num_ctx_max"),
         )
+        if prompt_tokens + _NUM_CTX_HEADROOM > num_ctx:
+            # The clamp (model_max or the 32768 default ceiling) capped
+            # num_ctx below what the prompt actually needs. Ollama truncates
+            # the HEAD of the prompt silently in this case, so make it loud.
+            logger.warning(
+                f"Prompt for {model} is ~{prompt_tokens} tokens but num_ctx="
+                f"{num_ctx}; Ollama will truncate the head of the prompt."
+            )
         payload["options"] = {
             "num_predict": num_predict,
             "temperature": options.get("temperature", 0.7),
             "num_ctx": num_ctx,
         }
-        logger.info(f"Calling Ollama API: {url} model={model} num_ctx={num_ctx}")
+        logger.info(
+            f"Calling Ollama API: {url} model={model} num_ctx={num_ctx} "
+            f"prompt_tokens={prompt_tokens}"
+        )
         response = requests.post(url, json=payload, timeout=timeout)
         response.raise_for_status()
         data = response.json()

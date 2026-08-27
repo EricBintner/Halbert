@@ -535,6 +535,15 @@ class LLMClientAdapter:
                     # The reply must fit in what is left after the prompt
                     # (spec §7: max_tokens subordinate to num_ctx − prompt).
                     num_predict = max(256, min(max_tokens, num_ctx - prompt_tokens - 512))
+                    if prompt_tokens + 512 > num_ctx:
+                        # num_ctx was clamped (model_max or the 32768 default
+                        # ceiling) below what this prompt needs. Ollama drops
+                        # the HEAD of the prompt silently, so make it loud.
+                        logger.warning(
+                            f"Prompt for {model} is ~{prompt_tokens} tokens "
+                            f"but num_ctx={num_ctx}; Ollama will truncate "
+                            "the head of the prompt."
+                        )
                     payload = {
                         "model": model,
                         "messages": messages,

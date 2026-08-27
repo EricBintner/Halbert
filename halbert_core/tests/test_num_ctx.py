@@ -4,6 +4,7 @@
 prompt, computed once per model per process (spec §7)."""
 
 import json
+import logging
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -67,6 +68,22 @@ def test_ollama_chat_payload_carries_num_ctx():
         call_llm_chat(endpoint="http://localhost:11434", model="example-model:latest",
                       messages=[{"role": "user", "content": "hi"}], options={"num_ctx": 8192})
     assert post.call_args.kwargs["json"]["options"]["num_ctx"] == 8192   # explicit override wins
+
+
+def test_ollama_chat_warns_when_ceiling_clamp_still_leaves_prompt_over_num_ctx(caplog):
+    """Review finding (A10): once the prompt is so large that even the 32768
+    default ceiling can't hold it, num_ctx_for_model silently returns the
+    ceiling instead of what the prompt needs. Ollama then truncates the head
+    of the prompt with nothing logged. _do_llm_call must warn in that case."""
+    with caplog.at_level(logging.WARNING, logger="halbert.model.client"):
+        with patch("halbert_core.model.client.requests.post",
+                   return_value=_response({"message": {"content": "hi"}})):
+            call_llm_chat(endpoint="http://localhost:11434", model="huge-prompt-model:latest",
+                          messages=[{"role": "user", "content": "y" * 200_000}])
+    assert any(
+        "huge-prompt-model:latest" in r.getMessage() and "num_ctx" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_openai_payload_has_no_options():
@@ -174,6 +191,16 @@ async def test_adapter_stream_has_num_ctx_and_bounded_num_predict(adapter, fake_
     opts = fake_aiohttp["json"]["options"]
     assert opts["num_ctx"] >= 4096 and opts["num_ctx"] % 1024 == 0
     assert opts["num_predict"] <= opts["num_ctx"] - 512 and opts["num_predict"] <= 8192
+
+
+@pytest.mark.asyncio
+async def test_adapter_stream_warns_when_ceiling_clamp_still_leaves_prompt_over_num_ctx(adapter, fake_aiohttp, caplog):
+    """Same review finding as above, for the dashboard adapter's stream
+    payload, which computes num_ctx independently of _do_llm_call."""
+    with caplog.at_level(logging.WARNING, logger="halbert.dashboard.routes.agent"):
+        result = "".join([c async for c in adapter.stream([{"role": "user", "content": "y" * 200_000}])])
+    assert result == "hi"
+    assert any("num_ctx" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.asyncio
