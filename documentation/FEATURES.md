@@ -356,7 +356,7 @@ Features:
 | `/api/settings/endpoints` | GET/POST/DELETE | Manage Ollama endpoints |
 | `/api/settings/assign/{role}` | POST | Assign model to role |
 | `/api/settings/ai-rules` | GET/POST/PUT/DELETE | Custom AI rules |
-| `/api/conversations` | GET/POST/DELETE | Chat history |
+| `/api/agent/timeline` | GET | Chat history, one page of turns |
 | `/api/terminal/execute` | POST | Run command |
 | `/api/editor/file` | GET/POST | Read/write config files |
 | `/api/services/{action}` | POST | Service control |
@@ -385,7 +385,7 @@ Features:
 | `~/.config/halbert/models.yml` | Model/endpoint configuration |
 | `~/.config/halbert/ai_rules.yml` | Custom AI rules |
 | `~/.config/halbert/personas/` | Persona definitions |
-| `~/.local/share/halbert/conversations/` | Chat history |
+| `~/.halbert/conversations.db` | Chat history (SQLite: threads, turns, receipts) |
 
 ### models.yml Example
 ```yaml

@@ -335,6 +335,279 @@ Triggers a fresh system discovery scan.
 
 ---
 
+## Agent API
+
+**Code**: `halbert_core/halbert_core/dashboard/routes/agent.py`
+
+The agent state machine and the one continuous conversation it writes to.
+`POST /api/agent/message` is the only way to talk to it and
+`GET /api/agent/timeline` the only way to read the history back: there is no
+conversations API, because the server chooses which hidden thread a turn
+belongs to and the client never names one.
+
+Every thread endpoint degrades rather than fails — with no store, or on a store
+error, it answers empty. The one exception is redaction, which must never
+report success it did not achieve.
+
+### Send Message
+
+```
+POST /api/agent/message
+Content-Type: application/json
+```
+
+**Request:**
+```json
+{
+  "message": "Why did the media share stop mounting?",
+  "session_id": "optional; generated when absent",
+  "context": {},
+  "images": [],
+  "max_tokens": 8192,
+  "temperature": 0.7,
+  "model": null,
+  "tier": null,
+  "endpoint_id": null
+}
+```
+
+`session_id` names one turn, not a conversation. `max_tokens` is bounded to
+1–32768. `model` / `tier` / `endpoint_id` carry the in-chat picker's pin for
+this turn; `tier` is `guide`, `specialist` or `vision` — anything else,
+including `auto`, means "no pin". A second message sent during a live turn
+queues on the state machine's turn lock.
+
+**Response:** `text/event-stream`. Each frame is `data: {...}` with
+`{"type", "session_id", "timestamp", ...}`. Types include `state_change`,
+`plan`, `plan_step_update`, `thinking`, `context_loaded`, `tool_start`,
+`tool_complete`, `tool_confirmation_required`, `response_chunk`,
+`response_complete`, `response_provenance`, `diff_proposal`, `terminal_spawn`,
+`terminal_output`, `terminal_complete`, `model_selected`, `thread_started`,
+`thread_recalled`, `turn_persisted`, `conversation_status`, `heartbeat`,
+`cancelled` and `error`. The read-only thread id the UI needs arrives on
+`turn_persisted`.
+
+### Confirm a High-Risk Action
+
+```
+POST /api/agent/confirm/{session_id}
+Content-Type: application/json
+
+{"action_id": "exec-123", "confirmed": true}
+```
+
+**Response:** `text/event-stream` — the continued turn, same event shapes.
+
+### Session State
+
+```
+GET /api/agent/state/{session_id}
+```
+
+**Response:**
+```json
+{
+  "session_id": "sess-1",
+  "state": "EXECUTING",
+  "plan": [],
+  "current_step": 0,
+  "loop_count": 0,
+  "confidence": 0.0,
+  "crag_action": "PENDING"
+}
+```
+
+`404` when the session is not live.
+
+### Cancel
+
+```
+POST /api/agent/cancel/{session_id}
+```
+
+→ `{"cancelled": true, "session_id": "sess-1"}`, or `404`.
+
+### Health
+
+```
+GET /api/agent/health
+```
+
+→ `{"status": "healthy", "active_sessions": 0, "current_state": "IDLE"}`, or
+`{"status": "unhealthy", "error": "..."}`. Always `200`.
+
+### Intake Classification
+
+```
+POST /api/agent/intake
+Content-Type: application/json
+
+{"message": "why is my disk failing?"}
+```
+
+Read-only: routes the message without running the agent.
+
+**Response:**
+```json
+{
+  "recommended_model": "specialist",
+  "complexity_score": 0.72,
+  "complexity_level": "high",
+  "intent": "troubleshooting",
+  "is_greeting": false,
+  "is_troubleshooting": true,
+  "specialist_enabled": true
+}
+```
+
+`503` when the build has no intake pipeline.
+
+### Active Sessions
+
+```
+GET /api/agent/sessions
+```
+
+**Response:**
+```json
+{
+  "sessions": [
+    {"session_id": "sess-1", "query": "first 100 chars", "state": "EXECUTING",
+     "loop_count": 0, "elapsed_ms": 1240}
+  ]
+}
+```
+
+### Metrics
+
+```
+GET /api/agent/metrics                    # collector summary
+GET /api/agent/metrics/sessions?limit=10  # {"sessions": [...]} recent completed
+```
+
+### Apply / Reject a Proposed File Change
+
+```
+POST /api/agent/diff/{session_id}/{diff_id}/apply
+POST /api/agent/diff/{session_id}/{diff_id}/reject
+```
+
+Resolved from the live session first, then from the store, so a proposal stays
+actionable after its turn has ended.
+
+**Response:**
+```json
+{"applied": true, "diff_id": "d1", "file_path": "/etc/samba/smb.conf"}
+```
+```json
+{"rejected": true, "diff_id": "d1"}
+```
+
+`"status_persisted": false` is added when the decision could not be written
+back to the store. `404` when there is no such proposal; `400` once it has been
+applied or rejected — `new_content` is a whole-file replacement, so a second
+apply would silently discard every edit made since.
+
+### Timeline
+
+```
+GET /api/agent/timeline?limit=50&before={turn_id}&around={turn_id}
+```
+
+One page of the conversation, newest-last, grouped by turn. `before` pages
+backwards from a turn; `around` centres a page on one (a recall chip click).
+`before` wins when both are given. `limit` is clamped to 1–200.
+
+**Response:**
+```json
+{
+  "turns": [
+    {
+      "turn_id": "turn-abc",
+      "thread_id": "thread-1",
+      "timestamp": 1756200000.0,
+      "origin": "human",
+      "user": {"message_id": 1, "content": "...", "timestamp": 1756200000.0, "status": "complete"},
+      "assistant": {"message_id": 2, "content": "...", "timestamp": 1756200001.0, "status": "complete"},
+      "blocks": [],
+      "terminal_block_ids": [],
+      "diff_proposals": []
+    }
+  ],
+  "has_more": false,
+  "current_thread": {"thread_id": "thread-1", "title": "", "status": "open"}
+}
+```
+
+`user` or `assistant` is `null` while a turn is half-written. Always `200`: with
+no store, or on any store error, the answer degrades to
+`{"turns": [], "has_more": false, "current_thread": null}`.
+
+### Current Thread
+
+```
+GET /api/agent/thread/current
+```
+
+The open thread, or `null` when nothing is open and when the store is
+unavailable. The body is the stored row plus a `thread_id` alias for `id`:
+
+```json
+{
+  "id": "thread-1",
+  "thread_id": "thread-1",
+  "title": "Media share stopped mounting",
+  "status": "open",
+  "receipt": "…summary the recall reads back…",
+  "receipt_updated_at": 1756200002.0,
+  "topic_domains": [],
+  "entities_json": [],
+  "recalled_json": [],
+  "last_active": 1756200001.0,
+  "stale": 0,
+  "ephemeral": 0,
+  "unread": 0,
+  "title_source": "provisional",
+  "message_count": 2,
+  "turn_count": 1
+}
+```
+
+### Retract a Recall
+
+```
+DELETE /api/agent/thread/{thread_id}/recall/{recalled_thread_id}
+```
+
+Marks a thread that was pulled into `thread_id` as retracted, so it stops
+feeding later prompts.
+
+→ `{"ok": true}`, or `{"ok": false}` when there was no such recall.
+
+### Redact a Message
+
+```
+POST /api/agent/message/{message_id}/redact
+```
+
+"Forget this" for one row: its content and tool blocks become
+`[redacted by admin]`, and every derived copy goes with it — the FTS index row,
+the thread title it founded, the thread's entity sets — before the thread
+receipt is regenerated from what is left. Rows are never deleted.
+
+**Response:**
+```json
+{"ok": true, "thread_id": "thread-1"}
+```
+
+`"receipt_refreshed": false` is added when the receipt could not be rebuilt and
+was blanked instead. `404` means only "there is no such row"; `503` means the
+store is unavailable and `500` means the redaction did not land in full — a
+person who asked to forget something is never told "nothing to forget", or
+"done", while the words are still readable somewhere.
+
+---
+
 ## Settings API
 
 ### Endpoints

@@ -2,7 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """
-Test RAG system with LLM integration.
+Manual demo: the RAG pipeline answering through a configured model.
+
+NOT A TEST SUITE, despite what it used to be called. It needs a reachable
+model endpoint and a RAG index that has already been built, it prints rather
+than asserts, and one of its two modes is an interactive prompt. It was named
+``test_rag_with_llm.py`` with a ``test_``-prefixed entry point, so it collected
+as pytest would collect a suite and read as coverage that nobody was running.
+
+Run it by hand:  python3 scripts/rag_llm_demo.py [--mode demo|interactive]
 """
 
 import sys
@@ -27,7 +35,7 @@ def _configured_model():
     return model or None
 
 
-def test_rag_with_llm():
+def run_demo():
     print("="*70)
     print("Halbert RAG + LLM DEMO")
     print("="*70)
@@ -99,7 +107,7 @@ def test_rag_with_llm():
         print()
 
 
-def test_interactive():
+def run_interactive():
     """Interactive mode with LLM."""
     print("="*70)
     print("Halbert RAG + LLM: Interactive Mode")
@@ -155,13 +163,13 @@ def test_interactive():
 if __name__ == '__main__':
     import argparse
     
-    parser = argparse.ArgumentParser(description="Test RAG with LLM")
-    parser.add_argument('--mode', choices=['test', 'interactive'], default='test',
-                       help='Run mode: test examples or interactive')
+    parser = argparse.ArgumentParser(description="Demo: RAG answering through a configured model")
+    parser.add_argument('--mode', choices=['demo', 'interactive'], default='demo',
+                       help='Run mode: scripted example questions, or an interactive prompt')
     
     args = parser.parse_args()
     
-    if args.mode == 'test':
-        test_rag_with_llm()
+    if args.mode == 'demo':
+        run_demo()
     else:
-        test_interactive()
+        run_interactive()
