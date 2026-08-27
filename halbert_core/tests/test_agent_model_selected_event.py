@@ -9,7 +9,14 @@ and none of it reached the frontend. These cover the transport: the factory's
 shape, the adapter reporting what it actually used through a per-call callback
 (never state on the process-wide shared adapter), and RESPONDING announcing it
 exactly once, ahead of the first chunk.
+
+The streaming path carries the graceful fallback too (D-2.1). While it lived
+only in chat(), a pinned model on a dead port put the connection error in the
+assistant's bubble, and ``fallback_from`` — the amber "was unavailable" chip —
+could not be set on any turn the user actually read.
 """
+
+import json
 
 import pytest
 from unittest.mock import patch
@@ -59,29 +66,124 @@ def slots(monkeypatch):
     return state
 
 
+ANSWER = "The answer is forty-two, and here is why."
+
+
+def _ollama_lines(text):
+    yield json.dumps({"message": {"content": text}}).encode()
+    yield json.dumps({"done": True}).encode()
+
+
+def _openai_lines(text):
+    body = {"choices": [{"delta": {"content": text}}]}
+    yield f"data: {json.dumps(body)}".encode()
+    yield b"data: [DONE]"
+
+
+class _Body:
+    """A response body; ``drops_after`` cuts the wire that many lines in."""
+
+    def __init__(self, lines, drops_after=None):
+        self._lines = list(lines)
+        self._drops_after = drops_after
+
+    def __aiter__(self):
+        return self._read()
+
+    async def _read(self):
+        for i, line in enumerate(self._lines):
+            if self._drops_after is not None and i >= self._drops_after:
+                raise ConnectionResetError("the runtime dropped the connection")
+            yield line
+
+
+class _Response:
+    def __init__(self, status, body, text=""):
+        self.status = status
+        self.content = body
+        self._text = text
+
+    async def text(self):
+        return self._text
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _Refusal:
+    """A request whose connection never opens."""
+
+    def __init__(self, model):
+        self._model = model
+
+    async def __aenter__(self):
+        raise ConnectionError(f"Cannot connect to host serving {self._model}")
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _Session:
+    """Answers on behalf of whichever model the payload names."""
+
+    def __init__(self, plan):
+        self._plan = plan
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def post(self, url, json=None, headers=None):
+        model = (json or {}).get("model")
+        self._plan["asked"].append(model)
+        failure = self._plan["fails"].get(model)
+        if failure == "refused":
+            return _Refusal(model)
+        if failure == "rejected":
+            return _Response(503, _Body([]), text="that model is not loaded")
+        lines = _ollama_lines if url.endswith("/api/chat") else _openai_lines
+        return _Response(200, _Body(
+            lines(self._plan["answer"]),
+            drops_after=1 if failure == "drops" else None,
+        ))
+
+
 @pytest.fixture
-def no_network(monkeypatch):
-    """Cut the wire under ``stream()``.
+def runtime(monkeypatch):
+    """A scripted runtime under ``stream()``, recording who was asked.
 
-    The model is reported before the first byte, so a stream that cannot
-    connect still has to report — and a test that reaches a real runtime on
-    the developer's machine proves nothing about either.
+    Nothing here touches the network: a test that reached a real runtime on
+    the developer's machine would prove nothing about either. Name a model in
+    ``fails`` to make it refuse the connection, reject the request, or drop the
+    wire once the answer has started.
     """
-    def _refuse(*args, **kwargs):
-        raise RuntimeError("network disabled in tests")
-    monkeypatch.setattr(aiohttp, "ClientSession", _refuse)
+    plan = {"answer": ANSWER, "fails": {}, "asked": []}
+    monkeypatch.setattr(aiohttp, "ClientSession",
+                        lambda *args, **kwargs: _Session(plan))
+    return plan
 
 
-async def _drain_stream(**kwargs):
-    """Run ``stream()`` to exhaustion, returning the reported payloads."""
-    captured = []
+async def _run_stream(**kwargs):
+    """Run ``stream()`` to exhaustion, returning its text and its reports."""
+    chunks, captured = [], []
     adapter = agent_routes.LLMClientAdapter()
-    async for _chunk in adapter.stream(
+    async for chunk in adapter.stream(
         messages=[{"role": "user", "content": kwargs.pop("prompt")}],
         on_model_selected=captured.append,
         **kwargs,
     ):
-        pass
+        chunks.append(chunk)
+    return "".join(chunks), captured
+
+
+async def _drain_stream(**kwargs):
+    """Run ``stream()`` to exhaustion, returning the reported payloads."""
+    _text, captured = await _run_stream(**kwargs)
     return captured
 
 
@@ -139,41 +241,41 @@ class TestFactory:
 
 class TestStreamReports:
 
-    async def test_reports_exactly_once(self, slots, no_network):
+    async def test_reports_exactly_once(self, slots, runtime):
         captured = await _drain_stream(prompt=TRIVIAL)
         assert len(captured) == 1
 
-    async def test_a_pinned_turn_is_pinned_and_not_escalated(self, slots, no_network):
+    async def test_a_pinned_turn_is_pinned_and_not_escalated(self, slots, runtime):
         captured = await _drain_stream(prompt=COMPLEX, model_override="pinned-x")
         assert captured[0]["model"] == "pinned-x"
         assert captured[0]["pinned"] is True
         assert captured[0]["escalated"] is False
 
-    async def test_a_tier_pin_is_pinned_and_not_escalated(self, slots, no_network):
+    async def test_a_tier_pin_is_pinned_and_not_escalated(self, slots, runtime):
         captured = await _drain_stream(prompt=TRIVIAL, tier_override="specialist")
         assert captured[0]["model"] == SPECIALIST[0]
         assert captured[0]["tier"] == "specialist"
         assert captured[0]["pinned"] is True
         assert captured[0]["escalated"] is False
 
-    async def test_an_escalated_turn_reports_the_reason(self, slots, no_network):
+    async def test_an_escalated_turn_reports_the_reason(self, slots, runtime):
         captured = await _drain_stream(prompt=COMPLEX)
         assert captured[0]["model"] == SPECIALIST[0]
         assert captured[0]["escalated"] is True
         assert captured[0]["pinned"] is False
         assert "0.50" in captured[0]["reason"]
 
-    async def test_a_routine_turn_is_neither(self, slots, no_network):
+    async def test_a_routine_turn_is_neither(self, slots, runtime):
         captured = await _drain_stream(prompt=TRIVIAL)
         assert captured[0]["model"] == GUIDE[0]
         assert captured[0]["pinned"] is False
         assert captured[0]["escalated"] is False
 
-    async def test_nothing_fell_back(self, slots, no_network):
+    async def test_nothing_fell_back(self, slots, runtime):
         captured = await _drain_stream(prompt=TRIVIAL)
         assert "fallback_from" not in captured[0]
 
-    async def test_the_payload_feeds_the_factory_unchanged(self, slots, no_network):
+    async def test_the_payload_feeds_the_factory_unchanged(self, slots, runtime):
         """The state machine splats the payload straight into the factory, so
         an extra or renamed key here is a TypeError in production."""
         captured = await _drain_stream(prompt=COMPLEX)
@@ -181,7 +283,7 @@ class TestStreamReports:
         assert ev.data["model"] == SPECIALIST[0]
 
     async def test_a_raising_callback_does_not_cost_the_user_the_answer(
-        self, slots, no_network
+        self, slots, runtime
     ):
         adapter = agent_routes.LLMClientAdapter()
         def _explode(_payload):
@@ -190,14 +292,117 @@ class TestStreamReports:
             messages=[{"role": "user", "content": TRIVIAL}],
             on_model_selected=_explode,
         )]
-        assert chunks  # the stream still ran and produced its error notice
+        assert "".join(chunks) == ANSWER
 
-    async def test_omitting_the_callback_is_still_supported(self, slots, no_network):
+    async def test_omitting_the_callback_is_still_supported(self, slots, runtime):
         adapter = agent_routes.LLMClientAdapter()
         chunks = [c async for c in adapter.stream(
             messages=[{"role": "user", "content": TRIVIAL}],
         )]
-        assert chunks
+        assert "".join(chunks) == ANSWER
+
+
+# -----------------------------------------------------------------------------
+# An unreachable model costs the user that model, never the turn — streaming
+# -----------------------------------------------------------------------------
+
+class TestStreamFallsBackToTheGuide:
+    """stream(), not chat(), produces the text the user reads. While the
+    fallback lived only in chat(), a pinned model on a dead port put the
+    connection error itself in the assistant's bubble."""
+
+    async def test_a_pinned_offline_model_is_answered_by_the_guide(
+        self, slots, runtime
+    ):
+        runtime["fails"]["pinned-x"] = "refused"
+        text, _captured = await _run_stream(prompt=TRIVIAL,
+                                            model_override="pinned-x")
+        assert text == ANSWER
+        assert runtime["asked"] == ["pinned-x", GUIDE[0]]
+
+    async def test_the_report_names_the_model_that_could_not_be_reached(
+        self, slots, runtime
+    ):
+        runtime["fails"]["pinned-x"] = "refused"
+        _text, captured = await _run_stream(prompt=TRIVIAL,
+                                            model_override="pinned-x")
+        assert len(captured) == 1
+        assert captured[0]["fallback_from"] == "pinned-x"
+        assert captured[0]["model"] == GUIDE[0]
+        assert captured[0]["tier"] == "guide"
+
+    async def test_the_guide_is_not_reported_as_pinned(self, slots, runtime):
+        """"Pinned" over a model the user never chose is the exact confusion
+        this event exists to remove."""
+        runtime["fails"]["pinned-x"] = "refused"
+        _text, captured = await _run_stream(prompt=TRIVIAL,
+                                            model_override="pinned-x")
+        assert captured[0]["pinned"] is False
+        assert captured[0]["escalated"] is False
+
+    async def test_a_rejected_request_falls_back_as_well(self, slots, runtime):
+        """A configured but unloaded model answers with a status, not a dead
+        socket, and strands the turn just the same."""
+        runtime["fails"][SPECIALIST[0]] = "rejected"
+        text, captured = await _run_stream(prompt=COMPLEX)
+        assert text == ANSWER
+        assert captured[0]["model"] == GUIDE[0]
+        assert captured[0]["fallback_from"] == SPECIALIST[0]
+
+    async def test_a_missing_credential_falls_back_as_well(self, slots, runtime):
+        """The key is checked before the request is sent, which is still before
+        the first byte — the turn can still change hands."""
+        slots["specialist"] = (SPECIALIST[0], "https://api.anthropic.test",
+                               "anthropic")
+        text, captured = await _run_stream(prompt=COMPLEX)
+        assert text == ANSWER
+        assert runtime["asked"] == [GUIDE[0]]
+        assert captured[0]["model"] == GUIDE[0]
+        assert captured[0]["fallback_from"] == SPECIALIST[0]
+
+    async def test_the_guide_failing_too_does_not_loop(self, slots, runtime):
+        runtime["fails"] = {"pinned-x": "refused", GUIDE[0]: "refused"}
+        text, captured = await _run_stream(prompt=TRIVIAL,
+                                           model_override="pinned-x")
+        assert runtime["asked"] == ["pinned-x", GUIDE[0]]
+        assert captured == []
+        assert "[Error:" in text
+
+    async def test_a_dead_guide_is_not_asked_to_stand_in_for_itself(
+        self, slots, runtime
+    ):
+        runtime["fails"][GUIDE[0]] = "refused"
+        text, captured = await _run_stream(prompt=TRIVIAL)
+        assert runtime["asked"] == [GUIDE[0]]
+        assert captured == []
+        assert "[Error:" in text
+
+    async def test_a_failure_after_the_first_chunk_is_not_restarted(
+        self, slots, runtime
+    ):
+        """The user has already read text from the pinned model; a second model
+        taking over would rewrite what is on screen, so the turn keeps the one
+        it has and says what went wrong."""
+        runtime["fails"]["pinned-x"] = "drops"
+        text, captured = await _run_stream(prompt=TRIVIAL,
+                                           model_override="pinned-x")
+        assert runtime["asked"] == ["pinned-x"]
+        assert text.startswith(ANSWER[:20])
+        assert "[Error:" in text
+        assert captured[0]["model"] == "pinned-x"
+        assert "fallback_from" not in captured[0]
+
+    async def test_a_healthy_turn_reports_before_it_yields(self, slots, runtime):
+        """The report waits for the response headers so it can tell the truth
+        about a failure; it must still land ahead of the first chunk."""
+        order = []
+        adapter = agent_routes.LLMClientAdapter()
+        async for _chunk in adapter.stream(
+            messages=[{"role": "user", "content": TRIVIAL}],
+            on_model_selected=lambda p: order.append("reported"),
+        ):
+            order.append("chunk")
+        assert order[0] == "reported"
 
 
 # -----------------------------------------------------------------------------
@@ -310,7 +515,7 @@ class TestNothingIsStoredOnTheAdapter:
             )
         assert set(vars(adapter)) == before
 
-    async def test_a_stream_call_adds_no_instance_state(self, slots, no_network):
+    async def test_a_stream_call_adds_no_instance_state(self, slots, runtime):
         adapter = agent_routes.LLMClientAdapter()
         before = set(vars(adapter))
         async for _chunk in adapter.stream(
@@ -445,3 +650,46 @@ class TestRespondingAnnouncesTheTurn:
         agent = _build_agent(_ReportingLLM(payload=None))
         events = [e async for e in agent.process("hello")]
         assert not [e for e in events if e.type == "model_selected"]
+
+
+# -----------------------------------------------------------------------------
+# End to end: the real adapter behind the real state machine
+# -----------------------------------------------------------------------------
+
+class TestTheFallbackChipReachesTheStream:
+    """RESPONDING is the only place ``model_selected`` is emitted, and it takes
+    what stream() reports. With the fallback in chat() alone, no production
+    turn could ever carry ``fallback_from`` — the amber chip was dead code."""
+
+    async def test_a_pinned_offline_turn_is_announced_as_a_fallback(
+        self, slots, runtime
+    ):
+        runtime["fails"]["pinned-x"] = "refused"
+        agent = _build_agent(agent_routes.LLMClientAdapter())
+        with patch("halbert_core.model.client.call_llm_chat", _caller()):
+            events = [e async for e in agent.process("hello",
+                                                     model_override="pinned-x")]
+        selected = [e for e in events if e.type == "model_selected"]
+        assert len(selected) == 1
+        assert selected[0].data["model"] == GUIDE[0]
+        assert selected[0].data["fallback_from"] == "pinned-x"
+
+    async def test_the_chip_precedes_the_text_it_explains(self, slots, runtime):
+        runtime["fails"]["pinned-x"] = "refused"
+        agent = _build_agent(agent_routes.LLMClientAdapter())
+        with patch("halbert_core.model.client.call_llm_chat", _caller()):
+            types = [e.type async for e in agent.process(
+                "hello", model_override="pinned-x")]
+        assert types.index("model_selected") < types.index("response_chunk")
+
+    async def test_the_user_reads_the_answer_and_not_the_error(
+        self, slots, runtime
+    ):
+        runtime["fails"]["pinned-x"] = "refused"
+        agent = _build_agent(agent_routes.LLMClientAdapter())
+        with patch("halbert_core.model.client.call_llm_chat", _caller()):
+            events = [e async for e in agent.process("hello",
+                                                     model_override="pinned-x")]
+        body = "".join(e.data.get("content", "") for e in events
+                       if e.type == "response_chunk")
+        assert body == ANSWER
