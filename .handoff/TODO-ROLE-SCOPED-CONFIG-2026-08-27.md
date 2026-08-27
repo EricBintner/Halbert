@@ -11,6 +11,94 @@ production-ready** despite the code being complete.
 
 ---
 
+## 0. NEWLY FOUND 2026-08-27 — scoping does not work on the live path
+
+Three findings from a follow-up investigation, each verified directly against
+`origin/model-picker-frontend`. Together they mean **no query in production is
+currently being scoped as intended.** These supersede everything below in
+priority.
+
+### 0a. The three role scopes are unreachable at query time
+
+`sourceprep_retrieval_backend.py::scope_for_query` can return exactly three
+things: `None`, `"host"`, or `f"knowledge_{platform}"`. There is **no code path
+that returns `network_admin`, `service_admin`, or `storage_admin`**, and
+`context/adapters.py` is the only caller that passes a scope at all.
+
+So the role scopes are indexed, registered in the template, and covered by the
+quality gate — and **dead on the live path**. The gate exercises them only
+because `corpus_quality_gate.py` hand-builds its own request body rather than
+going through `scope_for_query`.
+
+Nothing is broken by this; the scopes simply never activate. But the feature
+does not deliver its purpose until routing can reach it. See item 0d.
+
+### 0b. `knowledge-*` scopes have been silently unscoped all along
+
+The template registers **hyphenated** ids:
+
+```yaml
+- id: knowledge-linux
+- id: knowledge-macos
+```
+
+while `scope_for_query` returns **underscored** names (`knowledge_linux`).
+The daemon has no scope by the underscored name, so the request silently falls
+back to the global union.
+
+This is not speculation — `sourceprep_retrieval_backend.py:37-38` documents the
+behavior explicitly:
+
+> *scope IDs on the SourcePrep daemon use underscores, e.g. `"knowledge_macos"`;
+> hyphens silently fall back to the global union*
+
+So the mismatch was known when that comment was written, and the template still
+carries hyphens. **Every knowledge-scoped query has been returning full-corpus
+results while appearing to succeed.** A 200 carrying union results is
+byte-identical to a correctly scoped 200.
+
+This also settles item 2a below: unknown scope names **fail open**, confirmed by
+the project's own comment rather than by daemon testing.
+
+**Fix:** change the four `knowledge-*` ids in `sourceprep_template.yml` to
+underscores. Note the migration: `_reconcile_scopes` keys on `display_name`, so
+renaming creates four *new* scopes and orphans the four hyphenated ones on the
+daemon. Needs a daemon to clean up, so do it with one in front of you.
+
+### 0c. `scope_mode` is not in the shipped branch at all
+
+`grep scope_mode` on `origin/model-picker-frontend` returns **nothing** in
+`sourceprep_client.py`. It exists only as an uncommitted edit in the dirty main
+checkout. On the branch, the client sends `scope` and nothing else.
+
+Consequence: scoping is a **rank boost**, not a hard filter. Every design
+decision justified by "an empty mask under `scope_mode=hard` excludes
+everything rather than narrowing" — including making `storage_admin`
+file-backed on Darwin, and the `file_backed_platforms` gate in `roles.py` —
+rests on behavior that is not active in the shipped code. Those decisions are
+still defensible, but the stated reason is currently false.
+
+The comments in `roles.py` (lines 32, 60, 95, 117) and `sourceprep_setup.py`
+(line 275) should either be corrected or the flag should be landed.
+
+### 0d. Minimum work to make scoping real
+
+In order. Item 1 is required under any future routing design.
+
+1. **Observability first (~0.5 day).** Assert returned `source_path`s match the
+   requested scope; retry unscoped on zero chunks; log a warning when a scope
+   request returns union-shaped results. Without this, every fix below is
+   unmeasurable — and 0b went undetected precisely because nothing checks.
+2. Fix the hyphen/underscore mismatch (0b) and validate scope names against the
+   daemon's list at startup, so a typo fails loudly instead of silently
+   widening.
+3. Land `scope_mode` (0c) so scoping actually filters.
+4. Give the agent an explicit scope-by-name tool. This is the only routing
+   design where the agent can *retry a different scope* after seeing bad
+   results — keyword routing cannot recover from a wrong pick.
+
+---
+
 ## 1. BLOCKING — nothing here has ever been evaluated by CI
 
 `.github/workflows/ci.yml` triggers on `push` to `main`/`master` and on
