@@ -171,14 +171,28 @@ describe('executionFromBlock', () => {
     return { tool: 'run_command', args: { command: 'ls /srv' }, ...extra }
   }
 
-  it('reads the exit code only when the backend stored no status', () => {
+  it('lets a stored exit code win over the status beside it', () => {
+    // The combination stored data actually holds: a run_command that ran and
+    // failed. The executor returns the exit line as ordinary output rather
+    // than raising (tools/executor.py:513), so the call is recorded
+    // success=True (executor.py:369-374, state_machine.py:1853) while
+    // _tool_block parses the real code back out — {status: 'success',
+    // exit: 1}. Trusting the status here paints ✓ Success on a failed
+    // `systemctl restart sshd`.
+    expect(executionFromBlock(block({ status: 'success', exit: 1 }), 'f').status).toBe('error')
+    expect(executionFromBlock(block({ status: 'success', exit: 127 }), 'f').status).toBe('error')
+    // The same precedence must not flip a command that really did succeed.
+    expect(executionFromBlock(block({ status: 'success', exit: 0 }), 'f').status).toBe('success')
+  })
+
+  it('reads the exit code on an older row that stored no status', () => {
     expect(executionFromBlock(block({ exit: 0 }), 'f').status).toBe('success')
     expect(executionFromBlock(block({ exit: 1 }), 'f').status).toBe('error')
     // exit is only ever set for run_command; unknown reads as success.
     expect(executionFromBlock(block({ exit: null }), 'f').status).toBe('success')
   })
 
-  it("prefers the backend's own verdict over the exit code", () => {
+  it("falls to the backend's own verdict when no exit code was stored", () => {
     expect(executionFromBlock(block({ status: 'success', exit: null }), 'f').status).toBe('success')
     expect(executionFromBlock(block({ status: 'error', exit: null, error: 'no such file' }), 'f')).toMatchObject({
       status: 'error',

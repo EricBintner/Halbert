@@ -41,29 +41,48 @@ interface TimelineProps {
 }
 
 /**
- * A stored tool block in the shape the card renders. `block.status` is the
- * backend's own verdict (spec §8 messages.blocks_json / state_machine.py
- * _tool_block) and is authoritative WHENEVER IT IS PRESENT — not just for
- * the values this file happens to know. `exit` is only ever set for
- * `run_command` (state_machine.py:614-638), so a failed non-run_command
- * tool, or a call superseded before it ran (~line 446, `{exit: null, status:
- * "superseded"}`), would otherwise render as a green "success" card under
- * the exit-only heuristic. The backend's status vocabulary is wider than
- * success/error/superseded: a ToolCall is created `pending` (states.py:97,
- * state_machine.py:1221) and `_end_turn` (state_machine.py:660) persists
- * every call regardless of status, so a turn interrupted between dispatch
- * and completion stores `{status: "pending", exit: null}`. Anything that is
- * not the backend saying "success" is therefore rendered as a failed card:
- * a stored transcript must never tell an admin a command succeeded when it
- * never ran. Only when the backend sent no status at all (older, pre-status
- * rows) does this fall back to the exit heuristic: exit 0 or unknown reads
- * as success.
+ * A stored tool block (spec §8 messages.blocks_json / state_machine.py
+ * _tool_block) in the shape the card renders.
+ *
+ * The row carries two verdicts that can disagree, so the order they are read
+ * in decides what an admin is told. A REAL EXIT CODE WINS FIRST. A
+ * `run_command` that exits non-zero is not an error to the executor: it
+ * returns the exit line as ordinary output (`f"Exit code {returncode}\n…"`,
+ * tools/executor.py:513) instead of raising, so the call is wrapped
+ * `ExecutionResult(success=True, …)` (executor.py:369-374) and stored
+ * `status: "success"` (state_machine.py:1853) while `_tool_block`
+ * (state_machine.py:615-638) parses the real code back out — the persisted
+ * block is `{status: "success", exit: 1}`. Letting the status win there
+ * would paint a green ✓ Success on a `systemctl restart sshd` that exited 1,
+ * which is the common case, not an edge one. `_tool_block` only ever writes
+ * `exit: 0` when the status is already "success", so the two signals cannot
+ * contradict each other the other way round.
+ *
+ * With no exit code stored, the backend's own verdict decides, and anything
+ * that is not "success" is a failed card — not just the values this file
+ * happens to know. `exit` is only ever set for `run_command`, so a failed
+ * non-run_command tool, or a call superseded before it ran (~line 446,
+ * `{exit: null, status: "superseded"}`), would otherwise render green. The
+ * status vocabulary is wider than success/error/superseded: a ToolCall is
+ * created `pending` (states.py:97, state_machine.py:1221) and `_end_turn`
+ * (state_machine.py:660) persists every call regardless of status, so a turn
+ * interrupted between dispatch and completion stores `{status: "pending",
+ * exit: null}`. A stored transcript must never tell an admin a command
+ * succeeded when it never ran.
+ *
+ * Only an older, pre-status row with no exit code at all reaches the last
+ * default, where unknown reads as success.
  */
 export function executionFromBlock(block: TimelineToolBlock, fallbackId: string): ToolExecution {
   const exit = block.exit;
-  const status: ToolExecution['status'] = block.status
-    ? (block.status === 'success' ? 'success' : 'error')
-    : exit == null || exit === 0 ? 'success' : 'error';
+  let status: ToolExecution['status'];
+  if (typeof exit === 'number') {
+    status = exit === 0 ? 'success' : 'error';
+  } else if (block.status) {
+    status = block.status === 'success' ? 'success' : 'error';
+  } else {
+    status = 'success';
+  }
   return {
     executionId: block.executionId ?? fallbackId,
     tool: block.tool,
