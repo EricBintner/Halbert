@@ -49,7 +49,7 @@ the existing `knowledge-linux` / `knowledge_linux` hyphen/underscore split.
 |---|---|---|---|---|
 | `network_admin` | interfaces, DNS, routing, wireless, VPN, name resolution | rich | moderate | 1 |
 | `service_admin` | what runs at boot/login and how it is supervised | thin (narrow, see below) | **rich** | 1 |
-| `storage_admin` | mount intent, encryption, RAID/LVM/pool config, backup policy | rich | docs-only | 1 |
+| `storage_admin` | mount intent, encryption, RAID/LVM/pool config, backup policy | rich | thin (autofs) | 1 |
 | `security_admin` | sshd, sudo, PAM, MAC, firewall, hardening sysctls, audit | rich | moderate | 2 |
 | `shell_admin` | login environment, PATH, shell rc, locale/time | rich | moderate | 2 |
 | `package_admin` | repos, mirrors, pins, auto-update policy | rich | **none** | 2 |
@@ -70,12 +70,20 @@ The two platforms genuinely do not have the same roles.
   holds one empty `Kernel Flags` key), and scheduling (macOS has no
   `/etc/crontab` and no `/etc/periodic` — scheduling on macOS *is* launchd).
 - **Inverted:** `service_admin` is macOS's richest role and Linux's thinnest.
-- **File-rich one side, docs-only the other:** `storage_admin` (Linux rich;
-  macOS has no `fstab`, and `/etc/synthetic.conf` **does not exist on a stock
-  host**), `sharing_admin`, logging.
+- **File-rich one side, thin the other:** `storage_admin` (Linux rich; macOS
+  has no `fstab`, `/etc/synthetic.conf` **does not exist on a stock host**,
+  and APFS container layout is command-output-only via `diskutil apfs list` —
+  but autofs is real mount intent that lives in files, so `/etc/auto_master`,
+  `/etc/auto_home` and `/etc/autofs.conf` make the role **file-backed on
+  Darwin**, verified 3 matches on a stock host).
+- **File-rich one side, docs-only the other:** `sharing_admin`, logging.
 
 A docs-only role scope is legitimate — it stages curated
-`knowledge/<platform>/` files and no host config.
+`knowledge/<platform>/` files and no host config. It is not, however, a free
+choice for a *wave-one* role: staging nothing produces an empty scope, and
+under `scope_mode="hard"` an empty mask excludes everything rather than
+narrowing. A role that matches even one real file must be file-backed. That
+is why `storage_admin` is file-backed on Darwin.
 
 ### Deferred (name reserved, no scope yet)
 
@@ -259,7 +267,10 @@ well-known identifier, not a credential.
 
 Each role gets a manifest following the existing `Manifest` schema
 (`include`/`exclude`) that `config/manifest.py` already parses:
-`config/scopes/{network,service,storage}.yml`.
+`halbert_core/config/scopes/{network,service,storage}.yml`. They ship as
+package data rather than from the repo's `config/` tree: a repo-relative path
+does not exist under a wheel, where role staging then failed and left the
+registered scopes pointing at directories nothing had created.
 
 Two implementation notes not present in the existing global manifest:
 
@@ -330,11 +341,20 @@ policy folds in here: `/etc/borgmatic.d/*.yaml`, `/etc/restic/*`,
 `/etc/rsnapshot.conf`, `/etc/timeshift/timeshift.json`,
 `/etc/sanoid/sanoid.conf`, `/etc/btrbk/btrbk.conf`.
 
-**macOS — docs-only.** There is no `fstab`, and `/etc/synthetic.conf` does not
-exist on a stock machine (it appears only if an admin creates it), so rev. 1's
-single macOS storage entry would match nothing on a default host. Optionally
-`/etc/auto_master`, `/etc/auto_home`, `/etc/autofs.conf` if autofs is in use.
-APFS containers are correctly command-output-only (`diskutil apfs list`).
+**macOS — thin, not absent.** There is no `fstab`; `/etc/synthetic.conf` does
+not exist on a stock machine (it appears only if an admin creates one), so
+rev. 1's single macOS storage entry would match nothing on a default host; and
+APFS container layout is correctly command-output-only (`diskutil apfs list`).
+None of that is harvestable.
+
+Autofs is, and it is genuine mount intent that lives in files:
+`/etc/auto_master`, `/etc/auto_home` and `/etc/autofs.conf` all exist on a
+stock host (verified: 3 matches). The role is therefore **file-backed on
+Darwin** — `roles.py` lists `Darwin` in `file_backed_platforms` and
+`storage.yml` includes all three. An earlier revision called this docs-only
+and gated Darwin out, which left the scope empty; under `scope_mode="hard"` an
+empty mask excludes everything rather than narrowing, so that produced a
+broken scope rather than a thin one.
 
 *(Out of scope but noted: there is no LVM discovery at all today, live or
 file-based — `pvs`/`vgs`/`lvs` are unreferenced. That's a `StorageScanner`
