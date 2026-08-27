@@ -177,6 +177,82 @@ def test_live_session_reject_touches_no_file_and_settles_the_stored_copy(client,
     assert not target.exists()
 
 
+def test_a_diff_decided_from_the_store_settles_the_live_session_too(client, tm, tmp_path, monkeypatch):
+    """The mirror in the other direction, and the one that loses data.
+
+    A turn paused on AWAITING_CONFIRMATION keeps its session in
+    active_sessions while process() has already persisted the turn, so both
+    copies exist and both say "pending" -- and the diff card rendered from
+    the timeline has no session id to send (the persisted turn dicts carry
+    none), so the two copies get decided through different requests. Settling
+    only the one a request routed to leaves the other actionable, and
+    `new_content` is a whole-file replacement.
+    """
+    target = tmp_path / "live" / "smb.conf"
+    proposal = {"diff_id": "L1", "file_path": str(target), "new_content": "agent version\n", "status": "pending"}
+    _seed_turn(tm, "add a share while paused", "diff attached", diff_proposals=[dict(proposal)])
+    ctx = _live_ctx(monkeypatch, "live", {"L1": proposal})
+
+    assert client.post("/api/agent/diff/unknown-session/L1/apply").status_code == 200
+    assert target.read_text() == "agent version\n"
+    assert ctx.pending_diffs["L1"]["status"] == "applied"
+
+    target.write_text("hand edited by the admin\n")
+    # The still-open streaming UI posts with the session id it does know.
+    assert client.post("/api/agent/diff/live/L1/apply").status_code == 400
+    assert client.post("/api/agent/diff/live/L1/reject").status_code == 400
+    assert target.read_text() == "hand edited by the admin\n"
+
+
+def test_a_reject_from_the_store_settles_the_live_session_too(client, tm, tmp_path, monkeypatch):
+    target = tmp_path / "live" / "hosts"
+    proposal = {"diff_id": "L2", "file_path": str(target), "new_content": "nope\n", "status": "pending"}
+    _seed_turn(tm, "edit hosts while paused", "diff attached", diff_proposals=[dict(proposal)])
+    ctx = _live_ctx(monkeypatch, "live", {"L2": proposal})
+
+    assert client.post("/api/agent/diff/unknown-session/L2/reject").json() == {"rejected": True, "diff_id": "L2"}
+    assert ctx.pending_diffs["L2"]["status"] == "rejected"
+    assert client.post("/api/agent/diff/live/L2/apply").status_code == 400
+    assert not target.exists()
+
+
+def test_apply_settles_the_proposal_before_it_touches_disk(client, tm, tmp_path):
+    """Ordering, not politeness: a proposal left "pending" by a write that
+    succeeded is replayable over the admin's next edit, while one marked
+    applied by a write that failed only costs them a re-ask."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory\n")
+    _seed_turn(tm, "write below a plain file", "diff attached", diff_proposals=[
+        {"diff_id": "d9", "file_path": str(blocker / "smb.conf"), "new_content": "x\n", "status": "pending"},
+    ])
+    assert client.post("/api/agent/diff/dead-session/d9/apply").status_code == 500
+    stored = {d["diff_id"]: d["status"] for d in tm.store.list_turns(limit=10)[-1]["diff_proposals"]}
+    assert stored == {"d9": "applied"}
+    assert client.post("/api/agent/diff/dead-session/d9/apply").status_code == 400
+
+
+def test_a_decision_the_store_refused_is_reported_not_hidden(client, tm, tmp_path, monkeypatch):
+    """A status the store would not take leaves the proposal replayable after
+    a restart, so the response says so instead of showing a clean tick."""
+    target = tmp_path / "smb.conf"
+    _seed_turn(tm, "two more shares", "two diffs", diff_proposals=[
+        {"diff_id": "d1", "file_path": str(target), "new_content": "one\n", "status": "pending"},
+        {"diff_id": "d2", "file_path": str(target), "new_content": "two\n", "status": "pending"},
+    ])
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("store is read-only")
+
+    monkeypatch.setattr(tm.store, "update_message", boom)
+    assert client.post("/api/agent/diff/dead-session/d1/apply").json() == {
+        "applied": True, "diff_id": "d1", "file_path": str(target), "status_persisted": False,
+    }
+    assert target.read_text() == "one\n"
+    assert client.post("/api/agent/diff/dead-session/d2/reject").json() == {
+        "rejected": True, "diff_id": "d2", "status_persisted": False,
+    }
+
+
 def test_timeline_around_keeps_the_anchor_on_the_page(client, tm):
     turns = [_seed_turn(tm, f"message number {i}", f"answer {i}") for i in range(9)]
 
@@ -229,3 +305,32 @@ def test_conversations_routes_removed_and_thread_routes_present():
     assert "/api/agent/conversations/{conversation_id}" not in paths
     assert {"/api/agent/timeline", "/api/agent/thread/current",
             "/api/agent/thread/{thread_id}/recall/{recalled_thread_id}"} <= paths
+
+
+def test_the_real_thread_manager_resolves_and_feeds_the_timeline(tmp_path, monkeypatch):
+    """The one test that does not monkeypatch `_thread_manager`.
+
+    The helper swallows any exception, ImportError included, so a renamed
+    `get_thread_manager` or a broken import path would leave /timeline,
+    /thread/current, the recall retraction and the stored-diff fallback
+    silently answering empty in production with the suite still green.
+    """
+    import halbert_core.agents.threads as threads_mod
+
+    monkeypatch.setattr(threads_mod._cs, "_DEFAULT_DB", str(tmp_path / "conv.db"))
+    monkeypatch.setattr(threads_mod, "_manager", None)
+    monkeypatch.setattr(agent_routes, "_agent_instance", None)
+    manager = agent_routes._thread_manager()
+    assert isinstance(manager, ThreadManager)
+    assert manager is threads_mod.get_thread_manager()
+    try:
+        turn = _seed_turn(manager, "hello from the real manager", "hi")
+        app = FastAPI()
+        app.include_router(agent_routes.router)
+        real_client = TestClient(app)
+        body = real_client.get("/api/agent/timeline").json()
+        assert [t["turn_id"] for t in body["turns"]] == [turn.turn_id]
+        assert body["current_thread"]["thread_id"] == turn.thread_id
+        assert real_client.get("/api/agent/thread/current").json()["thread_id"] == turn.thread_id
+    finally:
+        manager.store.close()

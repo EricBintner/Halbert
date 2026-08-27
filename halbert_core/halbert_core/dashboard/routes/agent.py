@@ -1008,7 +1008,9 @@ if FASTAPI_AVAILABLE:
     # Live session first, then the store (messages.diff_proposals_json,
     # spec §8): active_sessions is evicted at the end of the turn, so a diff
     # proposed a moment ago is usually only on disk by the time the admin
-    # clicks Apply.
+    # clicks Apply. A turn paused on AWAITING_CONFIRMATION is the one moment
+    # when both copies exist at once, so a decision always settles every copy
+    # -- see _diff_copies.
     # -------------------------------------------------------------------------
 
     def _require_pending(diff: Dict[str, Any], diff_id: str) -> None:
@@ -1024,89 +1026,123 @@ if FASTAPI_AVAILABLE:
         if status != "pending":
             raise HTTPException(400, f"Diff {diff_id} was already {status}")
 
-    def _persist_diff_status(diff_id: str, status: str) -> None:
-        """Mirror a live-session decision onto the persisted proposal.
+    def _diff_copies(session_id: str, diff_id: str):
+        """Every copy of ``diff_id``, plus the handle that writes the store back.
 
-        The assistant row is written when the turn ends, which is before the
-        admin answers an AWAITING_CONFIRMATION pause -- the one state where
-        the session outlives its stored turn. Both copies then exist, and
-        only writing the live one would leave the store saying "pending" and
-        the diff actionable a second time after the session is evicted.
+        Returns ``(copies, stored)``. ``copies`` holds every dict that carries
+        this proposal's status -- the live sessions' copies first (the session
+        the request named leading, when it holds one), the persisted proposal
+        last -- and is empty when the diff is nowhere to be found. ``stored``
+        is ``(tm, message_id, proposals)`` for writing the persisted list
+        back, or None when the turn is not (yet) on disk.
+
+        The live side scans *every* active session rather than only
+        ``session_id``: a diff card rendered from the timeline has no session
+        id to send (the persisted turn dicts carry none), so a request can
+        name a session that never held the diff while the session that does
+        is still paused on AWAITING_CONFIRMATION. Diff ids are unique, so the
+        scan is both cheap and unambiguous -- and it is what lets a decision
+        settle the copy the request did not route to.
         """
+        contexts: List[Any] = []
+        if _agent_instance is not None:
+            try:
+                contexts = list(_agent_instance.active_sessions.values())
+            except Exception as e:
+                logger.warning(f"Live sessions unavailable (non-fatal): {e}")
+        named = _active_ctx(session_id)
+        if named is not None:
+            contexts = [named] + [ctx for ctx in contexts if ctx is not named]
+        copies: List[Dict[str, Any]] = []
+        for ctx in contexts:
+            pending = getattr(ctx, "pending_diffs", None)
+            diff = pending.get(diff_id) if isinstance(pending, dict) else None
+            if isinstance(diff, dict):
+                copies.append(diff)
         tm = _thread_manager()
         found = _find_stored_diff(tm, diff_id)
-        if found is None:
-            return
-        message_id, proposals, index = found
-        if proposals[index].get("status") == status:
-            return
-        proposals[index]["status"] = status
+        stored = None
+        if found is not None:
+            message_id, proposals, index = found
+            copies.append(proposals[index])
+            stored = (tm, message_id, proposals)
+        return copies, stored
+
+    def _settle_diff(copies: List[Dict[str, Any]], stored, status: str) -> bool:
+        """Record the decision on every copy; False when the store refused it.
+
+        Settling only the copy the request happened to route to leaves the
+        other one reading "pending", and ``new_content`` is a whole-file
+        replacement: the second decision would then silently discard whatever
+        the admin edited in between.
+        """
+        for diff in copies:
+            diff["status"] = status
+        if stored is None:
+            return True
+        tm, message_id, proposals = stored
         try:
             tm.store.update_message(message_id, diff_proposals=proposals)
+            return True
         except Exception as e:
             logger.warning(f"Could not persist diff status (non-fatal): {e}")
+            return False
 
-    def _write_diff(diff: Dict[str, Any], diff_id: str) -> Dict[str, Any]:
-        import os
-        _require_pending(diff, diff_id)
+    def _apply_target(diff: Dict[str, Any]):
+        """The ``(file_path, new_content)`` an apply would write, or a 400."""
         file_path = diff.get("file_path")
         new_content = diff.get("new_content")
         if not file_path or new_content is None:
             raise HTTPException(400, "Diff has no file path or content to apply; use the editor flow")
+        return file_path, new_content
+
+    def _write_file(file_path: str, new_content: str, diff_id: str) -> None:
+        import os
         try:
             os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
             with open(file_path, "w") as f:
                 f.write(new_content)
         except Exception as e:
-            logger.error(f"Failed to apply diff: {e}")
+            logger.error(f"Failed to apply diff {diff_id} (it stays settled as applied): {e}")
             raise HTTPException(500, f"Failed to apply diff: {e}")
-        diff["status"] = "applied"
         logger.info(f"Applied diff {diff_id} to {file_path}")
-        return {"applied": True, "diff_id": diff_id, "file_path": file_path}
 
     @router.post("/diff/{session_id}/{diff_id}/apply")
     async def apply_diff(session_id: str, diff_id: str):
         """Apply a proposed file change (live session, else the store)."""
-        ctx = _active_ctx(session_id)
-        if ctx is not None and diff_id in getattr(ctx, "pending_diffs", {}):
-            result = _write_diff(ctx.pending_diffs[diff_id], diff_id)
-            _persist_diff_status(diff_id, "applied")
-            return result
-        tm = _thread_manager()
-        found = _find_stored_diff(tm, diff_id)
-        if found is None:
+        copies, stored = _diff_copies(session_id, diff_id)
+        if not copies:
             raise HTTPException(404, "Diff not found")
-        message_id, proposals, index = found
-        result = _write_diff(proposals[index], diff_id)
-        try:
-            tm.store.update_message(message_id, diff_proposals=proposals)
-        except Exception as e:
-            logger.warning(f"Could not persist diff status (non-fatal): {e}")
+        for diff in copies:
+            _require_pending(diff, diff_id)
+        file_path, new_content = _apply_target(copies[0])
+        # Settle before touching disk. A proposal marked applied by a write
+        # that then failed costs the admin one re-ask; a write that succeeded
+        # while the proposal stayed pending is replayable over their next
+        # edit, and takes that edit with it.
+        persisted = _settle_diff(copies, stored, "applied")
+        _write_file(file_path, new_content, diff_id)
+        result: Dict[str, Any] = {"applied": True, "diff_id": diff_id, "file_path": file_path}
+        if not persisted:
+            # The store still says "pending": tell the caller rather than
+            # showing a clean tick over a decision that dies with the process.
+            result["status_persisted"] = False
         return result
 
     @router.post("/diff/{session_id}/{diff_id}/reject")
     async def reject_diff(session_id: str, diff_id: str):
         """Reject a proposed file change without writing to disk."""
-        ctx = _active_ctx(session_id)
-        if ctx is not None and diff_id in getattr(ctx, "pending_diffs", {}):
-            _require_pending(ctx.pending_diffs[diff_id], diff_id)
-            ctx.pending_diffs[diff_id]["status"] = "rejected"
-            _persist_diff_status(diff_id, "rejected")
-            logger.info(f"Rejected diff {diff_id}")
-            return {"rejected": True, "diff_id": diff_id}
-        tm = _thread_manager()
-        found = _find_stored_diff(tm, diff_id)
-        if found is None:
+        copies, stored = _diff_copies(session_id, diff_id)
+        if not copies:
             raise HTTPException(404, "Diff not found")
-        message_id, proposals, index = found
-        _require_pending(proposals[index], diff_id)
-        proposals[index]["status"] = "rejected"
-        try:
-            tm.store.update_message(message_id, diff_proposals=proposals)
-        except Exception as e:
-            logger.warning(f"Could not persist diff status (non-fatal): {e}")
+        for diff in copies:
+            _require_pending(diff, diff_id)
+        persisted = _settle_diff(copies, stored, "rejected")
         logger.info(f"Rejected diff {diff_id}")
-        return {"rejected": True, "diff_id": diff_id}
+        result: Dict[str, Any] = {"rejected": True, "diff_id": diff_id}
+        if not persisted:
+            result["status_persisted"] = False
+        return result
 
     # -------------------------------------------------------------------------
     # Timeline and threads (Plan A, spec §11)
