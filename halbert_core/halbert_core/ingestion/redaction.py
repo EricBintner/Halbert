@@ -65,11 +65,18 @@ _SECRET_SUBSTRINGS: Tuple[str, ...] = (
     "token",
 )
 
-# Tier 2: matched only as a *whole word* of the key. These are the short
-# spellings real configs use (`pass=`, `auth=`, `pin=`, `seed=`), and every
-# one of them is unsafe as a substring -- "pin" occurs inside "mapping",
-# "pass" inside "bypass" and "compass", "seed" inside "seeded". Whole-word
-# matching keeps them usable without redacting half of /etc.
+# Tier 2: matched only when the key's *last* word is one of these. These are
+# the short spellings real configs use (`pass=`, `auth=`, `pin=`, `seed=`),
+# and every one is unsafe as a plain substring -- "pin" occurs inside
+# "mapping", "pass" inside "bypass" and "compass", "seed" inside "seeded".
+#
+# Last word rather than any word, because in `key=value` naming the head noun
+# says what the value *is*: `db_pass` holds a pass, but `auth-alg` holds an
+# algorithm (NetworkManager writes `auth-alg=open`) and
+# `smtpd_sasl_auth_enable` holds a boolean. Matching any word redacted both of
+# those. The cost is that a trailing qualifier hides the noun -- `seed_value`
+# is missed where `seed` is caught -- which is the same shape of trade the
+# tier-1 substrings make in the other direction.
 _SECRET_WORDS = frozenset(
     {"auth", "cred", "mfa", "otp", "pass", "pin", "pw", "pwd", "seed", "totp"}
 )
@@ -107,7 +114,8 @@ def _is_secret_key(raw: str) -> bool:
         return False
     if any(needle in low for needle in _SECRET_SUBSTRINGS):
         return True
-    return any(w.lower() in _SECRET_WORDS for w in _WORD_SPLIT_RE.split(key) if w)
+    words = [w for w in _WORD_SPLIT_RE.split(key) if w]
+    return bool(words) and words[-1].lower() in _SECRET_WORDS
 
 
 # --- Substitution patterns ------------------------------------------------
@@ -281,14 +289,47 @@ def _closing_quote(line: str, start: int) -> Optional[int]:
     return None
 
 
-def _value_end(line: str, value_start: int, whole_line_value: bool) -> int:
-    """Where the value that begins at `value_start` ends.
+_BRACKET_PAIRS = {"{": "}", "[": "]"}
+
+
+def _matching_bracket(line: str, start: int) -> Optional[int]:
+    """Index of the bracket closing the one at `start`, on this line only.
+
+    Quote-aware, so a bracket inside a JSON string does not unbalance it.
+    """
+    stack: List[str] = []
+    i = start
+    while i < len(line):
+        ch = line[i]
+        if ch in "\"'":
+            close = _closing_quote(line, i)
+            if close is None:
+                return None
+            i = close + 1
+            continue
+        if ch in _BRACKET_PAIRS:
+            stack.append(_BRACKET_PAIRS[ch])
+        elif stack and ch == stack[-1]:
+            stack.pop()
+            if not stack:
+                return i
+        i += 1
+    return None
+
+
+def _value_end(line: str, value_start: int, whole_line_value: bool) -> Optional[int]:
+    """Where the value that begins at `value_start` ends, or None to skip it.
 
     The rule, and the tradeoff it settles:
 
     * A **quoted** value ends at its closing quote. This is what stops
       `password = "correct horse battery"` from leaking everything after the
       first word.
+    * A value that opens a **JSON object or array** ends at the matching
+      close bracket. If the container spans lines the pair is skipped
+      entirely (None) and its members are classified on their own terms --
+      better than redacting to end of line, which would leave an unbalanced
+      brace and orphan the members' text.
     * An **unquoted** value on a line that carries exactly one pair, starting
       the line, runs to end of line. That is the config-file shape -- one
       directive, and everything after the separator is its value -- and it is
@@ -300,15 +341,25 @@ def _value_end(line: str, value_start: int, whole_line_value: bool) -> int:
       log message readable enough for the email/address substitutions to still
       find their targets.
 
-    Residual gap, deliberately accepted: a credential that both contains
-    whitespace *and* shares its line with another `key=value` pair loses only
-    its first word. Closing that would mean swallowing the rest of every log
-    line, which destroys more than it protects.
+    Two residual gaps, deliberately accepted:
+
+    * A credential that both contains whitespace *and* shares its line with
+      another `key=value` pair loses only its first word. Closing that would
+      mean swallowing the rest of every log line, which destroys more than it
+      protects.
+    * A multi-line JSON container under a secret-sounding key protects only
+      the members whose own names look secret. Plists get the stronger
+      treatment (see `_redact_plist_container`) because XML close tags make
+      the container's extent unambiguous line by line; JSON's do not.
     """
     n = len(line)
-    if line[value_start] in "\"'":
+    ch = line[value_start]
+    if ch in "\"'":
         close = _closing_quote(line, value_start)
         return n if close is None else close + 1
+    if ch in _BRACKET_PAIRS:
+        close = _matching_bracket(line, value_start)
+        return None if close is None else close + 1
     if whole_line_value:
         return n
     end = value_start
@@ -336,6 +387,8 @@ def _redact_inline(line: str) -> str:
             # here would destroy `password:` and `keys:` headers.
             continue
         end = _value_end(line, value_start, whole_line_value)
+        if end is None:
+            continue  # container opens here and closes on a later line
         out.append(line[cursor:key_start])
         out.append(SECRET)
         cursor = end

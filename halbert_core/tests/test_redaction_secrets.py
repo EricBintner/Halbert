@@ -533,3 +533,57 @@ def test_long_single_line_does_not_stall_the_redactor():
     start = time.perf_counter()
     redact_text(blob)
     assert time.perf_counter() - start < 1.0
+
+
+# --- Structure that must survive being near a credential ------------------
+
+
+def test_json_object_value_is_redacted_as_a_unit():
+    """A secret-named object must not be half-eaten.
+
+    Ending the value at the first delimiter left `"bob"` orphaned outside any
+    key -- the secret was gone but the record was destroyed, which is the same
+    failure mode as the fstab and quoted-mapping cases.
+    """
+    line = '  "auth": {"username": "bob", "password": "hunter2secret"},\n'
+    out = redact_text(line)
+    assert "hunter2secret" not in out
+    assert '"bob"' not in out
+    assert out == "  <secret>,\n"
+
+
+def test_json_array_value_is_redacted_as_a_unit():
+    out = redact_text('"api_key": ["AKIAIOSFODNN7SECRET"]\n')
+    assert "AKIAIOSFODNN7SECRET" not in out
+
+
+def test_multiline_json_members_are_classified_individually():
+    """A container that opens at end of line is left for its members.
+
+    Redacting to end of line there would leave an unbalanced brace and
+    orphan every member, so the members are judged on their own names.
+    """
+    j = '{\n  "auth": {\n    "username": "bob",\n    "password": "hunter2secret"\n  }\n}\n'
+    out = redact_text(j)
+    assert "hunter2secret" not in out
+    assert '"username": "bob"' in out
+    assert out.count("\n") == j.count("\n")
+
+
+def test_head_noun_rule_spares_qualified_non_secret_keys():
+    """`auth-alg=open` is an algorithm, not a credential.
+
+    NetworkManager and wpa_supplicant both write it, and postfix writes
+    `smtpd_sasl_auth_enable`. Matching `auth` as any word of the key redacted
+    all three; matching it as the key's last word does not.
+    """
+    for text in (
+        "auth-alg=open\n",
+        "auth_alg=OPEN\n",
+        "smtpd_sasl_auth_enable = yes\n",
+        "pin_length=4\n",
+    ):
+        assert redact_text(text) == text
+    # ...while the head-noun spellings are still caught.
+    assert "hunter2secret" not in redact_text("db_pass=hunter2secret\n")
+    assert "hunter2secret" not in redact_text("wifi-pwd=hunter2secret\n")
