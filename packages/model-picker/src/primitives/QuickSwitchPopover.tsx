@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import type { HTMLAttributes, KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type {
+  HTMLAttributes,
+  KeyboardEvent as ReactKeyboardEvent,
+  RefObject,
+} from 'react'
 import type { DiscoveredModel, ModelSelection, Tier } from '../types'
 import { providerDescriptor } from '../types'
 import type { UseModelPickerResult } from '../useModelPicker'
@@ -18,6 +22,18 @@ export interface QuickSwitchPopoverProps
   onSelected?: (selection: ModelSelection) => void
   /** Footer link into the full settings surface. */
   onOpenSettings?: () => void
+  /**
+   * The host's trigger. The package is headless and never looks up the host's
+   * DOM, so the one outside element it may touch is the one handed to it here:
+   * closing hands focus back to it, and while the popover is open it carries
+   * `aria-controls` pointing at the listbox.
+   */
+  triggerRef?: RefObject<HTMLElement | null>
+  /**
+   * Where focus goes on close, for a host whose trigger is not one element a
+   * ref can name. Wins over `triggerRef`; with neither, focus is left alone.
+   */
+  onRequestFocusReturn?: () => void
 }
 
 const TIERS: readonly { id: Tier; label: string }[] = [
@@ -50,6 +66,11 @@ function capabilityTags(model: DiscoveredModel): string[] {
  * Committing does not dismiss: the live region has to outlive the click to be
  * read at all, and whether a quick switch closes the surface is the host's
  * call, made from `onSelected`.
+ *
+ * Focus return and the trigger's `aria-controls` both travel through
+ * `triggerRef`/`onRequestFocusReturn` rather than a DOM lookup: a package that
+ * knows nothing about its host cannot find the trigger for itself, and a host
+ * that passes neither keeps working, minus the two behaviours.
  */
 export function QuickSwitchPopover({
   picker,
@@ -58,10 +79,13 @@ export function QuickSwitchPopover({
   initialQuery,
   onSelected,
   onOpenSettings,
+  triggerRef,
+  onRequestFocusReturn,
   onKeyDown,
   ...rest
 }: QuickSwitchPopoverProps) {
   const baseId = useId()
+  const listboxId = `${baseId}-listbox`
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const optionRefs = useRef<(HTMLDivElement | null)[]>([])
@@ -117,6 +141,39 @@ export function QuickSwitchPopover({
     return () => document.removeEventListener('mousedown', dismiss)
   }, [open, onClose])
 
+  const returnFocus = () => {
+    // Only reclaim what our own removal orphaned: a user who has already
+    // clicked into another control must not have focus yanked off it.
+    const active = document.activeElement
+    const orphaned =
+      !active || active === document.body || active === document.documentElement
+    if (!orphaned) return
+    if (onRequestFocusReturn) onRequestFocusReturn()
+    else triggerRef?.current?.focus()
+  }
+
+  // Held in a ref so a host passing an inline callback cannot change this
+  // effect's identity mid-open and fire the focus return while still open.
+  const returnFocusRef = useRef(returnFocus)
+  useEffect(() => {
+    returnFocusRef.current = returnFocus
+  })
+
+  useEffect(() => {
+    if (!open) return
+    // Closing otherwise drops keyboard and screen-reader users on document.body.
+    return () => returnFocusRef.current()
+  }, [open])
+
+  useEffect(() => {
+    const trigger = triggerRef?.current
+    if (!open || !trigger) return
+    // The reference is only true while the listbox exists, so it is removed
+    // with the popover rather than left dangling on the trigger.
+    trigger.setAttribute('aria-controls', listboxId)
+    return () => trigger.removeAttribute('aria-controls')
+  }, [open, triggerRef, listboxId])
+
   const commitModel = useCallback(
     (model: DiscoveredModel) => {
       pinModel(model.id, model.endpointId)
@@ -169,7 +226,6 @@ export function QuickSwitchPopover({
 
   if (!open) return null
 
-  const listboxId = `${baseId}-listbox`
   const activeOptionId = flat[highlight]
     ? `${baseId}-option-${highlight}`
     : undefined

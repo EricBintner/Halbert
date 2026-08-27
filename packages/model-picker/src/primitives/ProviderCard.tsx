@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { HTMLAttributes } from 'react'
 import { providerDescriptor } from '../types'
 import type {
@@ -17,9 +17,20 @@ export interface ProviderCardProps extends HTMLAttributes<HTMLDivElement> {
   endpoint?: SavedEndpoint
   /** Used when `endpoint` is undefined. */
   provider?: ProviderId
+  /**
+   * Fires only once the hook reports no error for the write, so a save that
+   * never reached storage cannot be announced as one that did. An endpoint
+   * that stores but then cannot be listed also reports as a failure.
+   */
   onSaved?: (endpoint: SavedEndpoint) => void
+  /** Fires only once the hook reports no error for the removal. */
   onDeleted?: (endpointId: string) => void
 }
+
+/** A write that has settled but whose outcome the hook has not yet reported. */
+type CompletedWrite =
+  | { kind: 'save'; endpoint: SavedEndpoint }
+  | { kind: 'delete'; endpointId: string }
 
 /**
  * FNV-1a over provider and url. A derived id makes adding the same endpoint
@@ -70,6 +81,18 @@ export function ProviderCard({
   const [revealed, setRevealed] = useState(false)
   const [armed, setArmed] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [written, setWritten] = useState<CompletedWrite | null>(null)
+
+  // The hook swallows a failed write and resolves anyway, reporting through
+  // `error` on the render that follows — so the host's success callback waits
+  // for that render rather than firing on a write that never landed.
+  useEffect(() => {
+    if (!written) return
+    setWritten(null)
+    if (picker.error) return
+    if (written.kind === 'save') onSaved?.(written.endpoint)
+    else onDeleted?.(written.endpointId)
+  }, [written, picker.error, onSaved, onDeleted])
 
   // Hooks run first so this guard stays legal; with neither prop there is no
   // provider to describe.
@@ -98,7 +121,7 @@ export function ProviderCard({
     setSaving(true)
     try {
       await picker.saveEndpoint(next)
-      onSaved?.(next)
+      setWritten({ kind: 'save', endpoint: next })
     } finally {
       setSaving(false)
     }
@@ -112,7 +135,7 @@ export function ProviderCard({
     }
     setArmed(false)
     await picker.deleteEndpoint(endpoint.id)
-    onDeleted?.(endpoint.id)
+    setWritten({ kind: 'delete', endpointId: endpoint.id })
   }
 
   const notice = armed

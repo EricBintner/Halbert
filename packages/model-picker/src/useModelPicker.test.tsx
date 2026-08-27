@@ -64,9 +64,13 @@ function offering(
 function defaultCatalogue(): Record<string, DiscoveredModel[]> {
   return {
     [LOCAL.id]: [
+      // {} means "the host could not determine this"; `false` means it did
+      // determine it and the answer was no. modelsForRole must treat them
+      // differently.
       offering('local-plain', LOCAL, {}),
       offering('local-sight', LOCAL, { vision: true }),
       offering('local-tools', LOCAL, { tools: true }),
+      offering('local-known-plain', LOCAL, { vision: false, tools: false }),
     ],
     [HOSTED.id]: [offering('hosted-any', HOSTED, { tools: true, vision: true })],
     [EXTRA.id]: [offering('extra-plain', EXTRA, {})],
@@ -87,6 +91,8 @@ interface FakeTransport extends ModelPickerTransport {
   calls: Record<TransportMethod, number>
   /** Every patch handed to `saveConfig`, in order, captured before merging. */
   patches: Partial<PickerConfig>[]
+  /** Every endpoint handed to `listModels`, in order, as it was at the call. */
+  listed: SavedEndpoint[]
   /** Set a method to a message to make it reject with that message. */
   reject: Partial<Record<TransportMethod, string>>
   /** Endpoint ids whose listing rejects while the rest stay reachable. */
@@ -135,6 +141,7 @@ function fakeTransport(options: FakeOptions = {}): FakeTransport {
       discoverLocal: 0,
     },
     patches: [],
+    listed: [],
     reject: {},
     rejectListFor: new Set<string>(),
     releaseLoad: () => openGate(),
@@ -154,6 +161,7 @@ function fakeTransport(options: FakeOptions = {}): FakeTransport {
 
     async listModels(endpoint) {
       fake.calls.listModels += 1
+      fake.listed.push(clone(endpoint))
       const failure = fake.reject.listModels
       if (failure || fake.rejectListFor.has(endpoint.id)) {
         throw new Error(failure ?? `cannot reach ${endpoint.name}`)
@@ -243,12 +251,89 @@ describe('useModelPicker', () => {
     })
   })
 
+  it('loads the configuration once however often a fresh inline onError arrives', async () => {
+    // Writing the handler inline in the options object is the ordinary host
+    // idiom, and it hands the hook a new function identity on every render.
+    const transport = fakeTransport()
+    const handlers: ReturnType<typeof vi.fn>[] = []
+    const view = renderHook(() => {
+      const onError = vi.fn()
+      handlers.push(onError)
+      return useModelPicker({ transport, roles: ROLES, autoDiscover: false, onError })
+    })
+    await waitFor(() => expect(view.result.current.models).toHaveLength(5))
+
+    for (let i = 0; i < 4; i += 1) view.rerender()
+
+    expect(handlers.length).toBeGreaterThan(4)
+    expect(transport.calls.loadConfig).toBe(1)
+    expect(transport.calls.listModels).toBe(2)
+  })
+
+  it('loads the configuration once however often a fresh transport object arrives', async () => {
+    const transport = fakeTransport()
+    const listedBy: string[] = []
+    let nextTag = 'first'
+    const view = renderHook(() => {
+      const tag = nextTag
+      return useModelPicker({
+        // A wrapper literal around a stable client: identical behaviour, new
+        // identity every render.
+        transport: {
+          ...transport,
+          listModels: (endpoint: SavedEndpoint) => {
+            listedBy.push(tag)
+            return transport.listModels(endpoint)
+          },
+        },
+        roles: ROLES,
+        autoDiscover: false,
+      })
+    })
+    await waitFor(() => expect(view.result.current.models).toHaveLength(5))
+
+    nextTag = 'latest'
+    for (let i = 0; i < 4; i += 1) view.rerender()
+
+    expect(transport.calls.loadConfig).toBe(1)
+
+    // Stabilising the identity must not pin the first transport in place.
+    await act(async () => {
+      await view.result.current.refreshModels(LOCAL.id)
+    })
+    expect(listedBy[listedBy.length - 1]).toBe('latest')
+  })
+
+  it('reports an error to the onError the host passed most recently', async () => {
+    const transport = fakeTransport()
+    const handlers: ReturnType<typeof vi.fn>[] = []
+    const view = renderHook(() => {
+      const onError = vi.fn()
+      handlers.push(onError)
+      return useModelPicker({ transport, roles: ROLES, autoDiscover: false, onError })
+    })
+    await waitFor(() => expect(view.result.current.models).toHaveLength(5))
+    view.rerender()
+
+    const first = handlers[0]
+    const latest = handlers[handlers.length - 1]
+    expect(latest).not.toBe(first)
+
+    transport.reject.saveConfig = 'the settings store rejected the write'
+    await act(async () => {
+      await view.result.current.assignRole('primary', LOCAL.id, 'local-plain')
+    })
+
+    expect(latest).toHaveBeenCalledWith('the settings store rejected the write')
+    expect(first).not.toHaveBeenCalled()
+  })
+
   it('lists models for every configured endpoint once the configuration arrives', async () => {
     const transport = fakeTransport()
     const { result } = await mount(transport)
 
-    await waitFor(() => expect(result.current.models).toHaveLength(4))
-    expect(result.current.modelsByEndpoint[LOCAL.id]).toHaveLength(3)
+    await waitFor(() => expect(result.current.models).toHaveLength(5))
+    expect(result.current.modelsByEndpoint[LOCAL.id]).toHaveLength(4)
     expect(result.current.modelsByEndpoint[HOSTED.id]).toHaveLength(1)
     expect(result.current.listing).toEqual([])
   })
@@ -259,7 +344,7 @@ describe('useModelPicker', () => {
     const { result, onError } = await mount(transport)
 
     await waitFor(() => {
-      expect(result.current.modelsByEndpoint[LOCAL.id]).toHaveLength(3)
+      expect(result.current.modelsByEndpoint[LOCAL.id]).toHaveLength(4)
       expect(result.current.modelsByEndpoint[HOSTED.id]).toEqual([])
     })
     expect(onError).toHaveBeenCalled()
@@ -268,10 +353,11 @@ describe('useModelPicker', () => {
   it('omits models from providers the host cannot chat with', async () => {
     const transport = fakeTransport()
     const { result } = await mount(transport)
-    await waitFor(() => expect(result.current.models).toHaveLength(4))
+    await waitFor(() => expect(result.current.models).toHaveLength(5))
 
     const offered = result.current.modelsForRole('primary')
     expect(offered.map((m) => m.id).sort()).toEqual([
+      'local-known-plain',
       'local-plain',
       'local-sight',
       'local-tools',
@@ -279,24 +365,66 @@ describe('useModelPicker', () => {
     expect(offered.every((m) => m.provider === 'ollama')).toBe(true)
   })
 
-  it('offers only multimodal models to a role that requires vision', async () => {
+  it('hides a model known to lack vision from a role that requires it', async () => {
     const transport = fakeTransport()
     const { result } = await mount(transport)
-    await waitFor(() => expect(result.current.models).toHaveLength(4))
+    await waitFor(() => expect(result.current.models).toHaveLength(5))
 
-    expect(result.current.modelsForRole('sight').map((m) => m.id)).toEqual([
+    expect(result.current.modelsForRole('sight').map((m) => m.id)).not.toContain(
+      'local-known-plain',
+    )
+    expect(result.current.modelsForRole('sight').map((m) => m.id)).toContain(
       'local-sight',
-    ])
+    )
   })
 
-  it('offers only tool-calling models to a role that requires tools', async () => {
+  it('still offers a model whose vision support is unknown', async () => {
+    // A provider the host cannot inspect — lm-studio, openai-compatible, or an
+    // Ollama too old to report capabilities — reports nothing. Excluding those
+    // empties the dropdown entirely, which is the worse failure.
     const transport = fakeTransport()
     const { result } = await mount(transport)
-    await waitFor(() => expect(result.current.models).toHaveLength(4))
+    await waitFor(() => expect(result.current.models).toHaveLength(5))
 
-    expect(result.current.modelsForRole('tooling').map((m) => m.id)).toEqual([
+    expect(result.current.modelsForRole('sight').map((m) => m.id)).toContain(
+      'local-plain',
+    )
+  })
+
+  it('hides a model known to lack tools from a role that requires them', async () => {
+    const transport = fakeTransport()
+    const { result } = await mount(transport)
+    await waitFor(() => expect(result.current.models).toHaveLength(5))
+
+    expect(result.current.modelsForRole('tooling').map((m) => m.id)).not.toContain(
+      'local-known-plain',
+    )
+    expect(result.current.modelsForRole('tooling').map((m) => m.id)).toContain(
       'local-tools',
-    ])
+    )
+  })
+
+  it('still offers a model whose tool support is unknown', async () => {
+    const transport = fakeTransport()
+    const { result } = await mount(transport)
+    await waitFor(() => expect(result.current.models).toHaveLength(5))
+
+    expect(result.current.modelsForRole('tooling').map((m) => m.id)).toContain(
+      'local-plain',
+    )
+  })
+
+  it('drops an unusable provider from a role even when its capabilities are unknown', async () => {
+    // Unknown capabilities pass the capability filter, so the provider gate is
+    // the only thing keeping a model the chat runtime cannot call out of a slot.
+    const transport = fakeTransport({ config: { endpoints: [LOCAL, HOSTED, EXTRA] } })
+    const { result } = await mount(transport)
+    await waitFor(() => expect(result.current.models).toHaveLength(6))
+
+    expect(result.current.chatCapableEndpoints.map((e) => e.id)).toEqual([LOCAL.id])
+    const offered = result.current.modelsForRole('sight').map((m) => m.id)
+    expect(offered).not.toContain('extra-plain')
+    expect(offered).toContain('local-plain')
   })
 
   it('saves the merged assignments and adopts the configuration the host returns', async () => {
@@ -393,6 +521,32 @@ describe('useModelPicker', () => {
 
     expect(result.current.config.endpoints).toHaveLength(2)
     expect(result.current.endpointFor(LOCAL.id)?.name).toBe('Renamed runtime')
+  })
+
+  it('re-lists the endpoint as edited rather than the copy it replaced', async () => {
+    const transport = fakeTransport()
+    const { result } = await mount(transport)
+    await waitFor(() => expect(result.current.models).toHaveLength(5))
+
+    const moved: SavedEndpoint = {
+      ...LOCAL,
+      url: 'http://localhost:23456',
+      apiKey: 'rotated',
+    }
+    transport.catalogue[LOCAL.id] = [offering('relocated-offering', moved, {})]
+
+    await act(async () => {
+      await result.current.saveEndpoint(moved)
+    })
+
+    // Listing the pre-edit copy would probe the abandoned url with the old key
+    // and file the answer under the edited endpoint's id.
+    const last = transport.listed[transport.listed.length - 1]
+    expect(last?.url).toBe(moved.url)
+    expect(last?.apiKey).toBe('rotated')
+    expect(result.current.modelsByEndpoint[LOCAL.id]?.map((m) => m.id)).toEqual([
+      'relocated-offering',
+    ])
   })
 
   it('records the result of an endpoint test', async () => {

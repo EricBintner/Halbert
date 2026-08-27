@@ -118,21 +118,37 @@ export function useModelPicker(
     }
   }, [])
 
-  const fail = useCallback(
-    (e: unknown) => {
-      const msg = message(e)
-      if (alive.current) setError(msg)
-      onError?.(msg)
-    },
-    [onError],
-  )
+  // `transport` and `onError` are read through refs so that a host writing the
+  // ordinary idiom — an object literal or an arrow function in the options —
+  // does not produce a new identity every render, re-firing the mount effect
+  // and looping loadConfig forever. The refs always hold the latest value, so
+  // behaviour is unchanged; only the identity is stabilised.
+  const transportRef = useRef(transport)
+  const onErrorRef = useRef(onError)
+  useEffect(() => {
+    transportRef.current = transport
+    onErrorRef.current = onError
+  })
+
+  // The endpoint list as of *now*, so a callback created in an earlier render
+  // does not act on a stale copy after a save.
+  const endpointsRef = useRef<SavedEndpoint[]>(config.endpoints)
+  useEffect(() => {
+    endpointsRef.current = config.endpoints
+  }, [config.endpoints])
+
+  const fail = useCallback((e: unknown) => {
+    const msg = message(e)
+    if (alive.current) setError(msg)
+    onErrorRef.current?.(msg)
+  }, [])
 
   // ── Loading ────────────────────────────────────────────────────────────
 
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const next = await transport.loadConfig()
+      const next = await transportRef.current.loadConfig()
       if (!alive.current) return
       setConfig(next)
       setError(null)
@@ -141,15 +157,15 @@ export function useModelPicker(
     } finally {
       if (alive.current) setLoading(false)
     }
-  }, [transport, fail])
+  }, [fail])
 
-  const refreshModels = useCallback(
-    async (endpointId: string) => {
-      const endpoint = config.endpoints.find((e) => e.id === endpointId)
-      if (!endpoint) return
+  /** List one endpoint's models. Takes the endpoint itself, never an id. */
+  const listEndpoint = useCallback(
+    async (endpoint: SavedEndpoint) => {
+      const endpointId = endpoint.id
       setListing((ids) => (ids.includes(endpointId) ? ids : [...ids, endpointId]))
       try {
-        const found = await transport.listModels(endpoint)
+        const found = await transportRef.current.listModels(endpoint)
         if (!alive.current) return
         setModelsByEndpoint((prev) => ({ ...prev, [endpointId]: found }))
       } catch (e) {
@@ -164,21 +180,35 @@ export function useModelPicker(
         }
       }
     },
-    [config.endpoints, transport, fail],
+    [fail],
+  )
+
+  const refreshModels = useCallback(
+    async (endpointId: string) => {
+      // Read through the ref rather than the captured array: after a save the
+      // render has not necessarily flushed, and listing the pre-edit copy
+      // probes the abandoned url with the old key and files the answer under
+      // the edited endpoint's id.
+      const endpoint = endpointsRef.current.find((e) => e.id === endpointId)
+      if (!endpoint) return
+      await listEndpoint(endpoint)
+    },
+    [listEndpoint],
   )
 
   const discoverLocal = useCallback(async () => {
-    if (!transport.discoverLocal) return
+    const discover = transportRef.current.discoverLocal
+    if (!discover) return
     setDiscovering(true)
     try {
-      const found = await transport.discoverLocal()
+      const found = await discover.call(transportRef.current)
       if (alive.current) setDiscovery(found)
     } catch (e) {
       fail(e)
     } finally {
       if (alive.current) setDiscovering(false)
     }
-  }, [transport, fail])
+  }, [fail])
 
   useEffect(() => {
     void refresh()
@@ -221,8 +251,12 @@ export function useModelPicker(
       if (!role) return []
       return models.filter((m) => {
         if (!isChatCapable(m.provider)) return false
-        if (role.requiresVision && !m.capabilities.vision) return false
-        if (role.requiresTools && !m.capabilities.tools) return false
+        // `undefined` means the host could not determine the capability;
+        // only an explicit `false` disqualifies a model. Treating unknown as
+        // "no" empties the dropdown for every provider that cannot be
+        // inspected, which is worse than offering a model that may not fit.
+        if (role.requiresVision && m.capabilities.vision === false) return false
+        if (role.requiresTools && m.capabilities.tools === false) return false
         return true
       })
     },
@@ -244,8 +278,11 @@ export function useModelPicker(
   const apply = useCallback(
     async (patch: Partial<PickerConfig>) => {
       try {
-        const next = await transport.saveConfig(patch)
+        const next = await transportRef.current.saveConfig(patch)
         if (alive.current) {
+          // Synchronously, not via the effect: callers act on the result in
+          // the same tick, before React has flushed anything.
+          endpointsRef.current = next.endpoints
           setConfig(next)
           setError(null)
         }
@@ -253,7 +290,7 @@ export function useModelPicker(
         fail(e)
       }
     },
-    [transport, fail],
+    [fail],
   )
 
   const assignRole = useCallback(
@@ -287,9 +324,11 @@ export function useModelPicker(
         ? config.endpoints.map((e) => (e.id === endpoint.id ? endpoint : e))
         : [...config.endpoints, endpoint]
       await apply({ endpoints })
-      await refreshModels(endpoint.id)
+      // The endpoint we were handed is authoritative; looking it back up would
+      // race the render that has not happened yet.
+      await listEndpoint(endpoint)
     },
-    [apply, config.endpoints, refreshModels],
+    [apply, config.endpoints, listEndpoint],
   )
 
   const deleteEndpoint = useCallback(
@@ -325,7 +364,7 @@ export function useModelPicker(
       }
       setTesting(endpointId)
       try {
-        const result = await transport.testEndpoint(endpoint)
+        const result = await transportRef.current.testEndpoint(endpoint)
         if (alive.current) {
           setTestResults((prev) => ({ ...prev, [endpointId]: result }))
         }
@@ -340,7 +379,7 @@ export function useModelPicker(
         if (alive.current) setTesting(null)
       }
     },
-    [endpointFor, transport],
+    [endpointFor],
   )
 
   const testModel = useCallback(
@@ -350,12 +389,13 @@ export function useModelPicker(
       if (!assignment?.model || !endpoint) {
         return { ok: false, message: 'Assign a model first' }
       }
-      if (!transport.testModel) {
-        return transport.testEndpoint(endpoint)
+      const probe = transportRef.current.testModel
+      if (!probe) {
+        return transportRef.current.testEndpoint(endpoint)
       }
       setTesting(roleId)
       try {
-        const result = await transport.testModel(endpoint, assignment.model)
+        const result = await probe.call(transportRef.current, endpoint, assignment.model)
         if (alive.current) {
           setTestResults((prev) => ({ ...prev, [roleId]: result }))
         }
@@ -370,7 +410,7 @@ export function useModelPicker(
         if (alive.current) setTesting(null)
       }
     },
-    [assignmentFor, endpointFor, transport],
+    [assignmentFor, endpointFor],
   )
 
   // ── Per-turn pin ───────────────────────────────────────────────────────
