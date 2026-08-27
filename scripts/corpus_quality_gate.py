@@ -301,6 +301,47 @@ SCOPED_QUERIES = [
      "expected_terms": ["systemctl", "service"], "forbidden_path_prefix": "knowledge/macos/"},
     {"id": "s20_isolation_macos", "query": "brew tap homebrew cask", "scope": "knowledge-macos",
      "expected_terms": ["brew", "cask"], "forbidden_path_prefix": "knowledge/linux/"},
+    # ── role scopes (wave 1) ──
+    # Content queries: each role must return its own subsystem's config.
+    #
+    # Note on strength: the runner's term haystack is content + file_path
+    # (see `combined_text` below), so a term that also occurs in the staged
+    # path can be satisfied by the path alone -- "launch" matches
+    # host/service/Library/LaunchDaemons/..., "auto" matches
+    # host/storage/etc/auto_master. Those entries prove the scope resolves to
+    # the right tree rather than that the chunk text is on topic. The
+    # forbidden_path_prefix assertion is unaffected and is the load-bearing
+    # half of each entry.
+    {"id": "r01_network_dns", "query": "DNS resolver configuration",
+     "scope": "network_admin", "expected_terms": ["nameserver", "dns"],
+     "forbidden_path_prefix": "host/storage/"},
+    {"id": "r02_network_iface", "query": "network interface address configuration",
+     "scope": "network_admin", "expected_terms": ["interface"],
+     "forbidden_path_prefix": "host/storage/"},
+    {"id": "r03_service_launch", "query": "program that runs at login",
+     "scope": "service_admin", "expected_terms": ["label"],
+     "forbidden_path_prefix": "host/network/"},
+    {"id": "r04_service_manager", "query": "service manager configuration",
+     "scope": "service_admin", "expected_terms": ["launch"],
+     "forbidden_path_prefix": "host/storage/"},
+    {"id": "r05_storage_mounts", "query": "persistent filesystem mount options",
+     "scope": "storage_admin", "expected_terms": ["mount"],
+     "forbidden_path_prefix": "host/network/"},
+    {"id": "r06_storage_automount", "query": "automount map configuration",
+     "scope": "storage_admin", "expected_terms": ["auto"],
+     "forbidden_path_prefix": "host/network/"},
+    # Isolation probes: a role scope must never surface knowledge/ docs,
+    # which belong to the platform axis, not the role axis.
+    #
+    # Empty expected_terms skips only the term check (term_match_ratio is 1.0
+    # for an empty list); has_results, has_non_empty and scope_clean all still
+    # apply, so these remain real assertions rather than free passes.
+    {"id": "r07_iso_network_no_docs", "query": "network interface configuration",
+     "scope": "network_admin", "expected_terms": [],
+     "forbidden_path_prefix": "knowledge/"},
+    {"id": "r08_iso_service_no_docs", "query": "startup daemon",
+     "scope": "service_admin", "expected_terms": [],
+     "forbidden_path_prefix": "knowledge/"},
 ]
 
 
