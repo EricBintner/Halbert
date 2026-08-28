@@ -84,24 +84,29 @@ if FASTAPI_AVAILABLE:
     @router.get("/screenshot")
     async def capture_screenshot(
         monitor: int = Query(0, description="Monitor index (0=all, 1=primary)"),
-        quality: int = Query(85, ge=1, le=100, description="JPEG quality"),
-        max_dim: int = Query(1568, ge=256, le=4096, description="Max dimension in pixels"),
+        quality: Optional[int] = Query(None, ge=1, le=100, description="JPEG quality (defaults to config)"),
+        max_dim: Optional[int] = Query(None, ge=256, le=4096, description="Max dimension in pixels (defaults to config)"),
     ):
         """Capture the screen and return a base64-encoded JPEG.
 
         Checks vision_config.yml — if screen_capture.enabled is False,
-        returns 403 instead of capturing.
+        returns 403 instead of capturing. Quality and max_dim default to
+        the config values when not specified in the query.
         """
-        from ...vision.config import is_screen_capture_enabled
+        from ...vision.config import load_config, is_screen_capture_enabled
         if not is_screen_capture_enabled():
             return JSONResponse(
                 {"error": "Screen capture is disabled. Enable it in Settings > Vision.", "error_type": "disabled"},
                 status_code=403,
             )
 
+        cfg = load_config()
+        eff_quality = quality if quality is not None else cfg.screen_capture.quality
+        eff_max_dim = max_dim if max_dim is not None else cfg.screen_capture.max_dimension
+
         try:
             from ...vision.screen_capture import ScreenCapture, ScreenCaptureError
-            cap = ScreenCapture(quality=quality, max_dim=max_dim)
+            cap = ScreenCapture(quality=eff_quality, max_dim=eff_max_dim)
             base64_img = cap.capture_to_base64(monitor_index=monitor)
             return {"image": base64_img, "format": "jpeg"}
         except ScreenCaptureError as e:
@@ -125,25 +130,31 @@ if FASTAPI_AVAILABLE:
 
     @router.get("/webcam")
     async def capture_webcam(
-        camera: int = Query(0, description="Camera index (0=default)"),
-        quality: int = Query(85, ge=1, le=100, description="JPEG quality"),
-        max_dim: int = Query(768, ge=256, le=4096, description="Max dimension in pixels"),
+        camera: Optional[int] = Query(None, description="Camera index (defaults to config)"),
+        quality: Optional[int] = Query(None, ge=1, le=100, description="JPEG quality (defaults to config)"),
+        max_dim: Optional[int] = Query(None, ge=256, le=4096, description="Max dimension in pixels (defaults to config)"),
     ):
         """Capture a single frame from the webcam and return base64 JPEG.
 
         Checks vision_config.yml — if webcam.enabled is False, returns
-        403 instead of capturing.
+        403 instead of capturing. Camera, quality, and max_dim default
+        to the config values when not specified in the query.
         """
-        from ...vision.config import is_webcam_enabled
+        from ...vision.config import load_config, is_webcam_enabled
         if not is_webcam_enabled():
             return JSONResponse(
                 {"error": "Webcam capture is disabled. Enable it in Settings > Vision.", "error_type": "disabled"},
                 status_code=403,
             )
 
+        cfg = load_config()
+        eff_camera = camera if camera is not None else cfg.webcam.camera_index
+        eff_quality = quality if quality is not None else cfg.webcam.quality
+        eff_max_dim = max_dim if max_dim is not None else cfg.webcam.max_dimension
+
         try:
             from ...vision.webcam_capture import WebcamCapture, WebcamCaptureError
-            cap = WebcamCapture(camera_index=camera, quality=quality, max_dim=max_dim)
+            cap = WebcamCapture(camera_index=eff_camera, quality=eff_quality, max_dim=eff_max_dim)
             base64_img = cap.grab_to_base64()
             return {"image": base64_img, "format": "jpeg"}
         except WebcamCaptureError as e:

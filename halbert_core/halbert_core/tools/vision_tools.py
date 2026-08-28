@@ -33,16 +33,18 @@ async def capture_screenshot(args: Dict) -> Dict[str, Any]:
     If screen_capture.enabled is False, returns an error dict instead
     of capturing — the user must explicitly opt in via Settings > Vision.
     """
-    from ..vision.config import is_screen_capture_enabled
+    from ..vision.config import is_screen_capture_enabled, load_config
     if not is_screen_capture_enabled():
         return {
             "error": "Screen capture is disabled. The user can enable it in Settings > Vision.",
             "error_type": "disabled",
         }
 
+    # Fall back to config values when the LLM didn't specify
+    cfg = load_config()
     region = args.get("region")
-    quality = args.get("quality", 85)
-    max_dim = args.get("max_dim", 1568)
+    quality = args.get("quality", cfg.screen_capture.quality)
+    max_dim = args.get("max_dim", cfg.screen_capture.max_dimension)
 
     try:
         from ..vision.screen_capture import ScreenCapture, ScreenCaptureError
@@ -83,16 +85,17 @@ async def capture_webcam(args: Dict) -> Dict[str, Any]:
     If webcam.enabled is False, returns an error dict instead of
     capturing — the user must explicitly opt in via Settings > Vision.
     """
-    from ..vision.config import is_webcam_enabled
+    from ..vision.config import is_webcam_enabled, load_config
     if not is_webcam_enabled():
         return {
             "error": "Webcam capture is disabled. The user can enable it in Settings > Vision.",
             "error_type": "disabled",
         }
 
-    camera_index = args.get("camera", 0)
-    quality = args.get("quality", 85)
-    max_dim = args.get("max_dim", 768)
+    cfg = load_config()
+    camera_index = args.get("camera", cfg.webcam.camera_index)
+    quality = args.get("quality", cfg.webcam.quality)
+    max_dim = args.get("max_dim", cfg.webcam.max_dimension)
 
     try:
         from ..vision.webcam_capture import WebcamCapture, WebcamCaptureError
