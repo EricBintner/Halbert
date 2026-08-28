@@ -1,0 +1,22 @@
+# Halbert shell integration — sourced via `bash --rcfile <halbert>/shell/bashrc -i`
+# Source the user's real bashrc first so aliases/functions survive.
+[ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc"
+__halbert_prompt_cmd() {
+    local ec=$?
+    printf '\e]133;A\a'           # prompt start
+    return $ec
+}
+PROMPT_COMMAND="__halbert_prompt_cmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+__halbert_preexec() {
+    printf '\e]133;B\a'           # input start
+    printf '\e]7;file://%s%s\a' "$(hostname)" "$PWD"   # OSC 7 cwd
+}
+__halbert_precmd() {
+    local ec=$?
+    local id="$$-$(date +%s%N 2>/dev/null || date +%s)"
+    local cmd_b64=$(echo -n "$BASH_COMMAND" | base64)
+    printf '\e]133;C;id=%s;cmd=%s\a' "$id" "$cmd_b64"   # output start (command + block id)
+    printf '\e]133;D;%d\a' "$ec"                          # end (exit code)
+}
+trap '__halbert_preexec' DEBUG
+PROMPT_COMMAND="__halbert_precmd; __halbert_prompt_cmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
