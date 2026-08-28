@@ -426,6 +426,310 @@ function VisionSettings() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Security Settings Component (MCP Trust Boundary)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SecuritySettings() {
+  const [config, setConfig] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+  const [showAcknowledge, setShowAcknowledge] = useState(false)
+
+  useEffect(() => {
+    loadConfig()
+  }, [])
+
+  const loadConfig = async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/settings/being`)
+      if (resp.ok) {
+        const data = await resp.json()
+        setConfig(data.config)
+      }
+    } catch (e) {
+      console.error('Failed to load security config:', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const saveSecurity = async (updates: Record<string, any>) => {
+    setSaving(true)
+    try {
+      const resp = await fetch(`${API_BASE}/settings/being`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ security: { ...config?.security, ...updates } }),
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        setConfig(data.config)
+        setToast('Saved')
+        setTimeout(() => setToast(null), 2000)
+      } else {
+        const err = await resp.json()
+        setToast(`Error: ${err.detail || 'Failed to save'}`)
+        setTimeout(() => setToast(null), 3000)
+      }
+    } catch (e) {
+      setToast('Error: Network failure')
+      setTimeout(() => setToast(null), 3000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return <Card><CardContent className="py-8 text-center text-muted-foreground">Loading security config...</CardContent></Card>
+  }
+
+  if (!config) {
+    return <Card><CardContent className="py-8 text-center text-muted-foreground">Failed to load config</CardContent></Card>
+  }
+
+  const sec = config.security || {
+    operational_tier: 'cloud_ok',
+    secret_tier: 'local_only',
+    public_files: ['/etc/hosts', '/etc/hostname', '/etc/fstab'],
+    extra_secret_keys: [],
+  }
+
+  return (
+    <div className="space-y-4">
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-lg border bg-background px-4 py-2 text-sm shadow-lg">
+          {toast}
+        </div>
+      )}
+
+      {/* Trust Boundary Overview */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Lock className="h-5 w-5" />
+            MCP Trust Boundary
+          </CardTitle>
+          <CardDescription>
+            Controls how config values are routed when exposed to AI clients.
+            Secrets never enter conversation history via the config query path.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p>
+              <span className="font-medium text-foreground">Tier 0 (Public):</span>{' '}
+              Machine structure — service names, booleans, structural keys.
+              Always visible to cloud models.
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Tier 1 (Operational):</span>{' '}
+              SSH port, routable IPs, firewall rules. User-configurable routing.
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Tier 2 (Secrets):</span>{' '}
+              Passwords, tokens, API keys. Deterministic description only —
+              no model in the boundary.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Tier 1 — Operational */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Tier 1 — Operational Values</CardTitle>
+          <CardDescription>
+            Config values that could identify the machine but are not credentials.
+            Choose how cloud models may access them.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label>Routing</Label>
+            <div className="grid grid-cols-3 gap-2">
+              <Button
+                variant={sec.operational_tier === 'cloud_ok' ? 'default' : 'outline'}
+                onClick={() => saveSecurity({ operational_tier: 'cloud_ok' })}
+                disabled={saving}
+                className="flex flex-col items-center gap-1 h-auto py-3"
+              >
+                <span className="font-medium">Cloud OK</span>
+                <span className="text-xs opacity-70">Raw value to cloud</span>
+              </Button>
+              <Button
+                variant={sec.operational_tier === 'local_only' ? 'default' : 'outline'}
+                onClick={() => saveSecurity({ operational_tier: 'local_only' })}
+                disabled={saving}
+                className="flex flex-col items-center gap-1 h-auto py-3"
+              >
+                <span className="font-medium">Local Only</span>
+                <span className="text-xs opacity-70">Description only</span>
+              </Button>
+              <Button
+                variant={sec.operational_tier === 'redact' ? 'default' : 'outline'}
+                onClick={() => saveSecurity({ operational_tier: 'redact' })}
+                disabled={saving}
+                className="flex flex-col items-center gap-1 h-auto py-3"
+              >
+                <span className="font-medium">Redact</span>
+                <span className="text-xs opacity-70">Strip value</span>
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              {sec.operational_tier === 'cloud_ok' && 'Cloud models see operational values directly. Maximizes reasoning power.'}
+              {sec.operational_tier === 'local_only' && 'A deterministic description (length, charset, entropy) is returned instead of the raw value.'}
+              {sec.operational_tier === 'redact' && 'Values are stripped entirely. Only the key name and tier are returned.'}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Tier 2 — Secrets */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5" />
+            Tier 2 — Secrets
+          </CardTitle>
+          <CardDescription>
+            Credentials, keys, tokens. The deterministic responder returns
+            facts about the value (length, charset, entropy, view command)
+            without the value itself. No model in the boundary.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>Secret routing</Label>
+              <p className="text-xs text-muted-foreground mt-1">
+                {sec.secret_tier === 'local_only'
+                  ? 'Secrets are described, never revealed. This is the safest setting.'
+                  : 'Secrets are sent to cloud models. You acknowledged this risk.'}
+              </p>
+            </div>
+            <Badge variant={sec.secret_tier === 'local_only' ? 'default' : 'destructive'}>
+              {sec.secret_tier === 'local_only' ? 'Locked' : 'Acknowledged'}
+            </Badge>
+          </div>
+
+          {sec.secret_tier === 'local_only' && (
+            <div className="rounded-md border border-yellow-500/50 bg-yellow-500/5 p-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+                <div className="space-y-2">
+                  <p className="text-sm">
+                    <span className="font-medium">Escape hatch:</span> Allow cloud
+                    models to see raw secrets. This sends credentials to your
+                    cloud LLM vendor's inference logs.
+                  </p>
+                  {!showAcknowledge ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowAcknowledge(true)}
+                      disabled={saving}
+                    >
+                      I understand the risk — show option
+                    </Button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => {
+                          saveSecurity({ secret_tier: 'cloud_ok_acknowledged' })
+                          setShowAcknowledge(false)
+                        }}
+                        disabled={saving}
+                      >
+                        Confirm: allow cloud access to secrets
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowAcknowledge(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {sec.secret_tier === 'cloud_ok_acknowledged' && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => saveSecurity({ secret_tier: 'local_only' })}
+              disabled={saving}
+            >
+              Re-lock secrets to local only
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Public Files */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Public Files</CardTitle>
+          <CardDescription>
+            Host paths whose structure is Tier 0 (public). A value from one of
+            these files is Tier 0 only if its content does not contain a secret.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label>Files (one per line)</Label>
+            <textarea
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              defaultValue={(sec.public_files || []).join('\n')}
+              placeholder="/etc/hosts&#10;/etc/hostname&#10;/etc/fstab"
+              onBlur={(e) => {
+                const lines = e.target.value.split('\n').map((s: string) => s.trim()).filter(Boolean)
+                if (JSON.stringify(lines) !== JSON.stringify(sec.public_files || [])) {
+                  saveSecurity({ public_files: lines })
+                }
+              }}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Extra Secret Keys */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Extra Secret Keys</CardTitle>
+          <CardDescription>
+            Additional config key names to treat as Tier 2 (secrets), beyond the
+            built-in list (password, token, api_key, secret, etc).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label>Keys (one per line)</Label>
+            <textarea
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              defaultValue={(sec.extra_secret_keys || []).join('\n')}
+              placeholder="serial&#10;license&#10;activation"
+              onBlur={(e) => {
+                const lines = e.target.value.split('\n').map((s: string) => s.trim()).filter(Boolean)
+                if (JSON.stringify(lines) !== JSON.stringify(sec.extra_secret_keys || [])) {
+                  saveSecurity({ extra_secret_keys: lines })
+                }
+              }}
+            />
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Being Settings Component (Phase 6 / T6c.1)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -822,7 +1126,7 @@ function BeingSettings() {
  * mistyped link — so it opens the first tab, which is what a bare /settings
  * does too.
  */
-const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'vision', 'about'] as const
+const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'security', 'vision', 'about'] as const
 const DEFAULT_SETTINGS_TAB = SETTINGS_TABS[0]
 
 type SettingsNavItem = { id: string; label: string; icon: typeof Cpu }
@@ -848,6 +1152,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
     items: [
       { id: 'safety', label: 'Tool Permissions', icon: Shield },
       { id: 'alerts', label: 'Alert Rules', icon: Bell },
+      { id: 'security', label: 'Trust Boundary', icon: Lock },
       { id: 'vision', label: 'Vision', icon: Eye },
     ],
   },
@@ -2527,6 +2832,11 @@ export function Settings() {
         {/* Being Tab */}
         <TabsContent value="being" className="space-y-4">
           <BeingSettings />
+        </TabsContent>
+
+        {/* Security Tab */}
+        <TabsContent value="security" className="space-y-4">
+          <SecuritySettings />
         </TabsContent>
 
         {/* Vision Tab */}
