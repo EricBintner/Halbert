@@ -198,6 +198,30 @@ class ToolExecutor:
             }
         )
 
+        # Plan B: terminal_blocks fetch tool (B11)
+        self.register(
+            "terminal_blocks",
+            self._terminal_blocks,
+            {
+                "name": "terminal_blocks",
+                "description": "Fetch stored terminal block output",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {
+                            "type": "string",
+                            "description": "Terminal session id",
+                        },
+                        "n": {
+                            "type": "integer",
+                            "description": "Number of recent blocks (default 5)",
+                            "default": 5,
+                        },
+                    },
+                },
+            },
+        )
+
         # Thread meta-tools (Plan A, spec §7). The schemas are what the model
         # sees; PLANNING handles the calls inline and never dispatches them
         # here, so the handler is a stub (see execute()). Descriptions stay
@@ -567,6 +591,41 @@ class ToolExecutor:
         if exit_code != 0:
             return f"Exit code {exit_code}\n{full_output}".strip()
         return full_output.strip() if full_output else "(no output)"
+
+    async def _terminal_blocks(self, args: Dict) -> str:
+        """Fetch stored terminal block output (Plan B: B11).
+
+        Returns a JSON string listing recent terminal blocks for a session.
+        SAFE risk level — read-only.
+        """
+        session_id = args.get("session_id")
+        n = args.get("n", 5)
+        try:
+            from halbert_core.agents.threads import get_thread_manager
+            store = get_thread_manager().store
+            blocks = store.list_terminal_blocks(
+                session_id=session_id,
+                limit=n,
+            ) if session_id else store.list_terminal_blocks(limit=n)
+            # Trim to the fields the model needs
+            result = [
+                {
+                    "block_id": b.get("block_id"),
+                    "command": b.get("command"),
+                    "exit_code": b.get("exit_code"),
+                    "cwd": b.get("cwd"),
+                    "output_head": b.get("output_head", ""),
+                    "output_tail": b.get("output_tail", ""),
+                    "started_at": b.get("started_at"),
+                    "ended_at": b.get("ended_at"),
+                }
+                for b in blocks
+            ]
+            import json
+            return json.dumps(result, indent=2, default=str)
+        except Exception as e:
+            logger.warning(f"terminal_blocks tool failed: {e}")
+            return "[]"
 
     async def _read_file(self, args: Dict) -> str:
         """Read file contents."""
