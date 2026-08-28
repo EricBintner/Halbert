@@ -97,6 +97,16 @@ ROLES: Dict[str, RoleScope] = {
         file_backed_platforms=("Linux", "Darwin"),
         aliases_from=("sharing_admin",),
     ),
+    "credentials_admin": RoleScope(
+        name="credentials_admin",
+        manifest="credentials.yml",
+        # Credential files exist on both platforms — cloud CLIs, container
+        # registries, SSH config, .env files are cross-platform. This scope
+        # is the one that makes the trust boundary real: without it, the
+        # agent reads ~/.aws/credentials via a file-read tool and the secret
+        # enters context raw, bypassing tier routing entirely.
+        file_backed_platforms=("Linux", "Darwin"),
+    ),
 }
 
 

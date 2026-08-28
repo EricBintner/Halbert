@@ -85,6 +85,25 @@ _STAGED_INCLUDE_GLOBS = [
     "**/hostname",
     "**/synthetic.conf",
     "**/sysctl.conf",
+    # Credential files — cross-platform, added with the credentials_admin scope.
+    # These are config files with key=value or INI structure that the parser
+    # handles. Private key files (*.pem, id_rsa*) are excluded by
+    # _COMMON_EXCLUDE_GLOBS and the credentials.yml exclude block.
+    "**/credentials",
+    "**/config.json",
+    "**/.netrc",
+    "**/ssh_config",
+    "**/.env",
+    "**/.env.local",
+    "**/.env.production",
+    "**/.env.staging",
+    "**/.npmrc",
+    "**/pip.conf",
+    "**/.pypirc",
+    "**/.gitconfig",
+    "**/.git-credentials",
+    "**/credentials.tfrc.json",
+    "**/.terraformrc",
 ]
 
 _COMMON_EXCLUDE_GLOBS = [
