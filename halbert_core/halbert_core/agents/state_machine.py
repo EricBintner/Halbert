@@ -617,7 +617,7 @@ class AgentStateMachine:
                 turn,
                 assistant_text="".join(old_ctx.response_chunks or []),
                 blocks=blocks,
-                terminal_session_ids=list(old_ctx.terminal_block_ids or []),
+                terminal_block_ids=list(old_ctx.terminal_block_ids or []),
                 diff_proposals=[
                     {"diff_id": diff_id,
                      **(diff if isinstance(diff, dict) else {"value": diff})}
@@ -947,7 +947,7 @@ class AgentStateMachine:
                 turn,
                 assistant_text="".join(ctx.response_chunks),
                 blocks=blocks,
-                terminal_session_ids=list(ctx.terminal_block_ids),
+                terminal_block_ids=list(ctx.terminal_block_ids),
                 diff_proposals=diffs,
                 status=status,
                 thread_id_override=ctx.thread_id if ctx.thread_switched else None,
@@ -2220,6 +2220,8 @@ class AgentStateMachine:
                 sandboxed=bool(payload.get("sandboxed")),
                 cwd=payload.get("cwd"),
                 attach=str(payload.get("attach", "sse")),
+                block_id=payload.get("block_id"),
+                owner=str(payload.get("owner", "agent")),
             )
         if kind == "output":
             return StreamEvent.terminal_output(

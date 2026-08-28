@@ -31,6 +31,12 @@ interface TerminalTileProps {
   blockId?: string;
   /** Plan B: block output for frozen rendering (when block is complete). */
   blockOutput?: string;
+  /** Plan B: pre-split frozen head (first 20 lines). When both head and tail
+   * are provided, the tile renders them with a separator instead of the raw
+   * blockOutput string. */
+  blockOutputHead?: string;
+  /** Plan B: pre-split frozen tail (last 4 KiB). */
+  blockOutputTail?: string;
   /** Plan B: block exit code (when block is complete). */
   blockExitCode?: number | null;
   /** Plan B: 'agent' (default) or 'user'. Agent tiles disableStdin. */
@@ -50,7 +56,24 @@ function formatElapsed(startedAt: number, now: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
-export function TerminalTile({ session, onTerminated, blockId, blockOutput, blockExitCode, owner = 'agent' }: TerminalTileProps) {
+const FROZEN_HEAD_LINES = 20;
+const FROZEN_TAIL_BYTES = 4096;
+
+/**
+ * Split a frozen block's raw output into a head (first N lines) and tail
+ * (last 4 KiB). When the output is small enough that head and tail overlap,
+ * `tail` is null and the caller should render `head` alone.
+ */
+function splitFrozenOutput(output: string): { head: string; tail: string | null } {
+  const lines = output.split('\n');
+  const head = lines.slice(0, FROZEN_HEAD_LINES).join('\n');
+  if (output.length <= FROZEN_TAIL_BYTES && lines.length <= FROZEN_HEAD_LINES) {
+    return { head: output, tail: null };
+  }
+  return { head, tail: output.slice(-FROZEN_TAIL_BYTES) };
+}
+
+export function TerminalTile({ session, onTerminated, blockId, blockOutput, blockOutputHead, blockOutputTail, blockExitCode, owner = 'agent' }: TerminalTileProps) {
   const { sendInput, resize, kill, setVisible } = useTerminalSessions();
   // Agent-owned tiles are read-only; user tiles allow input.
   const interactive = session.transport === 'ws' && owner === 'user';
@@ -86,16 +109,47 @@ export function TerminalTile({ session, onTerminated, blockId, blockOutput, bloc
     let cancelled = false;
     let term: XTerm | null = null;
     let ro: ResizeObserver | null = null;
+    let io: IntersectionObserver | null = null;
     let disposeData: { dispose: () => void } | null = null;
+    let fontReady = false;
+    let inView = false;
+
+    // IntersectionObserver defers xterm construction until the container is
+    // near the viewport, so off-screen tiles (scrolled out of the conversation)
+    // don't pay the cost of a terminal instance.
+    const tryMount = () => {
+      if (cancelled || !fontReady || !inView || !containerRef.current || termRef.current) return;
+      mount();
+    };
+
+    if ('IntersectionObserver' in window) {
+      io = new IntersectionObserver(
+        (entries) => {
+          if (entries[0]?.isIntersecting) {
+            inView = true;
+            io?.disconnect();
+            tryMount();
+          }
+        },
+        { rootMargin: '200px' },
+      );
+      io.observe(containerRef.current);
+    } else {
+      inView = true;
+    }
 
     void terminalFontReady(13).then(() => {
-      if (cancelled || !containerRef.current || termRef.current) return;
-      mount();
+      if (cancelled) return;
+      fontReady = true;
+      tryMount();
     });
 
     function mount() {
+    const isAgentOwned = owner !== 'user';
     const t = new XTerm({
-      cursorBlink: session.status === 'running' && interactive,
+      // Agent-owned tiles are read-only mirrors — no blinking cursor.
+      // User-owned interactive tiles blink while running.
+      cursorBlink: !isAgentOwned && session.status === 'running' && interactive,
       disableStdin: !interactive,
       cursorStyle: 'bar',
       fontSize: 13,
@@ -109,10 +163,21 @@ export function TerminalTile({ session, onTerminated, blockId, blockOutput, bloc
     t.loadAddon(new WebLinksAddon());
     t.open(containerRef.current!);
     fit.fit();
+
+    // Escape hatch: Ctrl+` falls through to the browser (returns false so
+    // xterm ignores it). Every other key is owned by the PTY (returns true
+    // so xterm processes and forwards it).
+    t.attachCustomKeyEventHandler((e) => {
+      if (e.ctrlKey && e.code === 'Backquote') return false;
+      return true;
+    });
+
     // Replay what the store already holds. A tile mounted after its session
     // started — a reloaded page, a timeline turn scrolled back into view, an
     // undock — would otherwise open empty, and the incremental writer below
     // would then repaint the whole buffer on the next chunk.
+    // reset() first so a re-mount (StrictMode double-invoke, HMR) starts clean.
+    t.reset();
     if (session.output) {
       t.write(session.output);
     }
@@ -142,6 +207,7 @@ export function TerminalTile({ session, onTerminated, blockId, blockOutput, bloc
 
     return () => {
       cancelled = true;
+      io?.disconnect();
       disposeData?.dispose();
       ro?.disconnect();
       term?.dispose();
@@ -197,8 +263,22 @@ export function TerminalTile({ session, onTerminated, blockId, blockOutput, bloc
 
   const statusStyle = STATUS_STYLES[session.status] ?? STATUS_STYLES.idle;
 
-  // Plan B: frozen block rendering — no xterm, no socket, just <pre>
+  // Plan B: frozen block rendering — no xterm, no socket, just <pre>.
+  // When output_head/output_tail are provided (or can be split from the raw
+  // string), render head + separator + tail so very long blocks don't dump
+  // megabytes into the DOM.
   if (isFrozen) {
+    let frozenHead: string;
+    let frozenTail: string | null;
+    if (blockOutputHead !== undefined && blockOutputTail !== undefined) {
+      frozenHead = blockOutputHead;
+      frozenTail = blockOutputTail;
+    } else {
+      const split = splitFrozenOutput(blockOutput ?? '');
+      frozenHead = split.head;
+      frozenTail = split.tail;
+    }
+
     return (
       <div
         className="my-2 rounded-lg border border-border/60 bg-canvas-subtle overflow-hidden shadow-lg"
@@ -221,7 +301,13 @@ export function TerminalTile({ session, onTerminated, blockId, blockOutput, bloc
           </button>
         </div>
         <pre className="w-full max-h-64 overflow-auto px-3 py-2 text-xs font-mono text-text whitespace-pre-wrap break-all">
-          {blockOutput}
+          {frozenHead}
+          {frozenTail !== null && (
+            <>
+              {'\n…\n'}
+              {frozenTail}
+            </>
+          )}
         </pre>
       </div>
     );

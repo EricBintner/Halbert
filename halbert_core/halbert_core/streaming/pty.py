@@ -52,7 +52,6 @@ class PTYSession:
         cols: int = 80,
         rows: int = 24,
         buffer_bytes: int = _DEFAULT_BUFFER_BYTES,
-        echo: bool = True,
     ):
         self._command = command
         self._cwd = cwd
@@ -60,7 +59,6 @@ class PTYSession:
         self._cols = cols
         self._rows = rows
         self._buffer_bytes = buffer_bytes
-        self._echo = echo
 
         self._master_fd: Optional[int] = None
         self._slave_fd: Optional[int] = None
@@ -68,6 +66,8 @@ class PTYSession:
 
         # Bounded scrollback (keep the most recent ``buffer_bytes`` of output)
         self._buffer = bytearray()
+        # Exposed for attach replay (same content as _buffer).
+        self._replay_buffer: bytes = b""
         self._exited = False
         self._exit_code: Optional[int] = None
 
@@ -75,10 +75,6 @@ class PTYSession:
         # idle reaper treats recent output as activity, so a session streaming
         # output with no stdin (watching a long build) is not reaped mid-stream.
         self.last_output_at: float = 0.0
-
-        # Queues of in-flight read_chunk() generators, so kill() can push the
-        # EOF sentinel and wake consumers suspended at ``queue.get()``.
-        self._read_queues: set = set()
 
         # Fan-out: single reader task + per-consumer queues (Plan B: B4).
         # The reader task reads the master fd once and pushes chunks to every
@@ -113,13 +109,14 @@ class PTYSession:
 
     def get_buffer(self) -> bytes:
         """Return the full scrollback buffer contents."""
-        return bytes(self._buffer)
+        self._replay_buffer = bytes(self._buffer)
+        return self._replay_buffer
 
     # ------------------------------------------------------------------
     # Fan-out reader (Plan B: B4)
     # ------------------------------------------------------------------
 
-    async def attach(self, maxsize: int = 0) -> "asyncio.Queue":
+    async def attach(self, *, _maxsize: int = 0) -> "asyncio.Queue":
         """Subscribe to this session's output stream.
 
         Returns a queue that receives every future chunk. The first item
@@ -132,7 +129,7 @@ class PTYSession:
         # master fd before replaying so late attachers see the full output.
         if self._exited and self._master_fd is not None:
             self._drain_master()
-        q: "asyncio.Queue" = asyncio.Queue(maxsize=maxsize)
+        q: "asyncio.Queue" = asyncio.Queue(maxsize=_maxsize)
         # Replay first
         q.put_nowait(("__replay__", self.get_buffer()))
         self._fanout_queues.add(q)
@@ -218,10 +215,11 @@ class PTYSession:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def spawn(self) -> int:
+    async def spawn(self, echo: bool = True) -> int:
         """Open the PTY, fork the child, and execute the command.
 
-        Returns the child PID (also the session id).
+        Returns the child PID (also the session id). When *echo* is False,
+        ECHO is cleared on the slave fd before exec (pool sessions).
         """
         self._master_fd, self._slave_fd = os.openpty()
         self._set_winsize(self._cols, self._rows)
@@ -229,7 +227,7 @@ class PTYSession:
         # Clear ECHO on the slave fd before forking (pool sessions).
         # The line discipline echo duplicates every stdin write as stdout,
         # which corrupts block output for agent-pool sessions.
-        if not self._echo and self._slave_fd is not None:
+        if not echo and self._slave_fd is not None:
             try:
                 attrs = termios.tcgetattr(self._slave_fd)
                 # ECHO is bit 3 (0x8) in c_lflag
@@ -280,33 +278,26 @@ class PTYSession:
     async def read_chunk(self) -> AsyncIterator[bytes]:
         """Async generator yielding stdout chunks from the master fd.
 
-        Backward-compatible wrapper around the fan-out reader (Plan B: B4).
-        Creates a queue via ``attach()``, yields chunks, and detaches in
-        ``finally``. The first item (``__replay__``) is skipped so callers
-        that already consumed the buffer don't get a duplicate.
+        Thin wrapper around the fan-out reader (Plan B: B4). Creates a queue
+        via ``attach()``, yields chunks, and detaches in ``finally``. The
+        first item (``__replay__``) is skipped so callers that already
+        consumed the buffer don't get a duplicate.
         """
         if self._master_fd is None:
             return
         queue = await self.attach()
-        self._read_queues.add(queue)
         try:
             while True:
                 item = await queue.get()
                 if item is None:
                     break
                 if isinstance(item, tuple) and item[0] == "__replay__":
-                    # Skip replay for backward compat — callers that used
-                    # read_chunk before B4 never got a replay item.
                     continue
                 yield item
-            # Normal EOF: the child has closed the slave, so a blocking reap is
-            # safe and fast. This runs only on the natural-completion path.
             if not self._exited:
                 self._reap(blocking=True)
         finally:
-            self._read_queues.discard(queue)
             self.detach(queue)
-            # Cleanup/abandon path (aclose while still running): never block.
             self._reap(blocking=False)
 
     async def write_stdin(self, data: str) -> None:
@@ -337,14 +328,6 @@ class PTYSession:
                 asyncio.get_running_loop().remove_reader(self._master_fd)
             except (RuntimeError, ValueError):
                 # No running loop (e.g. cleanup after loop close) — nothing to remove
-                pass
-        # Wake any in-flight read_chunk() consumer suspended at queue.get():
-        # with the reader removed the EOF sentinel would otherwise never
-        # arrive, leaving the consumer task frozen forever.
-        for q in list(self._read_queues):
-            try:
-                q.put_nowait(None)
-            except Exception:
                 pass
         # Push EOF to every fanout queue (Plan B: B4).
         self._push_to_all(None)

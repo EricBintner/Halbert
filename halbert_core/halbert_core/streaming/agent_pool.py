@@ -22,6 +22,7 @@ from .pty import PTYSession
 from .session_manager import TerminalSessionManager, AtCapacityError
 from .shell_integration import OSCParser, BlockBoundary
 from .redact import redact
+from .terminal_bridge import publish_terminal_event
 
 logger = logging.getLogger("halbert.streaming.agent_pool")
 
@@ -42,11 +43,17 @@ class TerminalPool:
         Returns None when at cap and all sessions are busy/interactive
         (caller falls back to subprocess).
         """
-        # Look for an existing idle session
+        # Look for an existing idle, non-interactive session
         for sid, session in self._sessions.items():
-            if not self._manager._block_open.get(sid, False) and session.is_alive():
-                self._manager.set_block_open(sid, True)
-                return (sid, session)
+            if self._manager._block_open.get(sid, False):
+                continue
+            if not session.is_alive():
+                continue
+            # Skip interactive sessions (alt-screen or needs-input)
+            if self._manager.is_interactive(sid):
+                continue
+            self._manager.set_block_open(sid, True)
+            return (sid, session)
 
         # Try to spawn a new one
         if len(self._sessions) >= self._cap:
@@ -66,6 +73,13 @@ class TerminalPool:
         if session is None:
             return None
 
+        # Enable job control in the pool shell
+        try:
+            await session.write_stdin("set -m\n")
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
+
         self._sessions[sid] = session
         self._manager.set_block_open(sid, True)
         return (sid, session)
@@ -80,14 +94,29 @@ class TerminalPool:
         """Run a single command as a block in a pool session.
 
         Returns a dict with block_id, session_id, exit_code, output_head,
-        output_tail, duration. Returns None if no session could be acquired.
+        output_tail, duration, started_at, ended_at. Returns None if no
+        session could be acquired.
         """
         acquired = await self.acquire()
         if acquired is None:
             return None
         sid, session = acquired
         block_id = str(uuid.uuid4())
-        started_at = time.monotonic()
+        started_monotonic = time.monotonic()
+        started_at = time.time()
+
+        # Publish terminal_spawn event (Plan B: B6).
+        publish_terminal_event({
+            "kind": "spawn",
+            "terminal_session_id": sid,
+            "command": command,
+            "pid": session.pid or 0,
+            "cwd": cwd,
+            "sandboxed": False,
+            "attach": "ws",
+            "owner": "agent",
+            "block_id": block_id,
+        })
 
         # Build the block command with OSC 133 markers.
         # The command runs in a subshell so `exit` doesn't kill the pool shell.
@@ -112,56 +141,36 @@ class TerminalPool:
         # Write the command
         await session.write_stdin(block_cmd)
 
-        try:
-            async def wait_for_block():
-                nonlocal exit_code, block_closed
-                while not block_closed:
-                    try:
-                        item = await asyncio.wait_for(q.get(), timeout=timeout)
-                    except asyncio.TimeoutError:
+        async def _drain_until_closed():
+            """Consume queue items until the D marker is seen or EOF."""
+            nonlocal exit_code, block_closed
+            while not block_closed:
+                item = await q.get()
+                if item is None:
+                    break
+                if isinstance(item, tuple):
+                    continue  # replay
+                out = parser.feed(item)
+                block_output.extend(out.block_bytes)
+                for b in out.boundaries:
+                    if b.kind == "D" and b.block_id == block_id:
+                        exit_code = b.exit_code
+                        block_closed = True
                         break
-                    if item is None:
-                        break
-                    if isinstance(item, tuple):
-                        continue  # replay
-                    out = parser.feed(item)
-                    block_output.extend(out.block_bytes)
-                    for b in out.boundaries:
-                        if b.kind == "D" and b.block_id == block_id:
-                            exit_code = b.exit_code
-                            block_closed = True
-                            break
 
-            await asyncio.wait_for(wait_for_block(), timeout=timeout + 2.0)
+        try:
+            # Wall-clock timeout for the D marker
+            await asyncio.wait_for(_drain_until_closed(), timeout=timeout)
         except asyncio.TimeoutError:
-            # Command timed out — send Ctrl-C
+            # Command timed out — send ETX (Ctrl-C)
             try:
                 await session.write_stdin("\x03")
-                # Grace-wait 2s for D marker
-                try:
-                    async def grace_wait():
-                        nonlocal exit_code, block_closed
-                        deadline = time.monotonic() + 2.0
-                        while not block_closed and time.monotonic() < deadline:
-                            try:
-                                item = await asyncio.wait_for(q.get(), timeout=deadline - time.monotonic())
-                            except asyncio.TimeoutError:
-                                break
-                            if item is None:
-                                break
-                            if isinstance(item, tuple):
-                                continue
-                            out = parser.feed(item)
-                            block_output.extend(out.block_bytes)
-                            for b in out.boundaries:
-                                if b.kind == "D" and b.block_id == block_id:
-                                    exit_code = b.exit_code
-                                    block_closed = True
-                                    break
-                    await grace_wait()
-                except Exception:
-                    pass
             except Exception:
+                pass
+            # Grace-wait 2s for D marker after ETX
+            try:
+                await asyncio.wait_for(_drain_until_closed(), timeout=2.0)
+            except asyncio.TimeoutError:
                 pass
             if not block_closed:
                 # Kill and evict
@@ -171,7 +180,16 @@ class TerminalPool:
         finally:
             session.detach(q)
 
-        duration = time.monotonic() - started_at
+        ended_at = time.time()
+        duration = time.monotonic() - started_monotonic
+
+        # Publish terminal_complete event (Plan B: B6).
+        publish_terminal_event({
+            "kind": "complete",
+            "terminal_session_id": sid,
+            "exit_code": exit_code if exit_code is not None else -1,
+            "block_id": block_id,
+        })
 
         # Build output head (first 20 lines) and tail (last 4 KiB)
         output_bytes = bytes(block_output)
@@ -194,6 +212,8 @@ class TerminalPool:
             "output_head": head,
             "output_tail": tail,
             "duration": duration,
+            "started_at": started_at,
+            "ended_at": ended_at,
             "redacted": head_redacted or tail_redacted,
         }
 

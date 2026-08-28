@@ -58,6 +58,7 @@ class TestTerminalBlock:
             block_id="blk-1",
             terminal_session_id="tsess-1",
             command="ls -la",
+            owner="agent",
         )
         assert ev.type == "terminal_block"
         assert ev.data["block_id"] == "blk-1"
@@ -81,6 +82,7 @@ class TestTerminalBlock:
             block_id="blk-1",
             terminal_session_id="tsess-1",
             command="vim",
+            owner="agent",
             interactive=True,
         )
         assert ev.data["interactive"] is True
@@ -91,6 +93,7 @@ class TestTerminalBlock:
             block_id="blk-1",
             terminal_session_id="tsess-1",
             command="long-build",
+            owner="agent",
             promote=True,
         )
         assert ev.type == "terminal_block_promote"

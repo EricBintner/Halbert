@@ -55,6 +55,15 @@ describe('TerminalTile replay on mount', () => {
       unobserve() {}
       disconnect() {}
     })
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(public cb: (entries: { isIntersecting: boolean }[]) => void) {}
+      observe() {
+        // Immediately report as intersecting so the mount guard fires.
+        this.cb([{ isIntersecting: true }])
+      }
+      unobserve() {}
+      disconnect() {}
+    })
   })
 
   afterEach(() => {
@@ -69,27 +78,30 @@ describe('TerminalTile replay on mount', () => {
     render(<Tile id="t1" />)
 
     await waitFor(() => expect(instances).toHaveLength(1))
-    await waitFor(() => expect(instances[0].writes).toEqual(['old output']))
+    // reset() is called first (clears any stale state on re-mount), then the
+    // replay buffer is written.
+    await waitFor(() => expect(instances[0].writes).toEqual(['<reset>', 'old output']))
   })
 
   it('then writes only the delta, never the buffer twice', async () => {
     store.adopt('t1', { command: 'journalctl -f', pid: 3 })
     store.appendOutput('t1', 'old output')
     render(<Tile id="t1" />)
-    await waitFor(() => expect(instances[0]?.writes).toEqual(['old output']))
+    await waitFor(() => expect(instances[0]?.writes).toEqual(['<reset>', 'old output']))
 
     act(() => {
       store.appendOutput('t1', ' more')
     })
 
-    await waitFor(() => expect(instances[0].writes).toEqual(['old output', ' more']))
+    await waitFor(() => expect(instances[0].writes).toEqual(['<reset>', 'old output', ' more']))
   })
 
   it('mounts an empty session without writing anything', async () => {
     store.adopt('t2', { command: 'sleep 5', pid: 4 })
     render(<Tile id="t2" />)
     await waitFor(() => expect(instances).toHaveLength(1))
-    expect(instances[0].writes).toEqual([])
+    // reset() is always called; no output to replay so that's the only write.
+    expect(instances[0].writes).toEqual(['<reset>'])
   })
 })
 
@@ -99,6 +111,14 @@ describe('TerminalTile block rendering (Plan B)', () => {
     instances.length = 0
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
+      unobserve() {}
+      disconnect() {}
+    })
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(public cb: (entries: { isIntersecting: boolean }[]) => void) {}
+      observe() {
+        this.cb([{ isIntersecting: true }])
+      }
       unobserve() {}
       disconnect() {}
     })

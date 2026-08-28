@@ -9,7 +9,9 @@
 
 import { useState, type ReactNode } from 'react';
 import { type ToolExecution } from '../../hooks/useAgentStream';
+import { useTerminalSessions } from '../../hooks/useTerminalSessions';
 import { StatusLight, type StatusLightState } from './StatusLight';
+import { TerminalTile } from './TerminalTile';
 
 interface ToolExecutionCardProps {
   execution: ToolExecution;
@@ -22,6 +24,10 @@ interface ToolExecutionCardProps {
   blockExitCode?: number | null;
   /** Plan B: block duration in seconds. */
   blockDuration?: number;
+  /** Plan B: frozen head of block output (first N lines). */
+  outputHead?: string;
+  /** Plan B: frozen tail of block output (last N lines). */
+  outputTail?: string;
 }
 
 const STATUS_CONFIG = {
@@ -48,7 +54,7 @@ const STATUS_CONFIG = {
   },
 };
 
-export function ToolExecutionCard({ execution, onRetry, blockId, blockOutput, blockExitCode, blockDuration }: ToolExecutionCardProps): ReactNode {
+export function ToolExecutionCard({ execution, onRetry, blockId, blockOutput, blockExitCode, blockDuration, outputHead, outputTail }: ToolExecutionCardProps): ReactNode {
   const [isExpanded, setIsExpanded] = useState(false);
   const config = STATUS_CONFIG[execution.status];
 
@@ -65,6 +71,20 @@ export function ToolExecutionCard({ execution, onRetry, blockId, blockOutput, bl
 
   // Plan B: one-line result for short completed blocks
   const isShortBlock = isCommandBlock && blockDuration !== undefined && blockDuration < 2 && blockOutput !== undefined;
+
+  // Plan B: live long-running blocks render a live xterm via TerminalTile.
+  // Look up the terminal session hosting this block by blockId.
+  const { sessions } = useTerminalSessions();
+  const liveSession = isCommandBlock && execution.status === 'running'
+    ? sessions.find((s) => s.blockId === blockId)
+    : undefined;
+  const isLiveBlock = !!liveSession;
+
+  // Plan B: frozen block output — prefer output_head/tail over the whole blob.
+  const hasHeadTail = outputHead !== undefined && outputTail !== undefined;
+  const frozenOutput = hasHeadTail
+    ? `${outputHead}${outputHead && outputTail ? '\n\u2026\n' : ''}${outputTail}`
+    : blockOutput;
 
   return (
     <div
@@ -113,12 +133,22 @@ export function ToolExecutionCard({ execution, onRetry, blockId, blockOutput, bl
             </pre>
           </div>
 
-          {/* Plan B: block output (frozen <pre>) — replaces the result <pre> */}
-          {isCommandBlock && blockOutput !== undefined && (
+          {/* Plan B: live long-running block — render a live xterm via TerminalTile */}
+          {isLiveBlock && liveSession && (
+            <TerminalTile
+              session={liveSession}
+              blockId={blockId}
+              owner="agent"
+            />
+          )}
+
+          {/* Plan B: block output (frozen <pre>) — replaces the result <pre>.
+              Uses output_head/tail when available instead of the whole blob. */}
+          {isCommandBlock && !isLiveBlock && blockOutput !== undefined && (
             <div>
               <div className="text-[10px] font-medium text-muted-foreground mb-1">Block output</div>
               <pre className="text-[10px] bg-muted rounded p-1.5 overflow-x-auto border max-h-48">
-                {blockOutput}
+                {frozenOutput}
               </pre>
             </div>
           )}

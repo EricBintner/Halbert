@@ -394,17 +394,17 @@ class SqliteConversationStore:
                         session_id  TEXT NOT NULL,
                         thread_id   TEXT,
                         turn_id     TEXT,
-                        command     TEXT,
+                        command     TEXT NOT NULL,
                         cwd         TEXT,
-                        owner       TEXT,
+                        owner       TEXT NOT NULL DEFAULT 'agent',
                         interactive INTEGER NOT NULL DEFAULT 0,
                         remote      INTEGER NOT NULL DEFAULT 0,
                         redacted    INTEGER NOT NULL DEFAULT 0,
-                        started_at  REAL,
+                        started_at  REAL NOT NULL,
                         ended_at    REAL,
                         exit_code   INTEGER,
-                        output_head TEXT,
-                        output_tail TEXT
+                        output_head TEXT NOT NULL DEFAULT '',
+                        output_tail TEXT NOT NULL DEFAULT ''
                     )"""
                 )
                 cur.execute(
@@ -422,12 +422,12 @@ class SqliteConversationStore:
                 cur.execute(
                     """CREATE TABLE IF NOT EXISTS terminal_sessions (
                         session_id  TEXT PRIMARY KEY,
-                        kind        TEXT NOT NULL,
-                        owner       TEXT NOT NULL,
-                        watched     INTEGER NOT NULL DEFAULT 0,
-                        spawned_at  REAL,
+                        kind        TEXT NOT NULL DEFAULT 'oneshot',
+                        owner       TEXT NOT NULL DEFAULT 'agent',
+                        watched     INTEGER NOT NULL DEFAULT 1,
+                        spawned_at  REAL NOT NULL,
                         ended_at    REAL,
-                        last_state  TEXT
+                        last_state  TEXT NOT NULL DEFAULT 'running'
                     )"""
                 )
                 self._add_missing_columns(cur, "conversations", _THREAD_COLUMNS)
@@ -1918,25 +1918,47 @@ class SqliteConversationStore:
             logger.warning(f"insert_terminal_block failed: {e}")
             return False
 
+    _TERMINAL_BLOCK_UPDATABLE = frozenset(
+        {"ended_at", "exit_code", "output_head", "output_tail",
+         "interactive", "remote", "redacted"}
+    )
+
     def update_terminal_block(self, block_id: str, **fields: Any) -> bool:
         """Update one or more columns on a terminal block. Returns False if
-        the block does not exist or no fields were given."""
+        the block does not exist or no fields were given. ``last_state`` is
+        special-cased: it updates the parent terminal_session's last_state
+        and is a no-op if the session has already ended."""
         if self._conn is None:
             return False
         if not fields:
             return False
-        valid = {k: v for k, v in fields.items() if k in self._TERMINAL_BLOCK_COLUMNS}
-        if not valid:
-            return False
+        # last_state is routed to the session row, not the block row.
+        last_state = fields.pop("last_state", None)
+        valid = {k: v for k, v in fields.items()
+                 if k in self._TERMINAL_BLOCK_UPDATABLE}
         try:
             with self._lock, self._conn:
-                set_clause = ", ".join(f"{k} = ?" for k in valid)
-                row = self._conn.execute(
-                    f"UPDATE terminal_blocks SET {set_clause} "
-                    f"WHERE block_id = ?",
-                    (*valid.values(), block_id),
-                )
-                return row.rowcount > 0
+                updated = False
+                if valid:
+                    set_clause = ", ".join(f"{k} = ?" for k in valid)
+                    row = self._conn.execute(
+                        f"UPDATE terminal_blocks SET {set_clause} "
+                        f"WHERE block_id = ?",
+                        (*valid.values(), block_id),
+                    )
+                    updated = row.rowcount > 0
+                if last_state is not None:
+                    # Update the parent session's last_state unless it has
+                    # already ended (no-op if session ended).
+                    self._conn.execute(
+                        "UPDATE terminal_sessions SET last_state = ? "
+                        "WHERE session_id = (SELECT session_id FROM "
+                        "terminal_blocks WHERE block_id = ?) "
+                        "AND last_state NOT IN ('exited', 'killed', 'lost')",
+                        (last_state, block_id),
+                    )
+                    updated = True
+                return updated
         except Exception as e:
             logger.warning(f"update_terminal_block failed: {e}")
             return False
@@ -2062,8 +2084,9 @@ class SqliteConversationStore:
 
     def list_terminal_sessions(
         self,
+        *,
         kind: Optional[str] = None,
-        limit: int = 200,
+        limit: int = 50,
     ) -> List[Dict[str, Any]]:
         """List terminal sessions, newest-first by spawned_at."""
         if self._conn is None:

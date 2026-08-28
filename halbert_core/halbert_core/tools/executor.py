@@ -465,7 +465,7 @@ class ToolExecutor:
         command = args["command"]
         timeout = args.get("timeout", self.DEFAULT_TIMEOUT)
         cwd = args.get("cwd")
-        background = args.get("background", False)  # Plan C; Plan B accepts but ignores
+        # background is accepted but ignored (Plan C).
 
         # Expand user paths
         if cwd:
@@ -477,12 +477,35 @@ class ToolExecutor:
         pool_wanted = terminal_pool_wanted()
 
         # Plan B: try the pool first (only when streaming + pool enabled)
-        if pool_wanted and not background:
+        if pool_wanted:
             try:
                 from halbert_core.streaming.agent_pool import get_terminal_pool
                 pool = get_terminal_pool()
                 result = await pool.run_block(command, cwd=cwd, timeout=timeout)
                 if result is not None:
+                    # Store the terminal_block row
+                    try:
+                        from halbert_core.agents.threads import get_thread_manager
+                        store = get_thread_manager().store
+                        store.insert_terminal_block({
+                            "block_id": result["block_id"],
+                            "session_id": result["session_id"],
+                            "thread_id": None,
+                            "turn_id": None,
+                            "command": command,
+                            "cwd": cwd,
+                            "owner": "agent",
+                            "interactive": 0,
+                            "remote": 0,
+                            "redacted": 1 if result.get("redacted") else 0,
+                            "started_at": result.get("started_at", 0.0),
+                            "ended_at": result.get("ended_at", 0.0),
+                            "exit_code": result["exit_code"],
+                            "output_head": result["output_head"],
+                            "output_tail": result["output_tail"],
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to store terminal_block: {e}")
                     return self._format_block_result(result)
             except Exception as e:
                 logger.warning(f"Pool path failed, falling back to subprocess: {e}")

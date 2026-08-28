@@ -64,7 +64,7 @@ def _lock_free_to_another_thread(lock) -> bool:
 def _turn(tm, text, session="s", **end):
     turn = tm.begin_turn(text, analyze_message(text), session)
     tm.end_turn(turn, assistant_text=end.get("assistant", "ok"), blocks=end.get("blocks", []),
-                terminal_session_ids=end.get("terminals", []), diff_proposals=end.get("diffs", []))
+                terminal_block_ids=end.get("terminals", []), diff_proposals=end.get("diffs", []))
     return turn
 
 
@@ -340,7 +340,7 @@ class TestHistoryWindow:
             _turn(tm, f"step {i} of the samba setup", assistant=f"did step {i}")
         turn = tm.begin_turn("continue", analyze_message("continue"), "s")
         assert len(turn.history) == 12 and turn.history[0]["role"] == "user"
-        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_session_ids=[],
+        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_block_ids=[],
                     diff_proposals=[])
         turn2 = tm.begin_turn("continue", analyze_message("continue"), "s")
         assert len(turn2.history) == 13 and turn2.history[0]["role"] == "system"
@@ -671,7 +671,7 @@ class TestDegradedStore:
         turn = tm.begin_turn(text, analyze_message(text), "s")
         assert turn.user_message_id is None and turn.history == [] and turn.hint == ""
         assert turn.recalled == [] and turn.decision.action == "open_new"
-        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_session_ids=[], diff_proposals=[])
+        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_block_ids=[], diff_proposals=[])
         assert tm.current() is None and tm.mark_interrupted() == 0
 
     def test_decide_failure_stays_on_the_open_thread(self, tm, monkeypatch):
@@ -715,14 +715,14 @@ class TestDegradedStore:
         turn = tm.begin_turn(text, analyze_message(text), "s")
         assert turn.thread_id == "ghost" and turn.user_message_id is None
         assert turn.history == [] and turn.hint == "" and turn.recalled == []
-        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_session_ids=[], diff_proposals=[])
+        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_block_ids=[], diff_proposals=[])
         assert tm.store.get_thread("ghost") is None
 
     def test_end_turn_ignores_a_vanished_thread(self, tm):
         text = "add a samba share for the media folder"
         turn = tm.begin_turn(text, analyze_message(text), "s")
         assert tm.store.delete(turn.thread_id) is True
-        tm.end_turn(turn, assistant_text="Added it.", blocks=[], terminal_session_ids=[],
+        tm.end_turn(turn, assistant_text="Added it.", blocks=[], terminal_block_ids=[],
                     diff_proposals=[])
         assert tm.store.search_receipts("samba") == []
 
@@ -774,7 +774,7 @@ class TestRecallEdges:
     def test_recall_is_persisted_once(self, tm):
         t1, t2, text = self._closed_samba(tm)
         turn3 = tm.begin_turn(text, analyze_message(text), "s3")
-        tm.end_turn(turn3, assistant_text="ok", blocks=[], terminal_session_ids=[],
+        tm.end_turn(turn3, assistant_text="ok", blocks=[], terminal_block_ids=[],
                     diff_proposals=[])
         turn4 = tm.begin_turn(text, analyze_message(text), "s4")
         assert [r["thread_id"] for r in turn4.recalled] == [t1.thread_id]
@@ -788,7 +788,7 @@ class TestNewResumeTick:
         text = "and now something else"
         turn = tm.begin_turn(text, analyze_message(text), "s2")
         new_id = tm.new_thread("Other thing", "model switched", from_thread_id=turn.thread_id)
-        tm.end_turn(turn, assistant_text="", blocks=[], terminal_session_ids=[], diff_proposals=[],
+        tm.end_turn(turn, assistant_text="", blocks=[], terminal_block_ids=[], diff_proposals=[],
                     status="cancelled", thread_id_override=new_id)
         assert tm.store.list_messages(t1.thread_id)[-1]["role"] == "assistant"
         moved = tm.store.list_messages(new_id)
@@ -1126,7 +1126,7 @@ class TestRetractionNotes:
         assert turn4.notes == ["admin retracted recall of 'Add samba'"]
         assert "\nNote: admin retracted recall of 'Add samba'\n" in turn4.hint and "Pulled in" not in turn4.hint
         assert turn4.history[0]["role"] == "user"  # hidden rows never enter the history
-        tm.end_turn(turn4, assistant_text="ok", blocks=[], terminal_session_ids=[], diff_proposals=[])
+        tm.end_turn(turn4, assistant_text="ok", blocks=[], terminal_block_ids=[], diff_proposals=[])
         turn5 = tm.begin_turn("continue", analyze_message("continue"), "s5")
         assert turn5.notes == [] and "Note:" not in turn5.hint
 

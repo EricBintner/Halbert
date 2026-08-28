@@ -26,11 +26,11 @@ PATTERNS: List[Tuple[re.Pattern, str]] = [
         ),
         r"\1\2[redacted]",
     ),
-    # -p<token>  (preceded by start or whitespace; token starts with
-    # uppercase or digit so we don't match flag names like -proxy)
+    # -p<token>  (preceded by start or whitespace; preserve the space.
+    # Negative lookahead on lowercase avoids matching flag names like -proxy)
     (
-        re.compile(r"(?:^|\s)-p(?=[A-Z0-9])\S+", re.MULTILINE),
-        "-p[redacted]",
+        re.compile(r"(^|\s)(-p)(?![a-z])\S+", re.MULTILINE),
+        r"\1\2[redacted]",
     ),
     # Authorization: <scheme> <token>
     (
@@ -78,9 +78,9 @@ def redact(text: str) -> Tuple[str, bool]:
     any pattern matched. Never raises; on internal error returns
     ``(text, False)``.
     """
-    if not isinstance(text, str):
-        return (str(text) if text is not None else "", False)
     try:
+        if not isinstance(text, str):
+            return (str(text) if text is not None else "", False)
         was_redacted = False
         result = text
         for pattern, replacement in PATTERNS:

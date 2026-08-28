@@ -112,6 +112,11 @@ class StageRequest(BaseModel):
     command: str
 
 
+class WatchedRequest(BaseModel):
+    """Plan B: B8 — Toggle watched status of a user shell session."""
+    watched: bool
+
+
 # Blocked commands - NEVER execute
 BLOCKED_COMMANDS = {
     'rm -rf /',
@@ -400,6 +405,31 @@ if FASTAPI_AVAILABLE:
         await session.write_stdin(request.command)
         manager.touch(session_id)
         return {"ok": True, "staged": request.command}
+
+    # ------------------------------------------------------------------
+    # Watched toggle endpoint (Plan B: B8)
+    # ------------------------------------------------------------------
+
+    @router.post("/sessions/{session_id}/watched")
+    async def set_watched(session_id: str, request: WatchedRequest):
+        """Toggle the watched status of a user shell session.
+
+        When unwatched, block closes still store the block row (for xterm
+        replay) but do not insert messages rows or hint entries.
+        """
+        manager = get_terminal_manager()
+        session = manager.get(session_id)
+        if session is None:
+            raise HTTPException(404, "Session not found")
+        manager.set_watched(session_id, request.watched)
+        # Persist to the terminal_sessions table
+        try:
+            from halbert_core.agents.threads import get_thread_manager
+            store = get_thread_manager().store
+            store.update_terminal_session(session_id, watched=1 if request.watched else 0)
+        except Exception:
+            pass
+        return {"ok": True, "watched": request.watched}
 
     # ------------------------------------------------------------------
     # Existing validation/safety/history endpoints (unchanged behavior)

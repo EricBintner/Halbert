@@ -315,8 +315,16 @@ class ThreadManager:
         if not history:
             history = self._history(thread)
         notes = self._pending_notes(thread_id)
+        # Build terminal hint from watched shell blocks (Plan B: B22)
+        terminal_hint = None
         try:
-            hint = build_hint(thread, decision, recalled, [], now=now, notes=notes)
+            from halbert_core.streaming.watched_shell import WatchedShellProcessor
+            processor = WatchedShellProcessor(self.store)
+            terminal_hint = processor.build_hint_text(thread_id)
+        except Exception:
+            pass
+        try:
+            hint = build_hint(thread, decision, recalled, [], now=now, notes=notes, terminal_hint=terminal_hint)
         except Exception as e:
             logger.warning(f"hint builder failed: {e}")
             hint = ""
@@ -348,7 +356,7 @@ class ThreadManager:
         *,
         assistant_text: str,
         blocks: list,
-        terminal_session_ids: List[str],
+        terminal_block_ids: List[str],
         diff_proposals: list,
         status: str = "complete",
         thread_id_override: Optional[str] = None,
@@ -361,12 +369,12 @@ class ThreadManager:
             if thread_id != turn.thread_id:
                 fields["thread_id"] = thread_id
             self.store.update_message(turn.user_message_id, **fields)
-        if assistant_text or blocks or diff_proposals or terminal_session_ids:
+        if assistant_text or blocks or diff_proposals or terminal_block_ids:
             self.store.append_message(
                 thread_id, "assistant", assistant_text or "", origin="assistant",
                 turn_id=turn.turn_id, session_id=turn.session_id, status=status,
                 blocks=list(blocks or []),
-                terminal_block_ids=list(terminal_session_ids or []),
+                terminal_block_ids=list(terminal_block_ids or []),
                 diff_proposals=list(diff_proposals or []),
                 timestamp=now,
             )

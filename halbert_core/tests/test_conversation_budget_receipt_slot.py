@@ -340,7 +340,7 @@ class TestProducerContract:
                 turn = manager.begin_turn(text, analyze_message(text), "s")
                 manager.end_turn(
                     turn, assistant_text=f"did step {i}", blocks=[],
-                    terminal_session_ids=[], diff_proposals=[],
+                    terminal_block_ids=[], diff_proposals=[],
                 )
             history = manager.begin_turn(
                 "continue", analyze_message("continue"), "s"

@@ -23,7 +23,19 @@ export interface TaskCardData {
   exitCode?: number | null;
   blockId?: string;
   threadId: string;
+  /** Timestamp (ms epoch) when the task moved to a finished state. */
+  finishedAt?: number;
+  /** Alias for finishedAt; used as a fallback when finishedAt is absent. */
+  endedAt?: number;
 }
+
+/**
+ * MAX_VISIBLE governs how many live xterms are mounted simultaneously.
+ * TaskCard does not mount xterms directly (the terminal dock does), so this
+ * constant is informational here. If TaskCard ever mounts xterms internally,
+ * respect this limit.
+ */
+export const MAX_VISIBLE = 3;
 
 interface TaskCardProps extends TaskCardData {
   onJumpToTurn?: (turnId: string) => void;
@@ -38,9 +50,11 @@ export function TaskCard({
   state,
   elapsedSeconds,
   exitCode,
+  blockId,
   threadId,
   onJumpToTurn,
   onStop,
+  onCopy,
 }: TaskCardProps): ReactNode {
   const isRunning = state === 'running' || state === 'needs_attention';
   return (
@@ -48,6 +62,7 @@ export function TaskCard({
       className="rounded-lg border border-hairline bg-surface p-2 space-y-1"
       data-task-card={taskId}
       data-task-state={state}
+      data-block-id={blockId}
     >
       <div className="flex items-center gap-2">
         <StatusLight state={state} elapsedSeconds={elapsedSeconds} exitCode={exitCode} size="sm" />
@@ -61,6 +76,16 @@ export function TaskCard({
             aria-label="Stop task"
           >
             stop
+          </button>
+        )}
+        {onCopy && (
+          <button
+            onClick={() => onCopy(title)}
+            className="text-[10px] text-muted-foreground hover:text-text"
+            aria-label="Copy output"
+            title="Copy output"
+          >
+            copy
           </button>
         )}
         {onJumpToTurn && (
@@ -86,19 +111,31 @@ interface TasksColumnProps {
   finishedTasks: TaskCardData[];
   onJumpToTurn?: (turnId: string) => void;
   onStop?: (taskId: string) => void;
+  onCopy?: (output: string) => void;
   onClear?: () => void;
   yourShell?: ReactNode;
 }
+
+/** Finished cards collapse (are removed) after 10 minutes. */
+const FINISHED_TTL_MS = 10 * 60 * 1000;
 
 export function TasksColumn({
   runningTasks,
   finishedTasks,
   onJumpToTurn,
   onStop,
+  onCopy,
   onClear,
   yourShell,
 }: TasksColumnProps): ReactNode {
   const [finishedOpen, setFinishedOpen] = useState(false);
+
+  // Filter out finished cards older than 10 minutes.
+  const visibleFinished = finishedTasks.filter((task) => {
+    const ts = task.finishedAt ?? task.endedAt;
+    if (ts === undefined) return true;
+    return Date.now() - ts <= FINISHED_TTL_MS;
+  });
 
   return (
     <div
@@ -121,24 +158,26 @@ export function TasksColumn({
               {...task}
               onJumpToTurn={onJumpToTurn}
               onStop={onStop}
+              onCopy={onCopy}
             />
           ))
         )}
       </div>
 
       {/* Finished section — collapsible */}
-      {finishedTasks.length > 0 && (
+      {visibleFinished.length > 0 && (
         <details open={finishedOpen} onToggle={(e) => setFinishedOpen(e.currentTarget.open)}>
           <summary className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide cursor-pointer">
-            Finished {finishedTasks.length} {finishedOpen ? '\u203A' : '\u2039'}
+            Finished {visibleFinished.length} {finishedOpen ? '\u203A' : '\u2039'}
           </summary>
           {finishedOpen && (
             <div className="space-y-1 mt-1">
-              {finishedTasks.map((task) => (
+              {visibleFinished.map((task) => (
                 <TaskCard
                   key={task.taskId}
                   {...task}
                   onJumpToTurn={onJumpToTurn}
+                  onCopy={onCopy}
                 />
               ))}
             </div>
@@ -147,7 +186,7 @@ export function TasksColumn({
       )}
 
       {/* Clear button */}
-      {finishedTasks.length > 0 && onClear && (
+      {visibleFinished.length > 0 && onClear && (
         <button
           onClick={onClear}
           className="text-[10px] text-muted-foreground hover:text-text text-left"

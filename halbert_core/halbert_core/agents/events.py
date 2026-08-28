@@ -573,7 +573,7 @@ class StreamEvent:
         block_id: str,
         terminal_session_id: str,
         command: str,
-        owner: str = "agent",
+        owner: str,
         interactive: bool = False,
         promote: bool = False,
     ) -> 'StreamEvent':

@@ -199,8 +199,8 @@ async def test_echo_false_suppresses_line_discipline_echo():
     Pool sessions (agent-pool) use echo=False so block output isn't
     corrupted by the line discipline duplicating stdin as stdout.
     """
-    session = PTYSession("cat", echo=False)
-    await session.spawn()
+    session = PTYSession("cat")
+    await session.spawn(echo=False)
     await asyncio.sleep(0.2)  # let cat start
 
     await session.write_stdin("hello\n")
@@ -217,8 +217,8 @@ async def test_echo_false_suppresses_line_discipline_echo():
 @pytest.mark.asyncio
 async def test_echo_true_default_echoes_stdin():
     """With echo=True (default), stdin writes appear as stdout (line echo)."""
-    session = PTYSession("cat", echo=True)
-    await session.spawn()
+    session = PTYSession("cat")
+    await session.spawn(echo=True)
     await asyncio.sleep(0.2)
 
     await session.write_stdin("world\n")

@@ -186,7 +186,7 @@ async def test_buffer_independent_of_queue_overflow():
     """A full queue doesn't lose scrollback data."""
     session = PTYSession("printf 'overflow test\\n'")
     await session.spawn()
-    q = await session.attach(maxsize=1)  # tiny queue
+    q = await session.attach(_maxsize=1)  # tiny queue
     await asyncio.wait_for(q.get(), timeout=3.0)  # replay
 
     # Let output flow; queue may overflow

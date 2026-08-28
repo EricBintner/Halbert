@@ -96,8 +96,8 @@ class TerminalSessionManager:
                 f"Terminal session kind '{kind}' at capacity ({kind_cap})"
             )
         session_id = str(uuid.uuid4())
-        session = PTYSession(command, cwd=cwd, env=env, cols=cols, rows=rows, echo=echo)
-        await session.spawn()
+        session = PTYSession(command, cwd=cwd, env=env, cols=cols, rows=rows)
+        await session.spawn(echo=echo)
         self._sessions[session_id] = session
         self._last_activity[session_id] = time.monotonic()
         self._kinds[session_id] = kind
@@ -151,6 +151,11 @@ class TerminalSessionManager:
         if session_id in self._block_open:
             self._block_open[session_id] = is_open
 
+    def set_watched(self, session_id: str, watched: bool) -> None:
+        """Toggle the watched status of a user shell session."""
+        if session_id in self._watched:
+            self._watched[session_id] = watched
+
     # ------------------------------------------------------------------
     # Parser state for stage endpoint (Plan B: B9)
     # ------------------------------------------------------------------
@@ -168,10 +173,18 @@ class TerminalSessionManager:
             return False
         return state.get("at_prompt", False)
 
-    def update_parser_state(self, session_id: str, *, at_prompt: bool) -> None:
+    def is_interactive(self, session_id: str) -> bool:
+        """True when the session is in an interactive state (alt-screen
+        or needs-input). Used by the pool to skip interactive sessions."""
+        state = self._parser_states.get(session_id)
+        if state is None:
+            return False
+        return state.get("interactive", False)
+
+    def update_parser_state(self, session_id: str, *, at_prompt: bool = False, interactive: bool = False) -> None:
         """Update the parser state for a session (called by the reader loop)."""
         if session_id in self._sessions:
-            self._parser_states[session_id] = {"at_prompt": at_prompt}
+            self._parser_states[session_id] = {"at_prompt": at_prompt, "interactive": interactive}
 
     def kill(self, session_id: str) -> bool:
         """Kill and remove a session. Returns True if it existed."""

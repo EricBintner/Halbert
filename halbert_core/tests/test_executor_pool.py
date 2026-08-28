@@ -184,6 +184,6 @@ class TestRunCommandPoolPath:
                 "background": True,
             })
 
-        # Pool not used when background=True
-        mock_pool.run_block.assert_not_called()
+        # background kwarg is accepted but ignored (Plan C) — pool still used
+        mock_pool.run_block.assert_called_once()
         assert "bg" in result
