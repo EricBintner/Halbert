@@ -92,6 +92,21 @@ _COMMON_EXCLUDE_GLOBS = [
     "**/letsencrypt/**",
     "**/shadow",
     "**/gshadow",
+    # Key material — defence in depth.  Most of these match no include glob
+    # today (the include allowlist is the primary gate), but the protection
+    # must not depend on that list never widening.  Task 1 lifts redaction
+    # from the staging path, which removes the PEM_RE backstop inside
+    # redact_text(); these excludes replace it at the staging gate.
+    "**/*.key",
+    "**/*.pem",
+    "**/*.p12",
+    "**/*.pfx",
+    "**/id_rsa*",
+    "**/id_ecdsa*",
+    "**/id_ed25519*",
+    "**/*.kdbx",
+    "**/.netrc",
+    "**/authorized_keys",
 ]
 
 
