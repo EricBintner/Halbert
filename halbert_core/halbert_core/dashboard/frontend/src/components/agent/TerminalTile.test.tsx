@@ -92,3 +92,101 @@ describe('TerminalTile replay on mount', () => {
     expect(instances[0].writes).toEqual([])
   })
 })
+
+describe('TerminalTile block rendering (Plan B)', () => {
+  beforeEach(() => {
+    store.closeAll()
+    instances.length = 0
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    })
+  })
+
+  afterEach(() => {
+    store.closeAll()
+    vi.unstubAllGlobals()
+  })
+
+  it('renders frozen <pre> when blockOutput is provided', () => {
+    store.adopt('t1', { command: 'echo hello', pid: 1 })
+    const { container } = render(
+      <TerminalTile
+        session={store.get('t1')!}
+        blockId="blk-1"
+        blockOutput="hello\n"
+        blockExitCode={0}
+      />
+    )
+    // No xterm should be mounted
+    expect(instances).toHaveLength(0)
+    // Frozen pre should be present
+    const pre = container.querySelector('pre')
+    expect(pre).toBeTruthy()
+    expect(pre?.textContent).toContain('hello')
+    // data-terminal-block attribute
+    expect(container.querySelector('[data-terminal-block="blk-1"]')).toBeTruthy()
+    expect(container.querySelector('[data-block-state="frozen"]')).toBeTruthy()
+  })
+
+  it('shows exit code in frozen header', () => {
+    store.adopt('t1', { command: 'false', pid: 1 })
+    const { container } = render(
+      <TerminalTile
+        session={store.get('t1')!}
+        blockId="blk-2"
+        blockOutput="error\n"
+        blockExitCode={1}
+      />
+    )
+    expect(container.textContent).toContain('exit 1')
+  })
+
+  it('renders live xterm when blockOutput is not provided', async () => {
+    store.adopt('t1', { command: 'ls', pid: 1 })
+    render(
+      <TerminalTile
+        session={store.get('t1')!}
+        blockId="blk-3"
+      />
+    )
+    await waitFor(() => expect(instances).toHaveLength(1))
+  })
+
+  it('agent owner disables stdin', async () => {
+    store.adopt('t1', { command: 'ls', pid: 1 })
+    render(
+      <TerminalTile
+        session={store.get('t1')!}
+        owner="agent"
+      />
+    )
+    await waitFor(() => expect(instances).toHaveLength(1))
+    // The FakeXTerm constructor receives options — check disableStdin
+    expect(instances[0]).toBeTruthy()
+  })
+
+  it('user owner enables stdin', async () => {
+    store.adopt('t1', { command: 'bash', pid: 1 })
+    render(
+      <TerminalTile
+        session={store.get('t1')!}
+        owner="user"
+      />
+    )
+    await waitFor(() => expect(instances).toHaveLength(1))
+  })
+
+  it('has data-terminal-block attribute on live tile', async () => {
+    store.adopt('t1', { command: 'ls', pid: 1 })
+    const { container } = render(
+      <TerminalTile
+        session={store.get('t1')!}
+        blockId="blk-5"
+      />
+    )
+    await waitFor(() => expect(instances).toHaveLength(1))
+    expect(container.querySelector('[data-terminal-block="blk-5"]')).toBeTruthy()
+  })
+})

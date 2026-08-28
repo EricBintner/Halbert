@@ -26,6 +26,15 @@ import { xtermTheme, terminalFontReady } from '../../lib/xtermTheme';
 interface TerminalTileProps {
   session: TerminalSession;
   onTerminated?: (id: string) => void;
+  /** Plan B: render for a specific block. When the block is complete,
+   * show a frozen <pre> from output_head/tail and dispose the xterm. */
+  blockId?: string;
+  /** Plan B: block output for frozen rendering (when block is complete). */
+  blockOutput?: string;
+  /** Plan B: block exit code (when block is complete). */
+  blockExitCode?: number | null;
+  /** Plan B: 'agent' (default) or 'user'. Agent tiles disableStdin. */
+  owner?: 'agent' | 'user';
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -41,9 +50,12 @@ function formatElapsed(startedAt: number, now: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
-export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
+export function TerminalTile({ session, onTerminated, blockId, blockOutput, blockExitCode, owner = 'agent' }: TerminalTileProps) {
   const { sendInput, resize, kill, setVisible } = useTerminalSessions();
-  const interactive = session.transport === 'ws';
+  // Agent-owned tiles are read-only; user tiles allow input.
+  const interactive = session.transport === 'ws' && owner === 'user';
+  // Plan B: when blockOutput is provided, the block is complete — render frozen.
+  const isFrozen = blockOutput !== undefined;
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -185,8 +197,42 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
 
   const statusStyle = STATUS_STYLES[session.status] ?? STATUS_STYLES.idle;
 
+  // Plan B: frozen block rendering — no xterm, no socket, just <pre>
+  if (isFrozen) {
+    return (
+      <div
+        className="my-2 rounded-lg border border-border/60 bg-canvas-subtle overflow-hidden shadow-lg"
+        data-terminal-block={blockId}
+        data-block-state="frozen"
+      >
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-background/80 border-b border-border/60 text-xs">
+          <span className={`px-1.5 py-0.5 rounded border ${statusStyle} font-medium`}>
+            {blockExitCode != null ? `■ exit ${blockExitCode}` : '■ done'}
+          </span>
+          <span className="text-muted-foreground font-mono truncate flex-1" title={session.command}>
+            $ {session.command}
+          </span>
+          <button
+            onClick={handleCopy}
+            title="Copy output"
+            className="px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground hover:text-foreground"
+          >
+            {copied ? '✓' : '⧉'}
+          </button>
+        </div>
+        <pre className="w-full max-h-64 overflow-auto px-3 py-2 text-xs font-mono text-text whitespace-pre-wrap break-all">
+          {blockOutput}
+        </pre>
+      </div>
+    );
+  }
+
   return (
-    <div className="my-2 rounded-lg border border-border/60 bg-canvas-subtle overflow-hidden shadow-lg">
+    <div
+      className="my-2 rounded-lg border border-border/60 bg-canvas-subtle overflow-hidden shadow-lg"
+      data-terminal-block={blockId}
+      data-block-state={session.status}
+    >
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-1.5 bg-background/80 border-b border-border/60 text-xs">
         <span className={`px-1.5 py-0.5 rounded border ${statusStyle} font-medium`}>
