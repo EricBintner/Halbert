@@ -32,7 +32,7 @@ logger = logging.getLogger("halbert.agents.conversation_sqlite")
 _DEFAULT_DB = str(Path.home() / ".halbert" / "conversations.db")
 
 #: Bump when a migration step below must run on existing databases.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Columns added to the legacy tables. ``_ensure_schema`` applies each one
 # with ``ALTER TABLE ... ADD COLUMN`` when ``PRAGMA table_info`` lacks it.
@@ -383,6 +383,52 @@ class SqliteConversationStore:
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_compact_thread "
                     "ON compact_boundaries(thread_id)"
+                )
+                # v3: terminal_blocks and terminal_sessions (Plan B: B1).
+                # Blocks are the persisted shell-command records that back
+                # terminal tiles on the timeline; sessions are the PTY
+                # sessions (user, agent-pool, oneshot) that produce them.
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS terminal_blocks (
+                        block_id    TEXT PRIMARY KEY,
+                        session_id  TEXT NOT NULL,
+                        thread_id   TEXT,
+                        turn_id     TEXT,
+                        command     TEXT,
+                        cwd         TEXT,
+                        owner       TEXT,
+                        interactive INTEGER NOT NULL DEFAULT 0,
+                        remote      INTEGER NOT NULL DEFAULT 0,
+                        redacted    INTEGER NOT NULL DEFAULT 0,
+                        started_at  REAL,
+                        ended_at    REAL,
+                        exit_code   INTEGER,
+                        output_head TEXT,
+                        output_tail TEXT
+                    )"""
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tb_session "
+                    "ON terminal_blocks(session_id)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tb_thread "
+                    "ON terminal_blocks(thread_id)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tb_turn "
+                    "ON terminal_blocks(turn_id)"
+                )
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS terminal_sessions (
+                        session_id  TEXT PRIMARY KEY,
+                        kind        TEXT NOT NULL,
+                        owner       TEXT NOT NULL,
+                        watched     INTEGER NOT NULL DEFAULT 0,
+                        spawned_at  REAL,
+                        ended_at    REAL,
+                        last_state  TEXT
+                    )"""
                 )
                 self._add_missing_columns(cur, "conversations", _THREAD_COLUMNS)
                 self._add_missing_columns(cur, "messages", _MESSAGE_COLUMNS)
@@ -1842,6 +1888,203 @@ class SqliteConversationStore:
         except Exception as e:
             logger.warning(f"remove_somatic_block failed: {e}")
             return False
+
+    # ------------------------------------------------------------------
+    # terminal_blocks (Plan B: B1)
+    # ------------------------------------------------------------------
+
+    _TERMINAL_BLOCK_COLUMNS = (
+        "block_id", "session_id", "thread_id", "turn_id", "command",
+        "cwd", "owner", "interactive", "remote", "redacted",
+        "started_at", "ended_at", "exit_code", "output_head", "output_tail",
+    )
+
+    def insert_terminal_block(self, block: Dict[str, Any]) -> bool:
+        """Insert or replace a terminal block row."""
+        if self._conn is None:
+            return False
+        try:
+            with self._lock, self._conn:
+                cols = self._TERMINAL_BLOCK_COLUMNS
+                placeholders = ", ".join("?" for _ in cols)
+                values = tuple(block.get(c) for c in cols)
+                self._conn.execute(
+                    f"INSERT OR REPLACE INTO terminal_blocks ({', '.join(cols)}) "
+                    f"VALUES ({placeholders})",
+                    values,
+                )
+            return True
+        except Exception as e:
+            logger.warning(f"insert_terminal_block failed: {e}")
+            return False
+
+    def update_terminal_block(self, block_id: str, **fields: Any) -> bool:
+        """Update one or more columns on a terminal block. Returns False if
+        the block does not exist or no fields were given."""
+        if self._conn is None:
+            return False
+        if not fields:
+            return False
+        valid = {k: v for k, v in fields.items() if k in self._TERMINAL_BLOCK_COLUMNS}
+        if not valid:
+            return False
+        try:
+            with self._lock, self._conn:
+                set_clause = ", ".join(f"{k} = ?" for k in valid)
+                row = self._conn.execute(
+                    f"UPDATE terminal_blocks SET {set_clause} "
+                    f"WHERE block_id = ?",
+                    (*valid.values(), block_id),
+                )
+                return row.rowcount > 0
+        except Exception as e:
+            logger.warning(f"update_terminal_block failed: {e}")
+            return False
+
+    def get_terminal_block(self, block_id: str) -> Optional[Dict[str, Any]]:
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT * FROM terminal_blocks WHERE block_id = ?",
+                    (block_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            return dict(row)
+        except Exception as e:
+            logger.warning(f"get_terminal_block failed: {e}")
+            return None
+
+    def list_terminal_blocks(
+        self,
+        session_id: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """List terminal blocks, newest-first by started_at. At most one
+        filter is applied; if none, all blocks up to *limit*."""
+        if self._conn is None:
+            return []
+        try:
+            with self._lock:
+                where = ""
+                params: List[Any] = []
+                if session_id is not None:
+                    where = "WHERE session_id = ?"
+                    params.append(session_id)
+                elif thread_id is not None:
+                    where = "WHERE thread_id = ?"
+                    params.append(thread_id)
+                elif turn_id is not None:
+                    where = "WHERE turn_id = ?"
+                    params.append(turn_id)
+                params.append(limit)
+                rows = self._conn.execute(
+                    f"SELECT * FROM terminal_blocks {where} "
+                    f"ORDER BY started_at DESC LIMIT ?",
+                    params,
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"list_terminal_blocks failed: {e}")
+            return []
+
+    # ------------------------------------------------------------------
+    # terminal_sessions (Plan B: B1)
+    # ------------------------------------------------------------------
+
+    _TERMINAL_SESSION_COLUMNS = (
+        "session_id", "kind", "owner", "watched",
+        "spawned_at", "ended_at", "last_state",
+    )
+
+    def insert_terminal_session(self, session: Dict[str, Any]) -> bool:
+        """Insert or replace a terminal session row."""
+        if self._conn is None:
+            return False
+        try:
+            with self._lock, self._conn:
+                cols = self._TERMINAL_SESSION_COLUMNS
+                placeholders = ", ".join("?" for _ in cols)
+                values = tuple(session.get(c) for c in cols)
+                self._conn.execute(
+                    f"INSERT OR REPLACE INTO terminal_sessions ({', '.join(cols)}) "
+                    f"VALUES ({placeholders})",
+                    values,
+                )
+            return True
+        except Exception as e:
+            logger.warning(f"insert_terminal_session failed: {e}")
+            return False
+
+    def update_terminal_session(self, session_id: str, **fields: Any) -> bool:
+        """Update one or more columns on a terminal session. Returns False if
+        the session does not exist or no fields were given."""
+        if self._conn is None:
+            return False
+        if not fields:
+            return False
+        valid = {k: v for k, v in fields.items() if k in self._TERMINAL_SESSION_COLUMNS}
+        if not valid:
+            return False
+        try:
+            with self._lock, self._conn:
+                set_clause = ", ".join(f"{k} = ?" for k in valid)
+                row = self._conn.execute(
+                    f"UPDATE terminal_sessions SET {set_clause} "
+                    f"WHERE session_id = ?",
+                    (*valid.values(), session_id),
+                )
+                return row.rowcount > 0
+        except Exception as e:
+            logger.warning(f"update_terminal_session failed: {e}")
+            return False
+
+    def get_terminal_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT * FROM terminal_sessions WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            return dict(row)
+        except Exception as e:
+            logger.warning(f"get_terminal_session failed: {e}")
+            return None
+
+    def list_terminal_sessions(
+        self,
+        kind: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """List terminal sessions, newest-first by spawned_at."""
+        if self._conn is None:
+            return []
+        try:
+            with self._lock:
+                if kind is not None:
+                    rows = self._conn.execute(
+                        "SELECT * FROM terminal_sessions WHERE kind = ? "
+                        "ORDER BY spawned_at DESC LIMIT ?",
+                        (kind, limit),
+                    ).fetchall()
+                else:
+                    rows = self._conn.execute(
+                        "SELECT * FROM terminal_sessions "
+                        "ORDER BY spawned_at DESC LIMIT ?",
+                        (limit,),
+                    ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"list_terminal_sessions failed: {e}")
+            return []
 
     def close(self) -> None:
         if self._conn is not None:
