@@ -1239,7 +1239,116 @@ def redact_text(text: str, *, prose: bool = False) -> str:
     text = JWT_RE.sub("<jwt>", text)
     text = PEM_RE.sub("<pem_block>", text)
     text = LKDC_RE.sub("<lkdc_realm>", text)
+    # Known-prefix and high-entropy backstop (Task 8): catches bare
+    # context-free secrets that the format-aware passes above declined.
+    # Runs last so it only fires on what nothing else caught.
+    text = _redact_known_prefixes(text)
+    text = _redact_high_entropy(text)
     return text
+
+
+# --- Known-prefix detection (Task 8) ---------------------------------------
+#
+# These prefixes unambiguously identify a credential regardless of context.
+# The format-aware passes above need a key<sep>value shape or a PEM header;
+# a bare token on its own line, under a neutral key, or in a netrc
+# `machine h login u password hunter2` line has neither.
+#
+# Each pattern matches the prefix followed by the token body. The body is
+# bounded by word boundaries so a prefix that appears inside a longer
+# identifier (`ghp_` inside a URL path) is not falsely redacted.
+_KNOWN_PREFIX_PATTERNS: List[re.Pattern] = [
+    # GitHub personal access tokens / fine-grained tokens
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b"),
+    # GitHub classic PAT (40 hex chars, older format)
+    re.compile(r"\bghp_[A-Za-z0-9]{36,}\b"),
+    # OpenAI API keys
+    re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
+    # Anthropic API keys
+    re.compile(r"\bsk-ant-[A-Za-z0-9-_]{20,}\b"),
+    # AWS access key IDs (20 chars, start with AKIA)
+    re.compile(r"\bAKIA[A-Z0-9]{16}\b"),
+    # AWS secret access keys (40 base64 chars — high entropy catches these
+    # too, but the prefix is a cheaper signal when present)
+    # Slack tokens
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
+    # Google API keys
+    re.compile(r"\bAIza[A-Za-z0-9_-]{35}\b"),
+    # Stripe keys
+    re.compile(r"\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{24,}\b"),
+    # GitLab tokens
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b"),
+]
+
+
+def _redact_known_prefixes(text: str) -> str:
+    """Redact tokens with known credential prefixes."""
+    for pattern in _KNOWN_PREFIX_PATTERNS:
+        text = pattern.sub("<token>", text)
+    return text
+
+
+# --- High-entropy backstop (Task 8) ----------------------------------------
+#
+# A long unbroken run of base64/hex characters is likely a token even
+# without a known prefix. This is deliberately permissive: it only fires
+# on "words" (whitespace-bounded tokens) that are longer than a threshold
+# and have entropy above a minimum, and it runs after every format-aware
+# pass has already had its turn.
+#
+# False positives here mean redacting a non-secret that looked like a
+# token (a long hash, a base64-encoded config blob), which costs
+# information but not security. The threshold is set high enough to avoid
+# common config values (UUIDs are 36 chars with dashes, SHA-256 hashes
+# are 64 hex chars — both are legitimate non-secret values that will be
+# redacted, which is the safe direction).
+import math
+from collections import Counter as _Counter
+
+_HIGH_ENTROPY_MIN_LEN = 32  # minimum token length to consider
+_HIGH_ENTROPY_MIN_BITS = 3.0  # minimum Shannon entropy (bits/char)
+# Base64url and hex alphabets — the character sets real tokens use.
+_HIGH_ENTROPY_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/-_="
+)
+
+
+def _shannon_entropy(text: str) -> float:
+    """Shannon entropy in bits per character."""
+    if not text:
+        return 0.0
+    counts = _Counter(text)
+    length = len(text)
+    return -sum((c / length) * math.log2(c / length) for c in counts.values())
+
+
+# Match "words" — runs of non-whitespace, non-punctuation characters from
+# the high-entropy alphabet. Punctuation like commas, semicolons and
+# brackets delimit tokens in config files and log lines.
+_HIGH_ENTROPY_RE = re.compile(r"[A-Za-z0-9+/_=-]{32,}")
+
+
+def _redact_high_entropy(text: str) -> str:
+    """Redact long high-entropy tokens that no other pass caught.
+
+    Only fires on tokens that are at least 32 characters long, consist
+    entirely of base64/hex alphabet characters, and have Shannon entropy
+    above 3.0 bits/char. This is the last-resort backstop — everything
+    format-aware has already run.
+    """
+
+    def _check(match: "re.Match[str]") -> str:
+        token = match.group(0)
+        # Must be entirely from the high-entropy alphabet
+        if not all(c in _HIGH_ENTROPY_ALPHABET for c in token):
+            return token
+        if len(token) < _HIGH_ENTROPY_MIN_LEN:
+            return token
+        if _shannon_entropy(token) < _HIGH_ENTROPY_MIN_BITS:
+            return token
+        return "<token>"
+
+    return _HIGH_ENTROPY_RE.sub(_check, text)
 
 
 # --- Text that has already been parsed --------------------------------------
