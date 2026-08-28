@@ -179,6 +179,7 @@ class SourcePrepSetup:
         build_fast_sync_only: bool = False,
         retire_legacy_projects: bool = False,
         stage_host: bool = True,
+        redact_host: bool = True,
         edges: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Apply the template. Safe to re-run; only changed steps do work.
@@ -187,6 +188,12 @@ class SourcePrepSetup:
         incremental fast_sync, refresh external edges, incremental
         CodeIndex build; deep/finalize untouched (changed scope files fail
         the changeset gate for knowledge/, so this never re-embeds docs).
+        redact_host: When False, stage host config files unredacted. The
+        raw content is written to the staging tree so the SourcePrep index
+        sees real values. The egress boundary (mcp_response, detect_secure_content)
+        still redacts on the way out to external clients. Default True
+        (redacted) for backward compat; Task 4 sets it False for the
+        private host index rebuild.
         edges: pre-extracted config edges (absolute file:/... ids — remapped
         here). None → extract via ConfigEdgeExtractor. Extraction failure
         skips the push EXCEPT when an explicit list was provided (explicit
@@ -208,7 +215,7 @@ class SourcePrepSetup:
         # 1. Stage host/ (knowledge/ is corpus-conversion output, one-time;
         #    T-H1.1 wires jsonl_to_markdown to write here directly).
         if stage_host:
-            staged = self._stage_host_tree(root)
+            staged = self._stage_host_tree(root, redact=redact_host)
             result["files_staged"] = staged
 
         # 2. Find-or-create project.
@@ -257,7 +264,7 @@ class SourcePrepSetup:
 
     # ── step implementations ──────────────────────────────────
 
-    def _stage_host_tree(self, root: Path) -> int:
+    def _stage_host_tree(self, root: Path, *, redact: bool = True) -> int:
         import platform as _platform
 
         from ..config.roles import roles_for_platform
@@ -267,8 +274,8 @@ class SourcePrepSetup:
             stage_role_tree,
         )
 
-        staged = _stage_config_files(_os_config_paths(), root / "host")
-        logger.info("Staged %d host config files under %s/host", staged, root)
+        staged = _stage_config_files(_os_config_paths(), root / "host", redact=redact)
+        logger.info("Staged %d host config files under %s/host (redact=%s)", staged, root, redact)
 
         # Role scopes stage into sibling subdirectories under host/. Only
         # roles that are file-backed on this platform are staged — an empty
@@ -276,7 +283,7 @@ class SourcePrepSetup:
         # narrowing, so a docs-only role must not get an empty staged tree.
         for role in roles_for_platform(_platform.system()):
             try:
-                staged += stage_role_tree(role, root / "host")
+                staged += stage_role_tree(role, root / "host", redact=redact)
             except Exception as e:
                 logger.warning("Role staging failed for %s (non-fatal): %s", role, e)
 
