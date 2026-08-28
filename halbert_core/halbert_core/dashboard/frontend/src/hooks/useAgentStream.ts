@@ -204,7 +204,7 @@ export interface UseAgentStreamReturn {
    * `sessionId` names ONE TURN, not a conversation to reopen: the server
    * resolves the subject thread. Omit it and a fresh id is minted per send.
    */
-  sendMessage: (message: string, sessionId?: string, selection?: ModelSelection) => void;
+  sendMessage: (message: string, sessionId?: string, selection?: ModelSelection, images?: string[]) => void;
   confirmAction: (actionId: string, confirmed: boolean) => void;
   applyDiff: (diffId: string) => void;
   rejectDiff: (diffId: string) => void;
@@ -659,7 +659,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     });
   }, [options]);
 
-  const sendMessage = useCallback((message: string, sessionId?: string, selection?: ModelSelection) => {
+  const sendMessage = useCallback((message: string, sessionId?: string, selection?: ModelSelection, images?: string[]) => {
     // Close existing connection
     eventSourceRef.current?.close();
     
@@ -729,6 +729,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
         session_id: sid,
         max_tokens: maxTokens,
         temperature: temperature,
+        // Base64-encoded images for the vision model. Omitted when no images
+        // are attached so the backend keeps its automatic text routing.
+        ...(images && images.length > 0 ? { images } : {}),
         // Omitted entirely when the user has not pinned anything, so the
         // backend keeps its automatic routing.
         ...(selection?.model ? { model: selection.model } : {}),

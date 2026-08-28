@@ -39,9 +39,14 @@ import {
   Lock,
   FileCode,
   Sparkles,
+  Eye,
+  Info,
+  Palette,
 } from 'lucide-react'
 import { PageHeader, DataVersionCard } from '@/components/domain'
 import { ModelSettings } from '@/components/llm'
+import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
+import { LegalNoticesModal } from '@/components/legal/LegalNoticesModal'
 import { apiUrl } from '@/lib/apiBase'
 
 const API_BASE = apiUrl('/api')
@@ -57,6 +62,367 @@ interface AlertRule {
 interface DiscoveryStats {
   total: number
   by_type: Record<string, number>
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vision Settings Component (Phase 5: Privacy gates + Settings UI)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function VisionSettings() {
+  const [config, setConfig] = useState<any>(null)
+  const [status, setStatus] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    loadConfig()
+    loadStatus()
+  }, [])
+
+  const loadConfig = async () => {
+    try {
+      const resp = await fetch(apiUrl('/api/vision/config'))
+      if (resp.ok) {
+        const data = await resp.json()
+        setConfig(data)
+      }
+    } catch (err) {
+      console.error('Failed to load vision config:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadStatus = async () => {
+    try {
+      const resp = await fetch(apiUrl('/api/vision/status'))
+      if (resp.ok) {
+        setStatus(await resp.json())
+      }
+    } catch (err) {
+      console.error('Failed to load vision status:', err)
+    }
+  }
+
+  const updateConfig = async (field: string, value: boolean | number | string[]) => {
+    setSaving(true)
+    try {
+      const body: Record<string, any> = {}
+      body[field] = value
+      const resp = await fetch(apiUrl('/api/vision/config'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (resp.ok) {
+        await loadConfig()
+        setToast('Saved')
+        setTimeout(() => setToast(null), 2000)
+      }
+    } catch (err) {
+      console.error('Failed to update vision config:', err)
+      setToast('Save failed')
+      setTimeout(() => setToast(null), 3000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const testScreenshot = async () => {
+    setToast('Capturing...')
+    try {
+      const resp = await fetch(apiUrl('/api/vision/screenshot'))
+      if (resp.ok) {
+        setToast('Screenshot captured successfully')
+      } else {
+        const err = await resp.json().catch(() => ({}))
+        setToast(`Failed: ${err.error || resp.statusText}`)
+      }
+    } catch (err) {
+      setToast(`Failed: ${err}`)
+    }
+    setTimeout(() => setToast(null), 4000)
+  }
+
+  const testWebcam = async () => {
+    setToast('Capturing...')
+    try {
+      const resp = await fetch(apiUrl('/api/vision/webcam'))
+      if (resp.ok) {
+        setToast('Webcam frame captured successfully')
+      } else {
+        const err = await resp.json().catch(() => ({}))
+        setToast(`Failed: ${err.error || resp.statusText}`)
+      }
+    } catch (err) {
+      setToast(`Failed: ${err}`)
+    }
+    setTimeout(() => setToast(null), 4000)
+  }
+
+  if (loading) {
+    return <div className="text-muted-foreground">Loading vision settings...</div>
+  }
+
+  const deps = status?.dependencies || {}
+  const depsOk = deps.mss && deps.cv2 && deps.numpy
+
+  return (
+    <div className="space-y-4">
+      {toast && (
+        <Toast open={true} message={toast} onClose={() => setToast(null)} />
+      )}
+
+      {/* Dependency status */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Eye className="h-5 w-5" />
+            Vision Dependencies
+          </CardTitle>
+          <CardDescription>
+            Required packages for screen and webcam capture
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <div className="flex items-center gap-2 text-sm">
+            <span className={deps.mss ? 'text-green-500' : 'text-red-500'}>
+              {deps.mss ? '✓' : '✗'} mss
+            </span>
+            <span className={deps.cv2 ? 'text-green-500' : 'text-red-500'}>
+              {deps.cv2 ? '✓' : '✗'} opencv-python
+            </span>
+            <span className={deps.numpy ? 'text-green-500' : 'text-red-500'}>
+              {deps.numpy ? '✓' : '✗'} numpy
+            </span>
+          </div>
+          {!depsOk && (
+            <p className="text-sm text-muted-foreground">
+              Install with: pip install mss opencv-python
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Screen Capture */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Screen Capture</CardTitle>
+          <CardDescription>
+            When enabled, Halbert can take screenshots of your display to answer
+            questions about what's on screen.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="screen-enabled">Enable screen capture</Label>
+            <input
+              id="screen-enabled"
+              type="checkbox"
+              checked={config?.screen_capture?.enabled ?? false}
+              onChange={(e) => updateConfig('screen_capture_enabled', e.target.checked)}
+              disabled={saving}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="screen-quality">JPEG Quality</Label>
+            <Input
+              id="screen-quality"
+              type="number"
+              min={1}
+              max={100}
+              value={config?.screen_capture?.quality ?? 85}
+              onChange={(e) => updateConfig('screen_capture_quality', parseInt(e.target.value) || 85)}
+              disabled={saving}
+              className="w-20"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="screen-maxdim">Max dimension (px)</Label>
+            <Input
+              id="screen-maxdim"
+              type="number"
+              min={256}
+              max={4096}
+              value={config?.screen_capture?.max_dimension ?? 1568}
+              onChange={(e) => updateConfig('screen_capture_max_dim', parseInt(e.target.value) || 1568)}
+              disabled={saving}
+              className="w-24"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="screen-monitor">Monitor index</Label>
+            <Input
+              id="screen-monitor"
+              type="number"
+              min={0}
+              max={9}
+              value={config?.screen_capture?.monitor_index ?? 1}
+              onChange={(e) => updateConfig('screen_capture_monitor_index', parseInt(e.target.value) || 1)}
+              disabled={saving}
+              className="w-20"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="screen-gray">Grayscale</Label>
+              <p className="text-xs text-muted-foreground">30% smaller JPEGs. Text and UI perfectly readable.</p>
+            </div>
+            <input
+              id="screen-gray"
+              type="checkbox"
+              checked={config?.screen_capture?.grayscale ?? false}
+              onChange={(e) => updateConfig('screen_capture_grayscale', e.target.checked)}
+              disabled={saving}
+            />
+          </div>
+          <Button onClick={testScreenshot} disabled={saving || !config?.screen_capture?.enabled} variant="outline" size="sm">
+            Test screen capture
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Webcam */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Webcam</CardTitle>
+          <CardDescription>
+            When enabled, Halbert can capture frames from your camera to look at
+            physical objects, hardware, or labels. The camera LED will light briefly.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="webcam-enabled">Enable webcam access</Label>
+            <input
+              id="webcam-enabled"
+              type="checkbox"
+              checked={config?.webcam?.enabled ?? false}
+              onChange={(e) => updateConfig('webcam_enabled', e.target.checked)}
+              disabled={saving}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="webcam-camera">Camera index</Label>
+            <Input
+              id="webcam-camera"
+              type="number"
+              min={0}
+              max={9}
+              value={config?.webcam?.camera_index ?? 0}
+              onChange={(e) => updateConfig('webcam_camera_index', parseInt(e.target.value) || 0)}
+              disabled={saving}
+              className="w-20"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="webcam-quality">JPEG Quality</Label>
+            <Input
+              id="webcam-quality"
+              type="number"
+              min={1}
+              max={100}
+              value={config?.webcam?.quality ?? 85}
+              onChange={(e) => updateConfig('webcam_quality', parseInt(e.target.value) || 85)}
+              disabled={saving}
+              className="w-20"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="webcam-maxdim">Max dimension (px)</Label>
+            <Input
+              id="webcam-maxdim"
+              type="number"
+              min={256}
+              max={4096}
+              value={config?.webcam?.max_dimension ?? 768}
+              onChange={(e) => updateConfig('webcam_max_dim', parseInt(e.target.value) || 768)}
+              disabled={saving}
+              className="w-24"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="webcam-grayscale">Grayscale (smaller, no color)</Label>
+            <input
+              id="webcam-grayscale"
+              type="checkbox"
+              checked={config?.webcam?.grayscale ?? false}
+              onChange={(e) => updateConfig('webcam_grayscale', e.target.checked)}
+              disabled={saving}
+            />
+          </div>
+          <Button onClick={testWebcam} disabled={saving || !config?.webcam?.enabled} variant="outline" size="sm">
+            Test webcam capture
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Redaction */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Shield className="h-5 w-5" />
+            Sensitive Content Redaction
+          </CardTitle>
+          <CardDescription>
+            Blurs screen regions containing passwords, API keys, and tokens
+            before sending to the LLM. Adds ~50-200ms OCR overhead per capture.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="redaction-enabled">Enable redaction</Label>
+            <input
+              id="redaction-enabled"
+              type="checkbox"
+              checked={config?.redaction?.enabled ?? false}
+              onChange={(e) => updateConfig('redaction_enabled', e.target.checked)}
+              disabled={saving}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="redaction-blocklist">Custom blocklist keywords (one per line, empty = use defaults)</Label>
+            <textarea
+              id="redaction-blocklist"
+              className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              placeholder={"password\ntoken\napi_key\nsecret\n..."}
+              value={(config?.redaction?.blocklist ?? []).join('\n')}
+              onChange={(e) => {
+                const lines = e.target.value.split('\n').map((s: string) => s.trim()).filter(Boolean)
+                updateConfig('redaction_blocklist', lines)
+              }}
+              disabled={saving}
+            />
+            <p className="text-xs text-muted-foreground">
+              Default blocklist covers: password, secret, token, api_key, credential,
+              SSH keys, PEM blocks, and regex patterns for AWS/GitHub/Slack/Stripe keys.
+              Custom keywords are case-insensitive substring matches.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Privacy note */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Shield className="h-5 w-5" />
+            Privacy
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            All capture is local. Frames are sent only to your configured vision
+            model endpoint. If your vision model is a cloud API (not localhost),
+            screenshots and webcam frames will be sent to that external service.
+            Consider using a local Ollama vision model (e.g., llava) for privacy.
+            Images are not stored to disk unless you explicitly save the conversation.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -456,7 +822,7 @@ function BeingSettings() {
  * mistyped link — so it opens the first tab, which is what a bare /settings
  * does too.
  */
-const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being'] as const
+const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'vision', 'about'] as const
 const DEFAULT_SETTINGS_TAB = SETTINGS_TABS[0]
 
 type SettingsNavItem = { id: string; label: string; icon: typeof Cpu }
@@ -482,12 +848,16 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
     items: [
       { id: 'safety', label: 'Tool Permissions', icon: Shield },
       { id: 'alerts', label: 'Alert Rules', icon: Bell },
+      { id: 'vision', label: 'Vision', icon: Eye },
     ],
   },
   {
     id: 'general',
     label: 'General',
-    items: [{ id: 'system', label: 'System Info', icon: Cpu }],
+    items: [
+      { id: 'system', label: 'System Info', icon: Cpu },
+      { id: 'about', label: 'About', icon: Info },
+    ],
   },
 ]
 
@@ -522,6 +892,8 @@ export function Settings() {
 
   // Settings sidebar search filter
   const [settingsQuery, setSettingsQuery] = useState('')
+  const [showComponentLibrary, setShowComponentLibrary] = useState(false)
+  const [showLegalNotices, setShowLegalNotices] = useState(false)
 
   // Scan context for coordinated system-wide scanning
   const { triggerDeepScan, isDeepScanning } = useScan()
@@ -2157,16 +2529,90 @@ export function Settings() {
           <BeingSettings />
         </TabsContent>
 
+        {/* Vision Tab */}
+        <TabsContent value="vision" className="space-y-4">
+          <VisionSettings />
+        </TabsContent>
+
+        {/* About Tab */}
+        <TabsContent value="about" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Info className="h-5 w-5" />
+                About Halbert
+              </CardTitle>
+              <CardDescription>
+                AI-powered Linux system assistant
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <h4 className="font-medium">Version</h4>
+                <p className="text-sm text-muted-foreground">Development Build</p>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="font-medium">Developer Tools</h4>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Explore the UI component library used to build Halbert.
+                </p>
+                <Button variant="outline" onClick={() => setShowComponentLibrary(true)}>
+                  <Palette className="h-4 w-4 mr-2" />
+                  View Component Library
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="font-medium">Legal & Third-Party Notices</h4>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Licenses and attributions for Halbert, its RAG corpus sources,
+                  software dependencies, and bundled foundation models.
+                </p>
+                <Button variant="outline" onClick={() => setShowLegalNotices(true)}>
+                  <Shield className="h-4 w-4 mr-2" />
+                  View Legal Notices
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="font-medium">Links</h4>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="ghost" size="sm" asChild>
+                    <a href="https://github.com" target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="h-4 w-4 mr-1" />
+                      GitHub
+                    </a>
+                  </Button>
+                  <Button variant="ghost" size="sm" asChild>
+                    <a href="/docs" target="_blank" rel="noopener noreferrer">
+                      <BookOpen className="h-4 w-4 mr-1" />
+                      Documentation
+                    </a>
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
         </div>
       </Tabs>
             
       {/* Toast Notifications */}
-      <Toast 
+      <Toast
         open={toast.open}
         onClose={() => setToast(t => ({ ...t, open: false }))}
         message={toast.message}
         variant={toast.variant}
       />
+
+      {/* Component Library Viewer Modal */}
+      {showComponentLibrary && (
+        <ComponentLibraryViewer onClose={() => setShowComponentLibrary(false)} />
+      )}
+
+      {/* Legal Notices Modal */}
+      <LegalNoticesModal open={showLegalNotices} onOpenChange={setShowLegalNotices} />
     </div>
   )
 }

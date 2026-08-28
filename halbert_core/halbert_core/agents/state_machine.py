@@ -2384,14 +2384,55 @@ class AgentStateMachine:
             if result.success:
                 tool_call.status = "success"
                 tool_call.result = result.result
-                # The observation has to carry the *output*, not just "success".
-                # Observations are the only channel by which a tool result
-                # reaches the next PLANNING pass; recording bare success left
-                # the model blind to what it had just learnt, so it re-issued
-                # the same call until max_loops cut the turn off.
-                self.ctx.add_observation(
-                    _format_tool_observation(tool_name, tool_args, result.result)
-                )
+                # Vision tools return a dict with an "image" key (base64
+                # JPEG). Detect it and append to ctx.images so the next
+                # LLM call routes through the vision model. The text
+                # observation uses the "description" field, not the base64.
+                #
+                # capture_and_ocr returns "ocr_text" (text observation,
+                # no image routing) and optionally "image" (when
+                # include_image=True). The OCR text goes into the
+                # observation directly — the LLM reads it as text, not
+                # through the vision model, saving 5-15x tokens.
+                if isinstance(result.result, dict) and "image" in result.result:
+                    img_data = result.result["image"]
+                    if img_data and isinstance(img_data, str):
+                        if self.ctx.images is None:
+                            self.ctx.images = []
+                        self.ctx.images.append(img_data)
+                    desc = result.result.get("description", "Image captured")
+                    # If OCR text is also present, include it in the
+                    # observation so the LLM gets both the text and the
+                    # image routing.
+                    ocr_text = result.result.get("ocr_text")
+                    if ocr_text and isinstance(ocr_text, str):
+                        self.ctx.add_observation(
+                            f"Executed {tool_name}: {desc}\nOCR text:\n{ocr_text}"
+                        )
+                    else:
+                        self.ctx.add_observation(
+                            f"Executed {tool_name}: {desc}"
+                        )
+                elif isinstance(result.result, dict) and "ocr_text" in result.result:
+                    # OCR-only result: text observation, no image routing.
+                    # This is the 5-15x token savings path — the LLM
+                    # reads the extracted text without needing the
+                    # vision model at all.
+                    ocr_text = result.result["ocr_text"]
+                    desc = result.result.get("description", "OCR text extracted")
+                    self.ctx.add_observation(
+                        f"Executed {tool_name}: {desc}\n{ocr_text}"
+                    )
+                else:
+                    # The observation has to carry the *output*, not just
+                    # "success". Observations are the only channel by which
+                    # a tool result reaches the next PLANNING pass; recording
+                    # bare success left the model blind to what it had just
+                    # learnt, so it re-issued the same call until max_loops
+                    # cut the turn off.
+                    self.ctx.add_observation(
+                        _format_tool_observation(tool_name, tool_args, result.result)
+                    )
             else:
                 tool_call.status = "error"
                 tool_call.error = result.error
