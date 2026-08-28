@@ -69,61 +69,167 @@ class ScreenCaptureError(Exception):
 def list_windows() -> list:
     """List on-screen windows with titles (macOS only).
 
-    Returns a list of dicts with: id, owner, title, bounds.
-    Filters out tiny windows (menu bar items, cursors) and windows
-    without names. On non-macOS, returns empty list.
+    Returns a list of dicts with: id, owner, title, bounds, pid,
+    is_active. Filters out tiny windows (menu bar items, cursors) and
+    windows without names. On non-macOS, returns empty list.
+
+    Uses SCShareableContent (ScreenCaptureKit) when available for
+    richer data, falls back to CGWindowListCopyWindowInfo (Quartz).
     """
     import platform
     if platform.system() != "Darwin":
         return []
 
+    # Try ScreenCaptureKit first (richer data, includes process info)
     try:
-        from Quartz import (
-            CGWindowListCopyWindowInfo,
-            kCGWindowListOptionOnScreenOnly,
-            kCGNullWindowID,
-        )
-    except ImportError:
-        return []
+        return _list_windows_sck()
+    except Exception as e:
+        logger.debug(f"SCK window listing failed, falling back to CG: {e}")
 
-    windows = []
+    # Fall back to CGWindowListCopyWindowInfo
     try:
-        window_list = CGWindowListCopyWindowInfo(
-            kCGWindowListOptionOnScreenOnly, kCGNullWindowID
-        )
-        for w in window_list:
-            # Skip windows without a name (menu bar items, cursors, etc.)
-            name = w.get("kCGWindowName", "") or ""
-            owner = w.get("kCGWindowOwnerName", "") or ""
-            wid = w.get("kCGWindowNumber", 0)
-            bounds = w.get("kCGWindowBounds", {})
-            width = bounds.get("Width", 0)
-            height = bounds.get("Height", 0)
-
-            # Skip tiny windows (< 100x100) — menu bar items, tray icons
-            if width < 100 or height < 100:
-                continue
-            # Skip windows with no owner name
-            if not owner:
-                continue
-            # Skip the cursor window
-            if owner == "Window Server":
-                continue
-
-            windows.append({
-                "id": wid,
-                "owner": owner,
-                "title": name,
-                "width": width,
-                "height": height,
-                "x": bounds.get("X", 0),
-                "y": bounds.get("Y", 0),
-            })
+        return _list_windows_cg()
     except Exception as e:
         logger.warning(f"Failed to list windows: {e}")
         return []
 
+
+def _list_windows_sck() -> list:
+    """List windows using ScreenCaptureKit's SCShareableContent."""
+    import time
+    from ScreenCaptureKit import SCShareableContent
+    from Foundation import NSRunLoop, NSDate, CFRunLoopStop, CFRunLoopGetCurrent
+
+    content = [None]
+    def handler(c, err):
+        content[0] = c
+        CFRunLoopStop(CFRunLoopGetCurrent())
+
+    SCShareableContent.getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler_(
+        False, True, handler
+    )
+    rl = NSRunLoop.currentRunLoop()
+    deadline = time.time() + 3
+    while content[0] is None and time.time() < deadline:
+        rl.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.05))
+
+    if content[0] is None:
+        raise RuntimeError("SCK content timeout")
+
+    # Get active window PID for is_active flag
+    active_pid = _get_active_pid()
+
+    windows = []
+    for w in content[0].windows():
+        app = w.owningApplication()
+        if not app:
+            continue
+        owner = app.applicationName() or ""
+        pid = app.processID() or 0
+        title = w.title() or ""
+        rect = w.frame()
+        width = int(rect.size.width)
+        height = int(rect.size.height)
+
+        if width < 100 or height < 100:
+            continue
+        if not owner:
+            continue
+
+        windows.append({
+            "id": w.windowID(),
+            "owner": owner,
+            "title": title,
+            "pid": pid,
+            "width": width,
+            "height": height,
+            "x": int(rect.origin.x),
+            "y": int(rect.origin.y),
+            "is_active": pid == active_pid,
+        })
+
     return windows
+
+
+def _list_windows_cg() -> list:
+    """List windows using CGWindowListCopyWindowInfo (Quartz fallback)."""
+    from Quartz import (
+        CGWindowListCopyWindowInfo,
+        kCGWindowListOptionOnScreenOnly,
+        kCGNullWindowID,
+    )
+
+    active_pid = _get_active_pid()
+
+    windows = []
+    window_list = CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+    )
+    for w in window_list:
+        name = w.get("kCGWindowName", "") or ""
+        owner = w.get("kCGWindowOwnerName", "") or ""
+        wid = w.get("kCGWindowNumber", 0)
+        pid = w.get("kCGWindowOwnerPID", 0)
+        bounds = w.get("kCGWindowBounds", {})
+        width = bounds.get("Width", 0)
+        height = bounds.get("Height", 0)
+
+        if width < 100 or height < 100:
+            continue
+        if not owner:
+            continue
+        if owner == "Window Server":
+            continue
+
+        windows.append({
+            "id": wid,
+            "owner": owner,
+            "title": name,
+            "pid": pid,
+            "width": width,
+            "height": height,
+            "x": bounds.get("X", 0),
+            "y": bounds.get("Y", 0),
+            "is_active": pid == active_pid,
+        })
+
+    return windows
+
+
+def _get_active_pid() -> int:
+    """Get the PID of the frontmost application (macOS only)."""
+    try:
+        from AppKit import NSWorkspace
+        ws = NSWorkspace.sharedWorkspace()
+        app = ws.frontmostApplication()
+        return app.processIdentifier() if app else 0
+    except Exception:
+        return 0
+
+
+def get_active_window() -> dict:
+    """Get info about the frontmost application's main window (macOS only).
+
+    Returns a dict with: id, owner, title, pid, width, height, x, y.
+    Returns None on non-macOS or if the active window can't be determined.
+    """
+    import platform
+    if platform.system() != "Darwin":
+        return None
+
+    active_pid = _get_active_pid()
+    if not active_pid:
+        return None
+
+    windows = list_windows()
+    # Find the largest window belonging to the active app
+    active_windows = [w for w in windows if w.get("pid") == active_pid]
+    if not active_windows:
+        return None
+
+    # Sort by area (largest first) — the main window is usually the biggest
+    active_windows.sort(key=lambda w: w["width"] * w["height"], reverse=True)
+    return active_windows[0]
 
 
 class ScreenCapture:
@@ -252,16 +358,16 @@ class ScreenCapture:
     def capture_window(self, window_id: int) -> bytes:
         """Capture a specific window by its CGWindowID (macOS only).
 
-        Uses the native screencapture CLI with -l<windowid>, which
-        captures just the window content (no desktop, no other windows).
+        Uses CGWindowListCreateImage (Quartz) for native capture — no
+        subprocess, no temp files, ~2x faster than the screencapture CLI.
         On non-macOS platforms, raises ScreenCaptureError.
 
         Args:
             window_id: The macOS CGWindowNumber (from list_windows or
-                CGWindowListCopyWindowInfo).
+                get_active_window).
 
         Returns:
-            JPEG-encoded bytes.
+            JPEG-encoded bytes (downscaled and quality-adjusted).
         """
         import platform
         if platform.system() != "Darwin":
@@ -270,60 +376,52 @@ class ScreenCapture:
                 error_type="unsupported_platform",
             )
 
-        import subprocess
-        import tempfile
-        import os
-
-        # screencapture -l<windowid> -x -t jpg <output>
-        # -x: no sound, -t jpg: JPEG format
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            tmp_path = tmp.name
-
         try:
-            result = subprocess.run(
-                ["screencapture", "-l", str(window_id), "-x", "-t", "jpg", tmp_path],
-                capture_output=True,
-                timeout=10,
+            from Quartz import (
+                CGWindowListCreateImage, CGRectNull,
+                kCGWindowListOptionIncludingWindow,
+                kCGWindowImageDefault,
+                NSBitmapImageRep, NSJPEGFileType,
+                CGImageGetWidth, CGImageGetHeight,
             )
-            if result.returncode != 0:
-                raise ScreenCaptureError(
-                    f"screencapture failed: {result.stderr.decode('utf-8', errors='replace')}",
-                    error_type="capture_failed",
-                )
-            with open(tmp_path, "rb") as f:
-                jpeg_bytes = f.read()
-
-            if not jpeg_bytes:
-                raise ScreenCaptureError(
-                    "screencapture produced empty output",
-                    error_type="capture_failed",
-                )
-
-            # Apply downscale/encode pipeline
-            _ensure_deps()
-            frame = _cv2.imdecode(
-                _numpy.frombuffer(jpeg_bytes, dtype=_numpy.uint8),
-                _cv2.IMREAD_COLOR,
+        except ImportError as e:
+            raise ScreenCaptureError(
+                f"Quartz framework not available: {e}",
+                error_type="dependency_missing",
             )
-            if frame is None:
-                # Already a JPEG — re-encode through our pipeline
-                return self._encode_jpeg_from_jpeg(jpeg_bytes)
-            return self._encode_jpeg(frame)
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
 
-    def _encode_jpeg_from_jpeg(self, jpeg_bytes: bytes) -> bytes:
-        """Re-encode a JPEG through our downscale/quality pipeline."""
+        cg_image = CGWindowListCreateImage(
+            CGRectNull,
+            kCGWindowListOptionIncludingWindow,
+            window_id,
+            kCGWindowImageDefault,
+        )
+
+        if cg_image is None:
+            raise ScreenCaptureError(
+                f"Failed to capture window {window_id} (need Screen Recording permission?)",
+                error_type="permission_denied",
+            )
+
+        # Convert CGImage to JPEG bytes
+        rep = NSBitmapImageRep.alloc().initWithCGImage_(cg_image)
+        data = rep.representationUsingType_properties_(NSJPEGFileType, None)
+        if not data:
+            raise ScreenCaptureError(
+                "Failed to encode window capture as JPEG",
+                error_type="encode_failed",
+            )
+
+        jpeg_bytes = bytes(data)
+
+        # Apply our downscale/patch-align/grayscale pipeline
         _ensure_deps()
         frame = _cv2.imdecode(
             _numpy.frombuffer(jpeg_bytes, dtype=_numpy.uint8),
             _cv2.IMREAD_COLOR,
         )
         if frame is None:
-            return jpeg_bytes  # Can't decode, return as-is
+            return jpeg_bytes  # Can't decode, return raw JPEG
         return self._encode_jpeg(frame)
 
     def _encode_jpeg(self, frame_bgra) -> bytes:

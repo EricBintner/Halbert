@@ -73,9 +73,13 @@ async def capture_screenshot(args: Dict) -> Dict[str, Any]:
             desc = f"Screenshot captured (monitor {monitor})"
 
         # Redaction: if enabled, blur sensitive regions before sending
-        from ..vision.redact import should_redact, redact_image, get_blocklist
+        from ..vision.redact import should_redact, redact_image, get_blocklist, get_regex_patterns
         if should_redact(cfg):
-            jpeg_bytes = redact_image(jpeg_bytes, get_blocklist(cfg))
+            jpeg_bytes = redact_image(
+                jpeg_bytes,
+                blocklist=get_blocklist(cfg),
+                patterns=get_regex_patterns(),
+            )
             desc += " (redacted)"
 
         # Dedup: if the screen hasn't changed since the last capture,
@@ -346,6 +350,71 @@ async def capture_window_tool(args: Dict) -> Dict[str, Any]:
         return {"error": f"Unexpected error: {e}", "error_type": "capture_failed"}
 
 
+async def capture_active_window_tool(args: Dict) -> Dict[str, Any]:
+    """Capture the frontmost application's main window (macOS only).
+
+    Convenience tool — no need to call list_windows first. Finds the
+    active app via NSWorkspace.frontmostApplication, then captures its
+    largest window. This is the most efficient way to capture "what
+    the user is looking at" without capturing other windows.
+    """
+    from ..vision.config import is_screen_capture_enabled, load_config
+
+    if not is_screen_capture_enabled():
+        return {
+            "error": "Screen capture is disabled. The user can enable it in Settings > Vision.",
+            "error_type": "disabled",
+        }
+
+    cfg = load_config()
+    quality = args.get("quality", cfg.screen_capture.quality)
+    max_dim = args.get("max_dim", cfg.screen_capture.max_dimension)
+
+    try:
+        from ..vision.screen_capture import (
+            ScreenCapture, ScreenCaptureError, get_active_window,
+        )
+
+        active = get_active_window()
+        if not active:
+            return {
+                "error": "Could not determine the active window (macOS only)",
+                "error_type": "no_active_window",
+            }
+
+        cap = ScreenCapture(
+            quality=quality,
+            max_dim=max_dim,
+            grayscale=cfg.screen_capture.grayscale,
+        )
+        jpeg_bytes = cap.capture_window(active["id"])
+
+        # Dedup
+        global _last_screenshot_hash
+        frame_hash = hashlib.md5(jpeg_bytes).hexdigest()
+        if frame_hash == _last_screenshot_hash:
+            return {
+                "description": f"Active window ({active['owner']}) unchanged since last capture.",
+                "unchanged": True,
+            }
+        _last_screenshot_hash = frame_hash
+
+        base64_img = base64.b64encode(jpeg_bytes).decode("ascii")
+        return {
+            "image": base64_img,
+            "description": f"Active window captured: {active['owner']} — {active['title']}",
+            "window": active,
+        }
+
+    except ScreenCaptureError as e:
+        return {"error": str(e), "error_type": e.error_type}
+    except ImportError as e:
+        return {"error": str(e), "error_type": "dependency_missing"}
+    except Exception as e:
+        logger.error(f"Active window capture error: {e}", exc_info=True)
+        return {"error": f"Unexpected error: {e}", "error_type": "capture_failed"}
+
+
 # Tool schemas for registration
 VISION_TOOL_SCHEMAS = {
     "capture_screenshot": {
@@ -481,6 +550,32 @@ VISION_TOOL_SCHEMAS = {
             "required": ["window_id"],
         },
     },
+    "capture_active_window": {
+        "name": "capture_active_window",
+        "description": (
+            "Capture the frontmost application's main window (macOS only). "
+            "No need to call list_windows first — this automatically finds "
+            "and captures the active window. This is the most efficient way "
+            "to capture what the user is looking at. The image is attached "
+            "to your next response automatically."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "quality": {
+                    "type": "integer",
+                    "description": "JPEG quality (1-100, default 85)",
+                    "default": 85,
+                },
+                "max_dim": {
+                    "type": "integer",
+                    "description": "Max dimension in pixels (default 1568)",
+                    "default": 1568,
+                },
+            },
+            "required": [],
+        },
+    },
     "capture_webcam": {
         "name": "capture_webcam",
         "description": (
@@ -520,5 +615,6 @@ VISION_TOOL_HANDLERS = {
     "capture_and_ocr": capture_and_ocr,
     "list_windows": list_windows_tool,
     "capture_window": capture_window_tool,
+    "capture_active_window": capture_active_window_tool,
     "capture_webcam": capture_webcam,
 }

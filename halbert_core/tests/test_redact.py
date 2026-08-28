@@ -102,3 +102,56 @@ class TestRedactionConfig:
         cfg = load_config()
         assert cfg.redaction.enabled is False
         assert cfg.redaction.blocklist == []
+
+
+class TestRegexPatterns:
+    def test_default_patterns_have_common_secret_formats(self):
+        from halbert_core.vision.redact import DEFAULT_REGEX_PATTERNS
+        # Should have patterns for AWS, GitHub, Slack, Stripe, etc.
+        pattern_strings = [p.pattern for p in DEFAULT_REGEX_PATTERNS]
+        assert any("AKIA" in p for p in pattern_strings)  # AWS
+        assert any("ghp_" in p for p in pattern_strings)  # GitHub
+        assert any("xox" in p for p in pattern_strings)   # Slack
+        assert any("sk_" in p for p in pattern_strings)   # Stripe
+
+    def test_aws_key_matches(self):
+        from halbert_core.vision.redact import _matches_sensitive, DEFAULT_REGEX_PATTERNS
+        assert _matches_sensitive("AKIAIOSFODNN7EXAMPLE", [], DEFAULT_REGEX_PATTERNS)
+
+    def test_github_token_matches(self):
+        from halbert_core.vision.redact import _matches_sensitive, DEFAULT_REGEX_PATTERNS
+        token = "ghp_" + "A" * 36
+        assert _matches_sensitive(token, [], DEFAULT_REGEX_PATTERNS)
+
+    def test_jwt_matches(self):
+        from halbert_core.vision.redact import _matches_sensitive, DEFAULT_REGEX_PATTERNS
+        jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        assert _matches_sensitive(jwt, [], DEFAULT_REGEX_PATTERNS)
+
+    def test_pem_key_block_matches(self):
+        from halbert_core.vision.redact import _matches_sensitive, DEFAULT_REGEX_PATTERNS
+        pem = "-----BEGIN RSA PRIVATE KEY-----"
+        assert _matches_sensitive(pem, [], DEFAULT_REGEX_PATTERNS)
+
+    def test_non_secret_text_does_not_match_regex(self):
+        from halbert_core.vision.redact import _matches_sensitive, DEFAULT_REGEX_PATTERNS
+        assert not _matches_sensitive("Hello World 12345", [], DEFAULT_REGEX_PATTERNS)
+        assert not _matches_sensitive("ls -la /tmp", [], DEFAULT_REGEX_PATTERNS)
+
+    def test_keyword_takes_priority_over_regex(self):
+        from halbert_core.vision.redact import _matches_sensitive, DEFAULT_REGEX_PATTERNS
+        # "password" keyword matches, no need for regex
+        assert _matches_sensitive("password: hunter2", ["password"], DEFAULT_REGEX_PATTERNS)
+
+    def test_regex_catches_what_keywords_miss(self):
+        from halbert_core.vision.redact import _matches_sensitive, DEFAULT_REGEX_PATTERNS
+        # AWS key has no keyword, only regex catches it
+        assert _matches_sensitive("AKIAIOSFODNN7EXAMPLE", [], DEFAULT_REGEX_PATTERNS)
+        # But with keywords only, it's missed
+        assert not _matches_sensitive("AKIAIOSFODNN7EXAMPLE", ["password", "secret"], [])
+
+    def test_get_regex_patterns_returns_compiled(self):
+        from halbert_core.vision.redact import get_regex_patterns
+        import re
+        patterns = get_regex_patterns()
+        assert all(isinstance(p, re.Pattern) for p in patterns)

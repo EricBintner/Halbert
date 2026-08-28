@@ -415,6 +415,7 @@ class ToolSafetyFramework:
         elif tool_name in (
             "capture_screenshot", "capture_webcam",
             "capture_and_ocr", "list_windows", "capture_window",
+            "capture_active_window",
         ):
             return SafetyCheckResult(
                 risk_level=RiskLevel.SAFE,

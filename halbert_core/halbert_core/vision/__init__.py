@@ -21,7 +21,13 @@ from .config import (
     is_webcam_enabled,
 )
 from .ocr import recognize, is_available as ocr_available
-from .redact import redact_image, should_redact, get_blocklist
+from .redact import (
+    redact_image, should_redact, get_blocklist,
+    get_regex_patterns, DEFAULT_BLOCKLIST, DEFAULT_REGEX_PATTERNS,
+)
+from .screen_capture import ScreenCapture, ScreenCaptureError, list_windows, get_active_window
+from .webcam_capture import WebcamCapture, WebcamCaptureError
+from .wayland_capture import WaylandCapture, WaylandCaptureError, is_wayland
 
 __all__ = [
     "VisionConfig",
@@ -37,4 +43,16 @@ __all__ = [
     "redact_image",
     "should_redact",
     "get_blocklist",
+    "get_regex_patterns",
+    "DEFAULT_BLOCKLIST",
+    "DEFAULT_REGEX_PATTERNS",
+    "ScreenCapture",
+    "ScreenCaptureError",
+    "list_windows",
+    "get_active_window",
+    "WebcamCapture",
+    "WebcamCaptureError",
+    "WaylandCapture",
+    "WaylandCaptureError",
+    "is_wayland",
 ]

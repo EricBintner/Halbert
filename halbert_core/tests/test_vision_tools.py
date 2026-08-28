@@ -60,9 +60,15 @@ class TestVisionToolSchemas:
         from halbert_core.tools.safety import ToolSafetyFramework, RiskLevel
         safety = ToolSafetyFramework()
         for tool in ("capture_screenshot", "capture_and_ocr",
-                     "list_windows", "capture_window", "capture_webcam"):
+                     "list_windows", "capture_window",
+                     "capture_active_window", "capture_webcam"):
             result = safety.classify(tool, {})
             assert result.risk_level == RiskLevel.SAFE, f"{tool} not SAFE"
+
+    def test_capture_active_window_handler_mapping(self):
+        from halbert_core.tools.vision_tools import VISION_TOOL_HANDLERS
+        assert "capture_active_window" in VISION_TOOL_HANDLERS
+        assert callable(VISION_TOOL_HANDLERS["capture_active_window"])
 
 
 class TestCaptureWebcamHandler:
@@ -266,6 +272,66 @@ class TestCaptureWindowHandler:
 
         assert "image" in result
         assert "123" in result["description"]
+        vt._last_screenshot_hash = None
+
+
+class TestCaptureActiveWindowHandler:
+    """Test the capture_active_window tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_blocked_when_disabled(self):
+        from halbert_core.tools.vision_tools import capture_active_window_tool
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=False):
+            result = await capture_active_window_tool({})
+
+        assert "error" in result
+        assert result["error_type"] == "disabled"
+
+    @pytest.mark.asyncio
+    async def test_no_active_window_returns_error(self):
+        from halbert_core.tools.vision_tools import capture_active_window_tool
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=True), \
+             patch("halbert_core.vision.screen_capture.get_active_window",
+                    return_value=None):
+            result = await capture_active_window_tool({})
+
+        assert "error" in result
+        assert result["error_type"] == "no_active_window"
+
+    @pytest.mark.asyncio
+    async def test_returns_image_on_success(self):
+        import halbert_core.tools.vision_tools as vt
+        vt._last_screenshot_hash = None
+
+        from halbert_core.tools.vision_tools import capture_active_window_tool
+
+        mock_cap = MagicMock()
+        mock_cap.capture_window.return_value = b"activewindowjpeg"
+        fake_window = {
+            "id": 999, "owner": "Terminal", "title": "bash",
+            "pid": 123, "width": 800, "height": 600, "x": 0, "y": 0,
+            "is_active": True,
+        }
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=True), \
+             patch("halbert_core.vision.config.load_config") as mock_load, \
+             patch("halbert_core.vision.screen_capture.get_active_window",
+                    return_value=fake_window), \
+             patch("halbert_core.vision.screen_capture.ScreenCapture", return_value=mock_cap):
+            mock_load.return_value = MagicMock(
+                screen_capture=MagicMock(quality=85, max_dimension=1568, monitor_index=1, grayscale=False),
+                webcam=MagicMock(),
+            )
+            result = await capture_active_window_tool({})
+
+        assert "image" in result
+        assert "Terminal" in result["description"]
+        assert result["window"]["owner"] == "Terminal"
         vt._last_screenshot_hash = None
 
 
