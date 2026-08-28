@@ -46,29 +46,48 @@ import { useShellMode } from '@/contexts/ShellModeContext'
 import { askHost, runOnHost, configWithHost } from '@/lib/hostConversation'
 import { apiUrl } from '@/lib/apiBase'
 
-const navigation = [
-  // Overview
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+type NavItem = { name: string; href: string; icon: typeof LayoutDashboard }
+type NavSection = { label: string; items: NavItem[] }
 
-  // Essential System Health
-  { name: 'Services', href: '/services', icon: Server },
-  { name: 'Storage', href: '/storage', icon: HardDrive },
-  { name: 'Backups', href: '/backups', icon: Archive },
-  { name: 'Apps', href: '/apps', icon: Package },
-  { name: 'Security', href: '/security', icon: Shield },
-
-  // Networking
-  { name: 'Network', href: '/network', icon: Wifi },
-  { name: 'Sharing', href: '/sharing', icon: Share2 },
-
-  // Dev & Advanced
-  { name: 'Containers', href: '/containers', icon: Container },
-  { name: 'GPU', href: '/gpu', icon: Cpu },
-  { name: 'Development', href: '/development', icon: Code2 },
-
-  // Utility
-  { name: 'Approvals', href: '/approvals', icon: CheckCircle },
-  { name: 'Settings', href: '/settings', icon: Settings },
+const navSections: NavSection[] = [
+  {
+    label: 'Overview',
+    items: [
+      { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+    ],
+  },
+  {
+    label: 'System',
+    items: [
+      { name: 'Services', href: '/services', icon: Server },
+      { name: 'Storage', href: '/storage', icon: HardDrive },
+      { name: 'Backups', href: '/backups', icon: Archive },
+      { name: 'Apps', href: '/apps', icon: Package },
+      { name: 'Security', href: '/security', icon: Shield },
+    ],
+  },
+  {
+    label: 'Network',
+    items: [
+      { name: 'Network', href: '/network', icon: Wifi },
+      { name: 'Sharing', href: '/sharing', icon: Share2 },
+    ],
+  },
+  {
+    label: 'Development',
+    items: [
+      { name: 'Containers', href: '/containers', icon: Container },
+      { name: 'GPU', href: '/gpu', icon: Cpu },
+      { name: 'Development', href: '/development', icon: Code2 },
+    ],
+  },
+  {
+    label: 'Utility',
+    items: [
+      { name: 'Approvals', href: '/approvals', icon: CheckCircle },
+      { name: 'Settings', href: '/settings', icon: Settings },
+    ],
+  },
 ]
 
 interface ProgressPillProps {
@@ -359,24 +378,31 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="flex h-full overflow-hidden">
             {/* Navigation rail */}
             <nav className="w-64 shrink-0 border-r bg-card overflow-y-auto px-4 py-4 space-y-1">
-              {navigation.map((item) => {
-                const isActive = location.pathname === item.href
-                return (
-                  <Link
-                    key={item.name}
-                    to={item.href}
-                    className={cn(
-                      'flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors',
-                      isActive
-                        ? 'bg-primary text-primary-foreground'
-                        : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                    )}
-                  >
-                    <item.icon className="h-5 w-5" />
-                    {item.name}
-                  </Link>
-                )
-              })}
+              {navSections.map((section) => (
+                <div key={section.label} className="space-y-0.5">
+                  <p className="px-3 pt-3 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {section.label}
+                  </p>
+                  {section.items.map((item) => {
+                    const isActive = location.pathname === item.href
+                    return (
+                      <Link
+                        key={item.name}
+                        to={item.href}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+                          isActive
+                            ? 'bg-primary text-primary-foreground'
+                            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                        )}
+                      >
+                        <item.icon className="h-5 w-5" />
+                        {item.name}
+                      </Link>
+                    )
+                  })}
+                </div>
+              ))}
             </nav>
 
             {/* Page content */}
