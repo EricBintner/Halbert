@@ -3082,6 +3082,7 @@ class BeingConfigUpdate(BaseModel):
     name: Optional[str] = None
     voice_presentation: Optional[str] = None
     model: Optional[str] = None
+    model_endpoint_id: Optional[str] = None
 
 
 @router.get("/being")
@@ -3138,6 +3139,8 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
             cfg.voice_presentation = update.voice_presentation
         if update.model is not None:
             cfg.model = update.model if update.model else None
+        if update.model_endpoint_id is not None:
+            cfg.model_endpoint_id = update.model_endpoint_id if update.model_endpoint_id else None
 
         # Validate + save
         save_being_config(cfg)

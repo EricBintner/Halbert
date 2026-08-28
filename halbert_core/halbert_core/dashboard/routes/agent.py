@@ -380,6 +380,26 @@ def _resolve_turn_model(
     guide_endpoint = get_ollama_endpoint()
     guide_provider = provider_for(guide_endpoint)
 
+    # ── 0. Persona model override (shadows the guide model) ─────────────
+    # When BeingConfig has a model set, it replaces the guide model for all
+    # turns. Per-turn pins and tier overrides still take precedence (checked
+    # below) — the persona model just changes what "guide" means.
+    try:
+        from ...config.being_config import load_being_config
+        being_cfg = load_being_config()
+        if being_cfg.model:
+            persona_endpoint = guide_endpoint
+            persona_provider = guide_provider
+            if being_cfg.model_endpoint_id:
+                resolved = resolve_endpoint_by_id(being_cfg.model_endpoint_id)
+                if resolved:
+                    persona_endpoint, persona_provider, _ = resolved
+            guide_model = being_cfg.model
+            guide_endpoint = persona_endpoint
+            guide_provider = persona_provider
+    except Exception as e:
+        logger.debug(f"Persona model override not applied: {e}")
+
     # ── 1. Explicit model pin ────────────────────────────────────────────
     if model_override:
         # An id from the picker is exact; without one, match the pinned name

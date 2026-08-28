@@ -55,7 +55,8 @@ class BeingConfig:
     # --- Character (Phase 3 UI) ---
     name: str = ""  # display name; syncs with preferences.yml ai_name
     voice_presentation: str = "not_defined"  # not_defined | male | female
-    model: Optional[str] = None  # optional per-persona model override (deferred backend)
+    model: Optional[str] = None  # per-persona model override (shadows chat_model when set)
+    model_endpoint_id: Optional[str] = None  # saved-endpoint id for the persona model
 
     def validate(self) -> None:
         """Validate the config. Raises ValueError on invalid values."""
