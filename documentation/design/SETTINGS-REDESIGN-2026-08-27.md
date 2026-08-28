@@ -308,14 +308,19 @@ Halbert already has `components/ui/sheet.tsx` — no new dependency.
 | Nav grouping hides items users expect at top | Command palette (Phase 4) is the escape hatch; Dashboard stays first |
 | `personas` orphan deletion breaks something | Verified: no trigger exists (line 2041 has no matching `TabsTrigger`), so it renders nothing today |
 
-## 7. Open Questions
+## 7. Decisions (Resolved)
 
-1. **Settings sidebar width:** `w-56` (224px) or `w-64` (256px)? macOS uses ~220px; VS Code ~240px.
-2. **Section headers in nav:** uppercase muted text (Linear style) or bold with border (Vercel style)?
-3. **Collapsible nav groups:** default expanded or collapsed for less-used sections (Development, Utility)?
-4. **Command palette scope:** just navigation, or also include actions (e.g. "Start deep scan", "Rebuild index")?
-5. **Settings search:** filter tab labels only (Phase 2), or also search within tab content (future)?
-6. **Should "About" move to the footer/avatar dropdown instead of settings?** Many apps put version/legal info under the avatar menu, not in settings.
+1. **About location** → Moves to the avatar dropdown *and* the native macOS app-name menu (`Halbert ▸ About Halbert` in the menu bar). Removed from the settings sidebar. This matches Notion/GitHub convention plus the native macOS pattern.
+2. **Nav groups** → Always expanded. Section headers only, no collapse state. Simpler, no persisted UI state.
+3. **Settings sidebar width:** `w-56` (224px) — matches macOS. (Open for reviewer to challenge.)
+4. **Section headers in nav:** uppercase muted text (Linear style). (Open for reviewer to challenge.)
+
+## 8. Open Questions (For External Review)
+
+1. **Command palette scope (Phase 4):** Navigation only (jump to pages/settings tabs) vs. nav + actions (also trigger "Start deep scan", "Rebuild index", "New conversation"). Nav-only is simpler; nav+actions is more useful but requires wiring each action to its backend endpoint.
+2. **Settings search:** filter tab labels only (Phase 2), or also search within tab content (future)?
+3. **Is the 3-group settings IA (General / AI & Cognition / Safety) the right grouping?** Reviewer may suggest alternatives.
+4. **Should "Alerts" stay under General, or move to Safety & Control?** Alerts are rule configuration (General) but conceptually relate to safety monitoring.
 
 ---
 
