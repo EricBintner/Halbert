@@ -107,6 +107,11 @@ class ResizeRequest(BaseModel):
     rows: int
 
 
+class StageRequest(BaseModel):
+    """Plan B: B9 — Stage a command into a user shell at an empty prompt."""
+    command: str
+
+
 # Blocked commands - NEVER execute
 BLOCKED_COMMANDS = {
     'rm -rf /',
@@ -373,6 +378,28 @@ if FASTAPI_AVAILABLE:
         if not get_terminal_manager().kill(session_id):
             raise HTTPException(404, "Session not found")
         return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # Stage endpoint (Plan B: B9)
+    # ------------------------------------------------------------------
+
+    @router.post("/sessions/{session_id}/stage")
+    async def stage_into_shell(session_id: str, request: StageRequest):
+        """Write command text (no newline) to a user PTY at an empty prompt.
+
+        Allowed only when the parser sees the shell at an empty prompt:
+        state A/B seen, no C, no bytes typed since B. Otherwise 409.
+        """
+        manager = get_terminal_manager()
+        session = manager.get(session_id)
+        if session is None:
+            raise HTTPException(404, "Session not found")
+        if not manager.is_at_prompt(session_id):
+            raise HTTPException(409, "shell busy")
+        # Write the command without a newline — the user presses Enter
+        await session.write_stdin(request.command)
+        manager.touch(session_id)
+        return {"ok": True, "staged": request.command}
 
     # ------------------------------------------------------------------
     # Existing validation/safety/history endpoints (unchanged behavior)

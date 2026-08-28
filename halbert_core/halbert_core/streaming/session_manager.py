@@ -59,6 +59,7 @@ class TerminalSessionManager:
         self._watched: Dict[str, bool] = {}
         self._attach_counts: Dict[str, int] = {}
         self._block_open: Dict[str, bool] = {}
+        self._parser_states: Dict[str, Dict] = {}  # Plan B: B9 — OSC parser state
         self._kind_caps = kind_caps if kind_caps is not None else dict(_DEFAULT_KIND_CAPS)
         self._kind_ttls = kind_ttls if kind_ttls is not None else dict(_DEFAULT_KIND_TTLS)
 
@@ -150,6 +151,28 @@ class TerminalSessionManager:
         if session_id in self._block_open:
             self._block_open[session_id] = is_open
 
+    # ------------------------------------------------------------------
+    # Parser state for stage endpoint (Plan B: B9)
+    # ------------------------------------------------------------------
+
+    def is_at_prompt(self, session_id: str) -> bool:
+        """True when the session's shell is at an empty prompt.
+
+        The OSC parser for user-kind sessions tracks the last boundary.
+        A prompt is when: last boundary was A or B, no C open, and no
+        bytes typed since B. When no parser state is tracked, returns
+        False (conservative — don't stage into an unknown state).
+        """
+        state = self._parser_states.get(session_id)
+        if state is None:
+            return False
+        return state.get("at_prompt", False)
+
+    def update_parser_state(self, session_id: str, *, at_prompt: bool) -> None:
+        """Update the parser state for a session (called by the reader loop)."""
+        if session_id in self._sessions:
+            self._parser_states[session_id] = {"at_prompt": at_prompt}
+
     def kill(self, session_id: str) -> bool:
         """Kill and remove a session. Returns True if it existed."""
         session = self._sessions.pop(session_id, None)
@@ -158,6 +181,7 @@ class TerminalSessionManager:
         self._watched.pop(session_id, None)
         self._attach_counts.pop(session_id, None)
         self._block_open.pop(session_id, None)
+        self._parser_states.pop(session_id, None)
         if session is None:
             return False
         try:
