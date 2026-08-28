@@ -186,7 +186,7 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
   const statusStyle = STATUS_STYLES[session.status] ?? STATUS_STYLES.idle;
 
   return (
-    <div className="my-2 rounded-lg border border-border/60 bg-[#1a1b26] overflow-hidden shadow-lg">
+    <div className="my-2 rounded-lg border border-border/60 bg-canvas-subtle overflow-hidden shadow-lg">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-1.5 bg-background/80 border-b border-border/60 text-xs">
         <span className={`px-1.5 py-0.5 rounded border ${statusStyle} font-medium`}>
@@ -200,11 +200,11 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
           <span className="text-muted-foreground font-mono tabular-nums">{formatElapsed(session.startedAt, now)}</span>
         )}
         {session.sandboxed && (
-          <span className="px-1 py-0.5 rounded bg-info/20 text-info border border-info/40">sandbox</span>
+          <span className="px-1 py-0.5 rounded bg-status-telemetry-bg text-status-telemetry border border-status-telemetry-line">sandbox</span>
         )}
         {!interactive && (
           <span
-            className="px-1 py-0.5 rounded bg-violet-500/20 text-violet-300 border border-violet-500/40"
+            className="px-1 py-0.5 rounded bg-status-telemetry-bg text-status-telemetry border border-status-telemetry-line"
             title="Halbert is running this — mirrored read-only"
           >
             agent

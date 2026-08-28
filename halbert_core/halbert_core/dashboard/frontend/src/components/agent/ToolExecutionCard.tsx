@@ -18,24 +18,24 @@ interface ToolExecutionCardProps {
 const STATUS_CONFIG = {
   running: {
     icon: '⟳',
-    label: 'Running',
-    bgColor: 'bg-blue-100 dark:bg-info/10',
-    borderColor: 'border-blue-200 dark:border-info/30',
-    textColor: 'text-info dark:text-info',
+    label: 'running',
+    bgColor: 'bg-status-telemetry-bg',
+    borderColor: 'border-status-telemetry-line',
+    textColor: 'text-status-telemetry',
   },
   success: {
     icon: '✓',
-    label: 'Success',
-    bgColor: 'bg-success-muted dark:bg-success/10',
-    borderColor: 'border-success-muted dark:border-success/30',
-    textColor: 'text-success dark:text-success',
+    label: 'exit 0',
+    bgColor: 'bg-status-nominal-bg',
+    borderColor: 'border-status-nominal-line',
+    textColor: 'text-status-nominal',
   },
   error: {
     icon: '✗',
-    label: 'Error',
-    bgColor: 'bg-destructive/10',
-    borderColor: 'border-destructive/30',
-    textColor: 'text-destructive',
+    label: 'error',
+    bgColor: 'bg-status-critical-bg',
+    borderColor: 'border-status-critical-line',
+    textColor: 'text-status-critical',
   },
 };
 
@@ -55,11 +55,8 @@ export function ToolExecutionCard({ execution, onRetry }: ToolExecutionCardProps
         onClick={() => setIsExpanded(!isExpanded)}
       >
         <div className="flex items-center gap-2">
-          <span 
-            className={`
-              ${config.textColor} text-sm
-              ${execution.status === 'running' ? 'animate-spin' : ''}
-            `}
+          <span
+            className={`${config.textColor} text-sm`}
           >
             {config.icon}
           </span>

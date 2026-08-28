@@ -7,14 +7,9 @@
     "halbert_core/halbert_core/dashboard/frontend/src/components/agent/ContextBar.tsx": 8,
     "halbert_core/halbert_core/dashboard/frontend/src/components/agent/ScanBlock.tsx": 6,
     "halbert_core/halbert_core/dashboard/frontend/src/components/agent/StateBadge.tsx": 7,
-    "halbert_core/halbert_core/dashboard/frontend/src/components/agent/TerminalTile.tsx": 3,
-    "halbert_core/halbert_core/dashboard/frontend/src/components/agent/ToolExecutionCard.tsx": 2,
     "halbert_core/halbert_core/dashboard/frontend/src/components/domain/DataVersionCard.tsx": 1,
     "halbert_core/halbert_core/dashboard/frontend/src/components/domain/SystemItemActions.tsx": 4,
     "halbert_core/halbert_core/dashboard/frontend/src/components/legal/CloudDisclosureModal.tsx": 3,
-    "halbert_core/halbert_core/dashboard/frontend/src/components/llm/AIModelsSettings.tsx": 7,
-    "halbert_core/halbert_core/dashboard/frontend/src/components/llm/EndpointManager.tsx": 19,
-    "halbert_core/halbert_core/dashboard/frontend/src/components/llm/PlanDropdown.tsx": 1,
     "halbert_core/halbert_core/dashboard/frontend/src/components/modules/VitalsModule.tsx": 2,
     "halbert_core/halbert_core/dashboard/frontend/src/components/prep-primitives/Button.tsx": 4,
     "halbert_core/halbert_core/dashboard/frontend/src/components/prep-primitives/Toggle.tsx": 1,
@@ -36,5 +31,5 @@
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Services.tsx": 10,
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Sharing.tsx": 13
   },
-  "total": 268
+  "total": 236
 }
