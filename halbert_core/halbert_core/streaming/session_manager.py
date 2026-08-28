@@ -19,6 +19,9 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
+_DEFAULT_KIND_CAPS = {"user": 3, "agent-pool": 3, "oneshot": 2}
+_DEFAULT_KIND_TTLS = {"user": 1800, "agent-pool": 900, "oneshot": 60}
+
 from .pty import PTYSession
 
 logger = logging.getLogger("halbert.streaming.session_manager")
@@ -39,12 +42,25 @@ class AtCapacityError(Exception):
 class TerminalSessionManager:
     """Manages all active PTY sessions (singleton-style)."""
 
-    def __init__(self, max_sessions: int = 2, idle_ttl_seconds: int = 60):
+    def __init__(
+        self,
+        max_sessions: int = 2,
+        idle_ttl_seconds: int = 60,
+        kind_caps: Optional[Dict[str, int]] = None,
+        kind_ttls: Optional[Dict[str, int]] = None,
+    ):
         self._sessions: Dict[str, PTYSession] = {}
         self._last_activity: Dict[str, float] = {}
         self._max_sessions = max_sessions
         self._idle_ttl = idle_ttl_seconds
         self._reaper_task: Optional[asyncio.Task] = None
+        # Plan B: per-kind metadata
+        self._kinds: Dict[str, str] = {}
+        self._watched: Dict[str, bool] = {}
+        self._attach_counts: Dict[str, int] = {}
+        self._block_open: Dict[str, bool] = {}
+        self._kind_caps = kind_caps if kind_caps is not None else dict(_DEFAULT_KIND_CAPS)
+        self._kind_ttls = kind_ttls if kind_ttls is not None else dict(_DEFAULT_KIND_TTLS)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -57,21 +73,35 @@ class TerminalSessionManager:
         env: Optional[dict] = None,
         cols: int = 80,
         rows: int = 24,
+        kind: str = "oneshot",
+        watched: bool = True,
     ) -> str:
         """Spawn a PTY session and return its id.
 
-        Raises ``AtCapacityError`` if the manager is at capacity.
+        Raises ``AtCapacityError`` if the manager is at the total cap or
+        the per-kind cap.
         """
         if len(self._sessions) >= self._max_sessions:
             raise AtCapacityError(
                 f"Terminal session manager at capacity ({self._max_sessions})"
+            )
+        # Per-kind cap
+        kind_count = sum(1 for k in self._kinds.values() if k == kind)
+        kind_cap = self._kind_caps.get(kind, self._max_sessions)
+        if kind_count >= kind_cap:
+            raise AtCapacityError(
+                f"Terminal session kind '{kind}' at capacity ({kind_cap})"
             )
         session_id = str(uuid.uuid4())
         session = PTYSession(command, cwd=cwd, env=env, cols=cols, rows=rows)
         await session.spawn()
         self._sessions[session_id] = session
         self._last_activity[session_id] = time.monotonic()
-        logger.info(f"Spawned terminal session {session_id}: {command!r}")
+        self._kinds[session_id] = kind
+        self._watched[session_id] = watched
+        self._attach_counts[session_id] = 0
+        self._block_open[session_id] = False
+        logger.info(f"Spawned terminal session {session_id} (kind={kind}): {command!r}")
         return session_id
 
     def get(self, session_id: str) -> Optional[PTYSession]:
@@ -95,13 +125,36 @@ class TerminalSessionManager:
                 "exit_code": session.exit_code,
                 "idle_seconds": round(now - self._last_activity.get(sid, now), 1),
                 "buffer_bytes": len(session.get_buffer()),
+                "kind": self._kinds.get(sid, "oneshot"),
+                "watched": self._watched.get(sid, True),
+                "block_open": self._block_open.get(sid, False),
+                "attach_count": self._attach_counts.get(sid, 0),
             })
         return out
+
+    def attach_client(self, session_id: str) -> None:
+        """Increment the ws client count (prevents user-shell reaping)."""
+        if session_id in self._attach_counts:
+            self._attach_counts[session_id] += 1
+
+    def detach_client(self, session_id: str) -> None:
+        """Decrement the ws client count (never goes negative)."""
+        if session_id in self._attach_counts:
+            self._attach_counts[session_id] = max(0, self._attach_counts[session_id] - 1)
+
+    def set_block_open(self, session_id: str, is_open: bool) -> None:
+        """Mark a session as having an open block (prevents agent-pool reaping)."""
+        if session_id in self._block_open:
+            self._block_open[session_id] = is_open
 
     def kill(self, session_id: str) -> bool:
         """Kill and remove a session. Returns True if it existed."""
         session = self._sessions.pop(session_id, None)
         self._last_activity.pop(session_id, None)
+        self._kinds.pop(session_id, None)
+        self._watched.pop(session_id, None)
+        self._attach_counts.pop(session_id, None)
+        self._block_open.pop(session_id, None)
         if session is None:
             return False
         try:
@@ -150,18 +203,28 @@ class TerminalSessionManager:
             session = self._sessions.get(sid)
             if session is None:
                 continue
+            if not session.is_alive():
+                # Dead session: clean up regardless of kind
+                logger.debug(f"Reaping dead session {sid}")
+                self.kill(sid)
+                continue
             last = self._last_activity.get(sid, now)
             # Stdout counts as activity too: PTYSession stamps last_output_at
             # on every chunk, so a session streaming output with no stdin
             # (watching a long build) is never reaped mid-stream.
             last = max(last, getattr(session, "last_output_at", 0.0) or 0.0)
             idle = now - last
-            if not session.is_alive():
-                # Dead session: clean up
-                logger.debug(f"Reaping dead session {sid}")
-                self.kill(sid)
-            elif idle > self._idle_ttl:
-                logger.info(f"Reaping idle session {sid} (idle {idle:.0f}s > {self._idle_ttl}s)")
+            kind = self._kinds.get(sid, "oneshot")
+            ttl = self._kind_ttls.get(kind, self._idle_ttl)
+            # Per-kind reaping rules (Plan B: B5):
+            # - user sessions with attached clients are never reaped
+            # - agent-pool sessions with open blocks are never reaped
+            if kind == "user" and self._attach_counts.get(sid, 0) > 0:
+                continue
+            if kind == "agent-pool" and self._block_open.get(sid, False):
+                continue
+            if idle > ttl:
+                logger.info(f"Reaping idle session {sid} (kind={kind}, idle {idle:.0f}s > {ttl}s)")
                 self.kill(sid)
 
     async def shutdown(self) -> None:
