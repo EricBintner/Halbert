@@ -58,6 +58,36 @@ async def capture_screenshot(args: Dict) -> Dict[str, Any]:
         return {"error": f"Unexpected error: {e}", "error_type": "capture_failed"}
 
 
+async def capture_webcam(args: Dict) -> Dict[str, Any]:
+    """Capture a single frame from the webcam.
+
+    Returns a dict with:
+        - image: base64-encoded JPEG string
+        - description: human-readable summary for the observation
+
+    The camera is opened per-capture and released immediately. The LED
+    lights only momentarily.
+    """
+    camera_index = args.get("camera", 0)
+    quality = args.get("quality", 85)
+    max_dim = args.get("max_dim", 768)
+
+    try:
+        from ..vision.webcam_capture import WebcamCapture, WebcamCaptureError
+        cap = WebcamCapture(camera_index=camera_index, quality=quality, max_dim=max_dim)
+        base64_img = cap.grab_to_base64()
+        return {"image": base64_img, "description": "Webcam frame captured"}
+
+    except WebcamCaptureError as e:
+        logger.warning(f"Webcam capture tool error: {e}")
+        return {"error": str(e), "error_type": e.error_type}
+    except ImportError as e:
+        return {"error": str(e), "error_type": "dependency_missing"}
+    except Exception as e:
+        logger.error(f"Unexpected webcam capture error: {e}", exc_info=True)
+        return {"error": f"Unexpected error: {e}", "error_type": "capture_failed"}
+
+
 # Tool schemas for registration
 VISION_TOOL_SCHEMAS = {
     "capture_screenshot": {
@@ -95,9 +125,41 @@ VISION_TOOL_SCHEMAS = {
             "required": [],
         },
     },
+    "capture_webcam": {
+        "name": "capture_webcam",
+        "description": (
+            "Capture a single frame from the webcam. Use this when the user asks "
+            "you to look at something physical — hardware, a label, a screen on "
+            "another device, or anything not on the computer's own display. The "
+            "camera LED will light briefly. The captured image is attached to "
+            "your next response automatically."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "camera": {
+                    "type": "integer",
+                    "description": "Camera index (0=default, 1=second camera)",
+                    "default": 0,
+                },
+                "quality": {
+                    "type": "integer",
+                    "description": "JPEG quality (1-100, default 85)",
+                    "default": 85,
+                },
+                "max_dim": {
+                    "type": "integer",
+                    "description": "Max dimension in pixels (default 768)",
+                    "default": 768,
+                },
+            },
+            "required": [],
+        },
+    },
 }
 
 # Handler mapping
 VISION_TOOL_HANDLERS = {
     "capture_screenshot": capture_screenshot,
+    "capture_webcam": capture_webcam,
 }

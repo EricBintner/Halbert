@@ -27,6 +27,20 @@ class TestVisionToolSchemas:
         assert "capture_screenshot" in VISION_TOOL_HANDLERS
         assert callable(VISION_TOOL_HANDLERS["capture_screenshot"])
 
+    def test_webcam_schema_structure(self):
+        from halbert_core.tools.vision_tools import VISION_TOOL_SCHEMAS
+        schema = VISION_TOOL_SCHEMAS["capture_webcam"]
+        assert schema["name"] == "capture_webcam"
+        assert "description" in schema
+        params = schema["parameters"]
+        assert "camera" in params["properties"]
+        assert params["required"] == []
+
+    def test_webcam_handler_mapping(self):
+        from halbert_core.tools.vision_tools import VISION_TOOL_HANDLERS
+        assert "capture_webcam" in VISION_TOOL_HANDLERS
+        assert callable(VISION_TOOL_HANDLERS["capture_webcam"])
+
 
 class TestCaptureScreenshotHandler:
     """Test the tool handler with mocked ScreenCapture."""
