@@ -367,6 +367,7 @@ def _resolve_turn_model(
     model_override: Optional[str] = None,
     tier_override: Optional[str] = None,
     endpoint_id: Optional[str] = None,
+    secure: bool = False,
 ) -> TurnModel:
     """Pick the model for this turn.
 
@@ -374,6 +375,12 @@ def _resolve_turn_model(
     routing. A pin bypasses the complexity router entirely — that is the whole
     point of Locked Mode: a user who pins a local model must never discover
     afterwards that a cloud specialist answered and billed them.
+
+    When ``secure=True``, the resolved model is forced to a local provider
+    (one in ``LOCAL_GPU_PROVIDERS``).  If the router or pin selected a cloud
+    model, it falls back to the guide model — which is local ollama by
+    default.  This prevents secrets in the context from reaching a cloud
+    vendor.  The fallback is logged and reported in the turn reason.
 
     Resolution is done per call from models.yml rather than cached on the
     adapter, because one adapter instance is shared by every concurrent
@@ -384,6 +391,7 @@ def _resolve_turn_model(
         get_vision_model, provider_for, resolve_endpoint_by_id,
         score_query_complexity,
     )
+    from ...model.client import LOCAL_GPU_PROVIDERS
 
     guide_model = get_configured_model()
     guide_endpoint = get_ollama_endpoint()
@@ -473,6 +481,19 @@ def _resolve_turn_model(
             use_specialist = score >= 0.5
             reason = f"Complexity score {score:.2f} (threshold 0.50)"
         if use_specialist:
+            # ── Secure content fallback ───────────────────────────────────
+            # If secure=True and the specialist is a cloud provider, fall
+            # back to the guide model (local ollama) rather than sending
+            # secrets to a cloud vendor.  A false positive costs a
+            # local-model answer; a false negative ships a secret.
+            if secure and (spec_provider or "ollama") not in LOCAL_GPU_PROVIDERS:
+                logger.info(
+                    "Secure content: specialist %s is cloud (%s), falling back to guide",
+                    spec_model, spec_provider,
+                )
+                return TurnModel(guide_model, guide_endpoint, guide_provider,
+                                 "guide", False, False,
+                                 f"Secure content — specialist was cloud, used local guide")
             return TurnModel(spec_model, spec_endpoint, spec_provider or "ollama",
                              "specialist", False, True, reason)
 
