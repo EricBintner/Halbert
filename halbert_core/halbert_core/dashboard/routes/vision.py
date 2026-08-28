@@ -2,9 +2,13 @@
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Vision API routes.
 
-Provides endpoints for screen capture and (future) webcam capture.
-All capture is local — frames are processed on the server and returned
-as base64 JPEG. Nothing is stored to disk.
+Provides endpoints for screen capture, webcam capture, and vision
+configuration. All capture is local — frames are processed on the
+server and returned as base64 JPEG. Nothing is stored to disk.
+
+Capture endpoints check vision_config.yml before capturing. If the
+relevant feature (screen_capture.enabled or webcam.enabled) is False,
+the endpoint returns a 403 with a clear message instead of capturing.
 """
 
 import logging
@@ -13,6 +17,7 @@ from typing import Optional
 try:
     from fastapi import APIRouter, HTTPException, Query
     from fastapi.responses import JSONResponse
+    from pydantic import BaseModel
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
@@ -24,6 +29,58 @@ router = APIRouter(prefix="/vision", tags=["vision"])
 
 if FASTAPI_AVAILABLE:
 
+    class VisionConfigUpdate(BaseModel):
+        screen_capture_enabled: Optional[bool] = None
+        screen_capture_quality: Optional[int] = None
+        screen_capture_max_dim: Optional[int] = None
+        webcam_enabled: Optional[bool] = None
+        webcam_camera_index: Optional[int] = None
+        webcam_quality: Optional[int] = None
+        webcam_max_dim: Optional[int] = None
+
+    @router.get("/config")
+    async def get_vision_config():
+        """Get the current vision configuration."""
+        from ...vision.config import load_config
+        cfg = load_config()
+        return {
+            "screen_capture": {
+                "enabled": cfg.screen_capture.enabled,
+                "quality": cfg.screen_capture.quality,
+                "max_dimension": cfg.screen_capture.max_dimension,
+            },
+            "webcam": {
+                "enabled": cfg.webcam.enabled,
+                "camera_index": cfg.webcam.camera_index,
+                "quality": cfg.webcam.quality,
+                "max_dimension": cfg.webcam.max_dimension,
+            },
+        }
+
+    @router.put("/config")
+    async def update_vision_config(update: VisionConfigUpdate):
+        """Update vision configuration fields."""
+        from ...vision.config import load_config, save_config
+        cfg = load_config()
+
+        if update.screen_capture_enabled is not None:
+            cfg.screen_capture.enabled = update.screen_capture_enabled
+        if update.screen_capture_quality is not None:
+            cfg.screen_capture.quality = update.screen_capture_quality
+        if update.screen_capture_max_dim is not None:
+            cfg.screen_capture.max_dimension = update.screen_capture_max_dim
+        if update.webcam_enabled is not None:
+            cfg.webcam.enabled = update.webcam_enabled
+        if update.webcam_camera_index is not None:
+            cfg.webcam.camera_index = update.webcam_camera_index
+        if update.webcam_quality is not None:
+            cfg.webcam.quality = update.webcam_quality
+        if update.webcam_max_dim is not None:
+            cfg.webcam.max_dimension = update.webcam_max_dim
+
+        save_config(cfg)
+        return {"status": "ok"}
+
     @router.get("/screenshot")
     async def capture_screenshot(
         monitor: int = Query(0, description="Monitor index (0=all, 1=primary)"),
@@ -32,11 +89,16 @@ if FASTAPI_AVAILABLE:
     ):
         """Capture the screen and return a base64-encoded JPEG.
 
-        The frontend calls this when the user clicks the camera button
-        in the chat composer. The returned image is added to the
-        attached images list and sent with the next message to the
-        vision model.
+        Checks vision_config.yml — if screen_capture.enabled is False,
+        returns 403 instead of capturing.
         """
+        from ...vision.config import is_screen_capture_enabled
+        if not is_screen_capture_enabled():
+            return JSONResponse(
+                {"error": "Screen capture is disabled. Enable it in Settings > Vision.", "error_type": "disabled"},
+                status_code=403,
+            )
+
         try:
             from ...vision.screen_capture import ScreenCapture, ScreenCaptureError
             cap = ScreenCapture(quality=quality, max_dim=max_dim)
@@ -61,21 +123,6 @@ if FASTAPI_AVAILABLE:
                 status_code=500,
             )
 
-    @router.get("/status")
-    async def vision_status():
-        """Check if vision capture dependencies are available."""
-        deps = {}
-        for name, module_name in [("mss", "mss"), ("cv2", "cv2"), ("numpy", "numpy")]:
-            try:
-                __import__(module_name)
-                deps[name] = True
-            except ImportError:
-                deps[name] = False
-        return {
-            "screen_capture": all(deps.values()),
-            "dependencies": deps,
-        }
-
     @router.get("/webcam")
     async def capture_webcam(
         camera: int = Query(0, description="Camera index (0=default)"),
@@ -84,9 +131,16 @@ if FASTAPI_AVAILABLE:
     ):
         """Capture a single frame from the webcam and return base64 JPEG.
 
-        The camera is opened per-capture and released immediately — the
-        LED lights only momentarily. No continuous streaming.
+        Checks vision_config.yml — if webcam.enabled is False, returns
+        403 instead of capturing.
         """
+        from ...vision.config import is_webcam_enabled
+        if not is_webcam_enabled():
+            return JSONResponse(
+                {"error": "Webcam capture is disabled. Enable it in Settings > Vision.", "error_type": "disabled"},
+                status_code=403,
+            )
+
         try:
             from ...vision.webcam_capture import WebcamCapture, WebcamCaptureError
             cap = WebcamCapture(camera_index=camera, quality=quality, max_dim=max_dim)
@@ -110,3 +164,18 @@ if FASTAPI_AVAILABLE:
                 {"error": f"Unexpected error: {e}", "error_type": "capture_failed"},
                 status_code=500,
             )
+
+    @router.get("/status")
+    async def vision_status():
+        """Check if vision capture dependencies are available."""
+        deps = {}
+        for name, module_name in [("mss", "mss"), ("cv2", "cv2"), ("numpy", "numpy")]:
+            try:
+                __import__(module_name)
+                deps[name] = True
+            except ImportError:
+                deps[name] = False
+        return {
+            "screen_capture": all(deps.values()),
+            "dependencies": deps,
+        }

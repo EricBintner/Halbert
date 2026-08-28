@@ -42,6 +42,7 @@ import {
   Lock,
   FileCode,
   Sparkles,
+  Eye,
 } from 'lucide-react'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { PageHeader, ChromaDBSettings, DatasetManager, DataVersionCard } from '@/components/domain'
@@ -63,6 +64,286 @@ interface AlertRule {
 interface DiscoveryStats {
   total: number
   by_type: Record<string, number>
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vision Settings Component (Phase 5: Privacy gates + Settings UI)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function VisionSettings() {
+  const [config, setConfig] = useState<any>(null)
+  const [status, setStatus] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    loadConfig()
+    loadStatus()
+  }, [])
+
+  const loadConfig = async () => {
+    try {
+      const resp = await fetch(apiUrl('/api/vision/config'))
+      if (resp.ok) {
+        const data = await resp.json()
+        setConfig(data)
+      }
+    } catch (err) {
+      console.error('Failed to load vision config:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadStatus = async () => {
+    try {
+      const resp = await fetch(apiUrl('/api/vision/status'))
+      if (resp.ok) {
+        setStatus(await resp.json())
+      }
+    } catch (err) {
+      console.error('Failed to load vision status:', err)
+    }
+  }
+
+  const updateConfig = async (field: string, value: boolean | number) => {
+    setSaving(true)
+    try {
+      const body: Record<string, any> = {}
+      body[field] = value
+      const resp = await fetch(apiUrl('/api/vision/config'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (resp.ok) {
+        await loadConfig()
+        setToast('Saved')
+        setTimeout(() => setToast(null), 2000)
+      }
+    } catch (err) {
+      console.error('Failed to update vision config:', err)
+      setToast('Save failed')
+      setTimeout(() => setToast(null), 3000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const testScreenshot = async () => {
+    setToast('Capturing...')
+    try {
+      const resp = await fetch(apiUrl('/api/vision/screenshot'))
+      if (resp.ok) {
+        setToast('Screenshot captured successfully')
+      } else {
+        const err = await resp.json().catch(() => ({}))
+        setToast(`Failed: ${err.error || resp.statusText}`)
+      }
+    } catch (err) {
+      setToast(`Failed: ${err}`)
+    }
+    setTimeout(() => setToast(null), 4000)
+  }
+
+  const testWebcam = async () => {
+    setToast('Capturing...')
+    try {
+      const resp = await fetch(apiUrl('/api/vision/webcam'))
+      if (resp.ok) {
+        setToast('Webcam frame captured successfully')
+      } else {
+        const err = await resp.json().catch(() => ({}))
+        setToast(`Failed: ${err.error || resp.statusText}`)
+      }
+    } catch (err) {
+      setToast(`Failed: ${err}`)
+    }
+    setTimeout(() => setToast(null), 4000)
+  }
+
+  if (loading) {
+    return <div className="text-muted-foreground">Loading vision settings...</div>
+  }
+
+  const deps = status?.dependencies || {}
+  const depsOk = deps.mss && deps.cv2 && deps.numpy
+
+  return (
+    <div className="space-y-4">
+      {toast && (
+        <Toast open={true} message={toast} onClose={() => setToast(null)} />
+      )}
+
+      {/* Dependency status */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Eye className="h-5 w-5" />
+            Vision Dependencies
+          </CardTitle>
+          <CardDescription>
+            Required packages for screen and webcam capture
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <div className="flex items-center gap-2 text-sm">
+            <span className={deps.mss ? 'text-green-500' : 'text-red-500'}>
+              {deps.mss ? '✓' : '✗'} mss
+            </span>
+            <span className={deps.cv2 ? 'text-green-500' : 'text-red-500'}>
+              {deps.cv2 ? '✓' : '✗'} opencv-python
+            </span>
+            <span className={deps.numpy ? 'text-green-500' : 'text-red-500'}>
+              {deps.numpy ? '✓' : '✗'} numpy
+            </span>
+          </div>
+          {!depsOk && (
+            <p className="text-sm text-muted-foreground">
+              Install with: pip install mss opencv-python
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Screen Capture */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Screen Capture</CardTitle>
+          <CardDescription>
+            When enabled, Halbert can take screenshots of your display to answer
+            questions about what's on screen.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="screen-enabled">Enable screen capture</Label>
+            <input
+              id="screen-enabled"
+              type="checkbox"
+              checked={config?.screen_capture?.enabled ?? false}
+              onChange={(e) => updateConfig('screen_capture_enabled', e.target.checked)}
+              disabled={saving}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="screen-quality">JPEG Quality</Label>
+            <Input
+              id="screen-quality"
+              type="number"
+              min={1}
+              max={100}
+              value={config?.screen_capture?.quality ?? 85}
+              onChange={(e) => updateConfig('screen_capture_quality', parseInt(e.target.value) || 85)}
+              disabled={saving}
+              className="w-20"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="screen-maxdim">Max dimension (px)</Label>
+            <Input
+              id="screen-maxdim"
+              type="number"
+              min={256}
+              max={4096}
+              value={config?.screen_capture?.max_dimension ?? 1568}
+              onChange={(e) => updateConfig('screen_capture_max_dim', parseInt(e.target.value) || 1568)}
+              disabled={saving}
+              className="w-24"
+            />
+          </div>
+          <Button onClick={testScreenshot} disabled={saving || !config?.screen_capture?.enabled} variant="outline" size="sm">
+            Test screen capture
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Webcam */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Webcam</CardTitle>
+          <CardDescription>
+            When enabled, Halbert can capture frames from your camera to look at
+            physical objects, hardware, or labels. The camera LED will light briefly.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="webcam-enabled">Enable webcam access</Label>
+            <input
+              id="webcam-enabled"
+              type="checkbox"
+              checked={config?.webcam?.enabled ?? false}
+              onChange={(e) => updateConfig('webcam_enabled', e.target.checked)}
+              disabled={saving}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="webcam-camera">Camera index</Label>
+            <Input
+              id="webcam-camera"
+              type="number"
+              min={0}
+              max={9}
+              value={config?.webcam?.camera_index ?? 0}
+              onChange={(e) => updateConfig('webcam_camera_index', parseInt(e.target.value) || 0)}
+              disabled={saving}
+              className="w-20"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="webcam-quality">JPEG Quality</Label>
+            <Input
+              id="webcam-quality"
+              type="number"
+              min={1}
+              max={100}
+              value={config?.webcam?.quality ?? 85}
+              onChange={(e) => updateConfig('webcam_quality', parseInt(e.target.value) || 85)}
+              disabled={saving}
+              className="w-20"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="webcam-maxdim">Max dimension (px)</Label>
+            <Input
+              id="webcam-maxdim"
+              type="number"
+              min={256}
+              max={4096}
+              value={config?.webcam?.max_dimension ?? 768}
+              onChange={(e) => updateConfig('webcam_max_dim', parseInt(e.target.value) || 768)}
+              disabled={saving}
+              className="w-24"
+            />
+          </div>
+          <Button onClick={testWebcam} disabled={saving || !config?.webcam?.enabled} variant="outline" size="sm">
+            Test webcam capture
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Privacy note */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Shield className="h-5 w-5" />
+            Privacy
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            All capture is local. Frames are sent only to your configured vision
+            model endpoint. If your vision model is a cloud API (not localhost),
+            screenshots and webcam frames will be sent to that external service.
+            Consider using a local Ollama vision model (e.g., llava) for privacy.
+            Images are not stored to disk unless you explicitly save the conversation.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -478,7 +759,7 @@ function BeingSettings() {
  * mistyped link — so it opens the first tab, which is what a bare /settings
  * does too.
  */
-const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'about'] as const
+const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'vision', 'about'] as const
 const DEFAULT_SETTINGS_TAB = SETTINGS_TABS[0]
 
 /** The tab a URL asks for, or the default when it asks for nothing usable. */
@@ -1183,7 +1464,7 @@ export function Settings() {
       />
 
       <Tabs value={activeTab} onValueChange={selectTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="system" className="flex items-center gap-2">
             <Cpu className="h-4 w-4" />
             System
@@ -1207,6 +1488,10 @@ export function Settings() {
           <TabsTrigger value="being" className="flex items-center gap-2">
             <Sparkles className="h-4 w-4" />
             Being
+          </TabsTrigger>
+          <TabsTrigger value="vision" className="flex items-center gap-2">
+            <Eye className="h-4 w-4" />
+            Vision
           </TabsTrigger>
           <TabsTrigger value="about" className="flex items-center gap-2">
             <Info className="h-4 w-4" />
@@ -2532,6 +2817,11 @@ export function Settings() {
         {/* Being Tab */}
         <TabsContent value="being" className="space-y-4">
           <BeingSettings />
+        </TabsContent>
+
+        {/* Vision Tab */}
+        <TabsContent value="vision" className="space-y-4">
+          <VisionSettings />
         </TabsContent>
 
         {/* About Tab */}
