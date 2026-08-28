@@ -64,6 +64,20 @@ class TestOSCParserMarkers:
         assert out.boundaries[0].kind == "D"
         assert out.boundaries[0].exit_code is None
 
+    def test_d_with_exit_and_id(self):
+        p = OSCParser()
+        out = p.feed(b"\x1b]133;D;0;id=abc-123\x07")
+        assert out.boundaries[0].kind == "D"
+        assert out.boundaries[0].exit_code == 0
+        assert out.boundaries[0].block_id == "abc-123"
+
+    def test_d_with_id_only(self):
+        p = OSCParser()
+        out = p.feed(b"\x1b]133;D;id=xyz\x07")
+        assert out.boundaries[0].kind == "D"
+        assert out.boundaries[0].block_id == "xyz"
+        assert out.boundaries[0].exit_code is None
+
 
 # ---------------------------------------------------------------------------
 # OSC 7 — cwd

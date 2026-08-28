@@ -218,8 +218,8 @@ class OSCParser:
             self._in_block = True
             self._block_bytes.clear()
         elif kind == "D":
-            exit_code = self._parse_d_params(rest)
-            self._boundaries.append(BlockBoundary(kind="D", exit_code=exit_code))
+            exit_code, block_id = self._parse_d_params(rest)
+            self._boundaries.append(BlockBoundary(kind="D", exit_code=exit_code, block_id=block_id))
             self._in_block = False
 
     def _parse_c_params(self, rest: str) -> tuple[Optional[str], Optional[str]]:
@@ -239,15 +239,23 @@ class OSCParser:
                     command = None
         return block_id, command
 
-    def _parse_d_params(self, rest: str) -> Optional[int]:
-        """Parse ;<exit_code> from D marker."""
+    def _parse_d_params(self, rest: str) -> tuple[Optional[int], Optional[str]]:
+        """Parse ;<exit_code>[;id=<block_id>] from D marker."""
         rest = rest.lstrip(";")
         if not rest:
-            return None
-        try:
-            return int(rest)
-        except ValueError:
-            return None
+            return (None, None)
+        parts = rest.split(";")
+        exit_code: Optional[int] = None
+        block_id: Optional[str] = None
+        for part in parts:
+            if part.startswith("id="):
+                block_id = part[3:]
+            else:
+                try:
+                    exit_code = int(part)
+                except ValueError:
+                    pass
+        return (exit_code, block_id)
 
     def _handle_osc7(self, params: str) -> None:
         """Handle 7;file://host/path."""
