@@ -344,14 +344,14 @@ The review correctly identifies that `sentence-transformers` pulls in PyTorch (~
 
 ---
 
-## 9. Open Questions for Founder
+## 9. Founder Decisions (Resolved 2026-08-27)
 
-1. **Embeddings via Ollama** — Should we implement `OllamaEmbeddingBackend` now (Phase 1 prerequisite for N150 target) or defer? It's a Haloysius consumer-side change.
+1. **Embeddings via Ollama** — **DEFER to Phase 8.** `PersonaMemoryStore` already accepts a pluggable embedding callable, so the swap is mechanical. No work needed now. Design for it, implement when packaging for N150.
 
-2. **Home panel placement** — After Dashboard (position 2) or at the bottom of the nav? Review suggests after Dashboard.
+2. **Home panel placement** — **After Dashboard (position 2).** Home is the primary use case for this variant.
 
-3. **Phase 1 governance** — Should `call_service` in Phase 1 have any restrictions, or is it wide open (since it's just the user chatting, not autonomous)?
+3. **Phase 1 governance** — **Wide open.** The user is in the loop during Phase 1 (chat-initiated service calls, not autonomous). `HAGovernancePolicy` arrives in Phase 2 with event-driven actions.
 
-4. **HA History backfill depth** — 7 days or 14 days for the initial history query? More history = better context but more processing on first boot.
+4. **HA History backfill depth** — **7 days, configurable.** `ha_history_backfill_days: 7` in config. Power users can bump to 14 or 30. Runs once on first boot (flag in config), not on every restart.
 
-5. **Wyoming port** — Default port 10400 for the Halbert Wyoming agent? Standard Wyoming ports start at 10200.
+5. **Wyoming port** — **10400, configurable via `HALBERT_WYOMING_PORT`.** Safely above standard Wyoming services (10200-10300 range).
