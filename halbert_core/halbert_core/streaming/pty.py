@@ -25,7 +25,7 @@ import signal
 import struct
 import termios
 import time
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, Set
 
 logger = logging.getLogger("halbert.streaming.pty")
 
@@ -78,6 +78,13 @@ class PTYSession:
         # EOF sentinel and wake consumers suspended at ``queue.get()``.
         self._read_queues: set = set()
 
+        # Fan-out: single reader task + per-consumer queues (Plan B: B4).
+        # The reader task reads the master fd once and pushes chunks to every
+        # attached queue. This replaces the per-caller add_reader that starved
+        # when a second consumer attached to the same fd.
+        self._reader_task: Optional[asyncio.Task] = None
+        self._fanout_queues: Set["asyncio.Queue"] = set()
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -105,6 +112,105 @@ class PTYSession:
     def get_buffer(self) -> bytes:
         """Return the full scrollback buffer contents."""
         return bytes(self._buffer)
+
+    # ------------------------------------------------------------------
+    # Fan-out reader (Plan B: B4)
+    # ------------------------------------------------------------------
+
+    async def attach(self, maxsize: int = 0) -> "asyncio.Queue":
+        """Subscribe to this session's output stream.
+
+        Returns a queue that receives every future chunk. The first item
+        is ``("__replay__", self.get_buffer())`` so a newly-attached xterm
+        can render history without a separate fetch.
+
+        Starts the single reader task if it is not already running.
+        """
+        # If the child has already exited, drain any remaining data from the
+        # master fd before replaying so late attachers see the full output.
+        if self._exited and self._master_fd is not None:
+            self._drain_master()
+        q: "asyncio.Queue" = asyncio.Queue(maxsize=maxsize)
+        # Replay first
+        q.put_nowait(("__replay__", self.get_buffer()))
+        self._fanout_queues.add(q)
+        if self._reader_task is None or self._reader_task.done():
+            if self._master_fd is not None and not self._exited:
+                self._reader_task = asyncio.create_task(self._reader_loop())
+            elif self._exited:
+                # Child already exited — push EOF immediately
+                q.put_nowait(None)
+        return q
+
+    def detach(self, queue: "asyncio.Queue") -> None:
+        """Unsubscribe a consumer queue. Non-blocking."""
+        self._fanout_queues.discard(queue)
+
+    async def _reader_loop(self) -> None:
+        """Single reader task: reads master fd and fans out to all queues."""
+        if self._master_fd is None:
+            return
+        loop = asyncio.get_event_loop()
+
+        def _on_readable() -> None:
+            if self._exited:
+                return
+            try:
+                data = os.read(self._master_fd, 4096)
+            except OSError:
+                data = b""
+            if not data:
+                # EOF
+                loop.remove_reader(self._master_fd)
+                self._push_to_all(None)
+                self._reap(blocking=True)
+            else:
+                self._append_buffer(data)
+                self.last_output_at = time.monotonic()
+                self._push_to_all(data)
+
+        loop.add_reader(self._master_fd, _on_readable)
+        try:
+            # Keep the task alive until cancelled or EOF
+            while not self._exited:
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self._master_fd is not None:
+                try:
+                    loop.remove_reader(self._master_fd)
+                except (RuntimeError, ValueError):
+                    pass
+
+    def _push_to_all(self, item) -> None:
+        """Push an item to every fanout queue, dropping on overflow."""
+        for q in list(self._fanout_queues):
+            try:
+                q.put_nowait(item)
+            except asyncio.QueueFull:
+                # Queue is full (bounded) — drop the chunk for this consumer.
+                # The scrollback buffer still has it; the consumer can re-attach
+                # and replay. Never block the reader on one slow consumer.
+                pass
+
+    def _drain_master(self) -> None:
+        """Non-blocking drain of any remaining data on the master fd."""
+        if self._master_fd is None:
+            return
+        try:
+            fcntl.fcntl(self._master_fd, fcntl.F_SETFL, os.O_NONBLOCK)
+        except OSError:
+            pass
+        while True:
+            try:
+                data = os.read(self._master_fd, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+            self._append_buffer(data)
+            self.last_output_at = time.monotonic()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -160,57 +266,32 @@ class PTYSession:
     async def read_chunk(self) -> AsyncIterator[bytes]:
         """Async generator yielding stdout chunks from the master fd.
 
-        Uses the event loop's reader (kqueue on macOS, epoll on Linux) via
-        ``loop.add_reader`` rather than ``aiofiles``. ``aiofiles`` runs reads
-        in a thread executor, and a blocked PTY read does NOT unblock when the
-        master fd is closed — which hangs the event loop on shutdown. The
-        selector-based approach unregisters cleanly on fd close.
-
-        Yields until the child exits and the master returns EOF, then reaps
-        the child and records the exit code. Safe to iterate once per spawn.
+        Backward-compatible wrapper around the fan-out reader (Plan B: B4).
+        Creates a queue via ``attach()``, yields chunks, and detaches in
+        ``finally``. The first item (``__replay__``) is skipped so callers
+        that already consumed the buffer don't get a duplicate.
         """
         if self._master_fd is None:
             return
-        loop = asyncio.get_event_loop()
-        queue: "asyncio.Queue[Optional[bytes]]" = asyncio.Queue()
+        queue = await self.attach()
         self._read_queues.add(queue)
-        eof = False
-
-        def _on_readable() -> None:
-            nonlocal eof
-            if self._exited:
-                return
-            try:
-                data = os.read(self._master_fd, 4096)
-            except OSError:
-                # Master closed / error -> treat as EOF
-                data = b""
-            if not data:
-                eof = True
-                loop.remove_reader(self._master_fd)
-                queue.put_nowait(None)
-            else:
-                self._append_buffer(data)
-                self.last_output_at = time.monotonic()
-                queue.put_nowait(data)
-
-        loop.add_reader(self._master_fd, _on_readable)
         try:
-            while not eof:
+            while True:
                 item = await queue.get()
                 if item is None:
                     break
+                if isinstance(item, tuple) and item[0] == "__replay__":
+                    # Skip replay for backward compat — callers that used
+                    # read_chunk before B4 never got a replay item.
+                    continue
                 yield item
             # Normal EOF: the child has closed the slave, so a blocking reap is
             # safe and fast. This runs only on the natural-completion path.
-            self._reap(blocking=True)
+            if not self._exited:
+                self._reap(blocking=True)
         finally:
             self._read_queues.discard(queue)
-            # None after a concurrent kill() already removed the reader and
-            # closed the fd — remove_reader would fail (and could target a
-            # reused fd number), so skip it in that case.
-            if self._master_fd is not None:
-                loop.remove_reader(self._master_fd)
+            self.detach(queue)
             # Cleanup/abandon path (aclose while still running): never block.
             self._reap(blocking=False)
 
@@ -230,6 +311,9 @@ class PTYSession:
     def kill(self) -> None:
         """Terminate the child and close the master fd. Idempotent."""
         was_alive = not self._exited
+        # Cancel the reader task first (Plan B: B4).
+        if self._reader_task is not None and not self._reader_task.done():
+            self._reader_task.cancel()
         # Remove the async reader first so the event loop can shut down
         # cleanly even if a read_chunk generator was abandoned mid-iteration
         # (the generator's `finally` only runs on close/GC, which can be too
@@ -248,6 +332,8 @@ class PTYSession:
                 q.put_nowait(None)
             except Exception:
                 pass
+        # Push EOF to every fanout queue (Plan B: B4).
+        self._push_to_all(None)
         if was_alive and self._pid is not None:
             try:
                 os.kill(self._pid, signal.SIGTERM)
