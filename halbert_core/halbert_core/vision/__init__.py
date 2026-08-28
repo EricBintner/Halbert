@@ -14,21 +14,27 @@ from .config import (
     VisionConfig,
     ScreenCaptureConfig,
     WebcamConfig,
+    RedactionConfig,
     load_config,
     save_config,
     is_screen_capture_enabled,
     is_webcam_enabled,
 )
 from .ocr import recognize, is_available as ocr_available
+from .redact import redact_image, should_redact, get_blocklist
 
 __all__ = [
     "VisionConfig",
     "ScreenCaptureConfig",
     "WebcamConfig",
+    "RedactionConfig",
     "load_config",
     "save_config",
     "is_screen_capture_enabled",
     "is_webcam_enabled",
     "recognize",
     "ocr_available",
+    "redact_image",
+    "should_redact",
+    "get_blocklist",
 ]

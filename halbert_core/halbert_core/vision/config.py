@@ -53,9 +53,16 @@ class WebcamConfig:
 
 
 @dataclass
+class RedactionConfig:
+    enabled: bool = False  # OFF by default (adds OCR overhead to every capture)
+    blocklist: list = field(default_factory=list)  # empty = use DEFAULT_BLOCKLIST
+
+
+@dataclass
 class VisionConfig:
     screen_capture: ScreenCaptureConfig = field(default_factory=ScreenCaptureConfig)
     webcam: WebcamConfig = field(default_factory=WebcamConfig)
+    redaction: RedactionConfig = field(default_factory=RedactionConfig)
 
 
 _DEFAULT_CONFIG = VisionConfig()
@@ -71,6 +78,8 @@ def load_config() -> VisionConfig:
             data = yaml.safe_load(f) or {}
         screen = data.get("screen_capture", {})
         webcam = data.get("webcam", {})
+        redaction = data.get("redaction") or {}
+
         return VisionConfig(
             screen_capture=ScreenCaptureConfig(
                 enabled=screen.get("enabled", False),
@@ -85,6 +94,10 @@ def load_config() -> VisionConfig:
                 quality=webcam.get("quality", 85),
                 max_dimension=webcam.get("max_dimension", 768),
                 grayscale=webcam.get("grayscale", False),
+            ),
+            redaction=RedactionConfig(
+                enabled=redaction.get("enabled", False),
+                blocklist=redaction.get("blocklist", []),
             ),
         )
     except Exception as e:
@@ -110,6 +123,10 @@ def save_config(config: VisionConfig) -> None:
             "quality": config.webcam.quality,
             "max_dimension": config.webcam.max_dimension,
             "grayscale": config.webcam.grayscale,
+        },
+        "redaction": {
+            "enabled": config.redaction.enabled,
+            "blocklist": config.redaction.blocklist,
         },
     }
     with open(path, "w") as f:

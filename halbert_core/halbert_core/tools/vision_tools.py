@@ -72,6 +72,12 @@ async def capture_screenshot(args: Dict) -> Dict[str, Any]:
             jpeg_bytes = cap.capture_full(monitor_index=monitor)
             desc = f"Screenshot captured (monitor {monitor})"
 
+        # Redaction: if enabled, blur sensitive regions before sending
+        from ..vision.redact import should_redact, redact_image, get_blocklist
+        if should_redact(cfg):
+            jpeg_bytes = redact_image(jpeg_bytes, get_blocklist(cfg))
+            desc += " (redacted)"
+
         # Dedup: if the screen hasn't changed since the last capture,
         # skip sending the image. The LLM already has it from the
         # previous turn — re-sending wastes ~3000 tokens for nothing.

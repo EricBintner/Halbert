@@ -40,6 +40,8 @@ if FASTAPI_AVAILABLE:
         webcam_quality: Optional[int] = None
         webcam_max_dim: Optional[int] = None
         webcam_grayscale: Optional[bool] = None
+        redaction_enabled: Optional[bool] = None
+        redaction_blocklist: Optional[list] = None
 
     @router.get("/config")
     async def get_vision_config():
@@ -60,6 +62,10 @@ if FASTAPI_AVAILABLE:
                 "quality": cfg.webcam.quality,
                 "max_dimension": cfg.webcam.max_dimension,
                 "grayscale": cfg.webcam.grayscale,
+            },
+            "redaction": {
+                "enabled": cfg.redaction.enabled,
+                "blocklist": cfg.redaction.blocklist,
             },
         }
 
@@ -89,6 +95,10 @@ if FASTAPI_AVAILABLE:
             cfg.webcam.max_dimension = update.webcam_max_dim
         if update.webcam_grayscale is not None:
             cfg.webcam.grayscale = update.webcam_grayscale
+        if update.redaction_enabled is not None:
+            cfg.redaction.enabled = update.redaction_enabled
+        if update.redaction_blocklist is not None:
+            cfg.redaction.blocklist = update.redaction_blocklist
 
         save_config(cfg)
         return {"status": "ok"}
