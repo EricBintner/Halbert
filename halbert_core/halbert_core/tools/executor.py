@@ -625,3 +625,5 @@ class ToolExecutor:
             handler = VISION_TOOL_HANDLERS.get(name)
             if handler:
                 self.register(name, handler, schema)
+            else:
+                logger.warning(f"Vision tool '{name}' has schema but no handler — skipped")

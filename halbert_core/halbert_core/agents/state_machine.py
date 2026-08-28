@@ -2395,15 +2395,17 @@ class AgentStateMachine:
                 # observation directly — the LLM reads it as text, not
                 # through the vision model, saving 5-15x tokens.
                 if isinstance(result.result, dict) and "image" in result.result:
-                    if self.ctx.images is None:
-                        self.ctx.images = []
-                    self.ctx.images.append(result.result["image"])
+                    img_data = result.result["image"]
+                    if img_data and isinstance(img_data, str):
+                        if self.ctx.images is None:
+                            self.ctx.images = []
+                        self.ctx.images.append(img_data)
                     desc = result.result.get("description", "Image captured")
                     # If OCR text is also present, include it in the
                     # observation so the LLM gets both the text and the
                     # image routing.
                     ocr_text = result.result.get("ocr_text")
-                    if ocr_text:
+                    if ocr_text and isinstance(ocr_text, str):
                         self.ctx.add_observation(
                             f"Executed {tool_name}: {desc}\nOCR text:\n{ocr_text}"
                         )

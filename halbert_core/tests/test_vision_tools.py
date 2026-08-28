@@ -253,7 +253,7 @@ class TestCaptureWindowHandler:
     @pytest.mark.asyncio
     async def test_returns_image_on_success(self):
         import halbert_core.tools.vision_tools as vt
-        vt._last_screenshot_hash = None
+        vt._last_window_hash = None
 
         from halbert_core.tools.vision_tools import capture_window_tool
 
@@ -272,7 +272,7 @@ class TestCaptureWindowHandler:
 
         assert "image" in result
         assert "123" in result["description"]
-        vt._last_screenshot_hash = None
+        vt._last_window_hash = None
 
 
 class TestCaptureActiveWindowHandler:
@@ -305,7 +305,7 @@ class TestCaptureActiveWindowHandler:
     @pytest.mark.asyncio
     async def test_returns_image_on_success(self):
         import halbert_core.tools.vision_tools as vt
-        vt._last_screenshot_hash = None
+        vt._last_active_window_hash = None
 
         from halbert_core.tools.vision_tools import capture_active_window_tool
 
@@ -332,7 +332,7 @@ class TestCaptureActiveWindowHandler:
         assert "image" in result
         assert "Terminal" in result["description"]
         assert result["window"]["owner"] == "Terminal"
-        vt._last_screenshot_hash = None
+        vt._last_active_window_hash = None
 
 
 class TestCaptureScreenshotHandler:

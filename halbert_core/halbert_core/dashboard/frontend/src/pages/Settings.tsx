@@ -107,7 +107,7 @@ function VisionSettings() {
     }
   }
 
-  const updateConfig = async (field: string, value: boolean | number) => {
+  const updateConfig = async (field: string, value: boolean | number | string[]) => {
     setSaving(true)
     try {
       const body: Record<string, any> = {}
@@ -344,9 +344,64 @@ function VisionSettings() {
               className="w-24"
             />
           </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="webcam-grayscale">Grayscale (smaller, no color)</Label>
+            <input
+              id="webcam-grayscale"
+              type="checkbox"
+              checked={config?.webcam?.grayscale ?? false}
+              onChange={(e) => updateConfig('webcam_grayscale', e.target.checked)}
+              disabled={saving}
+            />
+          </div>
           <Button onClick={testWebcam} disabled={saving || !config?.webcam?.enabled} variant="outline" size="sm">
             Test webcam capture
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* Redaction */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Shield className="h-5 w-5" />
+            Sensitive Content Redaction
+          </CardTitle>
+          <CardDescription>
+            Blurs screen regions containing passwords, API keys, and tokens
+            before sending to the LLM. Adds ~50-200ms OCR overhead per capture.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="redaction-enabled">Enable redaction</Label>
+            <input
+              id="redaction-enabled"
+              type="checkbox"
+              checked={config?.redaction?.enabled ?? false}
+              onChange={(e) => updateConfig('redaction_enabled', e.target.checked)}
+              disabled={saving}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="redaction-blocklist">Custom blocklist keywords (one per line, empty = use defaults)</Label>
+            <textarea
+              id="redaction-blocklist"
+              className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              placeholder={"password\ntoken\napi_key\nsecret\n..."}
+              value={(config?.redaction?.blocklist ?? []).join('\n')}
+              onChange={(e) => {
+                const lines = e.target.value.split('\n').map((s: string) => s.trim()).filter(Boolean)
+                updateConfig('redaction_blocklist', lines)
+              }}
+              disabled={saving}
+            />
+            <p className="text-xs text-muted-foreground">
+              Default blocklist covers: password, secret, token, api_key, credential,
+              SSH keys, PEM blocks, and regex patterns for AWS/GitHub/Slack/Stripe keys.
+              Custom keywords are case-insensitive substring matches.
+            </p>
+          </div>
         </CardContent>
       </Card>
 

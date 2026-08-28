@@ -21,7 +21,11 @@ logger = logging.getLogger("halbert.tools.vision")
 # Dedup state: module-level because tool handlers are stateless functions.
 # Vision capture is inherently serial (one user, one screen), so a simple
 # last-hash comparison is sufficient — no need for a concurrent map.
+# Separate hashes per capture type so a full-screen capture doesn't
+# suppress a subsequent window capture (or vice versa).
 _last_screenshot_hash: str | None = None
+_last_window_hash: str | None = None
+_last_active_window_hash: str | None = None
 _last_webcam_hash: str | None = None
 
 
@@ -244,13 +248,40 @@ async def capture_and_ocr(args: Dict) -> Dict[str, Any]:
             ocr_text = recognize(png_buf.tobytes())
 
         if ocr_text and ocr_text.strip():
+            ocr_text = ocr_text.strip()
+
+            # Redaction: if enabled, mask lines containing sensitive
+            # keywords in the OCR text. This prevents passwords/tokens
+            # from reaching the LLM via the text path.
+            from ..vision.redact import should_redact, get_blocklist, get_regex_patterns, _matches_sensitive
+            if should_redact(cfg):
+                blocklist = get_blocklist(cfg)
+                patterns = get_regex_patterns()
+                lines = ocr_text.split("\n")
+                redacted_lines = []
+                for line in lines:
+                    if _matches_sensitive(line, blocklist, patterns):
+                        redacted_lines.append("[REDACTED]")
+                    else:
+                        redacted_lines.append(line)
+                ocr_text = "\n".join(redacted_lines)
+                desc += " (redacted)"
+
             result = {
-                "ocr_text": ocr_text.strip(),
+                "ocr_text": ocr_text,
                 "description": f"{desc}: {len(ocr_text)} chars of text extracted",
             }
-            # Optionally include a small thumbnail for visual context
+            # Optionally include a small thumbnail for visual context.
+            # If redaction is enabled, redact the image too.
             if include_image:
                 import base64
+                if should_redact(cfg):
+                    from ..vision.redact import redact_image
+                    jpeg_bytes = redact_image(
+                        jpeg_bytes,
+                        blocklist=get_blocklist(cfg),
+                        patterns=get_regex_patterns(),
+                    )
                 result["image"] = base64.b64encode(jpeg_bytes).decode("ascii")
             return result
         else:
@@ -328,15 +359,15 @@ async def capture_window_tool(args: Dict) -> Dict[str, Any]:
         )
         jpeg_bytes = cap.capture_window(window_id)
 
-        # Dedup
-        global _last_screenshot_hash
+        # Dedup (per-tool hash so full-screen captures don't suppress window captures)
+        global _last_window_hash
         frame_hash = hashlib.md5(jpeg_bytes).hexdigest()
-        if frame_hash == _last_screenshot_hash:
+        if frame_hash == _last_window_hash:
             return {
                 "description": "Window unchanged since last capture.",
                 "unchanged": True,
             }
-        _last_screenshot_hash = frame_hash
+        _last_window_hash = frame_hash
 
         base64_img = base64.b64encode(jpeg_bytes).decode("ascii")
         return {"image": base64_img, "description": f"Window {window_id} captured"}
@@ -389,15 +420,15 @@ async def capture_active_window_tool(args: Dict) -> Dict[str, Any]:
         )
         jpeg_bytes = cap.capture_window(active["id"])
 
-        # Dedup
-        global _last_screenshot_hash
+        # Dedup (per-tool hash)
+        global _last_active_window_hash
         frame_hash = hashlib.md5(jpeg_bytes).hexdigest()
-        if frame_hash == _last_screenshot_hash:
+        if frame_hash == _last_active_window_hash:
             return {
                 "description": f"Active window ({active['owner']}) unchanged since last capture.",
                 "unchanged": True,
             }
-        _last_screenshot_hash = frame_hash
+        _last_active_window_hash = frame_hash
 
         base64_img = base64.b64encode(jpeg_bytes).decode("ascii")
         return {

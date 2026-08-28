@@ -105,7 +105,7 @@ if FASTAPI_AVAILABLE:
 
     @router.get("/screenshot")
     async def capture_screenshot(
-        monitor: int = Query(0, description="Monitor index (0=all, 1=primary)"),
+        monitor: Optional[int] = Query(None, description="Monitor index (0=all, 1=primary). Omitted = use config default."),
         quality: Optional[int] = Query(None, ge=1, le=100, description="JPEG quality (defaults to config)"),
         max_dim: Optional[int] = Query(None, ge=256, le=4096, description="Max dimension in pixels (defaults to config)"),
     ):
@@ -125,7 +125,7 @@ if FASTAPI_AVAILABLE:
         cfg = load_config()
         eff_quality = quality if quality is not None else cfg.screen_capture.quality
         eff_max_dim = max_dim if max_dim is not None else cfg.screen_capture.max_dimension
-        eff_monitor = monitor if monitor != 0 else cfg.screen_capture.monitor_index
+        eff_monitor = monitor if monitor is not None else cfg.screen_capture.monitor_index
 
         try:
             from ...vision.screen_capture import ScreenCapture, ScreenCaptureError
