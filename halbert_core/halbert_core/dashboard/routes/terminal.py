@@ -107,6 +107,16 @@ class ResizeRequest(BaseModel):
     rows: int
 
 
+class StageRequest(BaseModel):
+    """Plan B: B9 — Stage a command into a user shell at an empty prompt."""
+    command: str
+
+
+class WatchedRequest(BaseModel):
+    """Plan B: B8 — Toggle watched status of a user shell session."""
+    watched: bool
+
+
 # Blocked commands - NEVER execute
 BLOCKED_COMMANDS = {
     'rm -rf /',
@@ -373,6 +383,53 @@ if FASTAPI_AVAILABLE:
         if not get_terminal_manager().kill(session_id):
             raise HTTPException(404, "Session not found")
         return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # Stage endpoint (Plan B: B9)
+    # ------------------------------------------------------------------
+
+    @router.post("/sessions/{session_id}/stage")
+    async def stage_into_shell(session_id: str, request: StageRequest):
+        """Write command text (no newline) to a user PTY at an empty prompt.
+
+        Allowed only when the parser sees the shell at an empty prompt:
+        state A/B seen, no C, no bytes typed since B. Otherwise 409.
+        """
+        manager = get_terminal_manager()
+        session = manager.get(session_id)
+        if session is None:
+            raise HTTPException(404, "Session not found")
+        if not manager.is_at_prompt(session_id):
+            raise HTTPException(409, "shell busy")
+        # Write the command without a newline — the user presses Enter
+        await session.write_stdin(request.command)
+        manager.touch(session_id)
+        return {"ok": True, "staged": request.command}
+
+    # ------------------------------------------------------------------
+    # Watched toggle endpoint (Plan B: B8)
+    # ------------------------------------------------------------------
+
+    @router.post("/sessions/{session_id}/watched")
+    async def set_watched(session_id: str, request: WatchedRequest):
+        """Toggle the watched status of a user shell session.
+
+        When unwatched, block closes still store the block row (for xterm
+        replay) but do not insert messages rows or hint entries.
+        """
+        manager = get_terminal_manager()
+        session = manager.get(session_id)
+        if session is None:
+            raise HTTPException(404, "Session not found")
+        manager.set_watched(session_id, request.watched)
+        # Persist to the terminal_sessions table
+        try:
+            from halbert_core.agents.threads import get_thread_manager
+            store = get_thread_manager().store
+            store.update_terminal_session(session_id, watched=1 if request.watched else 0)
+        except Exception:
+            pass
+        return {"ok": True, "watched": request.watched}
 
     # ------------------------------------------------------------------
     # Existing validation/safety/history endpoints (unchanged behavior)

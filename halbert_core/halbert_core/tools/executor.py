@@ -19,6 +19,7 @@ from typing import Dict, Any, Optional, Callable, List, TYPE_CHECKING
 from .safety import ToolSafetyFramework, RiskLevel, SafetyCheckResult, THREAD_META_TOOLS
 from ..streaming.terminal_bridge import (
     current_agent_session, publish_terminal_event, terminal_stream_wanted,
+    terminal_pool_wanted,
 )
 
 if TYPE_CHECKING:
@@ -195,6 +196,30 @@ class ToolExecutor:
                     "required": ["path"]
                 }
             }
+        )
+
+        # Plan B: terminal_blocks fetch tool (B11)
+        self.register(
+            "terminal_blocks",
+            self._terminal_blocks,
+            {
+                "name": "terminal_blocks",
+                "description": "Fetch stored terminal block output",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {
+                            "type": "string",
+                            "description": "Terminal session id",
+                        },
+                        "n": {
+                            "type": "integer",
+                            "description": "Number of recent blocks (default 5)",
+                            "default": 5,
+                        },
+                    },
+                },
+            },
         )
 
         # Thread meta-tools (Plan A, spec §7). The schemas are what the model
@@ -431,10 +456,16 @@ class ToolExecutor:
         bridge so the conversation can render a live terminal tile while the
         command is still running. The return value — what the model sees — is
         identical either way.
+
+        Plan B: when streaming, the pool path is tried first. The pool runs
+        the command in a PTY-backed bash session with OSC 133 block markers,
+        producing a terminal_block row. At cap or on failure, falls back to
+        the subprocess path.
         """
         command = args["command"]
         timeout = args.get("timeout", self.DEFAULT_TIMEOUT)
         cwd = args.get("cwd")
+        # background is accepted but ignored (Plan C).
 
         # Expand user paths
         if cwd:
@@ -442,6 +473,44 @@ class ToolExecutor:
 
         logger.debug(f"Running command: {command}")
 
+        streaming = terminal_stream_wanted()
+        pool_wanted = terminal_pool_wanted()
+
+        # Plan B: try the pool first (only when streaming + pool enabled)
+        if pool_wanted:
+            try:
+                from halbert_core.streaming.agent_pool import get_terminal_pool
+                pool = get_terminal_pool()
+                result = await pool.run_block(command, cwd=cwd, timeout=timeout)
+                if result is not None:
+                    # Store the terminal_block row
+                    try:
+                        from halbert_core.agents.threads import get_thread_manager
+                        store = get_thread_manager().store
+                        store.insert_terminal_block({
+                            "block_id": result["block_id"],
+                            "session_id": result["session_id"],
+                            "thread_id": None,
+                            "turn_id": None,
+                            "command": command,
+                            "cwd": cwd,
+                            "owner": "agent",
+                            "interactive": 0,
+                            "remote": 0,
+                            "redacted": 1 if result.get("redacted") else 0,
+                            "started_at": result.get("started_at", 0.0),
+                            "ended_at": result.get("ended_at", 0.0),
+                            "exit_code": result["exit_code"],
+                            "output_head": result["output_head"],
+                            "output_tail": result["output_tail"],
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to store terminal_block: {e}")
+                    return self._format_block_result(result)
+            except Exception as e:
+                logger.warning(f"Pool path failed, falling back to subprocess: {e}")
+
+        # Fallback: subprocess path (unchanged)
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
@@ -449,7 +518,6 @@ class ToolExecutor:
             cwd=cwd
         )
 
-        streaming = terminal_stream_wanted()
         terminal_id = f"cmd-{uuid.uuid4()}"
         if streaming:
             publish_terminal_event({
@@ -528,6 +596,59 @@ class ToolExecutor:
                     "exit_code": proc.returncode if proc.returncode is not None else -1,
                 })
             raise
+
+    @staticmethod
+    def _format_block_result(result: Dict) -> str:
+        """Format a pool block result for the model.
+
+        Returns the same string shape the model sees from the subprocess
+        path: exit code + output, or just output on success.
+        """
+        exit_code = result.get("exit_code", -1)
+        output = result.get("output_head", "")
+        tail = result.get("output_tail", "")
+        # Combine head and tail (head is first 20 lines, tail is last 4 KiB)
+        full_output = output
+        if tail and tail != output:
+            full_output = output + "\n" + tail
+        if exit_code != 0:
+            return f"Exit code {exit_code}\n{full_output}".strip()
+        return full_output.strip() if full_output else "(no output)"
+
+    async def _terminal_blocks(self, args: Dict) -> str:
+        """Fetch stored terminal block output (Plan B: B11).
+
+        Returns a JSON string listing recent terminal blocks for a session.
+        SAFE risk level — read-only.
+        """
+        session_id = args.get("session_id")
+        n = args.get("n", 5)
+        try:
+            from halbert_core.agents.threads import get_thread_manager
+            store = get_thread_manager().store
+            blocks = store.list_terminal_blocks(
+                session_id=session_id,
+                limit=n,
+            ) if session_id else store.list_terminal_blocks(limit=n)
+            # Trim to the fields the model needs
+            result = [
+                {
+                    "block_id": b.get("block_id"),
+                    "command": b.get("command"),
+                    "exit_code": b.get("exit_code"),
+                    "cwd": b.get("cwd"),
+                    "output_head": b.get("output_head", ""),
+                    "output_tail": b.get("output_tail", ""),
+                    "started_at": b.get("started_at"),
+                    "ended_at": b.get("ended_at"),
+                }
+                for b in blocks
+            ]
+            import json
+            return json.dumps(result, indent=2, default=str)
+        except Exception as e:
+            logger.warning(f"terminal_blocks tool failed: {e}")
+            return "[]"
 
     async def _read_file(self, args: Dict) -> str:
         """Read file contents."""

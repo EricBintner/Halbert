@@ -622,7 +622,7 @@ class AgentStateMachine:
                 turn,
                 assistant_text="".join(old_ctx.response_chunks or []),
                 blocks=blocks,
-                terminal_session_ids=list(old_ctx.terminal_session_ids or []),
+                terminal_block_ids=list(old_ctx.terminal_block_ids or []),
                 diff_proposals=[
                     {"diff_id": diff_id,
                      **(diff if isinstance(diff, dict) else {"value": diff})}
@@ -848,6 +848,7 @@ class AgentStateMachine:
             yield StreamEvent.thread_recalled(
                 sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="auto",
                 last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
+                scope_crossed=r.get("scope_crossed"),
             )
 
         yield StreamEvent.turn_persisted(sid, turn.thread_id, turn.turn_id)
@@ -952,7 +953,7 @@ class AgentStateMachine:
                 turn,
                 assistant_text="".join(ctx.response_chunks),
                 blocks=blocks,
-                terminal_session_ids=list(ctx.terminal_session_ids),
+                terminal_block_ids=list(ctx.terminal_block_ids),
                 diff_proposals=diffs,
                 status=status,
                 thread_id_override=ctx.thread_id if ctx.thread_switched else None,
@@ -1940,8 +1941,13 @@ class AgentStateMachine:
             results: List[Dict[str, Any]] = []
             if tm is not None:
                 try:
+                    # R4: scope as a property of the query — pass the open
+                    # thread's domains so same-domain hits rank first.
+                    turn_domains = list(getattr(self.ctx.turn_context, "domains", None) or [])
                     results = list(tm.recall(
-                        query=query, thread_id=thread_id, exclude_thread_id=self.ctx.thread_id,
+                        query=query, thread_id=thread_id,
+                        exclude_thread_id=self.ctx.thread_id,
+                        domains=turn_domains or None,
                     ) or [])
                 except Exception as e:
                     logger.warning(f"recall_thread store failure (non-fatal): {e}")
@@ -1969,6 +1975,7 @@ class AgentStateMachine:
                 yield StreamEvent.thread_recalled(
                     sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="tool",
                     last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
+                    scope_crossed=r.get("scope_crossed"),
                 )
             self.ctx.add_observation(
                 "Recalled earlier subjects: " + "; ".join(names)
@@ -2226,6 +2233,8 @@ class AgentStateMachine:
                 sandboxed=bool(payload.get("sandboxed")),
                 cwd=payload.get("cwd"),
                 attach=str(payload.get("attach", "sse")),
+                block_id=payload.get("block_id"),
+                owner=str(payload.get("owner", "agent")),
             )
         if kind == "output":
             return StreamEvent.terminal_output(
@@ -2245,8 +2254,11 @@ class AgentStateMachine:
         if payload.get("kind") != "spawn":
             return
         terminal_id = str(payload.get("terminal_session_id", ""))
-        if terminal_id and terminal_id not in self.ctx.terminal_session_ids:
-            self.ctx.terminal_session_ids.append(terminal_id)
+        block_id = str(payload.get("block_id", ""))
+        # Plan B: track block_id when present, fall back to session_id
+        track_id = block_id or terminal_id
+        if track_id and track_id not in self.ctx.terminal_block_ids:
+            self.ctx.terminal_block_ids.append(track_id)
 
     async def _run_tool_streaming(
         self,

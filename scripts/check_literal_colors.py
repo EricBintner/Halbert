@@ -44,6 +44,9 @@ PROPS = "bg|text|border|from|to|via|ring|divide|fill|stroke|outline|shadow|accen
 
 PATTERN = re.compile(rf"\b(?:{PROPS})-(?:{FAMILIES})-\d{{2,3}}\b")
 
+# Hex literal colours: bg-[#1a1b26], text-[#fff], etc. (Plan B: B14)
+HEX_PATTERN = re.compile(r"\b(?:bg|text|border|from|to|via|ring|fill|stroke)-\[#[0-9a-fA-F]{3,8}\]")
+
 # Dark neutral backgrounds are called out separately: they are the ones that
 # read as a hole punched in the bone canvas rather than merely off-brand.
 CLASHING = re.compile(rf"\bbg-(?:slate|zinc|gray|neutral|stone)-(?:[789]\d\d)\b")
@@ -67,9 +70,11 @@ def scan() -> tuple[dict[str, int], dict[str, int], Counter]:
         except (OSError, UnicodeDecodeError):
             continue
         hits = PATTERN.findall(text)
-        if hits:
-            counts[rel] = len(hits)
-            by_class.update(hits)
+        hex_hits = HEX_PATTERN.findall(text)
+        all_hits = hits + hex_hits
+        if all_hits:
+            counts[rel] = len(all_hits)
+            by_class.update(all_hits)
         clash = CLASHING.findall(text)
         if clash:
             clashes[rel] = len(clash)

@@ -79,11 +79,11 @@ class _RecordingThreadManager:
     def __init__(self):
         self.ended = []
 
-    def end_turn(self, turn, *, assistant_text, blocks, terminal_session_ids, diff_proposals,
+    def end_turn(self, turn, *, assistant_text, blocks, terminal_block_ids, diff_proposals,
                  status="complete", thread_id_override=None):
         self.ended.append(dict(
             turn=turn, assistant_text=assistant_text, blocks=blocks,
-            terminal_session_ids=terminal_session_ids, diff_proposals=diff_proposals,
+            terminal_block_ids=terminal_block_ids, diff_proposals=diff_proposals,
             status=status, thread_id_override=thread_id_override,
         ))
 
@@ -146,7 +146,7 @@ class TestTurnLock:
         assert len(tm.ended) == 1
         end = tm.ended[0]
         assert end["status"] == "cancelled" and end["assistant_text"] == ""
-        assert end["terminal_session_ids"] == [] and end["diff_proposals"] == []
+        assert end["terminal_block_ids"] == [] and end["diff_proposals"] == []
         assert end["thread_id_override"] is None
         assert end["blocks"] == [{
             "tool": "run_command", "args": {"command": "systemctl restart sshd"},
@@ -316,7 +316,7 @@ class TestTerminalSessionIds:
         agent.tools.execute = fake_execute
         sink = []
         events = [e async for e in agent._run_tool_streaming("run_command", {"command": "ls"}, False, sink)]
-        assert agent.ctx.terminal_session_ids == ["t-1"]
+        assert agent.ctx.terminal_block_ids == ["t-1"]
         assert [e.type for e in events].count("terminal_spawn") == 2
         assert sink[0].success is True
 
@@ -376,7 +376,7 @@ class TestReviewFollowUps:
             id="ran-1", name="run_command", args={"command": "ls"},
             status="success", result="Exit code 0\na",
         ))
-        paused.terminal_session_ids.append("term-9")
+        paused.terminal_block_ids.append("term-9")
         paused.response_chunks.append("partial ")
         paused.pending_diffs["d-1"] = {
             "file_path": "/etc/hosts", "edit_blocks": [], "status": "pending",
@@ -390,7 +390,7 @@ class TestReviewFollowUps:
         end = tm.ended[0]
         assert end["status"] == "cancelled"
         assert end["assistant_text"] == "partial "
-        assert end["terminal_session_ids"] == ["term-9"]
+        assert end["terminal_block_ids"] == ["term-9"]
         assert end["diff_proposals"] == [{
             "diff_id": "d-1", "file_path": "/etc/hosts",
             "edit_blocks": [], "status": "pending",

@@ -26,6 +26,21 @@ import { xtermTheme, terminalFontReady } from '../../lib/xtermTheme';
 interface TerminalTileProps {
   session: TerminalSession;
   onTerminated?: (id: string) => void;
+  /** Plan B: render for a specific block. When the block is complete,
+   * show a frozen <pre> from output_head/tail and dispose the xterm. */
+  blockId?: string;
+  /** Plan B: block output for frozen rendering (when block is complete). */
+  blockOutput?: string;
+  /** Plan B: pre-split frozen head (first 20 lines). When both head and tail
+   * are provided, the tile renders them with a separator instead of the raw
+   * blockOutput string. */
+  blockOutputHead?: string;
+  /** Plan B: pre-split frozen tail (last 4 KiB). */
+  blockOutputTail?: string;
+  /** Plan B: block exit code (when block is complete). */
+  blockExitCode?: number | null;
+  /** Plan B: 'agent' (default) or 'user'. Agent tiles disableStdin. */
+  owner?: 'agent' | 'user';
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -41,9 +56,29 @@ function formatElapsed(startedAt: number, now: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
-export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
+const FROZEN_HEAD_LINES = 20;
+const FROZEN_TAIL_BYTES = 4096;
+
+/**
+ * Split a frozen block's raw output into a head (first N lines) and tail
+ * (last 4 KiB). When the output is small enough that head and tail overlap,
+ * `tail` is null and the caller should render `head` alone.
+ */
+function splitFrozenOutput(output: string): { head: string; tail: string | null } {
+  const lines = output.split('\n');
+  const head = lines.slice(0, FROZEN_HEAD_LINES).join('\n');
+  if (output.length <= FROZEN_TAIL_BYTES && lines.length <= FROZEN_HEAD_LINES) {
+    return { head: output, tail: null };
+  }
+  return { head, tail: output.slice(-FROZEN_TAIL_BYTES) };
+}
+
+export function TerminalTile({ session, onTerminated, blockId, blockOutput, blockOutputHead, blockOutputTail, blockExitCode, owner = 'agent' }: TerminalTileProps) {
   const { sendInput, resize, kill, setVisible } = useTerminalSessions();
-  const interactive = session.transport === 'ws';
+  // Agent-owned tiles are read-only; user tiles allow input.
+  const interactive = session.transport === 'ws' && owner === 'user';
+  // Plan B: when blockOutput is provided, the block is complete — render frozen.
+  const isFrozen = blockOutput !== undefined;
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -74,16 +109,47 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
     let cancelled = false;
     let term: XTerm | null = null;
     let ro: ResizeObserver | null = null;
+    let io: IntersectionObserver | null = null;
     let disposeData: { dispose: () => void } | null = null;
+    let fontReady = false;
+    let inView = false;
+
+    // IntersectionObserver defers xterm construction until the container is
+    // near the viewport, so off-screen tiles (scrolled out of the conversation)
+    // don't pay the cost of a terminal instance.
+    const tryMount = () => {
+      if (cancelled || !fontReady || !inView || !containerRef.current || termRef.current) return;
+      mount();
+    };
+
+    if ('IntersectionObserver' in window) {
+      io = new IntersectionObserver(
+        (entries) => {
+          if (entries[0]?.isIntersecting) {
+            inView = true;
+            io?.disconnect();
+            tryMount();
+          }
+        },
+        { rootMargin: '200px' },
+      );
+      io.observe(containerRef.current);
+    } else {
+      inView = true;
+    }
 
     void terminalFontReady(13).then(() => {
-      if (cancelled || !containerRef.current || termRef.current) return;
-      mount();
+      if (cancelled) return;
+      fontReady = true;
+      tryMount();
     });
 
     function mount() {
+    const isAgentOwned = owner !== 'user';
     const t = new XTerm({
-      cursorBlink: session.status === 'running' && interactive,
+      // Agent-owned tiles are read-only mirrors — no blinking cursor.
+      // User-owned interactive tiles blink while running.
+      cursorBlink: !isAgentOwned && session.status === 'running' && interactive,
       disableStdin: !interactive,
       cursorStyle: 'bar',
       fontSize: 13,
@@ -97,10 +163,21 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
     t.loadAddon(new WebLinksAddon());
     t.open(containerRef.current!);
     fit.fit();
+
+    // Escape hatch: Ctrl+` falls through to the browser (returns false so
+    // xterm ignores it). Every other key is owned by the PTY (returns true
+    // so xterm processes and forwards it).
+    t.attachCustomKeyEventHandler((e) => {
+      if (e.ctrlKey && e.code === 'Backquote') return false;
+      return true;
+    });
+
     // Replay what the store already holds. A tile mounted after its session
     // started — a reloaded page, a timeline turn scrolled back into view, an
     // undock — would otherwise open empty, and the incremental writer below
     // would then repaint the whole buffer on the next chunk.
+    // reset() first so a re-mount (StrictMode double-invoke, HMR) starts clean.
+    t.reset();
     if (session.output) {
       t.write(session.output);
     }
@@ -130,6 +207,7 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
 
     return () => {
       cancelled = true;
+      io?.disconnect();
       disposeData?.dispose();
       ro?.disconnect();
       term?.dispose();
@@ -185,8 +263,62 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
 
   const statusStyle = STATUS_STYLES[session.status] ?? STATUS_STYLES.idle;
 
+  // Plan B: frozen block rendering — no xterm, no socket, just <pre>.
+  // When output_head/output_tail are provided (or can be split from the raw
+  // string), render head + separator + tail so very long blocks don't dump
+  // megabytes into the DOM.
+  if (isFrozen) {
+    let frozenHead: string;
+    let frozenTail: string | null;
+    if (blockOutputHead !== undefined && blockOutputTail !== undefined) {
+      frozenHead = blockOutputHead;
+      frozenTail = blockOutputTail;
+    } else {
+      const split = splitFrozenOutput(blockOutput ?? '');
+      frozenHead = split.head;
+      frozenTail = split.tail;
+    }
+
+    return (
+      <div
+        className="my-2 rounded-lg border border-border/60 bg-canvas-subtle overflow-hidden shadow-lg"
+        data-terminal-block={blockId}
+        data-block-state="frozen"
+      >
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-background/80 border-b border-border/60 text-xs">
+          <span className={`px-1.5 py-0.5 rounded border ${statusStyle} font-medium`}>
+            {blockExitCode != null ? `■ exit ${blockExitCode}` : '■ done'}
+          </span>
+          <span className="text-muted-foreground font-mono truncate flex-1" title={session.command}>
+            $ {session.command}
+          </span>
+          <button
+            onClick={handleCopy}
+            title="Copy output"
+            className="px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground hover:text-foreground"
+          >
+            {copied ? '✓' : '⧉'}
+          </button>
+        </div>
+        <pre className="w-full max-h-64 overflow-auto px-3 py-2 text-xs font-mono text-text whitespace-pre-wrap break-all">
+          {frozenHead}
+          {frozenTail !== null && (
+            <>
+              {'\n…\n'}
+              {frozenTail}
+            </>
+          )}
+        </pre>
+      </div>
+    );
+  }
+
   return (
-    <div className="my-2 rounded-lg border border-border/60 bg-[#1a1b26] overflow-hidden shadow-lg">
+    <div
+      className="my-2 rounded-lg border border-border/60 bg-canvas-subtle overflow-hidden shadow-lg"
+      data-terminal-block={blockId}
+      data-block-state={session.status}
+    >
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-1.5 bg-background/80 border-b border-border/60 text-xs">
         <span className={`px-1.5 py-0.5 rounded border ${statusStyle} font-medium`}>
@@ -200,11 +332,11 @@ export function TerminalTile({ session, onTerminated }: TerminalTileProps) {
           <span className="text-muted-foreground font-mono tabular-nums">{formatElapsed(session.startedAt, now)}</span>
         )}
         {session.sandboxed && (
-          <span className="px-1 py-0.5 rounded bg-info/20 text-info border border-info/40">sandbox</span>
+          <span className="px-1 py-0.5 rounded bg-status-telemetry-bg text-status-telemetry border border-status-telemetry-line">sandbox</span>
         )}
         {!interactive && (
           <span
-            className="px-1 py-0.5 rounded bg-violet-500/20 text-violet-300 border border-violet-500/40"
+            className="px-1 py-0.5 rounded bg-status-telemetry-bg text-status-telemetry border border-status-telemetry-line"
             title="Halbert is running this — mirrored read-only"
           >
             agent

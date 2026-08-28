@@ -28,6 +28,21 @@ import { apiUrl, wsUrl as backendWsUrl } from '@/lib/apiBase';
 export type TerminalSessionStatus = 'running' | 'done' | 'idle';
 
 /**
+ * A somatic block running inside a terminal session (Plan B). Long-running
+ * blocks are promoted to task cards that appear in the Tasks column.
+ */
+export type TerminalBlockStatus = 'running' | 'needs_attention' | 'completed';
+
+export interface TerminalBlock {
+  block_id: string;
+  owner: string;
+  status: TerminalBlockStatus;
+  /** True once promoted to a task card (terminal_block_promote / promote flag). */
+  isTaskCard: boolean;
+  label?: string;
+}
+
+/**
  * How a session's output reaches the store. 'ws' sessions are interactive PTYs;
  * 'sse' sessions are read-only mirrors of a command the agent is running.
  */
@@ -48,6 +63,12 @@ export interface TerminalSession {
   cwd?: string;
   /** Agent turn that spawned this session, when it came from the agent stream. */
   originSessionId?: string;
+  /** Somatic blocks owned by this session (Plan B). */
+  blocks: TerminalBlock[];
+  /** Block id this session was spawned to host, when known up front. */
+  blockId?: string;
+  /** Owner label for the block this session hosts. */
+  owner?: string;
 }
 
 /** What the agent stream knows about a session it did not open locally. */
@@ -57,6 +78,8 @@ export interface AdoptInfo {
   sandboxed?: boolean;
   cwd?: string;
   originSessionId?: string;
+  blockId?: string;
+  owner?: string;
 }
 
 export interface SpawnOptions {
@@ -127,6 +150,7 @@ class TerminalSessionStore {
       startedAt: Date.now(),
       transport: 'ws',
       cwd: opts.cwd,
+      blocks: [],
     };
     this.sessions.set(id, session);
     this.connect(id);
@@ -181,6 +205,54 @@ class TerminalSessionStore {
     this.emit();
   }
 
+  // ---------- somatic blocks (Plan B) ----------
+
+  /**
+   * Push a block record into a session's block list (terminal_block). When
+   * `promote` is true the block is born as a task card. Idempotent on block_id
+   * so a replayed SSE event cannot duplicate a block.
+   */
+  addBlock(id: string, block: TerminalBlock): void {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    if (s.blocks.some((b) => b.block_id === block.block_id)) return;
+    s.blocks.push(block);
+    this.emit();
+  }
+
+  /** Promote a block to a task card (terminal_block_promote). */
+  promoteBlock(id: string, blockId: string): void {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    const b = s.blocks.find((bl) => bl.block_id === blockId);
+    if (b && !b.isTaskCard) {
+      b.isTaskCard = true;
+      this.emit();
+    }
+  }
+
+  /** Mark a block as needing user input (terminal_needs_input). */
+  setBlockNeedsAttention(id: string, blockId: string): void {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    const b = s.blocks.find((bl) => bl.block_id === blockId);
+    if (b && b.status !== 'needs_attention') {
+      b.status = 'needs_attention';
+      this.emit();
+    }
+  }
+
+  /** Mark a block's task completed (task_completed). */
+  completeBlock(id: string, blockId: string): void {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    const b = s.blocks.find((bl) => bl.block_id === blockId);
+    if (b && b.status !== 'completed') {
+      b.status = 'completed';
+      this.emit();
+    }
+  }
+
   private makeSession(
     id: string,
     info: AdoptInfo,
@@ -200,6 +272,9 @@ class TerminalSessionStore {
       transport,
       cwd: info.cwd,
       originSessionId: info.originSessionId,
+      blocks: [],
+      blockId: info.blockId,
+      owner: info.owner,
     };
   }
 

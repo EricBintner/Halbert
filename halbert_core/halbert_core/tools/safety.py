@@ -405,6 +405,13 @@ class ToolSafetyFramework:
                 requires_confirmation=False,
                 reason="Search operation"
             )
+        elif tool_name == "terminal_blocks":
+            return SafetyCheckResult(
+                risk_level=RiskLevel.SAFE,
+                allowed=True,
+                requires_confirmation=False,
+                reason="Read-only terminal block fetch"
+            )
         elif tool_name in THREAD_META_TOOLS:
             return SafetyCheckResult(
                 risk_level=RiskLevel.SAFE,

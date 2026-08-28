@@ -364,7 +364,7 @@ export function Terminal() {
         <div className="flex-1 flex flex-col min-w-0">
           <div 
             ref={terminalRef}
-            className="flex-1 rounded-lg overflow-hidden bg-[#1a1b26] p-2"
+            className="flex-1 rounded-lg overflow-hidden bg-canvas-subtle p-2"
           />
           
           {/* Command Input */}

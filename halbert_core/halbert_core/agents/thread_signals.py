@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ..intake.signals import MessageSignals
+from ..continuity.recall_gate import classify as _gate_classify, MatchStrength as _GateStrength
 from .receipt import receipt_one_liner
 
 logger = logging.getLogger("halbert.agents.thread_signals")
@@ -62,6 +63,7 @@ NOTE_LINE_MAX = 200
 NOTE_ITEM_MAX = 180
 NOTES_MAX = 3
 NOTES_TOTAL_MAX = 300
+TERMINAL_HINT_MAX = 2048  # Plan B: B22 — shell-commands hint (2 KB cap)
 TITLE_MAX = 120
 DATE_MAX = 24
 TERMS_MAX = 96
@@ -76,6 +78,7 @@ _SCAN_FACTOR = 8
 
 _HINT_OPEN = "<continuity>\n"
 _HINT_CLOSE = "\n</continuity>"
+_RECALL_DISCLAIMER = "Recalled details are past observations with dates. Verify current state before asserting it."
 _WS_RE = re.compile(r"\s+")
 #: The block's own delimiters, stripped out of interpolated text so it can
 #: never look like a close/reopen of the block to whatever reads the prompt.
@@ -176,11 +179,13 @@ def format_date(ts: Optional[float], now: Optional[float] = None) -> str:
 
 # ── candidates ───────────────────────────────────────────────────
 
-def _gather_candidates(query: str, entities: set, open_id: Optional[str], store: Any) -> List[Candidate]:
+def _gather_candidates(query: str, entities: set, open_id: Optional[str], store: Any,
+                       *, domains: Optional[List[str]] = None) -> List[Candidate]:
     expanded = query if not entities else f"{query} {' '.join(sorted(entities))}"
     by_id: Dict[str, Candidate] = {}
     try:
-        hits = store.search_receipts(expanded, exclude_thread_id=open_id, limit=CANDIDATES_MAX)
+        hits = store.search_receipts(expanded, exclude_thread_id=open_id,
+                                     limit=CANDIDATES_MAX, domains=domains)
     except Exception as e:
         # The store logs and returns [] for its own failures, so reaching this
         # means a duck-typed store or a signature drift — recall would go
@@ -274,7 +279,9 @@ def decide(query: str, signals: MessageSignals, open_thread: Optional[Dict[str, 
     open_id = open_thread.get("thread_id") if open_thread else None
     cues = [name for name, on in (("past_reference", signals.past_reference), ("anaphora", signals.anaphora)) if on]
     entities = set(signals.entities or ())
-    candidates = _gather_candidates(query, entities, open_id, store)
+    # R4: scope as a property of the query — default to the open thread's domains
+    open_domains = list(open_thread.get("topic_domains") or []) if open_thread else None
+    candidates = _gather_candidates(query, entities, open_id, store, domains=open_domains)
 
     # Bare anaphora ("did that work?") with no topical signal refers to the
     # most recent paused/closed thread when nothing in the open thread is newer.
@@ -295,6 +302,15 @@ def decide(query: str, signals: MessageSignals, open_thread: Optional[Dict[str, 
 
     if cues and candidates and candidates[0].score >= STRONG_MIN_SCORE:
         candidates[0].strong = True
+    # §5a margin gate: even when the top score clears the threshold, require
+    # it to beat the runner-up by a margin. A close call is a *question*
+    # (weak-match path), not a silent injection. The gate is arithmetic on
+    # scores the index already produced — no model call.
+    if candidates and candidates[0].strong and len(candidates) > 1:
+        scored = [(c.thread_id, c.score) for c in candidates]
+        gate = _gate_classify(scored)
+        if gate.strength is not _GateStrength.STRONG:
+            candidates[0].strong = False
     candidates.sort(key=lambda c: (not c.strong, -c.score, -(c.last_active or 0.0)))
     strong = next((c for c in candidates if c.strong), None)
 
@@ -320,7 +336,7 @@ def decide(query: str, signals: MessageSignals, open_thread: Optional[Dict[str, 
 
 # ── hint ─────────────────────────────────────────────────────────
 
-def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: List[Dict[str, Any]], notifications: List[Dict[str, Any]], voice: str = "first_person", *, now: Optional[float] = None, notes: Optional[List[str]] = None) -> str:
+def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: List[Dict[str, Any]], notifications: List[Dict[str, Any]], voice: str = "first_person", *, now: Optional[float] = None, notes: Optional[List[str]] = None, terminal_hint: Optional[str] = None) -> str:
     """Render the ``<continuity>`` block (≤ 900 chars); '' when there is nothing to say.
 
     ``voice`` is accepted for the prompt layer, which wraps the block through
@@ -328,6 +344,9 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
     system-origin observations (a retracted recall, spec §6) rendered as
     ``Note:`` lines after the recall lines and before ``Waiting for you``;
     at most ``NOTES_MAX`` are rendered, within ``NOTES_TOTAL_MAX`` chars.
+    ``terminal_hint`` (Plan B: B22) is the shell-commands hint from
+    ``WatchedShellProcessor.build_hint_text``, rendered after notes and
+    before ``Waiting for you``.
     """
     now = time.time() if now is None else now
     if not open_thread:
@@ -387,7 +406,9 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
     # long note run would push the body past the budget and back into the
     # tail truncation this ordering exists to avoid.
     body_budget = HINT_MAX_CHARS - len(_HINT_OPEN) - len(_HINT_CLOSE)
-    free = body_budget - len(head_line) - (len(notif_line) + 1 if notif_line else 0)
+    has_disclaimer = bool(recall_lines or weak_line)
+    disclaimer_cost = (len(_RECALL_DISCLAIMER) + 1) if has_disclaimer else 0
+    free = body_budget - len(head_line) - (len(notif_line) + 1 if notif_line else 0) - disclaimer_cost
     if note_lines:
         reserved_lines = len(recall_lines) or (1 if weak_line else 0)
         reserve = reserved_lines * (RECALL_LINE_MIN + 1)
@@ -409,7 +430,11 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
     lines: List[str] = [head_line] + recall_lines
     if weak_line:
         lines.append(weak_line)
+    if recall_lines or weak_line:
+        lines.append(_RECALL_DISCLAIMER)
     lines.extend(note_lines)
+    if terminal_hint:
+        lines.append(_clip(terminal_hint, TERMINAL_HINT_MAX))
     if notif_line:
         lines.append(notif_line)
     body = "\n".join(lines)

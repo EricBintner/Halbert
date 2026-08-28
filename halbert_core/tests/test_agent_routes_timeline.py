@@ -33,7 +33,7 @@ def client(monkeypatch, tm):
 
 def _seed_turn(tm, query, answer, diff_proposals=None):
     turn = tm.begin_turn(query, analyze_message(query), f"sess-{query[:8]}")
-    tm.end_turn(turn, assistant_text=answer, blocks=[], terminal_session_ids=[], diff_proposals=diff_proposals or [])
+    tm.end_turn(turn, assistant_text=answer, blocks=[], terminal_block_ids=[], diff_proposals=diff_proposals or [])
     return turn
 
 

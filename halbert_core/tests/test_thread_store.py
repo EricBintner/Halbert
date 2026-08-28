@@ -133,7 +133,7 @@ class TestSchema:
         assert (row["status"], row["title_source"], row["receipt"]) == ("open", "provisional", "")
         assert s._conn.execute("SELECT origin, status FROM messages").fetchone()[:] == ("human", "complete")
         assert s._conn.execute("SELECT rowid FROM messages_fts").fetchall()[0][0] == 1
-        assert s._conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+        assert s._conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == SCHEMA_VERSION
         assert s._conn.execute("SELECT name FROM sqlite_master WHERE name = 'compact_boundaries'").fetchone() is not None
         assert s.search("smb.conf") == ["old"]
         s.close()

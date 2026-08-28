@@ -123,8 +123,10 @@ open ── new_thread / auto-open ──► paused ─────────�
 - **Grace window:** 30 minutes or 5 turns of the new thread, whichever first. During it a
   paused thread can be **reopened** (strong match, or the admin says "no, same topic" and the
   model calls `resume_thread`) — no `(2)` duplicates ever. After it, the tick closes the thread:
-  builds the final receipt, indexes it in FTS5, and — only for threads with ≥ 3 turns — writes
-  one first-person episodic line to Haloysius through the voice renderer.
+  builds the final receipt, indexes it in FTS5, and records machine-state triples
+  (commands, files, entities) to Halbert's own state store (R2-N3).
+  ~~The Haloysius episodic line was cut per founder decision D1.2 (2026-08-26):
+  Haloysius has no cross-session understanding, so session data does not flow into it.~~
 - **Merge:** "same topic" within the grace window moves the new thread's turns back into the
   previous thread and marks the new one `merged` (its rows stay, its receipt is dropped).
 - **Stale:** gap > 2 h without a domain shift does **not** close anything; the hint gains
@@ -262,11 +264,13 @@ history lands as closed threads. Then delete: the `/api/conversations` router, t
 `ConversationStore`, `routes/agent.py:889-926` (`/agent/conversations`), `SessionStore`, and
 `agents/handlers/*` (dead; references methods that do not exist).
 
-Memory writes: the Haloysius episodic line (voice-rendered, tags `[thread_id, *domains]`)
-at close for threads ≥ 3 turns; never for `origin=terminal` content; never for `ephemeral`
-threads. `HybridMemorySystem`'s vector adapter is fixed as a separate small task (shim
-`add/search/delete` over `Index` using `documents=` so both sides embed identically) but is
-**not** on the thread path.
+Memory writes: ~~the Haloysius episodic line (voice-rendered, tags `[thread_id, *domains]`)
+at close for threads ≥ 3 turns;~~ **CUT per founder decision D1.2 (2026-08-26):**
+Haloysius has no cross-session understanding, so session data does not flow into it.
+Machine-state triples (commands, files, entities) are now recorded to Halbert's own
+state store at thread close (R2-N3). `HybridMemorySystem`'s vector adapter is fixed as
+a separate small task (shim `add/search/delete` over `Index` using `documents=` so both
+sides embed identically) but is **not** on the thread path.
 
 ## 9. Terminals
 

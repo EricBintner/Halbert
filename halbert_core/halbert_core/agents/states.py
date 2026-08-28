@@ -213,9 +213,12 @@ class StateContext:
     # turn (A9b). Inline meta-tools deliberately do not raise loop_count, so
     # max_loops cannot end a PLANNING→PLANNING chain; this counter does.
     meta_tool_reentries: int = 0
-    # Terminal sessions this turn's tools spawned (spawn payloads seen on the
-    # terminal bridge); persisted on the assistant row at end_turn.
-    terminal_session_ids: List[str] = field(default_factory=list)
+    # Terminal block ids this turn's tools spawned (spawn payloads seen on the
+    # terminal bridge); persisted on the assistant row at end_turn. Renamed from
+    # terminal_session_ids in Plan B (B21) — the values are now block_ids, not
+    # session_ids, but the field name on the store column remains
+    # terminal_block_ids.
+    terminal_block_ids: List[str] = field(default_factory=list)
     # The ThreadManager.TurnContext for this turn (None when no manager is
     # wired); end_turn needs it back.
     turn_context: Optional[Any] = None

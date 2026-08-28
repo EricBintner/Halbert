@@ -5,8 +5,10 @@
 One ``ThreadManager`` per process owns thread identity: it resolves which
 thread a turn belongs to, persists the user row at turn start, appends the
 assistant row at turn end, refreshes receipts, and closes paused threads
-after the grace window on ``tick()``. Memory side effects (Haloysius line,
-LLM summaries) are ``on_thread_closed`` hooks — no-ops in Plan A.
+after the grace window on ``tick()``. LLM summaries are ``on_thread_closed``
+hooks. The Haloysius episodic line was cut per founder decision D1.2
+(continuity handoff 2026-08-26): Haloysius has no cross-session
+understanding, so session data does not flow into it.
 """
 
 from __future__ import annotations
@@ -257,6 +259,12 @@ class ThreadManager:
         #: Re-entrant: the locked entry points call one another (see `_locked`).
         self._lock = threading.RLock()
         self.on_thread_closed: List[Callable[[Dict[str, Any]], None]] = []
+        #: R8: optional consolidator run at the end of the idle tick.
+        self._consolidator = None
+
+    def set_consolidator(self, consolidator) -> None:
+        """Wire an R8 Consolidator. Called at the end of each idle tick."""
+        self._consolidator = consolidator
 
     # ------------------------------------------------------------------
     # Turn boundaries
@@ -315,8 +323,29 @@ class ThreadManager:
         if not history:
             history = self._history(thread)
         notes = self._pending_notes(thread_id)
+        # R2-N2: surface open loops as a note line when they exist in the
+        # thread's domains. Loops without a domain match all domains.
+        open_loops = self.store.list_open_loops(thread_id, open_only=True)
+        thread_domains = set(thread.get("topic_domains") or [])
+        if thread_domains:
+            open_loops = [
+                lo for lo in open_loops
+                if not lo.get("domain") or lo["domain"] in thread_domains
+            ]
+        if open_loops:
+            count = len(open_loops)
+            first = open_loops[0]["text"][:80]
+            notes.append(f"Open loop ({count}): {first}")
+        # Build terminal hint from watched shell blocks (Plan B: B22)
+        terminal_hint = None
         try:
-            hint = build_hint(thread, decision, recalled, [], now=now, notes=notes)
+            from halbert_core.streaming.watched_shell import WatchedShellProcessor
+            processor = WatchedShellProcessor(self.store)
+            terminal_hint = processor.build_hint_text(thread_id)
+        except Exception:
+            pass
+        try:
+            hint = build_hint(thread, decision, recalled, [], now=now, notes=notes, terminal_hint=terminal_hint)
         except Exception as e:
             logger.warning(f"hint builder failed: {e}")
             hint = ""
@@ -348,7 +377,7 @@ class ThreadManager:
         *,
         assistant_text: str,
         blocks: list,
-        terminal_session_ids: List[str],
+        terminal_block_ids: List[str],
         diff_proposals: list,
         status: str = "complete",
         thread_id_override: Optional[str] = None,
@@ -361,12 +390,12 @@ class ThreadManager:
             if thread_id != turn.thread_id:
                 fields["thread_id"] = thread_id
             self.store.update_message(turn.user_message_id, **fields)
-        if assistant_text or blocks or diff_proposals or terminal_session_ids:
+        if assistant_text or blocks or diff_proposals or terminal_block_ids:
             self.store.append_message(
                 thread_id, "assistant", assistant_text or "", origin="assistant",
                 turn_id=turn.turn_id, session_id=turn.session_id, status=status,
                 blocks=list(blocks or []),
-                terminal_block_ids=list(terminal_session_ids or []),
+                terminal_block_ids=list(terminal_block_ids or []),
                 diff_proposals=list(diff_proposals or []),
                 timestamp=now,
             )
@@ -537,6 +566,13 @@ class ThreadManager:
                 closed.append(row)
         for row in closed:
             self._fire_thread_closed(row)
+        # R8: consolidate cross-thread patterns into durable facts at idle.
+        # Runs after the close sweep, fail-soft, never blocks a turn.
+        if self._consolidator is not None:
+            try:
+                self._consolidator.consolidate(now=now)
+            except Exception as e:
+                logger.warning(f"consolidation tick failed (non-fatal): {e}")
         return [row["thread_id"] for row in closed]
 
     # ------------------------------------------------------------------
@@ -549,8 +585,14 @@ class ThreadManager:
         thread_id: Optional[str] = None,
         *,
         exclude_thread_id: Optional[str] = None,
+        domains: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Up to 3 candidates: {thread_id, title, date, receipt, matching_messages, match_terms}."""
+        """Up to 3 candidates: {thread_id, title, date, receipt, matching_messages, match_terms}.
+
+        ``domains`` (R4): when provided, same-domain hits are ranked ahead
+        of cross-domain ones. Never a hard filter — the user always gets
+        an answer.
+        """
         now = self._now()
         if thread_id:
             t = self.store.get_thread(thread_id)
@@ -558,10 +600,15 @@ class ThreadManager:
         if not query:
             return []
         out: List[Dict[str, Any]] = []
-        for hit in self.store.search_receipts(query, exclude_thread_id=exclude_thread_id, limit=RECALL_MAX):
+        for hit in self.store.search_receipts(
+            query, exclude_thread_id=exclude_thread_id, limit=RECALL_MAX, domains=domains,
+        ):
             t = self.store.get_thread(hit["thread_id"])
             if t is not None:
-                out.append(self._recall_result(t, query, list(hit.get("match_terms") or []), now))
+                result = self._recall_result(t, query, list(hit.get("match_terms") or []), now)
+                # R4: surface scope_crossed telemetry on each hit
+                result["scope_crossed"] = bool(hit.get("scope_crossed", False))
+                out.append(result)
         return out
 
     @_locked
@@ -697,7 +744,53 @@ class ThreadManager:
         fields.update(self._refined_title_fields(t))
         self.store.update_thread(thread_id, **fields)
         self._refresh_receipt(thread_id)
+        # R2-N3: record machine-state triples from the closed thread.
+        # Sources: Commands and Files written from the receipt, plus
+        # canonical entities. Never from Last said prose. Skip ephemeral.
+        if not t.get("ephemeral"):
+            self._record_thread_state(thread_id, t, now)
         return self.store.get_thread(thread_id) or t
+
+    def _record_thread_state(self, thread_id: str, thread: Dict[str, Any], now: float) -> None:
+        """Extract state triples from a closing thread and record them.
+
+        Triples come from the receipt's Commands and Files written lines
+        plus canonical entities — never from Last said prose. Skip
+        origin=terminal content. Fail-soft: any error is logged and
+        swallowed, never blocking thread close.
+        """
+        try:
+            from halbert_core.continuity.state_store import StateStore, default_state_db_path
+            from halbert_core.agents.receipt import _command_lines, _file_lines
+            store = StateStore(db_path=str(default_state_db_path()))
+            messages = self.store.list_messages(thread_id)
+            # Filter out terminal-origin messages
+            messages = [m for m in messages if (m.get("origin") or "human") != "terminal"]
+            blocks: List[Dict[str, Any]] = []
+            diffs: List[Dict[str, Any]] = []
+            for m in messages:
+                blocks.extend(m.get("blocks") or [])
+                diffs.extend(m.get("diff_proposals") or [])
+            # Record commands as state: subject=thread, predicate=ran_command
+            for cmd in _command_lines(blocks)[-8:]:
+                store.record_state(
+                    f"thread:{thread_id}", "ran_command", cmd,
+                    "thread_close", thread_id=thread_id, now=now,
+                )
+            # Record files written as state
+            for path in _file_lines(blocks, diffs)[-8:]:
+                store.record_state(
+                    f"thread:{thread_id}", "file_written", path,
+                    "thread_close", thread_id=thread_id, now=now,
+                )
+            # Record canonical entities as state
+            for entity in (thread.get("entities_json") or [])[:12]:
+                store.record_state(
+                    f"thread:{thread_id}", "entity", entity,
+                    "thread_close", thread_id=thread_id, now=now,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to record thread state for {thread_id}: {e}")
 
     def _close_due(self, t: Dict[str, Any], now: float) -> bool:
         """Is this paused row past the grace window — the minutes, or the successor's turns?"""
@@ -788,11 +881,39 @@ class ThreadManager:
         t = self.store.get_thread(thread_id)
         if t is None:
             return ""
-        receipt = build_receipt(t, self.store.list_messages(thread_id))
+        messages = self.store.list_messages(thread_id)
+        receipt = build_receipt(t, messages)
         if t.get("ephemeral"):
             return receipt
+        # R2-N2: extract open loops from the last assistant message and
+        # persist them as rows. The extractor already exists in receipt.py;
+        # this is the row write that was missing.
+        self._sync_open_loops(thread_id, t, messages)
         self.store.upsert_receipt(thread_id, t.get("title") or "", receipt)
         return receipt
+
+    def _sync_open_loops(
+        self, thread_id: str, thread: Dict[str, Any], messages: List[Dict[str, Any]]
+    ) -> None:
+        """Extract the open loop from the last assistant message and record it.
+
+        Only records a new row when the extracted text differs from the
+        most recent open loop for the thread (avoids duplicate rows on
+        every receipt refresh).
+        """
+        from halbert_core.agents.receipt import _open_loop, _clip
+        assistant = [m for m in messages if m.get("role") == "assistant"]
+        if not assistant:
+            return
+        text = _open_loop(assistant[-1].get("content") or "")
+        if not text or text == "none recorded":
+            return
+        existing = self.store.list_open_loops(thread_id, open_only=True)
+        if existing and existing[-1]["text"] == text:
+            return  # already recorded
+        domains = thread.get("topic_domains") or []
+        domain = domains[0] if domains else None
+        self.store.add_open_loop(thread_id, _clip(text, 200), domain=domain, source="receipt")
 
     def _history(self, thread: Dict[str, Any]) -> List[Dict[str, Any]]:
         # Ask for one row over the window: whether it comes back is the exact
@@ -898,6 +1019,15 @@ def get_thread_manager() -> ThreadManager:
     if manager is None:
         with _manager_lock:
             if _manager is None:
-                _manager = ThreadManager(SqliteConversationStore(_cs._DEFAULT_DB))
+                mgr = ThreadManager(SqliteConversationStore(_cs._DEFAULT_DB))
+                # R8: wire the consolidator so it runs at the end of each
+                # idle tick (close sweep). Fail-soft, never blocks a turn.
+                try:
+                    from ..continuity.consolidation import Consolidator
+                    from ..continuity.state_store import StateStore, default_state_db_path
+                    mgr.set_consolidator(Consolidator(mgr.store, StateStore(default_state_db_path())))
+                except Exception as e:
+                    logger.warning(f"consolidator wiring failed (non-fatal): {e}")
+                _manager = mgr
             manager = _manager
     return manager
