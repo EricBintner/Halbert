@@ -77,6 +77,7 @@ _SCAN_FACTOR = 8
 
 _HINT_OPEN = "<continuity>\n"
 _HINT_CLOSE = "\n</continuity>"
+_RECALL_DISCLAIMER = "Recalled details are past observations with dates. Verify current state before asserting it."
 _WS_RE = re.compile(r"\s+")
 #: The block's own delimiters, stripped out of interpolated text so it can
 #: never look like a close/reopen of the block to whatever reads the prompt.
@@ -391,7 +392,9 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
     # long note run would push the body past the budget and back into the
     # tail truncation this ordering exists to avoid.
     body_budget = HINT_MAX_CHARS - len(_HINT_OPEN) - len(_HINT_CLOSE)
-    free = body_budget - len(head_line) - (len(notif_line) + 1 if notif_line else 0)
+    has_disclaimer = bool(recall_lines or weak_line)
+    disclaimer_cost = (len(_RECALL_DISCLAIMER) + 1) if has_disclaimer else 0
+    free = body_budget - len(head_line) - (len(notif_line) + 1 if notif_line else 0) - disclaimer_cost
     if note_lines:
         reserved_lines = len(recall_lines) or (1 if weak_line else 0)
         reserve = reserved_lines * (RECALL_LINE_MIN + 1)
@@ -413,6 +416,8 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
     lines: List[str] = [head_line] + recall_lines
     if weak_line:
         lines.append(weak_line)
+    if recall_lines or weak_line:
+        lines.append(_RECALL_DISCLAIMER)
     lines.extend(note_lines)
     if terminal_hint:
         lines.append(_clip(terminal_hint, TERMINAL_HINT_MAX))

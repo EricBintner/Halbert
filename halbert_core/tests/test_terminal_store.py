@@ -21,8 +21,8 @@ def store():
 # ---------------------------------------------------------------------------
 
 class TestSchemaMigration:
-    def test_schema_version_is_3(self):
-        assert SCHEMA_VERSION == 3
+    def test_schema_version_is_4(self):
+        assert SCHEMA_VERSION == 4
 
     def test_terminal_blocks_table_exists(self, store):
         tables = store._conn.execute(
@@ -91,10 +91,11 @@ class TestSchemaMigration:
         s = SqliteConversationStore(db)
         assert s._conn is not None
         version = s._conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        assert version == 3
+        assert version == 4
         # New tables exist
         assert s.list_terminal_blocks() == []
         assert s.list_terminal_sessions() == []
+        assert s.list_open_loops("any-thread") == []
         s.close()
 
 
@@ -345,4 +346,51 @@ class TestFailureHandling:
         assert s.update_terminal_session("x", watched=0) is False
         assert s.get_terminal_session("x") is None
         assert s.list_terminal_sessions() == []
+        assert s.add_open_loop("t", "text") is None
+        assert s.list_open_loops("t") == []
+        assert s.close_open_loop(1) is False
         s.close()
+
+
+# ---------------------------------------------------------------------------
+# open_loops CRUD (continuity R2-N2)
+# ---------------------------------------------------------------------------
+
+class TestOpenLoops:
+    def test_add_and_list(self, store):
+        lid = store.add_open_loop("thread-1", "verify guest access is off")
+        assert lid is not None
+        loops = store.list_open_loops("thread-1")
+        assert len(loops) == 1
+        assert loops[0]["text"] == "verify guest access is off"
+        assert loops[0]["closed_at"] is None
+
+    def test_list_open_only(self, store):
+        lid1 = store.add_open_loop("t1", "loop A")
+        lid2 = store.add_open_loop("t1", "loop B")
+        store.close_open_loop(lid1)
+        loops = store.list_open_loops("t1", open_only=True)
+        assert len(loops) == 1
+        assert loops[0]["text"] == "loop B"
+
+    def test_list_all_includes_closed(self, store):
+        lid = store.add_open_loop("t1", "done loop")
+        store.close_open_loop(lid)
+        loops = store.list_open_loops("t1", open_only=False)
+        assert len(loops) == 1
+        assert loops[0]["closed_at"] is not None
+
+    def test_close_idempotent(self, store):
+        lid = store.add_open_loop("t1", "close me")
+        assert store.close_open_loop(lid) is True
+        # Second close is a no-op (WHERE closed_at IS NULL)
+        assert store.close_open_loop(lid) is True
+        loops = store.list_open_loops("t1", open_only=False)
+        assert len(loops) == 1
+
+    def test_thread_isolation(self, store):
+        store.add_open_loop("t1", "thread 1 loop")
+        store.add_open_loop("t2", "thread 2 loop")
+        assert len(store.list_open_loops("t1")) == 1
+        assert len(store.list_open_loops("t2")) == 1
+        assert store.list_open_loops("t1")[0]["text"] == "thread 1 loop"

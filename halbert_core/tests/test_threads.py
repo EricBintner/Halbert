@@ -948,7 +948,7 @@ class TestMergeBack:
         assert prev["status"] == "open" and prev["paused_at"] is None and prev["turns_since_pause"] == 0
         assert "successor" not in prev["metadata"] and prev["metadata"]["merged_from"] == [new_id]
         assert prev["entities_json"] == ["samba", "scanner", "share"] and prev["last_active"] == NOW
-        assert "· 2 turns" in prev["receipt"] and "Last said: Added [scanner]." in prev["receipt"]
+        assert "· 2 turns" in prev["receipt"] and "Last said (2026-08-26): Added [scanner]." in prev["receipt"]
         assert tm.current()["thread_id"] == t1.thread_id
         assert tm.store._conn.execute(
             "SELECT COUNT(*) FROM receipts_fts WHERE thread_id = ?", (new_id,)).fetchone()[0] == 0

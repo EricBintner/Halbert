@@ -13,6 +13,7 @@ from .adapters import (
     DiscoveryServiceAdapter,
     MemoryServiceAdapter,
     create_wired_context_assembler,
+    create_agent_context_assembler,
 )
 from .prioritizer import (
     ContextPrioritizer,
@@ -41,6 +42,7 @@ __all__ = [
     'DiscoveryServiceAdapter',
     'MemoryServiceAdapter',
     'create_wired_context_assembler',
+    'create_agent_context_assembler',
     # Prioritizer
     'ContextPrioritizer',
     'ContextItem',

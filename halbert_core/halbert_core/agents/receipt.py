@@ -41,7 +41,7 @@ OPEN_LOOP_LABEL = "Open loop:"
 #: (context/assembler.py `_fit_receipt`), so the two agree on "the part
 #: worth keeping" by construction instead of by two hand-kept lists
 #: (review: Plan A / A8b).
-ONE_LINER_LABELS = ("Started with:", "Last said:", OPEN_LOOP_LABEL)
+ONE_LINER_LABELS = ("Started with:", "Last said", OPEN_LOOP_LABEL)
 
 # Never split on "." alone: a sentence ends only at .!? followed by whitespace.
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -223,6 +223,8 @@ def build_receipt(
     ) or "none"
     started = _clip(human[0].get("content"), 160) if human else "none"
     last_said = first_sentence(assistant[-1].get("content") or "", 200) if assistant else "none"
+    last_said_ts = assistant[-1].get("timestamp") if assistant else None
+    last_said_date = f" ({_date(last_said_ts)})" if last_said_ts else ""
     blocks: List[Dict[str, Any]] = []
     diffs: List[Dict[str, Any]] = []
     for m in messages:
@@ -237,7 +239,7 @@ def build_receipt(
         f"Domains: {domains}",
         f"Entities: {entities}",
         f"Started with: {started}",
-        f"Last said: {last_said or 'none'}",
+        f"Last said{last_said_date}: {last_said or 'none'}",
         f"Commands: {commands}",
         f"Files written: {files}",
         f"{OPEN_LOOP_LABEL} {open_loop}",

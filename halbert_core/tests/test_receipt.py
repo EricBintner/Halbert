@@ -40,7 +40,7 @@ class TestBuildReceipt:
     def test_sections_in_order(self):
         r = build_receipt(_thread(), _messages())
         assert [line.split(":")[0] for line in r.splitlines()] == [
-            "Title", "When", "Domains", "Entities", "Started with", "Last said",
+            "Title", "When", "Domains", "Entities", "Started with", "Last said (2026-07-14)",
             "Commands", "Files written", "Open loop"]
 
     def test_lines(self):
@@ -50,7 +50,7 @@ class TestBuildReceipt:
         assert lines[2] == "Domains: network, config"
         assert lines[3] == "Entities: samba, /etc/samba/smb.conf, share"
         assert lines[4] == "Started with: add a samba share for the media folder second line"
-        assert lines[5] == "Last said: The share mounts from the laptop at //nas/media (v3.1 client)."
+        assert lines[5] == "Last said (2026-07-14): The share mounts from the laptop at //nas/media (v3.1 client)."
         assert lines[6] == "Commands: testparm (exit 0); systemctl restart smbd (exit 0)"
         assert lines[7] == "Files written: /etc/samba/smb.conf; /etc/fstab"
         assert lines[8] == "Open loop: Next, verify guest access is off once the config reloads."
@@ -100,7 +100,7 @@ class TestTitles:
         r = build_receipt(_thread(), _messages())
         assert receipt_one_liner(r) == (
             "Started with: add a samba share for the media folder second line "
-            "Last said: The share mounts from the laptop at //nas/media (v3.1 client). "
+            "Last said (2026-07-14): The share mounts from the laptop at //nas/media (v3.1 client). "
             "Open loop: Next, verify guest access is off once the config reloads.")
 
 
@@ -125,7 +125,7 @@ class TestReceiptHardening:
         r = build_receipt(thread, msgs)
         lines = r.splitlines()
         assert [ln.split(":")[0] for ln in lines] == [
-            "Title", "When", "Domains", "Entities", "Started with", "Last said",
+            "Title", "When", "Domains", "Entities", "Started with", "Last said (2026-07-14)",
             "Commands", "Files written", "Open loop"]
         # The real Open loop line is the one the model actually said, not
         # a forged one smuggled in through another field.

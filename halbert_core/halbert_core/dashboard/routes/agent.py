@@ -114,7 +114,7 @@ def get_agent():
         from ...agents import AgentStateMachine
         from ...tools import ToolSafetyFramework, ToolExecutor
         from ...eval.crag import CRAGEvaluator
-        from ...context import create_wired_context_assembler, MemoryServiceAdapter
+        from ...context import create_agent_context_assembler
         from ...context.adapters import SourcePrepAdapter
         from ...prompts import AgentPromptBuilder, PromptBuilder, ContextInjector
 
@@ -122,12 +122,14 @@ def get_agent():
         safety = ToolSafetyFramework()
         tool_executor = ToolExecutor(safety=safety)
 
-        # Create wired context assembler (connects to RAG, discovery, memory)
-        context_assembler = create_wired_context_assembler()
+        # Create agent context assembler (R9: no ChromaDB memory on agent path)
+        context_assembler = create_agent_context_assembler()
 
         # SEARCHING state retrieval: SourcePrep (RAGServiceAdapter is deprecated on the chat path)
         rag_service = SourcePrepAdapter()
-        memory_service = MemoryServiceAdapter()
+        # R9: ChromaDB-backed memory fenced off the agent path.
+        # memory_service is deliberately None — recall is Halbert-owned (receipts/FTS5).
+        memory_service = None
 
         # Wire PromptBuilder + ContextInjector into AgentPromptBuilder
         # for rich system prompts with model-specific overrides
