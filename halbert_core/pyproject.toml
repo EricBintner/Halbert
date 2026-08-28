@@ -75,6 +75,14 @@ dev = [
   "pyinstaller>=6.0",
 ]
 
+# Screen capture + webcam for vision model input. MSS is ~50KB (ctypes,
+# no native build). opencv-python is ~60MB but provides the JPEG encode
+# pipeline and webcam capture. numpy is already a core dependency.
+vision = [
+  "mss>=9.0",
+  "opencv-python>=4.8",
+]
+
 [project.scripts]
 halbert = "halbert_core.dashboard.__main__:main"
 

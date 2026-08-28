@@ -260,33 +260,42 @@ export function Layout({ children }: { children: React.ReactNode }) {
     return () => clearInterval(interval)
   }, [])
 
-  // Listen for screenshot capture requests from chat input
+  // Listen for screenshot capture requests from chat input.
+  // Calls the backend MSS screen capture endpoint (captures the real
+  // desktop, not the dashboard DOM like html2canvas did) and dispatches
+  // the result back to AgentChat via halbert:add-screenshot.
   useEffect(() => {
     const handleCaptureScreenshot = async () => {
       try {
-        // Use html2canvas to capture the window
-        const html2canvas = (await import('html2canvas')).default
-        const canvas = await html2canvas(document.body, {
-          useCORS: true,
-          logging: false,
-        })
+        const { apiUrl } = await import('../lib/apiBase')
+        const resp = await fetch(apiUrl('/api/vision/screenshot'))
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}))
+          const msg = err.error || `HTTP ${resp.status}`
+          console.error('[Layout] Screenshot failed:', msg)
+          // Dispatch an error event so AgentChat can surface it
+          window.dispatchEvent(new CustomEvent('halbert:screenshot-error', {
+            detail: { error: msg, errorType: err.error_type || 'capture_failed' }
+          }))
+          return
+        }
+        const data = await resp.json()
+        const dataUrl = `data:image/jpeg;base64,${data.image}`
 
-        // Convert to base64 (strip the data URL prefix for the API)
-        const dataUrl = canvas.toDataURL('image/png')
-        const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
-
-        // Dispatch event to add screenshot to chat
         window.dispatchEvent(new CustomEvent('halbert:add-screenshot', {
           detail: {
-            dataUrl,  // Full data URL for preview
-            base64,   // Just base64 for API
+            dataUrl,
+            base64: data.image,
             name: `Screenshot ${new Date().toLocaleTimeString()}`
           }
         }))
 
-        console.log('[Layout] Screenshot captured and dispatched to chat')
+        console.log('[Layout] Screenshot captured via backend and dispatched to chat')
       } catch (err) {
-        console.error('[Layout] Failed to capture screenshot:', err)
+        console.error('[Layout] Screenshot fetch failed:', err)
+        window.dispatchEvent(new CustomEvent('halbert:screenshot-error', {
+          detail: { error: String(err), errorType: 'fetch_failed' }
+        }))
       }
     }
 
