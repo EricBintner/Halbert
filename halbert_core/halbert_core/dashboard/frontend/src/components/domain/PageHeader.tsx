@@ -49,12 +49,12 @@ export function PageHeader({
   return (
     <div className="flex items-center justify-between">
       <div>
-        <h1 className="text-3xl font-bold flex items-center gap-2">
+        <h1 className="text-2xl font-bold font-sans tracking-tight flex items-center gap-2.5 text-foreground">
           {icon}
           {title}
         </h1>
         {description && (
-          <p className="text-muted-foreground">{description}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
         )}
       </div>
       <div className="flex items-center gap-2">

@@ -128,27 +128,23 @@
     color: var(--color-ink);
   }
   
-  /* Brand Typography — §4: Fraunces takes the headings, Space Grotesk the
-   * chrome and body. h3/h4 stay on the sans face: at 18px and 16px they sit at
-   * or below the display face's floor, and they read as UI rather than
-   * editorial. --tracking-display is the face's own tracking, not Tailwind's
-   * generic tracking-tight. */
+  /* Desktop App Typography — Space Grotesk takes headings, chrome, and body
+   * for high-legibility, precision engineering UI. Vintage serif (Fraunces) is
+   * reserved strictly for editorial marketing pages. */
   h1 {
-    @apply text-3xl font-bold;
-    font-family: var(--hb-font-display);
-    font-optical-sizing: auto;
-    letter-spacing: var(--tracking-display);
+    @apply text-2xl font-bold tracking-tight text-foreground;
+    font-family: var(--hb-font-sans);
   }
   h2 {
-    @apply text-2xl font-semibold;
-    font-family: var(--hb-font-display);
-    font-optical-sizing: auto;
-    letter-spacing: var(--tracking-display);
+    @apply text-xl font-semibold tracking-tight text-foreground;
+    font-family: var(--hb-font-sans);
   }
   h3 {
-    @apply text-lg font-semibold;
+    @apply text-base font-semibold tracking-tight text-foreground;
+    font-family: var(--hb-font-sans);
   }
   h4 {
-    @apply text-base font-semibold;
+    @apply text-sm font-semibold text-foreground;
+    font-family: var(--hb-font-sans);
   }
 }

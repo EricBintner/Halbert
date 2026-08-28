@@ -117,7 +117,7 @@ export function Dashboard() {
       {(criticalCount > 0 || warningCount > 0) && (
         <Card className={cn(
           "border-l-4",
-          criticalCount > 0 ? "border-l-red-500 bg-error/5" : "border-l-yellow-500 bg-warning/5"
+          criticalCount > 0 ? "border-l-destructive bg-destructive/5" : "border-l-warning bg-warning/5"
         )}>
           <CardContent className="p-4 flex items-center justify-between">
             <div className="flex items-center gap-3">

@@ -343,10 +343,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden">
       {/* Global top bar — present in both modes */}
-      <header className="flex items-center gap-3 px-4 h-12 border-b bg-card shrink-0">
+      <header className="flex items-center gap-3 px-4 h-12 border-b border-border bg-background shrink-0">
         <div className="flex items-center gap-2 shrink-0">
           <HalbertMark size={20} density="medium" tone="accent" />
-          <span className="text-sm font-semibold hidden sm:inline">Halbert</span>
+          <span className="text-sm font-semibold hidden sm:inline text-foreground">Halbert</span>
         </div>
 
         <ModeSwitch />
@@ -457,10 +457,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         ) : (
           <div className="flex h-full overflow-hidden">
             {/* Navigation rail */}
-            <nav className="w-64 shrink-0 border-r bg-card overflow-y-auto px-4 py-4 space-y-4">
+            <nav className="w-60 shrink-0 border-r border-border bg-background overflow-y-auto px-3 py-4 space-y-5">
               {navSections.map((section) => (
                 <div key={section.label} className="space-y-1">
-                  <p className="px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <p className="px-3 text-[10px] font-mono font-semibold uppercase tracking-wider text-muted-foreground/70 mb-1">
                     {section.label}
                   </p>
                   {section.items.map((item) => {
@@ -470,13 +470,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
                         key={item.name}
                         to={item.href}
                         className={cn(
-                          'flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+                          'flex items-center gap-2.5 px-3 py-2 rounded-md text-xs font-medium transition-all',
                           isActive
-                            ? 'bg-primary text-primary-foreground'
-                            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                            ? 'bg-secondary text-foreground font-semibold border border-border/80 shadow-xs'
+                            : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground'
                         )}
                       >
-                        <item.icon className="h-5 w-5" />
+                        <item.icon className={cn("h-4 w-4 shrink-0", isActive ? "text-primary" : "text-muted-foreground")} />
                         {item.name}
                       </Link>
                     )
@@ -487,8 +487,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
             {/* Page content */}
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-              <main className="flex-1 p-8 overflow-auto relative z-0">
-                {configEditor ?? children}
+              <main className="flex-1 p-6 md:p-8 overflow-auto relative z-0">
+                <div className="max-w-6xl mx-auto w-full">
+                  {configEditor ?? children}
+                </div>
               </main>
             </div>
 
