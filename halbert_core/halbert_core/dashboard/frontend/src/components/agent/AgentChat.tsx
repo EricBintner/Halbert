@@ -293,6 +293,25 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     loadMentionables();
   }, []);
 
+  // Listen for screenshots captured by Layout.tsx (the camera button
+  // dispatches halbert:capture-screenshot, Layout captures and dispatches
+  // halbert:add-screenshot with the base64 data). Without this listener the
+  // screenshot is captured and then dropped on the floor.
+  useEffect(() => {
+    const handleAddScreenshot = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.dataUrl) {
+        setAttachedImages(prev => [...prev, {
+          id: 'screenshot-' + Date.now(),
+          dataUrl: detail.dataUrl,
+          name: detail.name || 'Screenshot',
+        }]);
+      }
+    };
+    window.addEventListener('halbert:add-screenshot', handleAddScreenshot);
+    return () => window.removeEventListener('halbert:add-screenshot', handleAddScreenshot);
+  }, []);
+
   // Everything the fold below needs, one assignment fresh. The fold runs
   // from three places and one of them (the queued-send timeout) reads a
   // closure that is a render behind, so it must not read those values
@@ -770,10 +789,14 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     setAttachedImages([]);
     setExpandedProvenanceModules([]);
 
-    // TODO: Pass images to agent backend when vision support is added
     // No conversation id: the server resolves the subject. A session id
     // names one turn, so the hook mints a fresh one per send.
-    sendMessage(input.trim(), undefined, picker.selection);
+    sendMessage(
+      input.trim() || (imageData.length > 0 ? '[Image]' : ''),
+      undefined,
+      picker.selection,
+      imageData.length > 0 ? imageData : undefined,
+    );
     setInput('');
   };
 
