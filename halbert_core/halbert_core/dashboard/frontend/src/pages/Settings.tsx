@@ -1505,7 +1505,7 @@ export function Settings() {
               onKeyDown={(e) => { if (e.key === 'Escape') setSettingsQuery('') }}
             />
           </div>
-          <TabsList className="flex flex-col h-auto w-full gap-4 bg-transparent p-0">
+          <TabsList className="flex flex-col h-auto w-full items-stretch gap-4 bg-transparent p-0">
             {SETTINGS_SECTIONS.map((section) => {
               const filteredItems = section.items.filter((item) => {
                 if (!settingsQuery) return true
@@ -1528,7 +1528,7 @@ export function Settings() {
                       <TabsTrigger
                         key={item.id}
                         value={item.id}
-                        className="flex w-full items-center justify-start gap-2 rounded-md px-3 py-2 text-sm transition-colors data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-muted data-[state=inactive]:hover:text-foreground"
+                        className="flex w-full items-center justify-start gap-2 rounded-md px-3 py-2 text-sm transition-colors data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-muted data-[state=inactive]:hover:text-foreground"
                       >
                         <Icon className="h-4 w-4 shrink-0" />
                         {item.label}
