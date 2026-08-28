@@ -412,6 +412,13 @@ class ToolSafetyFramework:
                 requires_confirmation=False,
                 reason="Conversation thread operation (handled inline)"
             )
+        elif tool_name in ("capture_screenshot", "capture_webcam"):
+            return SafetyCheckResult(
+                risk_level=RiskLevel.SAFE,
+                allowed=True,
+                requires_confirmation=False,
+                reason="Local vision capture (read-only)"
+            )
         else:
             # Unknown tools get MEDIUM by default
             return SafetyCheckResult(

@@ -121,6 +121,8 @@ def get_agent():
         # Initialize components
         safety = ToolSafetyFramework()
         tool_executor = ToolExecutor(safety=safety)
+        tool_executor.register_system_tools()
+        tool_executor.register_vision_tools()
 
         # Create wired context assembler (connects to RAG, discovery, memory)
         context_assembler = create_wired_context_assembler()

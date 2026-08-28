@@ -606,8 +606,22 @@ class ToolExecutor:
     def register_system_tools(self):
         """Register system information tools."""
         from .system_info import SYSTEM_TOOL_SCHEMAS, SYSTEM_TOOL_HANDLERS
-        
+
         for name, schema in SYSTEM_TOOL_SCHEMAS.items():
             handler = SYSTEM_TOOL_HANDLERS.get(name)
+            if handler:
+                self.register(name, handler, schema)
+
+    def register_vision_tools(self):
+        """Register vision capture tools (screen, webcam).
+
+        Vision tool handlers return a dict with an "image" key (base64
+        JPEG). The state machine detects this and appends the image to
+        ctx.images, routing the next LLM call through the vision model.
+        """
+        from .vision_tools import VISION_TOOL_SCHEMAS, VISION_TOOL_HANDLERS
+
+        for name, schema in VISION_TOOL_SCHEMAS.items():
+            handler = VISION_TOOL_HANDLERS.get(name)
             if handler:
                 self.register(name, handler, schema)
