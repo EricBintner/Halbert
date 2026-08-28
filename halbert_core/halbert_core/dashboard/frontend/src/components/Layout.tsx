@@ -16,6 +16,7 @@
  */
 
 import { useState, useEffect } from 'react'
+import { Info, Palette, ExternalLink, FileText } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -37,6 +38,9 @@ import {
   ScanSearch,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
+import { LegalNoticesModal } from '@/components/legal'
+import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { ConfigEditor } from './ConfigEditor'
 import { HalbertMark } from '@/components/brand/HalbertMark'
 import { ModeSwitch } from './shell/ModeSwitch'
@@ -130,6 +134,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   // Global config editor state (triggered from chat "Edit Config" button)
   const [editingConfigPath, setEditingConfigPath] = useState<string | null>(null)
+  const [showAbout, setShowAbout] = useState(false)
+  const [showLegalNotices, setShowLegalNotices] = useState(false)
+  const [showComponentLibrary, setShowComponentLibrary] = useState(false)
 
   // Indexing status state (moved from Settings)
   const [indexing, setIndexing] = useState(false)
@@ -355,6 +362,34 @@ export function Layout({ children }: { children: React.ReactNode }) {
         )}
 
         <span className="text-[11px] text-muted-foreground font-mono hidden md:inline">v0.1.1</span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-7 w-7" title="About">
+              <Info className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setShowAbout(true)}>
+              <Info className="h-4 w-4 mr-2" />
+              About Halbert
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowLegalNotices(true)}>
+              <FileText className="h-4 w-4 mr-2" />
+              Legal Notices
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowComponentLibrary(true)}>
+              <Palette className="h-4 w-4 mr-2" />
+              Developer Tools
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <a href="/docs" target="_blank" rel="noopener noreferrer">
+                <ExternalLink className="h-4 w-4 mr-2" />
+                Documentation
+              </a>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button
           variant={isDebugMode ? 'default' : 'ghost'}
           size="icon"
@@ -365,6 +400,40 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <Bug className="h-3 w-3" />
         </Button>
       </header>
+
+      {/* About dialog */}
+      {showAbout && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowAbout(false)}>
+          <div className="bg-card border rounded-lg shadow-lg max-w-md w-full mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <HalbertMark size={24} density="medium" tone="accent" />
+              <h2 className="text-lg font-semibold">Halbert</h2>
+            </div>
+            <p className="text-sm text-muted-foreground">AI-powered system assistant</p>
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">Version</p>
+              <p className="text-sm font-mono">Development Build (v0.1.1)</p>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" size="sm" onClick={() => { setShowAbout(false); setShowLegalNotices(true) }}>
+                <FileText className="h-4 w-4 mr-1" />
+                Legal Notices
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setShowAbout(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Legal Notices Modal */}
+      <LegalNoticesModal open={showLegalNotices} onOpenChange={setShowLegalNotices} />
+
+      {/* Component Library Viewer */}
+      {showComponentLibrary && (
+        <ComponentLibraryViewer onClose={() => setShowComponentLibrary(false)} />
+      )}
 
       {/* Mode content */}
       <div className="flex-1 min-h-0 overflow-hidden">

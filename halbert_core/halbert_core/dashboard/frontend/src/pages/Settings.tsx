@@ -21,7 +21,6 @@ import {
   Database,
   RefreshCw,
   Trash2,
-  Info,
   Brain,
   BookOpen,
   Check,
@@ -30,22 +29,19 @@ import {
   Zap,
   ChevronDown,
   ChevronUp,
-  ExternalLink,
   Edit3,
+  ExternalLink,
   ScanSearch,
   Clock,
   Search,
   Shield,
   AlertTriangle,
-  Palette,
   Lock,
   FileCode,
   Sparkles,
 } from 'lucide-react'
-import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { PageHeader, DataVersionCard } from '@/components/domain'
 import { ModelSettings } from '@/components/llm'
-import { LegalNoticesModal } from '@/components/legal'
 import { apiUrl } from '@/lib/apiBase'
 
 const API_BASE = apiUrl('/api')
@@ -460,7 +456,7 @@ function BeingSettings() {
  * mistyped link — so it opens the first tab, which is what a bare /settings
  * does too.
  */
-const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'about'] as const
+const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being'] as const
 const DEFAULT_SETTINGS_TAB = SETTINGS_TABS[0]
 
 type SettingsNavItem = { id: string; label: string; icon: typeof Cpu }
@@ -492,11 +488,6 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
     id: 'general',
     label: 'General',
     items: [{ id: 'system', label: 'System Info', icon: Cpu }],
-  },
-  {
-    id: 'about',
-    label: 'About',
-    items: [{ id: 'about', label: 'About & Legal', icon: Info }],
   },
 ]
 
@@ -642,10 +633,8 @@ export function Settings() {
   })
   
   // Component Library viewer state
-  const [showComponentLibrary, setShowComponentLibrary] = useState(false)
 
   // Legal notices modal state (LEG-MOD-01)
-  const [showLegalNotices, setShowLegalNotices] = useState(false)
   
   // System Profile state
   const [systemProfile, setSystemProfile] = useState<{
@@ -2168,78 +2157,9 @@ export function Settings() {
           <BeingSettings />
         </TabsContent>
 
-        {/* About Tab */}
-        <TabsContent value="about" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Info className="h-5 w-5" />
-                About Halbert
-              </CardTitle>
-              <CardDescription>
-                AI-powered Linux system assistant
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <h4 className="font-medium">Version</h4>
-                <p className="text-sm text-muted-foreground">Development Build</p>
-              </div>
-              
-              <div className="space-y-2">
-                <h4 className="font-medium">Developer Tools</h4>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Explore the UI component library used to build Halbert.
-                </p>
-                <Button variant="outline" onClick={() => setShowComponentLibrary(true)}>
-                  <Palette className="h-4 w-4 mr-2" />
-                  View Component Library
-                </Button>
-              </div>
-
-              <div className="space-y-2">
-                <h4 className="font-medium">Legal & Third-Party Notices</h4>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Licenses and attributions for Halbert, its RAG corpus sources,
-                  software dependencies, and bundled foundation models.
-                </p>
-                <Button variant="outline" onClick={() => setShowLegalNotices(true)}>
-                  <Shield className="h-4 w-4 mr-2" />
-                  View Legal Notices
-                </Button>
-              </div>
-              
-              <div className="space-y-2">
-                <h4 className="font-medium">Links</h4>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="ghost" size="sm" asChild>
-                    <a href="https://github.com" target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="h-4 w-4 mr-1" />
-                      GitHub
-                    </a>
-                  </Button>
-                  <Button variant="ghost" size="sm" asChild>
-                    <a href="/docs" target="_blank" rel="noopener noreferrer">
-                      <BookOpen className="h-4 w-4 mr-1" />
-                      Documentation
-                    </a>
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
         </div>
       </Tabs>
-      
-      {/* Component Library Viewer */}
-      {showComponentLibrary && (
-        <ComponentLibraryViewer onClose={() => setShowComponentLibrary(false)} />
-      )}
-
-      {/* Legal Notices Modal (LEG-MOD-01) */}
-      <LegalNoticesModal open={showLegalNotices} onOpenChange={setShowLegalNotices} />
-      
+            
       {/* Toast Notifications */}
       <Toast 
         open={toast.open}
