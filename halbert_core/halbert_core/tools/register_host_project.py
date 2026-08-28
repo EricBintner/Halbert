@@ -29,6 +29,7 @@ import requests
 
 from ..config.parser import parse as parse_config
 from ..ingestion.redaction import redact_text
+from ..integrations.prep_token import auth_headers as _auth_headers
 from ..utils.paths import data_subdir
 
 logger = logging.getLogger(__name__)
@@ -289,6 +290,7 @@ class HostProjectRegistrar:
             resp = requests.get(
                 f"{self.base_url}/projects",
                 timeout=self.timeout,
+                headers=_auth_headers(),
             )
             resp.raise_for_status()
             data = resp.json()
@@ -312,6 +314,7 @@ class HostProjectRegistrar:
             f"{self.base_url}/projects",
             json={"path": path, "name": name, "mode": mode},
             timeout=self.timeout,
+            headers=_auth_headers(),
         )
         resp.raise_for_status()
         data = resp.json()
@@ -329,6 +332,7 @@ class HostProjectRegistrar:
             f"{self.base_url}/projects/{project_id}",
             json={"config": config, "touch": True},
             timeout=self.timeout,
+            headers=_auth_headers(),
         )
         resp.raise_for_status()
         return resp.json()
@@ -340,6 +344,7 @@ class HostProjectRegistrar:
                 f"{self.base_url}/projects/{project_id}/trace/build",
                 json={},
                 timeout=self.timeout * 4,
+                headers=_auth_headers(),
             )
             resp.raise_for_status()
             return resp.json()
@@ -468,6 +473,7 @@ class HostProjectRegistrar:
                 f"{self.base_url}/projects/{project_id}/search",
                 json={"query": query, "k": 5, "min_score": 0.05},
                 timeout=self.timeout,
+                headers=_auth_headers(),
             )
             resp.raise_for_status()
             return resp.json()
