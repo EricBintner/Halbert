@@ -2087,6 +2087,72 @@ class SqliteConversationStore:
             logger.warning(f"list_terminal_sessions failed: {e}")
             return []
 
+    # ------------------------------------------------------------------
+    # Migration (Plan B: B21)
+    # ------------------------------------------------------------------
+
+    def migrate_terminal_block_ids_to_blocks(self) -> int:
+        """Migrate messages.terminal_block_ids from session ids to block ids.
+
+        For every message with non-empty terminal_block_ids:
+          for each session_id in the list, find terminal_blocks rows with
+          that session_id, collect their block_ids, and replace the
+          session_id with the block_ids.
+
+        Returns the number of messages updated. Idempotent (a session_id
+        that has no terminal_blocks rows is left as-is — it was a one-shot
+        that never persisted a block). Runs once at boot after schema
+        migration.
+        """
+        if self._conn is None:
+            return 0
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT id, terminal_block_ids FROM messages "
+                    "WHERE terminal_block_ids IS NOT NULL "
+                    "AND terminal_block_ids != '[]'"
+                ).fetchall()
+            updated = 0
+            for row in rows:
+                msg_id = row["id"]
+                try:
+                    ids = json.loads(row["terminal_block_ids"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not ids:
+                    continue
+                new_ids: List[str] = []
+                changed = False
+                for sid in ids:
+                    # Check if this id is already a block_id
+                    block = self.get_terminal_block(sid)
+                    if block is not None:
+                        new_ids.append(sid)
+                        continue
+                    # It's a session_id — find blocks for this session
+                    blocks = self.list_terminal_blocks(session_id=sid, limit=100)
+                    if blocks:
+                        new_ids.extend(b["block_id"] for b in blocks)
+                        changed = True
+                    else:
+                        # No blocks found — leave as-is (one-shot, never persisted)
+                        new_ids.append(sid)
+                if changed:
+                    with self._lock, self._conn:
+                        self._conn.execute(
+                            "UPDATE messages SET terminal_block_ids = ? "
+                            "WHERE id = ?",
+                            (json.dumps(new_ids), msg_id),
+                        )
+                    updated += 1
+            if updated:
+                logger.info(f"migrate_terminal_block_ids_to_blocks: updated {updated} messages")
+            return updated
+        except Exception as e:
+            logger.warning(f"migrate_terminal_block_ids_to_blocks failed: {e}")
+            return 0
+
     def close(self) -> None:
         if self._conn is not None:
             try:

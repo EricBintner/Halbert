@@ -316,7 +316,7 @@ class TestTerminalSessionIds:
         agent.tools.execute = fake_execute
         sink = []
         events = [e async for e in agent._run_tool_streaming("run_command", {"command": "ls"}, False, sink)]
-        assert agent.ctx.terminal_session_ids == ["t-1"]
+        assert agent.ctx.terminal_block_ids == ["t-1"]
         assert [e.type for e in events].count("terminal_spawn") == 2
         assert sink[0].success is True
 
@@ -376,7 +376,7 @@ class TestReviewFollowUps:
             id="ran-1", name="run_command", args={"command": "ls"},
             status="success", result="Exit code 0\na",
         ))
-        paused.terminal_session_ids.append("term-9")
+        paused.terminal_block_ids.append("term-9")
         paused.response_chunks.append("partial ")
         paused.pending_diffs["d-1"] = {
             "file_path": "/etc/hosts", "edit_blocks": [], "status": "pending",

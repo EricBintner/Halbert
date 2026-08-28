@@ -617,7 +617,7 @@ class AgentStateMachine:
                 turn,
                 assistant_text="".join(old_ctx.response_chunks or []),
                 blocks=blocks,
-                terminal_session_ids=list(old_ctx.terminal_session_ids or []),
+                terminal_session_ids=list(old_ctx.terminal_block_ids or []),
                 diff_proposals=[
                     {"diff_id": diff_id,
                      **(diff if isinstance(diff, dict) else {"value": diff})}
@@ -947,7 +947,7 @@ class AgentStateMachine:
                 turn,
                 assistant_text="".join(ctx.response_chunks),
                 blocks=blocks,
-                terminal_session_ids=list(ctx.terminal_session_ids),
+                terminal_session_ids=list(ctx.terminal_block_ids),
                 diff_proposals=diffs,
                 status=status,
                 thread_id_override=ctx.thread_id if ctx.thread_switched else None,
@@ -2239,8 +2239,11 @@ class AgentStateMachine:
         if payload.get("kind") != "spawn":
             return
         terminal_id = str(payload.get("terminal_session_id", ""))
-        if terminal_id and terminal_id not in self.ctx.terminal_session_ids:
-            self.ctx.terminal_session_ids.append(terminal_id)
+        block_id = str(payload.get("block_id", ""))
+        # Plan B: track block_id when present, fall back to session_id
+        track_id = block_id or terminal_id
+        if track_id and track_id not in self.ctx.terminal_block_ids:
+            self.ctx.terminal_block_ids.append(track_id)
 
     async def _run_tool_streaming(
         self,

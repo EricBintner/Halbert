@@ -62,6 +62,7 @@ NOTE_LINE_MAX = 200
 NOTE_ITEM_MAX = 180
 NOTES_MAX = 3
 NOTES_TOTAL_MAX = 300
+TERMINAL_HINT_MAX = 300  # Plan B: B22 — shell-commands hint line
 TITLE_MAX = 120
 DATE_MAX = 24
 TERMS_MAX = 96
@@ -320,7 +321,7 @@ def decide(query: str, signals: MessageSignals, open_thread: Optional[Dict[str, 
 
 # ── hint ─────────────────────────────────────────────────────────
 
-def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: List[Dict[str, Any]], notifications: List[Dict[str, Any]], voice: str = "first_person", *, now: Optional[float] = None, notes: Optional[List[str]] = None) -> str:
+def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: List[Dict[str, Any]], notifications: List[Dict[str, Any]], voice: str = "first_person", *, now: Optional[float] = None, notes: Optional[List[str]] = None, terminal_hint: Optional[str] = None) -> str:
     """Render the ``<continuity>`` block (≤ 900 chars); '' when there is nothing to say.
 
     ``voice`` is accepted for the prompt layer, which wraps the block through
@@ -328,6 +329,9 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
     system-origin observations (a retracted recall, spec §6) rendered as
     ``Note:`` lines after the recall lines and before ``Waiting for you``;
     at most ``NOTES_MAX`` are rendered, within ``NOTES_TOTAL_MAX`` chars.
+    ``terminal_hint`` (Plan B: B22) is the shell-commands hint from
+    ``WatchedShellProcessor.build_hint_text``, rendered after notes and
+    before ``Waiting for you``.
     """
     now = time.time() if now is None else now
     if not open_thread:
@@ -410,6 +414,8 @@ def build_hint(open_thread: Dict[str, Any], decision: ThreadDecision, recalled: 
     if weak_line:
         lines.append(weak_line)
     lines.extend(note_lines)
+    if terminal_hint:
+        lines.append(_clip(terminal_hint, TERMINAL_HINT_MAX))
     if notif_line:
         lines.append(notif_line)
     body = "\n".join(lines)
