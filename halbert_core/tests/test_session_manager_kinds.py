@@ -282,6 +282,17 @@ class TestListActive:
         assert kinds["s1"] == "user"
         assert kinds["s2"] == "agent-pool"
 
+    def test_list_active_includes_owner(self):
+        m = _make_manager(max_sessions=8)
+        _inject(m, "s1", kind="user")
+        _inject(m, "s2", kind="agent-pool")
+        _inject(m, "s3", kind="oneshot")
+        snap = m.list_active()
+        owners = {s["session_id"]: s["owner"] for s in snap}
+        assert owners["s1"] == "user"
+        assert owners["s2"] == "agent"
+        assert owners["s3"] == "agent"
+
     def test_list_active_includes_watched(self):
         m = _make_manager(max_sessions=8)
         _inject(m, "s1", kind="user", watched=True)

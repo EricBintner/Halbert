@@ -44,7 +44,7 @@ class TerminalSessionManager:
 
     def __init__(
         self,
-        max_sessions: int = 2,
+        max_sessions: int = 8,
         idle_ttl_seconds: int = 60,
         kind_caps: Optional[Dict[str, int]] = None,
         kind_ttls: Optional[Dict[str, int]] = None,
@@ -69,12 +69,14 @@ class TerminalSessionManager:
     async def spawn(
         self,
         command: str,
+        *,
         cwd: Optional[str] = None,
         env: Optional[dict] = None,
         cols: int = 80,
         rows: int = 24,
         kind: str = "oneshot",
         watched: bool = True,
+        echo: bool = True,
     ) -> str:
         """Spawn a PTY session and return its id.
 
@@ -93,7 +95,7 @@ class TerminalSessionManager:
                 f"Terminal session kind '{kind}' at capacity ({kind_cap})"
             )
         session_id = str(uuid.uuid4())
-        session = PTYSession(command, cwd=cwd, env=env, cols=cols, rows=rows)
+        session = PTYSession(command, cwd=cwd, env=env, cols=cols, rows=rows, echo=echo)
         await session.spawn()
         self._sessions[session_id] = session
         self._last_activity[session_id] = time.monotonic()
@@ -126,6 +128,7 @@ class TerminalSessionManager:
                 "idle_seconds": round(now - self._last_activity.get(sid, now), 1),
                 "buffer_bytes": len(session.get_buffer()),
                 "kind": self._kinds.get(sid, "oneshot"),
+                "owner": "user" if self._kinds.get(sid) == "user" else "agent",
                 "watched": self._watched.get(sid, True),
                 "block_open": self._block_open.get(sid, False),
                 "attach_count": self._attach_counts.get(sid, 0),

@@ -1959,10 +1959,11 @@ class SqliteConversationStore:
 
     def list_terminal_blocks(
         self,
+        *,
         session_id: Optional[str] = None,
         thread_id: Optional[str] = None,
         turn_id: Optional[str] = None,
-        limit: int = 200,
+        limit: int = 50,
     ) -> List[Dict[str, Any]]:
         """List terminal blocks, newest-first by started_at. At most one
         filter is applied; if none, all blocks up to *limit*."""

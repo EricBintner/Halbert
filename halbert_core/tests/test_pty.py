@@ -190,3 +190,39 @@ async def test_child_has_controlling_terminal():
     output = await _collect_until(session, lambda o: b"ctty-ok" in o, timeout=5.0)
     assert b"ctty-ok" in output
     session.kill()
+
+
+@pytest.mark.asyncio
+async def test_echo_false_suppresses_line_discipline_echo():
+    """When echo=False, stdin writes don't appear as stdout (no echo).
+
+    Pool sessions (agent-pool) use echo=False so block output isn't
+    corrupted by the line discipline duplicating stdin as stdout.
+    """
+    session = PTYSession("cat", echo=False)
+    await session.spawn()
+    await asyncio.sleep(0.2)  # let cat start
+
+    await session.write_stdin("hello\n")
+    # Read output — with echo=False, we should only see cat's output
+    # (which echoes "hello\n" back), not the line-discipline echo.
+    # The key difference: without echo=False, "hello\n" appears twice
+    # (once from echo, once from cat). With echo=False, it appears once.
+    output = await _collect_until(session, lambda o: b"hello" in o, timeout=3.0)
+    # Count occurrences — should be 1 (cat only), not 2 (echo + cat)
+    assert output.count(b"hello") == 1
+    session.kill()
+
+
+@pytest.mark.asyncio
+async def test_echo_true_default_echoes_stdin():
+    """With echo=True (default), stdin writes appear as stdout (line echo)."""
+    session = PTYSession("cat", echo=True)
+    await session.spawn()
+    await asyncio.sleep(0.2)
+
+    await session.write_stdin("world\n")
+    output = await _collect_until(session, lambda o: b"world" in o, timeout=3.0)
+    # With echo on, "world" appears at least once from echo
+    assert b"world" in output
+    session.kill()

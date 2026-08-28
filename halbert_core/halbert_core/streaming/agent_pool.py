@@ -57,6 +57,7 @@ class TerminalPool:
                 _POOL_SHELL,
                 kind="agent-pool",
                 watched=False,
+                echo=False,
             )
         except AtCapacityError:
             return None

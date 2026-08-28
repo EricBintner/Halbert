@@ -52,6 +52,7 @@ class PTYSession:
         cols: int = 80,
         rows: int = 24,
         buffer_bytes: int = _DEFAULT_BUFFER_BYTES,
+        echo: bool = True,
     ):
         self._command = command
         self._cwd = cwd
@@ -59,6 +60,7 @@ class PTYSession:
         self._cols = cols
         self._rows = rows
         self._buffer_bytes = buffer_bytes
+        self._echo = echo
 
         self._master_fd: Optional[int] = None
         self._slave_fd: Optional[int] = None
@@ -223,6 +225,18 @@ class PTYSession:
         """
         self._master_fd, self._slave_fd = os.openpty()
         self._set_winsize(self._cols, self._rows)
+
+        # Clear ECHO on the slave fd before forking (pool sessions).
+        # The line discipline echo duplicates every stdin write as stdout,
+        # which corrupts block output for agent-pool sessions.
+        if not self._echo and self._slave_fd is not None:
+            try:
+                attrs = termios.tcgetattr(self._slave_fd)
+                # ECHO is bit 3 (0x8) in c_lflag
+                attrs[3] = attrs[3] & ~termios.ECHO
+                termios.tcsetattr(self._slave_fd, termios.TCSANOW, attrs)
+            except OSError:
+                pass
 
         pid = os.fork()
         if pid == 0:
