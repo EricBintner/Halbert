@@ -62,7 +62,7 @@ def _redact_canon(canon: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 @trace_call("config.snapshot")
-def snapshot(manifest_path: str) -> List[Dict[str, Any]]:
+def snapshot(manifest_path: str, *, redact: bool = True) -> List[Dict[str, Any]]:
     man = Manifest.from_file(manifest_path)
     files = man.iter_paths()
     ts = datetime.now(timezone.utc).isoformat()
@@ -82,12 +82,13 @@ def snapshot(manifest_path: str) -> List[Dict[str, Any]]:
                 raw_txt = None
             h = canon.get("hash", "")
             if raw_txt is not None and h:
-                safe_txt = redact_text(raw_txt)
+                safe_txt = redact_text(raw_txt) if redact else raw_txt
                 with open(os.path.join(RAW_DIR, f"{h}.txt"), "w", encoding="utf-8") as f:
                     f.write(safe_txt)
             if h:
+                canon_out = _redact_canon(canon) if redact else canon
                 with open(os.path.join(CANON_DIR, f"{h}.json"), "w", encoding="utf-8") as f:
-                    json.dump(_redact_canon(canon), f, ensure_ascii=False, indent=2)
+                    json.dump(canon_out, f, ensure_ascii=False, indent=2)
             out.append({"ts": ts, "path": p, "hash": h, "kind": canon.get("kind", "text")})
         except Exception as e:
             out.append({"ts": ts, "path": p, "error": str(e)})
