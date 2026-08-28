@@ -421,3 +421,40 @@ class TestVoicePresentationInPrompt:
         result = generate_personality_section(cfg)
         assert result == "Just be yourself."
         assert "VOICE PRESENTATION" not in result
+
+
+class TestNameInIdentity:
+    """Test that BeingConfig.name injects into the identity layer."""
+
+    def test_custom_name_appears_in_identity(self):
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.prompts.agent_prompts import AgentPromptBuilder
+        cfg = BeingConfig()
+        cfg.name = "WALLe"
+        builder = AgentPromptBuilder(being_cfg=cfg)
+        identity = builder._get_identity()
+        assert "WALLe" in identity
+        assert "Halbert" not in identity
+
+    def test_default_name_is_halbert(self):
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.prompts.agent_prompts import AgentPromptBuilder
+        cfg = BeingConfig()
+        builder = AgentPromptBuilder(being_cfg=cfg)
+        identity = builder._get_identity()
+        assert "Halbert" in identity
+
+    def test_empty_name_defaults_to_halbert(self):
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.prompts.agent_prompts import AgentPromptBuilder
+        cfg = BeingConfig()
+        cfg.name = ""
+        builder = AgentPromptBuilder(being_cfg=cfg)
+        identity = builder._get_identity()
+        assert "Halbert" in identity
+
+    def test_no_being_cfg_defaults_to_halbert(self):
+        from halbert_core.prompts.agent_prompts import AgentPromptBuilder
+        builder = AgentPromptBuilder()
+        identity = builder._get_identity()
+        assert "Halbert" in identity

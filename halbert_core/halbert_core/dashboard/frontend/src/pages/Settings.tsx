@@ -165,7 +165,7 @@ function BeingSettings() {
               {(['concise', 'balanced', 'detailed', 'analytical', 'casual'] as const).map((style) => (
                 <Button
                   key={style}
-                  variant={config.archetype_id === style ? 'default' : 'outline'}
+                  variant={(config.archetype_id || 'balanced') === style ? 'default' : 'outline'}
                   onClick={() => saveConfig({ archetype_id: style })}
                   disabled={saving}
                   className="capitalize"
@@ -175,12 +175,11 @@ function BeingSettings() {
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              {config.archetype_id === 'concise' && 'Fast, minimal words, imperative commands.'}
-              {config.archetype_id === 'balanced' && 'Clear, calm, factual, helpful.'}
+              {(config.archetype_id || 'balanced') === 'concise' && 'Fast, minimal words, imperative commands.'}
+              {(config.archetype_id || 'balanced') === 'balanced' && 'Clear, calm, factual, helpful.'}
               {config.archetype_id === 'detailed' && 'Explanatory, instructional. Explains why before acting.'}
               {config.archetype_id === 'analytical' && 'Systems-focused, design-oriented, addresses root causes.'}
               {config.archetype_id === 'casual' && 'Approachable, light touch, conversational.'}
-              {!config.archetype_id && 'Simple 5-way selector. Default: Balanced.'}
             </p>
           </div>
 
@@ -213,7 +212,7 @@ function BeingSettings() {
             <Label>Conversation Model</Label>
             <Select
               defaultValue={config.model || ''}
-              onChange={(e) => saveConfig({ model: e.target.value || null })}
+              onChange={(e) => saveConfig({ model: e.target.value })}
               disabled={saving}
             >
               <option value="">Default (System Agent Model)</option>

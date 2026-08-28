@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 VALID_VOICES = {"first_person", "the_computer", "hybrid"}
 VALID_PROACTIVITY = {"off", "quiet", "balanced", "assertive"}
 VALID_VOICE_PRESENTATIONS = {"not_defined", "male", "female"}
-VALID_COMMUNICATION_STYLES = {"concise", "balanced", "detailed", "analytical", "casual"}
 
 
 @dataclass
