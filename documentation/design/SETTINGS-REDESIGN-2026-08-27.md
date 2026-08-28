@@ -373,6 +373,18 @@ The redesign will be executed in four disciplined phases to maintain zero downti
   * ChromaDB legacy management endpoints (handled by background migration)
 * [ ] Ensure all settings endpoints write via atomic file stores with 0600 file modes.
 
+### Phase 5: Navigation Grouping (Supplemental)
+* [ ] Refactor `navigation` array in `Layout.tsx` from flat 14-item list to grouped structure with 5 sections: Overview, System, Network, Development, Utility.
+* [ ] Render section headers as muted uppercase text.
+* [ ] Always expanded — no collapse state.
+* [ ] Active item highlight unchanged (NavLink).
+
+### Phase 6: About Relocation (Supplemental)
+* [ ] Remove About from the Settings sidebar.
+* [ ] Add About entry to the avatar/user dropdown menu in `Layout.tsx`.
+* [ ] On macOS, add About Halbert to the native app-name menu bar (Tauri menu configuration).
+* [ ] About view shows: version, build hash, platform, system telemetry, legal notices link, developer tools button.
+
 ---
 
 ## 8. Verification & Acceptance Criteria
