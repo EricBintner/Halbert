@@ -81,7 +81,7 @@ function BeingSettings() {
         setConfig(data.config)
       }
     } catch (e) {
-      console.error('Failed to load being config:', e)
+      console.error('Failed to load personality config:', e)
     } finally {
       setLoading(false)
     }
@@ -114,7 +114,7 @@ function BeingSettings() {
   }
 
   if (loading) {
-    return <Card><CardContent className="py-8 text-center text-muted-foreground">Loading being config...</CardContent></Card>
+    return <Card><CardContent className="py-8 text-center text-muted-foreground">Loading personality config...</CardContent></Card>
   }
 
   if (!config) {
@@ -229,7 +229,7 @@ function BeingSettings() {
             Voice
           </CardTitle>
           <CardDescription>
-            How the being refers to itself in conversation
+            How the agent refers to itself in conversation
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -276,7 +276,7 @@ function BeingSettings() {
             Proactivity
           </CardTitle>
           <CardDescription>
-            How assertively the being opens conversations on its own
+            How assertively the agent opens conversations on its own
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -465,7 +465,7 @@ type SettingsSection = { id: string; label: string; items: SettingsNavItem[] }
 const SETTINGS_SECTIONS: SettingsSection[] = [
   {
     id: 'being',
-    label: 'The Being',
+    label: 'Personality',
     items: [{ id: 'being', label: 'Identity & Voice', icon: Sparkles }],
   },
   {
@@ -1133,7 +1133,7 @@ export function Settings() {
               onKeyDown={(e) => { if (e.key === 'Escape') setSettingsQuery('') }}
             />
           </div>
-          <TabsList className="flex flex-col h-auto w-full gap-0 bg-transparent p-0">
+          <TabsList className="flex flex-col h-auto w-full gap-4 bg-transparent p-0">
             {SETTINGS_SECTIONS.map((section) => {
               const filteredItems = section.items.filter((item) => {
                 if (!settingsQuery) return true
@@ -1146,8 +1146,8 @@ export function Settings() {
               })
               if (filteredItems.length === 0) return null
               return (
-                <div key={section.id} className="space-y-0.5">
-                  <p className="px-3 pt-3 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <div key={section.id} className="space-y-1">
+                  <p className="px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     {section.label}
                   </p>
                   {filteredItems.map((item) => {

@@ -446,10 +446,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         ) : (
           <div className="flex h-full overflow-hidden">
             {/* Navigation rail */}
-            <nav className="w-64 shrink-0 border-r bg-card overflow-y-auto px-4 py-4 space-y-1">
+            <nav className="w-64 shrink-0 border-r bg-card overflow-y-auto px-4 py-4 space-y-4">
               {navSections.map((section) => (
-                <div key={section.label} className="space-y-0.5">
-                  <p className="px-3 pt-3 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <div key={section.label} className="space-y-1">
+                  <p className="px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     {section.label}
                   </p>
                   {section.items.map((item) => {
