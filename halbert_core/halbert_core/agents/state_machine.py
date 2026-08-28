@@ -378,6 +378,7 @@ class AgentStateMachine:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         history_budget: Optional[int] = None,
+        retrieval_scope: Optional[str] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Process a user query through the state machine.
@@ -408,6 +409,9 @@ class AgentStateMachine:
                 route from the model that will actually answer (a pinned
                 turn's budget is not the default model's), so the state
                 machine never has to import route or picker code to know it.
+            retrieval_scope: Explicit SourcePrep scope id for retrieval this
+                turn. Used when no active skill provides one — e.g. the
+                "Analyze" button hardwires retrieval to the host scope.
 
         Yields:
             StreamEvent objects for each state change, tool call, etc.
@@ -467,6 +471,7 @@ class AgentStateMachine:
                 model_override=model_override,
                 tier_override=tier_override,
                 history_budget=history_budget or _default_conversation_tokens(),
+                retrieval_scope=retrieval_scope,
             )
 
             # Phase 3: Run intake pipeline before cognitive tick
@@ -1569,6 +1574,7 @@ class AgentStateMachine:
                 observations=self.ctx.observations,
                 intake=self.ctx.intake,
                 session_id=self.ctx.session_id,
+                retrieval_scope=self.ctx.retrieval_scope,
             )
             context_content = assembled.content
             yield StreamEvent.context_loaded(

@@ -58,13 +58,15 @@ class AssembledContext:
     sources: List[Dict[str, Any]]
     total_tokens: int
     truncated: bool = False
-    
+    secure: bool = False
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "content": self.content,
             "sources": self.sources,
             "total_tokens": self.total_tokens,
-            "truncated": self.truncated
+            "truncated": self.truncated,
+            "secure": self.secure,
         }
 
 
@@ -137,6 +139,7 @@ class ContextAssembler:
         intake: Any = None,
         session_id: Optional[str] = None,
         active_skills: Any = None,
+        retrieval_scope: Optional[str] = None,
     ) -> AssembledContext:
         """Assemble context within token budget.
 
@@ -156,6 +159,10 @@ class ContextAssembler:
                 provided, its role/scope routes retrieval and its budget
                 appetite reshuffles the per-category split. Falls back to
                 intake.active_skills when not passed explicitly.
+            retrieval_scope: Explicit SourcePrep scope id for retrieval, used
+                as a fallback when no active skill provides a scope. This is
+                how the "Analyze" button hardwires retrieval to a silo's KB
+                scope without defining a full skill.
             intake: Optional Phase 3 MessageIntake. When provided:
                 - max_tokens is overridden by intake.context_budget.total
                 - retrieval is gated by intake.needs_retrieval
@@ -238,7 +245,8 @@ class ContextAssembler:
             retrieval_tasks.append((
                 "retrieval",
                 self._retrieve_retrieval(
-                    query, budgets.get("retrieval", 0), composed=composed
+                    query, budgets.get("retrieval", 0), composed=composed,
+                    fallback_scope=retrieval_scope,
                 ),
             ))
         
@@ -322,6 +330,25 @@ class ContextAssembler:
             total_tokens=combined_tokens,
             truncated=truncated
         )
+
+        # T3.6: Context-assembly backstop — detect secure content before
+        # the context reaches a cloud model. Catches secrets that arrived
+        # off the config query path (terminal output, scanner results,
+        # user pastes). The detector reuses redact_text as a content probe
+        # and checks chunk provenance for host/ sources.
+        try:
+            from ..integrations.secure_detector import detect_secure_content
+            chunk_sources = [s.get("type", "") for s in sources]
+            if detect_secure_content(combined, chunk_sources=chunk_sources):
+                result.secure = True
+                logger.info("Context assembly: secure content detected — "
+                            "cloud fallback will be applied at model resolution")
+        except Exception:
+            # Fail toward secure=True on exceptions — a false positive costs
+            # a local-model answer; a false negative ships a secret to a
+            # cloud vendor. But we cannot set it here without the detector;
+            # the model layer's own detector is the second backstop.
+            logger.debug("secure_detector unavailable; relying on model-layer backstop")
         
         if compressed:
             logger.info(f"Context compressed: {sources[-1]['original_tokens']} -> {combined_tokens} tokens")
@@ -553,15 +580,22 @@ class ContextAssembler:
         
         return "\n".join(lines), tokens
     
-    async def _search_retrieval(self, query: str, composed: Any) -> List[Dict]:
+    async def _search_retrieval(self, query: str, composed: Any,
+                                fallback_scope: Optional[str] = None) -> List[Dict]:
         """Call the retrieval source, scoping it when a skill said how.
 
         Not every retrieval source accepts a scope — the RAG and Chroma
         adapters do not — so a source that rejects the keywords is called
         again without them rather than losing retrieval for the turn.
+
+        ``fallback_scope`` is used only when no active skill provided a scope
+        — e.g. the "Analyze" button hardwires retrieval to the host scope
+        without defining a full skill.
         """
         role = getattr(composed, "role", None) if composed else None
         scope = getattr(composed, "scope", None) if composed else None
+        if not scope and not role:
+            scope = fallback_scope
         if role or scope:
             try:
                 return await self.retrieval.search(query, limit=5, scope=scope, role=role)
@@ -593,7 +627,8 @@ class ContextAssembler:
             return None
 
     async def _retrieve_retrieval(self, query: str, max_tokens: int,
-                                  composed: Any = None) -> Dict:
+                                  composed: Any = None,
+                                  fallback_scope: Optional[str] = None) -> Dict:
         """Retrieve and format retrieval results (SourcePrep)."""
         logger.info(f"_retrieve_retrieval called with query='{query[:50]}...', max_tokens={max_tokens}")
         if max_tokens <= 0:
@@ -602,7 +637,8 @@ class ContextAssembler:
 
         try:
             logger.info("Calling retrieval search...")
-            results = await self._search_retrieval(query, composed)
+            results = await self._search_retrieval(query, composed,
+                                                    fallback_scope=fallback_scope)
             logger.info(f"Retrieval search returned {len(results)} results")
             
             lines = ["## Relevant Documents"]

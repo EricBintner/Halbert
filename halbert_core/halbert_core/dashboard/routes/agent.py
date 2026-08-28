@@ -68,6 +68,7 @@ class SendMessageRequest(BaseModel):
     model: Optional[str] = Field(None, description="Exact model pinned for this turn; bypasses the complexity router")
     tier: Optional[str] = Field(None, description="'guide' | 'specialist' | 'vision' | 'auto'")
     endpoint_id: Optional[str] = Field(None, description="Saved-endpoint id the pinned model came from; removes ambiguity when the same model name exists on two endpoints")
+    scope: Optional[str] = Field(None, description="Explicit SourcePrep scope id for retrieval this turn (e.g. 'host'). Used when no active skill provides a scope.")
 
 
 class ConfirmActionRequest(BaseModel):
@@ -1356,6 +1357,7 @@ if FASTAPI_AVAILABLE:
                     max_tokens=request.max_tokens,
                     temperature=request.temperature,
                     history_budget=history_budget,
+                    retrieval_scope=request.scope,
                 )) as stream:
                     async for event in stream:
                         yield event.to_sse()

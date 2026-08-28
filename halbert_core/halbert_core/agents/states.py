@@ -234,6 +234,12 @@ class StateContext:
     history_budget: int = 0
     thread_receipt_block: str = ""
 
+    # Per-turn retrieval scope override. When set, the ContextAssembler uses
+    # this scope for SourcePrep retrieval when no active skill provides one.
+    # This is how the "Analyze" button hardwires retrieval to a silo's KB
+    # scope without defining a full skill.
+    retrieval_scope: Optional[str] = None
+
     def add_observation(self, observation: str):
         """Add an observation from tool execution."""
         self.observations.append(observation)
