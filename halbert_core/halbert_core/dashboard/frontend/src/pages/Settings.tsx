@@ -34,6 +34,7 @@ import {
   Edit3,
   ScanSearch,
   Clock,
+  Search,
   Shield,
   AlertTriangle,
   Palette,
@@ -541,6 +542,43 @@ function BeingSettings() {
 const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'about'] as const
 const DEFAULT_SETTINGS_TAB = SETTINGS_TABS[0]
 
+type SettingsNavItem = { id: string; label: string; icon: typeof Cpu }
+type SettingsSection = { id: string; label: string; items: SettingsNavItem[] }
+
+const SETTINGS_SECTIONS: SettingsSection[] = [
+  {
+    id: 'being',
+    label: 'The Being',
+    items: [{ id: 'being', label: 'Identity & Voice', icon: Sparkles }],
+  },
+  {
+    id: 'intelligence',
+    label: 'Intelligence',
+    items: [
+      { id: 'ai', label: 'Models & Providers', icon: Brain },
+      { id: 'knowledge', label: 'Knowledge', icon: BookOpen },
+    ],
+  },
+  {
+    id: 'system-security',
+    label: 'System & Security',
+    items: [
+      { id: 'safety', label: 'Tool Permissions', icon: Shield },
+      { id: 'alerts', label: 'Alert Rules', icon: Bell },
+    ],
+  },
+  {
+    id: 'general',
+    label: 'General',
+    items: [{ id: 'system', label: 'System Info', icon: Cpu }],
+  },
+  {
+    id: 'about',
+    label: 'About',
+    items: [{ id: 'about', label: 'About & Legal', icon: Info }],
+  },
+]
+
 /** The tab a URL asks for, or the default when it asks for nothing usable. */
 export function settingsTabFromParam(raw: string | null): string {
   return (SETTINGS_TABS as readonly string[]).includes(raw ?? '')
@@ -569,6 +607,9 @@ export function Settings() {
       return params
     }, { replace: true })
   }, [setSearchParams])
+
+  // Settings sidebar search filter
+  const [settingsQuery, setSettingsQuery] = useState('')
 
   // Scan context for coordinated system-wide scanning
   const { triggerDeepScan, isDeepScanning } = useScan()
@@ -1169,37 +1210,56 @@ export function Settings() {
         hideScanButton
       />
 
-      <Tabs value={activeTab} onValueChange={selectTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-7">
-          <TabsTrigger value="system" className="flex items-center gap-2">
-            <Cpu className="h-4 w-4" />
-            System
-          </TabsTrigger>
-          <TabsTrigger value="ai" className="flex items-center gap-2">
-            <Brain className="h-4 w-4" />
-            AI Models
-          </TabsTrigger>
-          <TabsTrigger value="knowledge" className="flex items-center gap-2">
-            <BookOpen className="h-4 w-4" />
-            Knowledge
-          </TabsTrigger>
-          <TabsTrigger value="safety" className="flex items-center gap-2">
-            <Shield className="h-4 w-4" />
-            Safety
-          </TabsTrigger>
-          <TabsTrigger value="alerts" className="flex items-center gap-2">
-            <Bell className="h-4 w-4" />
-            Alerts
-          </TabsTrigger>
-          <TabsTrigger value="being" className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4" />
-            Being
-          </TabsTrigger>
-          <TabsTrigger value="about" className="flex items-center gap-2">
-            <Info className="h-4 w-4" />
-            About
-          </TabsTrigger>
-        </TabsList>
+      <Tabs value={activeTab} onValueChange={selectTab} orientation="vertical" className="flex gap-6">
+        <aside className="w-56 shrink-0 space-y-4">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="Filter settings..."
+              value={settingsQuery}
+              onChange={(e) => setSettingsQuery(e.target.value)}
+              className="pl-8 h-9"
+              onKeyDown={(e) => { if (e.key === 'Escape') setSettingsQuery('') }}
+            />
+          </div>
+          <TabsList className="flex flex-col h-auto w-full gap-0 bg-transparent p-0">
+            {SETTINGS_SECTIONS.map((section) => {
+              const filteredItems = section.items.filter((item) => {
+                if (!settingsQuery) return true
+                const q = settingsQuery.toLowerCase()
+                return (
+                  item.label.toLowerCase().includes(q) ||
+                  section.label.toLowerCase().includes(q) ||
+                  item.id.includes(q)
+                )
+              })
+              if (filteredItems.length === 0) return null
+              return (
+                <div key={section.id} className="space-y-0.5">
+                  <p className="px-3 pt-3 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {section.label}
+                  </p>
+                  {filteredItems.map((item) => {
+                    const Icon = item.icon
+                    return (
+                      <TabsTrigger
+                        key={item.id}
+                        value={item.id}
+                        className="flex w-full items-center justify-start gap-2 rounded-md px-3 py-2 text-sm transition-colors data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-muted data-[state=inactive]:hover:text-foreground"
+                      >
+                        <Icon className="h-4 w-4 shrink-0" />
+                        {item.label}
+                      </TabsTrigger>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </TabsList>
+        </aside>
+
+        <div className="flex-1 min-w-0">
 
         {/* System Tab */}
         <TabsContent value="system" className="space-y-4">
@@ -2248,6 +2308,7 @@ export function Settings() {
             </CardContent>
           </Card>
         </TabsContent>
+        </div>
       </Tabs>
       
       {/* Component Library Viewer */}
