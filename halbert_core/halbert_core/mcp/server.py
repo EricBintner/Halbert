@@ -525,13 +525,138 @@ class MCPServer:
 
 
 # ---------------------------------------------------------------------------
+# HTTP/SSE transport (Phase 4b)
+# ---------------------------------------------------------------------------
+
+import hmac
+import secrets
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse
+
+
+class _MCPHTTPHandler(BaseHTTPRequestHandler):
+    """HTTP handler for MCP JSON-RPC over POST + SSE streaming."""
+
+    # Set by the factory function below
+    _server: MCPServer = None  # type: ignore
+    _bearer_token: str = ""
+
+    def _check_auth(self) -> bool:
+        """Validate the Bearer token from the Authorization header."""
+        if not self._bearer_token:
+            return True  # No token configured — open mode (local only)
+        auth = self.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return False
+        token = auth[7:]
+        # Constant-time comparison to prevent timing attacks
+        return hmac.compare_digest(token, self._bearer_token)
+
+    def _send_json(self, code: int, body: dict) -> None:
+        payload = json.dumps(body).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _send_sse(self, data: str) -> None:
+        self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+        self.wfile.flush()
+
+    def do_POST(self) -> None:
+        """Handle JSON-RPC requests via POST."""
+        if not self._check_auth():
+            self._send_json(401, {"error": "Unauthorized"})
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        try:
+            request = json.loads(body)
+        except json.JSONDecodeError as e:
+            self._send_json(200, self._server._error(None, -32700, f"Parse error: {e}"))
+            return
+
+        response = self._server.handle_request(request)
+        if response is not None:
+            self._send_json(200, response)
+        else:
+            # Notification — acknowledge with 202
+            self.send_response(202)
+            self.end_headers()
+
+    def do_GET(self) -> None:
+        """SSE streaming endpoint at /sse."""
+        if not self._check_auth():
+            self._send_json(401, {"error": "Unauthorized"})
+            return
+
+        parsed = urlparse(self.path)
+        if parsed.path != "/sse":
+            self._send_json(404, {"error": "Not found"})
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        # Send an initial endpoint event so clients know where to POST
+        self._send_sse(json.dumps({
+            "jsonrpc": "2.0",
+            "method": "endpoint",
+            "params": {"uri": "/"},
+        }))
+
+        # Keep the connection open; in a full implementation this would
+        # stream server-initiated notifications. For now it's a heartbeat.
+        try:
+            while True:
+                import time
+                time.sleep(15)
+                self._send_sse(json.dumps({"jsonrpc": "2.0", "method": "ping"}))
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def log_message(self, format: str, *args) -> None:
+        # Route to stderr, not stdout
+        logger.info("HTTP %s - %s", self.address_string(), format % args)
+
+
+def _make_http_handler(server: MCPServer, bearer_token: str) -> type:
+    """Create a handler class with the server and token bound."""
+    class _Handler(_MCPHTTPHandler):
+        _server = server
+        _bearer_token = bearer_token
+    return _Handler
+
+
+def generate_bearer_token() -> str:
+    """Generate a random bearer token for HTTP transport."""
+    return secrets.token_urlsafe(32)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Halbert MCP server")
+    parser.add_argument(
+        "--transport", choices=["stdio", "http"], default="stdio",
+        help="Transport mode (default: stdio)",
+    )
     parser.add_argument("--instance-name", default="", help="Instance name for multi-instance disambiguation")
     parser.add_argument("--hostname", default="", help="Hostname override")
+    parser.add_argument("--port", type=int, default=8765, help="HTTP port (default 8765)")
+    parser.add_argument("--host", default="127.0.0.1", help="HTTP bind address (default 127.0.0.1)")
+    parser.add_argument(
+        "--bearer-token", default="",
+        help="Bearer token for HTTP auth. If empty, reads HALBERT_MCP_TOKEN env var. "
+             "If neither is set, HTTP runs in open mode (local only).",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -543,7 +668,24 @@ def main() -> None:
         instance_name=args.instance_name,
         hostname=args.hostname,
     )
-    server.run_stdio()
+
+    if args.transport == "stdio":
+        server.run_stdio()
+    elif args.transport == "http":
+        token = args.bearer_token or os.environ.get("HALBERT_MCP_TOKEN", "")
+        if not token:
+            logger.warning("HTTP transport with no bearer token — open mode (local only)")
+        handler = _make_http_handler(server, token)
+        httpd = HTTPServer((args.host, args.port), handler)
+        logger.info("MCP HTTP server listening on %s:%d (instance=%s, auth=%s)",
+                     args.host, args.port, server.instance_name, bool(token))
+        print(f"Halbert MCP server listening on http://{args.host}:{args.port}", file=sys.stderr)
+        if token:
+            print(f"Bearer token: {token}", file=sys.stderr)
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            httpd.shutdown()
 
 
 if __name__ == "__main__":
