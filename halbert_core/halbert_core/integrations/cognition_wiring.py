@@ -23,6 +23,8 @@ logger = logging.getLogger("halbert.integrations.cognition_wiring")
 # Module-level singletons
 _cognition = None
 _event_mapper = None
+_ha_event_mapper = None
+_ha_event_stream = None
 _trackers = None
 
 
@@ -235,12 +237,58 @@ def get_trackers():
     return _trackers
 
 
+def get_ha_event_mapper():
+    """Get or create the singleton HAEventMapper instance.
+
+    Returns None if HA is not configured.
+    """
+    global _ha_event_mapper
+    if _ha_event_mapper is None:
+        try:
+            from .home_assistant.ha_event_mapper import HAEventMapper
+            _ha_event_mapper = HAEventMapper(trackers=_trackers)
+        except Exception as e:
+            logger.warning(f"Could not create HA event mapper: {e}")
+    return _ha_event_mapper
+
+
+def start_ha_event_stream() -> None:
+    """Start the HA WebSocket event stream if configured.
+
+    Called from dashboard startup. If HA is not configured, this is a no-op.
+    """
+    global _ha_event_stream
+    if _ha_event_stream is not None:
+        return
+    try:
+        from .home_assistant.ha_config import load_ha_config
+        from .home_assistant.ha_event_stream import HAEventStream
+
+        config = load_ha_config()
+        if not config.is_configured():
+            return
+
+        mapper = get_ha_event_mapper()
+        if mapper is None:
+            return
+
+        _ha_event_stream = HAEventStream(
+            config=config,
+            on_event=mapper.add_event,
+        )
+        logger.info("HA event stream created (start deferred to async context)")
+    except Exception as e:
+        logger.warning(f"Could not create HA event stream: {e}")
+
+
 def shutdown():
     """Clean shutdown of background threads and trackers."""
-    global _event_mapper, _cognition, _trackers
+    global _event_mapper, _cognition, _trackers, _ha_event_mapper, _ha_event_stream
     if _event_mapper is not None:
         _event_mapper.stop_background_scan()
         _event_mapper = None
+    _ha_event_mapper = None
+    _ha_event_stream = None
     _cognition = None
     _trackers = None
     logger.info("Cognition wiring shut down")
