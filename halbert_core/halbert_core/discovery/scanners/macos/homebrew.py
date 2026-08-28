@@ -67,7 +67,7 @@ class HomebrewScanner(BaseScanner):
             title="Homebrew Not Installed",
             description="Homebrew package manager is not installed on this system",
             severity=DiscoverySeverity.INFO,
-            details={
+            data={
                 'install_url': 'https://brew.sh',
             },
             actions=[
@@ -75,11 +75,9 @@ class HomebrewScanner(BaseScanner):
                     id="install-homebrew",
                     label="Install Homebrew",
                     command='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
-                    dry_run=True,
                     requires_approval=True,
                 ),
             ],
-            tags=['package', 'homebrew', 'macos', 'missing'],
         )
     
     def _scan_outdated(self) -> List[Discovery]:
@@ -91,10 +89,19 @@ class HomebrewScanner(BaseScanner):
             return discoveries
         
         try:
-            outdated = json.loads(stdout) if stdout.strip() else []
+            parsed = json.loads(stdout) if stdout.strip() else []
         except json.JSONDecodeError:
             return discoveries
-        
+
+        # Homebrew changed the JSON format: newer versions return
+        # {"formulae": [...], "casks": [...]} instead of a flat list.
+        if isinstance(parsed, dict):
+            outdated = list(parsed.get('formulae', [])) + list(parsed.get('casks', []))
+        elif isinstance(parsed, list):
+            outdated = parsed
+        else:
+            outdated = []
+
         if not outdated:
             return discoveries
         
@@ -112,7 +119,7 @@ class HomebrewScanner(BaseScanner):
             description=f"Packages needing update: {', '.join(package_list)}" + 
                        (f" (+{more_count} more)" if more_count else ""),
             severity=DiscoverySeverity.WARNING if len(outdated) > 10 else DiscoverySeverity.INFO,
-            details={
+            data={
                 'count': len(outdated),
                 'packages': [pkg.get('name', pkg) if isinstance(pkg, dict) else pkg for pkg in outdated],
             },
@@ -121,17 +128,14 @@ class HomebrewScanner(BaseScanner):
                     id="upgrade-all",
                     label="Upgrade All",
                     command="brew upgrade",
-                    dry_run=True,
                     requires_approval=True,
                 ),
                 DiscoveryAction(
                     id="list-outdated",
                     label="List Outdated",
                     command="brew outdated",
-                    dry_run=True,
                 ),
             ],
-            tags=['package', 'homebrew', 'macos', 'outdated'],
         ))
         
         return discoveries
@@ -162,7 +166,7 @@ class HomebrewScanner(BaseScanner):
             title=title,
             description=description,
             severity=severity,
-            details={
+            data={
                 'doctor_output': stdout[:1000] if stdout else None,
                 'exit_code': code,
             },
@@ -171,17 +175,14 @@ class HomebrewScanner(BaseScanner):
                     id="brew-doctor",
                     label="Run Diagnostics",
                     command="brew doctor",
-                    dry_run=True,
                 ),
                 DiscoveryAction(
                     id="brew-cleanup",
                     label="Cleanup",
                     command="brew cleanup",
-                    dry_run=True,
                     requires_approval=True,
                 ),
             ],
-            tags=['package', 'homebrew', 'macos', 'health'],
         ))
         
         return discoveries
@@ -209,7 +210,7 @@ class HomebrewScanner(BaseScanner):
             description=f"GUI apps needing update: {', '.join(outdated_casks[:5])}" +
                        (f" (+{len(outdated_casks)-5} more)" if len(outdated_casks) > 5 else ""),
             severity=DiscoverySeverity.INFO,
-            details={
+            data={
                 'count': len(outdated_casks),
                 'casks': outdated_casks,
             },
@@ -218,11 +219,9 @@ class HomebrewScanner(BaseScanner):
                     id="upgrade-casks",
                     label="Upgrade Casks",
                     command="brew upgrade --cask",
-                    dry_run=True,
                     requires_approval=True,
                 ),
             ],
-            tags=['package', 'homebrew', 'macos', 'cask', 'outdated'],
         ))
         
         return discoveries

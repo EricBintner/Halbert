@@ -126,6 +126,10 @@ class NetworkScanner(BaseScanner):
         
         return None
     
+    def is_available(self) -> bool:
+        """Check if this scanner can run on the current platform."""
+        return self.command_exists('ip')
+    
     def scan(self) -> List[Discovery]:
         """Scan system for network resources."""
         discoveries = []

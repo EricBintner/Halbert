@@ -89,7 +89,7 @@ class HomebrewAppScanner(BaseScanner):
                 title=f"Homebrew: {len(formulas)} Formulas",
                 description=f"CLI tools: {', '.join(sample)}{more}",
                 severity=DiscoverySeverity.INFO,
-                details={
+                data={
                     'count': len(formulas),
                     'formulas': formulas,
                     'sample_info': formula_info,
@@ -99,17 +99,14 @@ class HomebrewAppScanner(BaseScanner):
                         id="list-formulas",
                         label="List All",
                         command="brew list --formula",
-                        dry_run=True,
                     ),
                     DiscoveryAction(
                         id="upgrade-formulas",
                         label="Upgrade All",
                         command="brew upgrade",
-                        dry_run=True,
                         requires_approval=True,
                     ),
                 ],
-                tags=['package', 'homebrew', 'formula', 'macos'],
             ))
         
         return discoveries
@@ -138,7 +135,7 @@ class HomebrewAppScanner(BaseScanner):
                 title=f"Homebrew: {len(casks)} Casks",
                 description=f"GUI apps: {', '.join(sample)}{more}",
                 severity=DiscoverySeverity.INFO,
-                details={
+                data={
                     'count': len(casks),
                     'casks': casks,
                 },
@@ -147,17 +144,14 @@ class HomebrewAppScanner(BaseScanner):
                         id="list-casks",
                         label="List All",
                         command="brew list --cask",
-                        dry_run=True,
                     ),
                     DiscoveryAction(
                         id="upgrade-casks",
                         label="Upgrade All",
                         command="brew upgrade --cask",
-                        dry_run=True,
                         requires_approval=True,
                     ),
                 ],
-                tags=['package', 'homebrew', 'cask', 'macos', 'apps'],
             ))
         
         return discoveries
@@ -195,7 +189,7 @@ class HomebrewAppScanner(BaseScanner):
                 title=f"Homebrew: {total_outdated} Updates Available",
                 description=f"Outdated: {', '.join(all_outdated)}{more}",
                 severity=DiscoverySeverity.WARNING if total_outdated > 10 else DiscoverySeverity.INFO,
-                details={
+                data={
                     'total': total_outdated,
                     'formulas': outdated_formulas,
                     'casks': outdated_casks,
@@ -205,17 +199,14 @@ class HomebrewAppScanner(BaseScanner):
                         id="show-outdated",
                         label="Show All Outdated",
                         command="brew outdated",
-                        dry_run=True,
                     ),
                     DiscoveryAction(
                         id="upgrade-all",
                         label="Upgrade All",
                         command="brew upgrade",
-                        dry_run=True,
                         requires_approval=True,
                     ),
                 ],
-                tags=['package', 'homebrew', 'updates', 'macos'],
             ))
         
         return discoveries
@@ -240,7 +231,7 @@ class HomebrewAppScanner(BaseScanner):
                 title=f"Homebrew: {len(warnings)} Warnings",
                 description="Run 'brew doctor' for details",
                 severity=DiscoverySeverity.WARNING,
-                details={
+                data={
                     'warning_count': len(warnings),
                     'warnings': warnings[:5],
                     'full_output': output[:1000],
@@ -250,10 +241,8 @@ class HomebrewAppScanner(BaseScanner):
                         id="run-doctor",
                         label="Run Doctor",
                         command="brew doctor",
-                        dry_run=True,
                     ),
                 ],
-                tags=['package', 'homebrew', 'health', 'macos'],
             ))
         else:
             discovery_id = make_discovery_id(DiscoveryType.PACKAGE, "homebrew-healthy")
@@ -265,9 +254,8 @@ class HomebrewAppScanner(BaseScanner):
                 title="Homebrew: Healthy",
                 description="No issues found by brew doctor",
                 severity=DiscoverySeverity.SUCCESS,
-                details={},
+                data={},
                 actions=[],
-                tags=['package', 'homebrew', 'health', 'macos'],
             ))
         
         return discoveries
@@ -294,7 +282,7 @@ class HomebrewAppScanner(BaseScanner):
                     title=f"Homebrew: {len(cleanup_items)} Items to Clean",
                     description="Old versions and cache can be removed",
                     severity=DiscoverySeverity.INFO,
-                    details={
+                    data={
                         'items': cleanup_items[:10],
                         'total': len(cleanup_items),
                     },
@@ -303,17 +291,14 @@ class HomebrewAppScanner(BaseScanner):
                             id="preview-cleanup",
                             label="Preview Cleanup",
                             command="brew cleanup -n",
-                            dry_run=True,
                         ),
                         DiscoveryAction(
                             id="run-cleanup",
                             label="Run Cleanup",
                             command="brew cleanup",
-                            dry_run=True,
                             requires_approval=True,
                         ),
                     ],
-                    tags=['package', 'homebrew', 'cleanup', 'macos'],
                 ))
         
         return discoveries

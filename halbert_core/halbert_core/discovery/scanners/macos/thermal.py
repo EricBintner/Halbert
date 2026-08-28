@@ -158,7 +158,7 @@ class MacThermalScanner(BaseScanner):
                     title=f"Battery: {percent}%",
                     description=f"Battery at {percent}% ({'charging' if plugged else 'on battery'})",
                     severity=severity,
-                    details={
+                    data={
                         'percent': percent,
                         'plugged': plugged,
                         'time_left': battery.secsleft if battery.secsleft > 0 else None,
@@ -168,10 +168,8 @@ class MacThermalScanner(BaseScanner):
                             id="battery-info",
                             label="Battery Details",
                             command="system_profiler SPPowerDataType",
-                            dry_run=True,
                         ),
                     ],
-                    tags=['hardware', 'battery', 'power', 'macos'],
                 )
         except Exception:
             pass
@@ -201,14 +199,13 @@ class MacThermalScanner(BaseScanner):
             title=f"{label}: {temp_c}°C",
             description=f"{label} temperature is {temp_c}°C",
             severity=severity,
-            details={
+            data={
                 'label': label,
                 'temp_c': temp_c,
                 'sensor': sensor,
                 'threshold_warning': self.TEMP_WARNING,
                 'threshold_critical': self.TEMP_CRITICAL,
             },
-            tags=['hardware', 'thermal', 'temperature', 'macos'],
         )
     
     def _no_temp_data(self) -> Discovery:
@@ -222,7 +219,7 @@ class MacThermalScanner(BaseScanner):
             title="Temperature Monitoring Unavailable",
             description="Temperature sensors require sudo access to powermetrics",
             severity=DiscoverySeverity.INFO,
-            details={
+            data={
                 'reason': 'powermetrics requires sudo',
                 'suggestion': 'Configure passwordless sudo for powermetrics',
             },
@@ -231,8 +228,6 @@ class MacThermalScanner(BaseScanner):
                     id="setup-sudo",
                     label="View Setup Instructions",
                     command="echo 'Add to sudoers: username ALL=(ALL) NOPASSWD: /usr/bin/powermetrics'",
-                    dry_run=True,
                 ),
             ],
-            tags=['hardware', 'thermal', 'macos', 'permission'],
         )

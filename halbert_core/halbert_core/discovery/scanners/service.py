@@ -39,6 +39,10 @@ class ServiceScanner(BaseScanner):
     def discovery_type(self) -> DiscoveryType:
         return DiscoveryType.SERVICE
     
+    def is_available(self) -> bool:
+        """Check if systemd or docker is available."""
+        return self.command_exists('systemctl') or self.command_exists('docker')
+    
     def scan(self) -> List[Discovery]:
         """Scan system for services."""
         discoveries = []

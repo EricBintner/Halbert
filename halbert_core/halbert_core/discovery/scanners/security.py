@@ -36,6 +36,10 @@ class SecurityScanner(BaseScanner):
     def discovery_type(self) -> DiscoveryType:
         return DiscoveryType.SECURITY
     
+    def is_available(self) -> bool:
+        """Check if this scanner can run on the current platform."""
+        return self.command_exists('systemctl')
+    
     def scan(self) -> List[Discovery]:
         """Scan system for security configuration."""
         discoveries = []

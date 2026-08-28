@@ -404,6 +404,25 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         ingestion_starter = threading.Thread(target=start_ingestion_delayed, daemon=True)
         ingestion_starter.start()
         logger.info("Ingestion service starting in background...")
+
+        # Auto-scan discovery engine on startup so dashboard pages have data
+        # without requiring a manual scan click. Runs in a daemon thread after
+        # a short delay to avoid competing with ChromaDB/ingestion init.
+        def start_discovery_scan_delayed():
+            """Run all discovery scanners in the background on startup."""
+            import time
+            time.sleep(5)  # Wait for other services to initialize
+            try:
+                from ..discovery.engine import get_engine
+                engine = get_engine()
+                discoveries = engine.scan_all()
+                logger.info(f"Startup discovery scan complete: {len(discoveries)} items found")
+            except Exception as e:
+                logger.warning(f"Startup discovery scan failed (non-fatal): {e}")
+
+        discovery_starter = threading.Thread(target=start_discovery_scan_delayed, daemon=True)
+        discovery_starter.start()
+        logger.info("Discovery scan starting in background...")
         
         # Phase 23: Start scheduler (re-enabled with delayed start)
         def start_scheduler_delayed():

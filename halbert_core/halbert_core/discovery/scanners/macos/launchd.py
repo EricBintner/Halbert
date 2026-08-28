@@ -94,21 +94,22 @@ class LaunchdScanner(BaseScanner):
                 title=f"launchd: {name}",
                 description=f"Service {name} - {status_text}",
                 severity=severity,
-                details={
+                status=status_text,
+                data={
+                    'service_type': 'launchd',
+                    'enabled': True,
                     'pid': pid,
                     'exit_status': status,
                     'status_text': status_text,
-                    'type': 'launchd',
+                    'category': _categorize_launchd_service(name),
                 },
                 actions=[
                     DiscoveryAction(
                         id=f"status-{name}",
                         label="Check Status",
                         command=f"launchctl list {name}",
-                        dry_run=True,
                     ),
                 ],
-                tags=['service', 'launchd', 'macos'],
             ))
         
         return discoveries
@@ -178,7 +179,7 @@ class LaunchdScanner(BaseScanner):
                 severity = DiscoverySeverity.INFO
                 status = "Manual start"
             
-            discovery_id = make_discovery_id(DiscoveryType.SERVICE, f"plist-{label}")
+            discovery_id = make_discovery_id(DiscoveryType.SERVICE, f"plist-{service_type}-{label}")
             
             return Discovery(
                 id=discovery_id,
@@ -187,31 +188,31 @@ class LaunchdScanner(BaseScanner):
                 title=f"LaunchDaemon: {label}" if service_type == 'daemon' else f"LaunchAgent: {label}",
                 description=f"{service_type.title()} '{label}' - {status}",
                 severity=severity,
-                details={
+                status=status,
+                data={
+                    'service_type': 'launchd',
+                    'enabled': not disabled,
                     'plist_path': str(plist_path),
                     'program': program,
                     'run_at_load': run_at_load,
                     'keep_alive': keep_alive,
                     'disabled': disabled,
-                    'type': service_type,
+                    'category': _categorize_launchd_service(label),
                 },
                 actions=[
                     DiscoveryAction(
                         id=f"load-{label}",
                         label="Load Service",
                         command=f"launchctl load {plist_path}",
-                        dry_run=True,
                         requires_approval=True,
                     ),
                     DiscoveryAction(
                         id=f"unload-{label}",
                         label="Unload Service",
                         command=f"launchctl unload {plist_path}",
-                        dry_run=True,
                         requires_approval=True,
                     ),
                 ],
-                tags=['service', 'launchd', 'macos', service_type],
             )
         
         except Exception as e:
@@ -228,3 +229,38 @@ class LaunchdScanner(BaseScanner):
             'com.apple.RemoteDesktop',
         ]
         return name in notable
+
+
+# Category mappings for macOS launchd services (mirrors Linux SERVICE_CATEGORIES)
+_LAUNCHD_CATEGORIES = {
+    'audio': ['coreaudio', 'audio', 'sound'],
+    'network': ['airport', 'network', 'vpn', 'ppp', 'remote'],
+    'storage': ['disk', 'fstab', 'mount', 'apfs'],
+    'desktop': ['windowserver', 'loginwindow', 'dock', 'finder', 'spotlight'],
+    'security': ['securityd', 'keychain', 'gatekeeper', 'filevault', 'firewall', 'ssh'],
+    'print': ['cups', 'print', 'lpd'],
+    'virtualization': ['docker', 'vmware', 'parallels', 'vbox', 'qemu'],
+    'database': ['mysql', 'postgres', 'redis', 'mongodb'],
+    'web': ['httpd', 'nginx', 'apache', 'caddy'],
+    'packages': ['homebrew', 'brew', 'mas'],
+    'power': ['battery', 'power', 'energy', 'thermal', 'pmset'],
+    'logging': ['logd', 'syslog', 'journal'],
+    'time': ['ntp', 'time', 'clock'],
+    'hardware': ['bluetooth', 'usb', 'thunderbolt', 'iokit', 'hid'],
+    'session': ['login', 'session', 'user'],
+    'cloud': ['icloud', 'cloud', 'sync'],
+    'backup': ['backup', 'timemachine', 'tmutil'],
+    'bluetooth': ['bluetooth'],
+    'messaging': ['ipc', 'message', 'notify'],
+    'diagnostics': ['diagnostic', 'crash', 'report'],
+}
+
+
+def _categorize_launchd_service(name: str) -> str:
+    """Categorize a launchd service by name for frontend filtering."""
+    name_lower = name.lower()
+    for category, patterns in _LAUNCHD_CATEGORIES.items():
+        for pattern in patterns:
+            if pattern in name_lower:
+                return category
+    return 'other'

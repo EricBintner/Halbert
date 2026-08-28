@@ -81,7 +81,7 @@ class MacSecurityScanner(BaseScanner):
             title=title,
             description=description,
             severity=severity,
-            details={
+            data={
                 'enabled': enabled,
                 'output': stdout.strip(),
             },
@@ -90,10 +90,8 @@ class MacSecurityScanner(BaseScanner):
                     id="sip-status",
                     label="Check SIP Status",
                     command="csrutil status",
-                    dry_run=True,
                 ),
             ],
-            tags=['security', 'sip', 'macos'],
         ))
         
         return discoveries
@@ -126,7 +124,7 @@ class MacSecurityScanner(BaseScanner):
             title=title,
             description=description,
             severity=severity,
-            details={
+            data={
                 'enabled': enabled,
             },
             actions=[
@@ -134,10 +132,8 @@ class MacSecurityScanner(BaseScanner):
                     id="gatekeeper-status",
                     label="Check Gatekeeper",
                     command="spctl --status",
-                    dry_run=True,
                 ),
             ],
-            tags=['security', 'gatekeeper', 'macos'],
         ))
         
         return discoveries
@@ -170,7 +166,7 @@ class MacSecurityScanner(BaseScanner):
             title=title,
             description=description,
             severity=severity,
-            details={
+            data={
                 'enabled': enabled,
                 'output': stdout.strip(),
             },
@@ -179,10 +175,8 @@ class MacSecurityScanner(BaseScanner):
                     id="filevault-status",
                     label="Check FileVault",
                     command="fdesetup status",
-                    dry_run=True,
                 ),
             ],
-            tags=['security', 'filevault', 'encryption', 'macos'],
         ))
         
         return discoveries
@@ -227,7 +221,7 @@ class MacSecurityScanner(BaseScanner):
             title=title,
             description=description + (", stealth mode on" if stealth_enabled else ""),
             severity=severity,
-            details={
+            data={
                 'enabled': enabled,
                 'stealth_mode': stealth_enabled,
             },
@@ -236,10 +230,8 @@ class MacSecurityScanner(BaseScanner):
                     id="firewall-status",
                     label="Check Firewall",
                     command="/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate",
-                    dry_run=True,
                 ),
             ],
-            tags=['security', 'firewall', 'macos'],
         ))
         
         return discoveries

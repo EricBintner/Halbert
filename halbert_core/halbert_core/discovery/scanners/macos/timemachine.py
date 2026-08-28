@@ -82,7 +82,9 @@ class TimeMachineScanner(BaseScanner):
                 title="Time Machine: Backup in Progress",
                 description=f"Backup running" + (f" ({progress:.0f}%)" if progress else ""),
                 severity=DiscoverySeverity.INFO,
-                details={
+                status="Running",
+                data={
+                    'tool': 'timemachine',
                     'running': True,
                     'progress': progress,
                 },
@@ -91,10 +93,8 @@ class TimeMachineScanner(BaseScanner):
                         id="tm-status",
                         label="Check Status",
                         command="tmutil status",
-                        dry_run=True,
                     ),
                 ],
-                tags=['backup', 'timemachine', 'macos'],
             ))
         
         return discoveries
@@ -118,7 +118,9 @@ class TimeMachineScanner(BaseScanner):
                 title="Time Machine: Not Configured",
                 description="No backup destination configured - your data is not being backed up",
                 severity=DiscoverySeverity.WARNING,
-                details={
+                status="Not Configured",
+                data={
+                    'tool': 'timemachine',
                     'configured': False,
                 },
                 actions=[
@@ -126,10 +128,8 @@ class TimeMachineScanner(BaseScanner):
                         id="open-tm-prefs",
                         label="Open Time Machine Preferences",
                         command="open /System/Library/PreferencePanes/TimeMachine.prefPane",
-                        dry_run=True,
                     ),
                 ],
-                tags=['backup', 'timemachine', 'macos', 'unconfigured'],
             ))
         else:
             # Parse destinations
@@ -160,16 +160,21 @@ class TimeMachineScanner(BaseScanner):
                     title=f"Time Machine: {dest.get('name', 'Backup')}",
                     description=f"Backup destination '{dest.get('name')}' ({dest.get('kind', 'Local')})",
                     severity=DiscoverySeverity.SUCCESS,
-                    details=dest,
+                    status="Configured",
+                    data={
+                        'tool': 'timemachine',
+                        'destination': dest.get('mount_point', ''),
+                        'source_path': '/',
+                        'schedule': 'automatic',
+                        **dest,
+                    },
                     actions=[
                         DiscoveryAction(
                             id="tm-dest-info",
                             label="Destination Info",
                             command="tmutil destinationinfo",
-                            dry_run=True,
                         ),
                     ],
-                    tags=['backup', 'timemachine', 'macos', 'destination'],
                 ))
         
         return discoveries
@@ -219,7 +224,11 @@ class TimeMachineScanner(BaseScanner):
                     title=title,
                     description=description,
                     severity=severity,
-                    details={
+                    status="Critical" if days_ago > self.BACKUP_CRITICAL_DAYS else ("Warning" if days_ago > self.BACKUP_WARNING_DAYS else "Healthy"),
+                    data={
+                        'tool': 'timemachine',
+                        'last_run': backup_date.isoformat(),
+                        'schedule': 'automatic',
                         'last_backup': backup_date.isoformat(),
                         'days_ago': days_ago,
                         'path': backup_path,
@@ -229,17 +238,14 @@ class TimeMachineScanner(BaseScanner):
                             id="start-backup",
                             label="Start Backup Now",
                             command="tmutil startbackup",
-                            dry_run=True,
                             requires_approval=True,
                         ),
                         DiscoveryAction(
                             id="list-backups",
                             label="List Backups",
                             command="tmutil listbackups",
-                            dry_run=True,
                         ),
                     ],
-                    tags=['backup', 'timemachine', 'macos'],
                 ))
             
             except ValueError:
