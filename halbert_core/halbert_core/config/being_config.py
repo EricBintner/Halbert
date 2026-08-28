@@ -27,6 +27,51 @@ logger = logging.getLogger(__name__)
 VALID_VOICES = {"first_person", "the_computer", "hybrid"}
 VALID_PROACTIVITY = {"off", "quiet", "balanced", "assertive"}
 VALID_VOICE_PRESENTATIONS = {"not_defined", "male", "female"}
+VALID_OPERATIONAL_TIERS = {"cloud_ok", "local_only", "redact"}
+VALID_SECRET_TIERS = {"local_only", "cloud_ok_acknowledged"}
+
+
+@dataclass
+class SecurityConfig:
+    """Security tier settings for config value routing.
+
+    Controls how config values are routed when exposed via MCP tools or
+    the agent context assembler.  See the tiered sensitivity plan for
+    the full rationale.
+
+    No ``secure_model`` / ``secure_endpoint`` fields — the Tier 2 path is
+    deterministic (``describe_secret``), no model.  If a local model is
+    ever reintroduced for open-ended questions about secrets, it must
+    carry a fail-closed assertion: reject any tag ending in ``:cloud``,
+    reject any provider outside ``LOCAL_GPU_PROVIDERS``, never infer
+    locality from the endpoint URL.
+    """
+    operational_tier: str = "cloud_ok"  # cloud_ok | local_only | redact
+    secret_tier: str = "local_only"     # local_only | cloud_ok_acknowledged
+    public_files: List[str] = field(default_factory=lambda: [
+        "/etc/hosts", "/etc/hostname", "/etc/fstab",
+    ])
+    extra_secret_keys: List[str] = field(default_factory=list)
+
+    def validate(self) -> None:
+        if self.operational_tier not in VALID_OPERATIONAL_TIERS:
+            raise ValueError(
+                f"Invalid operational_tier '{self.operational_tier}'. "
+                f"Must be one of: {VALID_OPERATIONAL_TIERS}"
+            )
+        if self.secret_tier not in VALID_SECRET_TIERS:
+            raise ValueError(
+                f"Invalid secret_tier '{self.secret_tier}'. "
+                f"Must be one of: {VALID_SECRET_TIERS}"
+            )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "SecurityConfig":
+        known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        return cls(**known)
 
 
 @dataclass
@@ -57,6 +102,9 @@ class BeingConfig:
     voice_presentation: str = "not_defined"  # not_defined | male | female
     model: Optional[str] = None  # per-persona model override (shadows chat_model when set)
     model_endpoint_id: Optional[str] = None  # saved-endpoint id for the persona model
+
+    # --- Security (MCP trust boundary) ---
+    security: SecurityConfig = field(default_factory=SecurityConfig)
 
     def validate(self) -> None:
         """Validate the config. Raises ValueError on invalid values."""
@@ -94,6 +142,7 @@ class BeingConfig:
                 f"Invalid voice_presentation '{self.voice_presentation}'. "
                 f"Must be one of: {VALID_VOICE_PRESENTATIONS}"
             )
+        self.security.validate()
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -101,6 +150,9 @@ class BeingConfig:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "BeingConfig":
         known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        # Handle nested security config
+        if "security" in known and isinstance(known["security"], dict):
+            known["security"] = SecurityConfig.from_dict(known["security"])
         return cls(**known)
 
 
