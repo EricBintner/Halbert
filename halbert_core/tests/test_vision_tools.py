@@ -42,6 +42,41 @@ class TestVisionToolSchemas:
         assert callable(VISION_TOOL_HANDLERS["capture_webcam"])
 
 
+class TestCaptureWebcamHandler:
+    """Test the webcam tool handler with mocked WebcamCapture."""
+
+    @pytest.mark.asyncio
+    async def test_returns_dict_with_image_key(self):
+        from halbert_core.tools.vision_tools import capture_webcam
+
+        mock_cap = MagicMock()
+        mock_cap.grab_to_base64.return_value = "webcamdata"
+
+        with patch("halbert_core.vision.config.is_webcam_enabled",
+                    return_value=True), \
+             patch("halbert_core.vision.webcam_capture.WebcamCapture", return_value=mock_cap):
+            result = await capture_webcam({})
+
+        assert isinstance(result, dict)
+        assert result["image"] == "webcamdata"
+        assert "description" in result
+
+    @pytest.mark.asyncio
+    async def test_blocked_when_disabled(self):
+        """Privacy gate: capture_webcam must check config before capturing."""
+        from halbert_core.tools.vision_tools import capture_webcam
+
+        with patch("halbert_core.vision.config.is_webcam_enabled",
+                    return_value=False), \
+             patch("halbert_core.vision.webcam_capture.WebcamCapture") as mock_cap:
+            result = await capture_webcam({})
+
+        assert "error" in result
+        assert result["error_type"] == "disabled"
+        assert "image" not in result
+        mock_cap.assert_not_called()
+
+
 class TestCaptureScreenshotHandler:
     """Test the tool handler with mocked ScreenCapture."""
 
@@ -52,7 +87,9 @@ class TestCaptureScreenshotHandler:
         mock_cap = MagicMock()
         mock_cap.capture_to_base64.return_value = "base64datahere"
 
-        with patch("halbert_core.vision.screen_capture.ScreenCapture", return_value=mock_cap):
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=True), \
+             patch("halbert_core.vision.screen_capture.ScreenCapture", return_value=mock_cap):
             result = await capture_screenshot({})
 
         assert isinstance(result, dict)
@@ -68,7 +105,9 @@ class TestCaptureScreenshotHandler:
         mock_cap = MagicMock()
         mock_cap.capture_to_base64.return_value = "regiondata"
 
-        with patch("halbert_core.vision.screen_capture.ScreenCapture", return_value=mock_cap):
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=True), \
+             patch("halbert_core.vision.screen_capture.ScreenCapture", return_value=mock_cap):
             result = await capture_screenshot({
                 "region": {"x": 100, "y": 200, "width": 800, "height": 600}
             })
@@ -83,13 +122,46 @@ class TestCaptureScreenshotHandler:
     async def test_dependency_error_returns_error_dict(self):
         from halbert_core.tools.vision_tools import capture_screenshot
 
-        with patch("halbert_core.vision.screen_capture.ScreenCapture",
-                    side_effect=ImportError("mss not installed")):
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=True), \
+             patch("halbert_core.vision.screen_capture.ScreenCapture",
+                   side_effect=ImportError("mss not installed")):
             result = await capture_screenshot({})
 
         assert "error" in result
         assert result.get("error_type") == "dependency_missing"
         assert "image" not in result
+
+    @pytest.mark.asyncio
+    async def test_screenshot_blocked_when_disabled(self):
+        """Privacy gate: capture_screenshot must check config before capturing."""
+        from halbert_core.tools.vision_tools import capture_screenshot
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=False), \
+             patch("halbert_core.vision.screen_capture.ScreenCapture") as mock_cap:
+            result = await capture_screenshot({})
+
+        assert "error" in result
+        assert result["error_type"] == "disabled"
+        assert "image" not in result
+        # ScreenCapture must not have been instantiated
+        mock_cap.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_screenshot_proceeds_when_enabled(self):
+        """When enabled, the capture proceeds normally."""
+        from halbert_core.tools.vision_tools import capture_screenshot
+
+        mock_cap = MagicMock()
+        mock_cap.capture_to_base64.return_value = "base64data"
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=True), \
+             patch("halbert_core.vision.screen_capture.ScreenCapture", return_value=mock_cap):
+            result = await capture_screenshot({})
+
+        assert result.get("image") == "base64data"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

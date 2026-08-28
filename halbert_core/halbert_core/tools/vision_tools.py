@@ -28,7 +28,18 @@ async def capture_screenshot(args: Dict) -> Dict[str, Any]:
     The state machine's _handle_executing detects the "image" key and
     appends it to ctx.images, routing the next LLM call through the
     vision model.
+
+    Checks the privacy config (vision_config.yml) before capturing.
+    If screen_capture.enabled is False, returns an error dict instead
+    of capturing — the user must explicitly opt in via Settings > Vision.
     """
+    from ..vision.config import is_screen_capture_enabled
+    if not is_screen_capture_enabled():
+        return {
+            "error": "Screen capture is disabled. The user can enable it in Settings > Vision.",
+            "error_type": "disabled",
+        }
+
     region = args.get("region")
     quality = args.get("quality", 85)
     max_dim = args.get("max_dim", 1568)
@@ -67,7 +78,18 @@ async def capture_webcam(args: Dict) -> Dict[str, Any]:
 
     The camera is opened per-capture and released immediately. The LED
     lights only momentarily.
+
+    Checks the privacy config (vision_config.yml) before capturing.
+    If webcam.enabled is False, returns an error dict instead of
+    capturing — the user must explicitly opt in via Settings > Vision.
     """
+    from ..vision.config import is_webcam_enabled
+    if not is_webcam_enabled():
+        return {
+            "error": "Webcam capture is disabled. The user can enable it in Settings > Vision.",
+            "error_type": "disabled",
+        }
+
     camera_index = args.get("camera", 0)
     quality = args.get("quality", 85)
     max_dim = args.get("max_dim", 768)

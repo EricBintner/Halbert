@@ -308,8 +308,22 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
         }]);
       }
     };
+    const handleScreenshotError = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const msg = detail?.error || 'Screenshot failed';
+      // Surface the error to the user. If screen capture is disabled,
+      // the message tells them exactly where to enable it.
+      setAgentError(detail?.errorType === 'disabled'
+        ? 'Screen capture is disabled. Enable it in Settings > Vision.'
+        : `Screenshot failed: ${msg}`);
+      setTimeout(() => setAgentError(null), 5000);
+    };
     window.addEventListener('halbert:add-screenshot', handleAddScreenshot);
-    return () => window.removeEventListener('halbert:add-screenshot', handleAddScreenshot);
+    window.addEventListener('halbert:screenshot-error', handleScreenshotError);
+    return () => {
+      window.removeEventListener('halbert:add-screenshot', handleAddScreenshot);
+      window.removeEventListener('halbert:screenshot-error', handleScreenshotError);
+    };
   }, []);
 
   // Everything the fold below needs, one assignment fresh. The fold runs
