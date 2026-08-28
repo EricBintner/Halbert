@@ -39,6 +39,8 @@ class ScreenCaptureConfig:
     enabled: bool = False
     quality: int = 85
     max_dimension: int = 1568
+    monitor_index: int = 1  # 0=all monitors, 1=primary (default avoids multi-monitor waste)
+    grayscale: bool = False  # 30% smaller JPEGs; text/UI perfectly readable
 
 
 @dataclass
@@ -47,6 +49,7 @@ class WebcamConfig:
     camera_index: int = 0
     quality: int = 85
     max_dimension: int = 768
+    grayscale: bool = False  # color matters for webcam (objects, labels)
 
 
 @dataclass
@@ -73,12 +76,15 @@ def load_config() -> VisionConfig:
                 enabled=screen.get("enabled", False),
                 quality=screen.get("quality", 85),
                 max_dimension=screen.get("max_dimension", 1568),
+                monitor_index=screen.get("monitor_index", 1),
+                grayscale=screen.get("grayscale", False),
             ),
             webcam=WebcamConfig(
                 enabled=webcam.get("enabled", False),
                 camera_index=webcam.get("camera_index", 0),
                 quality=webcam.get("quality", 85),
                 max_dimension=webcam.get("max_dimension", 768),
+                grayscale=webcam.get("grayscale", False),
             ),
         )
     except Exception as e:
@@ -95,12 +101,15 @@ def save_config(config: VisionConfig) -> None:
             "enabled": config.screen_capture.enabled,
             "quality": config.screen_capture.quality,
             "max_dimension": config.screen_capture.max_dimension,
+            "monitor_index": config.screen_capture.monitor_index,
+            "grayscale": config.screen_capture.grayscale,
         },
         "webcam": {
             "enabled": config.webcam.enabled,
             "camera_index": config.webcam.camera_index,
             "quality": config.webcam.quality,
             "max_dimension": config.webcam.max_dimension,
+            "grayscale": config.webcam.grayscale,
         },
     }
     with open(path, "w") as f:

@@ -33,7 +33,7 @@ class TestEncodeJpeg:
 
     def test_downscale_when_exceeds_max_dim(self):
         from halbert_core.vision.webcam_capture import WebcamCapture
-        cap = WebcamCapture(quality=85, max_dim=100)
+        cap = WebcamCapture(quality=85, max_dim=100, patch_align=False)
         frame = np.zeros((200, 400, 3), dtype=np.uint8)
         jpeg = cap._encode_jpeg(frame)
         import cv2

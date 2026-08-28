@@ -33,10 +33,13 @@ if FASTAPI_AVAILABLE:
         screen_capture_enabled: Optional[bool] = None
         screen_capture_quality: Optional[int] = None
         screen_capture_max_dim: Optional[int] = None
+        screen_capture_monitor_index: Optional[int] = None
+        screen_capture_grayscale: Optional[bool] = None
         webcam_enabled: Optional[bool] = None
         webcam_camera_index: Optional[int] = None
         webcam_quality: Optional[int] = None
         webcam_max_dim: Optional[int] = None
+        webcam_grayscale: Optional[bool] = None
 
     @router.get("/config")
     async def get_vision_config():
@@ -48,12 +51,15 @@ if FASTAPI_AVAILABLE:
                 "enabled": cfg.screen_capture.enabled,
                 "quality": cfg.screen_capture.quality,
                 "max_dimension": cfg.screen_capture.max_dimension,
+                "monitor_index": cfg.screen_capture.monitor_index,
+                "grayscale": cfg.screen_capture.grayscale,
             },
             "webcam": {
                 "enabled": cfg.webcam.enabled,
                 "camera_index": cfg.webcam.camera_index,
                 "quality": cfg.webcam.quality,
                 "max_dimension": cfg.webcam.max_dimension,
+                "grayscale": cfg.webcam.grayscale,
             },
         }
 
@@ -69,6 +75,10 @@ if FASTAPI_AVAILABLE:
             cfg.screen_capture.quality = update.screen_capture_quality
         if update.screen_capture_max_dim is not None:
             cfg.screen_capture.max_dimension = update.screen_capture_max_dim
+        if update.screen_capture_monitor_index is not None:
+            cfg.screen_capture.monitor_index = update.screen_capture_monitor_index
+        if update.screen_capture_grayscale is not None:
+            cfg.screen_capture.grayscale = update.screen_capture_grayscale
         if update.webcam_enabled is not None:
             cfg.webcam.enabled = update.webcam_enabled
         if update.webcam_camera_index is not None:
@@ -77,6 +87,8 @@ if FASTAPI_AVAILABLE:
             cfg.webcam.quality = update.webcam_quality
         if update.webcam_max_dim is not None:
             cfg.webcam.max_dimension = update.webcam_max_dim
+        if update.webcam_grayscale is not None:
+            cfg.webcam.grayscale = update.webcam_grayscale
 
         save_config(cfg)
         return {"status": "ok"}
@@ -103,11 +115,16 @@ if FASTAPI_AVAILABLE:
         cfg = load_config()
         eff_quality = quality if quality is not None else cfg.screen_capture.quality
         eff_max_dim = max_dim if max_dim is not None else cfg.screen_capture.max_dimension
+        eff_monitor = monitor if monitor != 0 else cfg.screen_capture.monitor_index
 
         try:
             from ...vision.screen_capture import ScreenCapture, ScreenCaptureError
-            cap = ScreenCapture(quality=eff_quality, max_dim=eff_max_dim)
-            base64_img = cap.capture_to_base64(monitor_index=monitor)
+            cap = ScreenCapture(
+                quality=eff_quality,
+                max_dim=eff_max_dim,
+                grayscale=cfg.screen_capture.grayscale,
+            )
+            base64_img = cap.capture_to_base64(monitor_index=eff_monitor)
             return {"image": base64_img, "format": "jpeg"}
         except ScreenCaptureError as e:
             logger.warning(f"Screen capture error: {e}")
@@ -154,7 +171,12 @@ if FASTAPI_AVAILABLE:
 
         try:
             from ...vision.webcam_capture import WebcamCapture, WebcamCaptureError
-            cap = WebcamCapture(camera_index=eff_camera, quality=eff_quality, max_dim=eff_max_dim)
+            cap = WebcamCapture(
+                camera_index=eff_camera,
+                quality=eff_quality,
+                max_dim=eff_max_dim,
+                grayscale=cfg.webcam.grayscale,
+            )
             base64_img = cap.grab_to_base64()
             return {"image": base64_img, "format": "jpeg"}
         except WebcamCaptureError as e:

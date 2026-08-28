@@ -253,6 +253,32 @@ function VisionSettings() {
               className="w-24"
             />
           </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="screen-monitor">Monitor index</Label>
+            <Input
+              id="screen-monitor"
+              type="number"
+              min={0}
+              max={9}
+              value={config?.screen_capture?.monitor_index ?? 1}
+              onChange={(e) => updateConfig('screen_capture_monitor_index', parseInt(e.target.value) || 1)}
+              disabled={saving}
+              className="w-20"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="screen-gray">Grayscale</Label>
+              <p className="text-xs text-muted-foreground">30% smaller JPEGs. Text and UI perfectly readable.</p>
+            </div>
+            <input
+              id="screen-gray"
+              type="checkbox"
+              checked={config?.screen_capture?.grayscale ?? false}
+              onChange={(e) => updateConfig('screen_capture_grayscale', e.target.checked)}
+              disabled={saving}
+            />
+          </div>
           <Button onClick={testScreenshot} disabled={saving || !config?.screen_capture?.enabled} variant="outline" size="sm">
             Test screen capture
           </Button>

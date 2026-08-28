@@ -73,19 +73,45 @@ class ScreenCapture:
     don't hold a handle to the display server between captures. This is
     cheap (MSS is ctypes-based, no daemon) and avoids any state drift
     if the display configuration changes between captures.
+
+    Patch alignment: when downscaling, dimensions are rounded down to
+    the nearest multiple of patch_size (default 336, LLaVA's patch size).
+    This avoids wasted tokens from partially-filled patches — a 1568x1018
+    image is 5x4=20 LLaVA patches, but 1344x1008 is 4x3=12 patches (40%
+    fewer tokens for negligible resolution loss).
     """
 
-    def __init__(self, quality: int = 85, max_dim: int = 1568):
+    # LLaVA tiles images into 336x336 patches. Each patch costs ~150
+    # tokens. Non-multiple dimensions round up, wasting tokens on
+    # partially-filled patches.
+    PATCH_SIZE = 336
+
+    def __init__(
+        self,
+        quality: int = 85,
+        max_dim: int = 1568,
+        grayscale: bool = False,
+        patch_align: bool = True,
+    ):
         """
         Args:
             quality: JPEG encode quality (1-100). 85 is visually lossless
-                and ~10x smaller than PNG.
+                and ~10x smaller than PNG. 70 is sufficient for reading
+                terminal text and saves ~40% on file size.
             max_dim: Downscale target for the longest side (pixels). 1568
                 matches Claude's max input resolution; 768 is sufficient
                 for local Ollama vision models (llava, etc.).
+            grayscale: Convert to grayscale before encoding. Saves ~30%
+                on file size. Text and UI elements are perfectly readable
+                in grayscale — color only matters for photos and charts.
+            patch_align: Round downscale dimensions to the nearest patch
+                multiple (336px for LLaVA). Saves up to 40% on tokens by
+                eliminating partially-filled patches.
         """
         self.quality = quality
         self.max_dim = max_dim
+        self.grayscale = grayscale
+        self.patch_align = patch_align
 
     def capture_full(self, monitor_index: int = 0) -> bytes:
         """Capture the full primary monitor (or a specific monitor).
@@ -167,18 +193,36 @@ class ScreenCapture:
         """Convert BGRA frame to BGR, downscale, JPEG encode.
 
         MSS returns BGRA (Blue, Green, Red, Alpha). OpenCV expects BGR
-        (no alpha). We strip the alpha channel, downscale if the longest
-        side exceeds max_dim, and JPEG encode.
+        (no alpha). We strip the alpha channel, optionally convert to
+        grayscale, downscale if the longest side exceeds max_dim (with
+        patch alignment to avoid wasted tokens), and JPEG encode.
         """
         _ensure_deps()
         # Strip alpha: BGRA → BGR
         frame = frame_bgra[:, :, :3]
+
+        # Grayscale: text and UI elements are luminance-dominant.
+        # Converting before downscale means less data to resize, and
+        # grayscale JPEGs are ~30% smaller than color at the same quality.
+        if self.grayscale:
+            frame = _cv2.cvtColor(frame, _cv2.COLOR_BGR2GRAY)
 
         h, w = frame.shape[:2]
         if max(h, w) > self.max_dim:
             scale = self.max_dim / max(h, w)
             new_w = int(w * scale)
             new_h = int(h * scale)
+
+            # Patch alignment: round down to the nearest patch multiple.
+            # A 1568x1018 image is 5x4=20 LLaVA patches, but 1344x1008
+            # is 4x3=12 — 40% fewer tokens for negligible resolution loss.
+            if self.patch_align:
+                new_w = (new_w // self.PATCH_SIZE) * self.PATCH_SIZE
+                new_h = (new_h // self.PATCH_SIZE) * self.PATCH_SIZE
+                # Guard against zero (image smaller than one patch)
+                new_w = max(new_w, self.PATCH_SIZE)
+                new_h = max(new_h, self.PATCH_SIZE)
+
             frame = _cv2.resize(frame, (new_w, new_h), interpolation=_cv2.INTER_AREA)
 
         ok, buf = _cv2.imencode(".jpg", frame, [_cv2.IMWRITE_JPEG_QUALITY, self.quality])

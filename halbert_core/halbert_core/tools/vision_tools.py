@@ -11,10 +11,18 @@ so the next LLM call routes through the vision model.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
 from typing import Dict, Any
 
 logger = logging.getLogger("halbert.tools.vision")
+
+# Dedup state: module-level because tool handlers are stateless functions.
+# Vision capture is inherently serial (one user, one screen), so a simple
+# last-hash comparison is sufficient — no need for a concurrent map.
+_last_screenshot_hash: str | None = None
+_last_webcam_hash: str | None = None
 
 
 async def capture_screenshot(args: Dict) -> Dict[str, Any]:
@@ -45,20 +53,39 @@ async def capture_screenshot(args: Dict) -> Dict[str, Any]:
     region = args.get("region")
     quality = args.get("quality", cfg.screen_capture.quality)
     max_dim = args.get("max_dim", cfg.screen_capture.max_dimension)
+    monitor = args.get("monitor", cfg.screen_capture.monitor_index)
 
     try:
         from ..vision.screen_capture import ScreenCapture, ScreenCaptureError
-        cap = ScreenCapture(quality=quality, max_dim=max_dim)
+        cap = ScreenCapture(
+            quality=quality,
+            max_dim=max_dim,
+            grayscale=cfg.screen_capture.grayscale,
+        )
 
         if region and all(k in region for k in ("x", "y", "width", "height")):
-            base64_img = cap.capture_to_base64(
-                region=(region["x"], region["y"], region["width"], region["height"])
+            jpeg_bytes = cap.capture_region(
+                region["x"], region["y"], region["width"], region["height"]
             )
             desc = f"Screenshot captured (region {region['width']}x{region['height']})"
         else:
-            base64_img = cap.capture_to_base64()
-            desc = "Screenshot captured (full screen)"
+            jpeg_bytes = cap.capture_full(monitor_index=monitor)
+            desc = f"Screenshot captured (monitor {monitor})"
 
+        # Dedup: if the screen hasn't changed since the last capture,
+        # skip sending the image. The LLM already has it from the
+        # previous turn — re-sending wastes ~3000 tokens for nothing.
+        global _last_screenshot_hash
+        frame_hash = hashlib.md5(jpeg_bytes).hexdigest()
+        if frame_hash == _last_screenshot_hash:
+            logger.info("Screenshot dedup: screen unchanged since last capture")
+            return {
+                "description": "Screen unchanged since last capture — the previous screenshot is still current.",
+                "unchanged": True,
+            }
+        _last_screenshot_hash = frame_hash
+
+        base64_img = base64.b64encode(jpeg_bytes).decode("ascii")
         return {"image": base64_img, "description": desc}
 
     except ScreenCaptureError as e:
@@ -99,8 +126,29 @@ async def capture_webcam(args: Dict) -> Dict[str, Any]:
 
     try:
         from ..vision.webcam_capture import WebcamCapture, WebcamCaptureError
-        cap = WebcamCapture(camera_index=camera_index, quality=quality, max_dim=max_dim)
-        base64_img = cap.grab_to_base64()
+        cap = WebcamCapture(
+            camera_index=camera_index,
+            quality=quality,
+            max_dim=max_dim,
+            grayscale=cfg.webcam.grayscale,
+        )
+        jpeg_bytes = cap.grab_frame()
+
+        # Dedup: webcam frames change constantly (noise, lighting), so
+        # exact-match dedup is less useful than for screenshots. But it
+        # catches the case where the camera pointed at the same static
+        # scene (e.g. a label on hardware).
+        global _last_webcam_hash
+        frame_hash = hashlib.md5(jpeg_bytes).hexdigest()
+        if frame_hash == _last_webcam_hash:
+            logger.info("Webcam dedup: frame unchanged since last capture")
+            return {
+                "description": "Webcam frame unchanged since last capture.",
+                "unchanged": True,
+            }
+        _last_webcam_hash = frame_hash
+
+        base64_img = base64.b64encode(jpeg_bytes).decode("ascii")
         return {"image": base64_img, "description": "Webcam frame captured"}
 
     except WebcamCaptureError as e:
@@ -121,14 +169,18 @@ VISION_TOOL_SCHEMAS = {
             "Capture the current screen as an image. Use this when the user asks "
             "about what's on screen, an error dialog, terminal output they can see, "
             "or anything visual on their display. The captured image is attached to "
-            "your next response automatically — you will be able to see it."
+            "your next response automatically. "
+            "Token cost scales with image size: use max_dim=768 for reading text "
+            "(~900 tokens), max_dim=512 for quick checks (~450 tokens), "
+            "max_dim=1568 only when you need full detail (~3000 tokens). "
+            "Use region to capture a specific area instead of the full screen."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "region": {
                     "type": "object",
-                    "description": "Optional screen region to capture instead of full screen",
+                    "description": "Optional screen region to capture instead of full screen. Use this when you know where the relevant content is (e.g. the terminal window).",
                     "properties": {
                         "x": {"type": "integer", "description": "Left coordinate (pixels)"},
                         "y": {"type": "integer", "description": "Top coordinate (pixels)"},
@@ -138,13 +190,18 @@ VISION_TOOL_SCHEMAS = {
                 },
                 "quality": {
                     "type": "integer",
-                    "description": "JPEG quality (1-100, default 85)",
+                    "description": "JPEG quality (1-100). 70 is sufficient for reading text; 85 for photos. Lower = smaller = faster.",
                     "default": 85,
                 },
                 "max_dim": {
                     "type": "integer",
-                    "description": "Max dimension in pixels (default 1568)",
+                    "description": "Max dimension in pixels. 768 for text reading, 512 for quick checks, 1568 for full detail. Lower = fewer tokens.",
                     "default": 1568,
+                },
+                "monitor": {
+                    "type": "integer",
+                    "description": "Monitor index: 0=all monitors, 1=primary, 2+=secondary. Default is the configured monitor.",
+                    "default": 1,
                 },
             },
             "required": [],

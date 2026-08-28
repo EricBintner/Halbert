@@ -57,19 +57,37 @@ class WebcamCapture:
     - Avoids holding the camera (and its LED) when Halbert isn't looking
     - Makes the 'Halbert is looking' state explicit and momentary
     - Works around macOS camera LED behavior (LED is on while camera is open)
+
+    Patch alignment: same as ScreenCapture — rounds downscale dimensions
+    to the nearest 336px multiple to avoid wasted LLaVA patches.
     """
 
-    def __init__(self, camera_index: int = 0, quality: int = 85, max_dim: int = 768):
+    PATCH_SIZE = 336
+
+    def __init__(
+        self,
+        camera_index: int = 0,
+        quality: int = 85,
+        max_dim: int = 768,
+        grayscale: bool = False,
+        patch_align: bool = True,
+    ):
         """
         Args:
             camera_index: OpenCV camera index (0 = default, 1 = second camera).
             quality: JPEG encode quality (1-100).
             max_dim: Downscale target for the longest side (pixels). 768 is
                 sufficient for local Ollama vision models.
+            grayscale: Convert to grayscale before encoding. Saves ~30%
+                on file size. Color matters for webcam (objects, labels),
+                so this defaults to False.
+            patch_align: Round downscale dimensions to patch multiples.
         """
         self.camera_index = camera_index
         self.quality = quality
         self.max_dim = max_dim
+        self.grayscale = grayscale
+        self.patch_align = patch_align
 
     def grab_frame(self) -> bytes:
         """Open camera, grab one frame, close camera. Returns JPEG bytes.
@@ -107,17 +125,30 @@ class WebcamCapture:
     def _encode_jpeg(self, frame_bgr) -> bytes:
         """Downscale and JPEG encode a BGR frame from OpenCV.
 
-        OpenCV returns BGR (no alpha), so we just downscale and encode.
+        OpenCV returns BGR (no alpha). We optionally convert to grayscale,
+        downscale with patch alignment, and JPEG encode.
         """
         _ensure_deps()
-        h, w = frame_bgr.shape[:2]
+        frame = frame_bgr
+
+        if self.grayscale:
+            frame = _cv2.cvtColor(frame, _cv2.COLOR_BGR2GRAY)
+
+        h, w = frame.shape[:2]
         if max(h, w) > self.max_dim:
             scale = self.max_dim / max(h, w)
             new_w = int(w * scale)
             new_h = int(h * scale)
-            frame_bgr = _cv2.resize(frame_bgr, (new_w, new_h), interpolation=_cv2.INTER_AREA)
 
-        ok, buf = _cv2.imencode(".jpg", frame_bgr, [_cv2.IMWRITE_JPEG_QUALITY, self.quality])
+            if self.patch_align:
+                new_w = (new_w // self.PATCH_SIZE) * self.PATCH_SIZE
+                new_h = (new_h // self.PATCH_SIZE) * self.PATCH_SIZE
+                new_w = max(new_w, self.PATCH_SIZE)
+                new_h = max(new_h, self.PATCH_SIZE)
+
+            frame = _cv2.resize(frame, (new_w, new_h), interpolation=_cv2.INTER_AREA)
+
+        ok, buf = _cv2.imencode(".jpg", frame, [_cv2.IMWRITE_JPEG_QUALITY, self.quality])
         if not ok:
             raise WebcamCaptureError("JPEG encoding failed")
         return buf.tobytes()

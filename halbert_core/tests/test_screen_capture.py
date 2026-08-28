@@ -48,7 +48,7 @@ class TestEncodeJpeg:
 
     def test_downscale_when_exceeds_max_dim(self):
         from halbert_core.vision.screen_capture import ScreenCapture
-        cap = ScreenCapture(quality=85, max_dim=100)
+        cap = ScreenCapture(quality=85, max_dim=100, patch_align=False)
         # 200x100 frame, should downscale to 100x50
         frame = np.zeros((100, 200, 4), dtype=np.uint8)
         jpeg = cap._encode_jpeg(frame)
@@ -78,6 +78,63 @@ class TestEncodeJpeg:
         import cv2
         decoded = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
         assert decoded.shape[2] == 3  # BGR, not BGRA
+
+    def test_grayscale_produces_single_channel(self):
+        """Grayscale mode produces a 1-channel JPEG (~30% smaller)."""
+        from halbert_core.vision.screen_capture import ScreenCapture
+        cap = ScreenCapture(quality=85, max_dim=768, grayscale=True)
+        frame = np.zeros((100, 200, 4), dtype=np.uint8)
+        frame[:, :, :3] = 128
+        frame[:, :, 3] = 255
+        jpeg = cap._encode_jpeg(frame)
+        import cv2
+        decoded = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        assert len(decoded.shape) == 2  # Grayscale (height, width)
+
+    def test_grayscale_smaller_than_color(self):
+        """Grayscale JPEG should be smaller than color at the same quality."""
+        from halbert_core.vision.screen_capture import ScreenCapture
+        frame = np.random.randint(0, 255, (200, 200, 4), dtype=np.uint8)
+        frame[:, :, 3] = 255
+        cap_color = ScreenCapture(quality=85, max_dim=768, grayscale=False)
+        cap_gray = ScreenCapture(quality=85, max_dim=768, grayscale=True)
+        jpeg_color = cap_color._encode_jpeg(frame.copy())
+        jpeg_gray = cap_gray._encode_jpeg(frame.copy())
+        assert len(jpeg_gray) < len(jpeg_color)
+
+    def test_patch_alignment_rounds_down(self):
+        """Patch alignment rounds downscale dims to nearest 336 multiple."""
+        from halbert_core.vision.screen_capture import ScreenCapture
+        cap = ScreenCapture(quality=85, max_dim=1568, patch_align=True)
+        # 6048x3928 -> scale to 1568 -> 1568x1018 -> align to 1344x1008
+        frame = np.zeros((3928, 6048, 4), dtype=np.uint8)
+        jpeg = cap._encode_jpeg(frame)
+        import cv2
+        decoded = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        assert decoded.shape[1] == 1344  # 4 * 336
+        assert decoded.shape[0] == 1008  # 3 * 336
+
+    def test_patch_alignment_disabled(self):
+        """When patch_align=False, dims are not rounded."""
+        from halbert_core.vision.screen_capture import ScreenCapture
+        cap = ScreenCapture(quality=85, max_dim=1568, patch_align=False)
+        frame = np.zeros((3928, 6048, 4), dtype=np.uint8)
+        jpeg = cap._encode_jpeg(frame)
+        import cv2
+        decoded = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        assert decoded.shape[1] == 1568  # Not aligned
+        assert decoded.shape[0] == 1018
+
+    def test_small_image_not_downscaled(self):
+        """Images smaller than max_dim are not downscaled even with patch_align."""
+        from halbert_core.vision.screen_capture import ScreenCapture
+        cap = ScreenCapture(quality=85, max_dim=1568, patch_align=True)
+        frame = np.zeros((400, 500, 4), dtype=np.uint8)
+        jpeg = cap._encode_jpeg(frame)
+        import cv2
+        decoded = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        assert decoded.shape[1] == 500
+        assert decoded.shape[0] == 400
 
 
 # ─────────────────────────────────────────────────────────────────────────────
