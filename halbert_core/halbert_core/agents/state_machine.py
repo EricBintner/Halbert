@@ -2388,13 +2388,38 @@ class AgentStateMachine:
                 # JPEG). Detect it and append to ctx.images so the next
                 # LLM call routes through the vision model. The text
                 # observation uses the "description" field, not the base64.
+                #
+                # capture_and_ocr returns "ocr_text" (text observation,
+                # no image routing) and optionally "image" (when
+                # include_image=True). The OCR text goes into the
+                # observation directly — the LLM reads it as text, not
+                # through the vision model, saving 5-15x tokens.
                 if isinstance(result.result, dict) and "image" in result.result:
                     if self.ctx.images is None:
                         self.ctx.images = []
                     self.ctx.images.append(result.result["image"])
                     desc = result.result.get("description", "Image captured")
+                    # If OCR text is also present, include it in the
+                    # observation so the LLM gets both the text and the
+                    # image routing.
+                    ocr_text = result.result.get("ocr_text")
+                    if ocr_text:
+                        self.ctx.add_observation(
+                            f"Executed {tool_name}: {desc}\nOCR text:\n{ocr_text}"
+                        )
+                    else:
+                        self.ctx.add_observation(
+                            f"Executed {tool_name}: {desc}"
+                        )
+                elif isinstance(result.result, dict) and "ocr_text" in result.result:
+                    # OCR-only result: text observation, no image routing.
+                    # This is the 5-15x token savings path — the LLM
+                    # reads the extracted text without needing the
+                    # vision model at all.
+                    ocr_text = result.result["ocr_text"]
+                    desc = result.result.get("description", "OCR text extracted")
                     self.ctx.add_observation(
-                        f"Executed {tool_name}: {desc}"
+                        f"Executed {tool_name}: {desc}\n{ocr_text}"
                     )
                 else:
                     # The observation has to carry the *output*, not just

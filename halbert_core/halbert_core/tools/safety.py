@@ -412,7 +412,10 @@ class ToolSafetyFramework:
                 requires_confirmation=False,
                 reason="Conversation thread operation (handled inline)"
             )
-        elif tool_name in ("capture_screenshot", "capture_webcam"):
+        elif tool_name in (
+            "capture_screenshot", "capture_webcam",
+            "capture_and_ocr", "list_windows", "capture_window",
+        ):
             return SafetyCheckResult(
                 risk_level=RiskLevel.SAFE,
                 allowed=True,

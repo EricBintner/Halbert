@@ -161,6 +161,185 @@ async def capture_webcam(args: Dict) -> Dict[str, Any]:
         return {"error": f"Unexpected error: {e}", "error_type": "capture_failed"}
 
 
+async def capture_and_ocr(args: Dict) -> Dict[str, Any]:
+    """Capture the screen, run OCR, return text instead of an image.
+
+    For terminal output, error dialogs, and code editors, this replaces
+    a ~900-token image with a ~50-200-token text observation. The LLM
+    gets the same information at 5-15x lower token cost.
+
+    When to use this vs capture_screenshot:
+        - Terminal output, command results, logs → capture_and_ocr
+        - Error dialogs with text → capture_and_ocr
+        - Code in an editor → capture_and_ocr
+        - UI layout, charts, photos, diagrams → capture_screenshot
+        - "What does this look like?" → capture_screenshot
+
+    If OCR finds no text (empty screen, pure graphics), falls back to
+    returning the image so the LLM can still see it.
+    """
+    from ..vision.config import is_screen_capture_enabled, load_config
+    if not is_screen_capture_enabled():
+        return {
+            "error": "Screen capture is disabled. The user can enable it in Settings > Vision.",
+            "error_type": "disabled",
+        }
+
+    cfg = load_config()
+    region = args.get("region")
+    quality = args.get("quality", cfg.screen_capture.quality)
+    max_dim = args.get("max_dim", cfg.screen_capture.max_dimension)
+    monitor = args.get("monitor", cfg.screen_capture.monitor_index)
+    include_image = args.get("include_image", False)
+
+    try:
+        from ..vision.screen_capture import ScreenCapture, ScreenCaptureError
+        from ..vision.ocr import recognize, is_available as ocr_available
+
+        if not ocr_available():
+            return {
+                "error": "No OCR backend available. Install pyobjc-framework-Vision (macOS) or tesseract.",
+                "error_type": "ocr_unavailable",
+            }
+
+        cap = ScreenCapture(
+            quality=quality,
+            max_dim=max_dim,
+            grayscale=cfg.screen_capture.grayscale,
+        )
+
+        # Capture as PNG (lossless for OCR — JPEG artifacts hurt accuracy)
+        if region and all(k in region for k in ("x", "y", "width", "height")):
+            jpeg_bytes = cap.capture_region(
+                region["x"], region["y"], region["width"], region["height"]
+            )
+            desc = f"OCR capture (region {region['width']}x{region['height']})"
+        else:
+            jpeg_bytes = cap.capture_full(monitor_index=monitor)
+            desc = f"OCR capture (monitor {monitor})"
+
+        # Run OCR on the captured frame
+        # Re-encode as PNG for better OCR accuracy (JPEG artifacts hurt)
+        import cv2
+        import numpy as np
+        frame = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            # Can't decode — try OCR on the raw JPEG bytes (some backends
+            # handle JPEG directly)
+            ocr_text = recognize(jpeg_bytes)
+        else:
+            ok, png_buf = cv2.imencode(".png", frame)
+            if not ok:
+                return {"error": "Failed to encode frame for OCR", "error_type": "encode_failed"}
+            ocr_text = recognize(png_buf.tobytes())
+
+        if ocr_text and ocr_text.strip():
+            result = {
+                "ocr_text": ocr_text.strip(),
+                "description": f"{desc}: {len(ocr_text)} chars of text extracted",
+            }
+            # Optionally include a small thumbnail for visual context
+            if include_image:
+                import base64
+                result["image"] = base64.b64encode(jpeg_bytes).decode("ascii")
+            return result
+        else:
+            # OCR found no text — fall back to sending the image
+            import base64
+            return {
+                "image": base64.b64encode(jpeg_bytes).decode("ascii"),
+                "description": f"{desc}: no text found, sending image instead",
+            }
+
+    except ScreenCaptureError as e:
+        return {"error": str(e), "error_type": e.error_type}
+    except ImportError as e:
+        return {"error": str(e), "error_type": "dependency_missing"}
+    except Exception as e:
+        logger.error(f"Unexpected OCR capture error: {e}", exc_info=True)
+        return {"error": f"Unexpected error: {e}", "error_type": "capture_failed"}
+
+
+async def list_windows_tool(args: Dict) -> Dict[str, Any]:
+    """List on-screen windows that can be captured individually.
+
+    Returns a list of windows with their IDs, owner app names, and
+    titles. The LLM can use a window ID with capture_window to capture
+    just that window instead of the full screen — much more efficient
+    and avoids capturing sensitive content in other windows.
+    """
+    from ..vision.screen_capture import list_windows
+
+    try:
+        windows = list_windows()
+        if not windows:
+            return {
+                "windows": [],
+                "description": "No windows found (per-window capture is macOS-only)",
+            }
+        return {
+            "windows": windows,
+            "description": f"Found {len(windows)} capturable windows",
+        }
+    except Exception as e:
+        logger.error(f"Failed to list windows: {e}", exc_info=True)
+        return {"error": str(e), "error_type": "list_failed"}
+
+
+async def capture_window_tool(args: Dict) -> Dict[str, Any]:
+    """Capture a specific window by ID (macOS only).
+
+    Use list_windows first to get window IDs. Capturing a single window
+    is more efficient than full screen (fewer pixels, fewer tokens) and
+    avoids capturing sensitive content in other windows.
+    """
+    from ..vision.config import is_screen_capture_enabled, load_config
+
+    if not is_screen_capture_enabled():
+        return {
+            "error": "Screen capture is disabled. The user can enable it in Settings > Vision.",
+            "error_type": "disabled",
+        }
+
+    window_id = args.get("window_id")
+    if window_id is None:
+        return {"error": "window_id is required", "error_type": "missing_param"}
+
+    cfg = load_config()
+    quality = args.get("quality", cfg.screen_capture.quality)
+    max_dim = args.get("max_dim", cfg.screen_capture.max_dimension)
+
+    try:
+        from ..vision.screen_capture import ScreenCapture, ScreenCaptureError
+        cap = ScreenCapture(
+            quality=quality,
+            max_dim=max_dim,
+            grayscale=cfg.screen_capture.grayscale,
+        )
+        jpeg_bytes = cap.capture_window(window_id)
+
+        # Dedup
+        global _last_screenshot_hash
+        frame_hash = hashlib.md5(jpeg_bytes).hexdigest()
+        if frame_hash == _last_screenshot_hash:
+            return {
+                "description": "Window unchanged since last capture.",
+                "unchanged": True,
+            }
+        _last_screenshot_hash = frame_hash
+
+        base64_img = base64.b64encode(jpeg_bytes).decode("ascii")
+        return {"image": base64_img, "description": f"Window {window_id} captured"}
+
+    except ScreenCaptureError as e:
+        return {"error": str(e), "error_type": e.error_type}
+    except ImportError as e:
+        return {"error": str(e), "error_type": "dependency_missing"}
+    except Exception as e:
+        logger.error(f"Window capture error: {e}", exc_info=True)
+        return {"error": f"Unexpected error: {e}", "error_type": "capture_failed"}
+
+
 # Tool schemas for registration
 VISION_TOOL_SCHEMAS = {
     "capture_screenshot": {
@@ -173,7 +352,10 @@ VISION_TOOL_SCHEMAS = {
             "Token cost scales with image size: use max_dim=768 for reading text "
             "(~900 tokens), max_dim=512 for quick checks (~450 tokens), "
             "max_dim=1568 only when you need full detail (~3000 tokens). "
-            "Use region to capture a specific area instead of the full screen."
+            "Use region to capture a specific area instead of the full screen. "
+            "For reading terminal text, prefer capture_and_ocr which returns text "
+            "instead of an image (~50-200 tokens vs ~900). "
+            "For capturing a specific window, use list_windows + capture_window."
         ),
         "parameters": {
             "type": "object",
@@ -205,6 +387,92 @@ VISION_TOOL_SCHEMAS = {
                 },
             },
             "required": [],
+        },
+    },
+    "capture_and_ocr": {
+        "name": "capture_and_ocr",
+        "description": (
+            "Capture the screen and extract text via OCR. Returns text instead of "
+            "an image, saving 5-15x on tokens. Use this for terminal output, error "
+            "dialogs, code in editors, log files, or any screen that is primarily "
+            "text. If no text is found, falls back to sending the image. "
+            "Cost: ~50-200 tokens (text) vs ~900 tokens (image). "
+            "For visual content (charts, photos, UI layout), use capture_screenshot instead."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "region": {
+                    "type": "object",
+                    "description": "Optional screen region to capture. Use this to target a specific terminal window or dialog.",
+                    "properties": {
+                        "x": {"type": "integer"},
+                        "y": {"type": "integer"},
+                        "width": {"type": "integer"},
+                        "height": {"type": "integer"},
+                    },
+                },
+                "max_dim": {
+                    "type": "integer",
+                    "description": "Max dimension for capture. Higher = better OCR accuracy but slower. 1568 is a good default.",
+                    "default": 1568,
+                },
+                "monitor": {
+                    "type": "integer",
+                    "description": "Monitor index: 0=all, 1=primary, 2+=secondary.",
+                    "default": 1,
+                },
+                "include_image": {
+                    "type": "boolean",
+                    "description": "Also include a small image alongside the OCR text. Useful when you need both the text and visual context (e.g. dialog color, icon). Default false.",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
+    "list_windows": {
+        "name": "list_windows",
+        "description": (
+            "List on-screen windows that can be captured individually (macOS only). "
+            "Returns window IDs, owner app names, and titles. Use this before "
+            "capture_window to find the right window ID. This is a text-only "
+            "result (no image), so it costs very few tokens."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    "capture_window": {
+        "name": "capture_window",
+        "description": (
+            "Capture a specific window by ID (macOS only). Use list_windows first "
+            "to get the window ID. Capturing a single window is more efficient "
+            "than full screen (fewer pixels, fewer tokens) and avoids capturing "
+            "sensitive content in other windows. The image is attached to your "
+            "next response automatically."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "window_id": {
+                    "type": "integer",
+                    "description": "Window ID from list_windows",
+                },
+                "quality": {
+                    "type": "integer",
+                    "description": "JPEG quality (1-100, default 85)",
+                    "default": 85,
+                },
+                "max_dim": {
+                    "type": "integer",
+                    "description": "Max dimension in pixels (default 1568)",
+                    "default": 1568,
+                },
+            },
+            "required": ["window_id"],
         },
     },
     "capture_webcam": {
@@ -243,5 +511,8 @@ VISION_TOOL_SCHEMAS = {
 # Handler mapping
 VISION_TOOL_HANDLERS = {
     "capture_screenshot": capture_screenshot,
+    "capture_and_ocr": capture_and_ocr,
+    "list_windows": list_windows_tool,
+    "capture_window": capture_window_tool,
     "capture_webcam": capture_webcam,
 }

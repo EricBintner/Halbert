@@ -41,6 +41,29 @@ class TestVisionToolSchemas:
         assert "capture_webcam" in VISION_TOOL_HANDLERS
         assert callable(VISION_TOOL_HANDLERS["capture_webcam"])
 
+    def test_capture_and_ocr_handler_mapping(self):
+        from halbert_core.tools.vision_tools import VISION_TOOL_HANDLERS
+        assert "capture_and_ocr" in VISION_TOOL_HANDLERS
+        assert callable(VISION_TOOL_HANDLERS["capture_and_ocr"])
+
+    def test_list_windows_handler_mapping(self):
+        from halbert_core.tools.vision_tools import VISION_TOOL_HANDLERS
+        assert "list_windows" in VISION_TOOL_HANDLERS
+        assert callable(VISION_TOOL_HANDLERS["list_windows"])
+
+    def test_capture_window_handler_mapping(self):
+        from halbert_core.tools.vision_tools import VISION_TOOL_HANDLERS
+        assert "capture_window" in VISION_TOOL_HANDLERS
+        assert callable(VISION_TOOL_HANDLERS["capture_window"])
+
+    def test_all_vision_tools_classified_safe(self):
+        from halbert_core.tools.safety import ToolSafetyFramework, RiskLevel
+        safety = ToolSafetyFramework()
+        for tool in ("capture_screenshot", "capture_and_ocr",
+                     "list_windows", "capture_window", "capture_webcam"):
+            result = safety.classify(tool, {})
+            assert result.risk_level == RiskLevel.SAFE, f"{tool} not SAFE"
+
 
 class TestCaptureWebcamHandler:
     """Test the webcam tool handler with mocked WebcamCapture."""
@@ -84,6 +107,166 @@ class TestCaptureWebcamHandler:
         assert result["error_type"] == "disabled"
         assert "image" not in result
         mock_cap.assert_not_called()
+
+
+class TestCaptureAndOcrHandler:
+    """Test the capture_and_ocr tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_blocked_when_disabled(self):
+        from halbert_core.tools.vision_tools import capture_and_ocr
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=False):
+            result = await capture_and_ocr({})
+
+        assert "error" in result
+        assert result["error_type"] == "disabled"
+
+    @pytest.mark.asyncio
+    async def test_ocr_unavailable_returns_error(self):
+        from halbert_core.tools.vision_tools import capture_and_ocr
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=True), \
+             patch("halbert_core.vision.ocr.is_available", return_value=False):
+            result = await capture_and_ocr({})
+
+        assert "error" in result
+        assert result["error_type"] == "ocr_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_returns_ocr_text_when_text_found(self):
+        import halbert_core.tools.vision_tools as vt
+        vt._last_screenshot_hash = None
+
+        from halbert_core.tools.vision_tools import capture_and_ocr
+
+        mock_cap = MagicMock()
+        mock_cap.capture_full.return_value = b"jpegdata"
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=True), \
+             patch("halbert_core.vision.config.load_config") as mock_load, \
+             patch("halbert_core.vision.ocr.is_available", return_value=True), \
+             patch("halbert_core.vision.ocr.recognize", return_value="Error: file not found"), \
+             patch("halbert_core.vision.screen_capture.ScreenCapture", return_value=mock_cap):
+            mock_load.return_value = MagicMock(
+                screen_capture=MagicMock(quality=85, max_dimension=1568, monitor_index=1, grayscale=False),
+                webcam=MagicMock(),
+            )
+            result = await capture_and_ocr({})
+
+        assert "ocr_text" in result
+        assert result["ocr_text"] == "Error: file not found"
+        assert "image" not in result
+        vt._last_screenshot_hash = None
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_image_when_no_text(self):
+        import halbert_core.tools.vision_tools as vt
+        vt._last_screenshot_hash = None
+
+        from halbert_core.tools.vision_tools import capture_and_ocr
+
+        mock_cap = MagicMock()
+        mock_cap.capture_full.return_value = b"jpegdata"
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=True), \
+             patch("halbert_core.vision.config.load_config") as mock_load, \
+             patch("halbert_core.vision.ocr.is_available", return_value=True), \
+             patch("halbert_core.vision.ocr.recognize", return_value=""), \
+             patch("halbert_core.vision.screen_capture.ScreenCapture", return_value=mock_cap):
+            mock_load.return_value = MagicMock(
+                screen_capture=MagicMock(quality=85, max_dimension=1568, monitor_index=1, grayscale=False),
+                webcam=MagicMock(),
+            )
+            result = await capture_and_ocr({})
+
+        assert "image" in result
+        assert "ocr_text" not in result
+        vt._last_screenshot_hash = None
+
+
+class TestListWindowsHandler:
+    """Test the list_windows tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_returns_window_list(self):
+        from halbert_core.tools.vision_tools import list_windows_tool
+
+        fake_windows = [
+            {"id": 123, "owner": "Terminal", "title": "bash", "width": 800, "height": 600, "x": 0, "y": 0},
+            {"id": 456, "owner": "Safari", "title": "Google", "width": 1200, "height": 800, "x": 100, "y": 100},
+        ]
+        with patch("halbert_core.vision.screen_capture.list_windows",
+                    return_value=fake_windows):
+            result = await list_windows_tool({})
+
+        assert "windows" in result
+        assert len(result["windows"]) == 2
+        assert result["windows"][0]["owner"] == "Terminal"
+
+    @pytest.mark.asyncio
+    async def test_empty_on_non_macos(self):
+        from halbert_core.tools.vision_tools import list_windows_tool
+
+        with patch("halbert_core.vision.screen_capture.list_windows",
+                    return_value=[]):
+            result = await list_windows_tool({})
+
+        assert result["windows"] == []
+
+
+class TestCaptureWindowHandler:
+    """Test the capture_window tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_blocked_when_disabled(self):
+        from halbert_core.tools.vision_tools import capture_window_tool
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=False):
+            result = await capture_window_tool({"window_id": 123})
+
+        assert "error" in result
+        assert result["error_type"] == "disabled"
+
+    @pytest.mark.asyncio
+    async def test_missing_window_id(self):
+        from halbert_core.tools.vision_tools import capture_window_tool
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=True):
+            result = await capture_window_tool({})
+
+        assert "error" in result
+        assert result["error_type"] == "missing_param"
+
+    @pytest.mark.asyncio
+    async def test_returns_image_on_success(self):
+        import halbert_core.tools.vision_tools as vt
+        vt._last_screenshot_hash = None
+
+        from halbert_core.tools.vision_tools import capture_window_tool
+
+        mock_cap = MagicMock()
+        mock_cap.capture_window.return_value = b"windowjpeg"
+
+        with patch("halbert_core.vision.config.is_screen_capture_enabled",
+                    return_value=True), \
+             patch("halbert_core.vision.config.load_config") as mock_load, \
+             patch("halbert_core.vision.screen_capture.ScreenCapture", return_value=mock_cap):
+            mock_load.return_value = MagicMock(
+                screen_capture=MagicMock(quality=85, max_dimension=1568, monitor_index=1, grayscale=False),
+                webcam=MagicMock(),
+            )
+            result = await capture_window_tool({"window_id": 123})
+
+        assert "image" in result
+        assert "123" in result["description"]
+        vt._last_screenshot_hash = None
 
 
 class TestCaptureScreenshotHandler:

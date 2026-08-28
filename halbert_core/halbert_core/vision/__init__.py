@@ -19,6 +19,7 @@ from .config import (
     is_screen_capture_enabled,
     is_webcam_enabled,
 )
+from .ocr import recognize, is_available as ocr_available
 
 __all__ = [
     "VisionConfig",
@@ -28,4 +29,6 @@ __all__ = [
     "save_config",
     "is_screen_capture_enabled",
     "is_webcam_enabled",
+    "recognize",
+    "ocr_available",
 ]

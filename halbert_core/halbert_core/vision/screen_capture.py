@@ -66,6 +66,66 @@ class ScreenCaptureError(Exception):
         self.error_type = error_type
 
 
+def list_windows() -> list:
+    """List on-screen windows with titles (macOS only).
+
+    Returns a list of dicts with: id, owner, title, bounds.
+    Filters out tiny windows (menu bar items, cursors) and windows
+    without names. On non-macOS, returns empty list.
+    """
+    import platform
+    if platform.system() != "Darwin":
+        return []
+
+    try:
+        from Quartz import (
+            CGWindowListCopyWindowInfo,
+            kCGWindowListOptionOnScreenOnly,
+            kCGNullWindowID,
+        )
+    except ImportError:
+        return []
+
+    windows = []
+    try:
+        window_list = CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+        )
+        for w in window_list:
+            # Skip windows without a name (menu bar items, cursors, etc.)
+            name = w.get("kCGWindowName", "") or ""
+            owner = w.get("kCGWindowOwnerName", "") or ""
+            wid = w.get("kCGWindowNumber", 0)
+            bounds = w.get("kCGWindowBounds", {})
+            width = bounds.get("Width", 0)
+            height = bounds.get("Height", 0)
+
+            # Skip tiny windows (< 100x100) — menu bar items, tray icons
+            if width < 100 or height < 100:
+                continue
+            # Skip windows with no owner name
+            if not owner:
+                continue
+            # Skip the cursor window
+            if owner == "Window Server":
+                continue
+
+            windows.append({
+                "id": wid,
+                "owner": owner,
+                "title": name,
+                "width": width,
+                "height": height,
+                "x": bounds.get("X", 0),
+                "y": bounds.get("Y", 0),
+            })
+    except Exception as e:
+        logger.warning(f"Failed to list windows: {e}")
+        return []
+
+    return windows
+
+
 class ScreenCapture:
     """Cross-platform screen capture. MSS primary, lazy-opened per capture.
 
@@ -188,6 +248,83 @@ class ScreenCapture:
         else:
             jpeg = self.capture_full(monitor_index=monitor_index)
         return base64.b64encode(jpeg).decode("ascii")
+
+    def capture_window(self, window_id: int) -> bytes:
+        """Capture a specific window by its CGWindowID (macOS only).
+
+        Uses the native screencapture CLI with -l<windowid>, which
+        captures just the window content (no desktop, no other windows).
+        On non-macOS platforms, raises ScreenCaptureError.
+
+        Args:
+            window_id: The macOS CGWindowNumber (from list_windows or
+                CGWindowListCopyWindowInfo).
+
+        Returns:
+            JPEG-encoded bytes.
+        """
+        import platform
+        if platform.system() != "Darwin":
+            raise ScreenCaptureError(
+                "Per-window capture is macOS-only",
+                error_type="unsupported_platform",
+            )
+
+        import subprocess
+        import tempfile
+        import os
+
+        # screencapture -l<windowid> -x -t jpg <output>
+        # -x: no sound, -t jpg: JPEG format
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            result = subprocess.run(
+                ["screencapture", "-l", str(window_id), "-x", "-t", "jpg", tmp_path],
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                raise ScreenCaptureError(
+                    f"screencapture failed: {result.stderr.decode('utf-8', errors='replace')}",
+                    error_type="capture_failed",
+                )
+            with open(tmp_path, "rb") as f:
+                jpeg_bytes = f.read()
+
+            if not jpeg_bytes:
+                raise ScreenCaptureError(
+                    "screencapture produced empty output",
+                    error_type="capture_failed",
+                )
+
+            # Apply downscale/encode pipeline
+            _ensure_deps()
+            frame = _cv2.imdecode(
+                _numpy.frombuffer(jpeg_bytes, dtype=_numpy.uint8),
+                _cv2.IMREAD_COLOR,
+            )
+            if frame is None:
+                # Already a JPEG — re-encode through our pipeline
+                return self._encode_jpeg_from_jpeg(jpeg_bytes)
+            return self._encode_jpeg(frame)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def _encode_jpeg_from_jpeg(self, jpeg_bytes: bytes) -> bytes:
+        """Re-encode a JPEG through our downscale/quality pipeline."""
+        _ensure_deps()
+        frame = _cv2.imdecode(
+            _numpy.frombuffer(jpeg_bytes, dtype=_numpy.uint8),
+            _cv2.IMREAD_COLOR,
+        )
+        if frame is None:
+            return jpeg_bytes  # Can't decode, return as-is
+        return self._encode_jpeg(frame)
 
     def _encode_jpeg(self, frame_bgra) -> bytes:
         """Convert BGRA frame to BGR, downscale, JPEG encode.
