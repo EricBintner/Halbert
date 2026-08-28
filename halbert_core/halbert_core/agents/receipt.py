@@ -224,7 +224,11 @@ def build_receipt(
     started = _clip(human[0].get("content"), 160) if human else "none"
     last_said = first_sentence(assistant[-1].get("content") or "", 200) if assistant else "none"
     last_said_ts = assistant[-1].get("timestamp") if assistant else None
-    last_said_date = f" ({_date(last_said_ts)})" if last_said_ts else ""
+    # Always stamp the date when there is a last-said message — even if
+    # the timestamp is missing, so the reader knows the date is unknown
+    # rather than absent. When there is no assistant message at all
+    # ("none"), no date is appended.
+    last_said_date = f" ({_date(last_said_ts)})" if assistant else ""
     blocks: List[Dict[str, Any]] = []
     diffs: List[Dict[str, Any]] = []
     for m in messages:

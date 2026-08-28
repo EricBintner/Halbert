@@ -259,6 +259,12 @@ class ThreadManager:
         #: Re-entrant: the locked entry points call one another (see `_locked`).
         self._lock = threading.RLock()
         self.on_thread_closed: List[Callable[[Dict[str, Any]], None]] = []
+        #: R8: optional consolidator run at the end of the idle tick.
+        self._consolidator = None
+
+    def set_consolidator(self, consolidator) -> None:
+        """Wire an R8 Consolidator. Called at the end of each idle tick."""
+        self._consolidator = consolidator
 
     # ------------------------------------------------------------------
     # Turn boundaries
@@ -317,8 +323,15 @@ class ThreadManager:
         if not history:
             history = self._history(thread)
         notes = self._pending_notes(thread_id)
-        # R2-N2: surface open loops as a note line when they exist
+        # R2-N2: surface open loops as a note line when they exist in the
+        # thread's domains. Loops without a domain match all domains.
         open_loops = self.store.list_open_loops(thread_id, open_only=True)
+        thread_domains = set(thread.get("topic_domains") or [])
+        if thread_domains:
+            open_loops = [
+                lo for lo in open_loops
+                if not lo.get("domain") or lo["domain"] in thread_domains
+            ]
         if open_loops:
             count = len(open_loops)
             first = open_loops[0]["text"][:80]
@@ -553,6 +566,13 @@ class ThreadManager:
                 closed.append(row)
         for row in closed:
             self._fire_thread_closed(row)
+        # R8: consolidate cross-thread patterns into durable facts at idle.
+        # Runs after the close sweep, fail-soft, never blocks a turn.
+        if self._consolidator is not None:
+            try:
+                self._consolidator.consolidate(now=now)
+            except Exception as e:
+                logger.warning(f"consolidation tick failed (non-fatal): {e}")
         return [row["thread_id"] for row in closed]
 
     # ------------------------------------------------------------------
@@ -585,7 +605,10 @@ class ThreadManager:
         ):
             t = self.store.get_thread(hit["thread_id"])
             if t is not None:
-                out.append(self._recall_result(t, query, list(hit.get("match_terms") or []), now))
+                result = self._recall_result(t, query, list(hit.get("match_terms") or []), now)
+                # R4: surface scope_crossed telemetry on each hit
+                result["scope_crossed"] = bool(hit.get("scope_crossed", False))
+                out.append(result)
         return out
 
     @_locked
@@ -996,6 +1019,15 @@ def get_thread_manager() -> ThreadManager:
     if manager is None:
         with _manager_lock:
             if _manager is None:
-                _manager = ThreadManager(SqliteConversationStore(_cs._DEFAULT_DB))
+                mgr = ThreadManager(SqliteConversationStore(_cs._DEFAULT_DB))
+                # R8: wire the consolidator so it runs at the end of each
+                # idle tick (close sweep). Fail-soft, never blocks a turn.
+                try:
+                    from ..continuity.consolidation import Consolidator
+                    from ..continuity.state_store import StateStore, default_state_db_path
+                    mgr.set_consolidator(Consolidator(mgr.store, StateStore(default_state_db_path())))
+                except Exception as e:
+                    logger.warning(f"consolidator wiring failed (non-fatal): {e}")
+                _manager = mgr
             manager = _manager
     return manager

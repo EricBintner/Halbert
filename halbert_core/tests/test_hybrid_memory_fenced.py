@@ -57,6 +57,21 @@ def test_hybrid_memory_not_on_agent_path():
     )
 
 
+def test_agent_route_passes_none_for_memory():
+    """The agent route must pass memory_service=None to the state machine.
+
+    This is the runtime fence: even if the static token scan passes, a
+    future change could wire a non-None memory service without importing
+    a forbidden token. This test reads the agent route source and
+    asserts the assignment is ``memory_service = None``.
+    """
+    root = Path(__file__).resolve().parents[1]
+    agent_route = (root / "halbert_core" / "dashboard" / "routes" / "agent.py").read_text()
+    assert "memory_service = None" in agent_route, (
+        "agent.py must set memory_service = None (R9 fence)"
+    )
+
+
 def test_hybrid_memory_still_importable():
     """HybridMemorySystem remains importable for eval/browser/migration tooling."""
     from halbert_core.memory.hybrid import HybridMemorySystem, get_hybrid_memory

@@ -1160,3 +1160,97 @@ class TestRetractionNotes:
         turn4 = tm.begin_turn(text, analyze_message(text), "s4")
         assert len(turn4.notes) == PENDING_NOTES_MAX
         assert turn4.notes[0] == "admin retracted recall of 'Add samba'"
+
+
+class TestRecordThreadState:
+    """R2-N3: machine-state triples recorded at thread close."""
+
+    def test_close_records_commands_files_and_entities(self, tm, monkeypatch):
+        """A non-ephemeral thread records ran_command, file_written, and
+        entity triples to the state store on close."""
+        recorded: list[dict] = []
+
+        class _FakeStateStore:
+            def record_state(self, subject, predicate, value, source, *,
+                             thread_id=None, now=None, **kw):
+                recorded.append({
+                    "subject": subject, "predicate": predicate,
+                    "value": value, "source": source, "thread_id": thread_id,
+                })
+                return len(recorded)
+
+        # Patch the StateStore import inside _record_thread_state
+        import halbert_core.agents.threads as _tm_mod
+        import halbert_core.continuity.state_store as _ss_mod
+        monkeypatch.setattr(_ss_mod, "StateStore", lambda *a, **k: _FakeStateStore())
+        monkeypatch.setattr(_ss_mod, "default_state_db_path", lambda: "/tmp/fake")
+
+        blocks = [{"tool": "run_command", "args": {"command": "testparm -s"},
+                   "exit_code": 0, "status": "complete"}]
+        diffs = [{"path": "/etc/samba/smb.conf", "action": "write"}]
+        t1 = _turn(tm, "add a samba share for the media folder",
+                   assistant="Added [media] at /srv/media.",
+                   blocks=blocks, diffs=diffs)
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+        assert tm.tick() == [t1.thread_id]
+
+        preds = {r["predicate"] for r in recorded}
+        assert "ran_command" in preds, f"expected ran_command in {preds}"
+        assert "entity" in preds, f"expected entity in {preds}"
+        # All records carry the thread_id and source=thread_close
+        for r in recorded:
+            assert r["thread_id"] == t1.thread_id
+            assert r["source"] == "thread_close"
+
+    def test_ephemeral_thread_skips_state_recording(self, tm, monkeypatch):
+        """Ephemeral threads must not record state triples."""
+        recorded: list[dict] = []
+
+        class _FakeStateStore:
+            def record_state(self, *a, **k):
+                recorded.append(a)
+                return 1
+
+        import halbert_core.continuity.state_store as _ss_mod
+        monkeypatch.setattr(_ss_mod, "StateStore", lambda *a, **k: _FakeStateStore())
+        monkeypatch.setattr(_ss_mod, "default_state_db_path", lambda: "/tmp/fake")
+
+        t1 = _turn(tm, "add a samba share for the media folder")
+        # Mark the thread as ephemeral
+        tm.store.update_thread(t1.thread_id, ephemeral=True)
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+        assert tm.tick() == [t1.thread_id]
+        assert recorded == [], "ephemeral thread must not record state"
+
+    def test_terminal_origin_messages_are_filtered(self, tm, monkeypatch):
+        """Messages with origin=terminal must not contribute state triples."""
+        recorded: list[dict] = []
+
+        class _FakeStateStore:
+            def record_state(self, subject, predicate, value, source, *,
+                             thread_id=None, now=None, **kw):
+                recorded.append({"predicate": predicate, "value": value})
+                return len(recorded)
+
+        import halbert_core.continuity.state_store as _ss_mod
+        monkeypatch.setattr(_ss_mod, "StateStore", lambda *a, **k: _FakeStateStore())
+        monkeypatch.setattr(_ss_mod, "default_state_db_path", lambda: "/tmp/fake")
+
+        t1 = _turn(tm, "add a samba share for the media folder")
+        # Add a terminal-origin message with a command block
+        tm.store.append_message(
+            t1.thread_id, "assistant", "terminal output",
+            origin="terminal", status="complete",
+            blocks=[{"tool": "run_command", "args": {"command": "rm -rf /"},
+                     "exit_code": 0, "status": "complete"}],
+        )
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+        tm.tick()
+
+        # The terminal-origin command must not appear in recorded commands
+        cmd_values = [r["value"] for r in recorded if r["predicate"] == "ran_command"]
+        assert "rm -rf /" not in cmd_values, \
+            f"terminal-origin command leaked into state: {cmd_values}"

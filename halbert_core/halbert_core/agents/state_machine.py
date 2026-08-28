@@ -843,6 +843,7 @@ class AgentStateMachine:
             yield StreamEvent.thread_recalled(
                 sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="auto",
                 last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
+                scope_crossed=r.get("scope_crossed"),
             )
 
         yield StreamEvent.turn_persisted(sid, turn.thread_id, turn.turn_id)
@@ -1934,8 +1935,13 @@ class AgentStateMachine:
             results: List[Dict[str, Any]] = []
             if tm is not None:
                 try:
+                    # R4: scope as a property of the query — pass the open
+                    # thread's domains so same-domain hits rank first.
+                    turn_domains = list(getattr(self.ctx.turn_context, "domains", None) or [])
                     results = list(tm.recall(
-                        query=query, thread_id=thread_id, exclude_thread_id=self.ctx.thread_id,
+                        query=query, thread_id=thread_id,
+                        exclude_thread_id=self.ctx.thread_id,
+                        domains=turn_domains or None,
                     ) or [])
                 except Exception as e:
                     logger.warning(f"recall_thread store failure (non-fatal): {e}")
@@ -1963,6 +1969,7 @@ class AgentStateMachine:
                 yield StreamEvent.thread_recalled(
                     sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="tool",
                     last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
+                    scope_crossed=r.get("scope_crossed"),
                 )
             self.ctx.add_observation(
                 "Recalled earlier subjects: " + "; ".join(names)

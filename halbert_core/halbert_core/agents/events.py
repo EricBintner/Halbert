@@ -674,6 +674,7 @@ class StreamEvent:
         match_terms: List[str],
         mode: str,
         last_turn_id: Optional[str] = None,
+        scope_crossed: Optional[bool] = None,
     ) -> 'StreamEvent':
         """An earlier thread's receipt was pulled into this turn.
 
@@ -681,18 +682,23 @@ class StreamEvent:
         ``"tool"`` (the model called ``recall_thread``). ``last_turn_id`` is
         the recalled thread's newest turn so the chip can scroll the timeline
         to it (spec §6); None when the store could not say.
+        ``scope_crossed`` (R4) is True when the hit's domains do not overlap
+        the querying thread's domains — a bleed telemetry signal.
         """
+        data = {
+            "thread_id": thread_id,
+            "title": title,
+            "date": date,
+            "match_terms": list(match_terms or []),
+            "mode": mode,
+            "last_turn_id": last_turn_id,
+        }
+        if scope_crossed is not None:
+            data["scope_crossed"] = scope_crossed
         return cls(
             type="thread_recalled",
             session_id=session_id,
-            data={
-                "thread_id": thread_id,
-                "title": title,
-                "date": date,
-                "match_terms": list(match_terms or []),
-                "mode": mode,
-                "last_turn_id": last_turn_id,
-            },
+            data=data,
         )
 
     @classmethod
