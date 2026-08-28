@@ -178,3 +178,283 @@ class TestPromptBuilderPersonality:
         assert "TEST_PERSONALITY_CONTENT" in prompt_with
         assert "<personality>" in prompt_with
         assert "</personality>" in prompt_with
+
+
+class TestArchetypeBlending:
+    """Test archetype blending (Phase 2)."""
+
+    def test_blend_same_archetype_returns_that_archetype(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        result = blend_archetypes("sentinel", "sentinel", 0.5)
+        # Blending identical archetypes should yield the same profile
+        assert abs(result["openness"] - 0.40) < 0.01
+
+    def test_blend_ratio_1_is_all_a(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        result = blend_archetypes("sentinel", "comedian", 1.0)
+        # ratio=1.0 means all sentinel
+        assert abs(result["openness"] - 0.40) < 0.01
+        assert abs(result["extraversion"] - 0.30) < 0.01
+
+    def test_blend_ratio_0_is_all_b(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        result = blend_archetypes("sentinel", "comedian", 0.0)
+        # ratio=0.0 means all comedian
+        assert abs(result["openness"] - 0.65) < 0.01
+        assert abs(result["extraversion"] - 0.75) < 0.01
+
+    def test_blend_50_50_is_average(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        result = blend_archetypes("sentinel", "comedian", 0.5)
+        # 50/50 should be the average
+        expected_openness = (0.40 + 0.65) / 2
+        assert abs(result["openness"] - expected_openness) < 0.01
+
+    def test_blend_invalid_archetype_raises(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        with pytest.raises(ValueError, match="Unknown archetype ID"):
+            blend_archetypes("sentinel", "nonexistent", 0.5)
+
+    def test_blend_invalid_ratio_raises(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        with pytest.raises(ValueError, match="Ratio must be"):
+            blend_archetypes("sentinel", "comedian", 1.5)
+
+    def test_blend_returns_all_five_traits(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        result = blend_archetypes("mentor", "surgeon", 0.7)
+        assert set(result.keys()) == {
+            "openness", "conscientiousness", "extraversion",
+            "agreeableness", "neuroticism",
+        }
+        for v in result.values():
+            assert 0.0 <= v <= 1.0
+
+
+class TestPromptManagerCustomMode:
+    """Test PromptManager CUSTOM mode loads personality from BeingConfig."""
+
+    def test_custom_mode_generates_from_personality(self, tmp_path):
+        from halbert_core.model.prompt_manager import PromptManager, PromptMode
+        from halbert_core.config.being_config import BeingConfig, save_being_config
+
+        # Set up a being.yml with personality in tmp_path
+        cfg = BeingConfig()
+        cfg.custom_personality_prompt = "TEST_CUSTOM_PERSONA_MARKER"
+        save_being_config(cfg, str(tmp_path / "being.yml"))
+
+        # Point PromptManager at tmp_path as config dir
+        pm = PromptManager(config_dir=tmp_path)
+        prompt = pm.build_prompt(mode=PromptMode.CUSTOM)
+
+        # The custom persona layer should be generated from BeingConfig
+        assert "TEST_CUSTOM_PERSONA_MARKER" in prompt
+
+    def test_custom_mode_falls_back_to_placeholder_when_no_personality(self, tmp_path):
+        from halbert_core.model.prompt_manager import PromptManager, PromptMode
+        from halbert_core.config.being_config import BeingConfig, save_being_config
+
+        # Empty personality config
+        cfg = BeingConfig()
+        save_being_config(cfg, str(tmp_path / "being.yml"))
+
+        pm = PromptManager(config_dir=tmp_path)
+        prompt = pm.build_prompt(mode=PromptMode.CUSTOM)
+
+        # Should still have base safety + mode layer, just no custom personality
+        assert "SAFETY RULES" in prompt
+        assert "Custom" in prompt
+
+    def test_custom_txt_file_overrides_generated_personality(self, tmp_path):
+        from halbert_core.model.prompt_manager import PromptManager, PromptMode
+        from halbert_core.config.being_config import BeingConfig, save_being_config
+
+        # Set up being.yml with personality
+        cfg = BeingConfig()
+        cfg.custom_personality_prompt = "FROM_BEING_CONFIG"
+        save_being_config(cfg, str(tmp_path / "being.yml"))
+
+        # Create custom.txt that should take precedence
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "custom.txt").write_text("FROM_CUSTOM_TXT_FILE")
+
+        pm = PromptManager(config_dir=tmp_path)
+        prompt = pm.build_prompt(mode=PromptMode.CUSTOM)
+
+        # File-based layer should win over generated
+        assert "FROM_CUSTOM_TXT_FILE" in prompt
+        assert "FROM_BEING_CONFIG" not in prompt
+
+
+class TestPhase3CharacterFields:
+    """Test Phase 3 Character card fields on BeingConfig."""
+
+    def test_default_character_fields(self):
+        from halbert_core.config.being_config import BeingConfig
+        cfg = BeingConfig()
+        assert cfg.name == ""
+        assert cfg.voice_presentation == "not_defined"
+        assert cfg.model is None
+
+    def test_validate_rejects_invalid_voice_presentation(self):
+        from halbert_core.config.being_config import BeingConfig
+        cfg = BeingConfig()
+        cfg.voice_presentation = "invalid"
+        with pytest.raises(ValueError, match="Invalid voice_presentation"):
+            cfg.validate()
+
+    def test_validate_accepts_valid_voice_presentations(self):
+        from halbert_core.config.being_config import BeingConfig
+        for vp in ("not_defined", "male", "female"):
+            cfg = BeingConfig()
+            cfg.voice_presentation = vp
+            cfg.validate()
+
+    def test_from_dict_picks_up_character_fields(self):
+        from halbert_core.config.being_config import BeingConfig
+        cfg = BeingConfig.from_dict({
+            "name": "Halbert",
+            "voice_presentation": "male",
+            "model": "llama3:8b",
+        })
+        assert cfg.name == "Halbert"
+        assert cfg.voice_presentation == "male"
+        assert cfg.model == "llama3:8b"
+
+    def test_to_dict_includes_character_fields(self):
+        from halbert_core.config.being_config import BeingConfig
+        cfg = BeingConfig()
+        cfg.name = "TestBot"
+        d = cfg.to_dict()
+        assert "name" in d
+        assert d["name"] == "TestBot"
+        assert "voice_presentation" in d
+        assert "model" in d
+
+
+class TestCommunicationStyles:
+    """Test the 5 communication-style archetypes."""
+
+    def test_list_communication_styles_returns_five(self):
+        from halbert_core.persona.archetypes import list_communication_styles, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        styles = list_communication_styles()
+        assert len(styles) == 5
+        ids = {s["id"] for s in styles}
+        assert ids == {"concise", "balanced", "detailed", "analytical", "casual"}
+
+    def test_communication_styles_have_profiles(self):
+        from halbert_core.persona.archetypes import list_communication_styles, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        styles = list_communication_styles()
+        for s in styles:
+            assert "profile" in s
+            assert set(s["profile"].keys()) == {
+                "openness", "conscientiousness", "extraversion",
+                "agreeableness", "neuroticism",
+            }
+
+    def test_get_archetype_finds_communication_style(self):
+        from halbert_core.persona.archetypes import get_archetype, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        archetype = get_archetype("concise")
+        assert archetype is not None
+        assert archetype.id == "concise"
+        assert archetype.name == "Concise"
+
+    def test_blend_communication_styles(self):
+        from halbert_core.persona.archetypes import blend_archetypes, is_available
+        if not is_available():
+            pytest.skip("Haloysius not available")
+        result = blend_archetypes("concise", "casual", 0.5)
+        assert set(result.keys()) == {
+            "openness", "conscientiousness", "extraversion",
+            "agreeableness", "neuroticism",
+        }
+
+
+class TestVoicePresentationInPrompt:
+    """Test that voice_presentation injects into personality prompt."""
+
+    def test_male_presentation_appears_in_extras(self):
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.persona.personality_prompt import generate_personality_section
+        cfg = BeingConfig()
+        cfg.voice_presentation = "male"
+        cfg.tone_descriptors = ["calm"]
+        result = generate_personality_section(cfg)
+        assert "VOICE PRESENTATION: male" in result
+
+    def test_not_defined_does_not_appear(self):
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.persona.personality_prompt import generate_personality_section
+        cfg = BeingConfig()
+        cfg.voice_presentation = "not_defined"
+        cfg.tone_descriptors = ["calm"]
+        result = generate_personality_section(cfg)
+        assert "VOICE PRESENTATION" not in result
+
+    def test_custom_prompt_overrides_voice_presentation(self):
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.persona.personality_prompt import generate_personality_section
+        cfg = BeingConfig()
+        cfg.voice_presentation = "female"
+        cfg.custom_personality_prompt = "Just be yourself."
+        result = generate_personality_section(cfg)
+        assert result == "Just be yourself."
+        assert "VOICE PRESENTATION" not in result
+
+
+class TestNameInIdentity:
+    """Test that BeingConfig.name injects into the identity layer."""
+
+    def test_custom_name_appears_in_identity(self):
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.prompts.agent_prompts import AgentPromptBuilder
+        cfg = BeingConfig()
+        cfg.name = "WALLe"
+        builder = AgentPromptBuilder(being_cfg=cfg)
+        identity = builder._get_identity()
+        assert "WALLe" in identity
+        assert "Halbert" not in identity
+
+    def test_default_name_is_halbert(self):
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.prompts.agent_prompts import AgentPromptBuilder
+        cfg = BeingConfig()
+        builder = AgentPromptBuilder(being_cfg=cfg)
+        identity = builder._get_identity()
+        assert "Halbert" in identity
+
+    def test_empty_name_defaults_to_halbert(self):
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.prompts.agent_prompts import AgentPromptBuilder
+        cfg = BeingConfig()
+        cfg.name = ""
+        builder = AgentPromptBuilder(being_cfg=cfg)
+        identity = builder._get_identity()
+        assert "Halbert" in identity
+
+    def test_no_being_cfg_defaults_to_halbert(self):
+        from halbert_core.prompts.agent_prompts import AgentPromptBuilder
+        builder = AgentPromptBuilder()
+        identity = builder._get_identity()
+        assert "Halbert" in identity

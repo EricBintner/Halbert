@@ -3078,6 +3078,10 @@ class BeingConfigUpdate(BaseModel):
     speech_patterns: Optional[List[str]] = None
     directives: Optional[List[str]] = None
     custom_personality_prompt: Optional[str] = None
+    # Character (Phase 3)
+    name: Optional[str] = None
+    voice_presentation: Optional[str] = None
+    model: Optional[str] = None
 
 
 @router.get("/being")
@@ -3127,6 +3131,13 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
             cfg.directives = update.directives
         if update.custom_personality_prompt is not None:
             cfg.custom_personality_prompt = update.custom_personality_prompt
+        # Character (Phase 3)
+        if update.name is not None:
+            cfg.name = update.name
+        if update.voice_presentation is not None:
+            cfg.voice_presentation = update.voice_presentation
+        if update.model is not None:
+            cfg.model = update.model if update.model else None
 
         # Validate + save
         save_being_config(cfg)
@@ -3162,6 +3173,19 @@ async def list_personality_archetypes() -> Dict[str, Any]:
         return {"status": "ok", "archetypes": list_archetypes(), "available": True}
     except Exception as e:
         logger.error(f"Failed to list archetypes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/personality/styles")
+async def list_communication_styles() -> Dict[str, Any]:
+    """List the 5 communication styles for the Phase 3 UI."""
+    try:
+        from ...persona.archetypes import list_communication_styles, is_available
+        if not is_available():
+            return {"status": "ok", "styles": [], "available": False}
+        return {"status": "ok", "styles": list_communication_styles(), "available": True}
+    except Exception as e:
+        logger.error(f"Failed to list communication styles: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -3215,4 +3239,24 @@ async def preview_personality_section(req: PersonalityPreviewRequest) -> Dict[st
         return {"status": "ok", "section": section}
     except Exception as e:
         logger.error(f"Failed to preview personality: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ArchetypeBlendRequest(BaseModel):
+    archetype_a_id: str
+    archetype_b_id: str
+    ratio: float = 0.5
+
+
+@router.post("/personality/blend")
+async def blend_archetypes(req: ArchetypeBlendRequest) -> Dict[str, Any]:
+    """Blend two archetypes into a Big Five profile dict."""
+    try:
+        from ...persona.archetypes import blend_archetypes as do_blend
+        profile = do_blend(req.archetype_a_id, req.archetype_b_id, req.ratio)
+        return {"status": "ok", "profile": profile}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to blend archetypes: {e}")
         raise HTTPException(status_code=500, detail=str(e))

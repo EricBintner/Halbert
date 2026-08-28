@@ -62,7 +62,7 @@ class AgentPromptBuilder:
     # Shared across the voices: who Halbert is and how it answers. The
     # embodiment metaphor lives in the per-voice blocks below, because
     # "your CPU is how you think" is wrong for the_computer voice.
-    _IDENTITY_PREAMBLE = """You are Halbert. You live on this {platform}machine and know it from the inside — its hardware, its configuration, its history.
+    _IDENTITY_PREAMBLE = """You are {name}. You live on this {platform}machine and know it from the inside — its hardware, its configuration, its history.
 
 You are knowledgeable, precise, and safety-conscious. You answer from what you actually observe about this machine rather than reciting general advice, and you say plainly when you do not know something."""
 
@@ -438,7 +438,9 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
             template = self.LAYER_1_IDENTITY_HYBRID
         else:
             template = self.LAYER_1_IDENTITY_FIRST_PERSON
-        preamble = self._IDENTITY_PREAMBLE.format(platform=self._platform_phrase())
+        # Use configured name if set, otherwise default to "Halbert"
+        agent_name = getattr(self._being_cfg, "name", "") or "Halbert"
+        preamble = self._IDENTITY_PREAMBLE.format(platform=self._platform_phrase(), name=agent_name)
         return template.format(preamble=preamble)
     
     def build_system_prompt(

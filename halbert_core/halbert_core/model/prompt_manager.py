@@ -254,19 +254,36 @@ Phase 5 feature: This mode allows user-defined personality and focus areas.
     def _load_custom_persona_layer(self, mode: PromptMode) -> Optional[str]:
         """
         Load custom persona prompt layer from config (Phase 4).
-        
+
+        For CUSTOM mode, generates a personality section from BeingConfig
+        if no custom.txt file exists.
+
         Args:
             mode: Persona mode
-        
+
         Returns:
             Custom prompt layer or None
         """
         persona_file = self.config_dir / 'prompts' / f'{mode.value}.txt'
-        
+
         if persona_file.exists():
             logger.info(f"Loading custom persona layer: {mode.value}")
             return persona_file.read_text()
-        
+
+        # CUSTOM mode: try generating from BeingConfig personality
+        if mode == PromptMode.CUSTOM:
+            try:
+                from ..config.being_config import load_being_config
+                from ..persona.personality_prompt import generate_personality_section
+                being_path = self.config_dir / "being.yml"
+                cfg = load_being_config(str(being_path))
+                section = generate_personality_section(cfg)
+                if section:
+                    logger.info("Generated CUSTOM persona layer from BeingConfig personality")
+                    return section
+            except Exception as e:
+                logger.warning(f"Failed to generate CUSTOM persona from BeingConfig: {e}")
+
         return None
     
     def get_mode_description(self, mode: PromptMode) -> str:
