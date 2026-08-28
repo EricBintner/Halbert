@@ -310,9 +310,9 @@ The review correctly identifies that `sentence-transformers` pulls in PyTorch (~
 
 **Impact:** This is a Haloysius-level change (the `EmbeddingBackend` protocol in `seam.py`). It's a consumer-side implementation, not a core change. The `PersonaMemoryStore` already accepts an embedding function — we just pass a different one.
 
-### D-2: 3B Model Default for Home
+### D-2: 3B/4B Model Default for Home
 
-**Decision:** The home instance defaults to Llama 3.2 3B or Qwen 2.5 3B for local inference. 7B is optional for users with more powerful hardware. The config specifies the model; the default is 3B.
+**Decision:** The home instance defaults to **Qwen 3.5 4B** (Apache 2.0, BFCL tool calling 95.0, ~2.5GB Q4) for local inference. This is the best CPU-only model in 2026 with the strongest tool calling score — critical for HA service calls. Light option: **SmolLM3 3B** (Apache 2.0, 1.9GB Q4, dual-mode reasoning) for Pi 5 or very constrained hardware. Future Frigate option: **Gemma 4 E4B** (multimodal text+image+audio, 4.5B active, Apache 2.0) — can analyze camera frames directly in Phase 5.
 
 ### D-3: Single SourcePrep Project (for now)
 

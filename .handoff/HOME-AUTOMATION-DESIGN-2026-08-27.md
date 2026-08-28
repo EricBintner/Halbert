@@ -779,7 +779,7 @@ The Proxmox angle is important: power users run **multiple VMs/LXCs** on one N15
 - No RAG scrapers, no config watcher, no discovery engine, no PTY
 - Runs on Pi 5 4GB with remote Ollama
 - Docker image: `halbert/halbert-home:latest`
-- Default model: Llama 3.2 3B or Qwen 2.5 3B (sub-1.5s voice latency on N150)
+- Default model: **Qwen 3.5 4B** (Apache 2.0, BFCL tool calling 95.0, ~2.5GB Q4, best CPU-only pick in 2026). Light option: **SmolLM3 3B** (Apache 2.0, 1.9GB Q4, dual-mode reasoning). Future Frigate option: **Gemma 4 E4B** (multimodal text+image+audio, can analyze camera frames directly).
 
 **Deliverable:** A lean package that runs on low-power hardware. The "full" Halbert and the "home" Halbert share the same codebase, just different entry points and dependency sets.
 
@@ -824,7 +824,7 @@ The `SourcePrepRetrievalBackend` already accepts `project_id` and `base_url`. It
 4. **Light variant as separate package?** — Phase 8. Install profile vs separate package.
 5. **Android target** — PWA is the zero-effort path. Native app is future market.
 6. **Cloud option** — SaaS onboarding path. Lower priority than self-hosted.
-7. **Model size** — Llama 3.2 3B for N150. 7B if 16GB RAM and nothing else heavy.
+7. **Model size** — Qwen 3.5 4B (Apache 2.0, BFCL 95.0, ~2.5GB Q4) is the 2026 default for N150. SmolLM3 3B for Pi 5. Gemma 4 E4B for future Frigate multimodal.
 8. **SourcePrep for HA configs** — Phase 6. No refactoring, just add a project. High value for power users.
 9. **Two processes vs InstanceManager** — Two processes on different ports is the pragmatic answer. InstanceManager is elegant but unnecessary until there's a real concurrency requirement.
 10. **Voice priority** — Phase 4. Text-first is correct for MVP. Voice is the "talk to your house" magic that differentiates.
