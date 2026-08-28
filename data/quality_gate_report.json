@@ -1,0 +1,474 @@
+{
+  "total_queries": 20,
+  "passed_queries": 16,
+  "failed_queries": 4,
+  "pass_rate_pct": 80.0,
+  "gate_passed": false,
+  "details": [
+    {
+      "id": "q01_sshd",
+      "query": "how to configure sshd",
+      "domain": "remote_access",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "ssh",
+        "sshd",
+        "config",
+        "port"
+      ],
+      "expected_terms": [
+        "ssh",
+        "sshd",
+        "config",
+        "port"
+      ],
+      "top_sources": [
+        "host/etc/ssh/sshd_config",
+        "knowledge/macos/man-pages/macos_man_pages_46.md",
+        "knowledge/linux/arch-wiki/arch_wiki_33.md"
+      ]
+    },
+    {
+      "id": "q02_diskutil_apfs",
+      "query": "diskutil apfs resize container",
+      "domain": "macos_storage",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "apfs",
+        "container"
+      ],
+      "expected_terms": [
+        "diskutil",
+        "apfs",
+        "volume",
+        "container"
+      ],
+      "top_sources": [
+        "knowledge/macos/support/macos_support_01.md",
+        "knowledge/macos/man-pages/macos_man_pages_08.md",
+        "knowledge/common/containers-docs/containers_docs_01.md"
+      ]
+    },
+    {
+      "id": "q03_freebsd_net",
+      "query": "freebsd network interface configuration",
+      "domain": "bsd_networking",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "freebsd",
+        "network"
+      ],
+      "expected_terms": [
+        "freebsd",
+        "rc.conf",
+        "ifconfig",
+        "network"
+      ],
+      "top_sources": [
+        "knowledge/bsd/freebsd-handbook/freebsd_handbook_04.md",
+        "knowledge/bsd/freebsd-handbook/freebsd_handbook_01.md",
+        "knowledge/bsd/freebsd-man-pages/freebsd_man_pages_04.md"
+      ]
+    },
+    {
+      "id": "q04_git_rebase",
+      "query": "git rebase interactive squash commits",
+      "domain": "version_control",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "git",
+        "rebase",
+        "commit",
+        "squash"
+      ],
+      "expected_terms": [
+        "git",
+        "rebase",
+        "commit",
+        "squash"
+      ],
+      "top_sources": [
+        "knowledge/common/git-docs/git_docs_01.md",
+        "knowledge/macos/man-pages/macos_man_pages_92.md",
+        "knowledge/common/devtools-docs/devtools_docs_01.md"
+      ]
+    },
+    {
+      "id": "q05_systemd_restart",
+      "query": "systemd restart failed service",
+      "domain": "linux_init",
+      "passed": true,
+      "chunks_returned": 2,
+      "matched_terms": [
+        "systemctl",
+        "systemd",
+        "service",
+        "restart"
+      ],
+      "expected_terms": [
+        "systemctl",
+        "systemd",
+        "service",
+        "restart"
+      ],
+      "top_sources": [
+        "knowledge/linux/systemd-docs/systemd_docs_01.md",
+        "knowledge/linux/systemd-ext/systemd_ext_01.md"
+      ]
+    },
+    {
+      "id": "q06_iptables_firewall",
+      "query": "iptables firewall drop incoming port",
+      "domain": "security",
+      "passed": true,
+      "chunks_returned": 4,
+      "matched_terms": [
+        "iptables",
+        "firewall",
+        "port",
+        "rule"
+      ],
+      "expected_terms": [
+        "iptables",
+        "firewall",
+        "port",
+        "rule"
+      ],
+      "top_sources": [
+        "knowledge/linux/arch-wiki/arch_wiki_29.md",
+        "knowledge/macos/macports-guide/macports_guide_01.md",
+        "knowledge/linux/arch-wiki/arch_wiki_15.md"
+      ]
+    },
+    {
+      "id": "q07_homebrew_cask",
+      "query": "homebrew cask install application",
+      "domain": "macos_packages",
+      "passed": true,
+      "chunks_returned": 2,
+      "matched_terms": [
+        "brew",
+        "cask",
+        "install",
+        "formula"
+      ],
+      "expected_terms": [
+        "brew",
+        "cask",
+        "install",
+        "formula"
+      ],
+      "top_sources": [
+        "knowledge/macos/homebrew/homebrew_01.md",
+        "knowledge/macos/homebrew/homebrew_18.md"
+      ]
+    },
+    {
+      "id": "q08_docker_compose",
+      "query": "docker compose up detached mode",
+      "domain": "containers",
+      "passed": false,
+      "chunks_returned": 1,
+      "matched_terms": [
+        "docker",
+        "compose",
+        "container",
+        "service"
+      ],
+      "expected_terms": [
+        "docker",
+        "compose",
+        "container",
+        "service"
+      ],
+      "top_sources": [
+        "knowledge/common/docker-docs/docker_docs_01.md"
+      ]
+    },
+    {
+      "id": "q09_find_modified",
+      "query": "find files modified in the last 24 hours",
+      "domain": "file_ops",
+      "passed": true,
+      "chunks_returned": 4,
+      "matched_terms": [
+        "find",
+        "mtime",
+        "file",
+        "directory"
+      ],
+      "expected_terms": [
+        "find",
+        "mtime",
+        "file",
+        "directory"
+      ],
+      "top_sources": [
+        "knowledge/macos/support/macos_support_01.md",
+        "knowledge/linux/linux-core-docs/linux-core_docs_02.md",
+        "knowledge/bsd/freebsd-man-pages/freebsd_man_pages_01.md"
+      ]
+    },
+    {
+      "id": "q10_zfs_dataset",
+      "query": "zfs create dataset compression lz4",
+      "domain": "storage",
+      "passed": false,
+      "chunks_returned": 1,
+      "matched_terms": [
+        "zfs",
+        "pool",
+        "dataset",
+        "compression"
+      ],
+      "expected_terms": [
+        "zfs",
+        "pool",
+        "dataset",
+        "compression"
+      ],
+      "top_sources": [
+        "knowledge/bsd/freebsd-handbook/freebsd_handbook_03.md"
+      ]
+    },
+    {
+      "id": "q11_chmod_permissions",
+      "query": "chmod setfacl file permissions recursive",
+      "domain": "permissions",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "chmod",
+        "permission",
+        "file",
+        "mode"
+      ],
+      "expected_terms": [
+        "chmod",
+        "permission",
+        "file",
+        "mode"
+      ],
+      "top_sources": [
+        "knowledge/linux/arch-wiki/arch_wiki_01.md",
+        "knowledge/macos/support/macos_support_01.md",
+        "knowledge/linux/tldr/tldr_01.md"
+      ]
+    },
+    {
+      "id": "q12_awk_column",
+      "query": "awk print second column delimiter",
+      "domain": "text_processing",
+      "passed": true,
+      "chunks_returned": 5,
+      "matched_terms": [
+        "awk",
+        "print",
+        "column",
+        "field"
+      ],
+      "expected_terms": [
+        "awk",
+        "print",
+        "column",
+        "field"
+      ],
+      "top_sources": [
+        "knowledge/common/shell-docs/shell_docs_01.md",
+        "knowledge/macos/man-pages/macos_man_pages_04.md",
+        "knowledge/linux/arch-wiki/arch_wiki_22.md"
+      ]
+    },
+    {
+      "id": "q13_curl_json",
+      "query": "curl post request json payload",
+      "domain": "devtools",
+      "passed": false,
+      "chunks_returned": 1,
+      "matched_terms": [
+        "curl",
+        "post",
+        "header",
+        "http"
+      ],
+      "expected_terms": [
+        "curl",
+        "post",
+        "header",
+        "http"
+      ],
+      "top_sources": [
+        "knowledge/macos/man-pages/macos_man_pages_67.md"
+      ]
+    },
+    {
+      "id": "q14_macports_install",
+      "query": "macports install package variant",
+      "domain": "macos_packages",
+      "passed": false,
+      "chunks_returned": 1,
+      "matched_terms": [
+        "port",
+        "macports",
+        "install",
+        "variant"
+      ],
+      "expected_terms": [
+        "port",
+        "macports",
+        "install",
+        "variant"
+      ],
+      "top_sources": [
+        "knowledge/macos/macports-guide/macports_guide_01.md"
+      ]
+    },
+    {
+      "id": "q15_nvidia_gpu",
+      "query": "nvidia-smi monitor gpu temperature memory",
+      "domain": "hardware",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "nvidia",
+        "smi",
+        "gpu"
+      ],
+      "expected_terms": [
+        "nvidia",
+        "smi",
+        "gpu",
+        "cuda"
+      ],
+      "top_sources": [
+        "knowledge/linux/nvidia-docs/nvidia_cuda_docs_03.md",
+        "knowledge/linux/nvidia-docs/nvidia_cuda_docs_08.md",
+        "knowledge/linux/nvidia-docs/nvidia_cuda_docs_06.md"
+      ]
+    },
+    {
+      "id": "q16_tar_extract",
+      "query": "tar extract tar.gz archive to directory",
+      "domain": "archive_ops",
+      "passed": true,
+      "chunks_returned": 5,
+      "matched_terms": [
+        "tar",
+        "extract",
+        "archive",
+        "gzip"
+      ],
+      "expected_terms": [
+        "tar",
+        "extract",
+        "archive",
+        "gzip"
+      ],
+      "top_sources": [
+        "knowledge/macos/support/macos_support_01.md",
+        "knowledge/linux/arch-wiki/arch_wiki_11.md",
+        "knowledge/macos/man-pages/macos_man_pages_88.md"
+      ]
+    },
+    {
+      "id": "q17_grep_recursive",
+      "query": "grep recursive search ignore case pattern",
+      "domain": "text_processing",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "grep",
+        "search",
+        "pattern",
+        "match"
+      ],
+      "expected_terms": [
+        "grep",
+        "search",
+        "pattern",
+        "match"
+      ],
+      "top_sources": [
+        "knowledge/common/tldr/tldr_03.md",
+        "knowledge/macos/man-pages/macos_man_pages_91.md",
+        "knowledge/macos/man-pages/macos_man_pages_10.md"
+      ]
+    },
+    {
+      "id": "q18_launchctl_plist",
+      "query": "launchctl load launchd daemon plist",
+      "domain": "macos_services",
+      "passed": true,
+      "chunks_returned": 5,
+      "matched_terms": [
+        "launchctl",
+        "launchd",
+        "plist",
+        "daemon"
+      ],
+      "expected_terms": [
+        "launchctl",
+        "launchd",
+        "plist",
+        "daemon"
+      ],
+      "top_sources": [
+        "host/Library/LaunchDaemons/com.google.keystone.daemon.plist",
+        "knowledge/macos/ask-different/ask_different_01.md",
+        "knowledge/macos/tldr/tldr_01.md"
+      ]
+    },
+    {
+      "id": "q19_nginx_proxy",
+      "query": "nginx reverse proxy pass upstream",
+      "domain": "webservers",
+      "passed": true,
+      "chunks_returned": 4,
+      "matched_terms": [
+        "nginx",
+        "proxy",
+        "server",
+        "http"
+      ],
+      "expected_terms": [
+        "nginx",
+        "proxy",
+        "server",
+        "http"
+      ],
+      "top_sources": [
+        "knowledge/linux/arch-wiki/arch_wiki_23.md",
+        "knowledge/linux/arch-wiki/arch_wiki_08.md",
+        "knowledge/linux/arch-wiki/arch_wiki_22.md"
+      ]
+    },
+    {
+      "id": "q20_pacman_install",
+      "query": "pacman install package arch linux",
+      "domain": "linux_packages",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "pacman",
+        "package",
+        "install",
+        "arch"
+      ],
+      "expected_terms": [
+        "pacman",
+        "package",
+        "install",
+        "arch"
+      ],
+      "top_sources": [
+        "knowledge/linux/arch-wiki/arch_wiki_15.md",
+        "knowledge/linux/arch-wiki/arch_wiki_13.md",
+        "knowledge/linux/arch-wiki/arch_wiki_24.md"
+      ]
+    }
+  ]
+}

@@ -63,10 +63,24 @@ export function App() {
   const timeline = timelineFor(aspect);
   const camera = getCameraState(s, aspect, timeline);
 
-  const jumpToStop = (i) => {
+  const jumpToStop = (i, smooth = true) => {
     const max = document.documentElement.scrollHeight - window.innerHeight;
-    window.scrollTo({ top: stopCenterS(i, aspect) * max, behavior: 'smooth' });
+    window.scrollTo({ top: stopCenterS(i, aspect) * max, behavior: smooth ? 'smooth' : 'auto' });
   };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const stopParam = params.get('stop') || window.location.hash.replace('#', '');
+    if (stopParam) {
+      const idx = STOPS.findIndex(
+        (st, i) => st.id.toLowerCase() === stopParam.toLowerCase() || String(i) === stopParam || String(i + 1) === stopParam
+      );
+      if (idx >= 0) {
+        // Small delay to allow document layout to settle
+        requestAnimationFrame(() => jumpToStop(idx, false));
+      }
+    }
+  }, [aspect]);
 
   return (
     <div

@@ -101,7 +101,7 @@ export function stopPose(rawStop, aspect) {
     return {
       cx: MARK.cx,
       cy: MARK.cy,
-      scale: stop.scale ?? fitScale(aspect, 0.5) * zoom,
+      scale: stop.scale ?? fitScale(aspect, 0.44) * zoom,
       normal: { x: 0, y: 0 },
       layout: { kind: 'full', strokeSide: 'none', angle: 0 },
     };

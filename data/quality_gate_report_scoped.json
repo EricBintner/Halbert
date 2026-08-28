@@ -1,0 +1,472 @@
+{
+  "total_queries": 24,
+  "passed_queries": 20,
+  "failed_queries": 4,
+  "pass_rate_pct": 83.33333333333334,
+  "gate_passed": false,
+  "details": [
+    {
+      "id": "s01_host_sshd",
+      "query": "sshd_config Port directive",
+      "scope": "host",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "ssh",
+        "port"
+      ],
+      "expected_terms": [
+        "ssh",
+        "port"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "host/etc/ssh/sshd_config",
+        "host/etc/ssh/sshd_config.d/100-macos.conf",
+        "host/Library/LaunchDaemons/net.langui.SFTPServer.plist"
+      ]
+    },
+    {
+      "id": "s02_host_sshd_dropin",
+      "query": "sshd_config drop-in override",
+      "scope": "host",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "ssh"
+      ],
+      "expected_terms": [
+        "ssh"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "host/etc/ssh/sshd_config",
+        "host/etc/ssh/sshd_config.d/100-macos.conf",
+        "host/Library/LaunchAgents/com.splashtop.streamer-for-user.plist"
+      ]
+    },
+    {
+      "id": "s03_linux_systemd",
+      "query": "systemd unit file restart",
+      "scope": "knowledge_linux",
+      "passed": true,
+      "chunks_returned": 2,
+      "matched_terms": [
+        "systemd",
+        "unit",
+        "restart"
+      ],
+      "expected_terms": [
+        "systemd",
+        "unit",
+        "restart"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/linux/systemd-docs/systemd_docs_01.md",
+        "knowledge/linux/systemd-ext/systemd_ext_01.md"
+      ]
+    },
+    {
+      "id": "s04_linux_pacman",
+      "query": "pacman install package arch",
+      "scope": "knowledge_linux",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "pacman",
+        "package"
+      ],
+      "expected_terms": [
+        "pacman",
+        "package"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/linux/arch-wiki/arch_wiki_13.md",
+        "knowledge/linux/arch-wiki/arch_wiki_15.md",
+        "knowledge/linux/arch-wiki/arch_wiki_24.md"
+      ]
+    },
+    {
+      "id": "s05_linux_iptables",
+      "query": "iptables firewall rule drop",
+      "scope": "knowledge_linux",
+      "passed": true,
+      "chunks_returned": 2,
+      "matched_terms": [
+        "iptables",
+        "firewall"
+      ],
+      "expected_terms": [
+        "iptables",
+        "firewall"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/linux/arch-wiki/arch_wiki_29.md",
+        "knowledge/linux/arch-wiki/arch_wiki_15.md"
+      ]
+    },
+    {
+      "id": "s06_linux_arch_wiki",
+      "query": "arch linux network configuration",
+      "scope": "knowledge_linux",
+      "passed": true,
+      "chunks_returned": 4,
+      "matched_terms": [
+        "network",
+        "config"
+      ],
+      "expected_terms": [
+        "network",
+        "config"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/linux/arch-wiki/arch_wiki_05.md",
+        "knowledge/linux/arch-wiki/arch_wiki_22.md",
+        "knowledge/linux/arch-wiki-ext/arch_wiki_ext_01.md"
+      ]
+    },
+    {
+      "id": "s07_linux_nvidia",
+      "query": "nvidia-smi gpu cuda",
+      "scope": "knowledge_linux",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "nvidia",
+        "gpu"
+      ],
+      "expected_terms": [
+        "nvidia",
+        "gpu"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/linux/nvidia-docs/nvidia_cuda_docs_03.md",
+        "knowledge/linux/nvidia-docs/nvidia_cuda_docs_01.md",
+        "knowledge/linux/nvidia-docs/nvidia_cuda_docs_08.md"
+      ]
+    },
+    {
+      "id": "s08_macos_diskutil",
+      "query": "diskutil apfs resize container",
+      "scope": "knowledge_macos",
+      "passed": true,
+      "chunks_returned": 2,
+      "matched_terms": [
+        "apfs"
+      ],
+      "expected_terms": [
+        "diskutil",
+        "apfs"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/macos/support/macos_support_01.md",
+        "knowledge/macos/man-pages/macos_man_pages_08.md"
+      ]
+    },
+    {
+      "id": "s09_macos_homebrew",
+      "query": "homebrew brew install cask",
+      "scope": "knowledge_macos",
+      "passed": false,
+      "chunks_returned": 1,
+      "matched_terms": [
+        "brew",
+        "install"
+      ],
+      "expected_terms": [
+        "brew",
+        "install"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/macos/homebrew/homebrew_18.md"
+      ]
+    },
+    {
+      "id": "s10_macos_launchctl",
+      "query": "launchctl load launchd plist",
+      "scope": "knowledge_macos",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "launchctl",
+        "launchd"
+      ],
+      "expected_terms": [
+        "launchctl",
+        "launchd"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/macos/tldr/tldr_01.md",
+        "knowledge/macos/ask-different/ask_different_01.md",
+        "knowledge/macos/support/macos_support_01.md"
+      ]
+    },
+    {
+      "id": "s11_macos_macports",
+      "query": "macports port install variant",
+      "scope": "knowledge_macos",
+      "passed": false,
+      "chunks_returned": 1,
+      "matched_terms": [
+        "macports",
+        "port"
+      ],
+      "expected_terms": [
+        "macports",
+        "port"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/macos/macports-guide/macports_guide_01.md"
+      ]
+    },
+    {
+      "id": "s12_bsd_freebsd_net",
+      "query": "freebsd network interface rc.conf",
+      "scope": "knowledge_bsd",
+      "passed": true,
+      "chunks_returned": 4,
+      "matched_terms": [
+        "freebsd",
+        "network"
+      ],
+      "expected_terms": [
+        "freebsd",
+        "network"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/bsd/freebsd-handbook/freebsd_handbook_04.md",
+        "knowledge/bsd/freebsd-man-pages/freebsd_man_pages_05.md",
+        "knowledge/bsd/freebsd-man-pages/freebsd_man_pages_04.md"
+      ]
+    },
+    {
+      "id": "s13_bsd_freebsd_handbook",
+      "query": "freebsd handbook ports system",
+      "scope": "knowledge_bsd",
+      "passed": true,
+      "chunks_returned": 2,
+      "matched_terms": [
+        "freebsd",
+        "ports"
+      ],
+      "expected_terms": [
+        "freebsd",
+        "ports"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/bsd/freebsd-handbook/freebsd_handbook_01.md",
+        "knowledge/bsd/freebsd-handbook/freebsd_handbook_03.md"
+      ]
+    },
+    {
+      "id": "s14_common_git",
+      "query": "git rebase interactive squash",
+      "scope": "knowledge_common",
+      "passed": true,
+      "chunks_returned": 2,
+      "matched_terms": [
+        "git",
+        "rebase"
+      ],
+      "expected_terms": [
+        "git",
+        "rebase"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/common/git-docs/git_docs_01.md",
+        "knowledge/common/devtools-docs/devtools_docs_01.md"
+      ]
+    },
+    {
+      "id": "s15_common_docker",
+      "query": "docker compose up detached",
+      "scope": "knowledge_common",
+      "passed": false,
+      "chunks_returned": 1,
+      "matched_terms": [
+        "docker",
+        "compose"
+      ],
+      "expected_terms": [
+        "docker",
+        "compose"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/common/docker-docs/docker_docs_01.md"
+      ]
+    },
+    {
+      "id": "s16_common_curl",
+      "query": "curl post json http",
+      "scope": "knowledge_common",
+      "passed": true,
+      "chunks_returned": 2,
+      "matched_terms": [
+        "curl",
+        "http"
+      ],
+      "expected_terms": [
+        "curl",
+        "http"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/common/tldr/tldr_04.md",
+        "knowledge/common/shell-docs/shell_docs_01.md"
+      ]
+    },
+    {
+      "id": "s17_common_awk",
+      "query": "awk print column field delimiter",
+      "scope": "knowledge_common",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "awk",
+        "print"
+      ],
+      "expected_terms": [
+        "awk",
+        "print"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/common/shell-docs/shell_docs_01.md",
+        "knowledge/common/tldr/tldr_10.md",
+        "knowledge/common/aws-cli/aws_cli_01.md"
+      ]
+    },
+    {
+      "id": "s18_common_tar",
+      "query": "tar extract gzip archive",
+      "scope": "knowledge_common",
+      "passed": true,
+      "chunks_returned": 3,
+      "matched_terms": [
+        "tar",
+        "extract"
+      ],
+      "expected_terms": [
+        "tar",
+        "extract"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/common/tldr/tldr_01.md",
+        "knowledge/common/tldr/tldr_09.md",
+        "knowledge/common/tldr/tldr_06.md"
+      ]
+    },
+    {
+      "id": "s19_isolation_linux",
+      "query": "systemctl service enable",
+      "scope": "knowledge_linux",
+      "passed": true,
+      "chunks_returned": 5,
+      "matched_terms": [
+        "systemctl",
+        "service"
+      ],
+      "expected_terms": [
+        "systemctl",
+        "service"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/linux/vendor-docs/vendor_docs_01.md",
+        "knowledge/linux/systemd-docs/systemd_docs_01.md",
+        "knowledge/linux/arch-wiki/arch_wiki_21.md"
+      ]
+    },
+    {
+      "id": "s20_isolation_macos",
+      "query": "brew tap homebrew cask",
+      "scope": "knowledge_macos",
+      "passed": false,
+      "chunks_returned": 1,
+      "matched_terms": [
+        "brew",
+        "cask"
+      ],
+      "expected_terms": [
+        "brew",
+        "cask"
+      ],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/macos/homebrew/homebrew_01.md"
+      ]
+    },
+    {
+      "id": "s21_neg_homebrew_linux",
+      "query": "homebrew brew install cask",
+      "scope": "knowledge_linux",
+      "passed": true,
+      "chunks_returned": 1,
+      "matched_terms": [],
+      "expected_terms": [],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/linux/man-pages/man_pages_01.md"
+      ]
+    },
+    {
+      "id": "s22_neg_diskutil_linux",
+      "query": "diskutil apfs resize container",
+      "scope": "knowledge_linux",
+      "passed": true,
+      "chunks_returned": 5,
+      "matched_terms": [],
+      "expected_terms": [],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/linux/tldr/tldr_01.md",
+        "knowledge/linux/man-pages/man_pages_01.md",
+        "knowledge/linux/arch-wiki/arch_wiki_19.md"
+      ]
+    },
+    {
+      "id": "s23_neg_pacman_macos",
+      "query": "pacman install package arch",
+      "scope": "knowledge_macos",
+      "passed": true,
+      "chunks_returned": 5,
+      "matched_terms": [],
+      "expected_terms": [],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/macos/homebrew/homebrew_12.md",
+        "knowledge/macos/man-pages/macos_man_pages_02.md",
+        "knowledge/macos/support/macos_support_02.md"
+      ]
+    },
+    {
+      "id": "s24_neg_systemctl_macos",
+      "query": "systemctl service enable",
+      "scope": "knowledge_macos",
+      "passed": true,
+      "chunks_returned": 4,
+      "matched_terms": [],
+      "expected_terms": [],
+      "scope_leaked": [],
+      "top_sources": [
+        "knowledge/macos/support/macos_support_01.md",
+        "knowledge/macos/ask-different/ask_different_01.md",
+        "knowledge/macos/man-pages/macos_man_pages_51.md"
+      ]
+    }
+  ]
+}

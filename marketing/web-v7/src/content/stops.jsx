@@ -15,7 +15,7 @@ import { ProactiveEventsPlate, VitalsPlate, RationalePlate, KnowledgePlate } fro
  */
 
 export const Kicker = ({ children }) => (
-  <div className="text-[11px] font-mono font-bold tracking-[0.2em] uppercase opacity-80 mb-4">{children}</div>
+  <div className="text-[13px] font-mono font-bold tracking-[0.2em] uppercase opacity-80 mb-4">{children}</div>
 );
 
 export const Headline = ({ children, size = 'lg' }) => {
@@ -188,15 +188,15 @@ export const STOP_CONTENT = {
   reveal: {
     above: (
       <>
-        <Kicker>07 // Early access</Kicker>
-        <Headline size="md">Halbert. 100% local host intelligence.</Headline>
+        <Kicker>// MEET HALBERT.</Kicker>
+        <Headline size="md">Hi, I’m your computer.</Headline>
       </>
     ),
     below: (
       <>
         <EarlyAccessForm />
         <div className="mt-4 text-[11px] font-mono tracking-wider uppercase opacity-70 text-center">
-          Linux today · macOS in beta · Open source · Runs on Ollama
+          Linux / macOS · Open source · Any LLM or BYOK
         </div>
         <div className="mt-3 flex items-center justify-center space-x-3 text-[10px] font-mono opacity-50 uppercase tracking-widest">
           <a href="/privacy.html" className="hover:opacity-100 hover:underline">Privacy</a>

@@ -36,9 +36,9 @@ const PAD_CSS = 'clamp(1.25rem,5vw,4.5rem)';
 const PAD = 'p-[clamp(1.25rem,5vw,4.5rem)]';
 const PAD_TIGHT = 'px-[clamp(1.25rem,5vw,4.5rem)] py-4';
 
-function Slot({ slot, children, className = '', style, tight = false }) {
+function Slot({ slot, children, className = '', style, tight = false, padClass }) {
   if (!children) return null;
-  const pad = tight ? PAD_TIGHT : PAD;
+  const pad = padClass ?? (tight ? PAD_TIGHT : PAD);
   return (
     <div className={`${pad} flex flex-col ${className}`} style={{ color: INK[slot], ...style }} data-slot={slot}>
       {children}
@@ -137,10 +137,22 @@ function CapLayout({ content }) {
 function FullLayout({ content }) {
   return (
     <div className="absolute inset-0 grid grid-rows-[1fr_auto_1fr] pt-14 pb-14">
-      <Slot slot="above" className="justify-end items-center text-center" tight>{content.above}</Slot>
-      {/* matches fitScale(aspect, 0.5): the mark spans half the shorter viewport side */}
-      <div className="h-[50vmin]" aria-hidden="true" />
-      <Slot slot="below" className="justify-start items-center text-center" tight>{content.below}</Slot>
+      <Slot
+        slot="above"
+        className="justify-end items-center text-center"
+        padClass="px-[clamp(1.25rem,5vw,4.5rem)] pt-4 pb-6 sm:pb-8"
+      >
+        {content.above}
+      </Slot>
+      {/* matches fitScale(aspect, 0.44): the mark spans 44% of the shorter viewport side */}
+      <div className="h-[44vmin]" aria-hidden="true" />
+      <Slot
+        slot="below"
+        className="justify-start items-center text-center"
+        padClass="px-[clamp(1.25rem,5vw,4.5rem)] pt-6 sm:pt-8 pb-4"
+      >
+        {content.below}
+      </Slot>
     </div>
   );
 }

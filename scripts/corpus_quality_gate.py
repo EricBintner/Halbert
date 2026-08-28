@@ -222,6 +222,7 @@ def run_quality_gate(server_url: str, project_id: str, k: int = 5, min_score: fl
             "query": query,
             "k": k,
             "structured": True,
+            "trace_expand": True,
             "min_score": min_score,
             "include_sources": True,
         }
@@ -229,7 +230,7 @@ def run_quality_gate(server_url: str, project_id: str, k: int = 5, min_score: fl
         try:
             resp = requests.post(url, json=body, timeout=30.0)
             resp.raise_for_status()
-            data = resp.json()
+            envelope = resp.json()
         except Exception as e:
             results.append({
                 "id": qid,
@@ -244,25 +245,32 @@ def run_quality_gate(server_url: str, project_id: str, k: int = 5, min_score: fl
 
         chunks = extract_chunks(data)
 
-        # Validate results
-        has_results = len(chunks) > 0
-        has_non_empty = any(len(c.get("content", "").strip()) > 30 for c in chunks)
+        # Match terms against chunk text only (not path strings).
+        # Path strings like "systemd-docs" or "homebrew_18" satisfy terms
+        # spuriously — only real chunk text counts.
+        chunk_texts = [str(c.get("text", "") or c.get("content", "") or "") for c in chunks]
+        combined_text = " ".join(chunk_texts).lower()
+        has_results = len(chunks) >= 2  # require at least 2 chunks
+        has_non_empty = any(len(t.strip()) > 30 for t in chunk_texts)
 
-        # Check for expected terms
-        combined_text = " ".join(c.get("content", "") + " " + c.get("file_path", "") for c in chunks).lower()
+        # Check for expected terms in chunk text only
         matched_terms = [t for t in expected_terms if t.lower() in combined_text]
         term_match_ratio = len(matched_terms) / len(expected_terms) if expected_terms else 1.0
 
-        # Query passes if results are returned, non-empty, and at least 50% of expected terms matched
+        # Query passes if >= 2 chunks, non-empty text, and at least 50% of expected terms matched
         passed = has_results and has_non_empty and term_match_ratio >= 0.5
 
         if passed:
             passed_count += 1
             print(f"✓ [{qid}] {query} ({len(chunks)} chunks, matched terms: {matched_terms})")
         else:
-            print(f"✗ [{qid}] {query} (chunks: {len(chunks)}, non_empty: {has_non_empty}, matched: {matched_terms}/{expected_terms})")
+            reasons = []
+            if not has_results: reasons.append(f"chunks={len(chunks)}(<2)")
+            if not has_non_empty: reasons.append("empty_text")
+            if term_match_ratio < 0.5: reasons.append(f"terms={matched_terms}/{expected_terms}")
+            print(f"✗ [{qid}] {query} ({'; '.join(reasons)})")
 
-        top_sources = [c.get("file_path", "") for c in chunks[:3] if c.get("file_path")]
+        top_sources = [c.get("source_path", "") for c in chunks[:3] if c.get("source_path")]
         results.append({
             "id": qid,
             "query": query,
@@ -304,45 +312,45 @@ SCOPED_QUERIES = [
     {"id": "s02_host_sshd_dropin", "query": "sshd_config drop-in override", "scope": "host",
      "expected_terms": ["ssh"], "forbidden_path_prefix": "knowledge/"},
     # ── knowledge-linux scope ──
-    {"id": "s03_linux_systemd", "query": "systemd unit file restart", "scope": "knowledge-linux",
+    {"id": "s03_linux_systemd", "query": "systemd unit file restart", "scope": "knowledge_linux",
      "expected_terms": ["systemd", "unit", "restart"], "forbidden_path_prefix": "knowledge/macos/"},
-    {"id": "s04_linux_pacman", "query": "pacman install package arch", "scope": "knowledge-linux",
+    {"id": "s04_linux_pacman", "query": "pacman install package arch", "scope": "knowledge_linux",
      "expected_terms": ["pacman", "package"], "forbidden_path_prefix": "knowledge/macos/"},
-    {"id": "s05_linux_iptables", "query": "iptables firewall rule drop", "scope": "knowledge-linux",
+    {"id": "s05_linux_iptables", "query": "iptables firewall rule drop", "scope": "knowledge_linux",
      "expected_terms": ["iptables", "firewall"], "forbidden_path_prefix": "knowledge/macos/"},
-    {"id": "s06_linux_arch_wiki", "query": "arch linux network configuration", "scope": "knowledge-linux",
+    {"id": "s06_linux_arch_wiki", "query": "arch linux network configuration", "scope": "knowledge_linux",
      "expected_terms": ["network", "config"], "forbidden_path_prefix": "knowledge/macos/"},
-    {"id": "s07_linux_nvidia", "query": "nvidia-smi gpu cuda", "scope": "knowledge-linux",
+    {"id": "s07_linux_nvidia", "query": "nvidia-smi gpu cuda", "scope": "knowledge_linux",
      "expected_terms": ["nvidia", "gpu"], "forbidden_path_prefix": "knowledge/macos/"},
     # ── knowledge-macos scope ──
-    {"id": "s08_macos_diskutil", "query": "diskutil apfs resize container", "scope": "knowledge-macos",
+    {"id": "s08_macos_diskutil", "query": "diskutil apfs resize container", "scope": "knowledge_macos",
      "expected_terms": ["diskutil", "apfs"], "forbidden_path_prefix": "knowledge/linux/"},
-    {"id": "s09_macos_homebrew", "query": "homebrew brew install cask", "scope": "knowledge-macos",
+    {"id": "s09_macos_homebrew", "query": "homebrew brew install cask", "scope": "knowledge_macos",
      "expected_terms": ["brew", "install"], "forbidden_path_prefix": "knowledge/linux/"},
-    {"id": "s10_macos_launchctl", "query": "launchctl load launchd plist", "scope": "knowledge-macos",
+    {"id": "s10_macos_launchctl", "query": "launchctl load launchd plist", "scope": "knowledge_macos",
      "expected_terms": ["launchctl", "launchd"], "forbidden_path_prefix": "knowledge/linux/"},
-    {"id": "s11_macos_macports", "query": "macports port install variant", "scope": "knowledge-macos",
+    {"id": "s11_macos_macports", "query": "macports port install variant", "scope": "knowledge_macos",
      "expected_terms": ["macports", "port"], "forbidden_path_prefix": "knowledge/linux/"},
     # ── knowledge-bsd scope ──
-    {"id": "s12_bsd_freebsd_net", "query": "freebsd network interface rc.conf", "scope": "knowledge-bsd",
+    {"id": "s12_bsd_freebsd_net", "query": "freebsd network interface rc.conf", "scope": "knowledge_bsd",
      "expected_terms": ["freebsd", "network"], "forbidden_path_prefix": "knowledge/linux/"},
-    {"id": "s13_bsd_freebsd_handbook", "query": "freebsd handbook ports system", "scope": "knowledge-bsd",
+    {"id": "s13_bsd_freebsd_handbook", "query": "freebsd handbook ports system", "scope": "knowledge_bsd",
      "expected_terms": ["freebsd", "ports"], "forbidden_path_prefix": "knowledge/linux/"},
     # ── knowledge-common scope ──
-    {"id": "s14_common_git", "query": "git rebase interactive squash", "scope": "knowledge-common",
+    {"id": "s14_common_git", "query": "git rebase interactive squash", "scope": "knowledge_common",
      "expected_terms": ["git", "rebase"], "forbidden_path_prefix": "knowledge/linux/"},
-    {"id": "s15_common_docker", "query": "docker compose up detached", "scope": "knowledge-common",
+    {"id": "s15_common_docker", "query": "docker compose up detached", "scope": "knowledge_common",
      "expected_terms": ["docker", "compose"], "forbidden_path_prefix": "knowledge/linux/"},
-    {"id": "s16_common_curl", "query": "curl post json http", "scope": "knowledge-common",
+    {"id": "s16_common_curl", "query": "curl post json http", "scope": "knowledge_common",
      "expected_terms": ["curl", "http"], "forbidden_path_prefix": "knowledge/linux/"},
-    {"id": "s17_common_awk", "query": "awk print column field delimiter", "scope": "knowledge-common",
+    {"id": "s17_common_awk", "query": "awk print column field delimiter", "scope": "knowledge_common",
      "expected_terms": ["awk", "print"], "forbidden_path_prefix": "knowledge/linux/"},
-    {"id": "s18_common_tar", "query": "tar extract gzip archive", "scope": "knowledge-common",
+    {"id": "s18_common_tar", "query": "tar extract gzip archive", "scope": "knowledge_common",
      "expected_terms": ["tar", "extract"], "forbidden_path_prefix": "knowledge/linux/"},
     # ── cross-scope isolation: linux query must NOT return macos chunks ──
-    {"id": "s19_isolation_linux", "query": "systemctl service enable", "scope": "knowledge-linux",
+    {"id": "s19_isolation_linux", "query": "systemctl service enable", "scope": "knowledge_linux",
      "expected_terms": ["systemctl", "service"], "forbidden_path_prefix": "knowledge/macos/"},
-    {"id": "s20_isolation_macos", "query": "brew tap homebrew cask", "scope": "knowledge-macos",
+    {"id": "s20_isolation_macos", "query": "brew tap homebrew cask", "scope": "knowledge_macos",
      "expected_terms": ["brew", "cask"], "forbidden_path_prefix": "knowledge/linux/"},
     # ── role scopes (wave 1) ──
     # Content queries: each role must return its own subsystem's config.
@@ -395,12 +403,22 @@ SCOPED_QUERIES = [
     {"id": "r08_iso_service_no_docs", "query": "startup daemon",
      "scope": "service_admin", "expected_terms": [],
      "forbidden_path_prefix": "knowledge/"},
+    # ── cross-platform negative probes: wrong-platform query under hard scope ──
+    # Pass = 0 chunks or all chunks in-scope (no leakage)
+    {"id": "s21_neg_homebrew_linux", "query": "homebrew brew install cask", "scope": "knowledge_linux",
+     "expected_terms": [], "forbidden_path_prefix": "knowledge/macos/"},
+    {"id": "s22_neg_diskutil_linux", "query": "diskutil apfs resize container", "scope": "knowledge_linux",
+     "expected_terms": [], "forbidden_path_prefix": "knowledge/macos/"},
+    {"id": "s23_neg_pacman_macos", "query": "pacman install package arch", "scope": "knowledge_macos",
+     "expected_terms": [], "forbidden_path_prefix": "knowledge/linux/"},
+    {"id": "s24_neg_systemctl_macos", "query": "systemctl service enable", "scope": "knowledge_macos",
+     "expected_terms": [], "forbidden_path_prefix": "knowledge/linux/"}
 ]
 
 
 def run_scoped_quality_gate(server_url: str, project_id: str, k: int = 5,
                             min_score: float = 0.15) -> Dict[str, Any]:
-    """Run 20 scoped queries and assert scope isolation (T-V.2)."""
+    """Run scoped queries and assert scope isolation (T-V.2)."""
     results = []
     passed_count = 0
 
@@ -412,6 +430,7 @@ def run_scoped_quality_gate(server_url: str, project_id: str, k: int = 5,
         scope = tq["scope"]
         expected_terms = tq["expected_terms"]
         forbidden = tq.get("forbidden_path_prefix", "")
+        is_negative = qid.startswith("s2") and "neg" in qid  # s21-s24: cross-platform negatives
 
         url = f"{server_url}/projects/{project_id}/context"
         body = {
@@ -421,13 +440,14 @@ def run_scoped_quality_gate(server_url: str, project_id: str, k: int = 5,
             "min_score": min_score,
             "include_sources": True,
             "scope": scope,
+            "scope_mode": "hard",
             "trace_expand": True,
         }
 
         try:
             resp = requests.post(url, json=body, timeout=30.0)
             resp.raise_for_status()
-            data = resp.json()
+            envelope = resp.json()
         except Exception as e:
             results.append({"id": qid, "query": query, "scope": scope,
                             "passed": False, "error": str(e), "chunks_returned": 0})
@@ -436,34 +456,47 @@ def run_scoped_quality_gate(server_url: str, project_id: str, k: int = 5,
 
         chunks = extract_chunks(data)
 
-        has_results = len(chunks) > 0
-        has_non_empty = any(len(c.get("content", "").strip()) > 30 for c in chunks)
-        combined_text = " ".join(c.get("content", "") + " " + c.get("file_path", "") for c in chunks).lower()
-        matched_terms = [t for t in expected_terms if t.lower() in combined_text]
-        term_match_ratio = len(matched_terms) / len(expected_terms) if expected_terms else 1.0
+        # Match terms against chunk text only (not path strings)
+        chunk_texts = [str(c.get("text", "") or c.get("content", "") or "") for c in chunks]
+        combined_text = " ".join(chunk_texts).lower()
+        all_paths = [c.get("source_path", "") for c in chunks]
 
-        # Scope isolation: no chunk's file_path starts with the forbidden prefix
-        all_paths = [c.get("file_path", "") for c in chunks]
+        # Scope isolation: no chunk's source_path starts with the forbidden prefix
         leaked = [p for p in all_paths if forbidden and p.startswith(forbidden)]
         scope_clean = len(leaked) == 0
 
-        passed = has_results and has_non_empty and term_match_ratio >= 0.5 and scope_clean
-
-        if passed:
-            passed_count += 1
-            print(f"+ [{qid}] scope={scope} {query} ({len(chunks)} chunks, terms={matched_terms})")
+        if is_negative:
+            # Negative probes: pass = 0 chunks or all chunks in-scope
+            passed = scope_clean
+            if passed:
+                passed_count += 1
+                print(f"+ [{qid}] scope={scope} {query} (clean: {len(chunks)} chunks, leaked={leaked})")
+            else:
+                print(f"X [{qid}] scope={scope} {query} -> LEAKED={leaked}")
         else:
-            reasons = []
-            if not has_results: reasons.append("no_results")
-            if not has_non_empty: reasons.append("empty_chunks")
-            if term_match_ratio < 0.5: reasons.append(f"terms={matched_terms}/{expected_terms}")
-            if not scope_clean: reasons.append(f"LEAKED={leaked}")
-            print(f"X [{qid}] scope={scope} {query} -> {'; '.join(reasons)}")
+            has_results = len(chunks) >= 2  # require at least 2 chunks
+            has_non_empty = any(len(t.strip()) > 30 for t in chunk_texts)
+            matched_terms = [t for t in expected_terms if t.lower() in combined_text]
+            term_match_ratio = len(matched_terms) / len(expected_terms) if expected_terms else 1.0
+
+            passed = has_results and has_non_empty and term_match_ratio >= 0.5 and scope_clean
+
+            if passed:
+                passed_count += 1
+                print(f"+ [{qid}] scope={scope} {query} ({len(chunks)} chunks, terms={matched_terms})")
+            else:
+                reasons = []
+                if not has_results: reasons.append(f"chunks={len(chunks)}(<2)")
+                if not has_non_empty: reasons.append("empty_text")
+                if term_match_ratio < 0.5: reasons.append(f"terms={matched_terms}/{expected_terms}")
+                if not scope_clean: reasons.append(f"LEAKED={leaked}")
+                print(f"X [{qid}] scope={scope} {query} -> {'; '.join(reasons)}")
 
         results.append({
             "id": qid, "query": query, "scope": scope,
             "passed": passed, "chunks_returned": len(chunks),
-            "matched_terms": matched_terms, "expected_terms": expected_terms,
+            "matched_terms": matched_terms if not is_negative else [],
+            "expected_terms": expected_terms,
             "scope_leaked": leaked, "top_sources": all_paths[:3],
         })
 

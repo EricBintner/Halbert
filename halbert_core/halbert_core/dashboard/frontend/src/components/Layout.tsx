@@ -21,6 +21,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
+  Home as HomeIcon,
   Server,
   Archive,
   CheckCircle,
@@ -58,6 +59,7 @@ const navSections: NavSection[] = [
     label: 'Overview',
     items: [
       { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+      { name: 'Home', href: '/home', icon: HomeIcon },
     ],
   },
   {
