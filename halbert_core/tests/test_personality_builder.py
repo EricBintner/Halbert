@@ -458,3 +458,144 @@ class TestNameInIdentity:
         builder = AgentPromptBuilder()
         identity = builder._get_identity()
         assert "Halbert" in identity
+
+
+class TestPersonaModelOverride:
+    """Test per-persona LLM model override fields and resolution."""
+
+    def test_default_model_fields_are_none(self):
+        from halbert_core.config.being_config import BeingConfig
+        cfg = BeingConfig()
+        assert cfg.model is None
+        assert cfg.model_endpoint_id is None
+
+    def test_model_and_endpoint_id_serialize(self):
+        from halbert_core.config.being_config import BeingConfig
+        cfg = BeingConfig()
+        cfg.model = "llama3:8b"
+        cfg.model_endpoint_id = "ep-1"
+        d = cfg.to_dict()
+        assert d["model"] == "llama3:8b"
+        assert d["model_endpoint_id"] == "ep-1"
+
+    def test_model_and_endpoint_id_deserialize(self):
+        from halbert_core.config.being_config import BeingConfig
+        cfg = BeingConfig.from_dict({
+            "model": "qwen2.5:14b",
+            "model_endpoint_id": "ep-2",
+        })
+        assert cfg.model == "qwen2.5:14b"
+        assert cfg.model_endpoint_id == "ep-2"
+
+    def test_clearing_model_fields(self):
+        from halbert_core.config.being_config import BeingConfig
+        cfg = BeingConfig()
+        cfg.model = "llama3:8b"
+        cfg.model_endpoint_id = "ep-1"
+        cfg.model = None
+        cfg.model_endpoint_id = None
+        cfg.validate()
+        assert cfg.model is None
+        assert cfg.model_endpoint_id is None
+
+    def test_validate_accepts_none_model(self):
+        from halbert_core.config.being_config import BeingConfig
+        cfg = BeingConfig()
+        cfg.validate()  # should not raise
+
+    @pytest.mark.skipif(
+        sys.version_info < (3, 10),
+        reason="agent.py uses contextlib.aclosing (Python 3.10+)",
+    )
+    def test_resolve_turn_model_uses_persona_model(self, monkeypatch):
+        """When BeingConfig.model is set, _resolve_turn_model uses it as guide."""
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.dashboard.routes.agent import _resolve_turn_model
+
+        # Mock load_being_config to return a persona with a model
+        persona_cfg = BeingConfig()
+        persona_cfg.model = "llama3:70b"
+        persona_cfg.model_endpoint_id = None
+
+        # Mock the model client functions
+        def mock_get_configured_model():
+            return "global-chat-model"
+
+        def mock_get_ollama_endpoint():
+            return "http://localhost:11434"
+
+        def mock_provider_for(url, default="ollama"):
+            return "ollama"
+
+        def mock_get_specialist_model():
+            return (None, None, None)
+
+        def mock_get_vision_model():
+            return (None, "http://localhost:11434", "ollama")
+
+        def mock_resolve_endpoint_by_id(eid):
+            return None
+
+        def mock_score_query_complexity(prompt):
+            return 1
+
+        monkeypatch.setattr("halbert_core.model.client.get_configured_model", mock_get_configured_model)
+        monkeypatch.setattr("halbert_core.model.client.get_ollama_endpoint", mock_get_ollama_endpoint)
+        monkeypatch.setattr("halbert_core.model.client.provider_for", mock_provider_for)
+        monkeypatch.setattr("halbert_core.model.client.get_specialist_model", mock_get_specialist_model)
+        monkeypatch.setattr("halbert_core.model.client.get_vision_model", mock_get_vision_model)
+        monkeypatch.setattr("halbert_core.model.client.resolve_endpoint_by_id", mock_resolve_endpoint_by_id)
+        monkeypatch.setattr("halbert_core.model.client.score_query_complexity", mock_score_query_complexity)
+        monkeypatch.setattr("halbert_core.config.being_config.load_being_config", lambda: persona_cfg)
+
+        turn = _resolve_turn_model(prompt="hello")
+        assert turn.model == "llama3:70b"
+        assert turn.tier == "guide"
+
+    @pytest.mark.skipif(
+        sys.version_info < (3, 10),
+        reason="agent.py uses contextlib.aclosing (Python 3.10+)",
+    )
+    def test_resolve_turn_model_falls_back_when_no_persona_model(self, monkeypatch):
+        """When BeingConfig.model is None, _resolve_turn_model uses the global guide."""
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.dashboard.routes.agent import _resolve_turn_model
+
+        persona_cfg = BeingConfig()  # model is None
+
+        monkeypatch.setattr("halbert_core.model.client.get_configured_model", lambda: "global-chat-model")
+        monkeypatch.setattr("halbert_core.model.client.get_ollama_endpoint", lambda: "http://localhost:11434")
+        monkeypatch.setattr("halbert_core.model.client.provider_for", lambda url, default="ollama": "ollama")
+        monkeypatch.setattr("halbert_core.model.client.get_specialist_model", lambda: (None, None, None))
+        monkeypatch.setattr("halbert_core.model.client.get_vision_model", lambda: (None, "http://localhost:11434", "ollama"))
+        monkeypatch.setattr("halbert_core.model.client.resolve_endpoint_by_id", lambda eid: None)
+        monkeypatch.setattr("halbert_core.model.client.score_query_complexity", lambda prompt: 1)
+        monkeypatch.setattr("halbert_core.config.being_config.load_being_config", lambda: persona_cfg)
+
+        turn = _resolve_turn_model(prompt="hello")
+        assert turn.model == "global-chat-model"
+
+    @pytest.mark.skipif(
+        sys.version_info < (3, 10),
+        reason="agent.py uses contextlib.aclosing (Python 3.10+)",
+    )
+    def test_per_turn_pin_overrides_persona_model(self, monkeypatch):
+        """Per-turn model_override takes precedence over persona model."""
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.dashboard.routes.agent import _resolve_turn_model
+
+        persona_cfg = BeingConfig()
+        persona_cfg.model = "llama3:70b"
+
+        monkeypatch.setattr("halbert_core.model.client.get_configured_model", lambda: "global-chat-model")
+        monkeypatch.setattr("halbert_core.model.client.get_ollama_endpoint", lambda: "http://localhost:11434")
+        monkeypatch.setattr("halbert_core.model.client.provider_for", lambda url, default="ollama": "ollama")
+        monkeypatch.setattr("halbert_core.model.client.get_specialist_model", lambda: (None, None, None))
+        monkeypatch.setattr("halbert_core.model.client.get_vision_model", lambda: (None, "http://localhost:11434", "ollama"))
+        monkeypatch.setattr("halbert_core.model.client.resolve_endpoint_by_id", lambda eid: None)
+        monkeypatch.setattr("halbert_core.model.client.score_query_complexity", lambda prompt: 1)
+        monkeypatch.setattr("halbert_core.config.being_config.load_being_config", lambda: persona_cfg)
+
+        turn = _resolve_turn_model(prompt="hello", model_override="qwen2.5:32b")
+        assert turn.model == "qwen2.5:32b"
+        assert turn.pinned is True

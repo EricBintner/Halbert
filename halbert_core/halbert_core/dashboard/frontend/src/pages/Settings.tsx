@@ -69,14 +69,23 @@ interface DiscoveryStats {
 // Being Settings Component (Phase 6 / T6c.1)
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface EndpointModel {
+  endpointId: string
+  endpointName: string
+  model: string
+}
+
 function BeingSettings() {
   const [config, setConfig] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [availableModels, setAvailableModels] = useState<Record<string, EndpointModel[]>>({})
+  const [modelsLoading, setModelsLoading] = useState(false)
 
   useEffect(() => {
     loadConfig()
+    loadAvailableModels()
   }, [])
 
   const loadConfig = async () => {
@@ -90,6 +99,41 @@ function BeingSettings() {
       console.error('Failed to load being config:', e)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadAvailableModels = async () => {
+    try {
+      setModelsLoading(true)
+      const resp = await fetch(`${API_BASE}/llm/config`)
+      if (!resp.ok) return
+      const data = await resp.json()
+      const endpoints = data?.data?.saved_endpoints || data?.saved_endpoints || []
+      const grouped: Record<string, EndpointModel[]> = {}
+      await Promise.all(endpoints.map(async (ep: any) => {
+        try {
+          const modelResp = await fetch(`${API_BASE}/api/llm/proxy/models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: ep.provider, url: ep.url, ...(ep.api_key ? { api_key: ep.api_key } : {}) }),
+          })
+          if (!modelResp.ok) return
+          const modelData = await modelResp.json()
+          const models: string[] = modelData?.data?.models || modelData?.models || []
+          if (models.length) {
+            grouped[ep.id] = models.map((m: string) => ({
+              endpointId: ep.id,
+              endpointName: ep.name,
+              model: m,
+            }))
+          }
+        } catch { /* endpoint unreachable, skip */ }
+      }))
+      setAvailableModels(grouped)
+    } catch (e) {
+      console.error('Failed to load available models:', e)
+    } finally {
+      setModelsLoading(false)
     }
   }
 
@@ -207,19 +251,38 @@ function BeingSettings() {
             </p>
           </div>
 
-          {/* Conversation Model (deferred backend) */}
+          {/* Conversation Model */}
           <div className="space-y-2">
             <Label>Conversation Model</Label>
             <Select
-              defaultValue={config.model || ''}
-              onChange={(e) => saveConfig({ model: e.target.value })}
-              disabled={saving}
+              value={config.model ? `${config.model_endpoint_id || ''}:${config.model}` : ''}
+              onChange={(e) => {
+                const val = e.target.value
+                if (!val) {
+                  saveConfig({ model: '', model_endpoint_id: '' })
+                } else {
+                  const sepIdx = val.indexOf(':')
+                  const endpointId = val.substring(0, sepIdx)
+                  const model = val.substring(sepIdx + 1)
+                  saveConfig({ model, model_endpoint_id: endpointId })
+                }
+              }}
+              disabled={saving || modelsLoading}
             >
               <option value="">Default (System Agent Model)</option>
-              <option value="_custom" disabled>Custom Model Path (coming soon)</option>
+              {Object.entries(availableModels).map(([epId, models]) => (
+                <optgroup key={epId} label={models[0]?.endpointName || epId}>
+                  {models.map((m) => (
+                    <option key={`${epId}:${m.model}`} value={`${epId}:${m.model}`}>
+                      {m.model}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+              {modelsLoading && <option disabled>Loading models...</option>}
             </Select>
             <p className="text-xs text-muted-foreground">
-              Use the system default, or assign a fine-tuned model to this persona.
+              Override the system agent model for this persona. Default uses the global chat model.
             </p>
           </div>
 
