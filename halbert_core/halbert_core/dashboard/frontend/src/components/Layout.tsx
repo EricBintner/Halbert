@@ -20,6 +20,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
+  Home as HomeIcon,
   Server,
   Archive,
   CheckCircle,
@@ -49,6 +50,7 @@ import { apiUrl } from '@/lib/apiBase'
 const navigation = [
   // Overview
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Home', href: '/home', icon: HomeIcon },
 
   // Essential System Health
   { name: 'Services', href: '/services', icon: Server },

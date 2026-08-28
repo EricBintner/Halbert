@@ -26,23 +26,36 @@ _event_mapper = None
 _trackers = None
 
 
+def _get_persona_id() -> str:
+    """Get the persona identity from env, defaulting to 'halbert'."""
+    return os.environ.get("HALBERT_PERSONA_ID", "halbert")
+
+
+def _get_scene_context() -> str:
+    """Get the scene context from env, falling back to platform-derived default."""
+    env_ctx = os.environ.get("HALBERT_SCENE_CONTEXT", "").strip()
+    if env_ctx:
+        return env_ctx
+
+    from ..utils.platform import is_linux, is_macos
+
+    if is_macos():
+        return "macOS system administration"
+    elif is_linux():
+        return "Linux system administration"
+    else:
+        return "system administration"
+
+
 def _create_cognition():
     """Create a PersonaCognition instance configured for Halbert."""
     from haloysius.persona.cognition import PersonaCognition
 
-    cognition = PersonaCognition(persona_id="halbert")
+    persona_id = _get_persona_id()
+    cognition = PersonaCognition(persona_id=persona_id)
+    cognition.scene_context = _get_scene_context()
 
-    # Set scene context to the system identity (platform-derived)
-    from ..utils.platform import is_linux, is_macos
-
-    if is_macos():
-        cognition.scene_context = "macOS system administration"
-    elif is_linux():
-        cognition.scene_context = "Linux system administration"
-    else:
-        cognition.scene_context = "system administration"
-
-    logger.info("Created PersonaCognition for halbert")
+    logger.info(f"Created PersonaCognition for {persona_id}")
     return cognition
 
 
@@ -63,9 +76,9 @@ def _create_memory_adapter():
         from haloysius.memory_v2.store import PersonaMemoryStore
         from .haloysius_memory_adapter import HaloysiusMemoryAdapter
 
-        store = PersonaMemoryStore("halbert")
+        store = PersonaMemoryStore(_get_persona_id())
         adapter = HaloysiusMemoryAdapter(store)
-        logger.info("Created HaloysiusMemoryAdapter for halbert")
+        logger.info(f"Created HaloysiusMemoryAdapter for {_get_persona_id()}")
         return adapter
     except Exception as e:
         logger.warning(f"Could not create memory adapter: {e}")
@@ -107,7 +120,8 @@ def _create_thought_generator():
         backend = seam.get_model_backend() if seam is not None else None
         if backend is None or not hasattr(backend, "generate_text"):
             return None
-        return ThoughtGenerator("halbert", "Halbert", llm_generate=backend.generate_text)
+        persona_id = _get_persona_id()
+        return ThoughtGenerator(persona_id, persona_id.capitalize(), llm_generate=backend.generate_text)
     except Exception as e:
         logger.warning(f"Could not create LLM thought generator: {e}")
         return None
