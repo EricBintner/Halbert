@@ -23,7 +23,6 @@ import {
   Trash2,
   Info,
   Brain,
-  Users,
   BookOpen,
   Check,
   X,
@@ -36,7 +35,6 @@ import {
   ScanSearch,
   Clock,
   Shield,
-  ShieldCheck,
   AlertTriangle,
   Palette,
   Lock,
@@ -44,8 +42,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
-import { PageHeader, ChromaDBSettings, DatasetManager, DataVersionCard } from '@/components/domain'
-import { CompressionSettings } from '@/components/CompressionSettings'
+import { PageHeader, DataVersionCard } from '@/components/domain'
 import { ModelSettings } from '@/components/llm'
 import { LegalNoticesModal } from '@/components/legal'
 import { apiUrl } from '@/lib/apiBase'
@@ -589,16 +586,6 @@ export function Settings() {
   const [savingPolicy, setSavingPolicy] = useState(false)
   const [clearing, setClearing] = useState(false)
   
-  // Persona state
-  const [activePersona, setActivePersona] = useState<string>('it_admin')
-  const [personaNames, setPersonaNames] = useState<Record<string, string>>({
-    it_admin: 'Halbert',
-    friend: 'Cera',
-    casual: 'Cera'
-  })
-  const [editingPersonaName, setEditingPersonaName] = useState<string | null>(null)
-  const [savingName, setSavingName] = useState(false)
-  
   // Editing endpoint state
   const [showAddKnowledgeSource, setShowAddKnowledgeSource] = useState(false)
   
@@ -643,19 +630,6 @@ export function Settings() {
   const [docSuggestions, setDocSuggestions] = useState<DocSuggestion[]>([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [addingSuggestion, setAddingSuggestion] = useState<string | null>(null)
-  
-  // GPU Tweaks state - stored in localStorage
-  const [gpuTweaks, setGpuTweaks] = useState(() => {
-    try {
-      const stored = localStorage.getItem('halbert_gpu_tweaks')
-      if (stored) return JSON.parse(stored)
-    } catch {}
-    return {
-      connectionTimeout: 300, // seconds (5 min default)
-      maxTokens: 8192,
-      temperature: 0.7,
-    }
-  })
   
   // Trending Topics state (Phase 34 - Cutting-Edge Discovery)
   interface TrendingSuggestion {
@@ -860,26 +834,7 @@ export function Settings() {
       console.error('Failed to load policy:', err)
     }
     
-    // Load active persona
-    try {
-      const res = await fetch(`${API_BASE}/persona/status`)
-      const data = await res.json()
-      if (data.active_persona) {
-        setActivePersona(data.active_persona)
-      }
-    } catch (err) {
-      console.error('Failed to load persona status:', err)
-    }
-    
-    // Load persona names
-    try {
-      const res = await fetch(`${API_BASE}/settings/persona-names`)
-      const data = await res.json()
-      setPersonaNames(data.names || {})
-    } catch (err) {
-      console.error('Failed to load persona names:', err)
-    }
-    
+
     // Load RAG stats
     try {
       const res = await fetch(`${API_BASE}/rag/stats`)
@@ -1005,37 +960,6 @@ export function Settings() {
     } catch (err) {
       console.error('Failed to toggle rule:', err)
     }
-  }
-  
-  const handleSwitchPersona = async (personaId: string) => {
-    try {
-      const res = await fetch(`${API_BASE}/persona/switch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ persona: personaId, user: 'dashboard' })
-      })
-      if (res.ok) {
-        setActivePersona(personaId)
-      }
-    } catch (err) {
-      console.error('Failed to switch persona:', err)
-    }
-  }
-  
-  const handleSavePersonaName = async (personaId: string, name: string) => {
-    setSavingName(true)
-    try {
-      await fetch(`${API_BASE}/settings/persona-name`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ persona: personaId, name })
-      })
-      setPersonaNames(prev => ({ ...prev, [personaId]: name }))
-      setEditingPersonaName(null)
-    } catch (err) {
-      console.error('Failed to save persona name:', err)
-    }
-    setSavingName(false)
   }
   
   const handleAddKnowledgeSource = async () => {
@@ -1241,7 +1165,7 @@ export function Settings() {
       <PageHeader
         icon={<SettingsIcon className="h-8 w-8" />}
         title="Settings"
-        description="Configure Halbert behavior, AI models, and personas"
+        description="Configure Halbert behavior, AI models, and system settings"
         hideScanButton
       />
 
@@ -1396,93 +1320,6 @@ export function Settings() {
         <TabsContent value="ai" className="space-y-4">
           <ModelSettings />
 
-          {/* Context Compression - Phase 72 */}
-          <CompressionSettings />
-
-          {/* GPU Tweaks Section */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Cpu className="h-5 w-5" />
-                Performance Tweaks
-              </CardTitle>
-              <CardDescription>
-                Adjust these settings based on your hardware. Slower hardware (CPU, older GPU, network LLM) needs longer timeouts.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <Label className="flex items-center gap-2">
-                    <Clock className="h-4 w-4" />
-                    Connection Timeout
-                  </Label>
-                  <Select 
-                    value={String(gpuTweaks.connectionTimeout)}
-                    onChange={(e) => {
-                      const newTweaks = {...gpuTweaks, connectionTimeout: parseInt(e.target.value)}
-                      setGpuTweaks(newTweaks)
-                      localStorage.setItem('halbert_gpu_tweaks', JSON.stringify(newTweaks))
-                    }}
-                  >
-                    <option value="60">1 minute (Fast GPU)</option>
-                    <option value="120">2 minutes</option>
-                    <option value="300">5 minutes (Default)</option>
-                    <option value="600">10 minutes (Slow/Network)</option>
-                    <option value="900">15 minutes (Very Slow)</option>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">How long to wait for LLM response before showing timeout error</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="flex items-center gap-2">
-                    <FileCode className="h-4 w-4" />
-                    Max Tokens
-                  </Label>
-                  <Select 
-                    value={String(gpuTweaks.maxTokens)}
-                    onChange={(e) => {
-                      const newTweaks = {...gpuTweaks, maxTokens: parseInt(e.target.value)}
-                      setGpuTweaks(newTweaks)
-                      localStorage.setItem('halbert_gpu_tweaks', JSON.stringify(newTweaks))
-                    }}
-                  >
-                    <option value="2048">2K (Fast, shorter responses)</option>
-                    <option value="4096">4K</option>
-                    <option value="8192">8K (Default)</option>
-                    <option value="16384">16K (Detailed responses)</option>
-                    <option value="24576">24K (Very detailed)</option>
-                    <option value="32768">32K (Maximum)</option>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">Maximum response length. Higher = slower but more complete</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="flex items-center gap-2">
-                    <Sparkles className="h-4 w-4" />
-                    Temperature
-                  </Label>
-                  <Select 
-                    value={String(gpuTweaks.temperature)}
-                    onChange={(e) => {
-                      const newTweaks = {...gpuTweaks, temperature: parseFloat(e.target.value)}
-                      setGpuTweaks(newTweaks)
-                      localStorage.setItem('halbert_gpu_tweaks', JSON.stringify(newTweaks))
-                    }}
-                  >
-                    <option value="0.3">0.3 (Precise, deterministic)</option>
-                    <option value="0.5">0.5 (Balanced)</option>
-                    <option value="0.7">0.7 (Default, creative)</option>
-                    <option value="0.9">0.9 (Very creative)</option>
-                    <option value="1.0">1.0 (Maximum creativity)</option>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">Lower = more focused, higher = more creative/varied</p>
-                </div>
-              </div>
-              <div className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
-                💡 <strong>Tip:</strong> If responses are being cut off, increase Max Tokens. If you're getting timeouts, increase Connection Timeout.
-                M1/M2 Mac with large models may need 5-10 min timeout. RTX 4090 can use 1-2 min.
-              </div>
-            </CardContent>
-          </Card>
 
         </TabsContent>
 
@@ -1490,12 +1327,6 @@ export function Settings() {
         <TabsContent value="knowledge" className="space-y-4">
           {/* Data Version & Freshness - Phase 54 */}
           <DataVersionCard />
-
-          {/* ChromaDB Storage Overview - Phase 52 (centerpiece) */}
-          <ChromaDBSettings />
-
-          {/* Dataset Downloads - RAG data from Hugging Face */}
-          <DatasetManager />
 
           {/* Self-Knowledge Section */}
           <Card>
@@ -2030,163 +1861,6 @@ export function Settings() {
           </Card>
         </TabsContent>
 
-        {/* Personas Tab - HIDDEN from UI but code preserved for future use
-           The tab trigger is commented out above, so users cannot navigate here.
-           This feature may be revisited when:
-           - Persona behavior differentiation is implemented (different system prompts)
-           - Memory isolation per persona is completed
-           - Custom persona creation is added
-           For now, the AI just uses default name "Halbert" from PersonaManager.
-        */}
-        <TabsContent value="personas" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Users className="h-5 w-5" />
-                  Active Mode
-                </div>
-                <Button variant="outline" size="sm" disabled title="Coming soon">
-                  <Plus className="h-4 w-4 mr-1" />
-                  Add Persona
-                </Button>
-              </CardTitle>
-              <CardDescription>
-                Switch between different AI personalities. Each persona has its own name and style.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-4">
-                {/* IT Admin Persona */}
-                <div
-                  className={`relative flex-1 rounded-lg border-2 transition-all ${
-                    activePersona === 'it_admin'
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:border-primary/50'
-                  }`}
-                >
-                  {activePersona === 'it_admin' && (
-                    <Badge className="absolute top-2 right-2">Active</Badge>
-                  )}
-                  <button
-                    onClick={() => handleSwitchPersona('it_admin')}
-                    className="w-full p-4 text-left"
-                  >
-                    <div className="text-2xl mb-2">🔧</div>
-                    <p className="font-medium">IT Administrator</p>
-                    <p className="text-sm text-muted-foreground">Professional system management</p>
-                  </button>
-                  
-                  {/* AI Name for this persona */}
-                  <div className="px-4 pb-4 pt-2 border-t">
-                    <Label className="text-xs text-muted-foreground">AI Name</Label>
-                    {editingPersonaName === 'it_admin' ? (
-                      <div className="flex gap-2 mt-1">
-                        <Input
-                          value={personaNames['it_admin'] || 'Halbert'}
-                          onChange={(e) => setPersonaNames(prev => ({ ...prev, it_admin: e.target.value }))}
-                          className="h-7 text-sm"
-                          autoFocus
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleSavePersonaName('it_admin', personaNames['it_admin'] || 'Halbert')
-                            if (e.key === 'Escape') setEditingPersonaName(null)
-                          }}
-                        />
-                        <Button 
-                          size="sm" 
-                          className="h-7" 
-                          onClick={() => handleSavePersonaName('it_admin', personaNames['it_admin'] || 'Halbert')}
-                          disabled={savingName}
-                        >
-                          {savingName ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1 mt-1">
-                        <span className="text-sm font-medium">{personaNames['it_admin'] || 'Halbert'}</span>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-5 w-5 p-0"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setEditingPersonaName('it_admin')
-                          }}
-                        >
-                          <Edit3 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Casual Companion Persona */}
-                <div
-                  className={`relative flex-1 rounded-lg border-2 transition-all ${
-                    activePersona === 'friend'
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:border-primary/50'
-                  }`}
-                >
-                  {activePersona === 'friend' && (
-                    <Badge className="absolute top-2 right-2">Active</Badge>
-                  )}
-                  <button
-                    onClick={() => handleSwitchPersona('friend')}
-                    className="w-full p-4 text-left"
-                  >
-                    <div className="text-2xl mb-2">😊</div>
-                    <p className="font-medium">Casual Companion</p>
-                    <p className="text-sm text-muted-foreground">Warm conversational style</p>
-                  </button>
-                  
-                  {/* AI Name for this persona */}
-                  <div className="px-4 pb-4 pt-2 border-t">
-                    <Label className="text-xs text-muted-foreground">AI Name</Label>
-                    {editingPersonaName === 'friend' ? (
-                      <div className="flex gap-2 mt-1">
-                        <Input
-                          value={personaNames['friend'] || 'Cera'}
-                          onChange={(e) => setPersonaNames(prev => ({ ...prev, friend: e.target.value }))}
-                          className="h-7 text-sm"
-                          autoFocus
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleSavePersonaName('friend', personaNames['friend'] || 'Cera')
-                            if (e.key === 'Escape') setEditingPersonaName(null)
-                          }}
-                        />
-                        <Button 
-                          size="sm" 
-                          className="h-7" 
-                          onClick={() => handleSavePersonaName('friend', personaNames['friend'] || 'Cera')}
-                          disabled={savingName}
-                        >
-                          {savingName ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1 mt-1">
-                        <span className="text-sm font-medium">{personaNames['friend'] || 'Cera'}</span>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-5 w-5 p-0"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setEditingPersonaName('friend')
-                          }}
-                        >
-                          <Edit3 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         {/* Safety Tab - Consolidated AI Rules, Policy, and Guardrails */}
         <TabsContent value="safety" className="space-y-4">
           <Card>
@@ -2464,90 +2138,6 @@ export function Settings() {
             </CardContent>
           </Card>
 
-          {/* Autonomy Guardrails Section */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ShieldCheck className="h-5 w-5" />
-                Autonomy Guardrails
-              </CardTitle>
-              <CardDescription>
-                Safety limits for autonomous operations. These prevent runaway automation.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Confidence Thresholds */}
-              <div className="space-y-2">
-                <h4 className="font-medium text-sm flex items-center gap-2">
-                  <Brain className="h-4 w-4" />
-                  Confidence Thresholds
-                </h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Auto-Execute</p>
-                    <p className="text-2xl font-bold text-success">80%</p>
-                    <p className="text-xs text-muted-foreground">Actions above this run automatically</p>
-                  </div>
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Approval Required</p>
-                    <p className="text-2xl font-bold text-warning">50-80%</p>
-                    <p className="text-xs text-muted-foreground">Actions in this range need approval</p>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Resource Budgets */}
-              <div className="space-y-2">
-                <h4 className="font-medium text-sm flex items-center gap-2">
-                  <Cpu className="h-4 w-4" />
-                  Resource Budgets
-                </h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Max CPU</p>
-                    <p className="text-xl font-bold">50%</p>
-                  </div>
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Max Memory</p>
-                    <p className="text-xl font-bold">2 GB</p>
-                  </div>
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Max Time</p>
-                    <p className="text-xl font-bold">30 min</p>
-                  </div>
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Max Jobs/Hour</p>
-                    <p className="text-xl font-bold">10</p>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Safe Mode */}
-              <div className="space-y-2">
-                <h4 className="font-medium text-sm flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4" />
-                  Safe Mode
-                </h4>
-                <div className="p-4 bg-muted/30 rounded-lg">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">Auto-Pause on Anomaly</p>
-                      <p className="text-sm text-muted-foreground">
-                        Automatically enter safe mode when anomalies are detected
-                      </p>
-                    </div>
-                    <Badge variant="default">Enabled</Badge>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="pt-4 border-t">
-                <p className="text-xs text-muted-foreground">
-                  Guardrails config: <code className="px-1 py-0.5 bg-muted rounded">config/autonomy.yml</code>
-                </p>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
 
         {/* Alerts Tab */}
