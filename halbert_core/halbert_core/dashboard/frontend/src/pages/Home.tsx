@@ -84,8 +84,8 @@ export function Home() {
           variant="ghost"
           size="sm"
           onClick={async () => {
-            await checkStatus()
-            if (connected) await loadEntities()
+            const isConn = await checkStatus()
+            if (isConn) await loadEntities()
           }}
         >
           Refresh

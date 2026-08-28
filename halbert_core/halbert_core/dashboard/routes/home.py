@@ -97,12 +97,28 @@ async def save_config(req: HAConfigRequest):
 async def get_entities(
     domain: Optional[str] = Query(None, description="Filter by entity domain"),
 ):
-    """List HA entities, optionally filtered by domain."""
+    """List HA entities, optionally filtered by domain.
+
+    If no domain is specified, entities are filtered to the configured
+    visible_domains list.
+    """
+    from ...integrations.home_assistant.ha_config import load_ha_config
+
     client = _get_client()
     if not client.config.is_configured():
         raise HTTPException(status_code=400, detail="Home Assistant is not configured")
     try:
-        entities = await client.get_entities_by_domain(domain)
+        if domain:
+            entities = await client.get_entities_by_domain(domain)
+        else:
+            # No domain filter: return all, let frontend filter by visible_domains
+            entities = await client.get_entities_by_domain(None)
+            config = load_ha_config()
+            if config.visible_domains:
+                entities = [
+                    e for e in entities
+                    if e["entity_id"].split(".")[0] in config.visible_domains
+                ]
         return {"entities": entities, "count": len(entities)}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))

@@ -6,6 +6,20 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { apiUrl } from '@/lib/apiBase'
+import {
+  Lightbulb,
+  Power,
+  Thermometer,
+  Lock,
+  Blinds,
+  Fan,
+  Speaker,
+  Vacuum,
+  Sensor,
+  Person,
+  AlarmClock,
+  Circle,
+} from 'lucide-react'
 
 interface Entity {
   entity_id: string
@@ -18,25 +32,26 @@ interface EntityListProps {
   entities: Entity[]
 }
 
-const DOMAIN_ICONS: Record<string, string> = {
-  light: 'lightbulb',
-  switch: 'power',
-  climate: 'thermometer',
-  lock: 'lock',
-  cover: 'blinds',
-  fan: 'fan',
-  media_player: 'speaker',
-  vacuum: 'vacuum',
-  binary_sensor: 'sensor',
-  sensor: 'sensor',
-  person: 'person',
-  device_tracker: 'person',
-  alarm_control_panel: 'alarm',
+const DOMAIN_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  light: Lightbulb,
+  switch: Power,
+  climate: Thermometer,
+  lock: Lock,
+  cover: Blinds,
+  fan: Fan,
+  media_player: Speaker,
+  vacuum: Vacuum,
+  binary_sensor: Sensor,
+  sensor: Sensor,
+  person: Person,
+  device_tracker: Person,
+  alarm_control_panel: AlarmClock,
 }
 
-export function EntityList({ entities }: EntityListProps) {
+export function EntityList({ entities: initialEntities }: EntityListProps) {
   const [search, setSearch] = useState('')
   const [domainFilter, setDomainFilter] = useState<string | null>(null)
+  const [entities, setEntities] = useState<Entity[]>(initialEntities)
 
   const domains = useMemo(() => {
     const set = new Set<string>()
@@ -67,8 +82,14 @@ export function EntityList({ entities }: EntityListProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain, service, entity_id: entityId }),
       })
-    } catch (e) {
-      console.error('Service call failed:', e)
+      // Optimistic update: flip the state in the local list
+      setEntities(prev => prev.map(e =>
+        e.entity_id === entityId
+          ? { ...e, state: service === 'turn_on' ? 'on' : 'off' }
+          : e
+      ))
+    } catch (err) {
+      console.error('Service call failed:', err)
     }
   }
 
@@ -126,9 +147,10 @@ export function EntityList({ entities }: EntityListProps) {
                   className="flex items-center justify-between px-3 py-2 rounded-md hover:bg-accent/50 transition-colors"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <span className="text-xs text-muted-foreground font-mono shrink-0">
-                      {DOMAIN_ICONS[domain] || 'circle'}
-                    </span>
+                    {(() => {
+                      const Icon = DOMAIN_ICONS[domain] || Circle
+                      return <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+                    })()}
                     <div className="min-w-0">
                       <div className="text-sm font-medium truncate">{name}</div>
                       <div className="text-xs text-muted-foreground font-mono truncate">

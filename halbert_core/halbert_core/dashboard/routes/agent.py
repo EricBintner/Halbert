@@ -205,6 +205,13 @@ def get_agent():
             logger.warning(f"Intake pipeline not available (non-fatal): {e}")
 
         # Create agent
+        tool_executor.register_system_tools()
+        tool_executor.register_vision_tools()
+        try:
+            from ...integrations.home_assistant.ha_tool import register_ha_tools
+            register_ha_tools(tool_executor)
+        except Exception as e:
+            logger.warning(f"Could not register HA tools (non-fatal): {e}")
         _agent_instance = AgentStateMachine(
             llm_client=llm_client,
             tool_executor=tool_executor,

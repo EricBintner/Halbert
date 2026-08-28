@@ -233,3 +233,68 @@ class TestCognitionWiringParameterization:
         finally:
             if old is not None:
                 os.environ["HALBERT_SCENE_CONTEXT"] = old
+
+
+# --- HA tool registration tests ---
+
+class TestHAToolRegistration:
+    def test_register_ha_tools(self):
+        """Test that register_ha_tools adds both tools to a mock executor."""
+        from halbert_core.integrations.home_assistant.ha_tool import register_ha_tools
+
+        class MockExecutor:
+            def __init__(self):
+                self.tools = {}
+                self.schemas = {}
+
+            def register(self, name, handler, schema):
+                self.tools[name] = handler
+                self.schemas[name] = schema
+
+        executor = MockExecutor()
+        register_ha_tools(executor)
+
+        assert "ha_call_service" in executor.tools
+        assert "ha_get_entity_state" in executor.tools
+        assert executor.schemas["ha_call_service"]["name"] == "ha_call_service"
+        assert executor.schemas["ha_get_entity_state"]["name"] == "ha_get_entity_state"
+        # Verify required fields
+        assert "domain" in executor.schemas["ha_call_service"]["parameters"]["properties"]
+        assert "entity_id" in executor.schemas["ha_get_entity_state"]["parameters"]["properties"]
+
+    @pytest.mark.asyncio
+    async def test_call_service_handler_not_configured(self, monkeypatch):
+        """Handler returns error message when HA is not configured."""
+        from halbert_core.integrations.home_assistant import ha_tool
+        from halbert_core.integrations.home_assistant.ha_config import HAConfig
+
+        # Reset client with unconfigured config
+        await ha_tool.close_client()
+        monkeypatch.setattr(
+            "halbert_core.integrations.home_assistant.ha_tool.load_ha_config",
+            lambda: HAConfig(),
+        )
+
+        result = await ha_tool._ha_call_service_handler({
+            "domain": "light",
+            "service": "turn_on",
+            "entity_id": "light.test",
+        })
+        assert "not configured" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_get_entity_state_handler_not_configured(self, monkeypatch):
+        """Handler returns error message when HA is not configured."""
+        from halbert_core.integrations.home_assistant import ha_tool
+        from halbert_core.integrations.home_assistant.ha_config import HAConfig
+
+        await ha_tool.close_client()
+        monkeypatch.setattr(
+            "halbert_core.integrations.home_assistant.ha_tool.load_ha_config",
+            lambda: HAConfig(),
+        )
+
+        result = await ha_tool._ha_get_entity_state_handler({
+            "entity_id": "light.test",
+        })
+        assert "not configured" in result.lower()
