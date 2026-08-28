@@ -495,6 +495,8 @@ class StreamEvent:
         sandboxed: bool = False,
         cwd: Optional[str] = None,
         attach: str = "sse",
+        block_id: Optional[str] = None,
+        owner: str = "agent",
     ) -> 'StreamEvent':
         """Announce that a terminal came alive inside this turn (E1f).
 
@@ -504,6 +506,9 @@ class StreamEvent:
         ``"ws"``   — the session is a live PTY owned by the terminal session
                      manager and the frontend should attach to
                      ``/ws/terminal/{terminal_session_id}`` for full duplex.
+
+        ``block_id`` (Plan B) identifies the specific block within the session.
+        ``owner`` (Plan B) is 'agent' or 'user'.
         """
         return cls(
             type="terminal_spawn",
@@ -515,6 +520,8 @@ class StreamEvent:
                 "sandboxed": sandboxed,
                 "cwd": cwd,
                 "attach": attach,
+                "block_id": block_id,
+                "owner": owner,
             },
         )
 
@@ -538,14 +545,97 @@ class StreamEvent:
         session_id: str,
         terminal_session_id: str,
         exit_code: int,
+        *,
+        block_id: Optional[str] = None,
     ) -> 'StreamEvent':
         """The terminal's child process exited (E1f)."""
+        data: dict = {
+            "terminal_session_id": terminal_session_id,
+            "exit_code": exit_code,
+        }
+        if block_id is not None:
+            data["block_id"] = block_id
         return cls(
             type="terminal_complete",
             session_id=session_id,
+            data=data,
+        )
+
+    # -------------------------------------------------------------------------
+    # Terminal block events (Plan B: B12)
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    def terminal_block(
+        cls,
+        session_id: str,
+        *,
+        block_id: str,
+        terminal_session_id: str,
+        command: str,
+        owner: str = "agent",
+        interactive: bool = False,
+        promote: bool = False,
+    ) -> 'StreamEvent':
+        """A new terminal block opened, or a block was promoted to long-running.
+
+        type="terminal_block" when a new block opens.
+        type="terminal_block_promote" when promote=True (block is >2s old
+        and still open — the tile appears in the Tasks column).
+        """
+        return cls(
+            type="terminal_block_promote" if promote else "terminal_block",
+            session_id=session_id,
             data={
+                "block_id": block_id,
                 "terminal_session_id": terminal_session_id,
+                "command": command,
+                "owner": owner,
+                "interactive": interactive,
+            },
+        )
+
+    @classmethod
+    def terminal_needs_input(
+        cls,
+        session_id: str,
+        *,
+        block_id: str,
+        terminal_session_id: str,
+    ) -> 'StreamEvent':
+        """A terminal block is waiting for input (password prompt, etc.)."""
+        return cls(
+            type="terminal_needs_input",
+            session_id=session_id,
+            data={
+                "block_id": block_id,
+                "terminal_session_id": terminal_session_id,
+            },
+        )
+
+    @classmethod
+    def task_completed(
+        cls,
+        session_id: str,
+        *,
+        task_id: str,
+        thread_id: str,
+        title: str,
+        exit_code: int,
+        duration: float,
+        tail: str,
+    ) -> 'StreamEvent':
+        """A task (command block or sub-agent) completed (Plan B defines, Plan C uses)."""
+        return cls(
+            type="task_completed",
+            session_id=session_id,
+            data={
+                "task_id": task_id,
+                "thread_id": thread_id,
+                "title": title,
                 "exit_code": exit_code,
+                "duration": duration,
+                "tail": tail,
             },
         )
 
