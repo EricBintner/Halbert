@@ -21,9 +21,7 @@ import {
   Database,
   RefreshCw,
   Trash2,
-  Info,
   Brain,
-  Users,
   BookOpen,
   Check,
   X,
@@ -31,23 +29,19 @@ import {
   Zap,
   ChevronDown,
   ChevronUp,
-  ExternalLink,
   Edit3,
+  ExternalLink,
   ScanSearch,
   Clock,
+  Search,
   Shield,
-  ShieldCheck,
   AlertTriangle,
-  Palette,
   Lock,
   FileCode,
   Sparkles,
 } from 'lucide-react'
-import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
-import { PageHeader, ChromaDBSettings, DatasetManager, DataVersionCard } from '@/components/domain'
-import { CompressionSettings } from '@/components/CompressionSettings'
+import { PageHeader, DataVersionCard } from '@/components/domain'
 import { ModelSettings } from '@/components/llm'
-import { LegalNoticesModal } from '@/components/legal'
 import { apiUrl } from '@/lib/apiBase'
 
 const API_BASE = apiUrl('/api')
@@ -69,23 +63,14 @@ interface DiscoveryStats {
 // Being Settings Component (Phase 6 / T6c.1)
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface EndpointModel {
-  endpointId: string
-  endpointName: string
-  model: string
-}
-
 function BeingSettings() {
   const [config, setConfig] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const [availableModels, setAvailableModels] = useState<Record<string, EndpointModel[]>>({})
-  const [modelsLoading, setModelsLoading] = useState(false)
 
   useEffect(() => {
     loadConfig()
-    loadAvailableModels()
   }, [])
 
   const loadConfig = async () => {
@@ -99,41 +84,6 @@ function BeingSettings() {
       console.error('Failed to load being config:', e)
     } finally {
       setLoading(false)
-    }
-  }
-
-  const loadAvailableModels = async () => {
-    try {
-      setModelsLoading(true)
-      const resp = await fetch(`${API_BASE}/llm/config`)
-      if (!resp.ok) return
-      const data = await resp.json()
-      const endpoints = data?.data?.saved_endpoints || data?.saved_endpoints || []
-      const grouped: Record<string, EndpointModel[]> = {}
-      await Promise.all(endpoints.map(async (ep: any) => {
-        try {
-          const modelResp = await fetch(`${API_BASE}/api/llm/proxy/models`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider: ep.provider, url: ep.url, ...(ep.api_key ? { api_key: ep.api_key } : {}) }),
-          })
-          if (!modelResp.ok) return
-          const modelData = await modelResp.json()
-          const models: string[] = modelData?.data?.models || modelData?.models || []
-          if (models.length) {
-            grouped[ep.id] = models.map((m: string) => ({
-              endpointId: ep.id,
-              endpointName: ep.name,
-              model: m,
-            }))
-          }
-        } catch { /* endpoint unreachable, skip */ }
-      }))
-      setAvailableModels(grouped)
-    } catch (e) {
-      console.error('Failed to load available models:', e)
-    } finally {
-      setModelsLoading(false)
     }
   }
 
@@ -248,41 +198,6 @@ function BeingSettings() {
             </div>
             <p className="text-xs text-muted-foreground">
               How the voice is characterized in conversation.
-            </p>
-          </div>
-
-          {/* Conversation Model */}
-          <div className="space-y-2">
-            <Label>Conversation Model</Label>
-            <Select
-              value={config.model ? `${config.model_endpoint_id || ''}:${config.model}` : ''}
-              onChange={(e) => {
-                const val = e.target.value
-                if (!val) {
-                  saveConfig({ model: '', model_endpoint_id: '' })
-                } else {
-                  const sepIdx = val.indexOf(':')
-                  const endpointId = val.substring(0, sepIdx)
-                  const model = val.substring(sepIdx + 1)
-                  saveConfig({ model, model_endpoint_id: endpointId })
-                }
-              }}
-              disabled={saving || modelsLoading}
-            >
-              <option value="">Default (System Agent Model)</option>
-              {Object.entries(availableModels).map(([epId, models]) => (
-                <optgroup key={epId} label={models[0]?.endpointName || epId}>
-                  {models.map((m) => (
-                    <option key={`${epId}:${m.model}`} value={`${epId}:${m.model}`}>
-                      {m.model}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-              {modelsLoading && <option disabled>Loading models...</option>}
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Override the system agent model for this persona. Default uses the global chat model.
             </p>
           </div>
 
@@ -541,8 +456,40 @@ function BeingSettings() {
  * mistyped link — so it opens the first tab, which is what a bare /settings
  * does too.
  */
-const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'about'] as const
+const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being'] as const
 const DEFAULT_SETTINGS_TAB = SETTINGS_TABS[0]
+
+type SettingsNavItem = { id: string; label: string; icon: typeof Cpu }
+type SettingsSection = { id: string; label: string; items: SettingsNavItem[] }
+
+const SETTINGS_SECTIONS: SettingsSection[] = [
+  {
+    id: 'being',
+    label: 'The Being',
+    items: [{ id: 'being', label: 'Identity & Voice', icon: Sparkles }],
+  },
+  {
+    id: 'intelligence',
+    label: 'Intelligence',
+    items: [
+      { id: 'ai', label: 'Models & Providers', icon: Brain },
+      { id: 'knowledge', label: 'Knowledge', icon: BookOpen },
+    ],
+  },
+  {
+    id: 'system-security',
+    label: 'System & Security',
+    items: [
+      { id: 'safety', label: 'Tool Permissions', icon: Shield },
+      { id: 'alerts', label: 'Alert Rules', icon: Bell },
+    ],
+  },
+  {
+    id: 'general',
+    label: 'General',
+    items: [{ id: 'system', label: 'System Info', icon: Cpu }],
+  },
+]
 
 /** The tab a URL asks for, or the default when it asks for nothing usable. */
 export function settingsTabFromParam(raw: string | null): string {
@@ -573,6 +520,9 @@ export function Settings() {
     }, { replace: true })
   }, [setSearchParams])
 
+  // Settings sidebar search filter
+  const [settingsQuery, setSettingsQuery] = useState('')
+
   // Scan context for coordinated system-wide scanning
   const { triggerDeepScan, isDeepScanning } = useScan()
   
@@ -588,16 +538,6 @@ export function Settings() {
   const [policyPath, setPolicyPath] = useState<string>('')
   const [savingPolicy, setSavingPolicy] = useState(false)
   const [clearing, setClearing] = useState(false)
-  
-  // Persona state
-  const [activePersona, setActivePersona] = useState<string>('it_admin')
-  const [personaNames, setPersonaNames] = useState<Record<string, string>>({
-    it_admin: 'Halbert',
-    friend: 'Cera',
-    casual: 'Cera'
-  })
-  const [editingPersonaName, setEditingPersonaName] = useState<string | null>(null)
-  const [savingName, setSavingName] = useState(false)
   
   // Editing endpoint state
   const [showAddKnowledgeSource, setShowAddKnowledgeSource] = useState(false)
@@ -643,19 +583,6 @@ export function Settings() {
   const [docSuggestions, setDocSuggestions] = useState<DocSuggestion[]>([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [addingSuggestion, setAddingSuggestion] = useState<string | null>(null)
-  
-  // GPU Tweaks state - stored in localStorage
-  const [gpuTweaks, setGpuTweaks] = useState(() => {
-    try {
-      const stored = localStorage.getItem('halbert_gpu_tweaks')
-      if (stored) return JSON.parse(stored)
-    } catch {}
-    return {
-      connectionTimeout: 300, // seconds (5 min default)
-      maxTokens: 8192,
-      temperature: 0.7,
-    }
-  })
   
   // Trending Topics state (Phase 34 - Cutting-Edge Discovery)
   interface TrendingSuggestion {
@@ -706,10 +633,8 @@ export function Settings() {
   })
   
   // Component Library viewer state
-  const [showComponentLibrary, setShowComponentLibrary] = useState(false)
 
   // Legal notices modal state (LEG-MOD-01)
-  const [showLegalNotices, setShowLegalNotices] = useState(false)
   
   // System Profile state
   const [systemProfile, setSystemProfile] = useState<{
@@ -860,26 +785,7 @@ export function Settings() {
       console.error('Failed to load policy:', err)
     }
     
-    // Load active persona
-    try {
-      const res = await fetch(`${API_BASE}/persona/status`)
-      const data = await res.json()
-      if (data.active_persona) {
-        setActivePersona(data.active_persona)
-      }
-    } catch (err) {
-      console.error('Failed to load persona status:', err)
-    }
-    
-    // Load persona names
-    try {
-      const res = await fetch(`${API_BASE}/settings/persona-names`)
-      const data = await res.json()
-      setPersonaNames(data.names || {})
-    } catch (err) {
-      console.error('Failed to load persona names:', err)
-    }
-    
+
     // Load RAG stats
     try {
       const res = await fetch(`${API_BASE}/rag/stats`)
@@ -1005,37 +911,6 @@ export function Settings() {
     } catch (err) {
       console.error('Failed to toggle rule:', err)
     }
-  }
-  
-  const handleSwitchPersona = async (personaId: string) => {
-    try {
-      const res = await fetch(`${API_BASE}/persona/switch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ persona: personaId, user: 'dashboard' })
-      })
-      if (res.ok) {
-        setActivePersona(personaId)
-      }
-    } catch (err) {
-      console.error('Failed to switch persona:', err)
-    }
-  }
-  
-  const handleSavePersonaName = async (personaId: string, name: string) => {
-    setSavingName(true)
-    try {
-      await fetch(`${API_BASE}/settings/persona-name`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ persona: personaId, name })
-      })
-      setPersonaNames(prev => ({ ...prev, [personaId]: name }))
-      setEditingPersonaName(null)
-    } catch (err) {
-      console.error('Failed to save persona name:', err)
-    }
-    setSavingName(false)
   }
   
   const handleAddKnowledgeSource = async () => {
@@ -1241,41 +1116,60 @@ export function Settings() {
       <PageHeader
         icon={<SettingsIcon className="h-8 w-8" />}
         title="Settings"
-        description="Configure Halbert behavior, AI models, and personas"
+        description="Configure Halbert behavior, AI models, and system settings"
         hideScanButton
       />
 
-      <Tabs value={activeTab} onValueChange={selectTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-7">
-          <TabsTrigger value="system" className="flex items-center gap-2">
-            <Cpu className="h-4 w-4" />
-            System
-          </TabsTrigger>
-          <TabsTrigger value="ai" className="flex items-center gap-2">
-            <Brain className="h-4 w-4" />
-            AI Models
-          </TabsTrigger>
-          <TabsTrigger value="knowledge" className="flex items-center gap-2">
-            <BookOpen className="h-4 w-4" />
-            Knowledge
-          </TabsTrigger>
-          <TabsTrigger value="safety" className="flex items-center gap-2">
-            <Shield className="h-4 w-4" />
-            Safety
-          </TabsTrigger>
-          <TabsTrigger value="alerts" className="flex items-center gap-2">
-            <Bell className="h-4 w-4" />
-            Alerts
-          </TabsTrigger>
-          <TabsTrigger value="being" className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4" />
-            Being
-          </TabsTrigger>
-          <TabsTrigger value="about" className="flex items-center gap-2">
-            <Info className="h-4 w-4" />
-            About
-          </TabsTrigger>
-        </TabsList>
+      <Tabs value={activeTab} onValueChange={selectTab} orientation="vertical" className="flex gap-6">
+        <aside className="w-56 shrink-0 space-y-4">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="Filter settings..."
+              value={settingsQuery}
+              onChange={(e) => setSettingsQuery(e.target.value)}
+              className="pl-8 h-9"
+              onKeyDown={(e) => { if (e.key === 'Escape') setSettingsQuery('') }}
+            />
+          </div>
+          <TabsList className="flex flex-col h-auto w-full gap-0 bg-transparent p-0">
+            {SETTINGS_SECTIONS.map((section) => {
+              const filteredItems = section.items.filter((item) => {
+                if (!settingsQuery) return true
+                const q = settingsQuery.toLowerCase()
+                return (
+                  item.label.toLowerCase().includes(q) ||
+                  section.label.toLowerCase().includes(q) ||
+                  item.id.includes(q)
+                )
+              })
+              if (filteredItems.length === 0) return null
+              return (
+                <div key={section.id} className="space-y-0.5">
+                  <p className="px-3 pt-3 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {section.label}
+                  </p>
+                  {filteredItems.map((item) => {
+                    const Icon = item.icon
+                    return (
+                      <TabsTrigger
+                        key={item.id}
+                        value={item.id}
+                        className="flex w-full items-center justify-start gap-2 rounded-md px-3 py-2 text-sm transition-colors data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-muted data-[state=inactive]:hover:text-foreground"
+                      >
+                        <Icon className="h-4 w-4 shrink-0" />
+                        {item.label}
+                      </TabsTrigger>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </TabsList>
+        </aside>
+
+        <div className="flex-1 min-w-0">
 
         {/* System Tab */}
         <TabsContent value="system" className="space-y-4">
@@ -1396,93 +1290,6 @@ export function Settings() {
         <TabsContent value="ai" className="space-y-4">
           <ModelSettings />
 
-          {/* Context Compression - Phase 72 */}
-          <CompressionSettings />
-
-          {/* GPU Tweaks Section */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Cpu className="h-5 w-5" />
-                Performance Tweaks
-              </CardTitle>
-              <CardDescription>
-                Adjust these settings based on your hardware. Slower hardware (CPU, older GPU, network LLM) needs longer timeouts.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <Label className="flex items-center gap-2">
-                    <Clock className="h-4 w-4" />
-                    Connection Timeout
-                  </Label>
-                  <Select 
-                    value={String(gpuTweaks.connectionTimeout)}
-                    onChange={(e) => {
-                      const newTweaks = {...gpuTweaks, connectionTimeout: parseInt(e.target.value)}
-                      setGpuTweaks(newTweaks)
-                      localStorage.setItem('halbert_gpu_tweaks', JSON.stringify(newTweaks))
-                    }}
-                  >
-                    <option value="60">1 minute (Fast GPU)</option>
-                    <option value="120">2 minutes</option>
-                    <option value="300">5 minutes (Default)</option>
-                    <option value="600">10 minutes (Slow/Network)</option>
-                    <option value="900">15 minutes (Very Slow)</option>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">How long to wait for LLM response before showing timeout error</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="flex items-center gap-2">
-                    <FileCode className="h-4 w-4" />
-                    Max Tokens
-                  </Label>
-                  <Select 
-                    value={String(gpuTweaks.maxTokens)}
-                    onChange={(e) => {
-                      const newTweaks = {...gpuTweaks, maxTokens: parseInt(e.target.value)}
-                      setGpuTweaks(newTweaks)
-                      localStorage.setItem('halbert_gpu_tweaks', JSON.stringify(newTweaks))
-                    }}
-                  >
-                    <option value="2048">2K (Fast, shorter responses)</option>
-                    <option value="4096">4K</option>
-                    <option value="8192">8K (Default)</option>
-                    <option value="16384">16K (Detailed responses)</option>
-                    <option value="24576">24K (Very detailed)</option>
-                    <option value="32768">32K (Maximum)</option>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">Maximum response length. Higher = slower but more complete</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="flex items-center gap-2">
-                    <Sparkles className="h-4 w-4" />
-                    Temperature
-                  </Label>
-                  <Select 
-                    value={String(gpuTweaks.temperature)}
-                    onChange={(e) => {
-                      const newTweaks = {...gpuTweaks, temperature: parseFloat(e.target.value)}
-                      setGpuTweaks(newTweaks)
-                      localStorage.setItem('halbert_gpu_tweaks', JSON.stringify(newTweaks))
-                    }}
-                  >
-                    <option value="0.3">0.3 (Precise, deterministic)</option>
-                    <option value="0.5">0.5 (Balanced)</option>
-                    <option value="0.7">0.7 (Default, creative)</option>
-                    <option value="0.9">0.9 (Very creative)</option>
-                    <option value="1.0">1.0 (Maximum creativity)</option>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">Lower = more focused, higher = more creative/varied</p>
-                </div>
-              </div>
-              <div className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
-                💡 <strong>Tip:</strong> If responses are being cut off, increase Max Tokens. If you're getting timeouts, increase Connection Timeout.
-                M1/M2 Mac with large models may need 5-10 min timeout. RTX 4090 can use 1-2 min.
-              </div>
-            </CardContent>
-          </Card>
 
         </TabsContent>
 
@@ -1490,12 +1297,6 @@ export function Settings() {
         <TabsContent value="knowledge" className="space-y-4">
           {/* Data Version & Freshness - Phase 54 */}
           <DataVersionCard />
-
-          {/* ChromaDB Storage Overview - Phase 52 (centerpiece) */}
-          <ChromaDBSettings />
-
-          {/* Dataset Downloads - RAG data from Hugging Face */}
-          <DatasetManager />
 
           {/* Self-Knowledge Section */}
           <Card>
@@ -2030,163 +1831,6 @@ export function Settings() {
           </Card>
         </TabsContent>
 
-        {/* Personas Tab - HIDDEN from UI but code preserved for future use
-           The tab trigger is commented out above, so users cannot navigate here.
-           This feature may be revisited when:
-           - Persona behavior differentiation is implemented (different system prompts)
-           - Memory isolation per persona is completed
-           - Custom persona creation is added
-           For now, the AI just uses default name "Halbert" from PersonaManager.
-        */}
-        <TabsContent value="personas" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Users className="h-5 w-5" />
-                  Active Mode
-                </div>
-                <Button variant="outline" size="sm" disabled title="Coming soon">
-                  <Plus className="h-4 w-4 mr-1" />
-                  Add Persona
-                </Button>
-              </CardTitle>
-              <CardDescription>
-                Switch between different AI personalities. Each persona has its own name and style.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-4">
-                {/* IT Admin Persona */}
-                <div
-                  className={`relative flex-1 rounded-lg border-2 transition-all ${
-                    activePersona === 'it_admin'
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:border-primary/50'
-                  }`}
-                >
-                  {activePersona === 'it_admin' && (
-                    <Badge className="absolute top-2 right-2">Active</Badge>
-                  )}
-                  <button
-                    onClick={() => handleSwitchPersona('it_admin')}
-                    className="w-full p-4 text-left"
-                  >
-                    <div className="text-2xl mb-2">🔧</div>
-                    <p className="font-medium">IT Administrator</p>
-                    <p className="text-sm text-muted-foreground">Professional system management</p>
-                  </button>
-                  
-                  {/* AI Name for this persona */}
-                  <div className="px-4 pb-4 pt-2 border-t">
-                    <Label className="text-xs text-muted-foreground">AI Name</Label>
-                    {editingPersonaName === 'it_admin' ? (
-                      <div className="flex gap-2 mt-1">
-                        <Input
-                          value={personaNames['it_admin'] || 'Halbert'}
-                          onChange={(e) => setPersonaNames(prev => ({ ...prev, it_admin: e.target.value }))}
-                          className="h-7 text-sm"
-                          autoFocus
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleSavePersonaName('it_admin', personaNames['it_admin'] || 'Halbert')
-                            if (e.key === 'Escape') setEditingPersonaName(null)
-                          }}
-                        />
-                        <Button 
-                          size="sm" 
-                          className="h-7" 
-                          onClick={() => handleSavePersonaName('it_admin', personaNames['it_admin'] || 'Halbert')}
-                          disabled={savingName}
-                        >
-                          {savingName ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1 mt-1">
-                        <span className="text-sm font-medium">{personaNames['it_admin'] || 'Halbert'}</span>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-5 w-5 p-0"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setEditingPersonaName('it_admin')
-                          }}
-                        >
-                          <Edit3 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Casual Companion Persona */}
-                <div
-                  className={`relative flex-1 rounded-lg border-2 transition-all ${
-                    activePersona === 'friend'
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:border-primary/50'
-                  }`}
-                >
-                  {activePersona === 'friend' && (
-                    <Badge className="absolute top-2 right-2">Active</Badge>
-                  )}
-                  <button
-                    onClick={() => handleSwitchPersona('friend')}
-                    className="w-full p-4 text-left"
-                  >
-                    <div className="text-2xl mb-2">😊</div>
-                    <p className="font-medium">Casual Companion</p>
-                    <p className="text-sm text-muted-foreground">Warm conversational style</p>
-                  </button>
-                  
-                  {/* AI Name for this persona */}
-                  <div className="px-4 pb-4 pt-2 border-t">
-                    <Label className="text-xs text-muted-foreground">AI Name</Label>
-                    {editingPersonaName === 'friend' ? (
-                      <div className="flex gap-2 mt-1">
-                        <Input
-                          value={personaNames['friend'] || 'Cera'}
-                          onChange={(e) => setPersonaNames(prev => ({ ...prev, friend: e.target.value }))}
-                          className="h-7 text-sm"
-                          autoFocus
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleSavePersonaName('friend', personaNames['friend'] || 'Cera')
-                            if (e.key === 'Escape') setEditingPersonaName(null)
-                          }}
-                        />
-                        <Button 
-                          size="sm" 
-                          className="h-7" 
-                          onClick={() => handleSavePersonaName('friend', personaNames['friend'] || 'Cera')}
-                          disabled={savingName}
-                        >
-                          {savingName ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1 mt-1">
-                        <span className="text-sm font-medium">{personaNames['friend'] || 'Cera'}</span>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-5 w-5 p-0"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setEditingPersonaName('friend')
-                          }}
-                        >
-                          <Edit3 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         {/* Safety Tab - Consolidated AI Rules, Policy, and Guardrails */}
         <TabsContent value="safety" className="space-y-4">
           <Card>
@@ -2464,90 +2108,6 @@ export function Settings() {
             </CardContent>
           </Card>
 
-          {/* Autonomy Guardrails Section */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ShieldCheck className="h-5 w-5" />
-                Autonomy Guardrails
-              </CardTitle>
-              <CardDescription>
-                Safety limits for autonomous operations. These prevent runaway automation.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Confidence Thresholds */}
-              <div className="space-y-2">
-                <h4 className="font-medium text-sm flex items-center gap-2">
-                  <Brain className="h-4 w-4" />
-                  Confidence Thresholds
-                </h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Auto-Execute</p>
-                    <p className="text-2xl font-bold text-success">80%</p>
-                    <p className="text-xs text-muted-foreground">Actions above this run automatically</p>
-                  </div>
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Approval Required</p>
-                    <p className="text-2xl font-bold text-warning">50-80%</p>
-                    <p className="text-xs text-muted-foreground">Actions in this range need approval</p>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Resource Budgets */}
-              <div className="space-y-2">
-                <h4 className="font-medium text-sm flex items-center gap-2">
-                  <Cpu className="h-4 w-4" />
-                  Resource Budgets
-                </h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Max CPU</p>
-                    <p className="text-xl font-bold">50%</p>
-                  </div>
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Max Memory</p>
-                    <p className="text-xl font-bold">2 GB</p>
-                  </div>
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Max Time</p>
-                    <p className="text-xl font-bold">30 min</p>
-                  </div>
-                  <div className="p-3 bg-muted/30 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Max Jobs/Hour</p>
-                    <p className="text-xl font-bold">10</p>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Safe Mode */}
-              <div className="space-y-2">
-                <h4 className="font-medium text-sm flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4" />
-                  Safe Mode
-                </h4>
-                <div className="p-4 bg-muted/30 rounded-lg">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">Auto-Pause on Anomaly</p>
-                      <p className="text-sm text-muted-foreground">
-                        Automatically enter safe mode when anomalies are detected
-                      </p>
-                    </div>
-                    <Badge variant="default">Enabled</Badge>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="pt-4 border-t">
-                <p className="text-xs text-muted-foreground">
-                  Guardrails config: <code className="px-1 py-0.5 bg-muted rounded">config/autonomy.yml</code>
-                </p>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
 
         {/* Alerts Tab */}
@@ -2597,77 +2157,9 @@ export function Settings() {
           <BeingSettings />
         </TabsContent>
 
-        {/* About Tab */}
-        <TabsContent value="about" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Info className="h-5 w-5" />
-                About Halbert
-              </CardTitle>
-              <CardDescription>
-                AI-powered Linux system assistant
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <h4 className="font-medium">Version</h4>
-                <p className="text-sm text-muted-foreground">Development Build</p>
-              </div>
-              
-              <div className="space-y-2">
-                <h4 className="font-medium">Developer Tools</h4>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Explore the UI component library used to build Halbert.
-                </p>
-                <Button variant="outline" onClick={() => setShowComponentLibrary(true)}>
-                  <Palette className="h-4 w-4 mr-2" />
-                  View Component Library
-                </Button>
-              </div>
-
-              <div className="space-y-2">
-                <h4 className="font-medium">Legal & Third-Party Notices</h4>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Licenses and attributions for Halbert, its RAG corpus sources,
-                  software dependencies, and bundled foundation models.
-                </p>
-                <Button variant="outline" onClick={() => setShowLegalNotices(true)}>
-                  <Shield className="h-4 w-4 mr-2" />
-                  View Legal Notices
-                </Button>
-              </div>
-              
-              <div className="space-y-2">
-                <h4 className="font-medium">Links</h4>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="ghost" size="sm" asChild>
-                    <a href="https://github.com" target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="h-4 w-4 mr-1" />
-                      GitHub
-                    </a>
-                  </Button>
-                  <Button variant="ghost" size="sm" asChild>
-                    <a href="/docs" target="_blank" rel="noopener noreferrer">
-                      <BookOpen className="h-4 w-4 mr-1" />
-                      Documentation
-                    </a>
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+        </div>
       </Tabs>
-      
-      {/* Component Library Viewer */}
-      {showComponentLibrary && (
-        <ComponentLibraryViewer onClose={() => setShowComponentLibrary(false)} />
-      )}
-
-      {/* Legal Notices Modal (LEG-MOD-01) */}
-      <LegalNoticesModal open={showLegalNotices} onOpenChange={setShowLegalNotices} />
-      
+            
       {/* Toast Notifications */}
       <Toast 
         open={toast.open}

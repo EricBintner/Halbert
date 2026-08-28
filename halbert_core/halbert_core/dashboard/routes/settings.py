@@ -381,52 +381,6 @@ async def install_model(model_name: str) -> Dict[str, Any]:
         }
 
 
-@router.get("/persona-names")
-async def get_persona_names() -> Dict[str, Any]:
-    """Get the AI name and user preferences from onboarding.
-    
-    Name priority:
-    1. ai_name from preferences (set during onboarding)
-    2. System hostname
-    3. "Halbert" (app default)
-    """
-    import socket
-    
-    try:
-        config_path = get_config_dir() / 'preferences.yml'
-        
-        # Get system hostname as fallback
-        try:
-            hostname = socket.gethostname()
-        except:
-            hostname = None
-        
-        # Default result - use hostname or app name
-        result = {
-            'ai_name': hostname or 'Halbert',
-            'user_name': None,
-            'user_type': None,
-            'names': {}  # Deprecated but kept for backwards compatibility
-        }
-        
-        if config_path.exists():
-            with open(config_path, 'r') as f:
-                prefs = yaml.safe_load(f) or {}
-            
-            # Priority: ai_name > hostname > "Halbert"
-            if prefs.get('ai_name'):
-                result['ai_name'] = prefs['ai_name']
-            
-            if prefs.get('user_name'):
-                result['user_name'] = prefs['user_name']
-            if prefs.get('user_type'):
-                result['user_type'] = prefs['user_type']
-        
-        return result
-    
-    except Exception as e:
-        logger.error(f"Error getting persona names: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 class ComputerNameUpdate(BaseModel):
@@ -473,10 +427,6 @@ async def update_computer_name(data: ComputerNameUpdate) -> Dict[str, Any]:
         logger.error(f"Error updating computer name: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-class PersonaNameUpdate(BaseModel):
-    persona: str
-    name: str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -644,59 +594,8 @@ async def update_ai_rule(rule_id: str, rule: AIRule) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/persona-name")
-async def set_persona_name(update: PersonaNameUpdate) -> Dict[str, Any]:
-    """Set the AI name for a specific persona."""
-    try:
-        config_path = get_config_dir() / 'preferences.yml'
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        if config_path.exists():
-            with open(config_path, 'r') as f:
-                prefs = yaml.safe_load(f) or {}
-        else:
-            prefs = {}
-        
-        if 'persona_names' not in prefs:
-            prefs['persona_names'] = {
-                'it_admin': 'Halbert',
-                'friend': 'Cera',
-                'casual': 'Cera',
-                'custom': 'Assistant'
-            }
-        
-        prefs['persona_names'][update.persona] = update.name
-        
-        with open(config_path, 'w') as f:
-            yaml.dump(prefs, f, default_flow_style=False)
-        
-        logger.info(f"Persona '{update.persona}' name set to: {update.name}")
-        return {'success': True, 'persona': update.persona, 'name': update.name}
-    
-    except Exception as e:
-        logger.error(f"Error setting persona name: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
-# Keep old endpoint for backwards compatibility
-@router.get("/computer-name")
-async def get_computer_name() -> Dict[str, str]:
-    """DEPRECATED: Use /persona-names instead. Get the default AI name."""
-    try:
-        config_path = get_config_dir() / 'preferences.yml'
-        
-        if config_path.exists():
-            with open(config_path, 'r') as f:
-                prefs = yaml.safe_load(f) or {}
-            # Return the active persona's name or fallback
-            persona_names = prefs.get('persona_names', {})
-            return {'name': persona_names.get('it_admin', 'Halbert')}
-        
-        return {'name': 'Halbert'}
-    
-    except Exception as e:
-        logger.error(f"Error getting computer name: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/prompts")

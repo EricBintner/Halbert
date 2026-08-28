@@ -35,7 +35,6 @@ vi.mock('@/lib/api', () => ({
 // which tab the URL opens — instead of about the picker's discovery state.
 vi.mock('@/components/llm', () => ({
   ModelSettings: () => <div data-testid="model-settings" />,
-  CompressionSettings: () => <div data-testid="compression-settings" />,
 }))
 
 import { Settings } from './Settings'
@@ -69,15 +68,15 @@ describe('Settings tabs follow the URL', () => {
   it('opens the tab named in the URL, so a deep link lands where it points', async () => {
     renderAt('/settings?tab=ai')
     await waitFor(() =>
-      expect(tab(/AI Models/i)).toHaveAttribute('aria-selected', 'true'),
+      expect(tab(/Models & Providers/i)).toHaveAttribute('aria-selected', 'true'),
     )
-    expect(tab(/System/i)).toHaveAttribute('aria-selected', 'false')
+    expect(tab(/System Info/i)).toHaveAttribute('aria-selected', 'false')
   })
 
   it('still opens System when the URL names no tab', async () => {
     renderAt('/settings')
     await waitFor(() =>
-      expect(tab(/System/i)).toHaveAttribute('aria-selected', 'true'),
+      expect(tab(/System Info/i)).toHaveAttribute('aria-selected', 'true'),
     )
   })
 
@@ -86,20 +85,20 @@ describe('Settings tabs follow the URL', () => {
     // unrecognised ?tab= would otherwise show a page of nothing but tabs.
     renderAt('/settings?tab=not-a-tab')
     await waitFor(() =>
-      expect(tab(/System/i)).toHaveAttribute('aria-selected', 'true'),
+      expect(tab(/System Info/i)).toHaveAttribute('aria-selected', 'true'),
     )
   })
 
   it('writes the tab back to the URL, so the tab someone is on is linkable', async () => {
     const user = userEvent.setup()
     renderAt('/settings')
-    await waitFor(() => expect(tab(/System/i)).toBeInTheDocument())
+    await waitFor(() => expect(tab(/System Info/i)).toBeInTheDocument())
 
-    await user.click(tab(/AI Models/i))
+    await user.click(tab(/Models & Providers/i))
 
     await waitFor(() =>
       expect(screen.getByTestId('url')).toHaveTextContent('/settings?tab=ai'),
     )
-    expect(tab(/AI Models/i)).toHaveAttribute('aria-selected', 'true')
+    expect(tab(/Models & Providers/i)).toHaveAttribute('aria-selected', 'true')
   })
 })

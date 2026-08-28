@@ -139,20 +139,9 @@ export const api = {
     let completed = false
     let cancelled = false
 
-    // Performance tweaks from Settings > AI > Performance Tweaks
-    // (same localStorage source as useAgentStream.ts).
-    let maxTokens = 8192
-    let temperature = 0.7
-    try {
-      const tweaks = localStorage.getItem('halbert_gpu_tweaks')
-      if (tweaks) {
-        const parsed = JSON.parse(tweaks)
-        if (parsed.maxTokens) maxTokens = parsed.maxTokens
-        if (parsed.temperature) temperature = parsed.temperature
-      }
-    } catch {
-      /* defaults are fine */
-    }
+    // Engine defaults — the backend owns max_tokens and temperature policy.
+    const maxTokens = 8192
+    const temperature = 0.7
 
     const fail = (msg: string): AgentStreamResult => {
       onError?.(msg)

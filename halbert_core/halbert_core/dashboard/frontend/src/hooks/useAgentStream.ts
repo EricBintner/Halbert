@@ -684,17 +684,10 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     // Use fetch with POST for SSE (EventSource only supports GET)
     const controller = new AbortController();
     
-    // Timeout detection - configurable in Settings > AI > Performance Tweaks
-    // Read from localStorage, default to 5 minutes (300 seconds)
-    let timeoutSeconds = 300;
-    try {
-      const tweaks = localStorage.getItem('halbert_gpu_tweaks');
-      if (tweaks) {
-        const parsed = JSON.parse(tweaks);
-        if (parsed.connectionTimeout) timeoutSeconds = parsed.connectionTimeout;
-      }
-    } catch {}
-    const CONNECTION_TIMEOUT = timeoutSeconds * 1000;
+    // Connection timeout — 5 minutes is the sensible default for local and
+    // network LLMs. The old GPU Tweaks localStorage override was removed;
+    // httpx on the backend handles retry/timeout policy.
+    const CONNECTION_TIMEOUT = 300 * 1000;
     let lastDataTime = Date.now();
     let timeoutCheckInterval: ReturnType<typeof setInterval> | null = null;
     
@@ -724,17 +717,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       }
     };
     
-    // Get performance tweaks from localStorage (set in Settings > AI > Performance Tweaks)
-    let maxTokens = 8192;
-    let temperature = 0.7;
-    try {
-      const tweaks = localStorage.getItem('halbert_gpu_tweaks');
-      if (tweaks) {
-        const parsed = JSON.parse(tweaks);
-        if (parsed.maxTokens) maxTokens = parsed.maxTokens;
-        if (parsed.temperature) temperature = parsed.temperature;
-      }
-    } catch {}
+    // Engine defaults — the backend owns max_tokens and temperature policy.
+    const maxTokens = 8192;
+    const temperature = 0.7;
     
     fetch(apiUrl('/api/agent/message'), {
       method: 'POST',
