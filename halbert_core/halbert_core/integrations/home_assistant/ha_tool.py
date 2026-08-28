@@ -93,6 +93,8 @@ HA_GET_ENTITY_STATE_SCHEMA = {
 
 async def _ha_call_service_handler(args: Dict[str, Any]) -> str:
     """ToolExecutor handler for ha_call_service."""
+    from .ha_governance import HAGovernancePolicy
+
     client = _get_client()
     if not client.config.is_configured():
         return "Home Assistant is not configured. Set the connection in the Home panel first."
@@ -101,6 +103,17 @@ async def _ha_call_service_handler(args: Dict[str, Any]) -> str:
     service = args.get("service", "")
     entity_id = args.get("entity_id", "")
     data = args.get("data") or {}
+
+    # Governance check
+    policy = HAGovernancePolicy()
+    decision = policy.classify(domain, entity_id, service)
+    if not decision["allowed"]:
+        return f"Blocked by governance policy: {decision['reason']}"
+    if decision["requires_confirmation"]:
+        return (
+            f"Confirmation required for {domain}.{service} on {entity_id}: "
+            f"{decision['reason']}. Please confirm this action."
+        )
 
     if entity_id:
         data["entity_id"] = entity_id

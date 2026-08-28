@@ -537,6 +537,28 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         except Exception as e:
             logger.warning(f"Failed to start terminal session reaper: {e}")
 
+        # Phase 2: Start HA WebSocket event stream if configured
+        try:
+            from ..integrations.cognition_wiring import start_ha_event_stream
+            start_ha_event_stream()
+            # The event stream needs async start; do it in a delayed thread
+            def start_ha_stream_delayed():
+                import time, asyncio
+                time.sleep(5)  # Wait for other services
+                try:
+                    from ..integrations.cognition_wiring import _ha_event_stream
+                    if _ha_event_stream is not None:
+                        loop = asyncio.new_event_loop()
+                        loop.run_until_complete(_ha_event_stream.start())
+                        loop.run_forever()
+                except Exception as e:
+                    logger.warning(f"HA event stream start failed: {e}")
+            ha_starter = threading.Thread(target=start_ha_stream_delayed, daemon=True)
+            ha_starter.start()
+            logger.info("HA event stream starting in background...")
+        except Exception as e:
+            logger.warning(f"HA event stream not started: {e}")
+
     # Shutdown event: stop background services
     @app.on_event("shutdown")
     async def shutdown_event():
@@ -577,6 +599,16 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             logger.info("Terminal session manager shut down")
         except Exception as e:
             logger.warning(f"Failed to shut down terminal session manager: {e}")
+
+        # Phase 2: Stop HA WebSocket event stream
+        try:
+            from ..integrations.cognition_wiring import _ha_event_stream, shutdown as cognition_shutdown
+            if _ha_event_stream is not None:
+                await _ha_event_stream.stop()
+                logger.info("HA event stream stopped")
+            cognition_shutdown()
+        except Exception as e:
+            logger.warning(f"Failed to stop HA event stream: {e}")
     
     logger.info("Halbert Dashboard API created")
     
