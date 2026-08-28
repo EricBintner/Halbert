@@ -19,6 +19,7 @@ from typing import Dict, Any, Optional, Callable, List, TYPE_CHECKING
 from .safety import ToolSafetyFramework, RiskLevel, SafetyCheckResult, THREAD_META_TOOLS
 from ..streaming.terminal_bridge import (
     current_agent_session, publish_terminal_event, terminal_stream_wanted,
+    terminal_pool_wanted,
 )
 
 if TYPE_CHECKING:
@@ -431,10 +432,16 @@ class ToolExecutor:
         bridge so the conversation can render a live terminal tile while the
         command is still running. The return value — what the model sees — is
         identical either way.
+
+        Plan B: when streaming, the pool path is tried first. The pool runs
+        the command in a PTY-backed bash session with OSC 133 block markers,
+        producing a terminal_block row. At cap or on failure, falls back to
+        the subprocess path.
         """
         command = args["command"]
         timeout = args.get("timeout", self.DEFAULT_TIMEOUT)
         cwd = args.get("cwd")
+        background = args.get("background", False)  # Plan C; Plan B accepts but ignores
 
         # Expand user paths
         if cwd:
@@ -442,6 +449,21 @@ class ToolExecutor:
 
         logger.debug(f"Running command: {command}")
 
+        streaming = terminal_stream_wanted()
+        pool_wanted = terminal_pool_wanted()
+
+        # Plan B: try the pool first (only when streaming + pool enabled)
+        if pool_wanted and not background:
+            try:
+                from halbert_core.streaming.agent_pool import get_terminal_pool
+                pool = get_terminal_pool()
+                result = await pool.run_block(command, cwd=cwd, timeout=timeout)
+                if result is not None:
+                    return self._format_block_result(result)
+            except Exception as e:
+                logger.warning(f"Pool path failed, falling back to subprocess: {e}")
+
+        # Fallback: subprocess path (unchanged)
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
@@ -449,7 +471,6 @@ class ToolExecutor:
             cwd=cwd
         )
 
-        streaming = terminal_stream_wanted()
         terminal_id = f"cmd-{uuid.uuid4()}"
         if streaming:
             publish_terminal_event({
@@ -528,6 +549,24 @@ class ToolExecutor:
                     "exit_code": proc.returncode if proc.returncode is not None else -1,
                 })
             raise
+
+    @staticmethod
+    def _format_block_result(result: Dict) -> str:
+        """Format a pool block result for the model.
+
+        Returns the same string shape the model sees from the subprocess
+        path: exit code + output, or just output on success.
+        """
+        exit_code = result.get("exit_code", -1)
+        output = result.get("output_head", "")
+        tail = result.get("output_tail", "")
+        # Combine head and tail (head is first 20 lines, tail is last 4 KiB)
+        full_output = output
+        if tail and tail != output:
+            full_output = output + "\n" + tail
+        if exit_code != 0:
+            return f"Exit code {exit_code}\n{full_output}".strip()
+        return full_output.strip() if full_output else "(no output)"
 
     async def _read_file(self, args: Dict) -> str:
         """Read file contents."""
