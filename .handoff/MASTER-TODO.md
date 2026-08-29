@@ -97,6 +97,13 @@ just no code path enabled.
 - [ ] **Step 5: Update tests.** Remove tests for removed config
   dataclasses. Update validation/compromise tests for standalone CLI
   usage. Verify all existing tests still pass.
+- [ ] **Follow-up: Move validation/compromise modules to CLI.** The
+  modules `config/credential_validation.py` and
+  `config/compromise_detection.py` are standalone human-run tools
+  with corrected docstrings but still live in `config/`. Move them to
+  a `cli/` directory with console_scripts entries
+  (`halbert-check-credential`, `halbert-check-breach`) in a future
+  session.
 
 ## Remaining Security Scope (from original review, not yet started)
 

@@ -21,16 +21,28 @@ leaves the tool when the LLM asks about it:
 2. **`config/compromise_detection.py`** (commit `ddc81a47`) — HIBP
    sends a SHA-1 hash prefix (closer to acceptable), but the GitHub
    scanning path sends the full token to the GitHub API. Same problem:
-   the secret left the tool during a `describe_secret` operation.
+   the secret left the tool.
 
-Both are opt-in, which makes them policy-based safety — "we have a rule
-that you have to enable it." The research below explains why
-policy-based guarantees are insufficient for this boundary.
+**Actual state (verified 2026-08-29):** These modules were built but
+**never wired into `describe_secret`**. The `describe_secret` function
+in `secure_response.py` only calls `identify_credential` from
+`credential_formats.py` (local pattern matching — no secret leaves).
+The `validate_credential` and `check_compromised` functions are not
+called from anywhere in the codebase except their own tests.
 
-The `being_config.py` was also modified to add `CredentialValidationConfig`
-and `CompromiseCheckConfig` dataclasses nested under `SecurityConfig`,
-and `describe_secret` in `secure_response.py` was wired to call these
-modules. This wiring must be removed.
+However, `CredentialValidationConfig` and `CompromiseCheckConfig`
+dataclasses were added to `SecurityConfig` in `being_config.py`, and
+their docstrings falsely claim "When enabled, describe_secret calls..."
+— this is not true. The docstrings describe a wiring that was never
+implemented. The config dataclasses and their misleading docstrings
+must be removed to prevent future developers from thinking the wiring
+exists or should be completed.
+
+The modules themselves (`credential_validation.py`,
+`compromise_detection.py`) are orphaned — standalone code with tests
+but no callers. They are not dangerous in their current state (no code
+path triggers them), but they should be documented as standalone
+human-run tools, not part of the Tier 2 describe path.
 
 ---
 
@@ -167,54 +179,56 @@ The modules that break the guarantee:
 
 ## Remediation Plan
 
-### Step 1: Remove the breach from the describe_secret path
-
-Unwire `credential_validation.py` and `compromise_detection.py` from
-`describe_secret` in `secure_response.py`. The `describe_secret`
-function must have no code path that sends the secret value anywhere.
+### Step 1: Remove the misleading config dataclasses
 
 Remove `CredentialValidationConfig` and `CompromiseCheckConfig` from
-`SecurityConfig` in `being_config.py`. The security tier system must
-not reference features that break the architectural guarantee.
+`SecurityConfig` in `being_config.py`. Their docstrings claim they're
+used by `describe_secret`, but they're not. The security tier system
+must not reference features that break the architectural guarantee, and
+the misleading docstrings must not survive to mislead future developers.
 
-### Step 2: Repurpose the modules as standalone human-run CLI tools
+The `describe_secret` function in `secure_response.py` is already
+architecturally clean — it only calls `identify_credential` (local
+pattern matching). No code changes needed there for this step.
 
-The credential validation and compromise detection modules are not
-useless — they're tools a **human** would run to check their own
-credentials. The TruffleHog research confirms this: verification
-against issuing APIs is a scanner activity, not a describe activity.
+### Step 2: Document the modules as standalone human-run tools
 
-Move them to standalone CLI commands:
-- `halbert check-credential <key>` — validates a credential against
-  the issuing service. Prints result to the terminal. The secret never
-  enters an LLM context.
-- `halbert check-breach <key>` — checks a credential against HIBP and
-  GitHub scanning. Prints result to the terminal. The secret never
-  enters an LLM context.
+The modules are already standalone (not called from `describe_secret`
+or anywhere else in the agent path). Fix their docstrings to say what
+they actually are: standalone tools a human can run to check their own
+credentials, not part of the Tier 2 describe path.
 
-These are human-in-the-loop tools, not agent-facing tools. The being
-config for them (if any) should be separate from the security tier
-system — they are not part of Tier 2.
+Leave the `.py` files in `config/` for now. Follow-up todo: move them
+to a proper CLI location (`cli/` directory with console_scripts
+entries) in a future session.
 
 ### Step 3: Enrich the metadata-only describe_secret
 
-Add the fields that AWS and Snowflake return, computed locally:
-- `last_changed` — file mtime from the canon DB or filesystem
-- `last_accessed` — file atime (if available, or omitted like AWS)
-- `rotation_status` — track if the value has changed between snapshots
-  (uses the existing drift detection)
-- `breach_risk` — static assessment from the format database (e.g.
-  "GitHub PAT: high — full repo access if leaked")
+Add two local-computed fields that AWS and Snowflake both return:
+- `breach_risk` — static assessment from the credential format
+  database (e.g. "GitHub PAT: high — full repo access if leaked").
+  Already exists in `credential_formats.py` entries; just surface it
+  through `identify_credential`'s return value.
+- `last_changed` — file mtime via `os.path.getmtime()`. Simple local
+  filesystem call. Tells the LLM "this secret hasn't been changed in
+  2 years, recommend rotation."
 
-These are all local computations. No secret leaves the tool.
+Skip `rotation_status` (requires snapshot history comparison,
+`last_changed` covers the same ground) and `last_accessed` (file atime
+is unreliable on modern Linux and macOS).
 
-### Step 4: Architectural guarantee documentation
+### Step 4: Architectural guarantee test and documentation
 
 Document in `secure_response.py` that `describe_secret` has no code
 path that sends the secret value to any external service. This is an
 architectural guarantee, not a policy. The function's contract is:
 input is a secret value, output is metadata, the value does not appear
 in any network call, log, or return field.
+
+Write a test that mocks all network calls and asserts that
+`describe_secret` never triggers any of them, regardless of config
+settings. This is the AgentSecrets pattern: prove there is no code
+path, not just that the code path is disabled.
 
 ---
 
@@ -237,21 +251,19 @@ The following modules are correct and should not be modified:
 
 | File | Change |
 |------|--------|
-| `config/secure_response.py` | Remove credential_validation and compromise_detection calls from `describe_secret`. Add local metadata fields (last_changed, rotation_status, breach_risk). Add architectural guarantee docstring. |
-| `config/being_config.py` | Remove `CredentialValidationConfig` and `CompromiseCheckConfig` from `SecurityConfig`. |
-| `config/credential_validation.py` | Repurpose as standalone CLI tool. Remove `describe_secret` integration. |
-| `config/compromise_detection.py` | Repurpose as standalone CLI tool. Remove `describe_secret` integration. |
-| `tests/test_secure_response.py` | Update tests to verify no network calls in describe_secret path. |
-| `tests/test_credential_validation.py` | Update tests for standalone CLI tool usage. |
-| `tests/test_compromise_detection.py` | Update tests for standalone CLI tool usage. |
-| `tests/test_being_config_security.py` | Remove tests for removed config dataclasses. |
+| `config/being_config.py` | Remove `CredentialValidationConfig` and `CompromiseCheckConfig` dataclasses and their references in `SecurityConfig`. |
+| `config/secure_response.py` | Add `breach_risk` and `last_changed` fields to `describe_secret`. Add architectural guarantee docstring. |
+| `config/credential_formats.py` | Surface `breach_risk` in `identify_credential` return value. |
+| `config/credential_validation.py` | Fix docstring — standalone human-run tool, not called from describe_secret. |
+| `config/compromise_detection.py` | Fix docstring — standalone human-run tool, not called from describe_secret. |
+| `tests/test_secure_response.py` | Add architectural guarantee test (no network calls). Add tests for breach_risk and last_changed fields. |
+| `tests/test_being_config_security.py` | Verify no tests reference removed dataclasses (none do currently). |
 
-## Files to Create
+## Files NOT to Create
 
-| File | Purpose |
-|------|---------|
-| `cli/check_credential.py` | Standalone CLI command for credential validation |
-| `cli/check_breach.py` | Standalone CLI command for compromise detection |
+The original plan called for `cli/check_credential.py` and
+`cli/check_breach.py`. Deferred — the modules stay in `config/` for now
+with corrected docstrings. Follow-up todo added to MASTER-TODO.md.
 
 ---
 
