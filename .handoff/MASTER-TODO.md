@@ -65,3 +65,58 @@ than the GPU page since this is a discovery/recommendation feature, not a
 system health feature.
 
 **Status:** Research complete. No action recommended.
+
+## Tier 2 Recalibration (from security review, 2026-08-29)
+
+Research and plan: `.handoff/TIER2-RECALIBRATION-2026-08-29.md`
+
+Two modules were built that break Tier 2's architectural guarantee
+that a secret value never leaves the tool during `describe_secret`:
+`credential_validation.py` (sends secret to service API) and
+`compromise_detection.py` (sends secret to HIBP/GitHub). Both are
+opt-in (policy-based), but the research (AgentSecrets, AWS, Snowflake)
+shows the guarantee must be architectural — no code path exists, not
+just no code path enabled.
+
+- [ ] **Step 1: Remove the breach from describe_secret.** Unwire
+  `credential_validation.py` and `compromise_detection.py` from
+  `describe_secret` in `secure_response.py`. Remove
+  `CredentialValidationConfig` and `CompromiseCheckConfig` from
+  `SecurityConfig` in `being_config.py`.
+- [ ] **Step 2: Repurpose as standalone human-run CLI tools.** Move
+  credential validation and compromise detection to `halbert
+  check-credential` and `halbert check-breach` CLI commands. The
+  secret never enters an LLM context. Human runs them deliberately.
+- [ ] **Step 3: Enrich metadata-only describe_secret.** Add local
+  fields that AWS/Snowflake return: `last_changed` (file mtime),
+  `rotation_status` (drift between snapshots), `breach_risk` (static
+  per-type from format database). All local, no secret leaves.
+- [ ] **Step 4: Architectural guarantee test.** Write a test that
+  mocks all network calls and asserts `describe_secret` never triggers
+  any, regardless of config. Prove no code path exists.
+- [ ] **Step 5: Update tests.** Remove tests for removed config
+  dataclasses. Update validation/compromise tests for standalone CLI
+  usage. Verify all existing tests still pass.
+
+## Remaining Security Scope (from original review, not yet started)
+
+These items from the security review are independent of the Tier 2
+recalibration and can proceed in parallel:
+
+- [ ] **Settings UI security tab** — Add Security tab to
+  `dashboard/frontend/src/pages/Settings.tsx` with tier pickers,
+  public files list, extra secret keys list, cloud_ok_keys list.
+  Backend endpoint `PUT /api/being-config` already exists.
+- [ ] **Context assembler integration** — Wire tier-aware config
+  queries into `context/assembler.py`. Tier 0/1 cloud_ok values go
+  into context directly. Tier 2 / Tier 1 local_only values go through
+  `describe_secret()`. This is what keeps raw config text out of
+  conversation history.
+- [ ] **Context-assembly backstop** — Before a cloud call, run
+  `detect_secure_content()` over assembled context. Catches secrets
+  from terminal watch, scanners, pastes. Set `secure=True` on the
+  turn if the detector fires.
+- [ ] **Rebuild index unredacted (operational)** — Requires SourcePrep
+  daemon. Run `register_host_project(redact=False)`, snapshot
+  unredacted, trigger index rebuild. Both egress paths (MCP boundary,
+  secure routing) must be verified first.
