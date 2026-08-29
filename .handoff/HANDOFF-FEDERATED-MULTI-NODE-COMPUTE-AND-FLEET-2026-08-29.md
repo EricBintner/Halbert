@@ -595,3 +595,154 @@ The scaffold is ready for implementation. The recommended order is the
 
 Each step's TODO markers in the scaffolded files point to the exact
 functions that need implementation.
+
+---
+
+## 11. Comprehensive Design Implications & Architectural Research Findings
+
+**Date:** 2026-08-29  
+**Analysis Target:** Halbert Federated Multi-Node Network, Design System Integration, Cognitive Loops, and Security Perimeter  
+
+Following the completion of the 28-file structural scaffolding pass and the resolution of the 13 scrutiny findings in commits `928c9166`, `a2ca6677`, and `9fff12a7`, this section synthesizes the critical design implications and research findings across the Halbert ecosystem.
+
+---
+
+### 11.1 Architectural Track-Check: Why This Model Succeeds
+
+The scaffolding successfully anchors the federated model into Halbert's existing foundations rather than creating redundant parallel abstractions:
+1. **Zero New Auth Silos (Resolving C1):** Reuses the MCP Phase 4b bearer authentication and token architecture. A peer node is authenticated through `peer_middleware.py`, creating a unified trust boundary across external MCP tools (Claude Code, Warp) and peer Halbert instances.
+2. **Evolution Over Greenfield (Resolving C2 & C3):** Rather than creating duplicate switchers or routers, `InstanceSwitch.tsx` is extended with mDNS discovery feeds, and `PeerProvider` implements the standard `ModelProvider` ABC within `tier_router.py`.
+3. **Defense-in-Depth Trust Boundary (Resolving C4 & C5):** Eliminates prompt-injection exfiltration and arbitrary remote inspection by enforcing `mcp_response()` redaction and delegating remote satellite diagnostics to the satellite's own MCP server.
+
+---
+
+### 11.2 Frontend Ergonomics & Design System Integration
+
+The user experience must balance two distinct mental models: **"Teleporting" into a single machine** vs **"Monitoring and managing the entire household fleet"**.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            TOP BAR NAVIGATION                               │
+│  [Halbert Mark]  Overview  Alerts  Storage  Security  Fleet [InstanceSwitch ▼]│
+└─────────────────────────────────────────────────────────────────────────────┘
+                                                          │
+          ┌───────────────────────────────────────────────┴───────────────────┐
+          ▼                                                                   ▼
+┌───────────────────────────────────────┐   ┌─────────────────────────────────────────┐
+│     1. INSTANCE SWITCH (Teleport)     │   │      2. FLEET COCKPIT (Panoptic)        │
+│ • Switches global `apiBase`           │   │ • Stays on Desktop context              │
+│ • Full UI re-targets to remote node   │   │ • Views all 1-25+ nodes at a glance     │
+│ • "I am now managing the Living Room" │   │ • Inspects logs via remote MCP drawer   │
+└───────────────────────────────────────┘   └─────────────────────────────────────────┘
+```
+
+#### Key Design System Rules (`packages/design-system`):
+1. **Component Surface Reuse:**
+   * Node cards in `NodeFleetCockpit.tsx` MUST use the standardized `MetricCard` surface and `StatusBadge` variants (`online` [emerald/green], `fallback` [amber/yellow], `offline` [slate/red]).
+   * Vitals indicators (CPU %, RAM %, Thermals °C, Load) must follow the exact typographic hierarchy and tabular numbers (`font-mono`) established in `@halbert/design-system`.
+2. **Dual-Action Node Interaction:**
+   * Clicking a node card in the Fleet Cockpit offers two clear affordances:
+     * **[Inspect Node]** (Default): Slides open a diagnostic drawer powered by `fleet_proxy.py` (Desktop acting as MCP client of the satellite) without interrupting the user's active desktop conversation or workflow.
+     * **[Switch Active Context]**: Invokes `setInstanceEndpoint()`, transitioning the full desktop UI to directly interface with that node's local dashboard.
+3. **Storybook Verification:**
+   * All new fleet components (`NodeFleetCockpit`, `PeerPairingModal`, `DiscoveredPeerCard`) must be registered with stories in `packages/design-system/src/stories/` covering full state variations: `SingleNode`, `MultiNodeFleet (5 nodes)`, `Degraded/Offline`, and `PairingHandshake`.
+
+---
+
+### 11.3 Cognitive & Persona Monologue Mechanics (`advance_turn`)
+
+The interaction between background cognitive ticks (`advance_turn` in `PersonaCognition`) and compute offloading presents a severe resource contention risk if not strictly bounded.
+
+#### The Cognitive Contention Finding:
+* If 10 satellite nodes in a household offloaded their continuous subconscious monologue (`advance_turn`) to the Desktop's GPU every 5–10 seconds, the Desktop would be hit with 60–120 inference requests per minute. This would permanently exhaust GPU VRAM and cause interactive desktop chat turns to crawl.
+
+#### The Four-Tier Turn Classification Policy:
+The `ComputeRouter` on satellite nodes enforces strict turn classification:
+
+| Turn Classification | Origin / Trigger | Offload to Desktop GPU? | Fallback Behavior if Desktop Offline |
+| :--- | :--- | :--- | :--- |
+| **`interactive_user`** | Wake-word voice query, chat input on satellite | **YES (Priority 2)** | Fast CPU template / local micro-model response (< 1.5s) |
+| **`high_value_event`** | Frigate person detection, security anomaly alert | **YES (Priority 3)** | Local heuristic rule evaluation |
+| **`sleep_consolidation`** | Daily memory synthesis (scheduled 3:00 AM) | **YES (Priority 3, Batch)** | Deferred in queue until Desktop is awake and idle |
+| **`cognitive_monologue`** | Continuous background tick (`advance_turn`) | **NO (Strictly Local)** | Runs 100% on-device using template thoughts (`HALBERT_LLM_THOUGHTS=0`) |
+
+---
+
+### 11.4 Multi-Satellite Concurrency & Latency Budgets
+
+When scaling to **1:N satellites (up to 25 nodes)**, latency budgets must govern queueing behavior to ensure human conversational responsiveness never stalls.
+
+#### Concurrency Slot Allocation (Desktop Broker):
+* The Desktop `ComputeBroker` operates with an async semaphore (default `max_concurrent=4` slots for modern Apple Silicon unified memory / NVIDIA VRAM):
+  * **Slot 1 (Reserved):** Dedicated to `Priority 1` (Active Local Desktop User).
+  * **Slots 2–4 (Dynamic Pool):** Shared between `Priority 2` (Satellite Voice) and `Priority 3` (Background Batch).
+
+#### The 1.5-Second Voice Timeout Rule:
+* When a user speaks to a satellite in the kitchen:
+  1. Satellite sends an inference request to Desktop with `priority=2` and a hard **1.5s queue timeout**.
+  2. If the Desktop is online and a slot is open, generation begins immediately and streams back over HTTP/SSE.
+  3. If all slots are occupied and 1.5s elapses without acquisition, the satellite **aborts queue wait** and immediately triggers local fallback generation.
+  4. **Outcome:** The user never experiences an awkward 5-second silence while standing in front of an ambient smart home speaker.
+
+---
+
+### 11.5 Security Perimeter, Egress Redaction & Trust Lifecycle
+
+A federated compute architecture fundamentally transforms the node-to-node boundary into an untrusted network link:
+
+```
+  ┌────────────────────────────────────────────────────────┐
+  │         SATELLITE NODE (e.g. Garage Pi on Wi-Fi)       │
+  └───────────────────────────┬────────────────────────────┘
+                              │ Prompt Request (Contains user input)
+                              ▼
+  ┌────────────────────────────────────────────────────────┐
+  │        DESKTOP COMPUTE ENDPOINT (compute_endpoint.py)   │
+  │  1. Validate Bearer Token against peers_config.py      │
+  │  2. Filter Tools: Strip all non-PEER_ALLOWED_TOOLS     │
+  │  3. Execute Model Generation (GPU / Apple Intelligence)│
+  │  4. Apply mcp_response() + redact_text() on output     │
+  └───────────────────────────┬────────────────────────────┘
+                              │ Redacted Response Stream
+                              ▼
+  ┌────────────────────────────────────────────────────────┐
+  │        SECURE INGESTION ON SATELLITE (No secrets leak)  │
+  └────────────────────────────────────────────────────────┘
+```
+
+#### Security Directives:
+1. **Unconditional `secure_model` Isolation:**
+   * The `secure_model` slot handles local secrets, disk encryption keys, authentication credentials, and raw private storage.
+   * `PeerProvider.can_serve_slot("secure_model")` unconditionally returns `False`. Remote offload of `secure_model` is forbidden by code architecture.
+2. **Egress Sanitization:**
+   * Responses from the Desktop compute endpoint pass through `mcp_response()` before serialization, stripping accidental file paths, API tokens, or internal workstation credentials that may have appeared in model reasoning traces.
+3. **Cryptographic Token Revocation:**
+   * `peers_config.py` stores SHA-256 hashes of tokens. Revoking a peer via the Desktop UI (`DELETE /api/peers/{node_id}`) immediately causes all subsequent requests from that peer to receive `401 Unauthorized` on the very next request cycle with zero cache lag.
+
+---
+
+### 11.6 Haloysius Subtractive Contract & Network Resilience
+
+Halbert's core contract mandates extreme portability:
+* **Subtractive Dependency Guard:** `zeroconf` is loaded strictly inside function-level `try/except ImportError` blocks. The core Halbert daemon will start, run, and execute all local functions with zero errors even if `zeroconf` is completely absent from the environment.
+* **Network Flapping Mitigation:**
+  * Workstations frequently enter sleep, undergo DHCP lease renewals, or experience Wi-Fi roaming latency.
+  * The satellite `ComputeRouter` maintains a rolling health window (`_peer_health_state`) with a 3-consecutive-failure threshold before transitioning a peer from `ONLINE` to `OFFLINE`. This prevents rapid flapping between local and remote models during minor network packet loss.
+
+---
+
+### 11.7 Implementation Summary Table
+
+| Step | Functional Area | Primary Component | Key Contract Enforced |
+| :--- | :--- | :--- | :--- |
+| **9.1** | Authentication | `peer_middleware.py` | Unified MCP/Peer bearer auth with SHA-256 token hashing |
+| **9.2** | Navigation | `InstanceSwitch.tsx` | Discovery feed polling + manual IP fallback |
+| **9.3** | Inference Client | `model/providers/peer.py` | `ModelProvider` compliance + slot filtering |
+| **9.4** | Redaction Boundary | `compute_endpoint.py` | `mcp_response()` output filtering + restricted tool allowlist |
+| **9.5** | Telemetry | `telemetry_agent.py` | Lightweight discovery snapshot diffing (no parallel scanners) |
+| **9.6** | Edge Fallback | `compute_router.py` | Hardware-profile awareness (template thoughts on ≤4GB) |
+| **9.7** | Discovery | `peer_discovery.py` | Lazy `zeroconf` import (Haloysius subtractive contract) |
+| **9.8** | Concurrency | `compute_broker.py` | Priority queue with 1.5s voice timeout & GPU slot semaphore |
+| **9.9** | Fleet Diagnostics | `fleet_proxy.py` | Desktop-as-MCP-client to remote satellites |
+| **9.10** | Apple Silicon | `peer_discovery.py` | Advertisement of `apple_foundation` Metal/ANE backends |
+
