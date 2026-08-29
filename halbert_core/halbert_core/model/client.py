@@ -63,7 +63,9 @@ class UnsupportedProviderError(RuntimeError):
 
 
 # Providers whose wire format is OpenAI's /v1/chat/completions.
-OPENAI_COMPATIBLE_PROVIDERS = frozenset({"openai", "openai-compatible", "lm-studio"})
+# apple-foundation: the Swift FoundationModels bridge speaks OpenAI-compatible
+# on loopback:11435, so _call_openai_compatible handles it with no new adapter.
+OPENAI_COMPATIBLE_PROVIDERS = frozenset({"openai", "openai-compatible", "lm-studio", "apple-foundation"})
 
 # Providers that can carry a chat turn. Anything saved under another provider
 # is listable and testable but rejected by call_llm_chat.
