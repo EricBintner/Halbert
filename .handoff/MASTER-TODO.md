@@ -39,7 +39,11 @@ thread persistence.
 - `dashboard/frontend/src/pages/GPU.tsx` — inline analysis UI (lines ~509-700+)
 - `dashboard/frontend/src/components/AIAnalysisPanel.tsx` — the reusable panel to adopt
 
-**Status:** Research complete. Implementation deferred (needs Linux + GPU to test).
+**Implementation plan:** `.handoff/GPU-DEEP-SCAN-REBUILD-PLAN-2026-08-29.md`
+— 9 steps, 11 files (3 new, 8 modified). Code can be written and
+unit-tested with mocks on Mac; integration testing requires Linux + GPU.
+
+**Status:** Plan complete, ready for implementation.
 
 ## RAG Trending — Assessment (no action needed)
 
