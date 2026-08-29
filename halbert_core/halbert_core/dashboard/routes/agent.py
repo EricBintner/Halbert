@@ -222,6 +222,13 @@ def get_agent():
             register_ha_tools(tool_executor)
         except Exception as e:
             logger.warning(f"Could not register HA tools (non-fatal): {e}")
+
+        # Frigate NVR tools — only registers if Frigate is configured
+        try:
+            from ...integrations.frigate.frigate_tools import register_frigate_tools
+            register_frigate_tools(tool_executor)
+        except Exception as e:
+            logger.warning(f"Could not register Frigate tools (non-fatal): {e}")
         _agent_instance = AgentStateMachine(
             llm_client=llm_client,
             tool_executor=tool_executor,

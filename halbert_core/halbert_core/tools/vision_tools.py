@@ -446,6 +446,137 @@ async def capture_active_window_tool(args: Dict) -> Dict[str, Any]:
         return {"error": f"Unexpected error: {e}", "error_type": "capture_failed"}
 
 
+# ── CV inference tools ──────────────────────────────────────────────────────
+
+async def detect_objects_tool(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Detect objects in a webcam or screenshot frame using YOLOv8.
+
+    Captures a frame (webcam or screen), runs object detection, and
+    returns a list of detections with labels, confidence, and bounding
+    boxes. Does NOT send the image to the vision LLM — all inference
+    is local.
+    """
+    source = args.get("source", "webcam")
+    conf_threshold = args.get("confidence_threshold", 0.5)
+
+    try:
+        from ..vision.inference.detector import detect_objects, is_available
+        if not is_available():
+            return {
+                "error": "Object detection not available. Install ultralytics or onnxruntime.",
+                "error_type": "dependency_missing",
+            }
+
+        # Capture frame
+        if source == "webcam":
+            frame_b64 = await capture_webcam({"max_dim": 640})
+            if isinstance(frame_b64, dict) and "error" in frame_b64:
+                return frame_b64
+            image_b64 = frame_b64 if isinstance(frame_b64, str) else frame_b64.get("image", "")
+        elif source == "screen":
+            frame_b64 = await capture_screenshot({"max_dim": 640})
+            if isinstance(frame_b64, dict) and "error" in frame_b64:
+                return frame_b64
+            image_b64 = frame_b64 if isinstance(frame_b64, str) else frame_b64.get("image", "")
+        else:
+            return {"error": f"Unknown source: {source}. Use 'webcam' or 'screen'."}
+
+        # Run detection
+        detections = detect_objects_from_base64_safe(image_b64, conf_threshold=conf_threshold)
+        return {
+            "source": source,
+            "detections": [d.to_dict() for d in detections],
+            "count": len(detections),
+        }
+    except Exception as e:
+        logger.error(f"Object detection error: {e}", exc_info=True)
+        return {"error": str(e), "error_type": "detection_failed"}
+
+
+def detect_objects_from_base64_safe(image_b64: str, conf_threshold: float = 0.5):
+    """Wrapper that handles data URI prefix and import errors."""
+    from ..vision.inference.detector import detect_objects_from_base64
+    return detect_objects_from_base64(image_b64, conf_threshold=conf_threshold)
+
+
+async def detect_faces_tool(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Detect faces in a webcam or screenshot frame.
+
+    Returns face bounding boxes and confidence. Does NOT perform
+    face recognition (identifying specific people) — only detection
+    that a face is present.
+    """
+    source = args.get("source", "webcam")
+    conf_threshold = args.get("confidence_threshold", 0.5)
+
+    try:
+        from ..vision.inference.face import detect_faces_from_base64, is_available
+        if not is_available():
+            return {
+                "error": "Face detection not available. Install mediapipe or download OpenCV DNN models.",
+                "error_type": "dependency_missing",
+            }
+
+        # Capture frame
+        if source == "webcam":
+            frame_b64 = await capture_webcam({"max_dim": 640})
+            if isinstance(frame_b64, dict) and "error" in frame_b64:
+                return frame_b64
+            image_b64 = frame_b64 if isinstance(frame_b64, str) else frame_b64.get("image", "")
+        elif source == "screen":
+            frame_b64 = await capture_screenshot({"max_dim": 640})
+            if isinstance(frame_b64, dict) and "error" in frame_b64:
+                return frame_b64
+            image_b64 = frame_b64 if isinstance(frame_b64, str) else frame_b64.get("image", "")
+        else:
+            return {"error": f"Unknown source: {source}. Use 'webcam' or 'screen'."}
+
+        faces = detect_faces_from_base64(image_b64, conf_threshold=conf_threshold)
+        return {
+            "source": source,
+            "faces": [f.to_dict() for f in faces],
+            "count": len(faces),
+        }
+    except Exception as e:
+        logger.error(f"Face detection error: {e}", exc_info=True)
+        return {"error": str(e), "error_type": "detection_failed"}
+
+
+async def detect_motion_tool(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Detect motion by comparing two consecutive webcam frames.
+
+    Captures two frames a few seconds apart and compares them.
+    Returns whether motion was detected, the motion ratio, and
+    bounding boxes of changed regions.
+    """
+    import asyncio as _asyncio
+
+    delay = args.get("delay_seconds", 2.0)
+
+    try:
+        # Capture first frame
+        frame1 = await capture_webcam({"max_dim": 640})
+        if isinstance(frame1, dict) and "error" in frame1:
+            return frame1
+        img1 = frame1 if isinstance(frame1, str) else frame1.get("image", "")
+
+        # Wait
+        await _asyncio.sleep(delay)
+
+        # Capture second frame
+        frame2 = await capture_webcam({"max_dim": 640})
+        if isinstance(frame2, dict) and "error" in frame2:
+            return frame2
+        img2 = frame2 if isinstance(frame2, str) else frame2.get("image", "")
+
+        from ..vision.motion import detect_motion_from_base64
+        result = detect_motion_from_base64(img1, img2)
+        return result.to_dict()
+    except Exception as e:
+        logger.error(f"Motion detection error: {e}", exc_info=True)
+        return {"error": str(e), "error_type": "detection_failed"}
+
+
 # Tool schemas for registration
 VISION_TOOL_SCHEMAS = {
     "capture_screenshot": {
@@ -638,6 +769,69 @@ VISION_TOOL_SCHEMAS = {
             "required": [],
         },
     },
+    # ── CV inference tools ────────────────────────────────────────
+    "detect_objects": {
+        "name": "detect_objects",
+        "description": (
+            "Detect objects in a webcam or screen frame using local YOLOv8 "
+            "inference. Returns labels (person, car, dog, etc.), confidence "
+            "scores, and bounding boxes. All inference is local — no image "
+            "is sent to the cloud. Use this for 'is someone there?' or "
+            "'what's in the room?' without using vision model tokens."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "Frame source: 'webcam' (default) or 'screen'",
+                },
+                "confidence_threshold": {
+                    "type": "number",
+                    "description": "Minimum detection confidence 0.0-1.0 (default 0.5)",
+                },
+            },
+        },
+    },
+    "detect_faces": {
+        "name": "detect_faces",
+        "description": (
+            "Detect faces in a webcam or screen frame. Returns bounding "
+            "boxes and confidence. Does NOT identify specific people — "
+            "only detects that faces are present. All inference is local."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "Frame source: 'webcam' (default) or 'screen'",
+                },
+                "confidence_threshold": {
+                    "type": "number",
+                    "description": "Minimum detection confidence 0.0-1.0 (default 0.5)",
+                },
+            },
+        },
+    },
+    "detect_motion": {
+        "name": "detect_motion",
+        "description": (
+            "Detect motion by capturing two webcam frames a few seconds "
+            "apart and comparing them. Returns whether motion was detected, "
+            "the fraction of changed pixels, and bounding boxes of motion "
+            "regions. Lightweight — no ML model needed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "delay_seconds": {
+                    "type": "number",
+                    "description": "Seconds between the two frames (default 2.0)",
+                },
+            },
+        },
+    },
 }
 
 # Handler mapping
@@ -648,4 +842,7 @@ VISION_TOOL_HANDLERS = {
     "capture_window": capture_window_tool,
     "capture_active_window": capture_active_window_tool,
     "capture_webcam": capture_webcam,
+    "detect_objects": detect_objects_tool,
+    "detect_faces": detect_faces_tool,
+    "detect_motion": detect_motion_tool,
 }

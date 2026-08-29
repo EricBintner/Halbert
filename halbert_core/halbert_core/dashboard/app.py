@@ -29,6 +29,10 @@ _scheduler_executor = None
 # Phase 5+7: Global ConfigWatcher reference (T5a.2 + T7e.1)
 _config_watcher = None
 
+# Frigate MQTT subscriber + event mapper (global for shutdown)
+_frigate_mqtt_subscriber = None
+_frigate_event_mapper = None
+
 
 def _parse_hhmm(value) -> tuple:
     """Parse an 'HH:MM' string into (hour, minute). Raises ValueError if malformed."""
@@ -262,7 +266,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -292,6 +296,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(legal.router, tags=["legal"])  # LEG-MOD-01/02: Legal notices & cloud disclosure
     app.include_router(vision.router, prefix="/api", tags=["vision"])  # Screen capture for vision model
     app.include_router(home.router, prefix="/api", tags=["home"])  # Home Assistant panel
+    app.include_router(frigate.router, prefix="/api", tags=["frigate"])  # Frigate NVR panel
     
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"
@@ -344,6 +349,14 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         @app.get("/home")
         async def serve_spa():
             """Serve React app for frontend routes."""
+            return FileResponse(
+                frontend_dist / "index.html",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
+
+        @app.get("/frigate")
+        async def serve_spa_frigate():
+            """Serve React app for Frigate panel route."""
             return FileResponse(
                 frontend_dist / "index.html",
                 headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
@@ -607,6 +620,34 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         except Exception as e:
             logger.warning(f"HA event stream not started: {e}")
 
+        # Frigate MQTT subscriber — start if MQTT is configured
+        try:
+            from ..integrations.frigate.frigate_config import load_frigate_config
+            frigate_cfg = load_frigate_config()
+            if frigate_cfg.is_mqtt_configured():
+                from ..integrations.frigate.frigate_event_mapper import FrigateEventMapper
+                from ..integrations.frigate.frigate_mqtt_subscriber import FrigateMQTTSubscriber
+                global _frigate_mqtt_subscriber, _frigate_event_mapper
+                _frigate_event_mapper = FrigateEventMapper()
+                _frigate_mqtt_subscriber = FrigateMQTTSubscriber(
+                    config=frigate_cfg,
+                    on_event=_frigate_event_mapper.handle_event,
+                )
+                def start_frigate_mqtt_delayed():
+                    import time, asyncio
+                    time.sleep(6)  # after HA stream
+                    try:
+                        loop = asyncio.new_event_loop()
+                        loop.run_until_complete(_frigate_mqtt_subscriber.start())
+                        loop.run_forever()
+                    except Exception as e:
+                        logger.warning(f"Frigate MQTT start failed: {e}")
+                frigate_starter = threading.Thread(target=start_frigate_mqtt_delayed, daemon=True)
+                frigate_starter.start()
+                logger.info("Frigate MQTT subscriber starting in background...")
+        except Exception as e:
+            logger.warning(f"Frigate MQTT subscriber not started: {e}")
+
     # Shutdown event: stop background services
     @app.on_event("shutdown")
     async def shutdown_event():
@@ -657,6 +698,16 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             cognition_shutdown()
         except Exception as e:
             logger.warning(f"Failed to stop HA event stream: {e}")
+
+        # Stop Frigate MQTT subscriber
+        try:
+            global _frigate_mqtt_subscriber
+            if _frigate_mqtt_subscriber is not None:
+                await _frigate_mqtt_subscriber.stop()
+                _frigate_mqtt_subscriber = None
+                logger.info("Frigate MQTT subscriber stopped")
+        except Exception as e:
+            logger.warning(f"Failed to stop Frigate MQTT subscriber: {e}")
     
     logger.info("Halbert Dashboard API created")
     

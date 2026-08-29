@@ -30,6 +30,9 @@ from .webcam_capture import WebcamCapture, WebcamCaptureError
 from .wayland_capture import WaylandCapture, WaylandCaptureError, is_wayland
 from .watcher import VisualWatcher
 from .cache import VisionCache
+from .motion import MotionDetector, BackgroundSubtractor, MotionResult, detect_motion
+from .zone_watcher import ZoneWatcher, Zone, ZoneEvent
+from .ambient_webcam import AmbientWebcamMonitor
 
 __all__ = [
     "VisionConfig",
@@ -59,4 +62,12 @@ __all__ = [
     "is_wayland",
     "VisualWatcher",
     "VisionCache",
+    "MotionDetector",
+    "BackgroundSubtractor",
+    "MotionResult",
+    "detect_motion",
+    "ZoneWatcher",
+    "Zone",
+    "ZoneEvent",
+    "AmbientWebcamMonitor",
 ]
