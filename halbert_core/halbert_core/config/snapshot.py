@@ -3,6 +3,7 @@
 from __future__ import annotations
 import os
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Any
 from .manifest import Manifest
@@ -10,6 +11,8 @@ from .parser import parse as parse_config
 from ..ingestion.redaction import redact_lines, redact_parsed, redact_text
 from ..utils.paths import data_subdir
 from ..obs.tracing import trace_call
+
+logger = logging.getLogger(__name__)
 
 """
 Config Snapshot helper (Phase 1)
@@ -26,6 +29,18 @@ SNAP_DIR = data_subdir("config", "snapshots")
 
 def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
+
+
+def _load_canon_for_correlation(h: str) -> Dict[str, Any] | None:
+    """Load a canon record by hash for correlation index building."""
+    p = os.path.join(CANON_DIR, f"{h}.json")
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 # The canonical JSON carries the same file twice over -- once parsed into
@@ -62,7 +77,7 @@ def _redact_canon(canon: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 @trace_call("config.snapshot")
-def snapshot(manifest_path: str) -> List[Dict[str, Any]]:
+def snapshot(manifest_path: str, *, redact: bool = True) -> List[Dict[str, Any]]:
     man = Manifest.from_file(manifest_path)
     files = man.iter_paths()
     ts = datetime.now(timezone.utc).isoformat()
@@ -82,12 +97,13 @@ def snapshot(manifest_path: str) -> List[Dict[str, Any]]:
                 raw_txt = None
             h = canon.get("hash", "")
             if raw_txt is not None and h:
-                safe_txt = redact_text(raw_txt)
+                safe_txt = redact_text(raw_txt) if redact else raw_txt
                 with open(os.path.join(RAW_DIR, f"{h}.txt"), "w", encoding="utf-8") as f:
                     f.write(safe_txt)
             if h:
+                canon_out = _redact_canon(canon) if redact else canon
                 with open(os.path.join(CANON_DIR, f"{h}.json"), "w", encoding="utf-8") as f:
-                    json.dump(_redact_canon(canon), f, ensure_ascii=False, indent=2)
+                    json.dump(canon_out, f, ensure_ascii=False, indent=2)
             out.append({"ts": ts, "path": p, "hash": h, "kind": canon.get("kind", "text")})
         except Exception as e:
             out.append({"ts": ts, "path": p, "error": str(e)})
@@ -98,4 +114,23 @@ def snapshot(manifest_path: str) -> List[Dict[str, Any]]:
     # Update latest.json pointer (write a copy)
     with open(os.path.join(SNAP_DIR, "latest.json"), "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
+    # Build and save the secret correlation index from the freshly
+    # written canon records. This groups identical secret values across
+    # files by SHA-256 hash, so describe_secret can report "this password
+    # also appears in 3 other files." Only hashes are stored — no raw
+    # values in the index.
+    try:
+        from .secret_correlation import build_correlation_index, save_correlation_index
+        canon_entries = []
+        for entry in out:
+            h = entry.get("hash")
+            if h:
+                canon = _load_canon_for_correlation(h)
+                if canon:
+                    canon_entries.append({"path": entry["path"], "canon": canon})
+        if canon_entries:
+            index = build_correlation_index(canon_entries)
+            save_correlation_index(index)
+    except Exception as e:
+        logger.warning("Failed to build secret correlation index: %s", e)
     return out

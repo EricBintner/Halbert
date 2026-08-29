@@ -29,6 +29,7 @@ import requests
 
 from ..config.parser import parse as parse_config
 from ..ingestion.redaction import redact_text
+from ..integrations.prep_token import auth_headers as _auth_headers
 from ..utils.paths import data_subdir
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,25 @@ _STAGED_INCLUDE_GLOBS = [
     "**/hostname",
     "**/synthetic.conf",
     "**/sysctl.conf",
+    # Credential files — cross-platform, added with the credentials_admin scope.
+    # These are config files with key=value or INI structure that the parser
+    # handles. Private key files (*.pem, id_rsa*) are excluded by
+    # _COMMON_EXCLUDE_GLOBS and the credentials.yml exclude block.
+    "**/credentials",
+    "**/config.json",
+    "**/.netrc",
+    "**/ssh_config",
+    "**/.env",
+    "**/.env.local",
+    "**/.env.production",
+    "**/.env.staging",
+    "**/.npmrc",
+    "**/pip.conf",
+    "**/.pypirc",
+    "**/.gitconfig",
+    "**/.git-credentials",
+    "**/credentials.tfrc.json",
+    "**/.terraformrc",
 ]
 
 _COMMON_EXCLUDE_GLOBS = [
@@ -92,6 +112,21 @@ _COMMON_EXCLUDE_GLOBS = [
     "**/letsencrypt/**",
     "**/shadow",
     "**/gshadow",
+    # Key material — defence in depth.  Most of these match no include glob
+    # today (the include allowlist is the primary gate), but the protection
+    # must not depend on that list never widening.  Task 1 lifts redaction
+    # from the staging path, which removes the PEM_RE backstop inside
+    # redact_text(); these excludes replace it at the staging gate.
+    "**/*.key",
+    "**/*.pem",
+    "**/*.p12",
+    "**/*.pfx",
+    "**/id_rsa*",
+    "**/id_ecdsa*",
+    "**/id_ed25519*",
+    "**/*.kdbx",
+    "**/.netrc",
+    "**/authorized_keys",
 ]
 
 
@@ -108,15 +143,24 @@ def _os_config_paths() -> List[str]:
 _NOTHING_TO_READ = (FileNotFoundError, IsADirectoryError, NotADirectoryError)
 
 
-def _stage_one_file(src_file: Path, dest_file: Path) -> bool:
-    """Stage a single config file through the redaction pipeline.
+def _stage_one_file(src_file: Path, dest_file: Path, *, redact: bool = True) -> bool:
+    """Stage a single config file, optionally through the redaction pipeline.
 
-    Never a raw copy: anything landing under the staging root is indexed by
-    SourcePrep and returned by scoped queries, so unredacted content here is
-    unredacted content in the knowledge base. Binary formats (plists) are
-    normalized to text by the parser first, so they are greppable AND so the
-    redaction rules can actually match — redaction is text-based and cannot
-    see inside a binary blob.
+    When ``redact=True`` (default), the file content is passed through
+    ``redact_text()`` before writing — anything landing under the staging
+    root is indexed by SourcePrep and returned by scoped queries, so
+    unredacted content here is unredacted content in the knowledge base.
+
+    When ``redact=False``, the raw text is written.  This is for Halbert's
+    private host project only: the staging dir is user-owned, the daemon
+    is localhost-only, and the MCP response boundary (``mcp_response()``)
+    redacts on egress to external clients.  The exclude globs
+    (``_COMMON_EXCLUDE_GLOBS``) still strip key material (*.key, *.pem,
+    id_rsa*, etc.) regardless of this flag.
+
+    Binary formats (plists) are normalized to text by the parser first, so
+    they are greppable AND so the redaction rules can actually match —
+    redaction is text-based and cannot see inside a binary blob.
 
     Returns True if the file was staged.
     """
@@ -162,15 +206,19 @@ def _stage_one_file(src_file: Path, dest_file: Path) -> bool:
         # index, but its existence is a fact about the host — an empty drop-in
         # is how a unit gets masked or a default overridden — and dropping it
         # would make the staged tree misreport the machine's file inventory.
-        dest_file.write_text(redact_text(text), encoding="utf-8")
+        dest_file.write_text(redact_text(text) if redact else text, encoding="utf-8")
     except (PermissionError, OSError) as e:
         logger.warning(f"Cannot write staged copy {dest_file}: {e}")
         return False
     return True
 
 
-def _stage_config_files(paths: List[str], staging_root: Path) -> int:
-    """Stage config files/dirs into the staging directory, redacted.
+def _stage_config_files(paths: List[str], staging_root: Path, *, redact: bool = True) -> int:
+    """Stage config files/dirs into the staging directory.
+
+    When ``redact=True`` (default), content is redacted before writing.
+    When ``redact=False``, raw content is written — for Halbert's private
+    host project only (see ``_stage_one_file`` for the security rationale).
 
     Preserves the original path structure under the staging root.
     Skips files that don't exist or aren't readable.
@@ -196,14 +244,14 @@ def _stage_config_files(paths: List[str], staging_root: Path) -> int:
 
         try:
             if src_path.is_file():
-                if _stage_one_file(src_path, dest):
+                if _stage_one_file(src_path, dest, redact=redact):
                     count += 1
             elif src_path.is_dir():
                 for root, dirs, files in os.walk(src_path):
                     rel = Path(root).relative_to(src_path)
                     dest_dir = dest / rel
                     for f in files:
-                        if _stage_one_file(Path(root) / f, dest_dir / f):
+                        if _stage_one_file(Path(root) / f, dest_dir / f, redact=redact):
                             count += 1
         except (PermissionError, OSError) as e:
             logger.warning(f"Cannot stage {src_path}: {e}")
@@ -215,11 +263,14 @@ def stage_role_tree(
     role: str,
     staging_root: Path,
     manifest_path: Optional[str] = None,
+    *,
+    redact: bool = True,
 ) -> int:
     """Stage one role's manifest-matched config under staging_root/<role>/.
 
-    Files go through the same redaction path as _stage_config_files — the
-    staging root is SourcePrep-visible, so nothing raw may land here.
+    When ``redact=True`` (default), content is redacted before writing.
+    When ``redact=False``, raw content is written — for Halbert's private
+    host project only.
 
     Returns the number of files staged.
     """
@@ -233,7 +284,7 @@ def stage_role_tree(
         return 0
 
     role_root = Path(staging_root) / staging_subdir_for(role)
-    staged = _stage_config_files(paths, role_root)
+    staged = _stage_config_files(paths, role_root, redact=redact)
     logger.info("Staged %d files for role %s under %s", staged, role, role_root)
     return staged
 
@@ -258,6 +309,7 @@ class HostProjectRegistrar:
             resp = requests.get(
                 f"{self.base_url}/projects",
                 timeout=self.timeout,
+                headers=_auth_headers(),
             )
             resp.raise_for_status()
             data = resp.json()
@@ -281,6 +333,7 @@ class HostProjectRegistrar:
             f"{self.base_url}/projects",
             json={"path": path, "name": name, "mode": mode},
             timeout=self.timeout,
+            headers=_auth_headers(),
         )
         resp.raise_for_status()
         data = resp.json()
@@ -298,6 +351,7 @@ class HostProjectRegistrar:
             f"{self.base_url}/projects/{project_id}",
             json={"config": config, "touch": True},
             timeout=self.timeout,
+            headers=_auth_headers(),
         )
         resp.raise_for_status()
         return resp.json()
@@ -309,6 +363,7 @@ class HostProjectRegistrar:
                 f"{self.base_url}/projects/{project_id}/trace/build",
                 json={},
                 timeout=self.timeout * 4,
+                headers=_auth_headers(),
             )
             resp.raise_for_status()
             return resp.json()
@@ -325,6 +380,8 @@ class HostProjectRegistrar:
         mode: str = "standalone",
         build: bool = True,
         staging_dir: Optional[str] = None,
+        *,
+        redact: bool = True,
     ) -> Dict[str, Any]:
         """Register or update the halbert-host SourcePrep project.
 
@@ -339,6 +396,10 @@ class HostProjectRegistrar:
             mode: Index location mode ("standalone", "embedded", "custom")
             build: If True, trigger an index build after registration.
             staging_dir: Custom staging directory. If None, uses default.
+            redact: If True (default), redact content before staging. If False,
+                write raw content — for Halbert's private host project only.
+                The MCP response boundary (mcp_response) handles egress
+                redaction for external clients.
 
         Returns:
             Dict with project_id, created (bool), files_staged, and build_result.
@@ -349,8 +410,8 @@ class HostProjectRegistrar:
         staging_root = Path(staging_dir) if staging_dir else Path(STAGING_DIR)
 
         # Stage config files
-        files_staged = _stage_config_files(paths, staging_root)
-        logger.info(f"Staged {files_staged} config files into {staging_root}")
+        files_staged = _stage_config_files(paths, staging_root, redact=redact)
+        logger.info(f"Staged {files_staged} config files into {staging_root} (redact={redact})")
 
         if files_staged == 0:
             logger.warning("No config files staged — project will be empty")
@@ -431,6 +492,7 @@ class HostProjectRegistrar:
                 f"{self.base_url}/projects/{project_id}/search",
                 json={"query": query, "k": 5, "min_score": 0.05},
                 timeout=self.timeout,
+                headers=_auth_headers(),
             )
             resp.raise_for_status()
             return resp.json()
@@ -441,18 +503,22 @@ class HostProjectRegistrar:
 def register_host_project(
     base_url: Optional[str] = None,
     build: bool = True,
+    *,
+    redact: bool = True,
 ) -> Dict[str, Any]:
     """Convenience function: register the host config project.
 
     Args:
         base_url: SourcePrep daemon URL. Defaults to http://localhost:8400.
         build: If True, trigger an index build.
+        redact: If True (default), redact content before staging. If False,
+            write raw content — for Halbert's private host project only.
 
     Returns:
         Registration result dict.
     """
     registrar = HostProjectRegistrar(base_url=base_url)
-    return registrar.register(build=build)
+    return registrar.register(build=build, redact=redact)
 
 
 if __name__ == "__main__":

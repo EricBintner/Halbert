@@ -13,7 +13,9 @@ Phase 6 / T6a.1.
 
 from __future__ import annotations
 
+import datetime
 import logging
+import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -27,6 +29,131 @@ logger = logging.getLogger(__name__)
 VALID_VOICES = {"first_person", "the_computer", "hybrid"}
 VALID_PROACTIVITY = {"off", "quiet", "balanced", "assertive"}
 VALID_VOICE_PRESENTATIONS = {"not_defined", "male", "female"}
+VALID_VARIANTS = {"sysadmin", "home"}
+VALID_AUTONOMY_LEVELS = {"observe", "suggest", "act", "orchestrate"}
+VALID_OPERATIONAL_TIERS = {"cloud_ok", "local_only", "redact"}
+VALID_SECRET_TIERS = {"local_only", "cloud_ok_acknowledged"}
+
+
+@dataclass
+class SecurityConfig:
+    """Security tier settings for config value routing.
+
+    Controls how config values are routed when exposed via MCP tools or
+    the agent context assembler.  See the tiered sensitivity plan for
+    the full rationale.
+
+    No ``secure_model`` / ``secure_endpoint`` fields — the Tier 2 path is
+    deterministic (``describe_secret``), no model.  If a local model is
+    ever reintroduced for open-ended questions about secrets, it must
+    carry a fail-closed assertion: reject any tag ending in ``:cloud``,
+    reject any provider outside ``LOCAL_GPU_PROVIDERS``, never infer
+    locality from the endpoint URL.
+
+    No ``credential_validation`` / ``compromise_check`` fields — those
+    modules send the secret to external services (issuing APIs, HIBP),
+    which breaks the architectural guarantee that ``describe_secret``
+    never sends the secret value anywhere. They exist as standalone
+    human-run tools, not as part of the Tier 2 describe path.
+    """
+    operational_tier: str = "cloud_ok"  # cloud_ok | local_only | redact
+    secret_tier: str = "local_only"     # local_only | cloud_ok_acknowledged
+    public_files: List[str] = field(default_factory=lambda: [
+        "/etc/hosts", "/etc/hostname", "/etc/fstab",
+    ])
+    extra_secret_keys: List[str] = field(default_factory=list)
+    # Per-key escape hatch: allow specific keys to be cloud_ok while the
+    # global secret_tier remains local_only. Keys listed here are treated
+    # as cloud_ok_acknowledged regardless of the global setting. This lets
+    # a user expose database passwords (which they trust ZDR with) while
+    # keeping SSH private keys and API tokens local-only.
+    cloud_ok_keys: List[str] = field(default_factory=list)
+    # TTL for the Tier 2 escape hatch. When secret_tier is
+    # cloud_ok_acknowledged, secret_tier_expiry is an ISO 8601 timestamp
+    # after which the tier auto-relocks to local_only. None means
+    # permanent (no auto-relock). Checked at load time and at query time
+    # via effective_secret_tier().
+    secret_tier_expiry: Optional[str] = None
+    # Volatile unlock: if True, the secret_tier is reset to local_only
+    # on the next load_being_config call (i.e. on process restart).
+    # This implements the "until restart" TTL option without requiring
+    # a background timer. Persisted to YAML so the next load can see it
+    # and relock; cleared by load_being_config after relocking.
+    volatile_unlock: bool = False
+
+    def validate(self) -> None:
+        if self.operational_tier not in VALID_OPERATIONAL_TIERS:
+            raise ValueError(
+                f"Invalid operational_tier '{self.operational_tier}'. "
+                f"Must be one of: {VALID_OPERATIONAL_TIERS}"
+            )
+        if self.secret_tier not in VALID_SECRET_TIERS:
+            raise ValueError(
+                f"Invalid secret_tier '{self.secret_tier}'. "
+                f"Must be one of: {VALID_SECRET_TIERS}"
+            )
+        # Type-check list fields to prevent downstream crashes
+        for field_name in ("public_files", "extra_secret_keys", "cloud_ok_keys"):
+            val = getattr(self, field_name)
+            if not isinstance(val, list):
+                raise ValueError(
+                    f"security.{field_name} must be a list, got {type(val).__name__}"
+                )
+            for item in val:
+                if not isinstance(item, str):
+                    raise ValueError(
+                        f"security.{field_name} must be a list of strings, "
+                        f"got {type(item).__name__}"
+                    )
+        # Validate secret_tier_expiry format and consistency
+        if self.secret_tier_expiry is not None:
+            if self.secret_tier != "cloud_ok_acknowledged":
+                raise ValueError(
+                    "secret_tier_expiry can only be set when secret_tier is "
+                    "'cloud_ok_acknowledged'"
+                )
+            try:
+                datetime.datetime.fromisoformat(self.secret_tier_expiry)
+            except (ValueError, TypeError) as e:
+                raise ValueError(
+                    f"secret_tier_expiry must be a valid ISO 8601 timestamp: {e}"
+                )
+        if self.volatile_unlock and self.secret_tier != "cloud_ok_acknowledged":
+            raise ValueError(
+                "volatile_unlock can only be True when secret_tier is "
+                "'cloud_ok_acknowledged'"
+            )
+
+    def effective_secret_tier(self) -> str:
+        """Return the effective secret tier, checking TTL expiry at runtime.
+
+        If secret_tier is cloud_ok_acknowledged but the expiry has passed,
+        returns 'local_only'. This is the function callers should use
+        at query time — never trust secret_tier directly without this check.
+        """
+        if self.secret_tier != "cloud_ok_acknowledged":
+            return self.secret_tier
+        if self.secret_tier_expiry is None:
+            return self.secret_tier
+        try:
+            expiry = datetime.datetime.fromisoformat(self.secret_tier_expiry)
+            now = datetime.datetime.now(expiry.tzinfo) if expiry.tzinfo else datetime.datetime.now()
+            if now > expiry:
+                return "local_only"
+        except (ValueError, TypeError):
+            # Invalid expiry string — fail safe (relock)
+            return "local_only"
+        return self.secret_tier
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> "SecurityConfig":
+        if d is None:
+            return cls()
+        known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        return cls(**known)
 
 
 @dataclass
@@ -87,6 +214,27 @@ class BeingConfig:
     # --- Senses (vision autonomy) ---
     senses: SensesConfig = field(default_factory=SensesConfig)
 
+    # --- Home identity & multi-instance ---
+    # Variant gates which startup services launch (sysadmin vs home).
+    # scene_context overrides platform-derived cognition framing.
+    # persona_id_override replaces hardcoded "halbert" in cognition_wiring.
+    variant: str = "sysadmin"  # sysadmin | home
+    scene_context: str = ""  # e.g. "smart home automation"
+    persona_id_override: str = ""  # e.g. "home"
+
+    # --- Home autonomy ---
+    # Controls whether Halbert can take physical action or only observe.
+    # observe: perceive and report only. No device commands.
+    # suggest: create proposals but wait for approval.
+    # act: execute Level 0/1 governance actions (lights, blinds, thermostat).
+    # orchestrate: coordinate multi-device sequences, Level 2 with cancel window.
+    autonomy_level: str = "observe"
+    # Per-domain overrides keyed by HA domain (e.g. {"lock": "suggest", "climate": "act"})
+    autonomy_overrides: Dict[str, str] = field(default_factory=dict)
+
+    # --- Security (MCP trust boundary) ---
+    security: SecurityConfig = field(default_factory=SecurityConfig)
+
     def __post_init__(self) -> None:
         """Coerce nested dict senses into SensesConfig if needed."""
         if isinstance(self.senses, dict):
@@ -143,6 +291,24 @@ class BeingConfig:
             raise ValueError(
                 f"senses.vision.interval_seconds must be >= 10, got {vision.interval_seconds}"
             )
+        # Home identity validation
+        if self.variant not in VALID_VARIANTS:
+            raise ValueError(
+                f"Invalid variant '{self.variant}'. Must be one of: {VALID_VARIANTS}"
+            )
+        if self.autonomy_level not in VALID_AUTONOMY_LEVELS:
+            raise ValueError(
+                f"Invalid autonomy_level '{self.autonomy_level}'. "
+                f"Must be one of: {VALID_AUTONOMY_LEVELS}"
+            )
+        for domain, level in self.autonomy_overrides.items():
+            if level not in VALID_AUTONOMY_LEVELS:
+                raise ValueError(
+                    f"Invalid autonomy override '{level}' for domain '{domain}'. "
+                    f"Must be one of: {VALID_AUTONOMY_LEVELS}"
+                )
+        # Security validation
+        self.security.validate()
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -164,6 +330,13 @@ class BeingConfig:
                 )
             else:
                 known["senses"] = SensesConfig()
+        # Handle nested security config — guard against null / missing
+        if "security" in known:
+            if isinstance(known["security"], dict):
+                known["security"] = SecurityConfig.from_dict(known["security"])
+            elif known["security"] is None:
+                # security: null in YAML — use defaults instead of crashing
+                known["security"] = SecurityConfig()
         return cls(**known)
 
 
@@ -237,7 +410,37 @@ def load_being_config(path: Optional[str] = None) -> BeingConfig:
         raise ValueError(f"Cannot read {config_path}: {e}")
 
     config = BeingConfig.from_dict(data)
+
+    # Volatile unlock: reset to local_only on load (process restart).
+    # The volatile_unlock flag is persisted so the next load can see it
+    # and relock. After relocking, persist the cleaned state to disk.
+    relocked = False
+    if config.security.volatile_unlock:
+        logger.info("Volatile unlock detected on load — relocking secrets to local_only")
+        config.security.secret_tier = "local_only"
+        config.security.volatile_unlock = False
+        config.security.secret_tier_expiry = None
+        relocked = True
+
+    # Expiry check: if the escape hatch has expired, relock.
+    if (config.security.secret_tier == "cloud_ok_acknowledged"
+            and config.security.secret_tier_expiry):
+        effective = config.security.effective_secret_tier()
+        if effective == "local_only":
+            logger.info("Secret tier expiry passed — relocking to local_only")
+            config.security.secret_tier = "local_only"
+            config.security.secret_tier_expiry = None
+            relocked = True
+
     config.validate()
+
+    # Persist the relocked state so the YAML doesn't keep stale TTL fields
+    if relocked:
+        try:
+            save_being_config(config, path)
+        except Exception as e:
+            logger.warning(f"Failed to persist relocked config: {e}")
+
     logger.info(f"Loaded being config from {config_path} (voice={config.voice})")
     return config
 
@@ -255,10 +458,33 @@ def save_being_config(config: BeingConfig, path: Optional[str] = None) -> None:
     data = config.to_dict()
     # Remove None values for cleaner YAML
     clean = {k: v for k, v in data.items() if v is not None and v != ""}
+    # Strip None-valued fields from the nested security block for cleaner YAML.
+    # volatile_unlock IS persisted — it is the marker that tells the next
+    # load_being_config call to relock (implementing "until restart" TTL).
+    if "security" in clean and isinstance(clean["security"], dict):
+        clean["security"] = {
+            k: v for k, v in clean["security"].items() if v is not None
+        }
 
     try:
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(clean, f, default_flow_style=False, sort_keys=False)
+        # Atomic write: write to temp file then rename, so a concurrent
+        # reader never sees a partially-written file. Restricted to 0o600
+        # because being.yml can contain security config references.
+        import tempfile
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(config_path.parent), suffix=".yml.tmp", prefix=".being_"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                yaml.dump(clean, f, default_flow_style=False, sort_keys=False)
+            os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, str(config_path))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         logger.info(f"Saved being config to {config_path}")
     except OSError as e:
         raise ValueError(f"Cannot write {config_path}: {e}")

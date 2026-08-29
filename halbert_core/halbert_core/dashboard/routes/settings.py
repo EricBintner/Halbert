@@ -22,6 +22,9 @@ from ...utils.platform import get_config_dir
 
 logger = logging.getLogger('halbert.dashboard')
 
+# Lock for concurrent being config read-modify-write operations
+_being_config_lock = threading.Lock()
+
 router = APIRouter()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2982,6 +2985,8 @@ class BeingConfigUpdate(BaseModel):
     voice_presentation: Optional[str] = None
     model: Optional[str] = None
     model_endpoint_id: Optional[str] = None
+    # Security (MCP trust boundary)
+    security: Optional[Dict[str, Any]] = None
 
 
 @router.get("/being")
@@ -2990,7 +2995,11 @@ async def get_being_config() -> Dict[str, Any]:
     try:
         from ...config.being_config import load_being_config
         cfg = load_being_config()
-        return {"status": "ok", "config": cfg.to_dict()}
+        resp = cfg.to_dict()
+        # Strip internal volatile_unlock from API response
+        if "security" in resp and isinstance(resp["security"], dict):
+            resp["security"].pop("volatile_unlock", None)
+        return {"status": "ok", "config": resp}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -3003,46 +3012,58 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
     """Update being configuration. Validates and persists to being.yml."""
     try:
         from ...config.being_config import load_being_config, save_being_config
-        cfg = load_being_config()
+        with _being_config_lock:
+            cfg = load_being_config()
 
-        # Apply partial updates (only non-None fields)
-        if update.voice is not None:
-            cfg.voice = update.voice
-        if update.proactivity is not None:
-            cfg.proactivity = update.proactivity
-        if update.purpose is not None:
-            cfg.purpose = update.purpose
-        if update.quiet_hours is not None:
-            cfg.quiet_hours = update.quiet_hours
-        if update.morning_report is not None:
-            cfg.morning_report = update.morning_report
-        if update.category_overrides is not None:
-            cfg.category_overrides = update.category_overrides
-        # Personality
-        if update.personality_profile is not None:
-            cfg.personality_profile = update.personality_profile
-        if update.archetype_id is not None:
-            cfg.archetype_id = update.archetype_id if update.archetype_id else None
-        if update.tone_descriptors is not None:
-            cfg.tone_descriptors = update.tone_descriptors
-        if update.speech_patterns is not None:
-            cfg.speech_patterns = update.speech_patterns
-        if update.directives is not None:
-            cfg.directives = update.directives
-        if update.custom_personality_prompt is not None:
-            cfg.custom_personality_prompt = update.custom_personality_prompt
-        # Character (Phase 3)
-        if update.name is not None:
-            cfg.name = update.name
-        if update.voice_presentation is not None:
-            cfg.voice_presentation = update.voice_presentation
-        if update.model is not None:
-            cfg.model = update.model if update.model else None
-        if update.model_endpoint_id is not None:
-            cfg.model_endpoint_id = update.model_endpoint_id if update.model_endpoint_id else None
+            # Apply partial updates (only non-None fields)
+            if update.voice is not None:
+                cfg.voice = update.voice
+            if update.proactivity is not None:
+                cfg.proactivity = update.proactivity
+            if update.purpose is not None:
+                cfg.purpose = update.purpose
+            if update.quiet_hours is not None:
+                cfg.quiet_hours = update.quiet_hours
+            if update.morning_report is not None:
+                cfg.morning_report = update.morning_report
+            if update.category_overrides is not None:
+                cfg.category_overrides = update.category_overrides
+            # Personality
+            if update.personality_profile is not None:
+                cfg.personality_profile = update.personality_profile
+            if update.archetype_id is not None:
+                cfg.archetype_id = update.archetype_id if update.archetype_id else None
+            if update.tone_descriptors is not None:
+                cfg.tone_descriptors = update.tone_descriptors
+            if update.speech_patterns is not None:
+                cfg.speech_patterns = update.speech_patterns
+            if update.directives is not None:
+                cfg.directives = update.directives
+            if update.custom_personality_prompt is not None:
+                cfg.custom_personality_prompt = update.custom_personality_prompt
+            # Character (Phase 3)
+            if update.name is not None:
+                cfg.name = update.name
+            if update.voice_presentation is not None:
+                cfg.voice_presentation = update.voice_presentation
+            if update.model is not None:
+                cfg.model = update.model if update.model else None
+            if update.model_endpoint_id is not None:
+                cfg.model_endpoint_id = update.model_endpoint_id if update.model_endpoint_id else None
+            # Security (MCP trust boundary)
+            if update.security is not None:
+                from ...config.being_config import SecurityConfig
+                existing = cfg.security.to_dict() if cfg.security else {}
+                merged = {**existing, **update.security}
+                # If the new secret_tier is local_only, clear TTL fields
+                if merged.get("secret_tier") == "local_only":
+                    merged["secret_tier_expiry"] = None
+                    merged["volatile_unlock"] = False
+                cfg.security = SecurityConfig.from_dict(merged)
+                cfg.security.validate()
 
-        # Validate + save
-        save_being_config(cfg)
+            # Validate + save
+            save_being_config(cfg)
 
         # Hot-reload personality into the running agent
         try:
@@ -3053,11 +3074,116 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"Could not hot-reload personality: {e}")
 
-        return {"status": "ok", "config": cfg.to_dict()}
+        # Strip internal volatile_unlock from API response
+        resp = cfg.to_dict()
+        if "security" in resp and isinstance(resp["security"], dict):
+            resp["security"].pop("volatile_unlock", None)
+        return {"status": "ok", "config": resp}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to save being config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/security/telemetry")
+async def get_security_telemetry() -> Dict[str, Any]:
+    """Count classified config values by tier (0/1/2) from the canon DB.
+
+    Iterates all canon JSON records, classifies each key/value pair using
+    the sensitivity classifier with the user's current security config
+    (public_files, extra_secret_keys), and returns counts per tier.
+    Recursively walks nested dict/list structures in tree and sections.
+    """
+    try:
+        import datetime
+        import json
+        import os
+        from ...config.being_config import load_being_config
+        from ...config.sensitivity import classify_sensitivity
+        from ...config.indexer import CANON_DIR
+
+        cfg = load_being_config()
+        sec = cfg.security
+        public_files = set(sec.public_files) if sec.public_files else set()
+        extra_secret_keys = sec.extra_secret_keys or []
+
+        # Check if the escape hatch has expired at runtime
+        effective_secret_tier = sec.secret_tier
+        if effective_secret_tier == "cloud_ok_acknowledged" and sec.secret_tier_expiry:
+            try:
+                expiry = datetime.datetime.fromisoformat(sec.secret_tier_expiry)
+                if datetime.datetime.now(expiry.tzinfo) > expiry:
+                    effective_secret_tier = "local_only"
+            except (ValueError, TypeError):
+                pass
+
+        def _flatten_pairs(obj, prefix=""):
+            """Recursively extract (key, value) leaf pairs from nested structures."""
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    full_key = f"{prefix}.{k}" if prefix else k
+                    if isinstance(v, (dict, list)):
+                        yield from _flatten_pairs(v, full_key)
+                    else:
+                        yield (full_key, v)
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    indexed_key = f"{prefix}[{i}]" if prefix else f"[{i}]"
+                    if isinstance(item, (dict, list)):
+                        yield from _flatten_pairs(item, indexed_key)
+                    else:
+                        yield (indexed_key, item)
+
+        counts = {"tier_0": 0, "tier_1": 0, "tier_2": 0}
+        total = 0
+
+        if os.path.isdir(CANON_DIR):
+            for fname in sorted(os.listdir(CANON_DIR)):
+                if not fname.endswith(".json"):
+                    continue
+                fpath = os.path.join(CANON_DIR, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        rec = json.load(f)
+                except Exception:
+                    continue
+                file_path = rec.get("path", "")
+
+                # Extract key/value pairs from the canon record, recursively
+                pairs: list[tuple[str, any]] = []
+                if "sections" in rec and isinstance(rec["sections"], dict):
+                    for _sec_name, kv in rec["sections"].items():
+                        if isinstance(kv, dict):
+                            pairs.extend(_flatten_pairs(kv))
+                if "tree" in rec and isinstance(rec["tree"], dict):
+                    pairs.extend(_flatten_pairs(rec["tree"]))
+
+                for key, value in pairs:
+                    tier = classify_sensitivity(
+                        key, value, file_path,
+                        public_files=public_files,
+                        extra_secret_keys=extra_secret_keys,
+                    )
+                    if tier == 0:
+                        counts["tier_0"] += 1
+                    elif tier == 1:
+                        counts["tier_1"] += 1
+                    else:
+                        counts["tier_2"] += 1
+                    total += 1
+
+        return {
+            "status": "ok",
+            "counts": counts,
+            "total": total,
+            "secret_tier": effective_secret_tier,
+            "operational_tier": sec.operational_tier,
+            "cloud_ok_keys_count": len(sec.cloud_ok_keys or []),
+            "secret_tier_expiry": sec.secret_tier_expiry,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get security telemetry: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

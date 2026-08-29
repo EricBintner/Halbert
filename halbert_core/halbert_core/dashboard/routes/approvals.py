@@ -18,7 +18,7 @@ router = APIRouter()
 class ApprovalDecisionRequest(BaseModel):
     """Request to approve/reject."""
     approved: bool
-    reason: str | None = None
+    reason: Optional[str] = None
 
 
 def _utc_now() -> str:

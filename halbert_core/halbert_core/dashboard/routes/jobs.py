@@ -5,13 +5,13 @@ Job monitoring API routes.
 """
 
 from fastapi import APIRouter, HTTPException
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 router = APIRouter()
 
 
 @router.get("")
-async def list_jobs(state: str | None = None) -> List[Dict[str, Any]]:
+async def list_jobs(state: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     List all scheduled jobs.
     

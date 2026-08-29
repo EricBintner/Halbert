@@ -158,7 +158,7 @@ class TestCognitionWiringDataSync:
                 del os.environ["HALOYSIUS_DATA_HOME"]
             import halbert_core.integrations.cognition_wiring as cw
             importlib.reload(cw)
-        assert os.environ.get("HALOYSIUS_DATA_HOME") == "/tmp/hbt-haloysius-sync"
+            assert os.environ.get("HALOYSIUS_DATA_HOME") == "/tmp/hbt-haloysius-sync"
 
     def test_haloysius_data_home_not_overwritten(self):
         env = {
@@ -168,7 +168,7 @@ class TestCognitionWiringDataSync:
         with patch.dict(os.environ, env, clear=False):
             import halbert_core.integrations.cognition_wiring as cw
             importlib.reload(cw)
-        assert os.environ.get("HALOYSIUS_DATA_HOME") == "/tmp/custom-haloysius"
+            assert os.environ.get("HALOYSIUS_DATA_HOME") == "/tmp/custom-haloysius"
 
 
 class TestPersonaIdFromEnv:

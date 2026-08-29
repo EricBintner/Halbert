@@ -27,3 +27,13 @@ export { DatasetManager } from './DatasetManager'
 
 // Phase 54: Data Version and Freshness
 export { DataVersionCard } from './DataVersionCard'
+
+// Security tab components (MCP Trust Boundary)
+export {
+  TrustBoundaryTelemetryBar,
+  Tier1RockerControl,
+  Tier2StateCard,
+  EscapeHatchConfirmationModal,
+  MachinedTagInput,
+  type TelemetryCounts,
+} from './SecurityComponents'

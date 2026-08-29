@@ -36,12 +36,34 @@ if _hbt_data and not os.environ.get("HALOYSIUS_DATA_HOME"):
 
 
 def _get_persona_id() -> str:
-    """Get the persona identity from env, defaulting to 'halbert'."""
+    """Get the persona identity.
+
+    Priority: BeingConfig.persona_id_override > HALBERT_PERSONA_ID env > 'halbert'.
+    """
+    # Try BeingConfig first (supports multi-instance via HALBERT_CONFIG_DIR)
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        if cfg.persona_id_override:
+            return cfg.persona_id_override
+    except Exception:
+        pass
     return os.environ.get("HALBERT_PERSONA_ID", "halbert")
 
 
 def _get_scene_context() -> str:
-    """Get the scene context from env, falling back to platform-derived default."""
+    """Get the scene context.
+
+    Priority: BeingConfig.scene_context > HALBERT_SCENE_CONTEXT env > platform default.
+    """
+    # Try BeingConfig first
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        if cfg.scene_context:
+            return cfg.scene_context
+    except Exception:
+        pass
     env_ctx = os.environ.get("HALBERT_SCENE_CONTEXT", "").strip()
     if env_ctx:
         return env_ctx

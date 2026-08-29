@@ -30,6 +30,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from .prep_token import auth_headers as _auth_headers
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PROJECT_ROOT = Path("~/.local/share/halbert/sourceprep")  # sourceprep_template.yml project.root
@@ -79,7 +81,7 @@ class SourcePrepClient:
     def _post(self, path: str, json_body: Dict[str, Any], project_id: Optional[str] = None) -> Dict[str, Any]:
         url = self._url(path, project_id=project_id)
         try:
-            resp = requests.post(url, json=json_body, timeout=self.timeout)
+            resp = requests.post(url, json=json_body, timeout=self.timeout, headers=_auth_headers())
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
@@ -94,7 +96,7 @@ class SourcePrepClient:
     ) -> Dict[str, Any]:
         url = self._url(path, project_id=project_id)
         try:
-            resp = requests.get(url, params=params, timeout=self.timeout)
+            resp = requests.get(url, params=params, timeout=self.timeout, headers=_auth_headers())
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
@@ -292,6 +294,7 @@ class SourcePrepClient:
             resp = requests.get(
                 f"{self.base_url}/health",
                 timeout=5.0,
+                headers=_auth_headers(),
             )
             return resp.status_code == 200
         except requests.RequestException:
@@ -338,6 +341,7 @@ class SourcePrepClient:
                 url,
                 params={"max_hops": max_hops, "max_nodes": max_nodes},
                 timeout=self.timeout,
+                headers=_auth_headers(),
             )
             resp.raise_for_status()
             return resp.json()

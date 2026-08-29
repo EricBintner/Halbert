@@ -6,6 +6,7 @@ Platform detection utilities for cross-platform support (Phase 5 M3 / Phase 6 pr
 Provides platform-specific behavior and detection for Linux and macOS.
 """
 
+import os
 import platform
 import subprocess
 from pathlib import Path
