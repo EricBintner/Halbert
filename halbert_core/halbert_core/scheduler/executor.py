@@ -117,7 +117,8 @@ class AutonomousExecutor:
                 self.guardrail_enforcer = GuardrailEnforcer()
                 # Load anomaly detector config
                 import yaml
-                with open("config/autonomy.yml") as f:
+                from ..autonomy.guardrails import _resolve_autonomy_path
+                with open(_resolve_autonomy_path()) as f:
                     autonomy_config = yaml.safe_load(f)
                 self.anomaly_detector = AnomalyDetector(autonomy_config["anomalies"])
                 self.recovery_executor = RecoveryExecutor(autonomy_config["recovery"])

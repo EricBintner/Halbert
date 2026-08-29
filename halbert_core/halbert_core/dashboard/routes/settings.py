@@ -2462,8 +2462,9 @@ def get_anomaly_detector():
     if _anomaly_detector is None:
         from ...autonomy import AnomalyDetector
         import yaml
+        from ...autonomy.guardrails import _resolve_autonomy_path
         try:
-            with open("config/autonomy.yml", "r") as f:
+            with open(_resolve_autonomy_path(), "r") as f:
                 config = yaml.safe_load(f) or {}
             anomaly_config = config.get("anomalies", {
                 "cpu_spike_threshold": 90,
@@ -2547,8 +2548,9 @@ def get_recovery_executor():
     if _recovery_executor is None:
         from ...autonomy import RecoveryExecutor
         import yaml
+        from ...autonomy.guardrails import _resolve_autonomy_path
         try:
-            with open("config/autonomy.yml", "r") as f:
+            with open(_resolve_autonomy_path(), "r") as f:
                 config = yaml.safe_load(f) or {}
             recovery_config = config.get("recovery", {
                 "rollback": {"enabled": True, "max_rollback_depth": 5},

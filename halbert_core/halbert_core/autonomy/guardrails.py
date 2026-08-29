@@ -12,8 +12,25 @@ from pathlib import Path
 import yaml
 from ..obs.logging import get_logger
 from ..obs.audit import write_audit
+from ..utils.paths import config_dir
 
 logger = get_logger("halbert")
+
+
+def _resolve_autonomy_path(explicit: Optional[Path] = None) -> Path:
+    """Resolve autonomy.yml path, trying explicit, XDG config dir, then repo-relative."""
+    if explicit is not None:
+        return explicit
+    candidates = [
+        Path(config_dir()) / "autonomy.yml",
+        Path("config") / "autonomy.yml",
+        Path(__file__).resolve().parents[3] / "config" / "autonomy.yml",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    # Fall back to the first candidate so the error message is sensible
+    return candidates[0]
 
 
 class GuardrailViolation(Exception):
@@ -40,7 +57,7 @@ class GuardrailEnforcer:
             config_path: Path to autonomy.yml (defaults to config/autonomy.yml)
         """
         if config_path is None:
-            config_path = Path("config/autonomy.yml")
+            config_path = _resolve_autonomy_path()
         
         self.config_path = config_path
         self.config = self._load_config()
