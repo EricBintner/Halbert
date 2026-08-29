@@ -392,17 +392,115 @@ Phase 8D: Commit, merge, push
 
 ### Reviewer Notes
 
-*(To be filled by the reviewing AI session)*
+#### 1. Executive Summary & Architectural Alignment
+The transition from Phase 7 to Phase 8 is well-grounded in the multi-instance and config isolation infrastructure built in Phase 7. The introduction of the `secure_model` slot and a lightweight packaging variant (`halbert-core[light]`) provides the missing foundation for running Halbert reliably across the entire hardware spectrum — from legacy dual-core Intel machines and low-power Intel N100/N150 mini PCs to Raspberry Pi 4/5 ARM64 boards, up to high-end Apple Silicon and multi-GPU workstations.
+
+However, several critical course corrections are required to ensure the design remains robust, strictly adheres to project rules (specifically avoiding hardcoded models and model recommendations), limits local workloads appropriately while enabling seamless cloud/LAN offloading, and maintains a transparent, intuitive UX without patronizing feature hiding or over-engineering.
+
+---
+
+### Critical Findings & Design Corrections
+
+#### Finding 1: Zero Tolerance for Hardcoded Models & Hardcoded Recommendations
+* **The Problem:** Sections §2.1, §2.3, §3.1, and §3.3 in the proposal introduce specific model strings (`qwen3:4b`, `llama3.2:3b`, `gemma3:4b`, `phi4-mini`, `nomic-embed-text`, `gpt-4o`) and make explicit model recommendations.
+* **The Architecture Rule:** Halbert's core design (established in `hardware_detector.py` and `config_wizard.py`) operates strictly on **Model Budgets (parameter sizes in billions and memory ceilings)** and **dynamic capability discovery**, never hardcoded model names or static recommendations.
+* **Mandated Corrections:**
+  1. **Slot Contract:** The 4 slots (`chat_model`, `specialist_model`, `vision_model`, `secure_model`) must represent functional roles and constraints, not specific model identifiers.
+  2. **Dynamic Endpoint Discovery:** When listing or defaulting models, query the endpoint's live catalog (`GET /api/tags` for Ollama, `GET /v1/models` for OpenAI-compatible/cloud) and filter by the detected `ModelBudget` (e.g. `pick_installed_model()`).
+  3. **No Hardcoded Embedding Models:** `OllamaEmbeddingBackend` must NOT hardcode `model="nomic-embed-text"`. It should accept an embedding model name from config/env (`HALBERT_EMBEDDING_MODEL`), discover installed embedding models on the endpoint (e.g., tags containing `embed`), or allow the user to select their preferred embedding model in settings.
+
+#### Finding 2: Universal Hardware Spectrum & Hardware Profiling
+Halbert must run reliably across three primary low-power tiers without crashing, thrashing swap, or hanging the event loop:
+1. **Legacy Intel PCs (Core 2 Duo / 2nd–6th Gen Core / Celeron / Pentium, 4GB–8GB RAM, slow CPU, SATA/HDD, limited/no AVX2):**
+   - *Constraint:* CPU inference is slow (1–3 tok/s). Heavy background indexing or importing large Python packages (`torch`) exhausts RAM.
+   - *Strategy:* Run `[light]` core (no PyTorch in memory). Use template thoughts (`HALBERT_LLM_THOUGHTS=0`). Offload general chat to Cloud or LAN GPU, and offload SourcePrep indexing to a networked desktop (`SOURCEPREP_URL`).
+2. **Intel N100 / N150 / N95 Mini PCs (Alder Lake-N / Twin Lake, 4–8 E-cores, 8GB–16GB RAM, AVX2, NVMe):**
+   - *Constraint:* CPU-only inference, 6–15W TDP ceiling.
+   - *Capability:* Capable of ~10–15 tok/s on quantized 3B–4B models. Comfortable running a local `secure_model` (3B–4B) + Halbert daemon + Home Assistant.
+   - *Strategy:* Run local `secure_model` via Ollama; offload heavy specialist or general chat to Cloud or LAN if desired.
+3. **Raspberry Pi 4 / 5 (ARM64 / aarch64, 2GB–8GB RAM, Broadcom SoC, SD/USB/NVMe storage):**
+   - *Constraint:* Pi 4 achieves ~3–5 tok/s; Pi 5 achieves ~8–12 tok/s on small models. Compiling heavy wheels (like PyTorch or older ChromaDB) on ARM64 is error-prone and memory-intensive.
+   - *Strategy:* `halbert-core[light]` pure-wheel installation. Use Ollama ARM64 binary for local inference/embeddings. Offload SourcePrep indexing over LAN.
+4. **`hardware_detector.py` Gap:**
+   - Currently, `_classify_hardware()` classifies all systems with `< 12GB RAM` as `HardwareProfile.UNKNOWN`.
+   - *Fix:* Introduce explicit profiles in `HardwareProfile` (e.g., `SBC_LOW_POWER` for <=4GB, `ENTRY_8GB` for 4–8GB) and calibrate realistic memory budgets (`max_params_b_4bit`: ~1B–2B on 4GB, ~3B–4B on 8GB, ~7B on 16GB).
+
+#### Finding 3: Tooling Limits vs. Tool Offload Architecture (Networked & Cloud)
+* **Limiting Machine Tooling to Hardware Capabilities:**
+   - **Dependency Trimming (`pyproject.toml`):** Move `sentence-transformers` and legacy `chromadb` out of base `dependencies` into optional extras (`[rag-legacy]`, `[full]`). The `[light]` baseline saves ~1.5GB of disk and ~500MB of idle RAM.
+   - **Background Workload Gating:** On `HALBERT_VARIANT=home` or low-power hardware, relax telemetry polling intervals and suppress heavy journald/hardware discovery sweeps.
+   - **Cognitive Monologue Gating:** Keep `HALBERT_LLM_THOUGHTS=0` (template thoughts) by default. Only invoke LLM-generated internal thoughts when explicitly enabled and when local compute or a dedicated `secure_model` is configured.
+* **Networked & Cloud Alternate Tools:**
+   - **SourcePrep Offload:** The `SourcePrepClient` and `SourcePrepRetrievalBackend` naturally accept `base_url` (configured via `SOURCEPREP_URL` or settings). A tiny Raspberry Pi or N100 can run without local SourcePrep daemon by querying a workstation or home server running SourcePrep at `http://desktop.lan:8400`.
+   - **Cloud LLM Offload:** `chat_model`, `specialist_model`, and `vision_model` can point to OpenAI, Anthropic, Gemini, Groq, or OpenRouter via saved endpoints.
+   - **LAN / Tailscale Model Offload:** Any endpoint URL in `models.yml` can point to an Ollama or vLLM instance on a local IP or Tailscale node (e.g., `http://gpu-rig.tailscale:11434`), allowing low-power nodes to borrow workstation GPU compute.
+   - **Local Privacy Boundary:** The `secure_model` remains strictly local (loopback) to process sensitive configuration and persona state safely.
+
+#### Finding 4: UX Philosophy — Simple, Intuitive, Invisible, BUT Never Hide Features
+* **Anti-Pattern Warning (Do NOT Hide Features on Low Hardware):**
+   - Detecting low hardware (e.g. 4GB RAM or Raspberry Pi) must **NEVER** hide settings tabs, model slots, specialist/vision configuration, or cloud providers.
+   - A user running Halbert on a Raspberry Pi 4 might intentionally use Cloud APIs (Claude 3.5 Sonnet, GPT-4o) or point to a remote LAN server with dual RTX 4090s. Hiding options based on local CPU/RAM is patronizing and breaks valid topologies.
+* **Transparent & Helpful UX:**
+   - Display detected hardware budget and profile clearly in Settings ("Hardware Budget: ~3B local parameters | Cloud / LAN offloading active").
+   - Pre-populate conservative, non-breaking defaults (e.g., leaving heavy slots disabled until an endpoint is selected).
+   - Provide clean, zero-friction setup without modal pop-up traps or rigid wizards.
+* **Avoid Over-Engineering:**
+   - Avoid building complex runtime load-balancers, dynamic heuristic CPU-throttling schedulers, or distributed consensus protocols.
+   - Rely on standard declarative YAML (`models.yml`), standard environment overrides (`SOURCEPREP_URL`, `HALBERT_VARIANT`, `HALBERT_CONFIG_DIR`), and straightforward HTTP/REST connections.
+
+#### Finding 5: Code Audit & Security Guardrails
+1. **Local-Only Enforcement for `secure_model`:**
+   - The proposed check `if not any(host in ep_url for host in ("localhost", "127.0.0.1", "0.0.0.0"))` in §2.6 is fragile (e.g., matches `http://attacker.com/localhost`, fails on `http://[::1]:11434` or unix sockets).
+   - *Fix:* Use standard URL parsing:
+     ```python
+     from urllib.parse import urlparse
+     import ipaddress
+
+     def is_local_endpoint(url: str) -> bool:
+         try:
+             hostname = urlparse(url).hostname or ""
+             if hostname in ("localhost", "0.0.0.0"):
+                 return True
+             ip = ipaddress.ip_address(hostname)
+             return ip.is_loopback or ip.is_unspecified
+         except ValueError:
+             return False
+     ```
+2. **Ollama Embeddings API Batching:**
+   - Ollama supports `/api/embed` with batching (`input: ["chunk1", "chunk2", ...]`).
+   - `OllamaEmbeddingBackend` should attempt `/api/embed` first for efficient single-request batching, and fall back to sequential `/api/embeddings` only on legacy Ollama versions (< 0.1.44).
+
+---
 
 ### Answers to Open Questions (§6)
 
-1. 
-2. 
-3. 
-4. 
-5. 
-6. 
+1. **`secure_model` slot approval & Cognitive Tick Routing:**
+   - **Approved.** The 4-slot model architecture (`chat_model`, `specialist_model`, `vision_model`, `secure_model`) is clean, orthogonal, and backwards-compatible.
+   - **Cognitive Tick:** When `HALBERT_LLM_THOUGHTS` is enabled, internal monologue must route to `secure_model` (with fallback to `chat_model` ONLY if `chat_model` is also a verified local endpoint; otherwise fall back to template thoughts). Persona memories and internal cognitive monologue must never be sent to cloud providers without explicit user instruction.
+
+2. **Cloud model defaults vs. Onboarding:**
+   - **Leave unconfigured.** Do not ship hardcoded cloud provider keys or pre-pinned model names. A fresh install should gracefully prompt the user in Settings / Onboarding to pick their preferred provider (Cloud API key, local Ollama, or LAN endpoint).
+
+3. **Onboarding flow priority:**
+   - Keep onboarding minimal and non-blocking. A lightweight selection (Role: Workstation Sysadmin vs. Home Hub vs. Light Client) that sets `variant` and opens the unified Model Picker is sufficient. Defer elaborate multi-step onboarding wizards.
+
+4. **Light hardware target:**
+   - **Both N100/N150 and Raspberry Pi 4/5 (ARM64) are first-class targets**, alongside legacy Intel computers. All dependencies in the `[light]` group must be pure Python or have standard pre-compiled ARM64 / x86_64 wheels on PyPI.
+
+5. **Tailscale & LAN Offload:**
+   - Supported out-of-the-box via URL configuration. Document the deployment topology in `deploy/README.md` (e.g., setting `SOURCEPREP_URL=http://<lan-host>:8400` and adding remote Ollama / vLLM URLs into `models.yml`).
+
+6. **Sentient Home UI priority:**
+   - Keep UI modular. Implement the essential multi-instance and status indicators without hiding existing sysadmin or configuration controls. Full spatial ambient UI (AreaGrid, TemporalChronicle) remains in its dedicated post-Phase 8 workstream.
+
+---
 
 ### Additional Concerns or Recommendations
 
-*(To be filled by the reviewing AI session)*
+1. **Pyproject.toml Base Dependency Cleanup:**
+   - Ensure `chromadb` and `sentence-transformers` are completely removed from mandatory `project.dependencies` in `halbert_core/pyproject.toml` and moved to optional extras. This unblocks instant, lightweight installation on Raspberry Pi and low-spec machines.
+2. **Advisory Lock Scope:**
+   - In `model/client.py`, ensure `llm_advisory_lock()` continues to protect local GPU/CPU endpoints (`ollama`, `llamacpp`, `mlx`, `lm-studio`) from concurrent contention between Halbert and SourcePrep while allowing cloud endpoints to execute concurrently without locking.
+3. **Graceful Fallbacks for Offline / Degraded State:**
+   - If `chat_model` is configured to Cloud but the network is offline, surface a clean, actionable status banner in the UI rather than unhandled network timeout exceptions. If a local `secure_model` is available, the agent can still respond to local sysadmin queries or queue tasks.
+
