@@ -28,7 +28,9 @@ import math
 import os
 import shlex
 from collections import Counter
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+from .credential_formats import identify_credential
 
 
 def _charset_classes(text: str) -> list[str]:
@@ -80,7 +82,13 @@ def _view_command(key: str, file_path: str) -> str:
     return f"cat {shlex.quote(file_path)}"
 
 
-def describe_secret(key: str, value: Any, file_path: str = "") -> Dict[str, Any]:
+def describe_secret(
+    key: str,
+    value: Any,
+    file_path: str = "",
+    *,
+    identify: bool = True,
+) -> Dict[str, Any]:
     """Return structured facts about ``value`` without the value itself.
 
     Parameters
@@ -91,16 +99,21 @@ def describe_secret(key: str, value: Any, file_path: str = "") -> Dict[str, Any]
         The secret value.  Converted to string for analysis.
     file_path
         The file the value came from (for the view command).
+    identify
+        When True (default), consult the credential format database to
+        identify the credential type. No secret leaves the tool — only
+        the value's shape is matched against known formats.
 
     Returns
     -------
     dict with keys: ``key``, ``file``, ``length``, ``charset``,
-    ``entropy_bits``, ``view_command``, ``redacted``.
+    ``entropy_bits``, ``view_command``, ``redacted``, and optionally
+    ``credential_type`` (if the format was identified).
     The ``redacted`` field is always ``True`` — callers can check it to
     distinguish a secure description from a raw value response.
     """
     text = "" if value is None else str(value)
-    return {
+    result: Dict[str, Any] = {
         "key": key,
         "file": file_path,
         "length": len(text),
@@ -109,3 +122,12 @@ def describe_secret(key: str, value: Any, file_path: str = "") -> Dict[str, Any]
         "view_command": _view_command(key, file_path),
         "redacted": True,
     }
+
+    # Token format identification — the safe "look to the internet":
+    # a bundled credential format database, no secret sent anywhere.
+    if identify and text:
+        cred_info = identify_credential(text)
+        if cred_info:
+            result["credential_type"] = cred_info
+
+    return result
