@@ -189,3 +189,32 @@ async def search_ha_config_api(q: str = Query(..., description="Search query"), 
     from ...integrations.home_assistant.ha_config_bridge import search_ha_config
     results = search_ha_config(q, k=k)
     return {"results": results, "count": len(results), "query": q}
+
+
+# --- Phase 4: Wyoming Voice Agent ---
+
+@router.get("/home/voice/status")
+async def get_voice_status():
+    """Check if the Wyoming voice agent is running."""
+    from ...integrations.wyoming_agent import WyomingConfig
+    cfg = WyomingConfig.from_env()
+    # Check if the global Wyoming agent is running
+    try:
+        from ...dashboard.app import _wyoming_agent
+        running = _wyoming_agent is not None and _wyoming_agent.is_running
+    except Exception:
+        running = False
+    return {
+        "enabled": cfg.enabled,
+        "host": cfg.host,
+        "port": cfg.port,
+        "running": running,
+    }
+
+
+@router.post("/home/voice/speak")
+async def proactive_speak_api(message: str = Query(..., description="Message to speak"), area_id: Optional[str] = Query(None, description="Target area ID")):
+    """Trigger proactive TTS via HA's tts.speak service."""
+    from ...integrations.wyoming_agent import proactive_speak
+    success = await proactive_speak(text=message, area_id=area_id)
+    return {"success": success, "message": message, "area_id": area_id}

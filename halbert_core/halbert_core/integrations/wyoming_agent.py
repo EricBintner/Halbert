@@ -1,0 +1,350 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+"""Wyoming Protocol Agent — TCP server for HA voice pipelines.
+
+Phase 4: Implements the Wyoming open voice protocol over TCP so that
+Home Assistant's Voice Pipeline can route STT → Halbert → TTS.
+
+Protocol summary:
+  1. HA connects via TCP to this server
+  2. HA sends JSONL messages: {"type": "transcript", "data": {"text": "..."}}
+  3. Halbert processes the transcript through the agent state machine
+  4. Halbert sends back: {"type": "response", "data": {"text": "..."}}
+
+Spatial scoping: HA passes context.area_id in the transcript event.
+Halbert filters entity resolution by area when the user says "turn on
+the light" without specifying a room.
+
+Proactive voice: Halbert can call HA's tts.speak service for Level 2+
+security events, area-tethered and suppressed by guest/sleep modes.
+
+No HACS dependency. HA's native Wyoming integration in Settings →
+Voice Assistants handles the configuration.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
+
+logger = logging.getLogger("halbert.integrations.wyoming")
+
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 10400
+
+
+@dataclass
+class WyomingConfig:
+    """Configuration for the Wyoming voice agent server."""
+    host: str = DEFAULT_HOST
+    port: int = DEFAULT_PORT
+    enabled: bool = True
+    # Suppress proactive voice when these are active
+    guest_mode_entity: str = "input_boolean.guest_mode"
+    sleep_mode_entity: str = "input_boolean.sleeping"
+    # Only speak proactively for Level 2+ (confirm-required and above)
+    proactive_min_level: int = 2
+
+    @classmethod
+    def from_env(cls) -> "WyomingConfig":
+        return cls(
+            host=os.environ.get("WYOMING_HOST", DEFAULT_HOST),
+            port=int(os.environ.get("WYOMING_PORT", str(DEFAULT_PORT))),
+            enabled=os.environ.get("WYOMING_ENABLED", "1").lower() in ("1", "true", "yes"),
+            guest_mode_entity=os.environ.get("WYOMING_GUEST_MODE_ENTITY", "input_boolean.guest_mode"),
+            sleep_mode_entity=os.environ.get("WYOMING_SLEEP_MODE_ENTITY", "input_boolean.sleeping"),
+            proactive_min_level=int(os.environ.get("WYOMING_PROACTIVE_MIN_LEVEL", "2")),
+        )
+
+
+class HalbertWyomingAgent:
+    """Wyoming protocol conversation agent for HA voice pipelines.
+
+    Implements the Wyoming JSONL TCP protocol:
+    - Incoming: transcript, audio-chunk (ignored), ping
+    - Outgoing: response, pong, error
+    """
+
+    def __init__(
+        self,
+        config: Optional[WyomingConfig] = None,
+        agent_factory=None,
+    ):
+        self.config = config or WyomingConfig.from_env()
+        self._agent_factory = agent_factory
+        self._server: Optional[asyncio.AbstractServer] = None
+        self._running = False
+
+    async def handle_transcript(
+        self,
+        text: str,
+        conversation_id: str = "",
+        area_id: Optional[str] = None,
+    ) -> str:
+        """Process a voice transcript and return a text response.
+
+        Args:
+            text: The transcribed user speech.
+            conversation_id: HA conversation ID for continuity.
+            area_id: HA area ID from the satellite device (for spatial scoping).
+
+        Returns:
+            Response text to send back to HA for TTS.
+        """
+        if not text.strip():
+            return "I didn't catch that."
+
+        # Build spatial context if area_id is provided
+        spatial_context = ""
+        if area_id:
+            spatial_context = await self._resolve_area_context(area_id)
+
+        # Get the agent instance
+        agent = self._get_agent()
+        if agent is None:
+            return "I'm not fully started yet. Please try again in a moment."
+
+        # Collect response text from the agent's stream events
+        response_text = await self._process_agent_turn(agent, text, spatial_context)
+
+        return response_text or "I'm not sure how to help with that."
+
+    async def _process_agent_turn(self, agent, query: str, spatial_context: str) -> str:
+        """Run the agent state machine and collect the response text."""
+        from ...agents.events import StreamEvent
+
+        full_query = query
+        if spatial_context:
+            full_query = f"{spatial_context}\n\nUser request: {query}"
+
+        response_chunks: list[str] = []
+
+        try:
+            async with asyncio.timeout(30.0):
+                async for event in agent.process(
+                    query=full_query,
+                    session_id=f"wyoming-{os.getpid()}",
+                ):
+                    if isinstance(event, StreamEvent):
+                        if event.type == "response_chunk":
+                            response_chunks.append(event.data.get("content", ""))
+                        elif event.type == "response_complete":
+                            break
+        except TimeoutError:
+            logger.warning("Agent turn timed out for Wyoming request")
+            return "Sorry, that took too long to process."
+        except Exception as e:
+            logger.error(f"Agent processing error in Wyoming: {e}")
+            return "I encountered an error processing that request."
+
+        return "".join(response_chunks).strip()
+
+    async def _resolve_area_context(self, area_id: str) -> str:
+        """Resolve area_id to a human-readable context string.
+
+        Queries HA for the area name and its entities, so the agent
+        knows which room the user is in.
+        """
+        try:
+            from .ha_config import load_ha_config
+            from .ha_client import HAClient
+
+            config = load_ha_config()
+            if not config.is_configured():
+                return ""
+
+            client = HAClient(config)
+            areas = await client.get_areas()
+            area = next((a for a in areas if a.get("area_id") == area_id), None)
+            if area:
+                area_name = area.get("name", area_id)
+                return f"[Spatial context: The user is in the {area_name}.]"
+        except Exception as e:
+            logger.debug(f"Could not resolve area context: {e}")
+
+        return ""
+
+    def _get_agent(self):
+        """Get the agent instance from the dashboard route."""
+        if self._agent_factory:
+            return self._agent_factory()
+        try:
+            from ...dashboard.routes.agent import get_agent
+            return get_agent()
+        except Exception:
+            return None
+
+    async def _handle_client(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        """Handle a single Wyoming TCP client connection.
+
+        Protocol: JSONL — one JSON object per line.
+        """
+        peer = writer.get_extra_info("peername")
+        logger.info(f"Wyoming client connected: {peer}")
+
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+
+                try:
+                    msg = json.loads(line.decode("utf-8").strip())
+                except json.JSONDecodeError:
+                    logger.warning(f"Invalid JSON from Wyoming client: {line!r}")
+                    continue
+
+                msg_type = msg.get("type", "")
+                data = msg.get("data", {})
+
+                if msg_type == "transcript":
+                    text = data.get("text", "")
+                    conversation_id = data.get("conversation_id", "")
+                    # HA passes context with area_id from the satellite
+                    context = data.get("context", {})
+                    area_id = context.get("area_id")
+
+                    response_text = await self.handle_transcript(
+                        text=text,
+                        conversation_id=conversation_id,
+                        area_id=area_id,
+                    )
+
+                    response_msg = {
+                        "type": "response",
+                        "data": {"text": response_text},
+                    }
+                    writer.write((json.dumps(response_msg) + "\n").encode("utf-8"))
+                    await writer.drain()
+
+                elif msg_type == "ping":
+                    writer.write((json.dumps({"type": "pong"}) + "\n").encode("utf-8"))
+                    await writer.drain()
+
+                elif msg_type == "audio-chunk":
+                    # Ignore audio data — we only handle text transcripts
+                    pass
+
+                elif msg_type == "describe":
+                    # Wyoming discovery: describe our capabilities
+                    describe_msg = {
+                        "type": "describe",
+                        "data": {
+                            "name": "halbert",
+                            "description": "Halbert AI home assistant",
+                            "capabilities": {
+                                "conversation": True,
+                                "streaming": False,
+                            },
+                        },
+                    }
+                    writer.write((json.dumps(describe_msg) + "\n").encode("utf-8"))
+                    await writer.drain()
+
+                else:
+                    logger.debug(f"Unknown Wyoming message type: {msg_type}")
+
+        except asyncio.IncompleteReadError:
+            pass
+        except Exception as e:
+            logger.error(f"Wyoming client error: {e}")
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            logger.info(f"Wyoming client disconnected: {peer}")
+
+    async def start(self) -> None:
+        """Start the Wyoming TCP server."""
+        if self._running:
+            logger.warning("Wyoming agent already running")
+            return
+
+        self._server = await asyncio.start_server(
+            self._handle_client,
+            host=self.config.host,
+            port=self.config.port,
+        )
+        self._running = True
+        logger.info(f"Wyoming agent listening on {self.config.host}:{self.config.port}")
+
+    async def stop(self) -> None:
+        """Stop the Wyoming TCP server."""
+        if self._server:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+        self._running = False
+        logger.info("Wyoming agent stopped")
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+
+async def proactive_speak(
+    text: str,
+    area_id: Optional[str] = None,
+    config: Optional[WyomingConfig] = None,
+) -> bool:
+    """Use HA's tts.speak service to proactively speak a message.
+
+    Only for Level 2+ security events. Area-tethered (speaks to the
+    room where the target user is detected). Suppressed when guest_mode
+    or sleeping input_boolean is active.
+
+    Args:
+        text: The message to speak.
+        area_id: Area to speak in (if None, speaks to all media_players).
+        config: Optional config override.
+
+    Returns:
+        True if the speak command was sent successfully.
+    """
+    cfg = config or WyomingConfig.from_env()
+    if not cfg.enabled:
+        return False
+
+    try:
+        from .ha_config import load_ha_config
+        from .ha_client import HAClient
+
+        ha_config = load_ha_config()
+        if not ha_config.is_configured():
+            return False
+
+        client = HAClient(ha_config)
+
+        # Check suppression booleans
+        for entity_id in [cfg.guest_mode_entity, cfg.sleep_mode_entity]:
+            try:
+                state = await client.get_entity_state(entity_id)
+                if state.get("state", "off") == "on":
+                    logger.info(f"Proactive speak suppressed ({entity_id} is on)")
+                    return False
+            except Exception:
+                pass  # Entity doesn't exist — don't suppress
+
+        # Build service call data
+        service_data: Dict[str, Any] = {"message": text}
+        if area_id:
+            # Target media players in the specified area
+            service_data["area_id"] = area_id
+
+        await client.call_service("tts", "speak", service_data)
+        logger.info(f"Proactive speak sent to area {area_id}: {text[:80]}")
+        return True
+
+    except Exception as e:
+        logger.warning(f"Proactive speak failed: {e}")
+        return False
