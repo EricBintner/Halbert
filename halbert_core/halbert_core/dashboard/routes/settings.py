@@ -2982,6 +2982,8 @@ class BeingConfigUpdate(BaseModel):
     voice_presentation: Optional[str] = None
     model: Optional[str] = None
     model_endpoint_id: Optional[str] = None
+    # Security (MCP trust boundary)
+    security: Optional[Dict[str, Any]] = None
 
 
 @router.get("/being")
@@ -3040,6 +3042,13 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
             cfg.model = update.model if update.model else None
         if update.model_endpoint_id is not None:
             cfg.model_endpoint_id = update.model_endpoint_id if update.model_endpoint_id else None
+        # Security (MCP trust boundary)
+        if update.security is not None:
+            from ...config.being_config import SecurityConfig
+            existing = cfg.security.to_dict() if cfg.security else {}
+            merged = {**existing, **update.security}
+            cfg.security = SecurityConfig.from_dict(merged)
+            cfg.security.validate()
 
         # Validate + save
         save_being_config(cfg)
@@ -3058,6 +3067,83 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to save being config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/security/telemetry")
+async def get_security_telemetry() -> Dict[str, Any]:
+    """Count classified config values by tier (0/1/2) from the canon DB.
+
+    Iterates all canon JSON records, classifies each key/value pair using
+    the sensitivity classifier with the user's current security config
+    (public_files, extra_secret_keys), and returns counts per tier.
+    """
+    try:
+        import json
+        import os
+        from ...config.being_config import load_being_config
+        from ...config.sensitivity import classify_sensitivity
+        from ...config.indexer import CANON_DIR
+
+        cfg = load_being_config()
+        sec = cfg.security
+        public_files = set(sec.public_files)
+        extra_secret_keys = sec.extra_secret_keys
+
+        counts = {"tier_0": 0, "tier_1": 0, "tier_2": 0}
+        total = 0
+
+        if os.path.isdir(CANON_DIR):
+            for fname in sorted(os.listdir(CANON_DIR)):
+                if not fname.endswith(".json"):
+                    continue
+                fpath = os.path.join(CANON_DIR, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        rec = json.load(f)
+                except Exception:
+                    continue
+                file_path = rec.get("path", "")
+                kind = rec.get("kind", "")
+
+                # Extract key/value pairs from the canon record
+                pairs: list[tuple[str, any]] = []
+                if "sections" in rec and isinstance(rec["sections"], dict):
+                    for sec_name, kv in rec["sections"].items():
+                        if isinstance(kv, dict):
+                            for k, v in kv.items():
+                                pairs.append((k, v))
+                elif "tree" in rec and isinstance(rec["tree"], dict):
+                    for k, v in rec["tree"].items():
+                        pairs.append((k, v))
+                else:
+                    # text file — no key/value pairs to classify
+                    pass
+
+                for key, value in pairs:
+                    tier = classify_sensitivity(
+                        key, value, file_path,
+                        public_files=public_files,
+                        extra_secret_keys=extra_secret_keys,
+                    )
+                    if tier == 0:
+                        counts["tier_0"] += 1
+                    elif tier == 1:
+                        counts["tier_1"] += 1
+                    else:
+                        counts["tier_2"] += 1
+                    total += 1
+
+        return {
+            "status": "ok",
+            "counts": counts,
+            "total": total,
+            "secret_tier": sec.secret_tier,
+            "operational_tier": sec.operational_tier,
+            "cloud_ok_keys_count": len(sec.cloud_ok_keys),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get security telemetry: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
