@@ -4,11 +4,25 @@
 
 Modules:
 - cognitive_loop: Autonomous perception-reason-action tick
-- (future) occupancy: Multi-signal occupancy model
-- (future) timeline: Persistent event timeline store
-- (future) behavior: Pattern learning and prediction
+- timeline: Persistent event ledger (SQLite-backed)
+- occupancy: Multi-signal presence correlation
+- behavior: Pattern learning and prediction from timeline history
 """
 
 from .cognitive_loop import HomeCognitiveLoop, CognitiveTickResult
+from .timeline import TimelineStore, TimelineEvent
+from .occupancy import OccupancyModel, PresenceSignal, PersonPresence
+from .behavior import BehaviorStore, BehaviorPattern, PatternInferrer
 
-__all__ = ["HomeCognitiveLoop", "CognitiveTickResult"]
+__all__ = [
+    "HomeCognitiveLoop",
+    "CognitiveTickResult",
+    "TimelineStore",
+    "TimelineEvent",
+    "OccupancyModel",
+    "PresenceSignal",
+    "PersonPresence",
+    "BehaviorStore",
+    "BehaviorPattern",
+    "PatternInferrer",
+]

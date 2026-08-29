@@ -56,7 +56,7 @@ class TestProtocol:
         resp = server.handle_request(req)
         assert "result" in resp
         tools = resp["result"]["tools"]
-        assert len(tools) == 12
+        assert len(tools) == 17
         # Instance name should be in descriptions
         assert "[test]" in tools[0]["description"]
 
@@ -69,6 +69,9 @@ class TestProtocol:
             "get_proactive_events", "get_being_config", "get_config_value",
             "get_config_structure", "get_config_diff", "get_config_dependencies",
             "search_knowledge", "run_scanner",
+            # HA tools (Phase 1)
+            "ha_get_entities", "ha_get_entity_state", "ha_call_service",
+            "get_autonomy_level", "set_autonomy_level",
         }
         assert tool_names == expected
 

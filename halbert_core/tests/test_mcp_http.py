@@ -112,7 +112,7 @@ class TestHTTPTransport:
         status, resp = _post(url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         assert status == 200
         tools = resp["result"]["tools"]
-        assert len(tools) == 12
+        assert len(tools) == 17
 
     def test_tool_call_over_http(self, http_server_factory):
         """tools/call should work over HTTP."""

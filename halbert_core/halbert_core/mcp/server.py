@@ -9,11 +9,13 @@ The server speaks JSON-RPC 2.0 over stdin/stdout, implementing the MCP
 content passes its result through ``mcp_response()`` (the egress boundary)
 before returning.
 
-Tool list (12 tools):
+Tool list (17 tools):
   get_vitals, get_discoveries, get_findings, get_proposals,
   get_proactive_events, get_being_config, get_config_value,
   get_config_structure, get_config_diff, get_config_dependencies,
-  search_knowledge, run_scanner
+  search_knowledge, run_scanner,
+  ha_get_entities, ha_get_entity_state, ha_call_service,
+  get_autonomy_level, set_autonomy_level
 
 Usage:
   halbert-mcp-serve                          # stdio (default)
@@ -291,6 +293,194 @@ def _tool_run_scanner(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Home Assistant tools
+# ---------------------------------------------------------------------------
+
+def _get_ha_client():
+    """Get the HA REST client singleton (lazy init)."""
+    try:
+        from ..integrations.home_assistant.ha_client import HAClient
+        from ..integrations.home_assistant.ha_config import load_ha_config
+        cfg = load_ha_config()
+        if not cfg.url:
+            return None
+        return HAClient(cfg)
+    except Exception as e:
+        logger.debug(f"HA client not available: {e}")
+        return None
+
+
+def _get_autonomy_gate():
+    """Get the AutonomyGate from BeingConfig."""
+    try:
+        from ..integrations.home_assistant.autonomy_gate import AutonomyGate
+        from ..integrations.home_assistant.ha_governance import HAGovernancePolicy
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        return AutonomyGate(
+            autonomy_level=cfg.autonomy_level,
+            autonomy_overrides=cfg.autonomy_overrides,
+            governance=HAGovernancePolicy(),
+        )
+    except Exception as e:
+        logger.debug(f"Autonomy gate not available: {e}")
+        return None
+
+
+def _tool_ha_get_entities(params: Dict[str, Any]) -> Dict[str, Any]:
+    """List HA entities, optionally filtered by domain."""
+    import asyncio
+    domain = params.get("domain", "")
+    try:
+        client = _get_ha_client()
+        if client is None:
+            return mcp_response({"error": "Home Assistant not configured", "entities": []})
+        states = asyncio.run(client.get_states())
+        if domain:
+            states = [s for s in states if s.get("entity_id", "").startswith(f"{domain}.")]
+        # Strip attributes that might contain sensitive data
+        safe = [
+            {
+                "entity_id": s.get("entity_id", ""),
+                "state": s.get("state", ""),
+                "friendly_name": s.get("attributes", {}).get("friendly_name", ""),
+            }
+            for s in states
+        ]
+        return mcp_response({"count": len(safe), "entities": safe})
+    except Exception as e:
+        return mcp_response({"error": str(e), "entities": []})
+
+
+def _tool_ha_get_entity_state(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Get the current state of a specific HA entity."""
+    import asyncio
+    entity_id = params.get("entity_id", "")
+    if not entity_id:
+        return mcp_response({"error": "entity_id is required"})
+    try:
+        client = _get_ha_client()
+        if client is None:
+            return mcp_response({"error": "Home Assistant not configured"})
+        state = asyncio.run(client.get_entity_state(entity_id))
+        return mcp_response({
+            "entity_id": entity_id,
+            "state": state.get("state", ""),
+            "attributes": state.get("attributes", {}),
+        })
+    except Exception as e:
+        return mcp_response({"error": str(e)})
+
+
+def _tool_ha_call_service(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Call a HA service. Gated by the AutonomyGate.
+
+    The autonomy gate enforces the autonomy_level setting:
+    - observe: all actions blocked
+    - suggest: actions become proposals (not executed)
+    - act: Level 0/1 auto-execute, Level 2+ proposed
+    - orchestrate: Level 0/1/2 auto-execute, Level 3 forbidden
+    """
+    import asyncio
+    domain = params.get("domain", "")
+    service = params.get("service", "")
+    entity_id = params.get("entity_id", "")
+    data = params.get("data", {})
+
+    if not domain or not service:
+        return mcp_response({"error": "domain and service are required"})
+
+    try:
+        gate = _get_autonomy_gate()
+        if gate is None:
+            return mcp_response({"error": "Autonomy gate not available"})
+
+        decision = gate.evaluate(domain, entity_id, service)
+
+        if not decision.allowed:
+            return mcp_response({
+                "executed": False,
+                "reason": decision.reason,
+                "governance_level": decision.governance_level,
+            })
+
+        if not decision.auto_execute:
+            return mcp_response({
+                "executed": False,
+                "requires_proposal": True,
+                "reason": decision.reason,
+                "governance_level": decision.governance_level,
+            })
+
+        # Auto-execute
+        client = _get_ha_client()
+        if client is None:
+            return mcp_response({"error": "Home Assistant not configured"})
+
+        if entity_id:
+            data.setdefault("entity_id", entity_id)
+        result = asyncio.run(client.call_service(domain, service, data))
+        return mcp_response({
+            "executed": True,
+            "result": result,
+            "reason": decision.reason,
+            "governance_level": decision.governance_level,
+            "cancel_window_seconds": decision.cancel_window_seconds,
+        })
+    except Exception as e:
+        return mcp_response({"error": str(e), "executed": False})
+
+
+def _tool_get_autonomy_level(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Get the current autonomy level and per-domain overrides."""
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        return mcp_response({
+            "autonomy_level": cfg.autonomy_level,
+            "autonomy_overrides": cfg.autonomy_overrides,
+            "variant": cfg.variant,
+        })
+    except Exception as e:
+        return mcp_response({"error": str(e)})
+
+
+def _tool_set_autonomy_level(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Set the autonomy level. Requires confirmation.
+
+    This is a high-friction operation — changing the autonomy level
+    affects what the house can do without asking.
+    """
+    level = params.get("level", "")
+    confirm = params.get("confirm", False)
+    overrides = params.get("overrides")
+
+    if not level:
+        return mcp_response({"error": "level is required"})
+    if not confirm:
+        return mcp_response({
+            "error": "confirm=true required to change autonomy level",
+            "requested_level": level,
+        })
+
+    try:
+        from ..config.being_config import load_being_config, save_being_config
+        cfg = load_being_config()
+        cfg.autonomy_level = level
+        if overrides is not None:
+            cfg.autonomy_overrides = overrides
+        cfg.validate()
+        save_being_config(cfg)
+        return mcp_response({
+            "autonomy_level": cfg.autonomy_level,
+            "autonomy_overrides": cfg.autonomy_overrides,
+            "message": f"Autonomy level set to '{level}'",
+        })
+    except Exception as e:
+        return mcp_response({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
 # Tool registry
 # ---------------------------------------------------------------------------
 
@@ -307,6 +497,11 @@ TOOL_HANDLERS: Dict[str, Any] = {
     "get_config_dependencies": _tool_get_config_dependencies,
     "search_knowledge": _tool_search_knowledge,
     "run_scanner": _tool_run_scanner,
+    "ha_get_entities": _tool_ha_get_entities,
+    "ha_get_entity_state": _tool_ha_get_entity_state,
+    "ha_call_service": _tool_ha_call_service,
+    "get_autonomy_level": _tool_get_autonomy_level,
+    "set_autonomy_level": _tool_set_autonomy_level,
 }
 
 # Tool schemas for the MCP initialize response
@@ -446,6 +641,85 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 },
             },
             "required": ["type", "confirm"],
+        },
+    },
+    {
+        "name": "ha_get_entities",
+        "description": "List Home Assistant entities, optionally filtered by domain.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "domain": {
+                    "type": "string",
+                    "description": "Filter by HA domain (light, climate, lock, etc.)",
+                },
+            },
+        },
+    },
+    {
+        "name": "ha_get_entity_state",
+        "description": "Get the current state of a specific Home Assistant entity.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "Full entity ID (e.g. light.living_room)",
+                },
+            },
+            "required": ["entity_id"],
+        },
+    },
+    {
+        "name": "ha_call_service",
+        "description": (
+            "Call a Home Assistant service. Gated by the autonomy slider: "
+            "at 'observe' all actions are blocked; at 'suggest' actions become "
+            "proposals; at 'act' Level 0/1 auto-execute; at 'orchestrate' "
+            "Level 0/1/2 auto-execute with cancel window."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "domain": {"type": "string", "description": "HA domain (light, climate, lock)"},
+                "service": {"type": "string", "description": "Service name (turn_on, turn_off)"},
+                "entity_id": {"type": "string", "description": "Target entity ID"},
+                "data": {"type": "object", "description": "Additional service data"},
+            },
+            "required": ["domain", "service"],
+        },
+    },
+    {
+        "name": "get_autonomy_level",
+        "description": "Get the current home autonomy level and per-domain overrides.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "set_autonomy_level",
+        "description": (
+            "Set the home autonomy level. GATED: requires confirm=true. "
+            "Levels: observe, suggest, act, orchestrate."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "level": {
+                    "type": "string",
+                    "description": "observe | suggest | act | orchestrate",
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to change the autonomy level.",
+                },
+                "overrides": {
+                    "type": "object",
+                    "description": "Per-domain overrides (e.g. {\"lock\": \"suggest\"})",
+                },
+            },
+            "required": ["level", "confirm"],
         },
     },
 ]
