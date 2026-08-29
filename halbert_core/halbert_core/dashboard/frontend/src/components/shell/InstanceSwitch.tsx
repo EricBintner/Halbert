@@ -21,12 +21,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu'
-import { apiUrl, setInstanceEndpoint, getInstanceEndpoint } from '@/lib/apiBase'
+import { setInstanceEndpoint, getInstanceEndpoint } from '@/lib/apiBase'
 
 export interface InstanceInfo {
   persona_id: string
   scene_context: string
   role: 'host' | 'home'
+  variant: string
   display_name: string
   port: number
   features: {

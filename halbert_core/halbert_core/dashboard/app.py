@@ -371,12 +371,12 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     async def startup_event():
         """Start background services on app startup."""
         # Multi-instance identity logging
-        import os as _os
-        _persona = _os.environ.get("HALBERT_PERSONA_ID", "halbert")
-        _scene = _os.environ.get("HALBERT_SCENE_CONTEXT", "")
-        _port = _os.environ.get("HALBERT_PORT", "8000")
-        _data = _os.environ.get("HALBERT_DATA_DIR") or _os.environ.get("Halbert_DATA_DIR", "")
-        _config = _os.environ.get("HALBERT_CONFIG_DIR") or _os.environ.get("Halbert_CONFIG_DIR", "")
+        import os
+        _persona = os.environ.get("HALBERT_PERSONA_ID", "halbert")
+        _scene = os.environ.get("HALBERT_SCENE_CONTEXT", "")
+        _port = os.environ.get("HALBERT_PORT", "8000")
+        _data = os.environ.get("HALBERT_DATA_DIR") or os.environ.get("Halbert_DATA_DIR", "")
+        _config = os.environ.get("HALBERT_CONFIG_DIR") or os.environ.get("Halbert_CONFIG_DIR", "")
         logger.info(
             f"Halbert instance starting — persona={_persona}, scene={_scene or '(default)'}, "
             f"port={_port}, data_dir={_data or '(default)'}, config_dir={_config or '(default)'}"
@@ -417,41 +417,50 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         
         # Start ingestion service in background (non-blocking)
         # Uses daemon threads so won't block shutdown
-        def start_ingestion_delayed():
-            """Start ingestion after a short delay to let ChromaDB initialize."""
-            import time
-            time.sleep(2)  # Wait for ChromaDB to be ready
-            try:
-                from ..ingestion.service import get_ingestion_service
-                service = get_ingestion_service()
-                service.start()
-                logger.info("Ingestion service started (journald + hwmon)")
-            except Exception as e:
-                logger.warning(f"Failed to start ingestion: {e}")
-        
-        import threading
-        ingestion_starter = threading.Thread(target=start_ingestion_delayed, daemon=True)
-        ingestion_starter.start()
-        logger.info("Ingestion service starting in background...")
+        # Multi-instance: skip sysadmin ingestion on home variant
+        _variant = os.environ.get("HALBERT_VARIANT", "sysadmin")
+        if _variant == "home":
+            logger.info("Ingestion service skipped (HALBERT_VARIANT=home)")
+        else:
+            def start_ingestion_delayed():
+                """Start ingestion after a short delay to let ChromaDB initialize."""
+                import time
+                time.sleep(2)  # Wait for ChromaDB to be ready
+                try:
+                    from ..ingestion.service import get_ingestion_service
+                    service = get_ingestion_service()
+                    service.start()
+                    logger.info("Ingestion service started (journald + hwmon)")
+                except Exception as e:
+                    logger.warning(f"Failed to start ingestion: {e}")
+
+            import threading
+            ingestion_starter = threading.Thread(target=start_ingestion_delayed, daemon=True)
+            ingestion_starter.start()
+            logger.info("Ingestion service starting in background...")
 
         # Auto-scan discovery engine on startup so dashboard pages have data
         # without requiring a manual scan click. Runs in a daemon thread after
         # a short delay to avoid competing with ChromaDB/ingestion init.
-        def start_discovery_scan_delayed():
-            """Run all discovery scanners in the background on startup."""
-            import time
-            time.sleep(5)  # Wait for other services to initialize
-            try:
-                from ..discovery.engine import get_engine
-                engine = get_engine()
-                discoveries = engine.scan_all()
-                logger.info(f"Startup discovery scan complete: {len(discoveries)} items found")
-            except Exception as e:
-                logger.warning(f"Startup discovery scan failed (non-fatal): {e}")
+        # Multi-instance: skip sysadmin discovery on home variant
+        if _variant == "home":
+            logger.info("Discovery scan skipped (HALBERT_VARIANT=home)")
+        else:
+            def start_discovery_scan_delayed():
+                """Run all discovery scanners in the background on startup."""
+                import time
+                time.sleep(5)  # Wait for other services to initialize
+                try:
+                    from ..discovery.engine import get_engine
+                    engine = get_engine()
+                    discoveries = engine.scan_all()
+                    logger.info(f"Startup discovery scan complete: {len(discoveries)} items found")
+                except Exception as e:
+                    logger.warning(f"Startup discovery scan failed (non-fatal): {e}")
 
-        discovery_starter = threading.Thread(target=start_discovery_scan_delayed, daemon=True)
-        discovery_starter.start()
-        logger.info("Discovery scan starting in background...")
+            discovery_starter = threading.Thread(target=start_discovery_scan_delayed, daemon=True)
+            discovery_starter.start()
+            logger.info("Discovery scan starting in background...")
         
         # Phase 23: Start scheduler (re-enabled with delayed start)
         def start_scheduler_delayed():
@@ -781,6 +790,7 @@ app = create_app()
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
     port = int(os.environ.get("HALBERT_PORT", "8000"))
     host = os.environ.get("HALBERT_HOST", "0.0.0.0")

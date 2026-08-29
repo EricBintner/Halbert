@@ -10,6 +10,7 @@ Group=halbert
 # Instance identity
 Environment=HALBERT_PERSONA_ID=home
 Environment=HALBERT_SCENE_CONTEXT=smart home automation
+Environment=HALBERT_VARIANT=home
 
 # Instance isolation
 Environment=HALBERT_DATA_DIR=/var/lib/halbert-home

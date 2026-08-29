@@ -30,6 +30,7 @@ async def get_instance_info() -> Dict[str, Any]:
 
     # Determine role from persona_id
     role = "host" if persona_id == "halbert" else "home"
+    variant = os.environ.get("HALBERT_VARIANT", "sysadmin")
 
     # Feature flags — which tabs/pages should be visible
     features = {
@@ -50,6 +51,7 @@ async def get_instance_info() -> Dict[str, Any]:
         "persona_id": persona_id,
         "scene_context": scene_context,
         "role": role,
+        "variant": variant,
         "display_name": display_name,
         "port": port,
         "features": features,

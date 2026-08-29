@@ -127,6 +127,25 @@ class TestInstanceInfoEndpoint:
             result = __import__("asyncio").run(get_instance_info())
         assert result["features"]["home"] is True
 
+    def test_instance_info_variant(self):
+        from halbert_core.dashboard.routes.instance import get_instance_info
+        env = {
+            "HALBERT_PERSONA_ID": "home",
+            "HALBERT_VARIANT": "home",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            result = __import__("asyncio").run(get_instance_info())
+        assert result["variant"] == "home"
+
+    def test_instance_info_default_variant(self):
+        from halbert_core.dashboard.routes.instance import get_instance_info
+        env = {"HALBERT_PERSONA_ID": "halbert"}
+        with patch.dict(os.environ, env, clear=False):
+            if "HALBERT_VARIANT" in os.environ:
+                del os.environ["HALBERT_VARIANT"]
+            result = __import__("asyncio").run(get_instance_info())
+        assert result["variant"] == "sysadmin"
+
 
 class TestCognitionWiringDataSync:
     """Test that HALOYSIUS_DATA_HOME is synced from HALBERT_DATA_DIR."""

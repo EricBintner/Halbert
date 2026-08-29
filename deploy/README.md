@@ -93,6 +93,7 @@ The HACS custom integration should be configured to connect to the **home** inst
 |----------|-------------|-------------|---------|
 | `HALBERT_PERSONA_ID` | `halbert` | `home` | Persona identity |
 | `HALBERT_SCENE_CONTEXT` | `Linux system administration` | `smart home automation` | Cognitive framing |
+| `HALBERT_VARIANT` | `sysadmin` | `home` | Gates sysadmin pipelines (ingestion, discovery scan) |
 | `HALBERT_DATA_DIR` | `/var/lib/halbert` | `/var/lib/halbert-home` | Data isolation |
 | `HALBERT_CONFIG_DIR` | `/etc/halbert` | `/etc/halbert-home` | Config isolation |
 | `HALBERT_LOG_DIR` | `/var/log/halbert` | `/var/log/halbert-home` | Log isolation |
