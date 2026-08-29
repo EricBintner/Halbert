@@ -269,7 +269,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -301,6 +301,8 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(home.router, prefix="/api", tags=["home"])  # Home Assistant panel
     app.include_router(frigate.router, prefix="/api", tags=["frigate"])  # Frigate NVR panel
     app.include_router(instance.router, tags=["instance"])  # Multi-instance info
+    app.include_router(peers.router, tags=["peers"])  # Phase 9.1: Peer pairing
+    app.include_router(fleet.router, tags=["fleet"])  # Phase 9.9: Fleet Cockpit
     
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"
