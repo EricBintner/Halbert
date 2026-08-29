@@ -8,7 +8,8 @@ from typing import Optional
 """
 Path resolver for FHS/XDG compliance with env overrides.
 Priority:
-1) Explicit env overrides: Halbert_CONFIG_DIR, Halbert_DATA_DIR, Halbert_LOG_DIR
+1) Explicit env overrides: HALBERT_CONFIG_DIR, HALBERT_DATA_DIR, HALBERT_LOG_DIR
+   (backward-compatible fallback: Halbert_CONFIG_DIR, Halbert_DATA_DIR, Halbert_LOG_DIR)
 2) If running as root (uid==0): /etc/halbert, /var/lib/halbert, /var/log/halbert
 3) XDG (user scope):
    - CONFIG: $XDG_CONFIG_HOME/halbert or ~/.config/halbert
@@ -36,8 +37,9 @@ def repo_root() -> Optional[str]:
 
 
 def config_dir() -> str:
-    if os.environ.get("Halbert_CONFIG_DIR"):
-        return os.environ["Halbert_CONFIG_DIR"]
+    val = os.environ.get("HALBERT_CONFIG_DIR") or os.environ.get("Halbert_CONFIG_DIR")
+    if val:
+        return val
     if _is_root():
         return "/etc/halbert"
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(Path.home(), ".config")
@@ -45,8 +47,9 @@ def config_dir() -> str:
 
 
 def data_dir() -> str:
-    if os.environ.get("Halbert_DATA_DIR"):
-        return os.environ["Halbert_DATA_DIR"]
+    val = os.environ.get("HALBERT_DATA_DIR") or os.environ.get("Halbert_DATA_DIR")
+    if val:
+        return val
     if _is_root():
         return "/var/lib/halbert"
     xdg = os.environ.get("XDG_DATA_HOME") or os.path.join(Path.home(), ".local", "share")
@@ -61,8 +64,9 @@ def state_dir() -> str:
 
 
 def log_dir() -> str:
-    if os.environ.get("Halbert_LOG_DIR"):
-        return os.environ["Halbert_LOG_DIR"]
+    val = os.environ.get("HALBERT_LOG_DIR") or os.environ.get("Halbert_LOG_DIR")
+    if val:
+        return val
     if _is_root():
         return "/var/log/halbert"
     # Prefer state dir for logs
