@@ -105,11 +105,19 @@ just no code path enabled.
 These items from the security review are independent of the Tier 2
 recalibration and can proceed in parallel:
 
-- [x] **Settings UI security tab** — Done. The Security tab already
-  had tier pickers, public files list, extra secret keys list, and
-  the Tier 2 escape hatch. Added the missing `cloud_ok_keys` card
-  (per-key cloud escape hatch) with warning styling. Vite build
-  passes. (commit 197b2a58)
+- [x] **Settings UI security tab** — Done. Redesigned per the Daylight
+  Mid-Century Modern design system spec
+  (`SECURITY-TAB-VISUAL-DESIGN-AND-HANDOFF-2026-08-29.md`). Five new
+  components in `SecurityComponents.tsx`: TrustBoundaryTelemetryBar
+  (live tier counts), Tier1RockerControl (mechanical segmented switch),
+  Tier2StateCard (dual-state vault), EscapeHatchConfirmationModal
+  (high-friction phrase typing + TTL), MachinedTagInput (tag chips
+  replacing textareas). Backend: fixed BeingConfigUpdate missing
+  security field (saves were silently dropped), added
+  /settings/security/telemetry endpoint, added TTL support
+  (secret_tier_expiry + volatile_unlock with load-time auto-relock),
+  fixed security:null crash, added list type validation, recursive
+  telemetry walker. 264 tests pass, Vite build passes.
 - [x] **Context assembler integration** — Done. The MCP
   `get_config_value` tool is already wired and tier-routed (Tier 2
   -> describe_secret, not raw value). The LLM calls it as a tool and
