@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { ChevronDown, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { SelectOption } from './Select';
+import type { SelectOption } from '@/components/ui/select';
 
 export interface SearchableSelectProps {
   options: SelectOption[];

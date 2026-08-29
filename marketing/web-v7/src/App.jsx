@@ -6,7 +6,7 @@ import { VectorCanvas } from './components/VectorCanvas';
 import { LayoutStage } from './components/LayoutStage';
 import { ScrollHUD } from './components/ScrollHUD';
 import { Reticle } from './components/Reticle';
-import { HalbertMark } from './components/HalbertMark';
+import { HalbertMark } from '@halbert/design-system'
 
 function useViewport() {
   const read = () => ({

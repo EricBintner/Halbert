@@ -226,7 +226,7 @@ export function CompressionSettings() {
                 <Select
                   value={config.backend}
                   onChange={(e) => handleUpdateConfig({ backend: e.target.value })}
-                  variant="sm"
+                  size="sm"
                 >
                   <option value="auto">Auto (best available)</option>
                   <option value="lingua">Lingua (neural, 178MB)</option>
@@ -241,7 +241,7 @@ export function CompressionSettings() {
                 <Select
                   value={config.level}
                   onChange={(e) => handleUpdateConfig({ level: e.target.value })}
-                  variant="sm"
+                  size="sm"
                 >
                   <option value="light">Light (60% keep)</option>
                   <option value="standard">Standard (40% keep)</option>

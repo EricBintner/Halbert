@@ -2,7 +2,7 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, Terminal, Zap } from 'lucide-react'
-import { Button } from '@/components/prep-primitives/Button'
+import { Button } from '@/components/ui/button'
 import { apiUrl } from '@/lib/apiBase'
 
 /** Shape of GET /api/settings/model/status. */
