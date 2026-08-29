@@ -101,7 +101,8 @@ def _get_current_canon(path: str) -> Optional[Dict[str, Any]]:
     """Get the current canonical record for ``path``, re-parsing if stale.
 
     Compares the live file's hash to the canon hash.  If they differ (or
-    no canon record exists), re-parses the live file.
+    no canon record exists), re-parses the live file and writes the new
+    canon record to the canon DB so subsequent calls don't re-parse.
     """
     canon_hash = _path_to_hash(path)
     live_hash = _live_hash(path)
@@ -109,7 +110,10 @@ def _get_current_canon(path: str) -> Optional[Dict[str, Any]]:
     if live_hash and (not canon_hash or canon_hash != live_hash):
         # File is stale or not yet snapshotted — re-parse live.
         try:
-            return parse_config(path)
+            canon = parse_config(path)
+            # Write the new canon record so subsequent calls don't re-parse.
+            _write_canon(path, live_hash, canon)
+            return canon
         except Exception as e:
             logger.warning("Failed to re-parse %s: %s", path, e)
             # Fall through to load the stale canon if it exists.
@@ -117,6 +121,45 @@ def _get_current_canon(path: str) -> Optional[Dict[str, Any]]:
     if canon_hash:
         return _load_canon(canon_hash)
     return None
+
+
+def _write_canon(path: str, file_hash: str, canon: Dict[str, Any]) -> None:
+    """Write a canon record to the canon DB and update the latest snapshot.
+
+    This keeps the canon DB current when files change between snapshot
+    runs, so _get_current_canon doesn't re-parse on every call.
+    """
+    try:
+        canon_path = os.path.join(CANON_DIR, f"{file_hash}.json")
+        os.makedirs(CANON_DIR, exist_ok=True)
+        canon["hash"] = file_hash
+        canon["path"] = path
+        with open(canon_path, "w", encoding="utf-8") as f:
+            json.dump(canon, f, indent=2)
+        # Update latest snapshot manifest
+        _update_latest_snapshot(path, file_hash)
+    except OSError as e:
+        logger.debug("Failed to write canon record for %s: %s", path, e)
+
+
+def _update_latest_snapshot(path: str, file_hash: str) -> None:
+    """Update or add an entry in the latest snapshot manifest."""
+    latest_path = os.path.join(SNAP_DIR, "latest.json")
+    entries = _load_latest_snapshot()
+    found = False
+    for entry in entries:
+        if entry.get("path") == path:
+            entry["hash"] = file_hash
+            found = True
+            break
+    if not found:
+        entries.append({"path": path, "hash": file_hash})
+    try:
+        os.makedirs(SNAP_DIR, exist_ok=True)
+        with open(latest_path, "w", encoding="utf-8") as f:
+            json.dump(entries, f, indent=2)
+    except OSError as e:
+        logger.debug("Failed to update latest snapshot: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -196,11 +239,18 @@ def get_config_value(
     secret_tier: str = "local_only",
     public_files: Optional[Set[str]] = None,
     extra_secret_keys: Optional[List[str]] = None,
+    cloud_ok_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Get a config value with tier routing applied.
 
     Returns a dict with keys: ``path``, ``key``, ``tier``, and either
     ``value`` (for cloud-safe tiers) or ``description`` (for secure tiers).
+
+    Per-key escape hatch: if ``cloud_ok_keys`` is provided and ``key``
+    matches one of its entries (case-insensitive, normalized), the value
+    is returned raw even when the global ``secret_tier`` is
+    ``local_only``. This lets a user expose specific secrets (e.g.
+    database passwords) while keeping others local-only.
     """
     canon = _get_current_canon(path)
     if canon is None:
@@ -223,6 +273,15 @@ def get_config_value(
         "section": section,
     }
 
+    # --- Per-key escape hatch check ---
+    key_is_cloud_ok = False
+    if cloud_ok_keys:
+        norm_key = key.strip().lower().replace("-", "").replace("_", "")
+        for ok_key in cloud_ok_keys:
+            if ok_key.strip().lower().replace("-", "").replace("_", "") == norm_key:
+                key_is_cloud_ok = True
+                break
+
     # --- Tier 0: always return raw value ---
     if tier == 0:
         result["value"] = value
@@ -241,7 +300,7 @@ def get_config_value(
 
     # --- Tier 2: route by secret_tier ---
     if tier == 2:
-        if secret_tier == "cloud_ok_acknowledged":
+        if key_is_cloud_ok or secret_tier == "cloud_ok_acknowledged":
             result["value"] = value
             result["acknowledged"] = True
         else:  # local_only (default)

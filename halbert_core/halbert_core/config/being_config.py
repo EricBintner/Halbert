@@ -101,6 +101,12 @@ class SecurityConfig:
         "/etc/hosts", "/etc/hostname", "/etc/fstab",
     ])
     extra_secret_keys: List[str] = field(default_factory=list)
+    # Per-key escape hatch: allow specific keys to be cloud_ok while the
+    # global secret_tier remains local_only. Keys listed here are treated
+    # as cloud_ok_acknowledged regardless of the global setting. This lets
+    # a user expose database passwords (which they trust ZDR with) while
+    # keeping SSH private keys and API tokens local-only.
+    cloud_ok_keys: List[str] = field(default_factory=list)
     credential_validation: CredentialValidationConfig = field(
         default_factory=CredentialValidationConfig
     )

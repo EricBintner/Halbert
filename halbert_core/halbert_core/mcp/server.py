@@ -256,10 +256,24 @@ def _tool_search_knowledge(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _tool_run_scanner(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Run a fresh scan of a given type (Phase 4b — medium risk)."""
+    """Run a fresh scan of a given type (Phase 4b — gated).
+
+    Gating: scanner execution is a potentially expensive operation that
+    can cause load, trigger security alerts, or consume disk. It requires
+    explicit confirmation via the ``confirm`` parameter set to ``True``.
+    This prevents an LLM from triggering scans without user awareness.
+    """
     scanner_type = params.get("type", "")
     if not scanner_type:
         return {"error": "type is required"}
+    # Gating: require explicit confirmation
+    if not params.get("confirm", False):
+        return {
+            "error": "scanner execution requires confirm=True",
+            "detail": ("Running a scanner can cause load, trigger security "
+                       "alerts, or consume disk. Set confirm=true to proceed."),
+            "type": scanner_type,
+        }
     try:
         from ..discovery.engine import DiscoveryEngine
         engine = DiscoveryEngine()
@@ -413,13 +427,23 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     },
     {
         "name": "run_scanner",
-        "description": "Run a fresh scan of a given discovery type.",
+        "description": (
+            "Run a fresh scan of a given discovery type. "
+            "GATED: requires confirm=true to prevent unintended scans."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "type": {"type": "string", "description": "Scanner type to run"},
+                "confirm": {
+                    "type": "boolean",
+                    "description": (
+                        "Must be true to proceed. Scans can cause load, "
+                        "trigger alerts, or consume disk."
+                    ),
+                },
             },
-            "required": ["type"],
+            "required": ["type", "confirm"],
         },
     },
 ]

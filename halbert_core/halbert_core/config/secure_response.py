@@ -66,20 +66,29 @@ def _shannon_entropy(text: str) -> float:
     return entropy
 
 
-def _view_command(key: str, file_path: str) -> str:
+def _view_command(key: str, file_path: str, *, remote: bool = False) -> str:
     """A local shell command to view the real value.
 
     The command is safe to show to any model — it does not contain the
     secret, only instructions for where to find it locally.
+
+    When ``remote=True``, the command is prefixed with a note that the
+    client must SSH to the host first. This is for HTTP/SSE transport
+    where the MCP client is on a different machine and cannot execute
+    the command directly.
     """
     if not file_path:
-        return f"# value is in memory only"
+        return "# value is in memory only"
     lower = file_path.lower()
     if lower.endswith(".plist"):
-        return f"plutil -p {shlex.quote(file_path)}"
-    if key:
-        return f"grep {shlex.quote(key)} {shlex.quote(file_path)}"
-    return f"cat {shlex.quote(file_path)}"
+        cmd = f"plutil -p {shlex.quote(file_path)}"
+    elif key:
+        cmd = f"grep {shlex.quote(key)} {shlex.quote(file_path)}"
+    else:
+        cmd = f"cat {shlex.quote(file_path)}"
+    if remote:
+        return f"# Run on the host machine:\n# {cmd}"
+    return cmd
 
 
 def describe_secret(
@@ -88,6 +97,7 @@ def describe_secret(
     file_path: str = "",
     *,
     identify: bool = True,
+    remote: bool = False,
 ) -> Dict[str, Any]:
     """Return structured facts about ``value`` without the value itself.
 
@@ -103,6 +113,9 @@ def describe_secret(
         When True (default), consult the credential format database to
         identify the credential type. No secret leaves the tool — only
         the value's shape is matched against known formats.
+    remote
+        When True, the view command is annotated for a remote client
+        (HTTP/SSE transport). The client must SSH to the host to run it.
 
     Returns
     -------
@@ -119,7 +132,7 @@ def describe_secret(
         "length": len(text),
         "charset": _charset_classes(text),
         "entropy_bits": round(_shannon_entropy(text), 2),
-        "view_command": _view_command(key, file_path),
+        "view_command": _view_command(key, file_path, remote=remote),
         "redacted": True,
     }
 
