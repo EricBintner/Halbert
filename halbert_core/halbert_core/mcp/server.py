@@ -195,6 +195,7 @@ def _tool_get_config_value(params: Dict[str, Any]) -> Dict[str, Any]:
             secret_tier=sec.secret_tier,
             public_files=set(sec.public_files),
             extra_secret_keys=sec.extra_secret_keys,
+            cloud_ok_keys=sec.cloud_ok_keys,
         )
         return mcp_response(result)
     except Exception as e:

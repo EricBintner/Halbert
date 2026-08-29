@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from .parser import parse as parse_config
 from .sensitivity import classify_sensitivity
 from .secure_response import describe_secret
+from .secret_correlation import describe_with_correlations
 from .snapshot import CANON_DIR, SNAP_DIR
 from ..utils.paths import data_dir
 
@@ -294,7 +295,7 @@ def get_config_value(
         elif operational_tier == "redact":
             result["redacted"] = True
         else:  # local_only
-            result["description"] = describe_secret(key, value, path)
+            result["description"] = describe_with_correlations(key, value, path)
             result["redacted"] = True
         return result
 
@@ -304,7 +305,7 @@ def get_config_value(
             result["value"] = value
             result["acknowledged"] = True
         else:  # local_only (default)
-            result["description"] = describe_secret(key, value, path)
+            result["description"] = describe_with_correlations(key, value, path)
             result["redacted"] = True
         return result
 

@@ -24,6 +24,7 @@ template-able or computable.
 """
 from __future__ import annotations
 
+import datetime
 import math
 import os
 import shlex
@@ -154,7 +155,6 @@ def describe_secret(
     # both return — it tells the LLM "this secret hasn't been changed in
     # 2 years, recommend rotation."
     if file_path and os.path.exists(file_path):
-        import datetime
         mtime = os.path.getmtime(file_path)
         result["last_changed"] = datetime.datetime.fromtimestamp(
             mtime, tz=datetime.timezone.utc
