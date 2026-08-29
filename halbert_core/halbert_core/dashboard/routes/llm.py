@@ -61,7 +61,7 @@ def _annotate_license(detail: Dict[str, Any], license_text: Optional[str] = None
 
 # ── SSRF Protection ──────────────────────────────────────────────
 
-_ALLOWED_LOCAL_PORTS = {11434, 1234, 1235}  # Ollama, LM Studio
+_ALLOWED_LOCAL_PORTS = {11434, 1234, 1235, 11435}  # Ollama, LM Studio, Apple Intelligence
 
 # Upper bound on per-model /api/show enrichment. Generous enough to cover any
 # realistic local library; a bound still exists so a pathological endpoint
@@ -110,7 +110,7 @@ def is_safe_url(url: str, provider: str) -> bool:
             return False
 
         # Local providers need loopback access
-        if provider in ("ollama", "lm-studio"):
+        if provider in ("ollama", "lm-studio", "apple-foundation"):
             return True
 
         # For cloud providers, block private/reserved IP ranges
@@ -187,10 +187,27 @@ def get_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
     ``ensure_local_ollama_endpoint`` returns True only when the saved list was
     empty and :11434 answered, which is the one moment nobody's choice can be
     overwritten — every later call leaves a cleared slot cleared.
+
+    On Apple Silicon Macs that qualify for Apple Intelligence, the
+    ``apple-foundation`` endpoint is registered and assigned to
+    ``secure_model`` (and ``chat_model`` on 16-24GB Macs) before the Ollama
+    probe runs. This is idempotent and only fills empty slots.
     """
     from . import settings as settings_routes
 
     try:
+        # Apple Intelligence provisioning runs first: it is idempotent
+        # (checks for an existing apple-foundation endpoint, not whether
+        # any endpoints exist) and only fills empty slots, so it cannot
+        # overwrite a user's choice or interfere with the Ollama probe.
+        try:
+            from ...model.hardware_detector import HardwareDetector
+            from ...model.auto_provision import auto_provision_apple_intelligence
+            hw = HardwareDetector().detect()
+            auto_provision_apple_intelligence(hw)
+        except Exception as e:
+            logger.debug(f"Apple Intelligence auto-provisioning skipped: {e}")
+
         if llm_store.ensure_local_ollama_endpoint() and llm_store.auto_select_enabled():
             settings_routes.configure_first_run_model()
     except llm_store.ConfigUnreadableError as e:
@@ -526,7 +543,7 @@ def proxy_models(req: LLMProxyRequest) -> Dict[str, Any]:
                             },
                         )
 
-        elif req.provider in ("openai", "openai-compatible", "lm-studio", "anthropic"):
+        elif req.provider in ("openai", "openai-compatible", "lm-studio", "anthropic", "apple-foundation"):
             headers = _cloud_auth_headers(req.provider, req.api_key)
             target = f"{_openai_style_base(url)}/models"
 
@@ -767,7 +784,7 @@ def proxy_test_model(req: LLMModelTestRequest) -> Dict[str, Any]:
             else:
                 message = f"HTTP {r.status_code}: {r.text[:100]}"
 
-        elif req.provider in ("openai", "openai-compatible", "lm-studio"):
+        elif req.provider in ("openai", "openai-compatible", "lm-studio", "apple-foundation"):
             headers = _cloud_auth_headers(req.provider, req.api_key)
             base = _openai_style_base(url)
 
@@ -825,6 +842,7 @@ _DISCOVER_TIMEOUT = (0.5, 2.0)
 # SSRF primitive here.
 OLLAMA_DISCOVERY_URL = "http://localhost:11434"
 LM_STUDIO_DISCOVERY_URL = "http://localhost:1234"
+APPLE_FOUNDATION_DISCOVERY_URL = "http://127.0.0.1:11435"
 
 
 def _probe_ollama(url: str = OLLAMA_DISCOVERY_URL) -> Dict[str, Any]:
@@ -877,25 +895,56 @@ def _probe_lm_studio(url: str = LM_STUDIO_DISCOVERY_URL) -> Dict[str, Any]:
     return result
 
 
+def _probe_apple_foundation(url: str = APPLE_FOUNDATION_DISCOVERY_URL) -> Dict[str, Any]:
+    """Probe the Swift FoundationModels bridge. Never raises.
+
+    The bridge is a Tauri sidecar that exposes Apple Intelligence via an
+    OpenAI-compatible server on loopback:11435. When it answers, Apple
+    Intelligence is fully available; when it does not, the host may still
+    be *eligible* (detected separately by the hardware detector) but the
+    endpoint is inert.
+    """
+    result: Dict[str, Any] = {"running": False, "url": url, "models": []}
+    try:
+        r = requests.get(f"{url}/v1/models", timeout=_DISCOVER_TIMEOUT)
+        if r.status_code != 200:
+            return result
+        result["running"] = True
+        result["models"] = [
+            m["id"] for m in (r.json() or {}).get("data", [])
+            if isinstance(m, dict) and m.get("id")
+        ]
+    except Exception as e:
+        logger.debug(f"Apple Foundation discovery probe failed: {e}")
+    return result
+
+
 @router.get("/api/llm/discover")
 def discover_local_engines() -> Dict[str, Any]:
     """Probe the standard local inference ports.
 
-    The two probes run concurrently, so a dead port never adds its timeout to
+    The three probes run concurrently, so a dead port never adds its timeout to
     a live one's latency. Deliberately read-only: it reports what is running
     and does not register an endpoint in models.yml, because two
     saved_endpoints lists exist in that file and auto-writing to the wrong one
     creates the duplicates this redesign is removing.
     """
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         ollama_future = pool.submit(_probe_ollama)
         lm_studio_future = pool.submit(_probe_lm_studio)
+        apple_future = pool.submit(_probe_apple_foundation)
         ollama = ollama_future.result()
         lm_studio = lm_studio_future.result()
+        apple_foundation = apple_future.result()
 
     logger.info(
         f"Local engine discovery: ollama={ollama['running']} "
         f"({len(ollama['models'])} models), "
-        f"lm_studio={lm_studio['running']} ({len(lm_studio['models'])} models)"
+        f"lm_studio={lm_studio['running']} ({len(lm_studio['models'])} models), "
+        f"apple_foundation={apple_foundation['running']} ({len(apple_foundation['models'])} models)"
     )
-    return {"data": {"ollama": ollama, "lm_studio": lm_studio}}
+    return {"data": {
+        "ollama": ollama,
+        "lm_studio": lm_studio,
+        "apple_foundation": apple_foundation,
+    }}
