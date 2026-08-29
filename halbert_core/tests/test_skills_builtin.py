@@ -14,6 +14,7 @@ from halbert_core.skills.loader import BUILTIN_DIR, load_skills
 EXPECTED = {
     "storage-ops", "service-ops", "network-ops",
     "security-ops", "config-ops", "discovery-ops",
+    "home-ops", "frigate-ops",
 }
 
 

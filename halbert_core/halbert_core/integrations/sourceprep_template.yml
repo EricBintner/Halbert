@@ -60,6 +60,9 @@ scopes:
   - id: storage_admin
     paths: ["host/storage"]
     pipeline_profile: system_config
+  - id: credentials_admin
+    paths: ["host/credentials"]
+    pipeline_profile: system_config
   - id: knowledge-linux
     paths: ["knowledge/linux"]
     pipeline_profile: prose_docs

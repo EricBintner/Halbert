@@ -70,7 +70,7 @@ from halbert_core.config.roles import (
 
 
 def test_wave_one_roles_are_registered():
-    assert set(ROLES) == {"network_admin", "service_admin", "storage_admin"}
+    assert set(ROLES) == {"network_admin", "service_admin", "storage_admin", "credentials_admin"}
 
 
 def test_every_role_has_a_manifest_that_exists():

@@ -181,6 +181,7 @@ def test_template_loads_and_has_contract_surface():
     names = [s["id"] for s in t["scopes"]]
     assert names == ["host",
                      "network_admin", "service_admin", "storage_admin",
+                     "credentials_admin",
                      "knowledge-linux", "knowledge-macos",
                      "knowledge-bsd", "knowledge-common"]
     profiles = {s["id"]: s["pipeline_profile"] for s in t["scopes"]}
@@ -281,16 +282,17 @@ def test_apply_creates_scopes_with_profiles_and_paths(setup):
     s.apply(stage_host=False, edges=SAMPLE_EDGES)
 
     creates = transport.calls_to("POST", "/scopes")
-    assert len(creates) == 8
+    assert len(creates) == 9
     names = {c["display_name"] for c in creates}
     assert names == {"host",
                      "network_admin", "service_admin", "storage_admin",
+                     "credentials_admin",
                      "knowledge-linux", "knowledge-macos",
                      "knowledge-bsd", "knowledge-common"}
     host_create = next(c for c in creates if c["display_name"] == "host")
     assert host_create.get("pipeline_profile") == "system_config"
     adds = transport.calls_to("POST", "/add")
-    assert len(adds) == 8  # one add-paths call per created scope
+    assert len(adds) == 9  # one add-paths call per created scope
 
 
 def test_apply_second_run_is_noop_for_scopes(setup):
@@ -416,7 +418,7 @@ def test_stage_host_tree_stages_every_platform_role(setup, monkeypatch):
 
     called: List[Tuple[str, str]] = []
 
-    def record(role, root):
+    def record(role, root, redact=True):
         called.append((role, Path(root).name))
         return 1
 
@@ -440,7 +442,7 @@ def test_stage_host_tree_survives_one_failing_role(setup, monkeypatch):
 
     from halbert_core.config.roles import roles_for_platform
 
-    def flaky(role, root):
+    def flaky(role, root, redact=True):
         if role == "network_admin":
             raise OSError("permission denied")
         return 2
