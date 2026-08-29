@@ -32,6 +32,29 @@ VALID_SECRET_TIERS = {"local_only", "cloud_ok_acknowledged"}
 
 
 @dataclass
+class CredentialValidationConfig:
+    """Opt-in credential validation settings.
+
+    When enabled, ``describe_secret`` calls the legitimate service's API
+    (not an LLM) to check if a credential is still active. This is what
+    a human would do to test a key. The secret leaves the tool but goes
+    to the service that issued it, not to an LLM vendor.
+
+    Disabled by default. Per-service opt-in via the ``services`` list.
+    """
+    enabled: bool = False
+    services: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "CredentialValidationConfig":
+        known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        return cls(**known)
+
+
+@dataclass
 class SecurityConfig:
     """Security tier settings for config value routing.
 
@@ -52,6 +75,9 @@ class SecurityConfig:
         "/etc/hosts", "/etc/hostname", "/etc/fstab",
     ])
     extra_secret_keys: List[str] = field(default_factory=list)
+    credential_validation: CredentialValidationConfig = field(
+        default_factory=CredentialValidationConfig
+    )
 
     def validate(self) -> None:
         if self.operational_tier not in VALID_OPERATIONAL_TIERS:
@@ -71,6 +97,11 @@ class SecurityConfig:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "SecurityConfig":
         known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        # Handle nested credential_validation
+        if "credential_validation" in known and isinstance(known["credential_validation"], dict):
+            known["credential_validation"] = CredentialValidationConfig.from_dict(
+                known["credential_validation"]
+            )
         return cls(**known)
 
 
