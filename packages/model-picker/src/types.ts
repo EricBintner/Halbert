@@ -26,6 +26,7 @@ export type ProviderId =
   | 'anthropic'
   | 'google'
   | 'azure-openai'
+  | 'apple-foundation'
 
 /** A configured place models can be fetched from. */
 export interface SavedEndpoint {
@@ -130,6 +131,7 @@ export interface LocalEngine {
 export interface LocalDiscovery {
   ollama: LocalEngine
   lmStudio: LocalEngine
+  appleFoundation: LocalEngine
 }
 
 /** Everything the picker reads and writes, in the host's own storage. */
@@ -202,6 +204,7 @@ export interface ProviderDescriptor {
 export const PROVIDERS: readonly ProviderDescriptor[] = [
   { id: 'ollama', label: 'Ollama', isLocal: true, needsApiKey: false, defaultUrl: 'http://localhost:11434' },
   { id: 'lm-studio', label: 'LM Studio', isLocal: true, needsApiKey: false, defaultUrl: 'http://localhost:1234' },
+  { id: 'apple-foundation', label: 'Apple Intelligence', isLocal: true, needsApiKey: false, defaultUrl: 'http://127.0.0.1:11435' },
   { id: 'openai', label: 'OpenAI', isLocal: false, needsApiKey: true, defaultUrl: 'https://api.openai.com/v1' },
   { id: 'anthropic', label: 'Anthropic', isLocal: false, needsApiKey: true, defaultUrl: 'https://api.anthropic.com' },
   { id: 'google', label: 'Google', isLocal: false, needsApiKey: true, defaultUrl: 'https://generativelanguage.googleapis.com' },
