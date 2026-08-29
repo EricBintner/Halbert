@@ -238,6 +238,7 @@ def get_config_value(
     *,
     operational_tier: str = "cloud_ok",
     secret_tier: str = "local_only",
+    secret_tier_expiry: Optional[str] = None,
     public_files: Optional[Set[str]] = None,
     extra_secret_keys: Optional[List[str]] = None,
     cloud_ok_keys: Optional[List[str]] = None,
@@ -252,7 +253,22 @@ def get_config_value(
     is returned raw even when the global ``secret_tier`` is
     ``local_only``. This lets a user expose specific secrets (e.g.
     database passwords) while keeping others local-only.
+
+    TTL: if ``secret_tier_expiry`` is provided, the effective secret tier
+    is computed at runtime — an expired timestamp downgrades
+    cloud_ok_acknowledged to local_only immediately, without needing a
+    config reload.
     """
+    # Runtime TTL check — never trust a stale cloud_ok_acknowledged
+    if secret_tier == "cloud_ok_acknowledged" and secret_tier_expiry:
+        try:
+            import datetime
+            expiry = datetime.datetime.fromisoformat(secret_tier_expiry)
+            now = datetime.datetime.now(expiry.tzinfo) if expiry.tzinfo else datetime.datetime.now()
+            if now > expiry:
+                secret_tier = "local_only"
+        except (ValueError, TypeError):
+            secret_tier = "local_only"  # fail safe
     canon = _get_current_canon(path)
     if canon is None:
         return {"path": path, "key": key, "error": "file not found or not parseable"}

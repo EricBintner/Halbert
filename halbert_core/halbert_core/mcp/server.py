@@ -193,6 +193,7 @@ def _tool_get_config_value(params: Dict[str, Any]) -> Dict[str, Any]:
             path, key,
             operational_tier=sec.operational_tier,
             secret_tier=sec.secret_tier,
+            secret_tier_expiry=sec.secret_tier_expiry,
             public_files=set(sec.public_files),
             extra_secret_keys=sec.extra_secret_keys,
             cloud_ok_keys=sec.cloud_ok_keys,

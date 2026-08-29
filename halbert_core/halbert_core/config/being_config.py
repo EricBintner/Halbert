@@ -13,7 +13,9 @@ Phase 6 / T6a.1.
 
 from __future__ import annotations
 
+import datetime
 import logging
+import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -67,12 +69,14 @@ class SecurityConfig:
     # TTL for the Tier 2 escape hatch. When secret_tier is
     # cloud_ok_acknowledged, secret_tier_expiry is an ISO 8601 timestamp
     # after which the tier auto-relocks to local_only. None means
-    # permanent (no auto-relock). Checked at load time and at query time.
+    # permanent (no auto-relock). Checked at load time and at query time
+    # via effective_secret_tier().
     secret_tier_expiry: Optional[str] = None
     # Volatile unlock: if True, the secret_tier is reset to local_only
     # on the next load_being_config call (i.e. on process restart).
     # This implements the "until restart" TTL option without requiring
-    # a background timer. Not persisted to YAML by save_being_config.
+    # a background timer. Persisted to YAML so the next load can see it
+    # and relock; cleared by load_being_config after relocking.
     volatile_unlock: bool = False
 
     def validate(self) -> None:
@@ -99,12 +103,53 @@ class SecurityConfig:
                         f"security.{field_name} must be a list of strings, "
                         f"got {type(item).__name__}"
                     )
+        # Validate secret_tier_expiry format and consistency
+        if self.secret_tier_expiry is not None:
+            if self.secret_tier != "cloud_ok_acknowledged":
+                raise ValueError(
+                    "secret_tier_expiry can only be set when secret_tier is "
+                    "'cloud_ok_acknowledged'"
+                )
+            try:
+                datetime.datetime.fromisoformat(self.secret_tier_expiry)
+            except (ValueError, TypeError) as e:
+                raise ValueError(
+                    f"secret_tier_expiry must be a valid ISO 8601 timestamp: {e}"
+                )
+        if self.volatile_unlock and self.secret_tier != "cloud_ok_acknowledged":
+            raise ValueError(
+                "volatile_unlock can only be True when secret_tier is "
+                "'cloud_ok_acknowledged'"
+            )
+
+    def effective_secret_tier(self) -> str:
+        """Return the effective secret tier, checking TTL expiry at runtime.
+
+        If secret_tier is cloud_ok_acknowledged but the expiry has passed,
+        returns 'local_only'. This is the function callers should use
+        at query time — never trust secret_tier directly without this check.
+        """
+        if self.secret_tier != "cloud_ok_acknowledged":
+            return self.secret_tier
+        if self.secret_tier_expiry is None:
+            return self.secret_tier
+        try:
+            expiry = datetime.datetime.fromisoformat(self.secret_tier_expiry)
+            now = datetime.datetime.now(expiry.tzinfo) if expiry.tzinfo else datetime.datetime.now()
+            if now > expiry:
+                return "local_only"
+        except (ValueError, TypeError):
+            # Invalid expiry string — fail safe (relock)
+            return "local_only"
+        return self.secret_tier
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "SecurityConfig":
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> "SecurityConfig":
+        if d is None:
+            return cls()
         known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
         return cls(**known)
 
@@ -330,28 +375,35 @@ def load_being_config(path: Optional[str] = None) -> BeingConfig:
     config = BeingConfig.from_dict(data)
 
     # Volatile unlock: reset to local_only on load (process restart).
-    # The volatile_unlock flag was persisted so the UI could show the
-    # state, but on reload it means "this was a temporary unlock".
+    # The volatile_unlock flag is persisted so the next load can see it
+    # and relock. After relocking, persist the cleaned state to disk.
+    relocked = False
     if config.security.volatile_unlock:
         logger.info("Volatile unlock detected on load — relocking secrets to local_only")
         config.security.secret_tier = "local_only"
         config.security.volatile_unlock = False
         config.security.secret_tier_expiry = None
+        relocked = True
 
     # Expiry check: if the escape hatch has expired, relock.
     if (config.security.secret_tier == "cloud_ok_acknowledged"
             and config.security.secret_tier_expiry):
-        import datetime
-        try:
-            expiry = datetime.datetime.fromisoformat(config.security.secret_tier_expiry)
-            if datetime.datetime.now(expiry.tzinfo) > expiry:
-                logger.info("Secret tier expiry passed — relocking to local_only")
-                config.security.secret_tier = "local_only"
-                config.security.secret_tier_expiry = None
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid secret_tier_expiry: {config.security.secret_tier_expiry}")
+        effective = config.security.effective_secret_tier()
+        if effective == "local_only":
+            logger.info("Secret tier expiry passed — relocking to local_only")
+            config.security.secret_tier = "local_only"
+            config.security.secret_tier_expiry = None
+            relocked = True
 
     config.validate()
+
+    # Persist the relocked state so the YAML doesn't keep stale TTL fields
+    if relocked:
+        try:
+            save_being_config(config, path)
+        except Exception as e:
+            logger.warning(f"Failed to persist relocked config: {e}")
+
     logger.info(f"Loaded being config from {config_path} (voice={config.voice})")
     return config
 
@@ -378,8 +430,24 @@ def save_being_config(config: BeingConfig, path: Optional[str] = None) -> None:
         }
 
     try:
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(clean, f, default_flow_style=False, sort_keys=False)
+        # Atomic write: write to temp file then rename, so a concurrent
+        # reader never sees a partially-written file. Restricted to 0o600
+        # because being.yml can contain security config references.
+        import tempfile
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(config_path.parent), suffix=".yml.tmp", prefix=".being_"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                yaml.dump(clean, f, default_flow_style=False, sort_keys=False)
+            os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, str(config_path))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         logger.info(f"Saved being config to {config_path}")
     except OSError as e:
         raise ValueError(f"Cannot write {config_path}: {e}")

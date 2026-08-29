@@ -22,6 +22,9 @@ from ...utils.platform import get_config_dir
 
 logger = logging.getLogger('halbert.dashboard')
 
+# Lock for concurrent being config read-modify-write operations
+_being_config_lock = threading.Lock()
+
 router = APIRouter()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2992,7 +2995,11 @@ async def get_being_config() -> Dict[str, Any]:
     try:
         from ...config.being_config import load_being_config
         cfg = load_being_config()
-        return {"status": "ok", "config": cfg.to_dict()}
+        resp = cfg.to_dict()
+        # Strip internal volatile_unlock from API response
+        if "security" in resp and isinstance(resp["security"], dict):
+            resp["security"].pop("volatile_unlock", None)
+        return {"status": "ok", "config": resp}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -3005,53 +3012,58 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
     """Update being configuration. Validates and persists to being.yml."""
     try:
         from ...config.being_config import load_being_config, save_being_config
-        cfg = load_being_config()
+        with _being_config_lock:
+            cfg = load_being_config()
 
-        # Apply partial updates (only non-None fields)
-        if update.voice is not None:
-            cfg.voice = update.voice
-        if update.proactivity is not None:
-            cfg.proactivity = update.proactivity
-        if update.purpose is not None:
-            cfg.purpose = update.purpose
-        if update.quiet_hours is not None:
-            cfg.quiet_hours = update.quiet_hours
-        if update.morning_report is not None:
-            cfg.morning_report = update.morning_report
-        if update.category_overrides is not None:
-            cfg.category_overrides = update.category_overrides
-        # Personality
-        if update.personality_profile is not None:
-            cfg.personality_profile = update.personality_profile
-        if update.archetype_id is not None:
-            cfg.archetype_id = update.archetype_id if update.archetype_id else None
-        if update.tone_descriptors is not None:
-            cfg.tone_descriptors = update.tone_descriptors
-        if update.speech_patterns is not None:
-            cfg.speech_patterns = update.speech_patterns
-        if update.directives is not None:
-            cfg.directives = update.directives
-        if update.custom_personality_prompt is not None:
-            cfg.custom_personality_prompt = update.custom_personality_prompt
-        # Character (Phase 3)
-        if update.name is not None:
-            cfg.name = update.name
-        if update.voice_presentation is not None:
-            cfg.voice_presentation = update.voice_presentation
-        if update.model is not None:
-            cfg.model = update.model if update.model else None
-        if update.model_endpoint_id is not None:
-            cfg.model_endpoint_id = update.model_endpoint_id if update.model_endpoint_id else None
-        # Security (MCP trust boundary)
-        if update.security is not None:
-            from ...config.being_config import SecurityConfig
-            existing = cfg.security.to_dict() if cfg.security else {}
-            merged = {**existing, **update.security}
-            cfg.security = SecurityConfig.from_dict(merged)
-            cfg.security.validate()
+            # Apply partial updates (only non-None fields)
+            if update.voice is not None:
+                cfg.voice = update.voice
+            if update.proactivity is not None:
+                cfg.proactivity = update.proactivity
+            if update.purpose is not None:
+                cfg.purpose = update.purpose
+            if update.quiet_hours is not None:
+                cfg.quiet_hours = update.quiet_hours
+            if update.morning_report is not None:
+                cfg.morning_report = update.morning_report
+            if update.category_overrides is not None:
+                cfg.category_overrides = update.category_overrides
+            # Personality
+            if update.personality_profile is not None:
+                cfg.personality_profile = update.personality_profile
+            if update.archetype_id is not None:
+                cfg.archetype_id = update.archetype_id if update.archetype_id else None
+            if update.tone_descriptors is not None:
+                cfg.tone_descriptors = update.tone_descriptors
+            if update.speech_patterns is not None:
+                cfg.speech_patterns = update.speech_patterns
+            if update.directives is not None:
+                cfg.directives = update.directives
+            if update.custom_personality_prompt is not None:
+                cfg.custom_personality_prompt = update.custom_personality_prompt
+            # Character (Phase 3)
+            if update.name is not None:
+                cfg.name = update.name
+            if update.voice_presentation is not None:
+                cfg.voice_presentation = update.voice_presentation
+            if update.model is not None:
+                cfg.model = update.model if update.model else None
+            if update.model_endpoint_id is not None:
+                cfg.model_endpoint_id = update.model_endpoint_id if update.model_endpoint_id else None
+            # Security (MCP trust boundary)
+            if update.security is not None:
+                from ...config.being_config import SecurityConfig
+                existing = cfg.security.to_dict() if cfg.security else {}
+                merged = {**existing, **update.security}
+                # If the new secret_tier is local_only, clear TTL fields
+                if merged.get("secret_tier") == "local_only":
+                    merged["secret_tier_expiry"] = None
+                    merged["volatile_unlock"] = False
+                cfg.security = SecurityConfig.from_dict(merged)
+                cfg.security.validate()
 
-        # Validate + save
-        save_being_config(cfg)
+            # Validate + save
+            save_being_config(cfg)
 
         # Hot-reload personality into the running agent
         try:
@@ -3062,7 +3074,11 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"Could not hot-reload personality: {e}")
 
-        return {"status": "ok", "config": cfg.to_dict()}
+        # Strip internal volatile_unlock from API response
+        resp = cfg.to_dict()
+        if "security" in resp and isinstance(resp["security"], dict):
+            resp["security"].pop("volatile_unlock", None)
+        return {"status": "ok", "config": resp}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -3113,10 +3129,11 @@ async def get_security_telemetry() -> Dict[str, Any]:
                         yield (full_key, v)
             elif isinstance(obj, list):
                 for i, item in enumerate(obj):
+                    indexed_key = f"{prefix}[{i}]" if prefix else f"[{i}]"
                     if isinstance(item, (dict, list)):
-                        yield from _flatten_pairs(item, prefix)
+                        yield from _flatten_pairs(item, indexed_key)
                     else:
-                        yield (prefix, item)
+                        yield (indexed_key, item)
 
         counts = {"tier_0": 0, "tier_1": 0, "tier_2": 0}
         total = 0

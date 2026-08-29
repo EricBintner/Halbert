@@ -141,13 +141,19 @@ export function Tier1RockerControl({ value, onChange, disabled, count }: Tier1Ro
 
   return (
     <div>
-      <div className="bg-surface-subtle p-1 rounded-lg border border-border grid grid-cols-3 gap-1">
+      <div
+        className="bg-surface-subtle p-1 rounded-lg border border-border grid grid-cols-3 gap-1"
+        role="radiogroup"
+        aria-label="Tier 1 operational value access mode"
+      >
         {segments.map((seg) => {
           const active = value === seg.key
           return (
             <button
               key={seg.key}
               type="button"
+              role="radio"
+              aria-checked={active}
               disabled={disabled}
               onClick={() => onChange(seg.key)}
               className={cn(
@@ -166,7 +172,7 @@ export function Tier1RockerControl({ value, onChange, disabled, count }: Tier1Ro
         })}
       </div>
       <div className="flex items-center gap-1.5 mt-2">
-        <Info className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <Info className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
         <p className="text-xs text-muted-foreground">
           {value === 'cloud_ok' &&
             `Cloud models see operational values directly.${count != null ? ` ${count} values accessible.` : ''}`}
@@ -190,6 +196,7 @@ interface Tier2StateCardProps {
   onRelock: () => void
   disabled?: boolean
   protectedCount?: number
+  expiry?: string | null
 }
 
 export function Tier2StateCard({
@@ -198,7 +205,23 @@ export function Tier2StateCard({
   onRelock,
   disabled,
   protectedCount,
+  expiry,
 }: Tier2StateCardProps) {
+  const expiryLabel = (() => {
+    if (locked || !expiry) return null
+    try {
+      const d = new Date(expiry)
+      const now = new Date()
+      const mins = Math.round((d.getTime() - now.getTime()) / 60000)
+      if (mins <= 0) return 'expiring'
+      if (mins < 60) return `${mins}m remaining`
+      const hrs = Math.floor(mins / 60)
+      const rem = mins % 60
+      return rem > 0 ? `${hrs}h ${rem}m remaining` : `${hrs}h remaining`
+    } catch {
+      return null
+    }
+  })()
   return (
     <div
       className={cn(
@@ -233,6 +256,11 @@ export function Tier2StateCard({
         >
           {locked ? 'LOCKED (LOCAL ONLY)' : 'SECRETS EXPOSED'}
         </span>
+        {expiryLabel && (
+          <span className="ml-2 font-mono text-xs text-status-critical/80">
+            {expiryLabel}
+          </span>
+        )}
       </div>
 
       {/* Body description */}
@@ -322,7 +350,7 @@ export function EscapeHatchConfirmationModal({
     }
   }, [open])
 
-  const phraseValid = phrase.trim() === REQUIRED_PHRASE
+  const phraseValid = phrase.trim().toUpperCase().replace(/\s+/g, ' ') === REQUIRED_PHRASE
 
   const ttlOptions: { key: TTLChoice; label: string; sub: string; recommended?: boolean }[] = [
     { key: '1h', label: '1 Hour', sub: 'Auto-relocks', recommended: true },
