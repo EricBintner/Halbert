@@ -200,11 +200,21 @@ def get_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
         # (checks for an existing apple-foundation endpoint, not whether
         # any endpoints exist) and only fills empty slots, so it cannot
         # overwrite a user's choice or interfere with the Ollama probe.
+        #
+        # The hardware detection (system_profiler + sysctl + bridge probe)
+        # is expensive (~1s), so it is skipped when the apple-foundation
+        # endpoint is already registered — the common case after first boot.
         try:
-            from ...model.hardware_detector import HardwareDetector
             from ...model.auto_provision import auto_provision_apple_intelligence
-            hw = HardwareDetector().detect()
-            auto_provision_apple_intelligence(hw)
+            from ...model import llm_config as _cfg
+            already_provisioned = any(
+                ep.get("provider") == _cfg.APPLE_FOUNDATION_PROVIDER
+                for ep in _cfg.load_global(use_cache=False).get("saved_endpoints", [])
+            )
+            if not already_provisioned:
+                from ...model.hardware_detector import HardwareDetector
+                hw = HardwareDetector().detect()
+                auto_provision_apple_intelligence(hw)
         except Exception as e:
             logger.debug(f"Apple Intelligence auto-provisioning skipped: {e}")
 
@@ -409,6 +419,7 @@ _PROVIDER_ASSERTS: Dict[str, tuple] = {
     "openai": ("tool_use",),
     "openrouter": ("tool_use",),
     "ollama": ("tool_use",),
+    "apple-foundation": ("tool_use",),
 }
 
 

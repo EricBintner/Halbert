@@ -229,6 +229,8 @@ _PROVIDER_TERMS: Dict[str, LicenseInfo] = {
                                      source="provider"),
     "lm-studio": LicenseInfo("Per-model licence (see the model's page in LM Studio)", "LicenseRef-Provider-Terms",
                              source="provider"),
+    "apple-foundation": LicenseInfo("Apple Intelligence On-Device (local, no data leaves this Mac)", "LicenseRef-Apple-Intelligence",
+                                    source="provider"),
 }
 
 

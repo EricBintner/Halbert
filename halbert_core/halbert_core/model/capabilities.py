@@ -152,6 +152,13 @@ class ModelCapabilities:
         elif provider == "ollama":
             caps.streaming = True
             caps.tool_use = True  # Most current local models support tools
+        elif provider == "apple-foundation":
+            # Apple Intelligence (FoundationModels) on the ANE: supports
+            # tool calling and streaming via the OpenAI-compatible bridge.
+            # Vision is not yet confirmed for the on-device foundation
+            # model; left False until the bridge reports it.
+            caps.streaming = True
+            caps.tool_use = True
         
         # === 3. RUNTIME METADATA FROM THE PROVIDER ===
         if runtime:
