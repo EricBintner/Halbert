@@ -70,6 +70,16 @@ DROPPED_KEYS = (
 )
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
+# Apple Intelligence (FoundationModels) — on-device LLM via the ANE.
+# The Swift bridge (halbert-foundation-bridge) serves OpenAI-compatible
+# wire format on loopback port 11435, distinct from Ollama (11434) and
+# LM Studio (1234). The model name is a stable identifier for the
+# built-in OS foundation model; the bridge maps it to
+# SystemLanguageModel.default.
+APPLE_FOUNDATION_URL = "http://127.0.0.1:11435"
+APPLE_FOUNDATION_MODEL = "apple-foundation-3b"
+APPLE_FOUNDATION_PROVIDER = "apple-foundation"
+
 
 def _chat_capable_providers() -> FrozenSet[str]:
     """CHAT_CAPABLE_PROVIDERS from model.client (includes anthropic after E-1).
@@ -833,6 +843,21 @@ def ensure_endpoint(url: str, provider: str = "ollama", name: str = "") -> str:
 def ensure_ollama_endpoint(url: str = DEFAULT_OLLAMA_URL) -> str:
     """Id of the Ollama endpoint at ``url``; creates "Local Ollama" if absent."""
     return ensure_endpoint(url, "ollama", "Local Ollama")
+
+
+def ensure_apple_foundation_endpoint() -> str:
+    """Id of the Apple Intelligence endpoint; creates it if absent.
+
+    The endpoint points at the Swift FoundationModels bridge on loopback
+    port 11435. It is registered even when the bridge is not running: the
+    host is *eligible* for Apple Intelligence and the endpoint is inert
+    until the bridge is bundled and started.
+    """
+    return ensure_endpoint(
+        APPLE_FOUNDATION_URL,
+        APPLE_FOUNDATION_PROVIDER,
+        "Apple Intelligence (On-Device)",
+    )
 
 
 def _probe_ollama(url: str, timeout: float) -> bool:
