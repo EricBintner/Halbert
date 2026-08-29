@@ -1118,6 +1118,181 @@ function BeingSettings() {
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Senses Settings Component (Vision autonomy — being.yml senses.vision)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SensesSettings() {
+  const [config, setConfig] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    loadConfig()
+  }, [])
+
+  const loadConfig = async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/settings/being`)
+      if (resp.ok) {
+        const data = await resp.json()
+        setConfig(data.config)
+      }
+    } catch (e) {
+      console.error('Failed to load senses config:', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const saveSenses = async (updates: Record<string, any>) => {
+    setSaving(true)
+    try {
+      const current = config.senses?.vision || {}
+      const newVision = { ...current, ...updates }
+      const resp = await fetch(`${API_BASE}/settings/being`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ senses: { vision: newVision } }),
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        setConfig(data.config)
+        setToast('Saved')
+        setTimeout(() => setToast(null), 2000)
+      } else {
+        const err = await resp.json()
+        setToast(`Error: ${err.detail || 'Failed to save'}`)
+        setTimeout(() => setToast(null), 3000)
+      }
+    } catch (e) {
+      setToast('Error: Network failure')
+      setTimeout(() => setToast(null), 3000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return <Card><CardContent className="py-8 text-center text-muted-foreground">Loading senses config...</CardContent></Card>
+  }
+
+  if (!config) {
+    return <Card><CardContent className="py-8 text-center text-muted-foreground">Failed to load config</CardContent></Card>
+  }
+
+  const vision = config.senses?.vision || {}
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Eye className="h-5 w-5" />
+            Vision Autonomy
+          </CardTitle>
+          <CardDescription>
+            Control how proactively the being uses screen capture. The system-level
+            enable/disable gate is in the Vision tab — these settings control what the
+            being is allowed to do with vision once it is enabled.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="vision-enabled">Enable proactive vision</Label>
+              <p className="text-xs text-muted-foreground">
+                Persona-level consent for autonomous screen monitoring.
+              </p>
+            </div>
+            <input
+              id="vision-enabled"
+              type="checkbox"
+              checked={vision.enabled ?? false}
+              onChange={(e) => saveSenses({ enabled: e.target.checked })}
+              disabled={saving}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="proactive-monitoring">Background monitoring</Label>
+              <p className="text-xs text-muted-foreground">
+                Periodically capture the active window and scan for error patterns.
+              </p>
+            </div>
+            <input
+              id="proactive-monitoring"
+              type="checkbox"
+              checked={vision.proactive_monitoring ?? false}
+              onChange={(e) => saveSenses({ proactive_monitoring: e.target.checked })}
+              disabled={saving}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="capture-on-intent">Auto-capture on visual intent</Label>
+              <p className="text-xs text-muted-foreground">
+                When you ask "what's on my screen", capture automatically before planning.
+              </p>
+            </div>
+            <input
+              id="capture-on-intent"
+              type="checkbox"
+              checked={vision.capture_on_intent ?? true}
+              onChange={(e) => saveSenses({ capture_on_intent: e.target.checked })}
+              disabled={saving}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="capture-on-error">Auto-capture on tool failure</Label>
+              <p className="text-xs text-muted-foreground">
+                OCR the screen when a command fails, for diagnostic context. Opt-in.
+              </p>
+            </div>
+            <input
+              id="capture-on-error"
+              type="checkbox"
+              checked={vision.capture_on_error ?? false}
+              onChange={(e) => saveSenses({ capture_on_error: e.target.checked })}
+              disabled={saving}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="vision-interval">Monitoring interval (seconds)</Label>
+              <p className="text-xs text-muted-foreground">
+                How often to check the screen when background monitoring is on. Min 10.
+              </p>
+            </div>
+            <Input
+              id="vision-interval"
+              type="number"
+              min={10}
+              max={600}
+              value={vision.interval_seconds ?? 60}
+              onChange={(e) => saveSenses({ interval_seconds: parseInt(e.target.value) || 60 })}
+              disabled={saving}
+              className="w-24"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-lg border bg-background px-4 py-2 text-sm shadow-lg">
+          {toast}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
  * The tabs this page has, in the order they are shown. Also the whitelist for
  * `?tab=`: Radix renders no panel for a value with no trigger, so an
@@ -2832,6 +3007,7 @@ export function Settings() {
         {/* Being Tab */}
         <TabsContent value="being" className="space-y-4">
           <BeingSettings />
+          <SensesSettings />
         </TabsContent>
 
         {/* Security Tab */}

@@ -123,7 +123,14 @@ def get_agent():
         safety = ToolSafetyFramework()
         tool_executor = ToolExecutor(safety=safety)
         tool_executor.register_system_tools()
-        tool_executor.register_vision_tools()
+
+        # Conditional vision tool registration — only register capture
+        # tools when the user has explicitly enabled screen capture or
+        # webcam in vision_config.yml. Prevents the LLM from being
+        # offered capture tools when the user hasn't opted in.
+        from ...vision.config import is_screen_capture_enabled, is_webcam_enabled
+        if is_screen_capture_enabled() or is_webcam_enabled():
+            tool_executor.register_vision_tools()
 
         # Create agent context assembler (R9: no ChromaDB memory on agent path)
         context_assembler = create_agent_context_assembler()
@@ -210,8 +217,6 @@ def get_agent():
             logger.warning(f"Intake pipeline not available (non-fatal): {e}")
 
         # Create agent
-        tool_executor.register_system_tools()
-        tool_executor.register_vision_tools()
         try:
             from ...integrations.home_assistant.ha_tool import register_ha_tools
             register_ha_tools(tool_executor)

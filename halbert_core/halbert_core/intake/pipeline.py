@@ -69,6 +69,7 @@ class MessageIntake:
     has_code_blocks: bool
     has_file_paths: bool
     has_images: bool
+    has_vision_request: bool
 
     # From complexity
     complexity_score: int
@@ -169,9 +170,11 @@ class IntakePipeline:
 
         skill_tier = _skill_model_tier(active_skills)
 
-        if signals.has_images and vision_model_name:
-            # Vision takes priority — image content requires a multimodal
-            # model, and no skill's tier preference changes that.
+        if (signals.has_images or signals.has_vision_request) and vision_model_name:
+            # Vision takes priority — image content or a visual-intent request
+            # needs a multimodal model, and no skill's tier preference changes
+            # that. has_vision_request covers "what's on my screen" without an
+            # attached image; the state machine auto-captures before planning.
             recommended_model_name = "vision"
             model_name = vision_model_name
         elif skill_tier == "specialist" and specialist_enabled:
@@ -210,6 +213,7 @@ class IntakePipeline:
             has_code_blocks=signals.has_code_blocks,
             has_file_paths=signals.has_file_paths,
             has_images=signals.has_images,
+        has_vision_request=signals.has_vision_request,
             # Complexity
             complexity_score=complexity.score,
             complexity_level=complexity.level.name,
