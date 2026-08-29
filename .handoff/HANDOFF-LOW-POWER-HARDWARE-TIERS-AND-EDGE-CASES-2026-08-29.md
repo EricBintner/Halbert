@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-29  
 **Status:** Approved & Implemented — Reference Specification & Operational Guidelines  
-**Scope:** Practical user edge cases, UI/user-flow friction points, 4-tier hardware taxonomy, Home Assistant SourcePrep scoping, and low-parameter/quantized local LLM analysis.
+**Scope:** Practical user edge cases, dual-track hardware requirements (Home vs. Workstation), dedicated resource headroom analysis, Home Assistant SourcePrep scoping, and low-parameter/quantized local LLM analysis.
 
 ---
 
@@ -10,11 +10,12 @@
 
 With the completion of Phase 7 (Multi-Instance & Config Isolation) and Phase 8 (4-Slot Model Architecture & Light Variant Packaging), Halbert runs across a broad hardware spectrum ranging from legacy dual-core Intel machines and low-power Intel N100/N150 mini PCs to Raspberry Pi 4/5 ARM64 boards, up to high-end Apple Silicon workstations.
 
-This document consolidates:
+This document establishes:
 1. **Practical user edge cases & compatibility solutions** identified during Phase 8 implementation.
-2. **Four tiers of hardware support** (Minimum, Recommended, Ideal, Power User) defining resource envelopes and deployment topologies.
-3. **Minimum SourcePrep requirements** for Home Automation (HA) vs. Full Sysadmin contexts.
-4. **Assessment of the local `secure_model` requirement**, evaluating 1B–4B parameter models and quantization strategies for constrained edge hardware.
+2. **Dual-Track Hardware Requirements** separating **Home Appliance / Hub** deployments from **Workstation / Sysadmin Server** deployments.
+3. **Dedicated Resource Headroom vs. Total Host Sizing**: Clearly distinguishing the unreserved RAM/CPU budget Halbert consumes from the total host capacity required when co-located with sibling workloads (Home Assistant, Frigate, IDEs, browsers).
+4. **Minimum SourcePrep requirements** for Home Automation (HA) vs. Full Sysadmin contexts.
+5. **Local `secure_model` assessment**, evaluating 1B–4B parameter models, CPU duty cycles, and quantization strategies on edge hardware.
 
 ---
 
@@ -64,119 +65,103 @@ This document consolidates:
 
 ---
 
-## 3. Hardware Tiers of Support
+## 3. Dedicated Resource Headroom vs. Total Host Sizing
 
-To guarantee predictability across diverse deployment environments, Halbert defines **four official tiers of hardware support**:
+When stating system requirements, we distinguish between:
+1. **Dedicated Process Budget (Unreserved Headroom):** The specific slice of RAM, CPU cores, and storage I/O that Halbert and its local model backend (Ollama) strictly require to be free and available without contention.
+2. **Total Host System Sizing:** The overall host machine capacity needed to run Halbert alongside its typical co-located sibling processes (Home Assistant + Frigate on Home Hubs; IDEs + Browsers + Docker on Workstations).
 
 ```
 +-----------------------------------------------------------------------------------+
-| Tier 1: Minimum (SBC / Edge / Legacy)      | Tier 2: Recommended (Mainstream Hub) |
-| RAM: 4GB | CPU: Quad-Core / Celeron / Pi 4 | RAM: 8GB-16GB | CPU: N100 / Pi 5     |
-| Local: 1B-2B Q4 (or Template Thoughts)     | Local: 3B-4B Q4 (10-15 tok/s)        |
-| Chat: Cloud / LAN offload                  | Chat: Cloud or Local 3B-4B           |
-| SourcePrep: Remote / Un-indexed fallback   | SourcePrep: HA-Scoped or Remote      |
+| HOME HUB / APPLIANCE TRACK (24/7 Headless Daemon)                                 |
+| Halbert Dedicated Budget: 1.2GB - 3.5GB unreserved RAM | 1-2 CPU cores on burst   |
+| Co-located Sibling Workloads: Home Assistant, Frigate NVR, MQTT, Wyoming Voice    |
 +-----------------------------------------------------------------------------------+
-| Tier 3: Ideal (Workstation / Pro Server)   | Tier 4: Power User (Sovereign Lab)   |
-| RAM: 16GB-32GB | GPU: M-Series / RTX 4060  | RAM: 64GB-128GB+ | GPU: Multi-RTX    |
-| Local: 7B-14B Q4/Q8                        | Local: 32B-70B + Local Vision/Voice  |
-| Chat: Local or Cloud                       | Chat: Fully Offline Sovereign        |
-| SourcePrep: Full local 70k+ corpus         | SourcePrep: Full Local + Multi-Node  |
+| WORKSTATION / SYSADMIN TRACK (Interactive Terminal & Codebase Brain)             |
+| Halbert Dedicated Budget: 1.5GB - 12GB unreserved RAM/VRAM | 2-4 CPU/GPU cores    |
+| Co-located Sibling Workloads: IDEs, Browsers (50+ tabs), Docker, Compilers        |
 +-----------------------------------------------------------------------------------+
 ```
 
-### Tier 1: Minimum (Low-Power / Edge / Legacy PC)
-* **Target Hardware:** Raspberry Pi 4 (4GB RAM), Rockchip RK3588 (4GB), Legacy Intel (Core 2 Duo / 2nd–6th Gen Core / Celeron / Pentium, 4GB RAM), Budget Thin Clients.
-* **Resource Envelope:** 4GB RAM, CPU-only, 32GB–64GB storage (SD / eMMC / SATA SSD), 5–15W TDP.
-* **Package Variant:** `halbert-core[light]` (pure wheels; no `torch`, `sentence-transformers`, or `chromadb`).
-* **Runtime Variant:** `HALBERT_VARIANT=home-light`.
-* **Model Configuration:**
-  * `secure_model`: Ultra-light 1B–2B quantized model ($\sim 1.0\text{–}1.5\text{GB}$ RAM) or template thoughts (`HALBERT_LLM_THOUGHTS=0`).
-  * `chat_model` / `specialist_model`: Cloud API (OpenAI, Anthropic, Gemini, Groq) or LAN GPU server.
-  * `vision_model`: Cloud VLM (GPT-4o, Claude 3.5 Sonnet) or disabled.
-* **SourcePrep:** Remote offload (`SOURCEPREP_URL=http://<desktop-ip>:8400`) or un-indexed SQLite FTS5 fallback.
-
-### Tier 2: Recommended (Mainstream Home Hub / Budget Workstation)
-* **Target Hardware:** Intel N100 / N150 / N95 Mini PCs, Raspberry Pi 5 (8GB RAM), Intel Core i3/i5 (8GB–16GB RAM), Apple Silicon Mac Mini 8GB.
-* **Resource Envelope:** 8GB–16GB RAM, 4–8 CPU cores (or 4 Gracemont E-cores), 128GB+ NVMe SSD, 10–25W TDP.
-* **Package Variant:** `halbert-core[light]` or standard `halbert-core`.
-* **Runtime Variant:** `HALBERT_VARIANT=home` or `sysadmin`.
-* **Model Configuration:**
-  * `secure_model`: 3B–4B Q4 quantized model ($\sim 2.5\text{–}3.5\text{GB}$ RAM) delivering 10–15 tok/s via local Ollama.
-  * `chat_model`: Cloud API (encouraged) or local 3B–4B model.
-  * `specialist_model`: Cloud API or LAN GPU offload.
-  * `vision_model`: Cloud VLM or local small VLM (via Ollama).
-* **SourcePrep:** Local HA-scoped SourcePrep ($\sim 150\text{MB}$ RAM) or Remote full SourcePrep.
-
-### Tier 3: Ideal (Dedicated Server / Pro Workstation / Apple Silicon)
-* **Target Hardware:** Apple Silicon Mac (M1/M2/M3/M4 with 16GB–32GB unified memory), Linux/Windows Workstations with AMD Ryzen 7 / Intel Core i7 + NVIDIA RTX 3060/4060 (8GB–12GB VRAM).
-* **Resource Envelope:** 16GB–32GB RAM/VRAM, fast NVMe, 35–150W TDP.
-* **Package Variant:** Full `halbert-core` with optional `[cloud-apis]` and `[vision]`.
-* **Runtime Variant:** `HALBERT_VARIANT=sysadmin` or `home`.
-* **Model Configuration:**
-  * `secure_model`: 4B–8B Q4/Q8 local model.
-  * `chat_model`: 7B–14B local model or Cloud API.
-  * `specialist_model`: 14B–32B local model (or Cloud Frontier model).
-  * `vision_model`: Local VLM or Cloud VLM.
-* **SourcePrep:** Full local SourcePrep instance (70,000+ chunks sysadmin corpus + FTS5 + trace graph).
-
-### Tier 4: Power User / Sovereign Homelab (Multi-Node / High-End)
-* **Target Hardware:** Mac Studio (64GB–128GB unified), Multi-GPU Linux Servers (e.g. dual RTX 3090/4090 with 48GB VRAM), Proxmox Homelab Clusters.
-* **Resource Envelope:** 64GB–128GB+ RAM/VRAM, high-speed LAN / 10GbE / Tailscale mesh.
-* **Package Variant:** Full `halbert-core` + multi-instance network topology.
-* **Runtime Variant:** Multiple concurrent instances (Host Sysadmin + Home Hub + Voice Satellites).
-* **Model Configuration:** Fully offline sovereign AI — 32B–70B local models, local Whisper large-v3, local Piper TTS, local high-res VLMs.
-* **SourcePrep:** Distributed SourcePrep hub serving multiple satellite Halbert instances over LAN.
+### CPU Duty Cycle & Thermal Considerations
+Running a local 3B–4B model on CPU (e.g. Intel N100 or Raspberry Pi 5) saturates 100% of all assigned CPU cores during active inference. 
+* **Home Context:** If background cognitive monologue (`advance_turn`) runs constantly on CPU, it creates persistent fan noise, thermal throttling, and scheduling latency for real-time services (like Frigate video decoding or Wyoming voice audio streaming).
+* **Architectural Rule:** In Home Hub / low-power deployments, cognitive monologue defaults to **template thoughts (`HALBERT_LLM_THOUGHTS=0`)**, keeping CPU utilization near 0% at idle and bursting only when an explicit user question or high-priority automation trigger occurs.
 
 ---
 
-## 4. Minimum SourcePrep Requirements for Home Automation (HA)
+## 4. Track A: Home Appliance & Hub Requirements (`home` / `home-light`)
 
-A key finding from Phase 8 benchmarking is the vast difference between the **Sysadmin Knowledge Corpus** and a **Dedicated Home Automation Corpus**:
+Designed for 24/7 continuous headless operation, smart home event streaming, and voice integration.
+
+| Tier | Dedicated Halbert Budget (Unreserved Headroom) | Total Host Sizing (Accounting for Sibling Workloads) | Recommended Sibling Workloads | Local Model & Runtime Configuration |
+|---|---|---|---|---|
+| **Tier 1: Home Minimal** | **$\sim 1.2\text{GB}$ Free RAM**<br>1 shared CPU core<br>10GB free storage | **4GB RAM**<br>Quad-Core CPU (Pi 4, Celeron, RK3588)<br>32GB–64GB eMMC/SSD | Home Assistant Core + Mosquitto MQTT | • `HALBERT_VARIANT=home-light`<br>• `secure_model`: 1B–1.5B Q4 ($\sim 1\text{GB}$ RAM) or Template Thoughts<br>• `chat_model`: Cloud / LAN offload<br>• SourcePrep: Remote / Un-indexed |
+| **Tier 2: Home Recommended** | **$\sim 3.0\text{GB}$ Free RAM**<br>2 CPU cores on burst<br>25GB free storage | **8GB – 16GB RAM**<br>4 E-cores / Quad-Core (N100, N150, Pi 5)<br>128GB+ NVMe SSD | Home Assistant OS + Frigate NVR (1–3 cams) + Wyoming Voice | • `HALBERT_VARIANT=home`<br>• `secure_model`: 3B–4B Q4 ($\sim 2.5\text{GB}$ RAM, 10–15 tok/s)<br>• `chat_model`: Cloud or local 3B–4B<br>• SourcePrep: Local HA-scoped ($\sim 150\text{MB}$) |
+| **Tier 3: Home Power Hub** | **$\sim 5.0\text{GB}$ Free RAM**<br>4 CPU cores / iGPU<br>50GB free storage | **16GB – 32GB RAM**<br>Intel Core i5 / N305 / AMD Ryzen / Mac Mini<br>256GB+ NVMe SSD | Full HA Stack + Frigate (4+ HD cams) + Local Whisper + Plex/Jellyfin | • `HALBERT_VARIANT=home`<br>• `secure_model`: 4B–8B Q4/Q8 local model<br>• `chat_model`: 7B–8B local or Cloud<br>• Full Local HA SourcePrep + Voice |
+
+---
+
+## 5. Track B: Workstation & Sysadmin Server Requirements (`sysadmin`)
+
+Designed for interactive terminal sessions, system diagnosis, and full-corpus SourcePrep code/config intelligence.
+
+| Tier | Dedicated Halbert Budget (Unreserved Headroom) | Total Host Sizing (Accounting for Sibling Workloads) | Recommended Sibling Workloads | Local Model & Runtime Configuration |
+|---|---|---|---|---|
+| **Tier 1: Workstation Entry** | **$\sim 1.5\text{GB}$ Free RAM**<br>1 CPU core<br>15GB free storage | **8GB RAM**<br>Older Laptop / Desktop (2nd–8th Gen Core, 8GB RAM) | Lightweight OS + Terminal + Single Browser Window | • `halbert-core[light]`<br>• `secure_model`: 1B–2B Q4 or Template Thoughts<br>• `chat_model`: Cloud API (OpenAI/Anthropic)<br>• SourcePrep: Remote LAN Offload |
+| **Tier 2: Workstation Mainstream** | **$\sim 4.5\text{GB}$ Free RAM / VRAM**<br>2–4 CPU cores<br>40GB free storage | **16GB RAM**<br>Modern Laptop / Desktop (Intel Core i5/i7, AMD Ryzen 5, Apple M1/M2) | IDE (VS Code/Cursor) + Web Browser (30+ tabs) + Docker | • `halbert-core`<br>• `secure_model`: 3B–4B Q4 local model<br>• `chat_model`: Cloud Frontier (encouraged) or local 4B<br>• SourcePrep: Host config + Local scope |
+| **Tier 3: Workstation Pro** | **$\sim 8\text{GB} – 12\text{GB}$ Free RAM / VRAM**<br>Dedicated GPU / Neural Engine<br>100GB free storage | **32GB RAM (or Unified)**<br>Mac Studio / MacBook Pro 32GB, PC with RTX 3060/4060 (8–12GB VRAM) | Full Dev Suite + Multiple Containers + Heavy Compilations | • Full `halbert-core` with `[vision]` and `[cloud-apis]`<br>• `secure_model`: 7B–8B Q8 or 14B Q4<br>• `chat_model`: 8B–14B local or Cloud<br>• SourcePrep: Full local 70k+ chunk corpus |
+| **Tier 4: Sovereign Homelab** | **$\ge 24\text{GB}$ Free RAM / VRAM**<br>Multi-GPU / High-core CPU<br>250GB+ fast NVMe | **64GB – 128GB+ RAM**<br>Mac Studio 64–128GB, Dual RTX 3090/4090 Workstations, Proxmox Cluster | Multi-tenant virtualization + Cluster orchestrations | • 100% Offline Sovereign AI<br>• `chat_model` / `specialist_model`: 32B–70B local<br>• Local Whisper large-v3 + Piper TTS + VLMs<br>• Distributed SourcePrep hub for satellites |
+
+---
+
+## 6. Minimum SourcePrep Requirements: Home Automation (HA) vs. Sysadmin
+
+A major architectural insight is the difference in resource overhead between indexing a **Full Sysadmin Knowledge Corpus** vs. a **Dedicated Home Automation Corpus**:
 
 | Metric | Full Sysadmin Corpus | HA-Scoped Corpus |
 |---|---|---|
 | **Corpus Contents** | Arch-Wiki, macOS man-pages, Linux admin guides, kernel docs | HA entity registry, YAML automations, area topology, Frigate zones, device manuals |
 | **Total Chunks** | 71,092 chunks | 500 – 5,000 chunks |
-| **Embedding Size on Disk** | $\sim 220\text{MB}$ (768-dim float32) | $\sim 1.5\text{MB} – 15\text{MB}$ |
-| **Daemon RAM Footprint** | $\sim 1.2\text{GB} – 2.0\text{GB}$ RSS | $\sim 120\text{MB} – 180\text{MB}$ RSS |
+| **Disk Size** | $\sim 220\text{MB}$ (768-dim float32) | $\sim 1.5\text{MB} – 15\text{MB}$ |
+| **Daemon RAM Overhead** | $\sim 1.2\text{GB} – 2.0\text{GB}$ RSS | $\sim 120\text{MB} – 180\text{MB}$ RSS |
 | **Indexing CPU Time** | 10 – 30 minutes (CPU) | 5 – 20 seconds |
-| **Minimum Hardware to Run Locally** | Tier 2 (8GB RAM, NVMe) | Tier 1 (4GB RAM, eMMC/SSD) |
+| **Minimum Headroom to Run Locally** | $\ge 2.0\text{GB}$ Dedicated RAM | **$\sim 200\text{MB}$ Dedicated RAM** |
 
-### Guidelines for HA Deployments:
-1. **On $\le 4\text{GB}$ RAM (Tier 1):** Do not run the full sysadmin SourcePrep daemon locally. Either:
-   * Point `SOURCEPREP_URL` to a Tier 2/3 machine on LAN, or
-   * Run HA-scoped SourcePrep with only `host` and `ha_config` scopes active.
-2. **On $\ge 8\text{GB}$ RAM (Tier 2+):** Local SourcePrep runs comfortably alongside Ollama and Home Assistant.
+### Deployment Rules for SourcePrep:
+1. **Home Track ($\le 4\text{GB}$ Hosts):** Point `SOURCEPREP_URL` to a remote workstation or run in un-indexed fallback mode.
+2. **Home Track ($\ge 8\text{GB}$ Hosts):** Local HA-scoped SourcePrep consumes only $\sim 150\text{MB}$ RAM and runs comfortably alongside Home Assistant and Frigate.
+3. **Workstation Track ($\ge 16\text{GB}$ Hosts):** Full local SourcePrep daemon indexes the entire 70k sysadmin knowledge base without impacting desktop responsiveness.
 
 ---
 
-## 5. Local LLM (`secure_model`) Assessment: 1B–4B Models & Quantization
+## 7. Local LLM (`secure_model`) Assessment: 1B–4B Models & Quantization
 
-The `secure_model` slot is mandatory for processing sensitive system configurations, API credentials, camera metadata, and internal persona thoughts (`advance_turn` cognitive tick). 
+The `secure_model` slot is mandatory for processing sensitive system configurations, API credentials, camera metadata, and internal persona monologue (`advance_turn` cognitive tick).
 
-### 5.1 Parameter Size Evaluation for Low-Power Devices
+### 7.1 Parameter Size Evaluation for Low-Power Devices
 
-| Parameter Class | Memory (Q4_K_M) | Inference Speed (N100) | Inference Speed (Pi 4) | Fitness for `secure_model` Role |
+| Parameter Class | Memory Headroom (Q4_K_M) | CPU Inference Speed (N100) | CPU Inference Speed (Pi 4) | Fitness for `secure_model` Role |
 |---|---|---|---|---|
-| **1B – 1.5B** | $\sim 0.8\text{GB} – 1.2\text{GB}$ | 20 – 35 tok/s | 10 – 16 tok/s | **Excellent for Tier 1:** Ultra-low RAM, fast cognitive monologue summarization, basic intent classification. |
-| **2B – 3B** | $\sim 1.4\text{GB} – 2.2\text{GB}$ | 15 – 22 tok/s | 6 – 10 tok/s | **Sweet Spot for 4GB–8GB:** Reliable tool calling, structured JSON output, safe privacy scrubbing. |
-| **3.8B – 4B** | $\sim 2.4\text{GB} – 3.2\text{GB}$ | 10 – 15 tok/s | 3 – 5 tok/s | **Standard for Tier 2:** Strong reasoning, excellent tool calling, fits in 8GB RAM alongside HA. |
-| **7B – 8B** | $\sim 4.5\text{GB} – 5.8\text{GB}$ | 4 – 7 tok/s | 1 – 2 tok/s (OOM risk) | **Tier 3+ only:** Too heavy for low-power CPU-only devices. |
+| **1B – 1.5B** | $\sim 0.8\text{GB} – 1.2\text{GB}$ | 20 – 35 tok/s | 10 – 16 tok/s | **Optimal for Minimal Tiers:** Ultra-low RAM, fast cognitive monologue summarization, low thermal impact. |
+| **2B – 3B** | $\sim 1.4\text{GB} – 2.2\text{GB}$ | 15 – 22 tok/s | 6 – 10 tok/s | **Sweet Spot for 4GB–8GB Hosts:** Reliable tool calling, structured JSON output, safe privacy scrubbing. |
+| **3.8B – 4B** | $\sim 2.4\text{GB} – 3.2\text{GB}$ | 10 – 15 tok/s | 3 – 5 tok/s | **Standard for 8GB–16GB Hosts:** Strong reasoning, reliable schema adherence, fits alongside HA. |
+| **7B – 8B** | $\sim 4.5\text{GB} – 5.8\text{GB}$ | 4 – 7 tok/s | 1 – 2 tok/s (OOM risk) | **Pro Tiers only ($\ge 16\text{GB}$ RAM):** Too heavy for low-power CPU-only hosts. |
 
-### 5.2 Quantization Strategies for Constrained Memory
+### 7.2 Quantization Strategies for Constrained Memory
 
 1. **`Q4_K_M` (4-bit medium - Default Baseline):**
    * Memory factor: $\sim 0.65\text{ GB}$ per billion parameters.
    * Delivers the optimal balance between perplexity retention and inference throughput on x86/ARM SIMD/NEON.
-2. **`Q3_K_M` / `Q2_K` (Extreme Quantization vs. Smaller Models):**
-   * *Assessment:* Running a 4B model at 2-bit ($\sim 1.4\text{GB}$ RAM) causes significant degradation in structured JSON generation and tool schema adherence. 
+2. **Smaller Model vs. Extreme Quantization:**
+   * *Assessment:* Running a 4B model at 2-bit (`Q2_K`, $\sim 1.4\text{GB}$ RAM) causes significant degradation in structured JSON generation and tool schema adherence.
    * *Recommendation:* Prefer a **2B model at Q4_K_M** over a **4B model at Q2_K**. The 2B Q4 model has superior schema precision and lower latency with identical memory usage.
-3. **`IQ3_S` / `IQ2_XXS` (Importance Matrix Quantization):**
-   * Where available via Ollama / llama.cpp, i-matrix quantization retains higher precision for core attention weights while compressing feed-forward layers, enabling 3B models to run under $1.6\text{GB}$ RAM with minimal quality loss.
+3. **Importance Matrix (`IQ3_S` / `IQ2_XXS`):**
+   * Retains precision on critical attention heads while compressing feed-forward layers, enabling 3B models to run under $1.6\text{GB}$ RAM if memory is strictly constrained.
 
 ---
 
-## 6. Actionable Implementation Checklist
+## 8. Actionable Implementation Checklist
 
 - [x] 4-slot model configuration implemented (`chat_model`, `specialist_model`, `vision_model`, `secure_model`).
 - [x] Local-only URL enforcement implemented with robust hostname/loopback parsing.
