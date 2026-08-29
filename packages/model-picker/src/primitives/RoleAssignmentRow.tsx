@@ -56,6 +56,14 @@ export function RoleAssignmentRow({
     .modelsForRole(role.id)
     .filter((m) => m.endpointId === endpointId)
 
+  // A local-only role must not offer cloud endpoints in its dropdown.
+  const endpointChoices = role.requiresLocal
+    ? picker.chatCapableEndpoints.filter((e) => {
+        const model = picker.models.find((m) => m.endpointId === e.id)
+        return model?.isLocal ?? false
+      })
+    : picker.chatCapableEndpoints
+
   // An endpoint that is down lists nothing, and a stored assignment would then
   // disappear from the select and read as "never configured".
   const orphaned = model !== '' && !options.some((m) => m.id === model)
@@ -106,7 +114,7 @@ export function RoleAssignmentRow({
         <option value="" disabled={!role.optional}>
           {role.optional ? 'None' : 'Choose an endpoint'}
         </option>
-        {picker.chatCapableEndpoints.map((candidate) => (
+        {endpointChoices.map((candidate) => (
           <option key={candidate.id} value={candidate.id}>
             {candidate.name}
           </option>

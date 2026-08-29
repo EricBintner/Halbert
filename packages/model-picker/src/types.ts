@@ -75,6 +75,8 @@ export interface AppRole {
   requiresTools?: boolean
   /** Only offer multimodal models. */
   requiresVision?: boolean
+  /** Only offer models on local endpoints (no cloud traffic). */
+  requiresLocal?: boolean
   /** An empty assignment is valid; the host has a fallback. */
   optional?: boolean
 }

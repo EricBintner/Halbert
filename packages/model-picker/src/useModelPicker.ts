@@ -265,6 +265,7 @@ export function useModelPicker(
         // inspected, which is worse than offering a model that may not fit.
         if (role.requiresVision && m.capabilities.vision === false) return false
         if (role.requiresTools && m.capabilities.tools === false) return false
+        if (role.requiresLocal && !m.isLocal) return false
         return true
       })
     },
