@@ -1,8 +1,9 @@
 # Phase 7 → Phase 8 Transition Review & Work Plan
 
 **Date:** 2026-08-29
-**Status:** Ready for review — awaiting founder sign-off before implementation
-**Scope:** Phase 7 completeness audit, model routing correction, Phase 8 detailed work plan, and Sentient Home roadmap alignment
+**Status:** Ready for review — awaiting feedback from another AI session before implementation
+**DO NOT IMPLEMENT until feedback is received in this document.**
+**Scope:** Phase 7 completeness audit, model routing correction, model architecture code audit, Phase 8 detailed work plan, and Sentient Home roadmap alignment
 
 ---
 
@@ -53,17 +54,55 @@
 
 **The 3B model is NOT the general chat model.** It is the **secure-data local model** — the model that processes sensitive data (system configs, secrets, HA tokens, Frigate camera frames) that must never leave the machine. The general chat model should default to cloud (OpenAI, Anthropic, etc.) with local as fallback.
 
-### 2.2 Current Model Architecture
+**Note on qwen2.5:** The `qwen2.5:3b` reference in the systemd unit is outdated. Qwen 2.5 is a 2024-era model. Current (2026) recommended small local models for the `secure_model` slot:
 
-The model system has three slots in `models.yml`:
+| Model | Params | RAM (Q4) | License | Ollama Pull | Notes |
+|-------|--------|----------|--------|-------------|-------|
+| **Qwen3 4B** | 4B | ~3-4 GB | Apache 2.0 | `qwen3:4b` | Best all-round small model; strong reasoning + tool calling |
+| Llama 3.2 3B | 3B | ~3 GB | Llama Community | `llama3.2:3b` | Fastest inference; best for CPU-only/N150 |
+| Gemma 3 4B | 4B | ~3-4 GB | Gemma | `gemma3:4b` | Multimodal (vision); 140+ languages |
+| Phi-4-mini | 3.8B | ~3 GB | MIT | `phi4-mini` | Best math/structured output at this size |
+
+**Recommendation:** Default `secure_model` to `qwen3:4b` (Apache 2.0, best general capability). For N150/Pi 5 class hardware where every MB counts, `llama3.2:3b` is the lighter fallback. The model choice is a deployment config, not a code decision.
+
+### 2.2 Current Model Architecture (Code Audit)
+
+The model system lives in three files:
+
+1. **`halbert_core/halbert_core/model/llm_config.py`** — Single owner of the `llm_config` section of `models.yml`. Defines `SLOTS` tuple, `default_llm_config()`, `normalise()`, `resolve()`, `save()`, `update()`.
+2. **`halbert_core/halbert_core/model/client.py`** — Model client. Imports `llm_config as _store`. Exposes `get_configured_model()` (chat), `get_specialist_model()`, `get_vision_model()`. Each calls `_store.resolve(slot_name)`.
+3. **`halbert_core/halbert_core/model/config_wizard.py`** — Generates initial `models.yml` with 3 slots + routing + hardware profile.
+4. **`halbert_core/halbert_core/model/tier_router.py`** — `TierRouterConfig.from_legacy_config()` reads the 3 slots for routing decisions.
+5. **`halbert_core/halbert_core/model/__init__.py`** — Re-exports `get_configured_model`, `get_specialist_model`, `get_vision_model`.
+
+The `SLOTS` tuple at `llm_config.py:61`:
+```python
+SLOTS = ("chat_model", "specialist_model", "vision_model")
+```
+
+`default_llm_config()` at `llm_config.py:122`:
+```python
+def default_llm_config() -> Dict[str, Any]:
+    return {
+        "saved_endpoints": [],
+        "chat_model": _empty_slot(),
+        "specialist_model": _empty_slot(),
+        "vision_model": _empty_slot(),
+    }
+```
+
+`normalise()` at `llm_config.py:351` iterates over `SLOTS` to validate each slot against saved endpoints and `CHAT_CAPABLE_PROVIDERS`.
+
+`resolve()` at `llm_config.py:742` takes a slot name and returns `Optional[ResolvedModel]`.
+
+**The `secure_model` slot does not exist.** Adding it requires changes to all 5 files above. The `SLOTS` tuple is the single point of truth — adding `"secure_model"` to it makes `normalise()`, `resolve()`, and the layer merge all work automatically. The local-only enforcement is the only custom logic needed.
 
 | Slot | Purpose | Current Default | Should Default To |
 |------|---------|-----------------|-------------------|
 | `chat_model` | General conversation, tool calling | Local Ollama (no model configured) | **Cloud** (user's choice — OpenAI/Anthropic) |
 | `specialist_model` | Code generation, complex reasoning | Not configured | Cloud or powerful local (14B+) |
 | `vision_model` | Image understanding | Falls back to chat_model | Cloud (GPT-4V, etc.) or local VLM |
-
-**Missing slot:** `secure_model` — a model that is **guaranteed local-only** for processing sensitive data. This does not exist yet.
+| `secure_model` (NEW) | Sensitive data processing, cognitive tick | Does not exist | **Local-only** (qwen3:4b or llama3.2:3b) |
 
 ### 2.3 Proposed `secure_model` Slot
 
@@ -85,7 +124,7 @@ llm_config:
   secure_model:                    # NEW
     enabled: true
     endpoint_id: ep_ollama_local   # MUST be a local endpoint
-    model: qwen2.5:3b              # small, fast, never leaves the machine
+    model: qwen3:4b                # local-only, never leaves the machine
     # The model client enforces that this endpoint's URL is localhost/127.0.0.1
 ```
 
@@ -113,7 +152,7 @@ The home service unit should NOT set `HALBERT_MODEL=qwen2.5:3b` as a blanket def
 # The model selection is per-instance in models.yml, not env vars.
 # Provisioning scripts should create a models.yml with:
 #   chat_model → user's cloud choice (or local 14B if offline)
-#   secure_model → qwen2.5:3b (local-only, hardcoded)
+#   secure_model → qwen3:4b (local-only, enforced by code)
 ```
 
 ### 2.5 Routing Flow
@@ -123,12 +162,45 @@ User message → chat_model (cloud, user's choice)
                 ↓
             Tool execution → tool may handle sensitive data
                 ↓
-            Sensitive data processing → secure_model (local 3B, never leaves machine)
+            Sensitive data processing → secure_model (local, never leaves machine)
                 ↓
             Tool result (sanitized) → back to chat_model for response synthesis
 ```
 
 The cognitive tick (`advance_turn`) runs on `secure_model` because it processes persona memory and internal state — this is the being's private monologue, not user-facing chat.
+
+### 2.6 Local-Only Enforcement Design
+
+The `secure_model` slot must reject non-local endpoints. The enforcement belongs in `normalise()` in `llm_config.py`, which already validates each slot against `CHAT_CAPABLE_PROVIDERS`. The additional check:
+
+```python
+# In normalise(), after the existing provider check:
+if slot == "secure_model" and enabled:
+    ep_url = by_id[endpoint_id]["url"].lower()
+    if not any(host in ep_url for host in ("localhost", "127.0.0.1", "0.0.0.0")):
+        logger.warning("secure_model endpoint %r is not local; slot disabled", ep_url)
+        enabled = False
+```
+
+This is an architectural guard, not a policy — secure data must never transit a network. The check is in `normalise()` so it applies on every read (file load, layer merge, save). A hand-edited `models.yml` that points `secure_model` at a cloud URL will be silently disabled with a warning, same as the existing provider-capability check.
+
+### 2.7 Files Requiring Changes for `secure_model`
+
+| File | Change | Lines |
+|------|--------|-------|
+| `model/llm_config.py:61` | Add `"secure_model"` to `SLOTS` tuple | 1 |
+| `model/llm_config.py:122-128` | Add `secure_model` to `default_llm_config()` | 1 |
+| `model/llm_config.py:351-387` | Add local-only check in `normalise()` loop | ~5 |
+| `model/client.py` | Add `get_secure_model()` function | ~10 |
+| `model/__init__.py` | Export `get_secure_model` | 2 |
+| `model/config_wizard.py:230-255` | Add `secure_model` to wizard defaults | ~5 |
+| `model/tier_router.py:111-135` | Add `secure_model` to `from_legacy_config()` | ~5 |
+| `deploy/halbert-home.service` | Remove `HALBERT_MODEL=qwen2.5:3b` line | 1 |
+| `deploy/halbert-host.service` | Remove `HALBERT_MODEL` line if present | 1 |
+| `deploy/README.md` | Update model references | ~5 |
+| `tests/test_secure_model.py` | New test file | ~60 |
+
+**Total:** ~95 lines across 10 files.
 
 ---
 
@@ -303,6 +375,34 @@ Phase 8D: Commit, merge, push
 - `.handoff/HANDOFF-SENTIENT-HOME-UX.md` — Sentient Home UX specification
 - `documentation/legal/OPEN-CORE-AND-DISTRIBUTION-STRATEGY.md` — Pricing & distribution
 - `documentation/legal/APP-STORE-DISTRIBUTION-STRATEGY.md` — Mac App Store strategy
-- `halbert_core/halbert_core/model/client.py` — Model client (3 slots, needs 4th)
-- `halbert_core/halbert_core/model/llm_config.py` — Model config store
-- `halbert_core/halbert_core/model/config_wizard.py` — Model config wizard defaults
+- `halbert_core/halbert_core/model/client.py` — Model client (3 slots, needs 4th: `secure_model`)
+- `halbert_core/halbert_core/model/llm_config.py` — Model config store (`SLOTS` tuple at line 61 is the single point of truth)
+- `halbert_core/halbert_core/model/config_wizard.py` — Model config wizard defaults (line 230-255)
+- `halbert_core/halbert_core/model/tier_router.py` — Tier router config (line 111-135, reads 3 slots)
+- `halbert_core/halbert_core/model/__init__.py` — Model package exports (line 27-36, 68-77)
+- `halbert_core/halbert_core/integrations/cognition_wiring.py` — Cognitive tick wiring (will route to `secure_model`)
+- `deploy/halbert-home.service` — Home systemd unit (has dead `HALBERT_MODEL=qwen2.5:3b` at line 32)
+- `deploy/halbert-host.service` — Host systemd unit
+
+---
+
+## 9. Feedback Area (For Reviewing AI Session)
+
+<!-- Reviewing AI session: please add your feedback, concerns, and answers to the open questions below. Do not edit above this line. -->
+
+### Reviewer Notes
+
+*(To be filled by the reviewing AI session)*
+
+### Answers to Open Questions (§6)
+
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+
+### Additional Concerns or Recommendations
+
+*(To be filled by the reviewing AI session)*
