@@ -1,0 +1,15 @@
+{
+  "domain": "halbert",
+  "name": "Halbert",
+  "after_dependencies": ["conversation"],
+  "codeowners": ["@EricBintner"],
+  "dependencies": [],
+  "documentation": "https://github.com/EricBintner/Halbert",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/EricBintner/Halbert/issues",
+  "requirements": [],
+  "version": "0.1.0",
+  "config_flow": true,
+  "single_config_entry": true
+}
