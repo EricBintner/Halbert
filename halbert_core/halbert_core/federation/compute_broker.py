@@ -103,27 +103,47 @@ class ComputeBroker:
     """Manages multi-satellite inference with priority queueing.
 
     Phase 9.2a (1:1): ``max_concurrent=1``, no preemption.
-    Phase 9.8 (2b): ``max_concurrent=N``, preemption of P3 by P1.
+    Phase 9.8 (2b): ``max_concurrent=4``, preemption of P3 by P1.
+
+    §11.4 Concurrency Slot Allocation (Phase 9.8 design target):
+    - Slot 1 (Reserved): Dedicated to Priority 1 (active local Desktop user).
+      This ensures the Desktop user never waits behind satellite requests.
+    - Slots 2-4 (Dynamic Pool): Shared between Priority 2 (satellite voice)
+      and Priority 3 (background batch / sleep consolidation).
+
+    §11.4 The 1.5-Second Voice Timeout Rule:
+    - Priority 2 (interactive_user) requests have a hard 1.5s queue timeout.
+    - If the semaphore is not acquired within 1.5s, the request is aborted
+      and the satellite falls back to local generation.
+    - This ensures users never experience awkward silence at a smart speaker.
 
     The broker runs as an asyncio task that pulls from the priority queue
     and acquires the semaphore before dispatching to the local model.
     """
 
+    # §11.4: 1.5s hard timeout for Priority 2 (voice) queue acquisition
+    VOICE_QUEUE_TIMEOUT_S: float = 1.5
+
     def __init__(
         self,
         max_concurrent: int = 1,
         enable_preemption: bool = False,
+        reserved_priority1_slots: int = 1,
     ):
         """
         Args:
             max_concurrent: How many inference requests can run
                 simultaneously on the GPU.  Default 1 for Phase 9.2a.
-                Increase to 2-4 for Phase 9.8 based on GPU VRAM.
+                §11.4 recommends 4 for Phase 9.8 (Apple Silicon / NVIDIA).
             enable_preemption: If True, Priority 1 requests can preempt
                 Priority 3 requests.  Default False for 9.2a.
+            reserved_priority1_slots: Number of slots reserved for Priority 1
+                (local Desktop user).  §11.4: 1 reserved slot out of 4.
+                Only meaningful when max_concurrent > 1.
         """
         self.max_concurrent = max_concurrent
         self.enable_preemption = enable_preemption
+        self.reserved_priority1_slots = reserved_priority1_slots
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._queue: asyncio.PriorityQueue[ComputeRequest] = asyncio.PriorityQueue()
         self._running: Dict[int, ComputeRequest] = {}  # id(req) -> req
@@ -131,8 +151,8 @@ class ComputeBroker:
         self._shutdown = False
 
         logger.info(
-            "ComputeBroker initialized: max_concurrent=%d, preemption=%s",
-            max_concurrent, enable_preemption,
+            "ComputeBroker initialized: max_concurrent=%d, preemption=%s, reserved_p1=%d",
+            max_concurrent, enable_preemption, reserved_priority1_slots,
         )
 
     async def start(self) -> None:
@@ -160,14 +180,25 @@ class ComputeBroker:
 
         This is called by ``compute_endpoint._submit_to_broker()``.
 
+        §11.4 Voice Timeout: If the request is Priority 2
+        (REMOTE_INTERACTIVE / interactive_user), the broker enforces a
+        hard 1.5s queue timeout.  If the semaphore is not acquired
+        within 1.5s, the request is aborted with a QueueTimeoutError
+        and the satellite's ComputeRouter falls back to local generation.
+
         TODO(federation-9.3): Put the request on the priority queue,
-        await the future, and return the raw model response.
+        await the future (with timeout for P2), and return the raw model
+        response.
         """
         # TODO(federation-9.3):
         # 1. Create a Future for the result
         # 2. Put the ComputeRequest on the priority queue
-        # 3. Await the future
-        # 4. Return the result (or re-raise if the request was cancelled)
+        # 3. Await the future:
+        #    - P1 (LOCAL_INTERACTIVE): no timeout (Desktop user waits)
+        #    - P2 (REMOTE_INTERACTIVE): 1.5s timeout (§11.4 voice rule)
+        #    - P3 (BACKGROUND_BATCH): no timeout (batch can wait)
+        # 4. On timeout: cancel queue entry, raise QueueTimeoutError
+        # 5. Return the result (or re-raise if the request was cancelled)
         raise NotImplementedError("ComputeBroker.submit() — TODO(federation-9.3)")
 
     async def _worker_loop(self) -> None:

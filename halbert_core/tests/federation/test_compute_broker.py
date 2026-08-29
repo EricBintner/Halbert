@@ -40,6 +40,20 @@ class TestComputeBroker:
         assert broker.max_concurrent == 4
         assert broker.enable_preemption is True
 
+    def test_voice_queue_timeout_constant(self):
+        """§11.4: The 1.5s voice timeout is a broker-level constant."""
+        assert ComputeBroker.VOICE_QUEUE_TIMEOUT_S == 1.5
+
+    def test_reserved_priority1_slots(self):
+        """§11.4: Broker supports reserved Priority 1 slots for Desktop user."""
+        broker = ComputeBroker(max_concurrent=4, reserved_priority1_slots=1)
+        assert broker.reserved_priority1_slots == 1
+
+    def test_default_reserved_slots(self):
+        """Default reserved_priority1_slots is 1 (§11.4)."""
+        broker = ComputeBroker()
+        assert broker.reserved_priority1_slots == 1
+
     def test_priority_ordering(self):
         """ComputeRequest objects sort by priority (lower = higher priority)."""
         req1 = ComputeRequest(priority=ComputePriority.LOCAL_INTERACTIVE)
