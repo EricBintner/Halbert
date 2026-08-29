@@ -45,6 +45,7 @@ import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { ConfigEditor } from './ConfigEditor'
 import { HalbertMark } from '@/components/brand/HalbertMark'
 import { ModeSwitch } from './shell/ModeSwitch'
+import { InstanceSwitch, type InstanceInfo } from './shell/InstanceSwitch'
 import { HostShell } from './shell/HostShell'
 import { useDebug } from '@/contexts/DebugContext'
 import { useShellMode } from '@/contexts/ShellModeContext'
@@ -155,6 +156,39 @@ export function Layout({ children }: { children: React.ReactNode }) {
     percent: number
     currentPhase: string | null
   }>({ percent: 0, currentPhase: null })
+
+  // Multi-instance: current instance info for sidebar filtering
+  const [instanceInfo, setInstanceInfo] = useState<InstanceInfo | null>(null)
+
+  // Fetch instance info on mount
+  useEffect(() => {
+    const fetchInfo = async () => {
+      try {
+        const res = await fetch(apiUrl('/api/instance/info'))
+        if (res.ok) {
+          const data = await res.json()
+          setInstanceInfo(data)
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+    fetchInfo()
+  }, [])
+
+  // Filter nav sections based on instance features
+  const filteredSections = navSections.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => {
+      if (!instanceInfo) return true
+      // Hide Home tab if instance doesn't have home feature
+      if (item.href === '/home' && !instanceInfo.features.home) return false
+      // Hide Development/GPU tabs if instance doesn't have development feature
+      if ((item.href === '/gpu' || item.href === '/development' || item.href === '/containers')
+          && !instanceInfo.features.development) return false
+      return true
+    }),
+  })).filter((section) => section.items.length > 0)
 
   // Listen for open-config-editor events from chat
   /**
@@ -351,6 +385,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
         <ModeSwitch />
 
+        <InstanceSwitch />
+
         <div className="flex-1" />
 
         {scanning && (
@@ -458,7 +494,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="flex h-full overflow-hidden">
             {/* Navigation rail */}
             <nav className="w-60 shrink-0 border-r border-border bg-background overflow-y-auto px-3 py-4 space-y-5">
-              {navSections.map((section) => (
+              {filteredSections.map((section) => (
                 <div key={section.label} className="space-y-1">
                   <p className="px-3 text-[10px] font-mono font-semibold uppercase tracking-wider text-muted-foreground/70 mb-1">
                     {section.label}

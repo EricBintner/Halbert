@@ -28,6 +28,12 @@ _ha_event_stream = None
 _frigate_event_mapper = None
 _trackers = None
 
+# Multi-instance: ensure Haloysius memory tree follows HALBERT_DATA_DIR
+# so persona memory stores are fully isolated per instance.
+_hbt_data = os.environ.get("HALBERT_DATA_DIR") or os.environ.get("Halbert_DATA_DIR")
+if _hbt_data and not os.environ.get("HALOYSIUS_DATA_HOME"):
+    os.environ["HALOYSIUS_DATA_HOME"] = _hbt_data
+
 
 def _get_persona_id() -> str:
     """Get the persona identity from env, defaulting to 'halbert'."""

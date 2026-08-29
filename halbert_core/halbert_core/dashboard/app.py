@@ -33,6 +33,9 @@ _config_watcher = None
 _frigate_mqtt_subscriber = None
 _frigate_event_mapper = None
 
+# Phase 4: Wyoming voice agent (global for shutdown)
+_wyoming_agent = None
+
 
 def _parse_hhmm(value) -> tuple:
     """Parse an 'HH:MM' string into (hour, minute). Raises ValueError if malformed."""
@@ -266,7 +269,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -297,6 +300,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(vision.router, prefix="/api", tags=["vision"])  # Screen capture for vision model
     app.include_router(home.router, prefix="/api", tags=["home"])  # Home Assistant panel
     app.include_router(frigate.router, prefix="/api", tags=["frigate"])  # Frigate NVR panel
+    app.include_router(instance.router, tags=["instance"])  # Multi-instance info
     
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"
@@ -366,6 +370,18 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     @app.on_event("startup")
     async def startup_event():
         """Start background services on app startup."""
+        # Multi-instance identity logging
+        import os as _os
+        _persona = _os.environ.get("HALBERT_PERSONA_ID", "halbert")
+        _scene = _os.environ.get("HALBERT_SCENE_CONTEXT", "")
+        _port = _os.environ.get("HALBERT_PORT", "8000")
+        _data = _os.environ.get("HALBERT_DATA_DIR") or _os.environ.get("Halbert_DATA_DIR", "")
+        _config = _os.environ.get("HALBERT_CONFIG_DIR") or _os.environ.get("Halbert_CONFIG_DIR", "")
+        logger.info(
+            f"Halbert instance starting — persona={_persona}, scene={_scene or '(default)'}, "
+            f"port={_port}, data_dir={_data or '(default)'}, config_dir={_config or '(default)'}"
+        )
+
         # Sidecar mode (Tauri sets HALBERT_PARENT_PID): stop when the shell dies.
         try:
             from .parent_watchdog import start_parent_watchdog
@@ -620,6 +636,28 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         except Exception as e:
             logger.warning(f"HA event stream not started: {e}")
 
+        # Phase 4: Start Wyoming voice agent if enabled
+        try:
+            from ..integrations.wyoming_agent import HalbertWyomingAgent, WyomingConfig
+            wyoming_cfg = WyomingConfig.from_env()
+            if wyoming_cfg.enabled:
+                global _wyoming_agent
+                _wyoming_agent = HalbertWyomingAgent(config=wyoming_cfg)
+                def start_wyoming_delayed():
+                    import time, asyncio
+                    time.sleep(7)  # after Frigate
+                    try:
+                        loop = asyncio.new_event_loop()
+                        loop.run_until_complete(_wyoming_agent.start())
+                        loop.run_forever()
+                    except Exception as e:
+                        logger.warning(f"Wyoming agent start failed: {e}")
+                wyoming_starter = threading.Thread(target=start_wyoming_delayed, daemon=True)
+                wyoming_starter.start()
+                logger.info(f"Wyoming voice agent starting on {wyoming_cfg.host}:{wyoming_cfg.port}...")
+        except Exception as e:
+            logger.warning(f"Wyoming voice agent not started: {e}")
+
         # Frigate MQTT subscriber — start if MQTT is configured
         try:
             from ..integrations.frigate.frigate_config import load_frigate_config
@@ -715,6 +753,16 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         except Exception as e:
             logger.warning(f"Failed to stop Frigate MQTT subscriber: {e}")
 
+        # Phase 4: Stop Wyoming voice agent
+        try:
+            global _wyoming_agent
+            if _wyoming_agent is not None:
+                await _wyoming_agent.stop()
+                _wyoming_agent = None
+                logger.info("Wyoming voice agent stopped")
+        except Exception as e:
+            logger.warning(f"Failed to stop Wyoming voice agent: {e}")
+
         # Close Frigate tools singleton client
         try:
             from ..integrations.frigate.frigate_tools import close_client as close_frigate_client
@@ -730,3 +778,10 @@ def create_app(enable_cors: bool = True) -> FastAPI:
 
 # Module-level app instance for uvicorn
 app = create_app()
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("HALBERT_PORT", "8000"))
+    host = os.environ.get("HALBERT_HOST", "0.0.0.0")
+    uvicorn.run(app, host=host, port=port)

@@ -5,6 +5,7 @@
  * - Browser / `vite` dev: '' (relative URLs; vite.config.ts proxies /api,/llm,/ws,...).
  * - Tauri webview (origin tauri://localhost): absolute http://127.0.0.1:<port>,
  *   injected synchronously by the Rust 'halbert-env' plugin init script.
+ * - Multi-instance: setInstanceEndpoint() overrides the base for cross-instance switching.
  */
 declare global {
   interface Window {
@@ -17,8 +18,22 @@ export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
+// Multi-instance: runtime override set by the Instance Switcher
+let _instanceOverride: string | null = null
+
+/** Set the active instance endpoint (e.g., 'http://localhost:8001'). Pass null to reset to local. */
+export function setInstanceEndpoint(url: string | null): void {
+  _instanceOverride = url ? url.replace(/\/$/, '') : null
+}
+
+/** Get the current instance override (or null if using local). */
+export function getInstanceEndpoint(): string | null {
+  return _instanceOverride
+}
+
 export function apiBase(): string {
   if (typeof window === 'undefined') return ''
+  if (_instanceOverride) return _instanceOverride
   const injected = window.__HALBERT_API_BASE__
   if (injected) return injected.replace(/\/$/, '')
   return isTauri() ? 'http://127.0.0.1:8000' : ''

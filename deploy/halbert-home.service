@@ -1,0 +1,38 @@
+[Unit]
+Description=Halbert Home Automation Instance
+After=network.target homeassistant.service
+
+[Service]
+Type=simple
+User=halbert
+Group=halbert
+
+# Instance identity
+Environment=HALBERT_PERSONA_ID=home
+Environment=HALBERT_SCENE_CONTEXT=smart home automation
+
+# Instance isolation
+Environment=HALBERT_DATA_DIR=/var/lib/halbert-home
+Environment=HALBERT_CONFIG_DIR=/etc/halbert-home
+Environment=HALBERT_LOG_DIR=/var/log/halbert-home
+
+# SourcePrep project (HA config awareness)
+Environment=SOURCEPREP_PROJECT_ID=ha-config
+
+# Ports
+Environment=HALBERT_PORT=8001
+Environment=HALBERT_HOST=0.0.0.0
+Environment=WYOMING_PORT=10401
+
+# Wyoming voice agent
+Environment=WYOMING_ENABLED=1
+
+# LLM model (lightweight low-latency for voice and event processing)
+Environment=HALBERT_MODEL=qwen2.5:3b
+
+ExecStart=/opt/halbert/bin/uvicorn halbert_core.dashboard.app:app --host 0.0.0.0 --port 8001
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

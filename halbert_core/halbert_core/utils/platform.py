@@ -193,6 +193,9 @@ def get_config_dir() -> Path:
     """
     Get platform-appropriate configuration directory.
     
+    Honours HALBERT_CONFIG_DIR (and legacy Halbert_CONFIG_DIR) env overrides
+    for multi-instance isolation.
+    
     Returns:
         Path to config directory
     
@@ -201,10 +204,12 @@ def get_config_dir() -> Path:
     - macOS: ~/Library/Application Support/Halbert
     - Windows: %APPDATA%/Halbert
     """
+    override = os.environ.get("HALBERT_CONFIG_DIR") or os.environ.get("Halbert_CONFIG_DIR")
+    if override:
+        return Path(override).expanduser()
     if is_macos():
         return Path.home() / "Library" / "Application Support" / "Halbert"
     elif is_windows():
-        # Use AppData/Roaming on Windows
         appdata = Path.home() / "AppData" / "Roaming"
         return appdata / "Halbert"
     else:  # Linux and others
@@ -215,6 +220,9 @@ def get_data_dir() -> Path:
     """
     Get platform-appropriate data directory.
     
+    Honours HALBERT_DATA_DIR (and legacy Halbert_DATA_DIR) env overrides
+    for multi-instance isolation.
+    
     Returns:
         Path to data directory
     
@@ -223,6 +231,9 @@ def get_data_dir() -> Path:
     - macOS: ~/Library/Application Support/Halbert/Data
     - Windows: %LOCALAPPDATA%/Halbert
     """
+    override = os.environ.get("HALBERT_DATA_DIR") or os.environ.get("Halbert_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
     if is_macos():
         return Path.home() / "Library" / "Application Support" / "Halbert" / "Data"
     elif is_windows():

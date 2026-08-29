@@ -1,8 +1,7 @@
 # Halbert Multi-Instance — Implementation Plan & Design
 
 **Date:** 2026-08-29
-**Phase:** 7 of Home Automation Implementation Strategy
-**Status:** Design document for external feedback — no code changes yet
+**Status:** Reviewed & Updated 2026-08-29 — See companion review & UI architecture spec: `HALBERT-MULTI-INSTANCE-REVIEW-FEEDBACK.md`
 
 ---
 
