@@ -417,9 +417,15 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         
         # Start ingestion service in background (non-blocking)
         # Uses daemon threads so won't block shutdown
-        # Multi-instance: skip sysadmin ingestion on home variant
-        _variant = os.environ.get("HALBERT_VARIANT", "sysadmin")
-        if _variant == "home":
+        # Multi-instance: skip sysadmin-only services on home and home-light variants.
+        # home-light additionally skips scheduler, config watcher, and ChromaDB-heavy
+        # init — it's a thin client for N100/Pi that offloads to a remote backend.
+        from ..integrations.cognition_wiring import _get_variant
+        _variant = _get_variant()
+        _is_light = _variant == "home-light"
+        if _is_light:
+            logger.info("Running in home-light variant — heavy services skipped")
+        if _variant in ("home", "home-light"):
             logger.info("Ingestion service skipped (HALBERT_VARIANT=home)")
         else:
             def start_ingestion_delayed():
@@ -442,8 +448,8 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         # Auto-scan discovery engine on startup so dashboard pages have data
         # without requiring a manual scan click. Runs in a daemon thread after
         # a short delay to avoid competing with ChromaDB/ingestion init.
-        # Multi-instance: skip sysadmin discovery on home variant
-        if _variant == "home":
+        # Multi-instance: skip sysadmin discovery on home and home-light variants
+        if _variant in ("home", "home-light"):
             logger.info("Discovery scan skipped (HALBERT_VARIANT=home)")
         else:
             def start_discovery_scan_delayed():
@@ -463,167 +469,188 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             logger.info("Discovery scan starting in background...")
         
         # Phase 23: Start scheduler (re-enabled with delayed start)
-        def start_scheduler_delayed():
-            """Start scheduler after a short delay."""
-            import time
-            time.sleep(3)  # Wait for other services to initialize
-            try:
-                from ..scheduler.executor import AutonomousExecutor, APSCHEDULER_AVAILABLE
-                if APSCHEDULER_AVAILABLE:
-                    global _scheduler_executor
-                    # Resolve timezone from being config (default: local system tz)
-                    scheduler_tz = 'UTC'
-                    try:
-                        from ..config.being_config import load_being_config, resolve_timezone
-                        being_cfg = load_being_config()
-                        scheduler_tz = resolve_timezone(being_cfg.timezone)
-                    except Exception:
-                        pass  # Fall back to UTC
-                    _scheduler_executor = AutonomousExecutor(
-                        max_workers=3,
-                        enable_llm=False,  # Disable LLM for scheduler jobs
-                        enable_guardrails=True,
-                        timezone=scheduler_tz,
-                    )
-                    _scheduler_executor.start()
-                    logger.info(f"Scheduler started successfully (timezone: {scheduler_tz})")
-                else:
-                    logger.info("APScheduler not available, scheduler disabled")
-            except Exception as e:
-                logger.warning(f"Failed to start scheduler: {e}")
-        
-        scheduler_starter = threading.Thread(target=start_scheduler_delayed, daemon=True)
-        scheduler_starter.start()
-        logger.info("Scheduler starting in background...")
-
-        # Phase 7 / T7d.2 + T7e.1: schedule morning report and detector sweep
-        def schedule_proactive_jobs_delayed():
-            """Register proactive jobs once the scheduler has had time to start."""
-            import time
-            time.sleep(4)  # after the delayed scheduler start above
-            try:
-                executor = _scheduler_executor
-                if executor is None:
-                    logger.info("Scheduler not running; proactive jobs not scheduled")
-                    return
-
-                from ..scheduler.autonomous_tasks import create_autonomous_task
-
-                # T7e.1: scheduled detector sweep every 6 hours
+        # home-light skips the scheduler — autonomous jobs run on the remote backend
+        if _is_light:
+            logger.info("Scheduler skipped (home-light variant)")
+        else:
+            def start_scheduler_delayed():
+                """Start scheduler after a short delay."""
+                import time
+                time.sleep(3)  # Wait for other services to initialize
                 try:
-                    sweep_task = create_autonomous_task('detector_sweep')
-                    executor.schedule_cron_job(
-                        job_id='detector_sweep',
-                        task_func=lambda: sweep_task.execute({}),
-                        cron_expr={'hour': '*/6', 'minute': 12},
-                        description='Detector sweep (drop-ins, fstab, permissions)',
-                    )
-                    logger.info("Detector sweep scheduled every 6 hours")
+                    from ..scheduler.executor import AutonomousExecutor, APSCHEDULER_AVAILABLE
+                    if APSCHEDULER_AVAILABLE:
+                        global _scheduler_executor
+                        # Resolve timezone from being config (default: local system tz)
+                        scheduler_tz = 'UTC'
+                        try:
+                            from ..config.being_config import load_being_config, resolve_timezone
+                            being_cfg = load_being_config()
+                            scheduler_tz = resolve_timezone(being_cfg.timezone)
+                        except Exception:
+                            pass  # Fall back to UTC
+                        _scheduler_executor = AutonomousExecutor(
+                            max_workers=3,
+                            enable_llm=False,  # Disable LLM for scheduler jobs
+                            enable_guardrails=True,
+                            timezone=scheduler_tz,
+                        )
+                        _scheduler_executor.start()
+                        logger.info(f"Scheduler started successfully (timezone: {scheduler_tz})")
+                    else:
+                        logger.info("APScheduler not available, scheduler disabled")
                 except Exception as e:
-                    logger.warning(f"Failed to schedule detector sweep: {e}")
+                    logger.warning(f"Failed to start scheduler: {e}")
 
-                # T7d.2: daily morning report per being.yml
-                # Missing / disabled / malformed being.yml → log and skip,
-                # never crash startup.
+            scheduler_starter = threading.Thread(target=start_scheduler_delayed, daemon=True)
+            scheduler_starter.start()
+            logger.info("Scheduler starting in background...")
+
+            # Phase 7 / T7d.2 + T7e.1: schedule morning report and detector sweep
+            def schedule_proactive_jobs_delayed():
+                """Register proactive jobs once the scheduler has had time to start."""
+                import time
+                time.sleep(4)  # after the delayed scheduler start above
                 try:
-                    from ..config.being_config import load_being_config
-                    being_config = load_being_config()
-                    report_cfg = being_config.morning_report or {}
-                    if not isinstance(report_cfg, dict) or not report_cfg.get('enabled'):
-                        logger.info("Morning report disabled or unconfigured; not scheduled")
+                    executor = _scheduler_executor
+                    if executor is None:
+                        logger.info("Scheduler not running; proactive jobs not scheduled")
                         return
-                    hour, minute = _parse_hhmm(report_cfg.get('time', '08:00'))
-                    report_task = create_autonomous_task('morning_report')
-                    executor.schedule_cron_job(
-                        job_id='morning_report',
-                        task_func=lambda: report_task.execute({}),
-                        cron_expr={'hour': hour, 'minute': minute},
-                        description='Daily morning report',
-                    )
-                    logger.info(
-                        f"Morning report scheduled daily at {hour:02d}:{minute:02d} {executor.timezone}"
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to schedule morning report: {e}")
 
-                # VisualWatcher: standalone background thread for proactive
-                # screen monitoring. NOT a cron job — cadence is adaptive
-                # (30s-5min), too fast for the cron scheduler. Gated by
-                # both vision_config.yml (system) and being.yml (persona).
-                try:
-                    from ..vision.config import is_screen_capture_enabled
-                    being_config = load_being_config()
-                    if (being_config.senses.vision.enabled
-                            and being_config.senses.vision.proactive_monitoring
-                            and is_screen_capture_enabled()):
-                        from ..vision.watcher import VisualWatcher
-                        from ..proactive.gate import ProactiveGate
-                        from ..autonomy.guardrails import GuardrailEnforcer
-                        from ..findings.store import FindingStore
-                        gate = ProactiveGate(
-                            being_config=being_config,
-                            guardrail_enforcer=GuardrailEnforcer(),
-                            finding_store=FindingStore(),
-                        )
-                        watcher = VisualWatcher(
-                            being_config=being_config,
-                            gate=gate,
-                            finding_store=FindingStore(),
-                        )
-                        watcher.start()
-                        logger.info("VisualWatcher started (proactive screen monitoring)")
-                except Exception as e:
-                    logger.warning(f"Failed to start VisualWatcher: {e}")
-            except Exception as e:
-                logger.warning(f"Failed to schedule proactive jobs: {e}")
+                    from ..scheduler.autonomous_tasks import create_autonomous_task
 
-        proactive_starter = threading.Thread(target=schedule_proactive_jobs_delayed, daemon=True)
-        proactive_starter.start()
+                    # T7e.1: scheduled detector sweep every 6 hours
+                    try:
+                        sweep_task = create_autonomous_task('detector_sweep')
+                        executor.schedule_cron_job(
+                            job_id='detector_sweep',
+                            task_func=lambda: sweep_task.execute({}),
+                            cron_expr={'hour': '*/6', 'minute': 12},
+                            description='Detector sweep (drop-ins, fstab, permissions)',
+                        )
+                        logger.info("Detector sweep scheduled every 6 hours")
+                    except Exception as e:
+                        logger.warning(f"Failed to schedule detector sweep: {e}")
+
+                    # T7d.2: daily morning report per being.yml
+                    # Missing / disabled / malformed being.yml → log and skip,
+                    # never crash startup.
+                    try:
+                        from ..config.being_config import load_being_config
+                        being_config = load_being_config()
+                        report_cfg = being_config.morning_report or {}
+                        if not isinstance(report_cfg, dict) or not report_cfg.get('enabled'):
+                            logger.info("Morning report disabled or unconfigured; not scheduled")
+                            return
+                        hour, minute = _parse_hhmm(report_cfg.get('time', '08:00'))
+                        report_task = create_autonomous_task('morning_report')
+                        executor.schedule_cron_job(
+                            job_id='morning_report',
+                            task_func=lambda: report_task.execute({}),
+                            cron_expr={'hour': hour, 'minute': minute},
+                            description='Daily morning report',
+                        )
+                        logger.info(
+                            f"Morning report scheduled daily at {hour:02d}:{minute:02d} {executor.timezone}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to schedule morning report: {e}")
+
+                    # VisualWatcher: standalone background thread for proactive
+                    # screen monitoring. NOT a cron job — cadence is adaptive
+                    # (30s-5min), too fast for the cron scheduler. Gated by
+                    # both vision_config.yml (system) and being.yml (persona).
+                    try:
+                        from ..vision.config import is_screen_capture_enabled
+                        being_config = load_being_config()
+                        if (being_config.senses.vision.enabled
+                                and being_config.senses.vision.proactive_monitoring
+                                and is_screen_capture_enabled()):
+                            from ..vision.watcher import VisualWatcher
+                            from ..proactive.gate import ProactiveGate
+                            from ..autonomy.guardrails import GuardrailEnforcer
+                            from ..findings.store import FindingStore
+                            gate = ProactiveGate(
+                                being_config=being_config,
+                                guardrail_enforcer=GuardrailEnforcer(),
+                                finding_store=FindingStore(),
+                            )
+                            watcher = VisualWatcher(
+                                being_config=being_config,
+                                gate=gate,
+                                finding_store=FindingStore(),
+                            )
+                            watcher.start()
+                            logger.info("VisualWatcher started (proactive screen monitoring)")
+                    except Exception as e:
+                        logger.warning(f"Failed to start VisualWatcher: {e}")
+                except Exception as e:
+                    logger.warning(f"Failed to schedule proactive jobs: {e}")
+
+            proactive_starter = threading.Thread(target=schedule_proactive_jobs_delayed, daemon=True)
+            proactive_starter.start()
 
         # Phase 5+7 / T5a.2 + T7e.1: watch host config files (Linux hosts only).
         # The whole thing no-ops gracefully if the platform is unsupported,
         # the manifest is missing/unwatched, or SourcePrep is down.
-        def start_config_watcher():
-            global _config_watcher
-            try:
-                from ..utils.platform import is_linux
-                if not is_linux():
-                    logger.info("Config watcher not started (Linux hosts only)")
-                    return
-                manifest = _find_config_registry()
-                if manifest is None:
-                    logger.info("No config-registry.yml found; config watcher not started")
-                    return
-                from ..config.watcher import (
-                    ConfigWatcher,
-                    create_sourceprep_reindex_callback,
-                    create_detector_trigger_callback,
-                )
-                watcher = ConfigWatcher(
-                    manifest_path=str(manifest),
-                    change_callbacks=[
-                        create_sourceprep_reindex_callback(),
-                        create_detector_trigger_callback(),
-                    ],
-                )
-                watcher.start()
-                _config_watcher = watcher
-                logger.info(f"Config watcher started on {manifest}")
-            except Exception as e:
-                logger.warning(f"Config watcher failed to start (non-fatal): {e}")
+        # home-light skips the config watcher — no local config tree to watch.
+        if _is_light:
+            logger.info("Config watcher skipped (home-light variant)")
+        else:
+            def start_config_watcher():
+                global _config_watcher
+                try:
+                    from ..utils.platform import is_linux
+                    if not is_linux():
+                        logger.info("Config watcher not started (Linux hosts only)")
+                        return
+                    manifest = _find_config_registry()
+                    if manifest is None:
+                        logger.info("No config-registry.yml found; config watcher not started")
+                        return
+                    from ..config.watcher import (
+                        ConfigWatcher,
+                        create_sourceprep_reindex_callback,
+                        create_detector_trigger_callback,
+                    )
+                    watcher = ConfigWatcher(
+                        manifest_path=str(manifest),
+                        change_callbacks=[
+                            create_sourceprep_reindex_callback(),
+                            create_detector_trigger_callback(),
+                        ],
+                    )
+                    watcher.start()
+                    _config_watcher = watcher
+                    logger.info(f"Config watcher started on {manifest}")
+                except Exception as e:
+                    logger.warning(f"Config watcher failed to start (non-fatal): {e}")
 
-        start_config_watcher()
+            start_config_watcher()
 
         # Terminal session manager (B1b): start the idle/dead session reaper so
         # exited PTY sessions don't permanently exhaust the session cap.
-        try:
-            from ..streaming.session_manager import get_terminal_manager
-            get_terminal_manager().start_reaper()
-            logger.info("Terminal session reaper started")
-        except Exception as e:
-            logger.warning(f"Failed to start terminal session reaper: {e}")
+        # home-light skips terminal sessions — no local shell access on thin clients.
+        if not _is_light:
+            try:
+                from ..streaming.session_manager import get_terminal_manager
+                get_terminal_manager().start_reaper()
+                logger.info("Terminal session reaper started")
+            except Exception as e:
+                logger.warning(f"Failed to start terminal session reaper: {e}")
 
         # Phase 2: Start HA WebSocket event stream if configured
+        # home-light can use HA creds from being.yml instead of ha_config.yml
+        if _is_light:
+            try:
+                from ..config.being_config import load_being_config
+                from ..integrations.home_assistant.ha_config import save_ha_config, HAConfig
+                being_cfg = load_being_config()
+                if being_cfg.ha_url and being_cfg.ha_token:
+                    save_ha_config(HAConfig(url=being_cfg.ha_url, token=being_cfg.ha_token))
+                    logger.info("HA config seeded from being.yml (home-light variant)")
+            except Exception as e:
+                logger.warning(f"Failed to seed HA config from being.yml: {e}")
         try:
             from ..integrations.cognition_wiring import start_ha_event_stream
             start_ha_event_stream()

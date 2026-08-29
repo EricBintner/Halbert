@@ -78,6 +78,21 @@ def _get_scene_context() -> str:
         return "system administration"
 
 
+def _get_variant() -> str:
+    """Get the instance variant.
+
+    Priority: BeingConfig.variant > HALBERT_VARIANT env > 'sysadmin'.
+    """
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        if cfg.variant:
+            return cfg.variant
+    except Exception:
+        pass
+    return os.environ.get("HALBERT_VARIANT", "sysadmin")
+
+
 def _create_cognition():
     """Create a PersonaCognition instance configured for Halbert."""
     from haloysius.persona.cognition import PersonaCognition
