@@ -156,19 +156,34 @@ On macOS Apple Silicon, Halbert organizes local model resolution into a 4-tier c
                    └─────────────────────────────────────────────┘
 ```
 
+### The Sub-32GB Mac Memory Rule: "One Local Model, Cloud for the Rest"
+
+On a 16GB or 24GB Mac, memory allocation must be strictly protected:
+* **macOS + WindowServer + Display buffers:** $\sim 4\text{–}5\text{GB}$
+* **Active User Apps (VS Code, Chrome with tabs, Docker, Slack):** $\sim 6\text{–}8\text{GB}$
+* **Apple Intelligence On-Device Model (on ANE):** $\sim 2.5\text{–}3.0\text{GB}$
+* **Total Base Allocation:** $\sim 13\text{–}15\text{GB}$
+
+**Architectural Rule:** On 16GB and 24GB Macs, **do NOT stack multiple local models**. 
+1. The **single native Apple Intelligence 3B model** serves **BOTH** `secure_model` (for private state/monologue) AND default local `chat_model` (for zero-cost offline conversation).
+2. For advanced coding, complex system refactoring, or high-tier reasoning, **recommend Cloud Frontier models (OpenAI, Anthropic, Gemini, Groq, Ollama Cloud)** for `specialist_model` / `chat_model`.
+3. Only on **$\ge 32\text{GB}$ Macs** (32GB, 64GB, 128GB+) should users load secondary or larger local models (14B–70B via MLX or Ollama) concurrently.
+
 ### Slot Assignments on macOS:
 1. **`secure_model` (Mandatory Local):**
    * **Default:** Apple Intelligence (`apple-foundation` endpoint via local bridge).
-   * **Fallback:** Local MLX or Local Ollama.
+   * **Fallback:** Single small local model via MLX or Ollama.
    * **Guarantee:** Private data, credentials, and cognitive monologue never leave the device.
 2. **`chat_model` (General Conversation):**
-   * **Default:** Apple Intelligence out of the box.
-   * **User Override:** Cloud API (Claude 3.5 Sonnet, GPT-4o) or 14B+ local MLX model.
+   * **16GB – 24GB Macs:** Default to Apple Intelligence on-device model; recommend Cloud Frontier (Claude 3.5 Sonnet / GPT-4o) for heavy coding.
+   * **32GB+ Macs:** Local 14B–32B model or Cloud Frontier.
 3. **`vision_model` (Screenshot & Visual Diagnostics):**
    * **Default:** Apple Intelligence multimodal session.
-   * **User Override:** Cloud VLM or local Qwen-VL.
-4. **`specialist_model` (Complex Code Refactoring):**
-   * **Default:** Cloud Frontier model or high-parameter local MLX model (e.g. 14B–32B on 32GB+ Macs).
+   * **User Override:** Cloud VLM (GPT-4o / Claude) or local VLM.
+4. **`specialist_model` (Complex Reasoning & Refactoring):**
+   * **16GB – 24GB Macs:** **Cloud Frontier Model (Recommended)** or remote LAN GPU offload.
+   * **32GB+ Macs:** 14B–32B local MLX model or Cloud Frontier.
+   * **64GB–128GB+ Macs:** 70B local model or Cloud Frontier.
 
 ---
 
