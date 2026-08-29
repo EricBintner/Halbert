@@ -28,9 +28,6 @@ Environment=WYOMING_PORT=10401
 # Wyoming voice agent
 Environment=WYOMING_ENABLED=1
 
-# LLM model (lightweight low-latency for voice and event processing)
-Environment=HALBERT_MODEL=qwen2.5:3b
-
 ExecStart=/opt/halbert/bin/uvicorn halbert_core.dashboard.app:app --host 0.0.0.0 --port 8001
 Restart=on-failure
 RestartSec=5

@@ -100,7 +100,38 @@ The HACS custom integration should be configured to connect to the **home** inst
 | `HALBERT_PORT` | `8000` | `8001` | Dashboard API port |
 | `WYOMING_PORT` | `10400` | `10401` | Wyoming voice TCP port |
 | `SOURCEPREP_PROJECT_ID` | `halbert-host` | `ha-config` | SourcePrep project |
-| `HALBERT_MODEL` | `qwen2.5:14b` | `qwen2.5:3b` | Ollama model |
+
+### Model Configuration
+
+Model selection is per-instance via `models.yml` (not env vars). Each instance should have a `models.yml` in its config directory with:
+
+- **`chat_model`** — User's choice (cloud API or local). Cloud-encouraged.
+- **`specialist_model`** — Optional, for complex reasoning.
+- **`vision_model`** — Optional, for image understanding.
+- **`secure_model`** — Local-only model for sensitive data processing. Endpoint URL is enforced to be loopback/localhost.
+
+The `secure_model` processes system configs, secrets, and persona memory. It must never point at a remote endpoint. The config normaliser will disable the slot with a warning if a non-local URL is detected.
+
+### LAN / Tailscale GPU Offload
+
+Low-power nodes (N100, Pi 5) can offload heavy model inference to a GPU machine on the local network or Tailscale:
+
+1. Run Ollama on the GPU machine: `ollama serve`
+2. In the low-power node's `models.yml`, add an endpoint pointing at the GPU machine's IP (e.g. `http://gpu-rig:11434`)
+3. Assign `chat_model` or `specialist_model` to that endpoint
+4. Keep `secure_model` pointing at localhost (the low-power node's own Ollama)
+
+SourcePrep can similarly be offloaded by setting `SOURCEPREP_URL=http://<lan-host>:8400`.
+
+### Light Hardware Installation
+
+For Intel N100/N150, Raspberry Pi 4/5, or legacy PCs with limited RAM:
+
+```bash
+pip install halbert-core[light]
+```
+
+This installs only the core + dashboard without `torch`, `sentence-transformers`, or `chromadb`. Ollama handles embeddings and local model inference. Cloud APIs or LAN GPU offload handle heavy workloads.
 
 ### Backward Compatibility
 

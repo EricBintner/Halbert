@@ -30,6 +30,8 @@ logger = get_logger("halbert")
 
 class HardwareProfile(str, Enum):
     """Hardware profile categories."""
+    SBC_LOW_POWER = "sbc_low_power"       # <=4GB RAM (Pi 4 2GB, legacy Celeron)
+    ENTRY_8GB = "entry_8gb"               # 4-8GB RAM (N100, Pi 5 4GB, older laptops)
     LAPTOP_16GB = "laptop_16gb"
     WORKSTATION_32GB = "workstation_32gb"
     WORKSTATION_64GB = "workstation_64gb"
@@ -375,7 +377,12 @@ class HardwareDetector:
         if hw.total_ram_gb >= 12:
             return HardwareProfile.LAPTOP_16GB
         
-        return HardwareProfile.UNKNOWN
+        # Entry-level 8GB (N100, Pi 5 4GB, older laptops)
+        if hw.total_ram_gb >= 4:
+            return HardwareProfile.ENTRY_8GB
+        
+        # Single-board / very low power (Pi 4 2GB, etc.)
+        return HardwareProfile.SBC_LOW_POWER
     
     def recommend_budget(self, hw: HardwareCapabilities) -> ModelBudget:
         """

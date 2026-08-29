@@ -231,6 +231,24 @@ def get_vision_model() -> Tuple[Optional[str], str, str]:
     return (vis.model, vis.url, vis.provider)
 
 
+def get_secure_model() -> Tuple[Optional[str], str, str]:
+    """(model, endpoint_url, provider) for the secure-data slot, or (None, "", "").
+
+    The secure_model is guaranteed local-only (enforced by llm_config.normalise).
+    Used for processing sensitive data — system configs, secrets, persona memory,
+    cognitive tick internal monologue — that must never leave the machine.
+
+    Callers fall back to the chat model when secure_model is not configured,
+    but ONLY when the chat model's endpoint is also local. Otherwise the caller
+    must degrade gracefully (e.g. template thoughts instead of LLM thoughts).
+    """
+    sec = _store.resolve("secure_model")
+    if sec is None:
+        return (None, "", "")
+    logger.info(f"Secure model enabled: {sec.model} at {sec.url} (provider: {sec.provider})")
+    return (sec.model, sec.url, sec.provider)
+
+
 # ── Endpoint helpers (one implementation, in the store) ──────────
 
 

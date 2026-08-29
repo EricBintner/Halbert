@@ -14,6 +14,7 @@ Schema (documentation/design/model-picker-independent-2026-08-26.md §4)::
       chat_model:       {enabled, endpoint_id, model}
       specialist_model: {enabled, endpoint_id, model}
       vision_model:     {enabled, endpoint_id, model}
+      secure_model:     {enabled, endpoint_id, model}  # local-only enforced
 
 Callers that change a slot send the whole slot dict (all three keys).
 ``CHAT_CAPABLE_PROVIDERS`` is imported lazily from :mod:`model.client` so the
@@ -50,6 +51,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+from urllib.parse import urlparse
+import ipaddress
 
 import yaml
 
@@ -58,7 +61,7 @@ from .config_locator import find_models_config, write_models_config
 
 logger = logging.getLogger("halbert.model.llm_config")
 
-SLOTS = ("chat_model", "specialist_model", "vision_model")
+SLOTS = ("chat_model", "specialist_model", "vision_model", "secure_model")
 LEGACY_KEYS = ("orchestrator", "specialist", "vision", "saved_endpoints")
 DROPPED_KEYS = (
     "embedding", "small_model", "large_model", "code_model", "coordinator_model",
@@ -119,12 +122,30 @@ def _empty_slot() -> Dict[str, Any]:
     return {"enabled": False, "endpoint_id": "", "model": ""}
 
 
+def _is_local_url(url: str) -> bool:
+    """True when ``url`` points at a loopback or unspecified address.
+
+    Uses standard URL parsing so it handles ``http://[::1]:11434`` and rejects
+    ``http://attacker.com/localhost``.  Used by :func:`normalise` to enforce
+    that ``secure_model`` never points at a remote endpoint.
+    """
+    try:
+        hostname = urlparse(url).hostname or ""
+        if hostname in ("localhost", "0.0.0.0"):
+            return True
+        ip = ipaddress.ip_address(hostname)
+        return ip.is_loopback or ip.is_unspecified
+    except ValueError:
+        return False
+
+
 def default_llm_config() -> Dict[str, Any]:
     return {
         "saved_endpoints": [],
         "chat_model": _empty_slot(),
         "specialist_model": _empty_slot(),
         "vision_model": _empty_slot(),
+        "secure_model": _empty_slot(),
     }
 
 
@@ -383,6 +404,13 @@ def normalise(llm: Any) -> Dict[str, Any]:
                 slot, by_id[endpoint_id]["provider"],
             )
             enabled = False
+        if enabled and slot == "secure_model":
+            ep_url = by_id[endpoint_id]["url"]
+            if not _is_local_url(ep_url):
+                logger.warning(
+                    "secure_model endpoint %r is not local; slot disabled", ep_url,
+                )
+                enabled = False
         cfg[slot] = {"enabled": enabled, "endpoint_id": endpoint_id, "model": model}
     return cfg
 
@@ -550,9 +578,10 @@ def load_global_file(use_cache: bool = True) -> Dict[str, Any]:
                 _write_raw(out)
                 llm = out["llm_config"]
                 logger.info(
-                    "Migrated legacy model config: chat=%r specialist=%r vision=%r endpoints=%d",
+                    "Migrated legacy model config: chat=%r specialist=%r vision=%r secure=%r endpoints=%d",
                     llm["chat_model"]["model"], llm["specialist_model"]["model"],
-                    llm["vision_model"]["model"], len(llm["saved_endpoints"]),
+                    llm["vision_model"]["model"], llm["secure_model"]["model"],
+                    len(llm["saved_endpoints"]),
                 )
             except Exception as e:
                 logger.error("Could not rewrite models.yml after migration: %s", e)

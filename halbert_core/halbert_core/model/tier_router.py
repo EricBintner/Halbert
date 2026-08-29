@@ -133,6 +133,7 @@ class TierRouterConfig:
         chat = _resolve_slot('chat_model')
         spec = _resolve_slot('specialist_model')
         vision = _resolve_slot('vision_model')
+        secure = _resolve_slot('secure_model')
 
         # Fall back to legacy keys when llm_config slots are empty
         if chat is None:

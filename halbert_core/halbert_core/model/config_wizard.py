@@ -252,6 +252,11 @@ class ConfigWizard:
                     "endpoint_id": "",
                     "model": "",
                 },
+                "secure_model": {
+                    "enabled": False,
+                    "endpoint_id": "",
+                    "model": "",
+                },
             },
 
             "routing": {
