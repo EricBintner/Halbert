@@ -1558,12 +1558,57 @@ class AgentStateMachine:
             return ""
         return "\n\n".join(parts) if parts else ""
 
+    def _should_diagnostic_capture(self, tool_name: str) -> bool:
+        """Only capture on failures of command-execution tools, not
+        search/read/lookup tools. Avoids context pollution from
+        unrelated screen state on benign failures. Gated by
+        being.yml senses.vision.capture_on_error (default False).
+        """
+        try:
+            from ..vision.config import is_screen_capture_enabled
+            if not is_screen_capture_enabled():
+                return False
+            from ..config.being_config import load_being_config
+            being_cfg = load_being_config()
+            if not being_cfg.senses.vision.capture_on_error:
+                return False
+        except Exception:
+            return False
+        diagnostic_tools = {"run_command", "execute_command", "shell", "bash"}
+        return tool_name in diagnostic_tools
+
     async def _handle_planning(self) -> AsyncIterator[StreamEvent]:
         """
         PLANNING state: Analyze query, create plan, decide next action.
         """
         logger.info(f"PLANNING: {self.ctx.user_query[:50]}...")
-        
+
+        # Auto-capture: if the user's message signals visual intent but no
+        # image has been captured yet, grab the active window before planning.
+        # Eliminates the 2-turn round-trip where the LLM requests a screenshot
+        # it obviously needs. Gated by both the system-level screen capture
+        # enable (vision_config.yml) and the persona-level capture_on_intent
+        # consent (being.yml senses.vision.capture_on_intent).
+        if (self.ctx.intake and getattr(self.ctx.intake, 'has_vision_request', False)
+                and not self.ctx.images):
+            try:
+                from ..vision.config import is_screen_capture_enabled
+                if is_screen_capture_enabled():
+                    from ..config.being_config import load_being_config
+                    being_cfg = load_being_config()
+                    if being_cfg.senses.vision.capture_on_intent:
+                        from ..tools.vision_tools import capture_active_window_tool
+                        result = await capture_active_window_tool({})
+                        if isinstance(result, dict) and "image" in result:
+                            self.ctx.images = self.ctx.images or []
+                            self.ctx.images.append(result["image"])
+                            if "ocr_text" in result and result["ocr_text"]:
+                                self.ctx.add_observation(
+                                    f"[Auto-capture] Active window OCR:\n{result['ocr_text']}"
+                                )
+            except Exception as e:
+                logger.debug(f"Auto-capture in PLANNING skipped: {e}")
+
         # Assemble context if we have context assembler.
         # NOTE: this is the single context-assembly call site for planning —
         # intake.context_budget controls the token budget, so max_tokens is
@@ -2455,7 +2500,25 @@ class AgentStateMachine:
                 tool_call.status = "error"
                 tool_call.error = result.error
                 self.ctx.add_observation(f"Executed {tool_name}: {result.error}")
-            
+
+                # Opt-in diagnostic capture: OCR the screen on command
+                # execution failures for diagnostic context. Gated by
+                # being.yml senses.vision.capture_on_error (default False).
+                # Only fires for command-execution tools, not search/read.
+                # OCR text only (no image) to avoid routing the turn
+                # through the more expensive vision model.
+                if self._should_diagnostic_capture(tool_name):
+                    try:
+                        from ..tools.vision_tools import capture_and_ocr
+                        screen = await capture_and_ocr({"include_image": False})
+                        if isinstance(screen, dict) and "ocr_text" in screen:
+                            ocr_excerpt = screen["ocr_text"][:500]
+                            self.ctx.add_observation(
+                                f"[Diagnostic] Screen OCR at failure:\n{ocr_excerpt}"
+                            )
+                    except Exception as e:
+                        logger.debug(f"Diagnostic capture failed: {e}")
+
             # Clear pending confirmation
             self.ctx.pending_confirmation = None
         else:

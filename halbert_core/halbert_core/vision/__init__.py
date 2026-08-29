@@ -28,6 +28,8 @@ from .redact import (
 from .screen_capture import ScreenCapture, ScreenCaptureError, list_windows, get_active_window
 from .webcam_capture import WebcamCapture, WebcamCaptureError
 from .wayland_capture import WaylandCapture, WaylandCaptureError, is_wayland
+from .watcher import VisualWatcher
+from .cache import VisionCache
 
 __all__ = [
     "VisionConfig",
@@ -55,4 +57,6 @@ __all__ = [
     "WaylandCapture",
     "WaylandCaptureError",
     "is_wayland",
+    "VisualWatcher",
+    "VisionCache",
 ]
