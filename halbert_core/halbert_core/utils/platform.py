@@ -6,11 +6,12 @@ Platform detection utilities for cross-platform support (Phase 5 M3 / Phase 6 pr
 Provides platform-specific behavior and detection for Linux and macOS.
 """
 
+import json
 import os
 import platform
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import logging
 
 logger = logging.getLogger('halbert')
@@ -188,6 +189,114 @@ def get_unified_memory_gb() -> Optional[int]:
     except Exception as e:
         logger.debug(f"Failed to get unified memory size: {e}")
         return None
+
+
+def get_macos_version() -> Optional[Tuple[int, int]]:
+    """The macOS version as ``(major, minor)``, or None on non-Mac.
+
+    macOS 15.1 (Darwin 24.1) is the first version with Apple Intelligence.
+    """
+    if not is_macos():
+        return None
+    try:
+        ver_str = platform.mac_ver()[0]
+        if not ver_str:
+            return None
+        parts = ver_str.split(".")
+        return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+    except Exception as e:
+        logger.debug(f"Failed to get macOS version: {e}")
+        return None
+
+
+def detect_metal_gpu() -> Optional[Dict[str, Any]]:
+    """Detect Metal GPU support on macOS via ``system_profiler``.
+
+    Returns a dict with ``metal_version`` and ``gpu_name`` when Metal is
+    available, or None on non-Mac / systems without Metal. Never raises.
+
+    Metal is implied by Apple Silicon, but an explicit check is defensive:
+    it catches VMs (UTM/Parallels on the Apple Silicon hypervisor) that
+    report ``arm64`` but have no Metal GPU, and it lets the UI display the
+    GPU name and Metal version.
+    """
+    if not is_macos():
+        return None
+    try:
+        result = subprocess.run(
+            ["system_profiler", "SPDisplaysDataType", "-json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        data = json.loads(result.stdout)
+        displays = (
+            data.get("SPDisplaysDataType", [])
+            if isinstance(data, dict)
+            else data
+        )
+        if not isinstance(displays, list):
+            return None
+        for gpu in displays:
+            if not isinstance(gpu, dict):
+                continue
+            # macOS reports Metal support under several possible keys
+            # depending on version: mtlgpufamilysupport (modern), or
+            # metal-support / metal_support (older schemas).
+            metal = (
+                gpu.get("spdisplays_mtlgpufamilysupport")
+                or gpu.get("spdisplays_metal-support")
+                or gpu.get("spdisplays_metal_support")
+            )
+            if metal:
+                return {
+                    "metal_version": str(metal),
+                    "gpu_name": str(
+                        gpu.get("sppci_model") or gpu.get("spdisplays_vendor")
+                        or "Apple GPU"
+                    ),
+                }
+    except Exception as e:
+        logger.debug(f"Failed to detect Metal GPU: {e}")
+    return None
+
+
+# macOS 15.1 (Darwin 24.1) is the first version with Apple Intelligence.
+_APPLE_INTELLIGENCE_MIN_MACOS = (15, 1)
+
+# Halbert-specific RAM floor: macOS + WindowServer (~4-5GB) + Halbert +
+# dashboard + the on-device model (~2.5-3GB ANE) leaves nothing on an 8GB
+# machine. 16GB is the operational minimum, not Apple's 8GB official floor.
+_APPLE_INTELLIGENCE_MIN_RAM_GB = 16
+
+
+def apple_intelligence_eligible(min_ram_gb: int = _APPLE_INTELLIGENCE_MIN_RAM_GB) -> bool:
+    """True when the host qualifies for Apple Intelligence on-device models.
+
+    All four conditions must hold:
+
+    1. Apple Silicon (M1+) — ``is_mac_apple_silicon()``
+    2. macOS >= 15.1 (Sequoia) — Apple Intelligence first shipped here
+    3. Unified memory >= ``min_ram_gb`` (default 16GB — Halbert's floor)
+    4. Metal GPU detected — defensive against arm64 VMs without Metal
+
+    This check does NOT probe the Swift bridge: a qualifying host may have
+    the bridge not yet bundled. Use :func:`probe_apple_foundation_bridge`
+    (in ``model.hardware_detector``) for the live availability check.
+    """
+    if not is_mac_apple_silicon():
+        return False
+    ver = get_macos_version()
+    if ver is None or ver < _APPLE_INTELLIGENCE_MIN_MACOS:
+        return False
+    mem = get_unified_memory_gb()
+    if mem is None or mem < min_ram_gb:
+        return False
+    if detect_metal_gpu() is None:
+        return False
+    return True
 
 
 def get_config_dir() -> Path:
