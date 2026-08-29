@@ -46,6 +46,7 @@ interface RawLlmConfig {
   chat_model: RawSlot
   specialist_model: RawSlot
   vision_model: RawSlot
+  secure_model: RawSlot
 }
 
 async function unwrap(response: Response): Promise<any> {
@@ -113,6 +114,7 @@ function toAssignments(llm: RawLlmConfig): Record<string, RoleAssignment> {
     chat_model: toRoleAssignment(llm.chat_model),
     specialist_model: toRoleAssignment(llm.specialist_model),
     vision_model: toRoleAssignment(llm.vision_model),
+    secure_model: toRoleAssignment(llm.secure_model),
   }
 }
 
@@ -232,7 +234,11 @@ export function createModelPickerTransport(): ModelPickerTransport {
     async discoverLocal(): Promise<LocalDiscovery> {
       const res = await fetch(apiUrl('/api/llm/discover'))
       const data = await unwrap(res)
-      return { ollama: data.ollama, lmStudio: data.lm_studio }
+      return {
+        ollama: data.ollama,
+        lmStudio: data.lm_studio,
+        appleFoundation: data.apple_foundation ?? { running: false, url: '', models: [] },
+      }
     },
   }
 }
