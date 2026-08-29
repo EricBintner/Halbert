@@ -55,6 +55,32 @@ class CredentialValidationConfig:
 
 
 @dataclass
+class CompromiseCheckConfig:
+    """Opt-in compromise detection settings.
+
+    When enabled, checks if credentials have been leaked in public breaches.
+    Two methods:
+
+    - HIBP: sends only SHA-1 hash prefix (5 chars). Full hash never leaves
+      the machine. K-anonymity model.
+    - GitHub scanning: sends full token to GitHub API (the issuing service).
+
+    Disabled by default.
+    """
+    enabled: bool = False
+    hibp: bool = False
+    github_scanning: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "CompromiseCheckConfig":
+        known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        return cls(**known)
+
+
+@dataclass
 class SecurityConfig:
     """Security tier settings for config value routing.
 
@@ -78,6 +104,9 @@ class SecurityConfig:
     credential_validation: CredentialValidationConfig = field(
         default_factory=CredentialValidationConfig
     )
+    compromise_check: CompromiseCheckConfig = field(
+        default_factory=CompromiseCheckConfig
+    )
 
     def validate(self) -> None:
         if self.operational_tier not in VALID_OPERATIONAL_TIERS:
@@ -97,10 +126,14 @@ class SecurityConfig:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "SecurityConfig":
         known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
-        # Handle nested credential_validation
+        # Handle nested configs
         if "credential_validation" in known and isinstance(known["credential_validation"], dict):
             known["credential_validation"] = CredentialValidationConfig.from_dict(
                 known["credential_validation"]
+            )
+        if "compromise_check" in known and isinstance(known["compromise_check"], dict):
+            known["compromise_check"] = CompromiseCheckConfig.from_dict(
+                known["compromise_check"]
             )
         return cls(**known)
 
