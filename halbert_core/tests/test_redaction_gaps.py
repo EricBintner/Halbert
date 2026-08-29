@@ -109,6 +109,38 @@ class TestHighEntropy:
         result = redact_text(text)
         assert result == text
 
+    def test_uuid_not_redacted(self):
+        """UUIDs are legitimate non-secret values — not redacted."""
+        uuid = "550e8400-e29b-41d4-a716-446655440000"
+        result = redact_text(uuid)
+        assert result == uuid
+
+    def test_sha256_hash_not_redacted(self):
+        """SHA-256 hashes are legitimate non-secret values — not redacted."""
+        sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        result = redact_text(sha256)
+        assert result == sha256
+
+    def test_sha1_hash_not_redacted(self):
+        """SHA-1 hashes are legitimate non-secret values — not redacted."""
+        sha1 = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        result = redact_text(sha1)
+        assert result == sha1
+
+    def test_md5_hash_not_redacted(self):
+        """MD5 hashes (32 hex chars) are legitimate non-secret values."""
+        md5 = "d41d8cd98f00b204e9800998ecf8427e"
+        result = redact_text(md5)
+        assert result == md5
+
+    def test_base64_token_still_redacted(self):
+        """A base64 token that is NOT a hash should still be redacted."""
+        # 44 chars of base64, not a known hash length
+        token = "SGVsbG8gV29ybGQgVGhpcyBJcyBBIFZlcnkgTG9uZyBTZWNyZXQ"
+        result = redact_text(token)
+        assert token not in result
+        assert "<token>" in result
+
 
 class TestRedactionGaps:
     """Specific gap cases from the trust boundary research."""

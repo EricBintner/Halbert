@@ -1259,9 +1259,10 @@ def redact_text(text: str, *, prose: bool = False) -> str:
 # identifier (`ghp_` inside a URL path) is not falsely redacted.
 _KNOWN_PREFIX_PATTERNS: List[re.Pattern] = [
     # GitHub personal access tokens / fine-grained tokens
+    # Covers: ghp_ (classic), gho_ (OAuth), ghu_ (user-to-server),
+    # ghs_ (server-to-server), ghr_ (refresh). The standalone ghp_ pattern
+    # that was here before was a subset of this and has been removed.
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b"),
-    # GitHub classic PAT (40 hex chars, older format)
-    re.compile(r"\bghp_[A-Za-z0-9]{36,}\b"),
     # OpenAI API keys
     re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
     # Anthropic API keys
@@ -1328,13 +1329,41 @@ def _shannon_entropy(text: str) -> float:
 _HIGH_ENTROPY_RE = re.compile(r"[A-Za-z0-9+/_=-]{32,}")
 
 
+def _looks_like_hash_or_uuid(token: str) -> bool:
+    """Heuristic: is this token a known non-secret format?
+
+    Avoids over-redacting:
+    - UUIDs (8-4-4-4-12 hex with dashes, 36 chars)
+    - SHA-256 hashes (64 hex chars)
+    - SHA-1 hashes (40 hex chars)
+    - MD5 hashes (32 hex chars)
+    - Git commit hashes (40 or 64 hex chars)
+
+    These are legitimate non-secret values that happen to be long and
+    high-entropy. Redacting them is safe (false positive direction) but
+    confusing — the agent sees <token> where it expected a hash.
+    """
+    # UUID with dashes: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    if len(token) == 36 and token.count("-") == 4:
+        parts = token.split("-")
+        if all(len(p) in (8, 4, 4, 4, 12) for p in parts):
+            if all(c in "0123456789abcdefABCDEF" for p in parts for c in p):
+                return True
+    # Pure hex strings of known hash lengths (no dashes, no non-hex chars)
+    if all(c in "0123456789abcdefABCDEF" for c in token):
+        if len(token) in (32, 40, 64, 96, 128):
+            return True
+    return False
+
+
 def _redact_high_entropy(text: str) -> str:
     """Redact long high-entropy tokens that no other pass caught.
 
     Only fires on tokens that are at least 32 characters long, consist
-    entirely of base64/hex alphabet characters, and have Shannon entropy
-    above 3.0 bits/char. This is the last-resort backstop — everything
-    format-aware has already run.
+    entirely of base64/hex alphabet characters, have Shannon entropy
+    above 3.0 bits/char, and do not match a known non-secret format
+    (UUID, SHA-256, SHA-1, MD5). This is the last-resort backstop —
+    everything format-aware has already run.
     """
 
     def _check(match: "re.Match[str]") -> str:
@@ -1345,6 +1374,9 @@ def _redact_high_entropy(text: str) -> str:
         if len(token) < _HIGH_ENTROPY_MIN_LEN:
             return token
         if _shannon_entropy(token) < _HIGH_ENTROPY_MIN_BITS:
+            return token
+        # Skip known non-secret formats (UUIDs, hashes)
+        if _looks_like_hash_or_uuid(token):
             return token
         return "<token>"
 

@@ -48,12 +48,14 @@ routable IPs, email addresses, MAC addresses.
 Non-string scalars (int, float, bool, None) are returned as-is — a number
 like a port or a UID is not a credential by itself.
 
-Known limit (Task 8): a bare context-free secret under a neutral key
-(e.g. ``{"key": "location", "value": "ghp_abc123"}``) is not caught by
-either rule.  ``_is_secret_key("location")`` is False and
-``redact_text("ghp_abc123")`` has no pattern to match it.  Closing that
-gap requires known-prefix detection (``ghp_``, ``sk-``, ``AKIA``, ``xox``)
-and a high-entropy backstop — see Task 8 in the implementation plan.
+Known limit: a short context-free secret under a neutral key (e.g.
+``{"key": "location", "value": "hunter2"}``) is not caught by either
+rule.  ``_is_secret_key("location")`` is False and ``redact_text("hunter2")``
+has no pattern to match it — the value is 7 chars, below the 32-char
+high-entropy threshold, and has no known credential prefix.  This is the
+same gap the sensitivity classifier documents: short secrets without
+known prefixes remain unclassified.  The entropy threshold is set high
+to avoid over-redacting normal config values (UUIDs, SHA-256 hashes).
 
 The function returns a new structure rather than mutating in place, so the
 caller's internal copy retains the raw value if it held one.

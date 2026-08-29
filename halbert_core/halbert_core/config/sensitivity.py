@@ -29,10 +29,11 @@ for that value, and ``/etc/fstab`` with cifs credentials still gets Tier 2.
 A path can confirm clean content is public; it can never certify content it
 has not looked at.
 
-Known limit (shared with Task 8): ``redact_text`` is keyword-driven with no
-entropy or known-prefix detection, so a bare context-free secret (``ghp_…``
-under a neutral key) is classified Tier 1, not Tier 2.  Closing that gap in
-Task 8 closes it here too — both share one detector.
+Known limit (shared with Task 8): ``redact_text`` now includes known-prefix
+detection (``ghp_``, ``sk-``, ``AKIA``, ``xox``, etc.) and a high-entropy
+backstop for long base64/hex tokens.  Short context-free secrets (< 32 chars,
+no known prefix) under neutral keys remain a gap — the entropy threshold is
+set high to avoid over-redacting normal config values (UUIDs, SHA-256 hashes).
 """
 from __future__ import annotations
 
