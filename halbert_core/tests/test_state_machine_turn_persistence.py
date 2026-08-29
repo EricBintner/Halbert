@@ -40,8 +40,8 @@ class _FakeThreadManager:
         self.begun.append((query, signals, session_id))
         return _Turn("t-open", f"turn-{len(self.begun)}", 1, list(self.history), self.hint, list(self.recalled))
 
-    def end_turn(self, turn, *, assistant_text, blocks, terminal_session_ids, diff_proposals, status="complete", thread_id_override=None):
-        self.ended.append(dict(turn=turn, assistant_text=assistant_text, blocks=blocks, terminal_session_ids=terminal_session_ids,
+    def end_turn(self, turn, *, assistant_text, blocks, terminal_block_ids, diff_proposals, status="complete", thread_id_override=None):
+        self.ended.append(dict(turn=turn, assistant_text=assistant_text, blocks=blocks, terminal_block_ids=terminal_block_ids,
                                diff_proposals=diff_proposals, status=status, thread_id_override=thread_id_override))
 
     def new_thread(self, title, reason, *, from_thread_id):
@@ -128,7 +128,7 @@ async def test_end_turn_receives_text_blocks_terminals_status():
     end = tm.ended[0]
     assert end["turn"].turn_id == "turn-1" and end["assistant_text"] == "the answer"
     assert end["status"] == "complete" and end["thread_id_override"] is None
-    assert end["terminal_session_ids"] == ["term-7"] and end["diff_proposals"] == []
+    assert end["terminal_block_ids"] == ["term-7"] and end["diff_proposals"] == []
     block = end["blocks"][0]
     assert block["tool"] == "run_command" and block["args"] == {"command": "uptime"}
     assert block["result"] == "22:50 up 1 day" and block["exit"] == 0

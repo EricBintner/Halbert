@@ -404,6 +404,25 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         ingestion_starter = threading.Thread(target=start_ingestion_delayed, daemon=True)
         ingestion_starter.start()
         logger.info("Ingestion service starting in background...")
+
+        # Auto-scan discovery engine on startup so dashboard pages have data
+        # without requiring a manual scan click. Runs in a daemon thread after
+        # a short delay to avoid competing with ChromaDB/ingestion init.
+        def start_discovery_scan_delayed():
+            """Run all discovery scanners in the background on startup."""
+            import time
+            time.sleep(5)  # Wait for other services to initialize
+            try:
+                from ..discovery.engine import get_engine
+                engine = get_engine()
+                discoveries = engine.scan_all()
+                logger.info(f"Startup discovery scan complete: {len(discoveries)} items found")
+            except Exception as e:
+                logger.warning(f"Startup discovery scan failed (non-fatal): {e}")
+
+        discovery_starter = threading.Thread(target=start_discovery_scan_delayed, daemon=True)
+        discovery_starter.start()
+        logger.info("Discovery scan starting in background...")
         
         # Phase 23: Start scheduler (re-enabled with delayed start)
         def start_scheduler_delayed():
@@ -488,6 +507,35 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                     )
                 except Exception as e:
                     logger.warning(f"Failed to schedule morning report: {e}")
+
+                # VisualWatcher: standalone background thread for proactive
+                # screen monitoring. NOT a cron job — cadence is adaptive
+                # (30s-5min), too fast for the cron scheduler. Gated by
+                # both vision_config.yml (system) and being.yml (persona).
+                try:
+                    from ..vision.config import is_screen_capture_enabled
+                    being_config = load_being_config()
+                    if (being_config.senses.vision.enabled
+                            and being_config.senses.vision.proactive_monitoring
+                            and is_screen_capture_enabled()):
+                        from ..vision.watcher import VisualWatcher
+                        from ..proactive.gate import ProactiveGate
+                        from ..autonomy.guardrails import GuardrailEnforcer
+                        from ..findings.store import FindingStore
+                        gate = ProactiveGate(
+                            being_config=being_config,
+                            guardrail_enforcer=GuardrailEnforcer(),
+                            finding_store=FindingStore(),
+                        )
+                        watcher = VisualWatcher(
+                            being_config=being_config,
+                            gate=gate,
+                            finding_store=FindingStore(),
+                        )
+                        watcher.start()
+                        logger.info("VisualWatcher started (proactive screen monitoring)")
+                except Exception as e:
+                    logger.warning(f"Failed to start VisualWatcher: {e}")
             except Exception as e:
                 logger.warning(f"Failed to schedule proactive jobs: {e}")
 

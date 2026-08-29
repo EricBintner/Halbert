@@ -131,3 +131,24 @@ def publish_terminal_event(payload: Dict[str, Any]) -> None:
 def terminal_stream_wanted() -> bool:
     """True when the current context has a consumer for terminal events."""
     return get_terminal_event_bus().has_subscribers(current_agent_session.get())
+
+
+# Plan B: pool path opt-in. The pool creates real PTY sessions; existing
+# tests and non-pool callers expect the subprocess path. This flag is set
+# by the dashboard app or test setup when the pool is explicitly enabled.
+_pool_enabled: bool = False
+
+
+def set_terminal_pool_enabled(enabled: bool) -> None:
+    """Enable or disable the pool path in _run_command (Plan B: B7)."""
+    global _pool_enabled
+    _pool_enabled = enabled
+
+
+def terminal_pool_wanted() -> bool:
+    """True when the pool path should be used in _run_command.
+
+    Requires both ``terminal_stream_wanted()`` (there is a consumer) and
+    ``_pool_enabled`` (the pool has been explicitly enabled by the app).
+    """
+    return _pool_enabled and terminal_stream_wanted()

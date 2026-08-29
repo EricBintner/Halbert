@@ -2,35 +2,27 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * AIAnalysisPanel - Reusable AI analysis component.
- * 
- * Provides a consistent UI for AI-powered analysis across all pages.
- * Supports quick analysis (guide model) and deep research (specialist model).
+ *
+ * Routes the "Analyze" button through the main agent with the specialist
+ * tier and a hardwired retrieval scope ("host"), so the analysis is the
+ * same Halbert — same voice, same retrieval, same being config — just
+ * scoped to the silo and answered by the thinking model. The turn is
+ * persisted as a separate thread; "Continue in chat" hands the analysis
+ * context to the main orchestrator.
  */
 
-import { useState } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { 
-  Sparkles, 
-  AlertCircle, 
-  Info, 
+import {
+  Sparkles,
   Loader2,
   RefreshCw,
   MessageSquare,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { openChat } from '@/components/SendToChat'
-import { api } from '@/lib/api'
-
-export interface AIAnalysis {
-  analysis: string
-  recommendations: string[]
-  health_score: number
-  issues_found: boolean
-  critical_issues?: string[]
-  model_used?: string
-}
+import { apiUrl } from '@/lib/apiBase'
+import { MarkdownRenderer } from '@/components/domain'
 
 interface AIAnalysisPanelProps {
   /** Type of discovery to analyze (backup, service, storage, network, security) */
@@ -39,11 +31,10 @@ interface AIAnalysisPanelProps {
   title: string
   /** Whether analysis can be run (e.g., has data to analyze) */
   canAnalyze?: boolean
-  /** Optional context builder function for research button */
+  /** Optional context builder function for the "Continue in chat" button */
   buildContext?: () => string
-  /** Optional custom research question */
+  /** Optional custom research question for "Continue in chat" prefill */
   researchQuestion?: string
-  /** Icon color class */
 }
 
 export function AIAnalysisPanel({
@@ -53,30 +44,97 @@ export function AIAnalysisPanel({
   buildContext,
   researchQuestion,
 }: AIAnalysisPanelProps) {
-  const [analysis, setAnalysis] = useState<AIAnalysis | null>(null)
+  const [analysisText, setAnalysisText] = useState('')
+  const [thinkingText, setThinkingText] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
+  const [hasAnalysis, setHasAnalysis] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
 
-  const runAnalysis = async () => {
+  // Abort any in-flight analysis when the panel unmounts (user navigates away)
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  const runAnalysis = useCallback(async () => {
+    // Cancel any in-flight analysis
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
     setAnalyzing(true)
+    setAnalysisText('')
+    setThinkingText('')
+    setHasAnalysis(false)
+
+    const message = `Analyze my ${type} configuration on this system. Look at what's set up, identify any issues, risks, or misconfigurations, and suggest improvements. Be specific about what you find — reference actual config files and settings.`
+
     try {
-      const result = await api.analyzeDiscoveries(type, true)  // Use specialist model for deep analysis
-      setAnalysis(result)
-    } catch (error) {
-      console.error('AI analysis failed:', error)
-      setAnalysis({
-        analysis: 'Unable to connect to AI. Please ensure Ollama is running.',
-        health_score: 0,
-        issues_found: true,
-        recommendations: ['Start Ollama service', 'Check network connectivity'],
+      const response = await fetch(apiUrl('/api/agent/message'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          tier: 'specialist',
+          scope: 'host',
+          max_tokens: 8192,
+          temperature: 0.7,
+        }),
+        signal: controller.signal,
       })
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
+      if (!reader) throw new Error('No response body')
+
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.type === 'response_chunk' && data.content) {
+              setAnalysisText((prev) => prev + data.content)
+              setHasAnalysis(true)
+            } else if (data.type === 'thinking' && data.content) {
+              setThinkingText((prev) => prev + data.content)
+            } else if (data.type === 'error') {
+              setAnalysisText(`Analysis error: ${data.message || data.error || 'Unknown error'}`)
+              setHasAnalysis(true)
+            }
+          } catch {
+            // Ignore partial JSON
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        console.error('AI analysis failed:', err)
+        setAnalysisText(
+          'Unable to connect to Halbert. Please ensure the backend and model are running.',
+        )
+        setHasAnalysis(true)
+      }
     } finally {
-      setAnalyzing(false)
+      // Only clear analyzing if this controller is still current —
+      // a superseded request's finally must not clobber the active one's state.
+      if (abortRef.current === controller) {
+        setAnalyzing(false)
+      }
     }
-  }
+  }, [type])
 
   const defaultContext = () => {
-    if (!analysis) return `Analyzing ${type}...`
-    return `## ${title} Analysis\n\n${analysis.analysis}\n\nHealth Score: ${analysis.health_score}%`
+    if (!analysisText) return `Analyzing ${type}...`
+    return `## ${title} Analysis\n\n${analysisText}`
   }
 
   const defaultQuestion = `Give me a detailed analysis of my ${type} configuration, including potential risks and improvement suggestions.`
@@ -96,57 +154,21 @@ export function AIAnalysisPanel({
             <div className="flex-1 min-w-0">
               <h3 className="font-semibold text-foreground flex items-center gap-2">
                 AI {title} Analysis
-                {analysis && (
-                  <Badge variant="outline" className={cn(
-                    "ml-2",
-                    analysis.health_score >= 80 ? "border-success/50 text-success" :
-                    analysis.health_score >= 50 ? "border-warning/50 text-warning" :
-                    "border-error/50 text-error"
-                  )}>
-                    Health: {analysis.health_score}%
-                  </Badge>
-                )}
               </h3>
-              {analysis ? (
-                <div className="mt-2 space-y-3">
-                  <p className="text-sm text-muted-foreground">{analysis.analysis}</p>
-                  
-                  {/* Critical Issues */}
-                  {analysis.critical_issues && analysis.critical_issues.length > 0 && (
-                    <div className="p-2 rounded-md bg-error-muted border border-error/30">
-                      <p className="text-xs font-semibold text-error mb-1">⚠️ Critical Issues:</p>
-                      <ul className="space-y-1">
-                        {analysis.critical_issues.map((issue, i) => (
-                          <li key={i} className="text-sm text-error flex items-start gap-2">
-                            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                            {issue}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  
-                  {/* Recommendations */}
-                  {analysis.recommendations.length > 0 && (
-                    <div className="mt-3">
-                      <p className="text-xs font-semibold text-muted-foreground mb-2">Recommendations:</p>
-                      <ul className="space-y-1">
-                        {analysis.recommendations.map((rec, i) => (
-                          <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                            <Info className="h-4 w-4 shrink-0 mt-0.5 text-status-telemetry" />
-                            {rec}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  
-                  {/* Model info */}
-                  {analysis.model_used && (
-                    <p className="text-xs text-muted-foreground/60">
-                      Analyzed using {analysis.model_used}
+              {hasAnalysis || analyzing ? (
+                <div className="mt-2 space-y-2">
+                  {thinkingText && analyzing && (
+                    <p className="text-xs text-muted-foreground/60 italic">
+                      {thinkingText.slice(-200)}
                     </p>
                   )}
+                  {analysisText ? (
+                    <div className="text-sm text-muted-foreground prose prose-sm max-w-none dark:prose-invert">
+                      <MarkdownRenderer text={analysisText} />
+                    </div>
+                  ) : analyzing ? (
+                    <p className="text-sm text-muted-foreground">Thinking...</p>
+                  ) : null}
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground mt-1">
@@ -155,11 +177,11 @@ export function AIAnalysisPanel({
               )}
             </div>
           </div>
-          
+
           {/* Action buttons */}
           <div className="flex gap-2 shrink-0">
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               size="sm"
               onClick={runAnalysis}
               disabled={analyzing || !canAnalyze}
@@ -171,12 +193,12 @@ export function AIAnalysisPanel({
                 </>
               ) : (
                 <>
-                  {analysis ? <RefreshCw className="h-4 w-4 mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-                  {analysis ? 'Refresh' : 'Analyze'}
+                  {hasAnalysis ? <RefreshCw className="h-4 w-4 mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                  {hasAnalysis ? 'Refresh' : 'Analyze'}
                 </>
               )}
             </Button>
-            {analysis && (
+            {hasAnalysis && (
               <Button
                 variant="ghost"
                 size="icon"

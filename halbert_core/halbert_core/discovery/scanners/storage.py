@@ -40,6 +40,10 @@ class StorageScanner(BaseScanner):
     def discovery_type(self) -> DiscoveryType:
         return DiscoveryType.STORAGE
     
+    def is_available(self) -> bool:
+        """Check if this scanner can run on the current platform."""
+        return self.command_exists('lsblk')
+    
     def scan(self) -> List[Discovery]:
         """Scan system for storage."""
         discoveries = []

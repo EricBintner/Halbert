@@ -10,6 +10,7 @@ recall, open loops and machine-state history. This package is that second half.
 See ``.handoff/HANDOFF-CONTINUITY-AFTER-PLAN-A-2026-08-26.md``.
 """
 
+from .consolidation import Consolidator
 from .freshness import AnswerSource, Decision, decide, is_re_observable
 from .recall_gate import GateResult, MatchStrength, classify
 from .state_store import StateStore, StateTriple
@@ -21,4 +22,6 @@ __all__ = [
     "MatchStrength", "GateResult", "classify",
     # where may this answer come from?
     "AnswerSource", "Decision", "decide", "is_re_observable",
+    # cross-thread consolidation at idle (R8)
+    "Consolidator",
 ]

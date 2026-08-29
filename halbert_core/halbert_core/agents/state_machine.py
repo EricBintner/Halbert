@@ -378,6 +378,7 @@ class AgentStateMachine:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         history_budget: Optional[int] = None,
+        retrieval_scope: Optional[str] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Process a user query through the state machine.
@@ -408,6 +409,9 @@ class AgentStateMachine:
                 route from the model that will actually answer (a pinned
                 turn's budget is not the default model's), so the state
                 machine never has to import route or picker code to know it.
+            retrieval_scope: Explicit SourcePrep scope id for retrieval this
+                turn. Used when no active skill provides one — e.g. the
+                "Analyze" button hardwires retrieval to the host scope.
 
         Yields:
             StreamEvent objects for each state change, tool call, etc.
@@ -467,6 +471,7 @@ class AgentStateMachine:
                 model_override=model_override,
                 tier_override=tier_override,
                 history_budget=history_budget or _default_conversation_tokens(),
+                retrieval_scope=retrieval_scope,
             )
 
             # Phase 3: Run intake pipeline before cognitive tick
@@ -617,7 +622,7 @@ class AgentStateMachine:
                 turn,
                 assistant_text="".join(old_ctx.response_chunks or []),
                 blocks=blocks,
-                terminal_session_ids=list(old_ctx.terminal_session_ids or []),
+                terminal_block_ids=list(old_ctx.terminal_block_ids or []),
                 diff_proposals=[
                     {"diff_id": diff_id,
                      **(diff if isinstance(diff, dict) else {"value": diff})}
@@ -843,6 +848,7 @@ class AgentStateMachine:
             yield StreamEvent.thread_recalled(
                 sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="auto",
                 last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
+                scope_crossed=r.get("scope_crossed"),
             )
 
         yield StreamEvent.turn_persisted(sid, turn.thread_id, turn.turn_id)
@@ -947,7 +953,7 @@ class AgentStateMachine:
                 turn,
                 assistant_text="".join(ctx.response_chunks),
                 blocks=blocks,
-                terminal_session_ids=list(ctx.terminal_session_ids),
+                terminal_block_ids=list(ctx.terminal_block_ids),
                 diff_proposals=diffs,
                 status=status,
                 thread_id_override=ctx.thread_id if ctx.thread_switched else None,
@@ -1552,12 +1558,57 @@ class AgentStateMachine:
             return ""
         return "\n\n".join(parts) if parts else ""
 
+    def _should_diagnostic_capture(self, tool_name: str) -> bool:
+        """Only capture on failures of command-execution tools, not
+        search/read/lookup tools. Avoids context pollution from
+        unrelated screen state on benign failures. Gated by
+        being.yml senses.vision.capture_on_error (default False).
+        """
+        try:
+            from ..vision.config import is_screen_capture_enabled
+            if not is_screen_capture_enabled():
+                return False
+            from ..config.being_config import load_being_config
+            being_cfg = load_being_config()
+            if not being_cfg.senses.vision.capture_on_error:
+                return False
+        except Exception:
+            return False
+        diagnostic_tools = {"run_command", "execute_command", "shell", "bash"}
+        return tool_name in diagnostic_tools
+
     async def _handle_planning(self) -> AsyncIterator[StreamEvent]:
         """
         PLANNING state: Analyze query, create plan, decide next action.
         """
         logger.info(f"PLANNING: {self.ctx.user_query[:50]}...")
-        
+
+        # Auto-capture: if the user's message signals visual intent but no
+        # image has been captured yet, grab the active window before planning.
+        # Eliminates the 2-turn round-trip where the LLM requests a screenshot
+        # it obviously needs. Gated by both the system-level screen capture
+        # enable (vision_config.yml) and the persona-level capture_on_intent
+        # consent (being.yml senses.vision.capture_on_intent).
+        if (self.ctx.intake and getattr(self.ctx.intake, 'has_vision_request', False)
+                and not self.ctx.images):
+            try:
+                from ..vision.config import is_screen_capture_enabled
+                if is_screen_capture_enabled():
+                    from ..config.being_config import load_being_config
+                    being_cfg = load_being_config()
+                    if being_cfg.senses.vision.capture_on_intent:
+                        from ..tools.vision_tools import capture_active_window_tool
+                        result = await capture_active_window_tool({})
+                        if isinstance(result, dict) and "image" in result:
+                            self.ctx.images = self.ctx.images or []
+                            self.ctx.images.append(result["image"])
+                            if "ocr_text" in result and result["ocr_text"]:
+                                self.ctx.add_observation(
+                                    f"[Auto-capture] Active window OCR:\n{result['ocr_text']}"
+                                )
+            except Exception as e:
+                logger.debug(f"Auto-capture in PLANNING skipped: {e}")
+
         # Assemble context if we have context assembler.
         # NOTE: this is the single context-assembly call site for planning —
         # intake.context_budget controls the token budget, so max_tokens is
@@ -1569,6 +1620,7 @@ class AgentStateMachine:
                 observations=self.ctx.observations,
                 intake=self.ctx.intake,
                 session_id=self.ctx.session_id,
+                retrieval_scope=self.ctx.retrieval_scope,
             )
             context_content = assembled.content
             yield StreamEvent.context_loaded(
@@ -1934,8 +1986,13 @@ class AgentStateMachine:
             results: List[Dict[str, Any]] = []
             if tm is not None:
                 try:
+                    # R4: scope as a property of the query — pass the open
+                    # thread's domains so same-domain hits rank first.
+                    turn_domains = list(getattr(self.ctx.turn_context, "domains", None) or [])
                     results = list(tm.recall(
-                        query=query, thread_id=thread_id, exclude_thread_id=self.ctx.thread_id,
+                        query=query, thread_id=thread_id,
+                        exclude_thread_id=self.ctx.thread_id,
+                        domains=turn_domains or None,
                     ) or [])
                 except Exception as e:
                     logger.warning(f"recall_thread store failure (non-fatal): {e}")
@@ -1963,6 +2020,7 @@ class AgentStateMachine:
                 yield StreamEvent.thread_recalled(
                     sid, rid, rtitle, rdate, list(r.get("match_terms") or []), mode="tool",
                     last_turn_id=r.get("last_turn_id") or self._last_turn_id(rid),
+                    scope_crossed=r.get("scope_crossed"),
                 )
             self.ctx.add_observation(
                 "Recalled earlier subjects: " + "; ".join(names)
@@ -2220,6 +2278,8 @@ class AgentStateMachine:
                 sandboxed=bool(payload.get("sandboxed")),
                 cwd=payload.get("cwd"),
                 attach=str(payload.get("attach", "sse")),
+                block_id=payload.get("block_id"),
+                owner=str(payload.get("owner", "agent")),
             )
         if kind == "output":
             return StreamEvent.terminal_output(
@@ -2239,8 +2299,11 @@ class AgentStateMachine:
         if payload.get("kind") != "spawn":
             return
         terminal_id = str(payload.get("terminal_session_id", ""))
-        if terminal_id and terminal_id not in self.ctx.terminal_session_ids:
-            self.ctx.terminal_session_ids.append(terminal_id)
+        block_id = str(payload.get("block_id", ""))
+        # Plan B: track block_id when present, fall back to session_id
+        track_id = block_id or terminal_id
+        if track_id and track_id not in self.ctx.terminal_block_ids:
+            self.ctx.terminal_block_ids.append(track_id)
 
     async def _run_tool_streaming(
         self,
@@ -2437,7 +2500,25 @@ class AgentStateMachine:
                 tool_call.status = "error"
                 tool_call.error = result.error
                 self.ctx.add_observation(f"Executed {tool_name}: {result.error}")
-            
+
+                # Opt-in diagnostic capture: OCR the screen on command
+                # execution failures for diagnostic context. Gated by
+                # being.yml senses.vision.capture_on_error (default False).
+                # Only fires for command-execution tools, not search/read.
+                # OCR text only (no image) to avoid routing the turn
+                # through the more expensive vision model.
+                if self._should_diagnostic_capture(tool_name):
+                    try:
+                        from ..tools.vision_tools import capture_and_ocr
+                        screen = await capture_and_ocr({"include_image": False})
+                        if isinstance(screen, dict) and "ocr_text" in screen:
+                            ocr_excerpt = screen["ocr_text"][:500]
+                            self.ctx.add_observation(
+                                f"[Diagnostic] Screen OCR at failure:\n{ocr_excerpt}"
+                            )
+                    except Exception as e:
+                        logger.debug(f"Diagnostic capture failed: {e}")
+
             # Clear pending confirmation
             self.ctx.pending_confirmation = None
         else:

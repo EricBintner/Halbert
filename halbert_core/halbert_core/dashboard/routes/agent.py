@@ -68,6 +68,7 @@ class SendMessageRequest(BaseModel):
     model: Optional[str] = Field(None, description="Exact model pinned for this turn; bypasses the complexity router")
     tier: Optional[str] = Field(None, description="'guide' | 'specialist' | 'vision' | 'auto'")
     endpoint_id: Optional[str] = Field(None, description="Saved-endpoint id the pinned model came from; removes ambiguity when the same model name exists on two endpoints")
+    scope: Optional[str] = Field(None, description="Explicit SourcePrep scope id for retrieval this turn (e.g. 'host'). Used when no active skill provides a scope.")
 
 
 class ConfirmActionRequest(BaseModel):
@@ -114,7 +115,7 @@ def get_agent():
         from ...agents import AgentStateMachine
         from ...tools import ToolSafetyFramework, ToolExecutor
         from ...eval.crag import CRAGEvaluator
-        from ...context import create_wired_context_assembler, MemoryServiceAdapter
+        from ...context import create_agent_context_assembler
         from ...context.adapters import SourcePrepAdapter
         from ...prompts import AgentPromptBuilder, PromptBuilder, ContextInjector
 
@@ -122,14 +123,23 @@ def get_agent():
         safety = ToolSafetyFramework()
         tool_executor = ToolExecutor(safety=safety)
         tool_executor.register_system_tools()
-        tool_executor.register_vision_tools()
 
-        # Create wired context assembler (connects to RAG, discovery, memory)
-        context_assembler = create_wired_context_assembler()
+        # Conditional vision tool registration — only register capture
+        # tools when the user has explicitly enabled screen capture or
+        # webcam in vision_config.yml. Prevents the LLM from being
+        # offered capture tools when the user hasn't opted in.
+        from ...vision.config import is_screen_capture_enabled, is_webcam_enabled
+        if is_screen_capture_enabled() or is_webcam_enabled():
+            tool_executor.register_vision_tools()
+
+        # Create agent context assembler (R9: no ChromaDB memory on agent path)
+        context_assembler = create_agent_context_assembler()
 
         # SEARCHING state retrieval: SourcePrep (RAGServiceAdapter is deprecated on the chat path)
         rag_service = SourcePrepAdapter()
-        memory_service = MemoryServiceAdapter()
+        # R9: ChromaDB-backed memory fenced off the agent path.
+        # memory_service is deliberately None — recall is Halbert-owned (receipts/FTS5).
+        memory_service = None
 
         # Wire PromptBuilder + ContextInjector into AgentPromptBuilder
         # for rich system prompts with model-specific overrides
@@ -207,8 +217,6 @@ def get_agent():
             logger.warning(f"Intake pipeline not available (non-fatal): {e}")
 
         # Create agent
-        tool_executor.register_system_tools()
-        tool_executor.register_vision_tools()
         try:
             from ...integrations.home_assistant.ha_tool import register_ha_tools
             register_ha_tools(tool_executor)
@@ -1377,6 +1385,7 @@ if FASTAPI_AVAILABLE:
                     max_tokens=request.max_tokens,
                     temperature=request.temperature,
                     history_budget=history_budget,
+                    retrieval_scope=request.scope,
                 )) as stream:
                     async for event in stream:
                         yield event.to_sse()

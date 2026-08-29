@@ -442,3 +442,25 @@ def create_wired_context_assembler():
         discovery_service=discovery_adapter,
         token_counter=token_counter,
     )
+
+
+def create_agent_context_assembler():
+    """Create a ContextAssembler for the agent path — no HybridMemorySystem.
+
+    R9 fence: the agent path must not reach ChromaDB-backed
+    HybridMemorySystem. This assembler wires SourcePrep and discovery
+    but leaves memory_service=None, so the ContextAssembler skips it.
+    """
+    from .assembler import ContextAssembler
+    from .tokens import TokenCounter
+
+    token_counter = TokenCounter()
+    retrieval_adapter = SourcePrepAdapter()
+    discovery_adapter = DiscoveryServiceAdapter()
+
+    return ContextAssembler(
+        retrieval_service=retrieval_adapter,
+        memory_service=None,
+        discovery_service=discovery_adapter,
+        token_counter=token_counter,
+    )

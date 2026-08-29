@@ -213,9 +213,12 @@ class StateContext:
     # turn (A9b). Inline meta-tools deliberately do not raise loop_count, so
     # max_loops cannot end a PLANNING→PLANNING chain; this counter does.
     meta_tool_reentries: int = 0
-    # Terminal sessions this turn's tools spawned (spawn payloads seen on the
-    # terminal bridge); persisted on the assistant row at end_turn.
-    terminal_session_ids: List[str] = field(default_factory=list)
+    # Terminal block ids this turn's tools spawned (spawn payloads seen on the
+    # terminal bridge); persisted on the assistant row at end_turn. Renamed from
+    # terminal_session_ids in Plan B (B21) — the values are now block_ids, not
+    # session_ids, but the field name on the store column remains
+    # terminal_block_ids.
+    terminal_block_ids: List[str] = field(default_factory=list)
     # The ThreadManager.TurnContext for this turn (None when no manager is
     # wired); end_turn needs it back.
     turn_context: Optional[Any] = None
@@ -233,6 +236,12 @@ class StateContext:
     #                         and folded into messages[0].
     history_budget: int = 0
     thread_receipt_block: str = ""
+
+    # Per-turn retrieval scope override. When set, the ContextAssembler uses
+    # this scope for SourcePrep retrieval when no active skill provides one.
+    # This is how the "Analyze" button hardwires retrieval to a silo's KB
+    # scope without defining a full skill.
+    retrieval_scope: Optional[str] = None
 
     def add_observation(self, observation: str):
         """Add an observation from tool execution."""

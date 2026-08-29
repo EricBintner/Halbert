@@ -37,7 +37,7 @@ def client(monkeypatch, tm):
 def _seed(tm, query, answer, blocks=None, diffs=None, terminals=None):
     turn = tm.begin_turn(query, analyze_message(query), "sess-redact")
     tm.end_turn(turn, assistant_text=answer, blocks=blocks or [],
-                terminal_session_ids=terminals or [], diff_proposals=diffs or [])
+                terminal_block_ids=terminals or [], diff_proposals=diffs or [])
     return turn
 
 

@@ -83,7 +83,7 @@ class MacNetworkScanner(BaseScanner):
                         title=f"{current_port} ({current_device})",
                         description=f"Interface {current_device}: {status.get('status', 'unknown')}",
                         severity=DiscoverySeverity.SUCCESS if status.get('active') else DiscoverySeverity.INFO,
-                        details={
+                        data={
                             'port_name': current_port,
                             'device': current_device,
                             'ip': status.get('ip'),
@@ -94,10 +94,8 @@ class MacNetworkScanner(BaseScanner):
                                 id=f"info-{current_device}",
                                 label="Show Details",
                                 command=f"ifconfig {current_device}",
-                                dry_run=True,
                             ),
                         ],
-                        tags=['network', 'interface', 'macos'],
                     ))
         
         return discoveries
@@ -156,7 +154,7 @@ class MacNetworkScanner(BaseScanner):
                 description=f"Using DNS: {', '.join(dns_servers[:3])}" +
                            (f" (+{len(dns_servers)-3} more)" if len(dns_servers) > 3 else ""),
                 severity=DiscoverySeverity.SUCCESS,
-                details={
+                data={
                     'servers': dns_servers,
                     'count': len(dns_servers),
                 },
@@ -165,10 +163,8 @@ class MacNetworkScanner(BaseScanner):
                         id="show-dns",
                         label="Show DNS Details",
                         command="scutil --dns",
-                        dry_run=True,
                     ),
                 ],
-                tags=['network', 'dns', 'macos'],
             ))
         
         return discoveries
@@ -222,7 +218,7 @@ class MacNetworkScanner(BaseScanner):
                 title=f"WiFi: {ssid}",
                 description=f"Connected to '{ssid}' - {quality} signal ({signal} dBm)",
                 severity=severity,
-                details={
+                data={
                     'ssid': ssid,
                     'signal_dbm': signal,
                     'channel': channel,
@@ -233,10 +229,8 @@ class MacNetworkScanner(BaseScanner):
                         id="wifi-scan",
                         label="Scan Networks",
                         command=f"{airport_path} -s",
-                        dry_run=True,
                     ),
                 ],
-                tags=['network', 'wifi', 'wireless', 'macos'],
             ))
         
         return discoveries
@@ -266,7 +260,7 @@ class MacNetworkScanner(BaseScanner):
             title=f"Internet: {status}",
             description=description,
             severity=severity,
-            details={
+            data={
                 'connected': code == 0,
             },
             actions=[
@@ -274,10 +268,8 @@ class MacNetworkScanner(BaseScanner):
                     id="test-connectivity",
                     label="Test Connectivity",
                     command="ping -c 3 8.8.8.8",
-                    dry_run=True,
                 ),
             ],
-            tags=['network', 'internet', 'connectivity', 'macos'],
         ))
         
         return discoveries

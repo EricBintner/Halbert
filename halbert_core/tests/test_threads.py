@@ -64,7 +64,7 @@ def _lock_free_to_another_thread(lock) -> bool:
 def _turn(tm, text, session="s", **end):
     turn = tm.begin_turn(text, analyze_message(text), session)
     tm.end_turn(turn, assistant_text=end.get("assistant", "ok"), blocks=end.get("blocks", []),
-                terminal_session_ids=end.get("terminals", []), diff_proposals=end.get("diffs", []))
+                terminal_block_ids=end.get("terminals", []), diff_proposals=end.get("diffs", []))
     return turn
 
 
@@ -340,7 +340,7 @@ class TestHistoryWindow:
             _turn(tm, f"step {i} of the samba setup", assistant=f"did step {i}")
         turn = tm.begin_turn("continue", analyze_message("continue"), "s")
         assert len(turn.history) == 12 and turn.history[0]["role"] == "user"
-        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_session_ids=[],
+        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_block_ids=[],
                     diff_proposals=[])
         turn2 = tm.begin_turn("continue", analyze_message("continue"), "s")
         assert len(turn2.history) == 13 and turn2.history[0]["role"] == "system"
@@ -671,7 +671,7 @@ class TestDegradedStore:
         turn = tm.begin_turn(text, analyze_message(text), "s")
         assert turn.user_message_id is None and turn.history == [] and turn.hint == ""
         assert turn.recalled == [] and turn.decision.action == "open_new"
-        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_session_ids=[], diff_proposals=[])
+        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_block_ids=[], diff_proposals=[])
         assert tm.current() is None and tm.mark_interrupted() == 0
 
     def test_decide_failure_stays_on_the_open_thread(self, tm, monkeypatch):
@@ -715,14 +715,14 @@ class TestDegradedStore:
         turn = tm.begin_turn(text, analyze_message(text), "s")
         assert turn.thread_id == "ghost" and turn.user_message_id is None
         assert turn.history == [] and turn.hint == "" and turn.recalled == []
-        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_session_ids=[], diff_proposals=[])
+        tm.end_turn(turn, assistant_text="ok", blocks=[], terminal_block_ids=[], diff_proposals=[])
         assert tm.store.get_thread("ghost") is None
 
     def test_end_turn_ignores_a_vanished_thread(self, tm):
         text = "add a samba share for the media folder"
         turn = tm.begin_turn(text, analyze_message(text), "s")
         assert tm.store.delete(turn.thread_id) is True
-        tm.end_turn(turn, assistant_text="Added it.", blocks=[], terminal_session_ids=[],
+        tm.end_turn(turn, assistant_text="Added it.", blocks=[], terminal_block_ids=[],
                     diff_proposals=[])
         assert tm.store.search_receipts("samba") == []
 
@@ -774,7 +774,7 @@ class TestRecallEdges:
     def test_recall_is_persisted_once(self, tm):
         t1, t2, text = self._closed_samba(tm)
         turn3 = tm.begin_turn(text, analyze_message(text), "s3")
-        tm.end_turn(turn3, assistant_text="ok", blocks=[], terminal_session_ids=[],
+        tm.end_turn(turn3, assistant_text="ok", blocks=[], terminal_block_ids=[],
                     diff_proposals=[])
         turn4 = tm.begin_turn(text, analyze_message(text), "s4")
         assert [r["thread_id"] for r in turn4.recalled] == [t1.thread_id]
@@ -788,7 +788,7 @@ class TestNewResumeTick:
         text = "and now something else"
         turn = tm.begin_turn(text, analyze_message(text), "s2")
         new_id = tm.new_thread("Other thing", "model switched", from_thread_id=turn.thread_id)
-        tm.end_turn(turn, assistant_text="", blocks=[], terminal_session_ids=[], diff_proposals=[],
+        tm.end_turn(turn, assistant_text="", blocks=[], terminal_block_ids=[], diff_proposals=[],
                     status="cancelled", thread_id_override=new_id)
         assert tm.store.list_messages(t1.thread_id)[-1]["role"] == "assistant"
         moved = tm.store.list_messages(new_id)
@@ -948,7 +948,7 @@ class TestMergeBack:
         assert prev["status"] == "open" and prev["paused_at"] is None and prev["turns_since_pause"] == 0
         assert "successor" not in prev["metadata"] and prev["metadata"]["merged_from"] == [new_id]
         assert prev["entities_json"] == ["samba", "scanner", "share"] and prev["last_active"] == NOW
-        assert "· 2 turns" in prev["receipt"] and "Last said: Added [scanner]." in prev["receipt"]
+        assert "· 2 turns" in prev["receipt"] and "Last said (2026-08-26): Added [scanner]." in prev["receipt"]
         assert tm.current()["thread_id"] == t1.thread_id
         assert tm.store._conn.execute(
             "SELECT COUNT(*) FROM receipts_fts WHERE thread_id = ?", (new_id,)).fetchone()[0] == 0
@@ -1126,7 +1126,7 @@ class TestRetractionNotes:
         assert turn4.notes == ["admin retracted recall of 'Add samba'"]
         assert "\nNote: admin retracted recall of 'Add samba'\n" in turn4.hint and "Pulled in" not in turn4.hint
         assert turn4.history[0]["role"] == "user"  # hidden rows never enter the history
-        tm.end_turn(turn4, assistant_text="ok", blocks=[], terminal_session_ids=[], diff_proposals=[])
+        tm.end_turn(turn4, assistant_text="ok", blocks=[], terminal_block_ids=[], diff_proposals=[])
         turn5 = tm.begin_turn("continue", analyze_message("continue"), "s5")
         assert turn5.notes == [] and "Note:" not in turn5.hint
 
@@ -1160,3 +1160,97 @@ class TestRetractionNotes:
         turn4 = tm.begin_turn(text, analyze_message(text), "s4")
         assert len(turn4.notes) == PENDING_NOTES_MAX
         assert turn4.notes[0] == "admin retracted recall of 'Add samba'"
+
+
+class TestRecordThreadState:
+    """R2-N3: machine-state triples recorded at thread close."""
+
+    def test_close_records_commands_files_and_entities(self, tm, monkeypatch):
+        """A non-ephemeral thread records ran_command, file_written, and
+        entity triples to the state store on close."""
+        recorded: list[dict] = []
+
+        class _FakeStateStore:
+            def record_state(self, subject, predicate, value, source, *,
+                             thread_id=None, now=None, **kw):
+                recorded.append({
+                    "subject": subject, "predicate": predicate,
+                    "value": value, "source": source, "thread_id": thread_id,
+                })
+                return len(recorded)
+
+        # Patch the StateStore import inside _record_thread_state
+        import halbert_core.agents.threads as _tm_mod
+        import halbert_core.continuity.state_store as _ss_mod
+        monkeypatch.setattr(_ss_mod, "StateStore", lambda *a, **k: _FakeStateStore())
+        monkeypatch.setattr(_ss_mod, "default_state_db_path", lambda: "/tmp/fake")
+
+        blocks = [{"tool": "run_command", "args": {"command": "testparm -s"},
+                   "exit_code": 0, "status": "complete"}]
+        diffs = [{"path": "/etc/samba/smb.conf", "action": "write"}]
+        t1 = _turn(tm, "add a samba share for the media folder",
+                   assistant="Added [media] at /srv/media.",
+                   blocks=blocks, diffs=diffs)
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+        assert tm.tick() == [t1.thread_id]
+
+        preds = {r["predicate"] for r in recorded}
+        assert "ran_command" in preds, f"expected ran_command in {preds}"
+        assert "entity" in preds, f"expected entity in {preds}"
+        # All records carry the thread_id and source=thread_close
+        for r in recorded:
+            assert r["thread_id"] == t1.thread_id
+            assert r["source"] == "thread_close"
+
+    def test_ephemeral_thread_skips_state_recording(self, tm, monkeypatch):
+        """Ephemeral threads must not record state triples."""
+        recorded: list[dict] = []
+
+        class _FakeStateStore:
+            def record_state(self, *a, **k):
+                recorded.append(a)
+                return 1
+
+        import halbert_core.continuity.state_store as _ss_mod
+        monkeypatch.setattr(_ss_mod, "StateStore", lambda *a, **k: _FakeStateStore())
+        monkeypatch.setattr(_ss_mod, "default_state_db_path", lambda: "/tmp/fake")
+
+        t1 = _turn(tm, "add a samba share for the media folder")
+        # Mark the thread as ephemeral
+        tm.store.update_thread(t1.thread_id, ephemeral=True)
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+        assert tm.tick() == [t1.thread_id]
+        assert recorded == [], "ephemeral thread must not record state"
+
+    def test_terminal_origin_messages_are_filtered(self, tm, monkeypatch):
+        """Messages with origin=terminal must not contribute state triples."""
+        recorded: list[dict] = []
+
+        class _FakeStateStore:
+            def record_state(self, subject, predicate, value, source, *,
+                             thread_id=None, now=None, **kw):
+                recorded.append({"predicate": predicate, "value": value})
+                return len(recorded)
+
+        import halbert_core.continuity.state_store as _ss_mod
+        monkeypatch.setattr(_ss_mod, "StateStore", lambda *a, **k: _FakeStateStore())
+        monkeypatch.setattr(_ss_mod, "default_state_db_path", lambda: "/tmp/fake")
+
+        t1 = _turn(tm, "add a samba share for the media folder")
+        # Add a terminal-origin message with a command block
+        tm.store.append_message(
+            t1.thread_id, "assistant", "terminal output",
+            origin="terminal", status="complete",
+            blocks=[{"tool": "run_command", "args": {"command": "rm -rf /"},
+                     "exit_code": 0, "status": "complete"}],
+        )
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+        tm.tick()
+
+        # The terminal-origin command must not appear in recorded commands
+        cmd_values = [r["value"] for r in recorded if r["predicate"] == "ran_command"]
+        assert "rm -rf /" not in cmd_values, \
+            f"terminal-origin command leaked into state: {cmd_values}"

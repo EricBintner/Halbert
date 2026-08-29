@@ -16,16 +16,10 @@ from datetime import datetime
 import logging
 import threading
 import time
+import platform
 
 from .schema import Discovery, DiscoveryType, DiscoverySeverity
 from .scanners.base import BaseScanner
-from .scanners.backup import BackupScanner
-from .scanners.service import ServiceScanner
-from .scanners.storage import StorageScanner
-from .scanners.network import NetworkScanner
-from .scanners.security import SecurityScanner
-from .scanners.sharing import SharingScanner
-from .scanners.apps import FlatpakScanner, SnapScanner, AppImageScanner
 
 
 logger = logging.getLogger('halbert.discovery.engine')
@@ -104,7 +98,22 @@ class DiscoveryEngine:
         return data_dir
     
     def _register_default_scanners(self):
-        """Register built-in scanners."""
+        """Register built-in scanners for the current platform."""
+        if platform.system() == 'Darwin':
+            self._register_macos_scanners()
+        else:
+            self._register_linux_scanners()
+
+    def _register_linux_scanners(self):
+        """Register Linux-specific scanners."""
+        from .scanners.backup import BackupScanner
+        from .scanners.service import ServiceScanner
+        from .scanners.storage import StorageScanner
+        from .scanners.network import NetworkScanner
+        from .scanners.security import SecurityScanner
+        from .scanners.sharing import SharingScanner
+        from .scanners.apps import FlatpakScanner, SnapScanner, AppImageScanner
+
         self.register_scanner(BackupScanner())
         self.register_scanner(ServiceScanner())
         self.register_scanner(StorageScanner())
@@ -115,6 +124,24 @@ class DiscoveryEngine:
         self.register_scanner(FlatpakScanner())
         self.register_scanner(SnapScanner())
         self.register_scanner(AppImageScanner())
+
+    def _register_macos_scanners(self):
+        """Register macOS-specific scanners."""
+        from .scanners.macos import (
+            LaunchdScanner, HomebrewScanner, MacThermalScanner,
+            MacNetworkScanner, MacStorageScanner, MacSecurityScanner,
+            TimeMachineScanner, HomebrewAppScanner, MacAppStoreScanner,
+        )
+
+        self.register_scanner(LaunchdScanner())       # SERVICE
+        self.register_scanner(MacStorageScanner())     # STORAGE
+        self.register_scanner(MacNetworkScanner())     # NETWORK
+        self.register_scanner(MacSecurityScanner())    # SECURITY
+        self.register_scanner(TimeMachineScanner())    # BACKUP
+        self.register_scanner(HomebrewScanner())       # PACKAGE
+        self.register_scanner(HomebrewAppScanner())    # PACKAGE (apps)
+        self.register_scanner(MacAppStoreScanner())    # PACKAGE (App Store)
+        self.register_scanner(MacThermalScanner())     # HARDWARE
     
     # ─────────────────────────────────────────────────────────────
     # Scanner Management

@@ -181,6 +181,27 @@ class SystemEventMapper:
                 source=source,
             )
 
+        elif event_type == "visual_anomaly":
+            intensity = 0.7 if severity == "critical" else 0.4
+            cognition.worries.add_worry(
+                content=f"Screen anomaly: {detail}",
+                source=source,
+                category="visual_stability",
+                intensity=intensity,
+                intrusion_rate=0.3 if severity == "critical" else 0.1,
+            )
+            cognition.emotional_state.add_emotion(
+                emotion=self._emotion("VIGILANCE"),
+                intensity=intensity * 0.6,
+                source=source,
+            )
+            cognition.drives.add_drive(
+                category=self._drive("COMPETENCE"),
+                content=f"Investigate screen anomaly: {detail}",
+                intensity=intensity * 0.5,
+                trigger=source,
+            )
+
         # Update state trackers
         if event_type == "disk_failure" and "disk_health" in self._trackers:
             self._trackers["disk_health"].update_health(source, severity)

@@ -42,17 +42,8 @@ import {
   Eye,
   Info,
   Palette,
-  SlidersHorizontal,
 } from 'lucide-react'
 import { PageHeader, DataVersionCard } from '@/components/domain'
-import {
-  TrustBoundaryTelemetryBar,
-  Tier1RockerControl,
-  Tier2StateCard,
-  EscapeHatchConfirmationModal,
-  MachinedTagInput,
-  type TelemetryCounts,
-} from '@/components/domain'
 import { ModelSettings } from '@/components/llm'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { LegalNoticesModal } from '@/components/legal/LegalNoticesModal'
@@ -440,16 +431,13 @@ function VisionSettings() {
 
 function SecuritySettings() {
   const [config, setConfig] = useState<any>(null)
-  const [telemetry, setTelemetry] = useState<TelemetryCounts | null>(null)
   const [loading, setLoading] = useState(true)
-  const [telemetryLoading, setTelemetryLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const [showEscapeModal, setShowEscapeModal] = useState(false)
+  const [showAcknowledge, setShowAcknowledge] = useState(false)
 
   useEffect(() => {
     loadConfig()
-    loadTelemetry()
   }, [])
 
   const loadConfig = async () => {
@@ -466,23 +454,6 @@ function SecuritySettings() {
     }
   }
 
-  const loadTelemetry = async () => {
-    setTelemetryLoading(true)
-    try {
-      const resp = await fetch(`${API_BASE}/settings/security/telemetry`)
-      if (resp.ok) {
-        const data = await resp.json()
-        setTelemetry(data)
-      } else {
-        console.error('Telemetry endpoint returned', resp.status)
-      }
-    } catch (e) {
-      console.error('Failed to load security telemetry:', e)
-    } finally {
-      setTelemetryLoading(false)
-    }
-  }
-
   const saveSecurity = async (updates: Record<string, any>) => {
     setSaving(true)
     try {
@@ -496,8 +467,6 @@ function SecuritySettings() {
         setConfig(data.config)
         setToast('Saved')
         setTimeout(() => setToast(null), 2000)
-        // Refresh telemetry after config changes — awaited to avoid races
-        await loadTelemetry()
       } else {
         const err = await resp.json()
         setToast(`Error: ${err.detail || 'Failed to save'}`)
@@ -524,10 +493,7 @@ function SecuritySettings() {
     secret_tier: 'local_only',
     public_files: ['/etc/hosts', '/etc/hostname', '/etc/fstab'],
     extra_secret_keys: [],
-    cloud_ok_keys: [],
   }
-
-  const locked = sec.secret_tier === 'local_only'
 
   return (
     <div className="space-y-4">
@@ -537,150 +503,228 @@ function SecuritySettings() {
         </div>
       )}
 
-      {/* Telemetry Scope Instrument */}
-      <TrustBoundaryTelemetryBar counts={telemetry} loading={telemetryLoading} />
-
-      {/* Tier 1 — Operational Values */}
+      {/* Trust Boundary Overview */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <SlidersHorizontal className="h-5 w-5" />
-            Tier 1 — Operational Values
+            <Lock className="h-5 w-5" />
+            MCP Trust Boundary
           </CardTitle>
           <CardDescription>
-            Machine context, open ports, firewall rules, and internal IP addresses.
-            Choose how cloud models may access them.
+            Controls how config values are routed when exposed to AI clients.
+            Secrets never enter conversation history via the config query path.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Tier1RockerControl
-            value={sec.operational_tier}
-            onChange={(v) => saveSecurity({ operational_tier: v })}
-            disabled={saving}
-            count={telemetry?.tier_1}
-          />
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p>
+              <span className="font-medium text-foreground">Tier 0 (Public):</span>{' '}
+              Machine structure — service names, booleans, structural keys.
+              Always visible to cloud models.
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Tier 1 (Operational):</span>{' '}
+              SSH port, routable IPs, firewall rules. User-configurable routing.
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Tier 2 (Secrets):</span>{' '}
+              Passwords, tokens, API keys. Deterministic description only —
+              no model in the boundary.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
-      {/* Tier 2 — Secrets (dual-state vault) */}
-      <Tier2StateCard
-        locked={locked}
-        onUnlock={() => setShowEscapeModal(true)}
-        onRelock={() => saveSecurity({ secret_tier: 'local_only', secret_tier_expiry: null, volatile_unlock: false })}
-        disabled={saving}
-        protectedCount={telemetry?.tier_2}
-      />
-
-      {/* Per-Key Cloud Escape Hatch */}
+      {/* Tier 1 — Operational */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Shield className="h-5 w-5" />
-            Per-Key Cloud Escape Hatch
-            {telemetry && telemetry.cloud_ok_keys_count > 0 && (
-              <span className="font-mono text-xs text-status-warning">
-                ({telemetry.cloud_ok_keys_count} Active)
-              </span>
-            )}
-          </CardTitle>
+          <CardTitle>Tier 1 — Operational Values</CardTitle>
           <CardDescription>
-            Allow specific non-critical keys to bypass Tier 2 without unlocking all secrets.
+            Config values that could identify the machine but are not credentials.
+            Choose how cloud models may access them.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="rounded-md border border-status-warning-line bg-status-warning-bg p-3">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="h-4 w-4 text-status-warning mt-0.5 shrink-0" />
-              <p className="text-sm">
-                Keys listed here bypass the Tier 2 boundary. Their raw values
-                will appear in your cloud LLM vendor's inference logs. Only
-                list keys whose values you are willing to expose.
-              </p>
+          <div className="space-y-2">
+            <Label>Routing</Label>
+            <div className="grid grid-cols-3 gap-2">
+              <Button
+                variant={sec.operational_tier === 'cloud_ok' ? 'default' : 'outline'}
+                onClick={() => saveSecurity({ operational_tier: 'cloud_ok' })}
+                disabled={saving}
+                className="flex flex-col items-center gap-1 h-auto py-3"
+              >
+                <span className="font-medium">Cloud OK</span>
+                <span className="text-xs opacity-70">Raw value to cloud</span>
+              </Button>
+              <Button
+                variant={sec.operational_tier === 'local_only' ? 'default' : 'outline'}
+                onClick={() => saveSecurity({ operational_tier: 'local_only' })}
+                disabled={saving}
+                className="flex flex-col items-center gap-1 h-auto py-3"
+              >
+                <span className="font-medium">Local Only</span>
+                <span className="text-xs opacity-70">Description only</span>
+              </Button>
+              <Button
+                variant={sec.operational_tier === 'redact' ? 'default' : 'outline'}
+                onClick={() => saveSecurity({ operational_tier: 'redact' })}
+                disabled={saving}
+                className="flex flex-col items-center gap-1 h-auto py-3"
+              >
+                <span className="font-medium">Redact</span>
+                <span className="text-xs opacity-70">Strip value</span>
+              </Button>
             </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              {sec.operational_tier === 'cloud_ok' && 'Cloud models see operational values directly. Maximizes reasoning power.'}
+              {sec.operational_tier === 'local_only' && 'A deterministic description (length, charset, entropy) is returned instead of the raw value.'}
+              {sec.operational_tier === 'redact' && 'Values are stripped entirely. Only the key name and tier are returned.'}
+            </p>
           </div>
-          <MachinedTagInput
-            values={sec.cloud_ok_keys || []}
-            onChange={(vals) => saveSecurity({ cloud_ok_keys: vals })}
-            placeholder="Add key name (e.g. WEATHER_API_KEY)"
-            disabled={saving}
-            addLabel="Add Exception"
-          />
         </CardContent>
       </Card>
 
-      {/* File & Key Classification */}
+      {/* Tier 2 — Secrets */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <FileCode className="h-5 w-5" />
-            File &amp; Key Classification
+            <AlertTriangle className="h-5 w-5" />
+            Tier 2 — Secrets
           </CardTitle>
           <CardDescription>
-            Override the default tier assignments for specific files and keys.
+            Credentials, keys, tokens. The deterministic responder returns
+            facts about the value (length, charset, entropy, view command)
+            without the value itself. No model in the boundary.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-5">
-          {/* Public Files */}
-          <div className="space-y-2">
-            <Label className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-              Public Files (Tier 0 Floor)
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              Host paths whose structure is Tier 0. A value from one of these
-              files is Tier 0 only if its content does not contain a secret.
-            </p>
-            <MachinedTagInput
-              values={sec.public_files || []}
-              onChange={(vals) => saveSecurity({ public_files: vals })}
-              placeholder="Add file path (e.g. /etc/hosts)"
-              disabled={saving}
-              addLabel="Add Path"
-            />
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>Secret routing</Label>
+              <p className="text-xs text-muted-foreground mt-1">
+                {sec.secret_tier === 'local_only'
+                  ? 'Secrets are described, never revealed. This is the safest setting.'
+                  : 'Secrets are sent to cloud models. You acknowledged this risk.'}
+              </p>
+            </div>
+            <Badge variant={sec.secret_tier === 'local_only' ? 'default' : 'destructive'}>
+              {sec.secret_tier === 'local_only' ? 'Locked' : 'Acknowledged'}
+            </Badge>
           </div>
 
-          {/* Extra Secret Keys */}
-          <div className="space-y-2">
-            <Label className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-              Extra Secret Keys (Tier 2 Enforcement)
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              Additional config key names to treat as Tier 2, beyond the built-in
-              list (password, token, api_key, secret, etc).
-            </p>
-            <MachinedTagInput
-              values={sec.extra_secret_keys || []}
-              onChange={(vals) => saveSecurity({ extra_secret_keys: vals })}
-              placeholder="Add key name (e.g. serial)"
+          {sec.secret_tier === 'local_only' && (
+            <div className="rounded-md border border-yellow-500/50 bg-yellow-500/5 p-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+                <div className="space-y-2">
+                  <p className="text-sm">
+                    <span className="font-medium">Escape hatch:</span> Allow cloud
+                    models to see raw secrets. This sends credentials to your
+                    cloud LLM vendor's inference logs.
+                  </p>
+                  {!showAcknowledge ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowAcknowledge(true)}
+                      disabled={saving}
+                    >
+                      I understand the risk — show option
+                    </Button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => {
+                          saveSecurity({ secret_tier: 'cloud_ok_acknowledged' })
+                          setShowAcknowledge(false)
+                        }}
+                        disabled={saving}
+                      >
+                        Confirm: allow cloud access to secrets
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowAcknowledge(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {sec.secret_tier === 'cloud_ok_acknowledged' && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => saveSecurity({ secret_tier: 'local_only' })}
               disabled={saving}
-              addLabel="Add Key"
+            >
+              Re-lock secrets to local only
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Public Files */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Public Files</CardTitle>
+          <CardDescription>
+            Host paths whose structure is Tier 0 (public). A value from one of
+            these files is Tier 0 only if its content does not contain a secret.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label>Files (one per line)</Label>
+            <textarea
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              defaultValue={(sec.public_files || []).join('\n')}
+              placeholder="/etc/hosts&#10;/etc/hostname&#10;/etc/fstab"
+              onBlur={(e) => {
+                const lines = e.target.value.split('\n').map((s: string) => s.trim()).filter(Boolean)
+                if (JSON.stringify(lines) !== JSON.stringify(sec.public_files || [])) {
+                  saveSecurity({ public_files: lines })
+                }
+              }}
             />
           </div>
         </CardContent>
       </Card>
 
-      {/* Escape Hatch Confirmation Modal */}
-      <EscapeHatchConfirmationModal
-        open={showEscapeModal}
-        onClose={() => setShowEscapeModal(false)}
-        onConfirm={(ttl) => {
-          const updates: Record<string, any> = { secret_tier: 'cloud_ok_acknowledged' }
-          if (ttl === '1h') {
-            const expiry = new Date(Date.now() + 3600_000)
-            updates.secret_tier_expiry = expiry.toISOString()
-            updates.volatile_unlock = false
-          } else if (ttl === 'restart') {
-            updates.volatile_unlock = true
-            updates.secret_tier_expiry = null
-          } else {
-            // permanent
-            updates.secret_tier_expiry = null
-            updates.volatile_unlock = false
-          }
-          saveSecurity(updates)
-          setShowEscapeModal(false)
-        }}
-        disabled={saving}
-      />
+      {/* Extra Secret Keys */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Extra Secret Keys</CardTitle>
+          <CardDescription>
+            Additional config key names to treat as Tier 2 (secrets), beyond the
+            built-in list (password, token, api_key, secret, etc).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label>Keys (one per line)</Label>
+            <textarea
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              defaultValue={(sec.extra_secret_keys || []).join('\n')}
+              placeholder="serial&#10;license&#10;activation"
+              onBlur={(e) => {
+                const lines = e.target.value.split('\n').map((s: string) => s.trim()).filter(Boolean)
+                if (JSON.stringify(lines) !== JSON.stringify(sec.extra_secret_keys || [])) {
+                  saveSecurity({ extra_secret_keys: lines })
+                }
+              }}
+            />
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -1062,6 +1106,181 @@ function BeingSettings() {
               }
             }}
           />
+        </CardContent>
+      </Card>
+
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-lg border bg-background px-4 py-2 text-sm shadow-lg">
+          {toast}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Senses Settings Component (Vision autonomy — being.yml senses.vision)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SensesSettings() {
+  const [config, setConfig] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    loadConfig()
+  }, [])
+
+  const loadConfig = async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/settings/being`)
+      if (resp.ok) {
+        const data = await resp.json()
+        setConfig(data.config)
+      }
+    } catch (e) {
+      console.error('Failed to load senses config:', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const saveSenses = async (updates: Record<string, any>) => {
+    setSaving(true)
+    try {
+      const current = config.senses?.vision || {}
+      const newVision = { ...current, ...updates }
+      const resp = await fetch(`${API_BASE}/settings/being`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ senses: { vision: newVision } }),
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        setConfig(data.config)
+        setToast('Saved')
+        setTimeout(() => setToast(null), 2000)
+      } else {
+        const err = await resp.json()
+        setToast(`Error: ${err.detail || 'Failed to save'}`)
+        setTimeout(() => setToast(null), 3000)
+      }
+    } catch (e) {
+      setToast('Error: Network failure')
+      setTimeout(() => setToast(null), 3000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return <Card><CardContent className="py-8 text-center text-muted-foreground">Loading senses config...</CardContent></Card>
+  }
+
+  if (!config) {
+    return <Card><CardContent className="py-8 text-center text-muted-foreground">Failed to load config</CardContent></Card>
+  }
+
+  const vision = config.senses?.vision || {}
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Eye className="h-5 w-5" />
+            Vision Autonomy
+          </CardTitle>
+          <CardDescription>
+            Control how proactively the being uses screen capture. The system-level
+            enable/disable gate is in the Vision tab — these settings control what the
+            being is allowed to do with vision once it is enabled.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="vision-enabled">Enable proactive vision</Label>
+              <p className="text-xs text-muted-foreground">
+                Persona-level consent for autonomous screen monitoring.
+              </p>
+            </div>
+            <input
+              id="vision-enabled"
+              type="checkbox"
+              checked={vision.enabled ?? false}
+              onChange={(e) => saveSenses({ enabled: e.target.checked })}
+              disabled={saving}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="proactive-monitoring">Background monitoring</Label>
+              <p className="text-xs text-muted-foreground">
+                Periodically capture the active window and scan for error patterns.
+              </p>
+            </div>
+            <input
+              id="proactive-monitoring"
+              type="checkbox"
+              checked={vision.proactive_monitoring ?? false}
+              onChange={(e) => saveSenses({ proactive_monitoring: e.target.checked })}
+              disabled={saving}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="capture-on-intent">Auto-capture on visual intent</Label>
+              <p className="text-xs text-muted-foreground">
+                When you ask "what's on my screen", capture automatically before planning.
+              </p>
+            </div>
+            <input
+              id="capture-on-intent"
+              type="checkbox"
+              checked={vision.capture_on_intent ?? true}
+              onChange={(e) => saveSenses({ capture_on_intent: e.target.checked })}
+              disabled={saving}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="capture-on-error">Auto-capture on tool failure</Label>
+              <p className="text-xs text-muted-foreground">
+                OCR the screen when a command fails, for diagnostic context. Opt-in.
+              </p>
+            </div>
+            <input
+              id="capture-on-error"
+              type="checkbox"
+              checked={vision.capture_on_error ?? false}
+              onChange={(e) => saveSenses({ capture_on_error: e.target.checked })}
+              disabled={saving}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="vision-interval">Monitoring interval (seconds)</Label>
+              <p className="text-xs text-muted-foreground">
+                How often to check the screen when background monitoring is on. Min 10.
+              </p>
+            </div>
+            <Input
+              id="vision-interval"
+              type="number"
+              min={10}
+              max={600}
+              value={vision.interval_seconds ?? 60}
+              onChange={(e) => saveSenses({ interval_seconds: parseInt(e.target.value) || 60 })}
+              disabled={saving}
+              className="w-24"
+            />
+          </div>
         </CardContent>
       </Card>
 
@@ -2788,6 +3007,7 @@ export function Settings() {
         {/* Being Tab */}
         <TabsContent value="being" className="space-y-4">
           <BeingSettings />
+          <SensesSettings />
         </TabsContent>
 
         {/* Security Tab */}

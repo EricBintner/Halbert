@@ -32,7 +32,7 @@ logger = logging.getLogger("halbert.agents.conversation_sqlite")
 _DEFAULT_DB = str(Path.home() / ".halbert" / "conversations.db")
 
 #: Bump when a migration step below must run on existing databases.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 # Columns added to the legacy tables. ``_ensure_schema`` applies each one
 # with ``ALTER TABLE ... ADD COLUMN`` when ``PRAGMA table_info`` lacks it.
@@ -384,8 +384,70 @@ class SqliteConversationStore:
                     "CREATE INDEX IF NOT EXISTS idx_compact_thread "
                     "ON compact_boundaries(thread_id)"
                 )
+                # v3: terminal_blocks and terminal_sessions (Plan B: B1).
+                # Blocks are the persisted shell-command records that back
+                # terminal tiles on the timeline; sessions are the PTY
+                # sessions (user, agent-pool, oneshot) that produce them.
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS terminal_blocks (
+                        block_id    TEXT PRIMARY KEY,
+                        session_id  TEXT NOT NULL,
+                        thread_id   TEXT,
+                        turn_id     TEXT,
+                        command     TEXT NOT NULL,
+                        cwd         TEXT,
+                        owner       TEXT NOT NULL DEFAULT 'agent',
+                        interactive INTEGER NOT NULL DEFAULT 0,
+                        remote      INTEGER NOT NULL DEFAULT 0,
+                        redacted    INTEGER NOT NULL DEFAULT 0,
+                        started_at  REAL NOT NULL,
+                        ended_at    REAL,
+                        exit_code   INTEGER,
+                        output_head TEXT NOT NULL DEFAULT '',
+                        output_tail TEXT NOT NULL DEFAULT ''
+                    )"""
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tb_session "
+                    "ON terminal_blocks(session_id)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tb_thread "
+                    "ON terminal_blocks(thread_id)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tb_turn "
+                    "ON terminal_blocks(turn_id)"
+                )
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS terminal_sessions (
+                        session_id  TEXT PRIMARY KEY,
+                        kind        TEXT NOT NULL DEFAULT 'oneshot',
+                        owner       TEXT NOT NULL DEFAULT 'agent',
+                        watched     INTEGER NOT NULL DEFAULT 1,
+                        spawned_at  REAL NOT NULL,
+                        ended_at    REAL,
+                        last_state  TEXT NOT NULL DEFAULT 'running'
+                    )"""
+                )
                 self._add_missing_columns(cur, "conversations", _THREAD_COLUMNS)
                 self._add_missing_columns(cur, "messages", _MESSAGE_COLUMNS)
+                # v4: open_loops table (continuity R2-N2).
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS open_loops (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        thread_id   TEXT NOT NULL,
+                        text        TEXT NOT NULL,
+                        domain      TEXT,
+                        created_at  REAL NOT NULL,
+                        closed_at   REAL,
+                        source      TEXT
+                    )"""
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_open_loops_thread "
+                    "ON open_loops(thread_id, closed_at)"
+                )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_messages_turn ON messages(turn_id)"
                 )
@@ -1616,6 +1678,18 @@ class SqliteConversationStore:
         # construction now that ``matched`` is re-derived from the same
         # index that selected the row (finding 2).
         score = min(1.0, len(matched) / max(1, min(len(terms), 3))) if matched else 0.25
+        # Parse topic_domains from the row (stored as JSON or comma-separated)
+        raw_domains = row["topic_domains"] if "topic_domains" in row.keys() else None
+        if isinstance(raw_domains, str):
+            import json as _json
+            try:
+                topic_domains = _json.loads(raw_domains) if raw_domains else []
+            except (ValueError, TypeError):
+                topic_domains = []
+        elif isinstance(raw_domains, (list, tuple)):
+            topic_domains = list(raw_domains)
+        else:
+            topic_domains = []
         return {
             "thread_id": row["thread_id"],
             "title": row["title"] or "",
@@ -1624,15 +1698,23 @@ class SqliteConversationStore:
             "snippet": _receipt_snippet(row["receipt"] or "", matched),
             "last_active": row["last_active"],
             "status": row["status"],
+            "topic_domains": topic_domains,
         }
 
     def search_receipts(
-        self, query: str, *, exclude_thread_id: Optional[str] = None, limit: int = 5
+        self, query: str, *, exclude_thread_id: Optional[str] = None,
+        limit: int = 5, domains: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Rank threads by receipt/title relevance to ``query``.
 
         Query terms are quoted and OR-joined; the MATCH runs in its own try so
         an FTS failure degrades to the title LIKE pass instead of aborting.
+
+        ``domains`` (R4): when provided, results whose ``topic_domains``
+        overlap the given domains are ranked ahead of non-overlapping ones.
+        This is a bleed-prevention ordering, not a hard filter — a
+        same-domain hit is preferred but a cross-domain hit is never
+        refused, so the user always gets an answer.
         """
         if self._conn is None or not query:
             return []
@@ -1645,7 +1727,8 @@ class SqliteConversationStore:
                 with self._lock:
                     rows = self._conn.execute(
                         """SELECT r.thread_id, r.title, r.receipt,
-                                  c.last_active, c.status, c.created_at
+                                  c.last_active, c.status, c.created_at,
+                                  c.topic_domains
                            FROM receipts_fts r JOIN conversations c ON c.id = r.thread_id
                            WHERE receipts_fts MATCH ? AND c.status != 'merged'
                              AND c.ephemeral = 0 AND (? IS NULL OR r.thread_id != ?)
@@ -1669,7 +1752,8 @@ class SqliteConversationStore:
             with self._lock:
                 for term in terms[:6]:
                     like_rows.extend(self._conn.execute(
-                        """SELECT id AS thread_id, title, receipt, last_active, status, created_at
+                        """SELECT id AS thread_id, title, receipt, last_active, status, created_at,
+                                  topic_domains
                            FROM conversations
                            WHERE lower(title) LIKE ? AND status != 'merged' AND ephemeral = 0
                              AND (? IS NULL OR id != ?)
@@ -1681,9 +1765,20 @@ class SqliteConversationStore:
                     hits[r["thread_id"]] = self._receipt_hit(r, terms, real_fts=False)
         except Exception as e:
             logger.warning(f"receipt title search failed: {e}")
-        ranked = sorted(
-            hits.values(), key=lambda h: (-h["score"], -(h["last_active"] or 0.0))
-        )
+        # R4: domain-aware ordering — prefer same-domain hits, never refuse cross-domain.
+        domain_set = set(domains) if domains else set()
+        if domain_set:
+            for h in hits.values():
+                h_domains = set(h.get("topic_domains") or [])
+                h["scope_crossed"] = len(h_domains & domain_set) == 0
+            ranked = sorted(
+                hits.values(),
+                key=lambda h: (h.get("scope_crossed", False), -h["score"], -(h["last_active"] or 0.0)),
+            )
+        else:
+            ranked = sorted(
+                hits.values(), key=lambda h: (-h["score"], -(h["last_active"] or 0.0))
+            )
         return ranked[:limit]
 
     def search_snippets(self, thread_id: str, query: str, limit: int = 5) -> List[str]:
@@ -1842,6 +1937,368 @@ class SqliteConversationStore:
         except Exception as e:
             logger.warning(f"remove_somatic_block failed: {e}")
             return False
+
+    # ------------------------------------------------------------------
+    # terminal_blocks (Plan B: B1)
+    # ------------------------------------------------------------------
+
+    _TERMINAL_BLOCK_COLUMNS = (
+        "block_id", "session_id", "thread_id", "turn_id", "command",
+        "cwd", "owner", "interactive", "remote", "redacted",
+        "started_at", "ended_at", "exit_code", "output_head", "output_tail",
+    )
+
+    def insert_terminal_block(self, block: Dict[str, Any]) -> bool:
+        """Insert or replace a terminal block row."""
+        if self._conn is None:
+            return False
+        try:
+            with self._lock, self._conn:
+                cols = self._TERMINAL_BLOCK_COLUMNS
+                placeholders = ", ".join("?" for _ in cols)
+                values = tuple(block.get(c) for c in cols)
+                self._conn.execute(
+                    f"INSERT OR REPLACE INTO terminal_blocks ({', '.join(cols)}) "
+                    f"VALUES ({placeholders})",
+                    values,
+                )
+            return True
+        except Exception as e:
+            logger.warning(f"insert_terminal_block failed: {e}")
+            return False
+
+    _TERMINAL_BLOCK_UPDATABLE = frozenset(
+        {"ended_at", "exit_code", "output_head", "output_tail",
+         "interactive", "remote", "redacted"}
+    )
+
+    def update_terminal_block(self, block_id: str, **fields: Any) -> bool:
+        """Update one or more columns on a terminal block. Returns False if
+        the block does not exist or no fields were given. ``last_state`` is
+        special-cased: it updates the parent terminal_session's last_state
+        and is a no-op if the session has already ended."""
+        if self._conn is None:
+            return False
+        if not fields:
+            return False
+        # last_state is routed to the session row, not the block row.
+        last_state = fields.pop("last_state", None)
+        valid = {k: v for k, v in fields.items()
+                 if k in self._TERMINAL_BLOCK_UPDATABLE}
+        try:
+            with self._lock, self._conn:
+                updated = False
+                if valid:
+                    set_clause = ", ".join(f"{k} = ?" for k in valid)
+                    row = self._conn.execute(
+                        f"UPDATE terminal_blocks SET {set_clause} "
+                        f"WHERE block_id = ?",
+                        (*valid.values(), block_id),
+                    )
+                    updated = row.rowcount > 0
+                if last_state is not None:
+                    # Update the parent session's last_state unless it has
+                    # already ended (no-op if session ended).
+                    self._conn.execute(
+                        "UPDATE terminal_sessions SET last_state = ? "
+                        "WHERE session_id = (SELECT session_id FROM "
+                        "terminal_blocks WHERE block_id = ?) "
+                        "AND last_state NOT IN ('exited', 'killed', 'lost')",
+                        (last_state, block_id),
+                    )
+                    updated = True
+                return updated
+        except Exception as e:
+            logger.warning(f"update_terminal_block failed: {e}")
+            return False
+
+    def get_terminal_block(self, block_id: str) -> Optional[Dict[str, Any]]:
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT * FROM terminal_blocks WHERE block_id = ?",
+                    (block_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            return dict(row)
+        except Exception as e:
+            logger.warning(f"get_terminal_block failed: {e}")
+            return None
+
+    def list_terminal_blocks(
+        self,
+        *,
+        session_id: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """List terminal blocks, newest-first by started_at. At most one
+        filter is applied; if none, all blocks up to *limit*."""
+        if self._conn is None:
+            return []
+        try:
+            with self._lock:
+                where = ""
+                params: List[Any] = []
+                if session_id is not None:
+                    where = "WHERE session_id = ?"
+                    params.append(session_id)
+                elif thread_id is not None:
+                    where = "WHERE thread_id = ?"
+                    params.append(thread_id)
+                elif turn_id is not None:
+                    where = "WHERE turn_id = ?"
+                    params.append(turn_id)
+                params.append(limit)
+                rows = self._conn.execute(
+                    f"SELECT * FROM terminal_blocks {where} "
+                    f"ORDER BY started_at DESC LIMIT ?",
+                    params,
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"list_terminal_blocks failed: {e}")
+            return []
+
+    # ------------------------------------------------------------------
+    # terminal_sessions (Plan B: B1)
+    # ------------------------------------------------------------------
+
+    _TERMINAL_SESSION_COLUMNS = (
+        "session_id", "kind", "owner", "watched",
+        "spawned_at", "ended_at", "last_state",
+    )
+
+    def insert_terminal_session(self, session: Dict[str, Any]) -> bool:
+        """Insert or replace a terminal session row."""
+        if self._conn is None:
+            return False
+        try:
+            with self._lock, self._conn:
+                cols = self._TERMINAL_SESSION_COLUMNS
+                placeholders = ", ".join("?" for _ in cols)
+                values = tuple(session.get(c) for c in cols)
+                self._conn.execute(
+                    f"INSERT OR REPLACE INTO terminal_sessions ({', '.join(cols)}) "
+                    f"VALUES ({placeholders})",
+                    values,
+                )
+            return True
+        except Exception as e:
+            logger.warning(f"insert_terminal_session failed: {e}")
+            return False
+
+    def update_terminal_session(self, session_id: str, **fields: Any) -> bool:
+        """Update one or more columns on a terminal session. Returns False if
+        the session does not exist or no fields were given."""
+        if self._conn is None:
+            return False
+        if not fields:
+            return False
+        valid = {k: v for k, v in fields.items() if k in self._TERMINAL_SESSION_COLUMNS}
+        if not valid:
+            return False
+        try:
+            with self._lock, self._conn:
+                set_clause = ", ".join(f"{k} = ?" for k in valid)
+                row = self._conn.execute(
+                    f"UPDATE terminal_sessions SET {set_clause} "
+                    f"WHERE session_id = ?",
+                    (*valid.values(), session_id),
+                )
+                return row.rowcount > 0
+        except Exception as e:
+            logger.warning(f"update_terminal_session failed: {e}")
+            return False
+
+    def get_terminal_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT * FROM terminal_sessions WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            return dict(row)
+        except Exception as e:
+            logger.warning(f"get_terminal_session failed: {e}")
+            return None
+
+    def list_terminal_sessions(
+        self,
+        *,
+        kind: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """List terminal sessions, newest-first by spawned_at."""
+        if self._conn is None:
+            return []
+        try:
+            with self._lock:
+                if kind is not None:
+                    rows = self._conn.execute(
+                        "SELECT * FROM terminal_sessions WHERE kind = ? "
+                        "ORDER BY spawned_at DESC LIMIT ?",
+                        (kind, limit),
+                    ).fetchall()
+                else:
+                    rows = self._conn.execute(
+                        "SELECT * FROM terminal_sessions "
+                        "ORDER BY spawned_at DESC LIMIT ?",
+                        (limit,),
+                    ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"list_terminal_sessions failed: {e}")
+            return []
+
+    # ------------------------------------------------------------------
+    # open_loops (continuity R2-N2)
+    # ------------------------------------------------------------------
+
+    def add_open_loop(
+        self,
+        thread_id: str,
+        text: str,
+        *,
+        domain: Optional[str] = None,
+        source: Optional[str] = None,
+        created_at: Optional[float] = None,
+    ) -> Optional[int]:
+        """Record an open loop for a thread. Returns the row id, or None on failure."""
+        if self._conn is None:
+            return None
+        import time as _time
+        try:
+            with self._lock:
+                cur = self._conn.execute(
+                    "INSERT INTO open_loops (thread_id, text, domain, created_at, source) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (thread_id, text, domain, created_at or _time.time(), source),
+                )
+            self._conn.commit()
+            return cur.lastrowid
+        except Exception as e:
+            logger.warning(f"add_open_loop failed: {e}")
+            return None
+
+    def list_open_loops(
+        self,
+        thread_id: str,
+        *,
+        open_only: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """List open loops for a thread. By default, only unclosed loops."""
+        if self._conn is None:
+            return []
+        try:
+            with self._lock:
+                if open_only:
+                    rows = self._conn.execute(
+                        "SELECT * FROM open_loops WHERE thread_id = ? AND closed_at IS NULL "
+                        "ORDER BY created_at ASC",
+                        (thread_id,),
+                    ).fetchall()
+                else:
+                    rows = self._conn.execute(
+                        "SELECT * FROM open_loops WHERE thread_id = ? "
+                        "ORDER BY created_at ASC",
+                        (thread_id,),
+                    ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"list_open_loops failed: {e}")
+            return []
+
+    def close_open_loop(self, loop_id: int, *, closed_at: Optional[float] = None) -> bool:
+        """Close an open loop by setting closed_at. Returns True on success."""
+        if self._conn is None:
+            return False
+        import time as _time
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "UPDATE open_loops SET closed_at = ? WHERE id = ? AND closed_at IS NULL",
+                    (closed_at or _time.time(), loop_id),
+                )
+            self._conn.commit()
+            return True
+        except Exception as e:
+            logger.warning(f"close_open_loop failed: {e}")
+            return False
+
+    # ------------------------------------------------------------------
+    # Migration (Plan B: B21)
+    # ------------------------------------------------------------------
+
+    def migrate_terminal_block_ids_to_blocks(self) -> int:
+        """Migrate messages.terminal_block_ids from session ids to block ids.
+
+        For every message with non-empty terminal_block_ids:
+          for each session_id in the list, find terminal_blocks rows with
+          that session_id, collect their block_ids, and replace the
+          session_id with the block_ids.
+
+        Returns the number of messages updated. Idempotent (a session_id
+        that has no terminal_blocks rows is left as-is — it was a one-shot
+        that never persisted a block). Runs once at boot after schema
+        migration.
+        """
+        if self._conn is None:
+            return 0
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT id, terminal_block_ids FROM messages "
+                    "WHERE terminal_block_ids IS NOT NULL "
+                    "AND terminal_block_ids != '[]'"
+                ).fetchall()
+            updated = 0
+            for row in rows:
+                msg_id = row["id"]
+                try:
+                    ids = json.loads(row["terminal_block_ids"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not ids:
+                    continue
+                new_ids: List[str] = []
+                changed = False
+                for sid in ids:
+                    # Check if this id is already a block_id
+                    block = self.get_terminal_block(sid)
+                    if block is not None:
+                        new_ids.append(sid)
+                        continue
+                    # It's a session_id — find blocks for this session
+                    blocks = self.list_terminal_blocks(session_id=sid, limit=100)
+                    if blocks:
+                        new_ids.extend(b["block_id"] for b in blocks)
+                        changed = True
+                    else:
+                        # No blocks found — leave as-is (one-shot, never persisted)
+                        new_ids.append(sid)
+                if changed:
+                    with self._lock, self._conn:
+                        self._conn.execute(
+                            "UPDATE messages SET terminal_block_ids = ? "
+                            "WHERE id = ?",
+                            (json.dumps(new_ids), msg_id),
+                        )
+                    updated += 1
+            if updated:
+                logger.info(f"migrate_terminal_block_ids_to_blocks: updated {updated} messages")
+            return updated
+        except Exception as e:
+            logger.warning(f"migrate_terminal_block_ids_to_blocks failed: {e}")
+            return 0
 
     def close(self) -> None:
         if self._conn is not None:

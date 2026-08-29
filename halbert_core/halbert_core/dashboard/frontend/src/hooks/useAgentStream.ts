@@ -10,6 +10,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { apiUrl } from '@/lib/apiBase';
 import { terminalSessionStore } from './useTerminalSessions';
+import type { TerminalBlock } from './useTerminalSessions';
 import { announce } from '@/lib/announce';
 
 // -----------------------------------------------------------------------------
@@ -117,7 +118,7 @@ export interface AgentSession {
   /** Terminal sessions opened during this turn, oldest first (E1f). */
   terminalSessions?: string[];
   /** Subject the server put this turn in (thread_started). */
-  thread?: { threadId: string; title: string } | null;
+  thread?: { threadId: string; title: string; unread?: boolean } | null;
   /**
    * Earlier subject pulled into this turn (thread_recalled), one at most.
    * `lastTurnId` is that thread's most recent turn — where the chip jumps.
@@ -131,6 +132,12 @@ export interface AgentSession {
   } | null;
   /** Server turn id once the user row is stored (turn_persisted). */
   turnId?: string | null;
+  /**
+   * Task cards completed this turn (Plan C `task_completed`). Plan B defines
+   * the factory; the hook only mirrors them so the Tasks column can move a
+   * card to Finished.
+   */
+  tasks?: { block_id: string; owner: string; completed: boolean }[];
 }
 
 export interface StreamEvent {
@@ -252,6 +259,8 @@ export function applyTerminalEvent(event: StreamEvent): void {
         sandboxed: !!event.sandboxed,
         cwd: (event.cwd as string | undefined) ?? undefined,
         originSessionId: event.session_id,
+        blockId: (event.block_id as string | undefined) ?? undefined,
+        owner: (event.owner as string | undefined) ?? undefined,
       };
       // 'ws' means a real PTY the backend session manager owns — attach a
       // socket for full duplex. Otherwise the output rides this SSE stream.
@@ -269,6 +278,26 @@ export function applyTerminalEvent(event: StreamEvent): void {
       terminalSessionStore.complete(
         terminalId,
         typeof event.exit_code === 'number' ? event.exit_code : -1,
+      );
+      break;
+    case 'terminal_block': {
+      const block: TerminalBlock = {
+        block_id: (event.block_id as string) ?? '',
+        owner: (event.owner as string) ?? '',
+        status: 'running',
+        isTaskCard: !!event.promote,
+        label: (event.label as string | undefined) ?? undefined,
+      };
+      terminalSessionStore.addBlock(terminalId, block);
+      break;
+    }
+    case 'terminal_block_promote':
+      terminalSessionStore.promoteBlock(terminalId, (event.block_id as string) ?? '');
+      break;
+    case 'terminal_needs_input':
+      terminalSessionStore.setBlockNeedsAttention(
+        terminalId,
+        (event.block_id as string) ?? '',
       );
       break;
   }
@@ -319,6 +348,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       thread: null,
       recalled: null,
       turnId: null,
+      tasks: [],
     });
     sessionIdRef.current = sessionId;
   }, []);
@@ -327,7 +357,10 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     if (
       event.type === 'terminal_spawn' ||
       event.type === 'terminal_output' ||
-      event.type === 'terminal_complete'
+      event.type === 'terminal_complete' ||
+      event.type === 'terminal_block' ||
+      event.type === 'terminal_block_promote' ||
+      event.type === 'terminal_needs_input'
     ) {
       applyTerminalEvent(event);
     }
@@ -591,6 +624,33 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
         case 'terminal_complete':
           // Output and exit live in the terminal store, not in session state.
           return prev;
+
+        // Plan B: somatic blocks live in the terminal store (applyTerminalEvent
+        // above). The session only needs to know about promoted task cards so
+        // the conversation can render them inline.
+        case 'terminal_block':
+        case 'terminal_block_promote':
+        case 'terminal_needs_input':
+          return prev;
+
+        // Plan C: a task card finished. Plan B defines the factory; the hook
+        // mirrors it so the Tasks column can move the card to Finished, light
+        // the StatusLight, and mark the thread unread.
+        case 'task_completed': {
+          const blockId = (event.block_id as string) ?? '';
+          const owner = (event.owner as string) ?? '';
+          console.log('[AGENT] task_completed:', blockId, owner);
+          // Mark the block completed in the terminal store as well.
+          const tid = event.terminal_session_id as string | undefined;
+          if (tid) terminalSessionStore.completeBlock(tid, blockId);
+          return {
+            ...prev,
+            thread: prev.thread
+              ? { ...prev.thread, unread: true } as AgentSession['thread']
+              : prev.thread,
+            tasks: [...(prev.tasks ?? []), { block_id: blockId, owner, completed: true }],
+          };
+        }
 
         // D1c: subagent lifecycle event
         case 'subagent_event':

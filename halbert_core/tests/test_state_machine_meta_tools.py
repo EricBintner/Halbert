@@ -34,8 +34,8 @@ class _FakeThreadManager:
         self.calls.append(("new_thread", title, reason, from_thread_id))
         return "t-new"
 
-    def recall(self, query=None, thread_id=None, *, exclude_thread_id=None):
-        self.calls.append(("recall", query, thread_id, exclude_thread_id))
+    def recall(self, query=None, thread_id=None, *, exclude_thread_id=None, domains=None):
+        self.calls.append(("recall", query, thread_id, exclude_thread_id, domains))
         return list(self.recall_results)
 
     def resume_thread(self, thread_id, *, from_thread_id):
@@ -164,7 +164,7 @@ async def test_recall_injects_receipt_emits_thread_recalled_and_repeat_reflects(
     assert events[0].data["thread_id"] == "t-9" and events[0].data["mode"] == "tool"
     assert events[0].data["match_terms"] == ["samba", "share"]
     assert events[0].data["last_turn_id"] == "turn-b"   # newest row with a turn_id
-    assert tm.calls == [("recall", "samba share", None, "t-open")]
+    assert tm.calls == [("recall", "samba share", None, "t-open", None)]
     assert agent.ctx.retrieved_context[0]["source"] == "thread" and "testparm" in agent.ctx.retrieved_context[0]["content"]
     assert agent.ctx.recalled_threads[0]["thread_id"] == "t-9"
     assert agent.ctx.loop_count == 0 and agent.ctx.thread_switched is False

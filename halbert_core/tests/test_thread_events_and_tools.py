@@ -61,11 +61,11 @@ class TestStateContextThreadFields:
         b = StateContext(session_id="b", request_id="r", user_query="q")
         assert a.thread_id is None and a.continuity_hint == ""
         assert a.thread_switched is False and a.thread_manager is None
-        assert a.recalled_threads == [] and a.terminal_session_ids == []
+        assert a.recalled_threads == [] and a.terminal_block_ids == []
         assert a.turn_context is None
         a.recalled_threads.append({"thread_id": "t"})
-        a.terminal_session_ids.append("term-1")
-        assert b.recalled_threads == [] and b.terminal_session_ids == []
+        a.terminal_block_ids.append("term-1")
+        assert b.recalled_threads == [] and b.terminal_block_ids == []
 
 
 class TestMetaToolSchemas:

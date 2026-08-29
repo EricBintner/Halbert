@@ -75,7 +75,7 @@ class MacAppStoreScanner(BaseScanner):
             title="Mac App Store CLI Not Installed",
             description="Install 'mas' to see App Store apps in Halbert",
             severity=DiscoverySeverity.INFO,
-            details={
+            data={
                 'suggestion': "mas allows viewing App Store apps from terminal",
             },
             actions=[
@@ -83,11 +83,9 @@ class MacAppStoreScanner(BaseScanner):
                     id="install-mas",
                     label="Install mas",
                     command="brew install mas",
-                    dry_run=True,
                     requires_approval=True,
                 ),
             ],
-            tags=['package', 'appstore', 'mas', 'macos'],
         )
     
     def _scan_installed(self) -> List[Discovery]:
@@ -135,7 +133,7 @@ class MacAppStoreScanner(BaseScanner):
                 title=f"App Store: {len(apps)} Apps",
                 description=f"Installed: {', '.join(app_names)}{more}",
                 severity=DiscoverySeverity.INFO,
-                details={
+                data={
                     'count': len(apps),
                     'apps': apps,
                     'note': "App Store apps are managed by macOS, shown here for reference",
@@ -145,10 +143,8 @@ class MacAppStoreScanner(BaseScanner):
                         id="list-apps",
                         label="List All",
                         command="mas list",
-                        dry_run=True,
                     ),
                 ],
-                tags=['package', 'appstore', 'macos', 'apps'],
             ))
         
         return discoveries
@@ -186,7 +182,7 @@ class MacAppStoreScanner(BaseScanner):
                 title=f"App Store: {len(updates)} Updates",
                 description=f"Updates: {', '.join(update_names)}{more}",
                 severity=DiscoverySeverity.INFO,
-                details={
+                data={
                     'count': len(updates),
                     'updates': updates,
                     'note': "Updates can be installed via App Store app or 'mas upgrade'",
@@ -196,16 +192,13 @@ class MacAppStoreScanner(BaseScanner):
                         id="show-updates",
                         label="Show Updates",
                         command="mas outdated",
-                        dry_run=True,
                     ),
                     DiscoveryAction(
                         id="open-appstore",
                         label="Open App Store",
                         command="open -a 'App Store'",
-                        dry_run=True,
                     ),
                 ],
-                tags=['package', 'appstore', 'updates', 'macos'],
             ))
         
         return discoveries
@@ -231,16 +224,14 @@ class MacAppStoreScanner(BaseScanner):
                     title="App Store: Not Signed In",
                     description="Sign in to App Store to manage purchases",
                     severity=DiscoverySeverity.INFO,
-                    details={},
+                    data={},
                     actions=[
                         DiscoveryAction(
                             id="open-appstore",
                             label="Open App Store",
                             command="open -a 'App Store'",
-                            dry_run=True,
                         ),
                     ],
-                    tags=['package', 'appstore', 'account', 'macos'],
                 ))
         
         return discoveries

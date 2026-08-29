@@ -110,6 +110,32 @@ class SecurityConfig:
 
 
 @dataclass
+class SensesVisionConfig:
+    """Persona-level vision autonomy settings.
+
+    The system-level enable/disable gate lives in vision_config.yml
+    (is_screen_capture_enabled). These fields control what the being
+    is *allowed to do proactively* with vision, separate from whether
+    the hardware is enabled at all.
+    """
+    enabled: bool = False  # persona-level consent for proactive vision
+    proactive_monitoring: bool = False  # background VisualWatcher
+    capture_on_intent: bool = True  # auto-capture in PLANNING when visual intent detected
+    capture_on_error: bool = False  # auto-capture on tool failure (opt-in)
+    interval_seconds: int = 60  # VisualWatcher cadence when proactive_monitoring=True
+    error_patterns: List[str] = field(default_factory=lambda: [
+        "error", "failed", "panic", "warning", "exception",
+        "connection refused", "access denied", "not found",
+    ])
+
+
+@dataclass
+class SensesConfig:
+    """Sensory autonomy settings for the being."""
+    vision: SensesVisionConfig = field(default_factory=SensesVisionConfig)
+
+
+@dataclass
 class BeingConfig:
     """Configuration for how the being behaves and communicates."""
 
@@ -138,8 +164,25 @@ class BeingConfig:
     model: Optional[str] = None  # per-persona model override (shadows chat_model when set)
     model_endpoint_id: Optional[str] = None  # saved-endpoint id for the persona model
 
+    # --- Senses (vision autonomy) ---
+    senses: SensesConfig = field(default_factory=SensesConfig)
+
     # --- Security (MCP trust boundary) ---
     security: SecurityConfig = field(default_factory=SecurityConfig)
+
+    def __post_init__(self) -> None:
+        """Coerce nested dict senses into SensesConfig if needed."""
+        if isinstance(self.senses, dict):
+            vision_data = self.senses.get("vision", {})
+            if isinstance(vision_data, dict):
+                self.senses = SensesConfig(
+                    vision=SensesVisionConfig(**{
+                        k: v for k, v in vision_data.items()
+                        if k in SensesVisionConfig.__dataclass_fields__
+                    })
+                )
+            else:
+                self.senses = SensesConfig()
 
     def validate(self) -> None:
         """Validate the config. Raises ValueError on invalid values."""
@@ -177,6 +220,12 @@ class BeingConfig:
                 f"Invalid voice_presentation '{self.voice_presentation}'. "
                 f"Must be one of: {VALID_VOICE_PRESENTATIONS}"
             )
+        # Senses validation
+        vision = self.senses.vision
+        if vision.interval_seconds < 10:
+            raise ValueError(
+                f"senses.vision.interval_seconds must be >= 10, got {vision.interval_seconds}"
+            )
         self.security.validate()
 
     def to_dict(self) -> Dict[str, Any]:
@@ -185,6 +234,20 @@ class BeingConfig:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "BeingConfig":
         known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        # Unpack nested SensesConfig — from_dict only filters top-level keys,
+        # so nested dataclasses need explicit construction.
+        if "senses" in known and isinstance(known["senses"], dict):
+            senses_data = known["senses"]
+            vision_data = senses_data.get("vision", {})
+            if isinstance(vision_data, dict):
+                known["senses"] = SensesConfig(
+                    vision=SensesVisionConfig(**{
+                        k: v for k, v in vision_data.items()
+                        if k in SensesVisionConfig.__dataclass_fields__
+                    })
+                )
+            else:
+                known["senses"] = SensesConfig()
         # Handle nested security config — guard against null / missing
         if "security" in known:
             if isinstance(known["security"], dict):

@@ -120,7 +120,7 @@ def _seed_turn(tm, text, reply, session_id="seed"):
     turn = tm.begin_turn(text, analyze_message(text), session_id)
     tm.end_turn(
         turn, assistant_text=reply, blocks=[],
-        terminal_session_ids=[], diff_proposals=[],
+        terminal_block_ids=[], diff_proposals=[],
     )
     return turn
 

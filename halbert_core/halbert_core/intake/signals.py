@@ -168,6 +168,25 @@ _IMAGE_EXT_RE = re.compile(
     r"\b\w+\.(png|jpe?g|gif|webp|svg|bmp|tiff?|heic|avif)\b", re.IGNORECASE
 )
 
+# Visual intent — the user is asking Halbert to look at the screen, without
+# having attached an image. Phrases like "what's on my screen" or "what does
+# the error dialog say" signal that the turn needs a screen capture before
+# the LLM can plan effectively. Anchored on possessive/demonstrative words
+# to avoid false positives like "screening process" or "screenshot tool".
+_VISUAL_INTENT_RE = re.compile(
+    r"\b(?:"
+    r"on (?:my|the) screen"
+    r"|look at (?:my|this|the) (?:screen|camera|webcam|window|display|error|dialog|popup)"
+    r"|what(?:'s| is|s) on (?:my|the) screen"
+    r"|what do you see"
+    r"|see (?:this|the) (?:error|dialog|window|message|popup|notification)"
+    r"|the (?:error|dialog|popup|notification)(?:\s+\w+)? says"
+    r"|what does (?:my|the) screen (?:show|say)"
+    r"|what(?:'s| is) on (?:my|the) display"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _COMMAND_VERBS = frozenset(
     {"show", "list", "check", "run", "install", "configure", "enable",
      "disable", "restart", "stop", "start", "update", "remove", "create",
@@ -198,6 +217,7 @@ class MessageSignals:
     has_code_blocks: bool = False
     has_file_paths: bool = False
     has_images: bool = False
+    has_vision_request: bool = False  # user asks to look at the screen (no attached image)
     # Thread cues (spec §4.2 / §6)
     entities: Set[str] = field(default_factory=set)
     past_reference: bool = False
@@ -357,6 +377,9 @@ def analyze_message(message: str) -> MessageSignals:
         or bool(_IMAGE_HTML_RE.search(text))
         or bool(_IMAGE_EXT_RE.search(text))
     )
+
+    # ── Visual intent (no attached image, but user asks to look) ─
+    signals.has_vision_request = bool(_VISUAL_INTENT_RE.search(text))
 
     # ── Question detection ───────────────────────────────────────
     signals.is_question = bool(_QUESTION_RE.search(text))
