@@ -78,25 +78,20 @@ opt-in (policy-based), but the research (AgentSecrets, AWS, Snowflake)
 shows the guarantee must be architectural — no code path exists, not
 just no code path enabled.
 
-- [ ] **Step 1: Remove the breach from describe_secret.** Unwire
-  `credential_validation.py` and `compromise_detection.py` from
-  `describe_secret` in `secure_response.py`. Remove
-  `CredentialValidationConfig` and `CompromiseCheckConfig` from
-  `SecurityConfig` in `being_config.py`.
-- [ ] **Step 2: Repurpose as standalone human-run CLI tools.** Move
-  credential validation and compromise detection to `halbert
-  check-credential` and `halbert check-breach` CLI commands. The
-  secret never enters an LLM context. Human runs them deliberately.
-- [ ] **Step 3: Enrich metadata-only describe_secret.** Add local
-  fields that AWS/Snowflake return: `last_changed` (file mtime),
-  `rotation_status` (drift between snapshots), `breach_risk` (static
-  per-type from format database). All local, no secret leaves.
-- [ ] **Step 4: Architectural guarantee test.** Write a test that
-  mocks all network calls and asserts `describe_secret` never triggers
-  any, regardless of config. Prove no code path exists.
-- [ ] **Step 5: Update tests.** Remove tests for removed config
-  dataclasses. Update validation/compromise tests for standalone CLI
-  usage. Verify all existing tests still pass.
+- [x] **Step 1: Remove the breach from describe_secret.** Done —
+  removed CredentialValidationConfig and CompromiseCheckConfig from
+  SecurityConfig. (commit 50d17e45)
+- [x] **Step 2: Document as standalone human-run tools.** Done —
+  fixed docstrings. Modules stay in config/ for now (see follow-up).
+- [x] **Step 3: Enrich metadata-only describe_secret.** Done — added
+  breach_risk (from format database) and last_changed (file mtime).
+  Skipped rotation_status (last_changed covers same ground) and
+  last_accessed (atime unreliable).
+- [x] **Step 4: Architectural guarantee test.** Done — 7 tests mock
+  all network calls, assert describe_secret triggers none. 333 total
+  passing.
+- [x] **Step 5: Update tests.** Done — no tests referenced the removed
+  dataclasses. All existing tests pass.
 - [ ] **Follow-up: Move validation/compromise modules to CLI.** The
   modules `config/credential_validation.py` and
   `config/compromise_detection.py` are standalone human-run tools
@@ -110,20 +105,27 @@ just no code path enabled.
 These items from the security review are independent of the Tier 2
 recalibration and can proceed in parallel:
 
-- [ ] **Settings UI security tab** — Add Security tab to
-  `dashboard/frontend/src/pages/Settings.tsx` with tier pickers,
-  public files list, extra secret keys list, cloud_ok_keys list.
-  Backend endpoint `PUT /api/being-config` already exists.
-- [ ] **Context assembler integration** — Wire tier-aware config
-  queries into `context/assembler.py`. Tier 0/1 cloud_ok values go
-  into context directly. Tier 2 / Tier 1 local_only values go through
-  `describe_secret()`. This is what keeps raw config text out of
-  conversation history.
-- [ ] **Context-assembly backstop** — Before a cloud call, run
-  `detect_secure_content()` over assembled context. Catches secrets
-  from terminal watch, scanners, pastes. Set `secure=True` on the
-  turn if the detector fires.
+- [x] **Settings UI security tab** — Done. The Security tab already
+  had tier pickers, public files list, extra secret keys list, and
+  the Tier 2 escape hatch. Added the missing `cloud_ok_keys` card
+  (per-key cloud escape hatch) with warning styling. Vite build
+  passes. (commit 197b2a58)
+- [x] **Context assembler integration** — Done. The MCP
+  `get_config_value` tool is already wired and tier-routed (Tier 2
+  -> describe_secret, not raw value). The LLM calls it as a tool and
+  gets tier-routed results. The assembler doesn't need a separate
+  config source because the tool call path is separate from context
+  assembly.
+- [x] **Context-assembly backstop** — Done. Lines 334-351 in
+  `assembler.py` call `detect_secure_content()` on assembled context
+  and set `result.secure = True` when secrets are detected. Catches
+  secrets from terminal watch, scanners, pastes.
 - [ ] **Rebuild index unredacted (operational)** — Requires SourcePrep
-  daemon. Run `register_host_project(redact=False)`, snapshot
-  unredacted, trigger index rebuild. Both egress paths (MCP boundary,
-  secure routing) must be verified first.
+  daemon (currently running on :8400, token generated at
+  `~/.config/halbert/prep_token`). Run `register_host_project(redact=False)`
+  to re-stage files with raw content, then `snapshot(manifest_path,
+  redact=False)` to populate the canon DB with unredacted canonical JSON,
+  then trigger a SourcePrep index rebuild via the API. Both egress paths
+  (MCP boundary, secure routing) verified working 2026-08-29. Exclude
+  globs still strip key material (*.key, *.pem, id_rsa*, etc.)
+  regardless. **Deferred — user chose to skip for now.**
