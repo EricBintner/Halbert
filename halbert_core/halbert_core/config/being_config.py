@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 VALID_VOICES = {"first_person", "the_computer", "hybrid"}
 VALID_PROACTIVITY = {"off", "quiet", "balanced", "assertive"}
 VALID_VOICE_PRESENTATIONS = {"not_defined", "male", "female"}
+VALID_VARIANTS = {"sysadmin", "home"}
+VALID_AUTONOMY_LEVELS = {"observe", "suggest", "act", "orchestrate"}
 
 
 @dataclass
@@ -87,6 +89,24 @@ class BeingConfig:
     # --- Senses (vision autonomy) ---
     senses: SensesConfig = field(default_factory=SensesConfig)
 
+    # --- Home identity & multi-instance ---
+    # Variant gates which startup services launch (sysadmin vs home).
+    # scene_context overrides platform-derived cognition framing.
+    # persona_id_override replaces hardcoded "halbert" in cognition_wiring.
+    variant: str = "sysadmin"  # sysadmin | home
+    scene_context: str = ""  # e.g. "smart home automation"
+    persona_id_override: str = ""  # e.g. "home"
+
+    # --- Home autonomy ---
+    # Controls whether Halbert can take physical action or only observe.
+    # observe: perceive and report only. No device commands.
+    # suggest: create proposals but wait for approval.
+    # act: execute Level 0/1 governance actions (lights, blinds, thermostat).
+    # orchestrate: coordinate multi-device sequences, Level 2 with cancel window.
+    autonomy_level: str = "observe"
+    # Per-domain overrides keyed by HA domain (e.g. {"lock": "suggest", "climate": "act"})
+    autonomy_overrides: Dict[str, str] = field(default_factory=dict)
+
     def __post_init__(self) -> None:
         """Coerce nested dict senses into SensesConfig if needed."""
         if isinstance(self.senses, dict):
@@ -143,6 +163,22 @@ class BeingConfig:
             raise ValueError(
                 f"senses.vision.interval_seconds must be >= 10, got {vision.interval_seconds}"
             )
+        # Home identity validation
+        if self.variant not in VALID_VARIANTS:
+            raise ValueError(
+                f"Invalid variant '{self.variant}'. Must be one of: {VALID_VARIANTS}"
+            )
+        if self.autonomy_level not in VALID_AUTONOMY_LEVELS:
+            raise ValueError(
+                f"Invalid autonomy_level '{self.autonomy_level}'. "
+                f"Must be one of: {VALID_AUTONOMY_LEVELS}"
+            )
+        for domain, level in self.autonomy_overrides.items():
+            if level not in VALID_AUTONOMY_LEVELS:
+                raise ValueError(
+                    f"Invalid autonomy override '{level}' for domain '{domain}'. "
+                    f"Must be one of: {VALID_AUTONOMY_LEVELS}"
+                )
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
