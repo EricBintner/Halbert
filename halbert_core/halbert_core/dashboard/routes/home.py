@@ -218,3 +218,24 @@ async def proactive_speak_api(message: str = Query(..., description="Message to 
     from ...integrations.wyoming_agent import proactive_speak
     success = await proactive_speak(text=message, area_id=area_id)
     return {"success": success, "message": message, "area_id": area_id}
+
+
+# --- Phase 6: HACS Integration ---
+
+@router.get("/home/hacs/info")
+async def get_hacs_info():
+    """Return HACS integration info for the Home panel."""
+    from ...integrations.wyoming_agent import WyomingConfig
+    cfg = WyomingConfig.from_env()
+    return {
+        "integration_name": "halbert",
+        "integration_version": "0.1.0",
+        "wyoming_host": cfg.host,
+        "wyoming_port": cfg.port,
+        "hacs_repo": "https://github.com/EricBintner/Halbert",
+        "install_instructions": (
+            "Add this repository to HACS as an Integration, install 'Halbert', "
+            "then add it via Settings → Devices & Services. Configure the Wyoming "
+            f"agent host:port (default: localhost:{cfg.port})."
+        ),
+    }
