@@ -228,4 +228,6 @@ class ComputeBroker:
             "queue_depth": self._queue.qsize(),
             "running": len(self._running),
             "preemption_enabled": self.enable_preemption,
+            "reserved_priority1_slots": self.reserved_priority1_slots,
+            "voice_queue_timeout_s": self.VOICE_QUEUE_TIMEOUT_S,
         }

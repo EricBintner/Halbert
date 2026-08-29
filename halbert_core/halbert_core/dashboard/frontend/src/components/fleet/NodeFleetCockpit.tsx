@@ -31,6 +31,7 @@
  *   with a "Pair a Satellite" CTA that opens PeerPairingModal
  */
 
+import * as React from 'react'
 import { useState, useEffect, useCallback } from 'react'
 import {
   Cpu, MemoryStick, Thermometer, Clock,

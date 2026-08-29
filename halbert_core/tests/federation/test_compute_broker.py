@@ -85,6 +85,8 @@ class TestComputeBroker:
         assert stats["preemption_enabled"] is True
         assert "queue_depth" in stats
         assert "running" in stats
+        assert stats["reserved_priority1_slots"] == 1
+        assert stats["voice_queue_timeout_s"] == 1.5
 
     @pytest.mark.skip(reason="TODO(federation-9.8) — requires async broker loop implementation")
     def test_concurrent_requests_respect_semaphore(self):
