@@ -13,7 +13,7 @@
  * Design spec: .handoff/SECURITY-TAB-VISUAL-DESIGN-AND-HANDOFF-2026-08-29.md
  * Token reference: shared-tokens/tokens.css (via tailwind.config.js)
  */
-import { useState, useRef, useEffect, type KeyboardEvent } from 'react'
+import { useState, useEffect, type KeyboardEvent } from 'react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -50,6 +50,7 @@ export interface TelemetryCounts {
   secret_tier: string
   operational_tier: string
   cloud_ok_keys_count: number
+  secret_tier_expiry?: string | null
 }
 
 interface TelemetryBarProps {
@@ -213,7 +214,7 @@ export function Tier2StateCard({
           {locked ? (
             <Lock className="h-5 w-5 text-status-nominal" />
           ) : (
-            <Unlock className="h-5 w-5 text-status-critical animate-pulse" />
+            <Unlock className="h-5 w-5 text-status-critical motion-safe:animate-pulse" />
           )}
           <div>
             <h4 className="font-semibold text-foreground">Tier 2 — Secrets &amp; Credentials</h4>
@@ -227,7 +228,7 @@ export function Tier2StateCard({
             'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-mono text-xs font-semibold border',
             locked
               ? 'bg-status-nominal-bg text-status-nominal border-status-nominal-line'
-              : 'bg-status-critical text-white border-status-critical animate-pulse',
+              : 'bg-status-critical text-white border-status-critical motion-safe:animate-pulse',
           )}
         >
           {locked ? 'LOCKED (LOCAL ONLY)' : 'SECRETS EXPOSED'}
@@ -312,7 +313,6 @@ export function EscapeHatchConfirmationModal({
 }: EscapeHatchModalProps) {
   const [phrase, setPhrase] = useState('')
   const [ttl, setTTL] = useState<TTLChoice>('1h')
-  const confirmBtnRef = useRef<HTMLButtonElement>(null)
 
   // Reset state when modal opens/closes
   useEffect(() => {
@@ -413,11 +413,10 @@ export function EscapeHatchConfirmationModal({
 
         {/* Buttons */}
         <div className="flex justify-end gap-2 mt-6">
-          <Button variant="outline" onClick={onClose} autoFocus>
+          <Button variant="outline" onClick={onClose}>
             Cancel &amp; Keep Locked
           </Button>
           <Button
-            ref={confirmBtnRef}
             disabled={!phraseValid || disabled}
             onClick={() => onConfirm(ttl)}
             className={cn(

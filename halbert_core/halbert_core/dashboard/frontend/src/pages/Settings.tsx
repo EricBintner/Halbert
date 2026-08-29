@@ -442,6 +442,7 @@ function SecuritySettings() {
   const [config, setConfig] = useState<any>(null)
   const [telemetry, setTelemetry] = useState<TelemetryCounts | null>(null)
   const [loading, setLoading] = useState(true)
+  const [telemetryLoading, setTelemetryLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [showEscapeModal, setShowEscapeModal] = useState(false)
@@ -466,14 +467,19 @@ function SecuritySettings() {
   }
 
   const loadTelemetry = async () => {
+    setTelemetryLoading(true)
     try {
       const resp = await fetch(`${API_BASE}/settings/security/telemetry`)
       if (resp.ok) {
         const data = await resp.json()
         setTelemetry(data)
+      } else {
+        console.error('Telemetry endpoint returned', resp.status)
       }
     } catch (e) {
       console.error('Failed to load security telemetry:', e)
+    } finally {
+      setTelemetryLoading(false)
     }
   }
 
@@ -490,8 +496,8 @@ function SecuritySettings() {
         setConfig(data.config)
         setToast('Saved')
         setTimeout(() => setToast(null), 2000)
-        // Refresh telemetry after config changes
-        loadTelemetry()
+        // Refresh telemetry after config changes — awaited to avoid races
+        await loadTelemetry()
       } else {
         const err = await resp.json()
         setToast(`Error: ${err.detail || 'Failed to save'}`)
@@ -532,7 +538,7 @@ function SecuritySettings() {
       )}
 
       {/* Telemetry Scope Instrument */}
-      <TrustBoundaryTelemetryBar counts={telemetry} loading={loading} />
+      <TrustBoundaryTelemetryBar counts={telemetry} loading={telemetryLoading} />
 
       {/* Tier 1 — Operational Values */}
       <Card>
@@ -560,7 +566,7 @@ function SecuritySettings() {
       <Tier2StateCard
         locked={locked}
         onUnlock={() => setShowEscapeModal(true)}
-        onRelock={() => saveSecurity({ secret_tier: 'local_only' })}
+        onRelock={() => saveSecurity({ secret_tier: 'local_only', secret_tier_expiry: null, volatile_unlock: false })}
         disabled={saving}
         protectedCount={telemetry?.tier_2}
       />
@@ -656,8 +662,21 @@ function SecuritySettings() {
       <EscapeHatchConfirmationModal
         open={showEscapeModal}
         onClose={() => setShowEscapeModal(false)}
-        onConfirm={(_ttl) => {
-          saveSecurity({ secret_tier: 'cloud_ok_acknowledged' })
+        onConfirm={(ttl) => {
+          const updates: Record<string, any> = { secret_tier: 'cloud_ok_acknowledged' }
+          if (ttl === '1h') {
+            const expiry = new Date(Date.now() + 3600_000)
+            updates.secret_tier_expiry = expiry.toISOString()
+            updates.volatile_unlock = false
+          } else if (ttl === 'restart') {
+            updates.volatile_unlock = true
+            updates.secret_tier_expiry = null
+          } else {
+            // permanent
+            updates.secret_tier_expiry = null
+            updates.volatile_unlock = false
+          }
+          saveSecurity(updates)
           setShowEscapeModal(false)
         }}
         disabled={saving}

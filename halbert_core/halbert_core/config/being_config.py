@@ -64,6 +64,16 @@ class SecurityConfig:
     # a user expose database passwords (which they trust ZDR with) while
     # keeping SSH private keys and API tokens local-only.
     cloud_ok_keys: List[str] = field(default_factory=list)
+    # TTL for the Tier 2 escape hatch. When secret_tier is
+    # cloud_ok_acknowledged, secret_tier_expiry is an ISO 8601 timestamp
+    # after which the tier auto-relocks to local_only. None means
+    # permanent (no auto-relock). Checked at load time and at query time.
+    secret_tier_expiry: Optional[str] = None
+    # Volatile unlock: if True, the secret_tier is reset to local_only
+    # on the next load_being_config call (i.e. on process restart).
+    # This implements the "until restart" TTL option without requiring
+    # a background timer. Not persisted to YAML by save_being_config.
+    volatile_unlock: bool = False
 
     def validate(self) -> None:
         if self.operational_tier not in VALID_OPERATIONAL_TIERS:
@@ -76,6 +86,19 @@ class SecurityConfig:
                 f"Invalid secret_tier '{self.secret_tier}'. "
                 f"Must be one of: {VALID_SECRET_TIERS}"
             )
+        # Type-check list fields to prevent downstream crashes
+        for field_name in ("public_files", "extra_secret_keys", "cloud_ok_keys"):
+            val = getattr(self, field_name)
+            if not isinstance(val, list):
+                raise ValueError(
+                    f"security.{field_name} must be a list, got {type(val).__name__}"
+                )
+            for item in val:
+                if not isinstance(item, str):
+                    raise ValueError(
+                        f"security.{field_name} must be a list of strings, "
+                        f"got {type(item).__name__}"
+                    )
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -162,9 +185,13 @@ class BeingConfig:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "BeingConfig":
         known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
-        # Handle nested security config
-        if "security" in known and isinstance(known["security"], dict):
-            known["security"] = SecurityConfig.from_dict(known["security"])
+        # Handle nested security config — guard against null / missing
+        if "security" in known:
+            if isinstance(known["security"], dict):
+                known["security"] = SecurityConfig.from_dict(known["security"])
+            elif known["security"] is None:
+                # security: null in YAML — use defaults instead of crashing
+                known["security"] = SecurityConfig()
         return cls(**known)
 
 
@@ -238,6 +265,29 @@ def load_being_config(path: Optional[str] = None) -> BeingConfig:
         raise ValueError(f"Cannot read {config_path}: {e}")
 
     config = BeingConfig.from_dict(data)
+
+    # Volatile unlock: reset to local_only on load (process restart).
+    # The volatile_unlock flag was persisted so the UI could show the
+    # state, but on reload it means "this was a temporary unlock".
+    if config.security.volatile_unlock:
+        logger.info("Volatile unlock detected on load — relocking secrets to local_only")
+        config.security.secret_tier = "local_only"
+        config.security.volatile_unlock = False
+        config.security.secret_tier_expiry = None
+
+    # Expiry check: if the escape hatch has expired, relock.
+    if (config.security.secret_tier == "cloud_ok_acknowledged"
+            and config.security.secret_tier_expiry):
+        import datetime
+        try:
+            expiry = datetime.datetime.fromisoformat(config.security.secret_tier_expiry)
+            if datetime.datetime.now(expiry.tzinfo) > expiry:
+                logger.info("Secret tier expiry passed — relocking to local_only")
+                config.security.secret_tier = "local_only"
+                config.security.secret_tier_expiry = None
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid secret_tier_expiry: {config.security.secret_tier_expiry}")
+
     config.validate()
     logger.info(f"Loaded being config from {config_path} (voice={config.voice})")
     return config
@@ -256,6 +306,13 @@ def save_being_config(config: BeingConfig, path: Optional[str] = None) -> None:
     data = config.to_dict()
     # Remove None values for cleaner YAML
     clean = {k: v for k, v in data.items() if v is not None and v != ""}
+    # Strip None-valued fields from the nested security block for cleaner YAML.
+    # volatile_unlock IS persisted — it is the marker that tells the next
+    # load_being_config call to relock (implementing "until restart" TTL).
+    if "security" in clean and isinstance(clean["security"], dict):
+        clean["security"] = {
+            k: v for k, v in clean["security"].items() if v is not None
+        }
 
     try:
         with open(config_path, "w", encoding="utf-8") as f:

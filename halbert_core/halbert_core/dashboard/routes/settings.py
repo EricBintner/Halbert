@@ -3077,8 +3077,10 @@ async def get_security_telemetry() -> Dict[str, Any]:
     Iterates all canon JSON records, classifies each key/value pair using
     the sensitivity classifier with the user's current security config
     (public_files, extra_secret_keys), and returns counts per tier.
+    Recursively walks nested dict/list structures in tree and sections.
     """
     try:
+        import datetime
         import json
         import os
         from ...config.being_config import load_being_config
@@ -3087,8 +3089,34 @@ async def get_security_telemetry() -> Dict[str, Any]:
 
         cfg = load_being_config()
         sec = cfg.security
-        public_files = set(sec.public_files)
-        extra_secret_keys = sec.extra_secret_keys
+        public_files = set(sec.public_files) if sec.public_files else set()
+        extra_secret_keys = sec.extra_secret_keys or []
+
+        # Check if the escape hatch has expired at runtime
+        effective_secret_tier = sec.secret_tier
+        if effective_secret_tier == "cloud_ok_acknowledged" and sec.secret_tier_expiry:
+            try:
+                expiry = datetime.datetime.fromisoformat(sec.secret_tier_expiry)
+                if datetime.datetime.now(expiry.tzinfo) > expiry:
+                    effective_secret_tier = "local_only"
+            except (ValueError, TypeError):
+                pass
+
+        def _flatten_pairs(obj, prefix=""):
+            """Recursively extract (key, value) leaf pairs from nested structures."""
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    full_key = f"{prefix}.{k}" if prefix else k
+                    if isinstance(v, (dict, list)):
+                        yield from _flatten_pairs(v, full_key)
+                    else:
+                        yield (full_key, v)
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    if isinstance(item, (dict, list)):
+                        yield from _flatten_pairs(item, prefix)
+                    else:
+                        yield (prefix, item)
 
         counts = {"tier_0": 0, "tier_1": 0, "tier_2": 0}
         total = 0
@@ -3104,21 +3132,15 @@ async def get_security_telemetry() -> Dict[str, Any]:
                 except Exception:
                     continue
                 file_path = rec.get("path", "")
-                kind = rec.get("kind", "")
 
-                # Extract key/value pairs from the canon record
+                # Extract key/value pairs from the canon record, recursively
                 pairs: list[tuple[str, any]] = []
                 if "sections" in rec and isinstance(rec["sections"], dict):
-                    for sec_name, kv in rec["sections"].items():
+                    for _sec_name, kv in rec["sections"].items():
                         if isinstance(kv, dict):
-                            for k, v in kv.items():
-                                pairs.append((k, v))
-                elif "tree" in rec and isinstance(rec["tree"], dict):
-                    for k, v in rec["tree"].items():
-                        pairs.append((k, v))
-                else:
-                    # text file — no key/value pairs to classify
-                    pass
+                            pairs.extend(_flatten_pairs(kv))
+                if "tree" in rec and isinstance(rec["tree"], dict):
+                    pairs.extend(_flatten_pairs(rec["tree"]))
 
                 for key, value in pairs:
                     tier = classify_sensitivity(
@@ -3138,9 +3160,10 @@ async def get_security_telemetry() -> Dict[str, Any]:
             "status": "ok",
             "counts": counts,
             "total": total,
-            "secret_tier": sec.secret_tier,
+            "secret_tier": effective_secret_tier,
             "operational_tier": sec.operational_tier,
-            "cloud_ok_keys_count": len(sec.cloud_ok_keys),
+            "cloud_ok_keys_count": len(sec.cloud_ok_keys or []),
+            "secret_tier_expiry": sec.secret_tier_expiry,
         }
     except Exception as e:
         logger.error(f"Failed to get security telemetry: {e}")
