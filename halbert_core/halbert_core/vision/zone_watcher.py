@@ -57,17 +57,35 @@ class Zone:
         return (self.x, self.y, self.x + self.width, self.y + self.height)
 
     def crop(self, frame: bytes) -> bytes:
-        """Crop a JPEG frame to this zone. Returns JPEG bytes."""
+        """Crop a JPEG frame to this zone. Returns JPEG bytes.
+
+        Clamps the crop region to the frame bounds. Raises ValueError
+        if the zone is entirely outside the frame or the crop is empty.
+        """
         import cv2
         import numpy as np
         img_array = np.frombuffer(frame, dtype=np.uint8)
         img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         if img is None:
             raise ValueError("Failed to decode frame")
-        x2 = min(self.x + self.width, img.shape[1])
+
+        h, w = img.shape[:2]
+        x1 = max(0, self.x)
+        y1 = max(0, self.y)
+        x2 = min(self.x + self.width, w)
         y2 = min(self.y + self.height, img.shape[0])
-        cropped = img[self.y:y2, self.x:x2]
-        _, buf = cv2.imencode(".jpg", cropped)
+
+        if x2 <= x1 or y2 <= y1:
+            raise ValueError(
+                f"Zone '{self.name}' is entirely outside the frame "
+                f"(zone=({self.x},{self.y},{self.width},{self.height}), "
+                f"frame=({w}x{h}))"
+            )
+
+        cropped = img[y1:y2, x1:x2]
+        success, buf = cv2.imencode(".jpg", cropped)
+        if not success or buf is None:
+            raise ValueError("Failed to encode cropped frame")
         return buf.tobytes()
 
 
@@ -121,6 +139,7 @@ class ZoneWatcher:
         self._last_event_time: Dict[str, float] = {}
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()  # protects subtractors and _last_event_time
 
     def start(self) -> None:
         """Start the zone monitoring loop."""
@@ -166,26 +185,27 @@ class ZoneWatcher:
             self._check_zone(name, zone, frame)
 
     def _check_zone(self, name: str, zone: Zone, frame: bytes) -> None:
-        """Check a single zone for motion."""
+        """Check a single zone for motion. Thread-safe via _lock."""
         try:
             cropped = zone.crop(frame)
         except Exception as e:
             logger.debug(f"ZoneWatcher: crop failed for {name}: {e}")
             return
 
-        sub = self._subtractors[name]
-        result = sub.process(cropped)
+        with self._lock:
+            sub = self._subtractors[name]
+            result = sub.process(cropped)
 
-        if not result.has_motion:
-            return
+            if not result.has_motion:
+                return
 
-        # Cooldown check
-        now = time.time()
-        last = self._last_event_time.get(name, 0)
-        if now - last < zone.cooldown_seconds:
-            return
+            # Cooldown check
+            now = time.time()
+            last = self._last_event_time.get(name, 0)
+            if now - last < zone.cooldown_seconds:
+                return
 
-        self._last_event_time[name] = now
+            self._last_event_time[name] = now
 
         event = ZoneEvent(
             zone_name=name,
@@ -208,7 +228,13 @@ class ZoneWatcher:
     def check_once(self) -> List[ZoneEvent]:
         """Run a single check of all zones and return any events.
 
-        Useful for testing without the threading loop.
+        This is a **peek** — it does NOT invoke the on_event callback
+        and does NOT apply cooldown. It's useful for testing and
+        one-shot queries. For continuous monitoring with callbacks,
+        use start() instead.
+
+        Thread-safe: acquires _lock to avoid concurrent access to
+        the BackgroundSubtractor instances from the watch loop.
         """
         events = []
         try:
@@ -219,18 +245,19 @@ class ZoneWatcher:
         if not frame:
             return events
 
-        for name, zone in self.zones.items():
-            try:
-                cropped = zone.crop(frame)
-                sub = self._subtractors[name]
-                result = sub.process(cropped)
-                if result.has_motion:
-                    events.append(ZoneEvent(
-                        zone_name=name,
-                        timestamp=time.time(),
-                        motion_ratio=result.motion_ratio,
-                        bounding_boxes=result.bounding_boxes,
-                    ))
-            except Exception:
-                continue
+        with self._lock:
+            for name, zone in self.zones.items():
+                try:
+                    cropped = zone.crop(frame)
+                    sub = self._subtractors[name]
+                    result = sub.process(cropped)
+                    if result.has_motion:
+                        events.append(ZoneEvent(
+                            zone_name=name,
+                            timestamp=time.time(),
+                            motion_ratio=result.motion_ratio,
+                            bounding_boxes=result.bounding_boxes,
+                        ))
+                except Exception:
+                    continue
         return events

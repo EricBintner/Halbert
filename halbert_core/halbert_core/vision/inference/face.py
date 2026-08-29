@@ -129,12 +129,26 @@ def _load_mediapipe():
 
     import mediapipe as mp
 
+    # Use a low min_detection_confidence so the caller's conf_threshold
+    # is the actual filter — MediaPipe's internal threshold doesn't
+    # discard low-confidence faces before we can see them.
     _mediapipe_detector = mp.solutions.face_detection.FaceDetection(
         model_selection=0,  # 0=short-range (2m), 1=full-range (5m)
-        min_detection_confidence=0.5,
+        min_detection_confidence=0.1,
     )
     logger.info("Loaded MediaPipe face detector")
     return _mediapipe_detector
+
+
+def close_mediapipe() -> None:
+    """Release the MediaPipe detector to free GPU/model resources."""
+    global _mediapipe_detector
+    if _mediapipe_detector is not None:
+        try:
+            _mediapipe_detector.close()
+        except Exception:
+            pass
+        _mediapipe_detector = None
 
 
 def _detect_mediapipe(img: np.ndarray, conf_threshold: float = 0.5) -> List[FaceDetection]:
@@ -193,6 +207,10 @@ def detect_faces(
             if backend == "cv2_dnn":
                 raise
             logger.debug("cv2_dnn model not available, trying mediapipe")
+        except Exception as e:
+            if backend == "cv2_dnn":
+                raise
+            logger.debug(f"cv2_dnn failed ({e}), trying mediapipe")
 
     # Fall back to MediaPipe
     if backend in ("auto", "mediapipe"):
@@ -204,7 +222,12 @@ def detect_faces(
             raise ImportError(
                 "No face detection backend available. Either:\n"
                 "  1. Download OpenCV DNN models to ~/.local/share/halbert/models/\n"
+                "     See: https://github.com/opencv/opencv/tree/master/samples/dnn/face_detector\n"
                 "  2. Install mediapipe: pip install mediapipe"
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Face detection failed on all backends. Last error: {e}"
             )
 
     return []

@@ -25,6 +25,7 @@ _cognition = None
 _event_mapper = None
 _ha_event_mapper = None
 _ha_event_stream = None
+_frigate_event_mapper = None
 _trackers = None
 
 
@@ -221,6 +222,15 @@ def get_event_mapper():
         # Start background scan
         _event_mapper.start_background_scan()
 
+        # Wrap in composite with Frigate event mapper if available
+        frigate_mapper = get_frigate_event_mapper()
+        if frigate_mapper is not None:
+            _event_mapper = CompositeEventMapper(
+                primary=_event_mapper,
+                secondary_mappers=[frigate_mapper],
+            )
+            logger.info("Event mapper wrapped with Frigate composite")
+
     return _event_mapper
 
 
@@ -250,6 +260,60 @@ def get_ha_event_mapper():
         except Exception as e:
             logger.warning(f"Could not create HA event mapper: {e}")
     return _ha_event_mapper
+
+
+def get_frigate_event_mapper():
+    """Get or create the singleton FrigateEventMapper instance.
+
+    Returns None if Frigate is not configured. The mapper is also
+    used by the MQTT subscriber (via dashboard/app.py) — if that
+    has already created one, we reuse it.
+    """
+    global _frigate_event_mapper
+    if _frigate_event_mapper is None:
+        try:
+            from .frigate.frigate_config import load_frigate_config
+            from .frigate.frigate_event_mapper import FrigateEventMapper
+
+            config = load_frigate_config()
+            if not config.is_configured():
+                return None
+
+            _frigate_event_mapper = FrigateEventMapper()
+            logger.info("Frigate event mapper created")
+        except Exception as e:
+            logger.warning(f"Could not create Frigate event mapper: {e}")
+    return _frigate_event_mapper
+
+
+class CompositeEventMapper:
+    """Calls populate_cognition() on multiple event mappers.
+
+    Wraps the primary SystemEventMapper and any secondary mappers
+    (HA, Frigate) so the AgentStateMachine only needs one
+    event_mapper reference.
+    """
+
+    def __init__(self, primary, secondary_mappers=None):
+        self._primary = primary
+        self._secondary = [m for m in (secondary_mappers or []) if m is not None]
+
+    def populate_cognition(self, cognition):
+        if self._primary is not None:
+            self._primary.populate_cognition(cognition)
+        for mapper in self._secondary:
+            try:
+                mapper.populate_cognition(cognition)
+            except Exception as e:
+                logger.debug(f"Secondary event mapper failed: {e}")
+
+    def start_background_scan(self):
+        if self._primary is not None:
+            self._primary.start_background_scan()
+
+    def stop_background_scan(self):
+        if self._primary is not None:
+            self._primary.stop_background_scan()
 
 
 def start_ha_event_stream() -> None:
@@ -283,12 +347,13 @@ def start_ha_event_stream() -> None:
 
 def shutdown():
     """Clean shutdown of background threads and trackers."""
-    global _event_mapper, _cognition, _trackers, _ha_event_mapper, _ha_event_stream
+    global _event_mapper, _cognition, _trackers, _ha_event_mapper, _ha_event_stream, _frigate_event_mapper
     if _event_mapper is not None:
         _event_mapper.stop_background_scan()
         _event_mapper = None
     _ha_event_mapper = None
     _ha_event_stream = None
+    _frigate_event_mapper = None
     _cognition = None
     _trackers = None
     logger.info("Cognition wiring shut down")

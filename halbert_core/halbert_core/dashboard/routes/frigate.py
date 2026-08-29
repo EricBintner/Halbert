@@ -83,12 +83,19 @@ async def get_frigate_config():
 @router.post("/frigate/config")
 async def save_frigate_config_route(req: FrigateConfigRequest):
     """Save Frigate connection config."""
-    from ...integrations.frigate.frigate_config import FrigateConfig, load_frigate_config, save_frigate_config
+    from ...integrations.frigate.frigate_config import (
+        FrigateConfig, load_frigate_config, save_frigate_config,
+        _is_masked_credential,
+    )
 
-    # Preserve existing credentials if not provided in the request
+    # Preserve existing credentials if not provided or masked in the request
     existing = load_frigate_config()
-    api_key = req.api_key if req.api_key else existing.api_key
-    mqtt_password = req.mqtt_password if req.mqtt_password else existing.mqtt_password
+    api_key = req.api_key if req.api_key and not _is_masked_credential(req.api_key) else existing.api_key
+    mqtt_password = (
+        req.mqtt_password
+        if req.mqtt_password and not _is_masked_credential(req.mqtt_password)
+        else existing.mqtt_password
+    )
 
     config = FrigateConfig(
         url=req.url,

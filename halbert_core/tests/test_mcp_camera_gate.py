@@ -148,3 +148,141 @@ class TestMCPToolHandlers:
         result = FRIGATE_MCP_TOOL_HANDLERS["vision_get_motion"]({})
         assert "image" not in result
         assert "frame" not in result
+
+
+class TestExpandedForbiddenFields:
+    """Test the expanded forbidden field list."""
+
+    def test_strips_img_field(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        assert strip_image_data({"img": "data"})["img"] == "<redacted:image>"
+
+    def test_strips_picture_field(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        assert strip_image_data({"picture": "data"})["picture"] == "<redacted:image>"
+
+    def test_strips_photo_field(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        assert strip_image_data({"photo": "data"})["photo"] == "<redacted:image>"
+
+    def test_strips_video_field(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        assert strip_image_data({"video": "data"})["video"] == "<redacted:image>"
+
+    def test_strips_clip_field(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        assert strip_image_data({"clip": "data"})["clip"] == "<redacted:image>"
+
+    def test_strips_thumb_field(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        assert strip_image_data({"thumb": "data"})["thumb"] == "<redacted:image>"
+
+    def test_strips_src_field(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        assert strip_image_data({"src": "data"})["src"] == "<redacted:image>"
+
+    def test_strips_base64_field(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        assert strip_image_data({"base64": "data"})["base64"] == "<redacted:image>"
+
+
+class TestCaseInsensitiveDataURI:
+    """Test case-insensitive data URI detection."""
+
+    def test_uppercase_data_uri(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        payload = {"data": "DATA:IMAGE/JPEG;BASE64,abc123"}
+        result = strip_image_data(payload)
+        assert result["data"] == "<redacted:image>"
+
+    def test_mixed_case_data_uri(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        payload = {"data": "Data:Image/PNG;base64,xyz"}
+        result = strip_image_data(payload)
+        assert result["data"] == "<redacted:image>"
+
+    def test_leading_whitespace_data_uri(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        payload = {"data": "  data:image/jpeg;base64,abc"}
+        result = strip_image_data(payload)
+        assert result["data"] == "<redacted:image>"
+
+
+class TestListImageStripping:
+    """Test that image data in lists is stripped."""
+
+    def test_data_uri_in_list(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        payload = {"frames": ["data:image/jpeg;base64,abc", "text"]}
+        result = strip_image_data(payload)
+        assert result["frames"][0] == "<redacted:image>"
+        assert result["frames"][1] == "text"
+
+    def test_long_base64_in_list(self):
+        from halbert_core.mcp.camera_gate import strip_image_data
+        long_b64 = "A" * 1500
+        payload = {"items": [long_b64, "short"]}
+        result = strip_image_data(payload)
+        assert result["items"][0] == "<redacted:image>"
+        assert result["items"][1] == "short"
+
+
+class TestGateResponse:
+    """Test the gate_response() entry point."""
+
+    def test_camera_query_stripped(self):
+        from halbert_core.mcp.camera_gate import gate_response
+        response = {"camera": "front", "image": "base64data"}
+        result = gate_response("frigate_get_events", response)
+        assert result["image"] == "<redacted:image>"
+        assert result["camera"] == "front"
+
+    def test_non_camera_query_passthrough(self):
+        from halbert_core.mcp.camera_gate import gate_response
+        response = {"vitals": {"heart_rate": 72}}
+        result = gate_response("get_vitals", response)
+        assert result == response  # unchanged
+
+
+class TestVerifyBearerToken:
+    """Test constant-time bearer token verification."""
+
+    def test_correct_token(self):
+        from halbert_core.mcp.camera_gate import verify_bearer_token
+        assert verify_bearer_token("secret123", "secret123") is True
+
+    def test_wrong_token(self):
+        from halbert_core.mcp.camera_gate import verify_bearer_token
+        assert verify_bearer_token("wrong", "secret123") is False
+
+    def test_empty_provided(self):
+        from halbert_core.mcp.camera_gate import verify_bearer_token
+        assert verify_bearer_token("", "secret123") is False
+
+    def test_empty_expected(self):
+        from halbert_core.mcp.camera_gate import verify_bearer_token
+        assert verify_bearer_token("secret123", "") is False
+
+    def test_both_empty(self):
+        from halbert_core.mcp.camera_gate import verify_bearer_token
+        assert verify_bearer_token("", "") is False
+
+
+class TestExpandedIsCameraQuery:
+    """Test the expanded is_camera_query() list."""
+
+    def test_frigate_get_active_detections_is_camera(self):
+        from halbert_core.mcp.camera_gate import is_camera_query
+        assert is_camera_query("frigate_get_active_detections") is True
+
+    def test_frigate_get_snapshot_is_camera(self):
+        from halbert_core.mcp.camera_gate import is_camera_query
+        assert is_camera_query("frigate_get_snapshot") is True
+
+    def test_capture_screenshot_is_camera(self):
+        from halbert_core.mcp.camera_gate import is_camera_query
+        assert is_camera_query("capture_screenshot") is True
+
+    def test_detect_objects_is_camera(self):
+        from halbert_core.mcp.camera_gate import is_camera_query
+        assert is_camera_query("detect_objects") is True

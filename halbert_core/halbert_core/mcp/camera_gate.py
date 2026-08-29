@@ -54,6 +54,7 @@ and restrict HTTP transport to non-camera queries.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List
 
 logger = logging.getLogger("halbert.mcp.camera_gate")
@@ -63,7 +64,15 @@ _FORBIDDEN_IMAGE_FIELDS = frozenset({
     "image", "image_b64", "image_base64", "snapshot", "frame",
     "jpeg", "jpg", "thumbnail", "data_uri", "screenshot",
     "frame_bytes", "snapshot_bytes",
+    # Additional field names that could carry image data
+    "img", "picture", "photo", "video", "clip", "preview",
+    "thumb", "src", "href", "url", "base64", "b64",
+    "image_url", "media", "content", "encoded_image", "picture_url",
+    "thumbnail_b64", "preview_b64",
 })
+
+# Regex for detecting data URIs (case-insensitive, allows whitespace prefix)
+_DATA_URI_RE = re.compile(r'^\s*data:image/[^\s;]+;base64,', re.IGNORECASE)
 
 # Fields that are safe to expose as text metadata
 _SAFE_METADATA_FIELDS = frozenset({
@@ -78,12 +87,27 @@ _SAFE_METADATA_FIELDS = frozenset({
 })
 
 
+def _looks_like_image_data(value: Any) -> bool:
+    """Check if a value looks like image data (data URI or base64 blob)."""
+    if not isinstance(value, str):
+        return False
+    # Case-insensitive data URI check with whitespace tolerance
+    if _DATA_URI_RE.match(value):
+        return True
+    # Long base64 strings (>1000 chars) are likely image data
+    if len(value) > 1000 and re.match(r'^[A-Za-z0-9+/=\s]+$', value):
+        return True
+    return False
+
+
 def strip_image_data(payload: Any) -> Any:
     """Recursively strip image data from a payload.
 
-    This is the camera data gate. It removes any field whose name
-    matches a known image field, and any field whose value looks
-    like a base64-encoded image (data:image/...).
+    This is the camera data gate. It removes:
+    1. Any field whose name matches a known image field
+    2. Any field whose value is a data:image/... URI
+    3. Any string in a list that looks like image data
+    4. Any suspiciously long base64 string
 
     Called on every MCP response that touches camera/vision data,
     before the response is sent to the client.
@@ -94,14 +118,19 @@ def strip_image_data(payload: Any) -> Any:
             if key.lower() in _FORBIDDEN_IMAGE_FIELDS:
                 cleaned[key] = "<redacted:image>"
                 continue
-            # Check for data URI image values
-            if isinstance(value, str) and value.startswith("data:image/"):
+            if _looks_like_image_data(value):
                 cleaned[key] = "<redacted:image>"
                 continue
             cleaned[key] = strip_image_data(value)
         return cleaned
     elif isinstance(payload, list):
-        return [strip_image_data(item) for item in payload]
+        result = []
+        for item in payload:
+            if _looks_like_image_data(item):
+                result.append("<redacted:image>")
+            else:
+                result.append(strip_image_data(item))
+        return result
     else:
         return payload
 
@@ -110,16 +139,31 @@ def is_camera_query(tool_name: str) -> bool:
     """Check if a tool name touches camera/vision data.
 
     Used to decide whether to apply the camera data gate.
+    This list must match the keys in FRIGATE_MCP_TOOL_HANDLERS.
     """
     camera_tools = frozenset({
+        # Frigate metadata tools (in FRIGATE_MCP_TOOL_HANDLERS)
         "frigate_get_events",
         "frigate_get_reviews",
-        "frigate_review_event",
         "frigate_list_cameras",
-        "frigate_get_status",
+        "frigate_get_active_detections",
+        # Vision metadata tools (in FRIGATE_MCP_TOOL_HANDLERS)
         "vision_get_detections",
         "vision_get_motion",
-        "vision_get_active_cameras",
+        # Image-returning tools from frigate_tools.py — these should
+        # NEVER be exposed via MCP. If they somehow get registered,
+        # the gate will strip their image responses.
+        "frigate_get_snapshot",
+        "frigate_get_latest_frame",
+        "frigate_review_event",
+        # Vision capture tools — also should never be exposed via MCP
+        "capture_screenshot",
+        "capture_webcam",
+        "capture_window",
+        "capture_active_window",
+        "detect_objects",
+        "detect_faces",
+        "detect_motion",
     })
     return tool_name in camera_tools
 
@@ -374,3 +418,32 @@ FRIGATE_MCP_TOOL_HANDLERS = {
     "vision_get_detections": _tool_vision_get_detections,
     "vision_get_motion": _tool_vision_get_motion,
 }
+
+
+def gate_response(tool_name: str, response: Any) -> Any:
+    """Apply the camera data gate to an MCP tool response.
+
+    Call this on every tool response before sending it to the client.
+    If the tool is a camera query, strip_image_data() is applied.
+    Otherwise, the response passes through unchanged.
+
+    This is the main entry point for the MCP server to use.
+    """
+    if is_camera_query(tool_name):
+        return strip_image_data(response)
+    return response
+
+
+def verify_bearer_token(provided: str, expected: str) -> bool:
+    """Constant-time bearer token comparison.
+
+    Uses hmac.compare_digest to prevent timing attacks. Both arguments
+    must be strings; if either is empty, returns False.
+
+    The MCP server should call this for every HTTP-transport request
+    before dispatching to a tool handler.
+    """
+    import hmac
+    if not provided or not expected:
+        return False
+    return hmac.compare_digest(provided.encode(), expected.encode())

@@ -74,6 +74,10 @@ class AmbientWebcamMonitor:
         self.max_dim = max_dim
         self._subtractor = BackgroundSubtractor(
             min_motion_ratio=min_motion_ratio,
+            # Use short history for polling-mode webcam — at 10s intervals,
+            # 500 frames would take ~83 minutes to learn the background.
+            # 30 frames = ~5 minutes, which is reasonable for a webcam.
+            history=30,
         )
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -137,13 +141,17 @@ class AmbientWebcamMonitor:
             import cv2
             cap = cv2.VideoCapture(self.camera_index)
             if not cap.isOpened():
-                logger.debug(f"AmbientWebcamMonitor: could not open camera {self.camera_index}")
+                logger.warning(f"AmbientWebcamMonitor: could not open camera {self.camera_index} "
+                               f"(may be in use by another process)")
+                cap.release()
                 return None
 
             try:
-                # Warm up auto-exposure
+                # Warm up auto-exposure (check each read for failure)
                 for _ in range(self.warmup_frames):
-                    cap.read()
+                    ok, _ = cap.read()
+                    if not ok:
+                        break
 
                 ret, frame = cap.read()
                 if not ret or frame is None:
@@ -156,8 +164,11 @@ class AmbientWebcamMonitor:
                     frame = cv2.resize(frame, (int(w * scale), int(h * scale)),
                                        interpolation=cv2.INTER_AREA)
 
-                # Encode as JPEG
-                _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                # Encode as JPEG (check success)
+                success, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if not success or buf is None:
+                    logger.warning("AmbientWebcamMonitor: JPEG encoding failed")
+                    return None
                 return buf.tobytes()
             finally:
                 cap.release()

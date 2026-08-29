@@ -64,6 +64,21 @@ class FrigateConfig:
         """Return True if MQTT is enabled and host is set."""
         return self.mqtt_enabled and bool(self.mqtt_host)
 
+    def validate(self) -> list[str]:
+        """Validate config values. Returns a list of error messages (empty = valid)."""
+        errors = []
+        if self.url:
+            if not self.url.startswith(("http://", "https://")):
+                errors.append("URL must start with http:// or https://")
+        if self.mqtt_enabled:
+            if not self.mqtt_host:
+                errors.append("MQTT enabled but mqtt_host is empty")
+            if not (1 <= self.mqtt_port <= 65535):
+                errors.append(f"MQTT port {self.mqtt_port} is out of range (1-65535)")
+        if not (0.0 <= self.min_alert_score <= 1.0):
+            errors.append(f"min_alert_score {self.min_alert_score} is out of range (0.0-1.0)")
+        return errors
+
     def to_dict(self) -> dict:
         d = asdict(self)
         # Never expose credentials in API responses
@@ -111,8 +126,25 @@ def load_frigate_config() -> FrigateConfig:
 
 
 def save_frigate_config(config: FrigateConfig) -> None:
-    """Save Frigate config to disk."""
+    """Save Frigate config to disk with restricted permissions."""
+    errors = config.validate()
+    if errors:
+        raise ValueError(f"Invalid Frigate config: {'; '.join(errors)}")
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(config), indent=2))
+    # Write with restricted permissions (owner read/write only)
+    # because the file contains API keys and MQTT passwords
+    data = json.dumps(asdict(config), indent=2)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, data.encode())
+    finally:
+        os.close(fd)
     logger.info(f"Saved Frigate config to {path}")
+
+
+def _is_masked_credential(value: str) -> bool:
+    """Check if a string looks like a masked credential placeholder."""
+    if not value:
+        return False
+    return value.endswith("...") or value == "***"

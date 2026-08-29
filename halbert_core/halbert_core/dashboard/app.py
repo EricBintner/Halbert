@@ -625,10 +625,16 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             from ..integrations.frigate.frigate_config import load_frigate_config
             frigate_cfg = load_frigate_config()
             if frigate_cfg.is_mqtt_configured():
+                from ..integrations.cognition_wiring import get_frigate_event_mapper
                 from ..integrations.frigate.frigate_event_mapper import FrigateEventMapper
                 from ..integrations.frigate.frigate_mqtt_subscriber import FrigateMQTTSubscriber
                 global _frigate_mqtt_subscriber, _frigate_event_mapper
-                _frigate_event_mapper = FrigateEventMapper()
+                # Use the cognition_wiring singleton so the same mapper
+                # is used by both the MQTT subscriber and the composite
+                # event mapper in the agent state machine.
+                _frigate_event_mapper = get_frigate_event_mapper()
+                if _frigate_event_mapper is None:
+                    _frigate_event_mapper = FrigateEventMapper()
                 _frigate_mqtt_subscriber = FrigateMQTTSubscriber(
                     config=frigate_cfg,
                     on_event=_frigate_event_mapper.handle_event,
@@ -708,6 +714,14 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 logger.info("Frigate MQTT subscriber stopped")
         except Exception as e:
             logger.warning(f"Failed to stop Frigate MQTT subscriber: {e}")
+
+        # Close Frigate tools singleton client
+        try:
+            from ..integrations.frigate.frigate_tools import close_client as close_frigate_client
+            await close_frigate_client()
+            logger.info("Frigate tools client closed")
+        except Exception as e:
+            logger.warning(f"Failed to close Frigate tools client: {e}")
     
     logger.info("Halbert Dashboard API created")
     

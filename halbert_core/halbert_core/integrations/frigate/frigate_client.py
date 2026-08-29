@@ -6,15 +6,16 @@ Mirrors HAClient: aiohttp session, lazy init, token auth, structured
 exceptions. Wraps the Frigate REST API:
 
   GET /api/events           — query detection events
-  GET /api/reviews          — query review segments
+  GET /api/review           — query review segments (singular)
   GET /api/config           — get Frigate config (cameras, zones)
-  GET /{camera}/latest.jpg  — latest frame from a camera
-  GET /events/{id}/snapshot.jpg — event snapshot
-  GET /events/{id}/clip.mp4    — event clip (redirect to file)
+  GET /api/{camera}/latest.jpg  — latest frame from a camera
+  GET /api/events/{id}/snapshot.jpg — event snapshot
+  GET /api/events/{id}/clip.mp4    — event clip (redirect to file)
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -35,6 +36,8 @@ class FrigateClient:
     def __init__(self, config: FrigateConfig) -> None:
         self.config = config
         self._session: Optional[aiohttp.ClientSession] = None
+        # 10-second total timeout — Frigate is typically on LAN
+        self._timeout = aiohttp.ClientTimeout(total=10)
 
     def _headers(self) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -47,7 +50,7 @@ class FrigateClient:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            self._session = aiohttp.ClientSession(timeout=self._timeout)
         return self._session
 
     async def close(self) -> None:
@@ -82,6 +85,8 @@ class FrigateClient:
                 if resp.content_type == "application/json":
                     return await resp.json()
                 return await resp.text()
+        except asyncio.TimeoutError:
+            raise FrigateConnectionError(f"Frigate request timed out: {path}") from None
         except aiohttp.ClientError as e:
             raise FrigateConnectionError(f"Frigate connection error: {e}") from e
 
@@ -108,6 +113,8 @@ class FrigateClient:
                     raise FrigateNotFoundError(f"Frigate endpoint not found: {path}")
                 resp.raise_for_status()
                 return await resp.read()
+        except asyncio.TimeoutError:
+            raise FrigateConnectionError(f"Frigate request timed out: {path}") from None
         except aiohttp.ClientError as e:
             raise FrigateConnectionError(f"Frigate connection error: {e}") from e
 
@@ -153,7 +160,7 @@ class FrigateClient:
         in_progress: bool = False,
         favorites: bool = False,
         min_score: float = 0.0,
-        sort: str = "score",
+        sort: str = "date_desc",
     ) -> List[Dict[str, Any]]:
         """Query detection events from Frigate.
 
@@ -169,15 +176,15 @@ class FrigateClient:
             in_progress: Only return in-progress events.
             favorites: Only return favorited events.
             min_score: Minimum detection score (0.0-1.0).
-            sort: Sort order ("score", "time", "speed").
+            sort: Sort order (date_desc, date_asc, score_desc, score_asc).
         """
-        params = {
-            "cameras" if camera == "all" else "camera": camera,
+        params: Dict[str, Any] = {
+            "cameras": camera,  # Frigate uses "cameras" for both single and multi
             "labels": labels,
             "zones": zones,
             "limit": limit,
-            "in_progress": in_progress,
-            "favorites": favorites,
+            "in_progress": int(in_progress),  # Frigate expects int, not bool
+            "favorites": int(favorites),
             "min_score": min_score,
             "sort": sort,
         }
@@ -186,9 +193,9 @@ class FrigateClient:
         if before is not None:
             params["before"] = before
         if has_snapshot is not None:
-            params["has_snapshot"] = has_snapshot
+            params["has_snapshot"] = int(has_snapshot)
         if has_clip is not None:
-            params["has_clip"] = has_clip
+            params["has_clip"] = int(has_clip)
 
         result = await self._request("GET", "/api/events", params=params)
         if isinstance(result, list):
@@ -214,20 +221,25 @@ class FrigateClient:
 
         Reviews are Frigate's higher-level grouping of events into
         alert (severity=alert) or detection (severity=detection) segments.
+
+        Note: Frigate's endpoint is /api/review (singular).
+        severity must be 'alert', 'detection', or omitted for all.
         """
-        params = {
-            "cameras" if camera == "all" else "camera": camera,
-            "severity": severity,
+        params: Dict[str, Any] = {
+            "cameras": camera,
             "limit": limit,
         }
+        # Only pass severity if it's a valid enum value (not "all")
+        if severity in ("alert", "detection", "significant_motion"):
+            params["severity"] = severity
         if after is not None:
             params["after"] = after
         if before is not None:
             params["before"] = before
         if has_clip is not None:
-            params["has_clip"] = has_clip
+            params["has_clip"] = int(has_clip)
 
-        result = await self._request("GET", "/api/reviews", params=params)
+        result = await self._request("GET", "/api/review", params=params)
         if isinstance(result, list):
             return result
         return []

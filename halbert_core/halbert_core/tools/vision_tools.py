@@ -448,6 +448,27 @@ async def capture_active_window_tool(args: Dict) -> Dict[str, Any]:
 
 # ── CV inference tools ──────────────────────────────────────────────────────
 
+def _validate_capture_result(result) -> str:
+    """Extract base64 image from a capture result, or raise ValueError."""
+    if isinstance(result, dict) and "error" in result:
+        raise ValueError(result["error"])
+    image_b64 = result if isinstance(result, str) else result.get("image", "")
+    if not image_b64:
+        raise ValueError("Capture returned empty image")
+    return image_b64
+
+
+async def _capture_frame_for_cv(source: str) -> str:
+    """Capture a frame from webcam or screen, return base64 string."""
+    if source == "webcam":
+        result = await capture_webcam({"max_dim": 640})
+    elif source == "screen":
+        result = await capture_screenshot({"max_dim": 640})
+    else:
+        raise ValueError(f"Unknown source: {source}. Use 'webcam' or 'screen'.")
+    return _validate_capture_result(result)
+
+
 async def detect_objects_tool(args: Dict[str, Any]) -> Dict[str, Any]:
     """Detect objects in a webcam or screenshot frame using YOLOv8.
 
@@ -456,11 +477,13 @@ async def detect_objects_tool(args: Dict[str, Any]) -> Dict[str, Any]:
     boxes. Does NOT send the image to the vision LLM — all inference
     is local.
     """
+    import asyncio
+
     source = args.get("source", "webcam")
     conf_threshold = args.get("confidence_threshold", 0.5)
 
     try:
-        from ..vision.inference.detector import detect_objects, is_available
+        from ..vision.inference.detector import detect_objects_from_base64, is_available
         if not is_available():
             return {
                 "error": "Object detection not available. Install ultralytics or onnxruntime.",
@@ -468,35 +491,25 @@ async def detect_objects_tool(args: Dict[str, Any]) -> Dict[str, Any]:
             }
 
         # Capture frame
-        if source == "webcam":
-            frame_b64 = await capture_webcam({"max_dim": 640})
-            if isinstance(frame_b64, dict) and "error" in frame_b64:
-                return frame_b64
-            image_b64 = frame_b64 if isinstance(frame_b64, str) else frame_b64.get("image", "")
-        elif source == "screen":
-            frame_b64 = await capture_screenshot({"max_dim": 640})
-            if isinstance(frame_b64, dict) and "error" in frame_b64:
-                return frame_b64
-            image_b64 = frame_b64 if isinstance(frame_b64, str) else frame_b64.get("image", "")
-        else:
-            return {"error": f"Unknown source: {source}. Use 'webcam' or 'screen'."}
+        try:
+            image_b64 = await _capture_frame_for_cv(source)
+        except ValueError as e:
+            return {"error": str(e), "error_type": "capture_failed"}
 
-        # Run detection
-        detections = detect_objects_from_base64_safe(image_b64, conf_threshold=conf_threshold)
+        # Run detection in executor to avoid blocking the event loop
+        detections = await asyncio.to_thread(
+            detect_objects_from_base64, image_b64, conf_threshold=conf_threshold
+        )
         return {
             "source": source,
             "detections": [d.to_dict() for d in detections],
             "count": len(detections),
         }
+    except ImportError as e:
+        return {"error": str(e), "error_type": "dependency_missing"}
     except Exception as e:
         logger.error(f"Object detection error: {e}", exc_info=True)
         return {"error": str(e), "error_type": "detection_failed"}
-
-
-def detect_objects_from_base64_safe(image_b64: str, conf_threshold: float = 0.5):
-    """Wrapper that handles data URI prefix and import errors."""
-    from ..vision.inference.detector import detect_objects_from_base64
-    return detect_objects_from_base64(image_b64, conf_threshold=conf_threshold)
 
 
 async def detect_faces_tool(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -506,6 +519,8 @@ async def detect_faces_tool(args: Dict[str, Any]) -> Dict[str, Any]:
     face recognition (identifying specific people) — only detection
     that a face is present.
     """
+    import asyncio
+
     source = args.get("source", "webcam")
     conf_threshold = args.get("confidence_threshold", 0.5)
 
@@ -518,25 +533,22 @@ async def detect_faces_tool(args: Dict[str, Any]) -> Dict[str, Any]:
             }
 
         # Capture frame
-        if source == "webcam":
-            frame_b64 = await capture_webcam({"max_dim": 640})
-            if isinstance(frame_b64, dict) and "error" in frame_b64:
-                return frame_b64
-            image_b64 = frame_b64 if isinstance(frame_b64, str) else frame_b64.get("image", "")
-        elif source == "screen":
-            frame_b64 = await capture_screenshot({"max_dim": 640})
-            if isinstance(frame_b64, dict) and "error" in frame_b64:
-                return frame_b64
-            image_b64 = frame_b64 if isinstance(frame_b64, str) else frame_b64.get("image", "")
-        else:
-            return {"error": f"Unknown source: {source}. Use 'webcam' or 'screen'."}
+        try:
+            image_b64 = await _capture_frame_for_cv(source)
+        except ValueError as e:
+            return {"error": str(e), "error_type": "capture_failed"}
 
-        faces = detect_faces_from_base64(image_b64, conf_threshold=conf_threshold)
+        # Run detection in executor to avoid blocking the event loop
+        faces = await asyncio.to_thread(
+            detect_faces_from_base64, image_b64, conf_threshold=conf_threshold
+        )
         return {
             "source": source,
             "faces": [f.to_dict() for f in faces],
             "count": len(faces),
         }
+    except ImportError as e:
+        return {"error": str(e), "error_type": "dependency_missing"}
     except Exception as e:
         logger.error(f"Face detection error: {e}", exc_info=True)
         return {"error": str(e), "error_type": "detection_failed"}
@@ -549,29 +561,31 @@ async def detect_motion_tool(args: Dict[str, Any]) -> Dict[str, Any]:
     Returns whether motion was detected, the motion ratio, and
     bounding boxes of changed regions.
     """
-    import asyncio as _asyncio
+    import asyncio
 
     delay = args.get("delay_seconds", 2.0)
 
     try:
         # Capture first frame
-        frame1 = await capture_webcam({"max_dim": 640})
-        if isinstance(frame1, dict) and "error" in frame1:
-            return frame1
-        img1 = frame1 if isinstance(frame1, str) else frame1.get("image", "")
+        try:
+            img1 = await _capture_frame_for_cv("webcam")
+        except ValueError as e:
+            return {"error": str(e), "error_type": "capture_failed"}
 
         # Wait
-        await _asyncio.sleep(delay)
+        await asyncio.sleep(delay)
 
         # Capture second frame
-        frame2 = await capture_webcam({"max_dim": 640})
-        if isinstance(frame2, dict) and "error" in frame2:
-            return frame2
-        img2 = frame2 if isinstance(frame2, str) else frame2.get("image", "")
+        try:
+            img2 = await _capture_frame_for_cv("webcam")
+        except ValueError as e:
+            return {"error": str(e), "error_type": "capture_failed"}
 
         from ..vision.motion import detect_motion_from_base64
-        result = detect_motion_from_base64(img1, img2)
+        result = await asyncio.to_thread(detect_motion_from_base64, img1, img2)
         return result.to_dict()
+    except ImportError as e:
+        return {"error": str(e), "error_type": "dependency_missing"}
     except Exception as e:
         logger.error(f"Motion detection error: {e}", exc_info=True)
         return {"error": str(e), "error_type": "detection_failed"}

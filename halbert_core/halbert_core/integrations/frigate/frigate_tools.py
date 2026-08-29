@@ -13,29 +13,36 @@ from __future__ import annotations
 
 import base64
 import logging
+import threading
 from typing import Any, Dict, Optional
 
 from .frigate_config import load_frigate_config
-from .frigate_client import FrigateClient
 
 logger = logging.getLogger("halbert.integrations.frigate.tools")
 
-# Module-level singleton client (created on first use)
-_client: Optional[FrigateClient] = None
+# Module-level singleton client (created on first use, thread-safe)
+_client = None
+_client_lock = threading.Lock()
 
 
-def _get_client() -> FrigateClient:
+def _get_client():
+    """Get or create the singleton FrigateClient. Thread-safe."""
     global _client
     if _client is None:
-        _client = FrigateClient(load_frigate_config())
+        with _client_lock:
+            if _client is None:
+                from .frigate_client import FrigateClient
+                _client = FrigateClient(load_frigate_config())
     return _client
 
 
 async def close_client() -> None:
+    """Close the singleton client. Called on app shutdown."""
     global _client
-    if _client is not None:
-        await _client.close()
-        _client = None
+    with _client_lock:
+        if _client is not None:
+            await _client.close()
+            _client = None
 
 
 # --- Tool schemas ---

@@ -183,6 +183,7 @@ class BackgroundSubtractor:
         var_threshold: int = 16,
         min_motion_ratio: float = 0.01,
         detect_shadows: bool = False,
+        warmup_frames: int = 5,
     ):
         """
         Args:
@@ -190,11 +191,14 @@ class BackgroundSubtractor:
             var_threshold: MOG2 variance threshold (higher = less sensitive).
             min_motion_ratio: Minimum fraction of foreground pixels to report motion.
             detect_shadows: Whether to detect and exclude shadows.
+            warmup_frames: Number of initial frames where has_motion is forced
+                False (the model hasn't learned the background yet).
         """
         self.history = history
         self.var_threshold = var_threshold
         self.min_motion_ratio = min_motion_ratio
         self.detect_shadows = detect_shadows
+        self.warmup_frames = warmup_frames
         self._subtractor = None
         self._frame_count = 0
 
@@ -255,7 +259,12 @@ class BackgroundSubtractor:
 
         has_motion = motion_ratio >= self.min_motion_ratio and len(bboxes) > 0
 
+        # Warmup gating: suppress motion during initial frames while
+        # the MOG2 model is learning the background
         self._frame_count += 1
+        if self._frame_count <= self.warmup_frames:
+            has_motion = False
+
         return MotionResult(
             has_motion=has_motion,
             motion_ratio=motion_ratio,

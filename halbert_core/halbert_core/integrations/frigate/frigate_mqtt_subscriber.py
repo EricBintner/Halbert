@@ -58,6 +58,7 @@ class FrigateMQTTSubscriber:
         self._task: Optional[asyncio.Task] = None
         self._running = False
         self._connected = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     @property
     def connected(self) -> bool:
@@ -68,18 +69,36 @@ class FrigateMQTTSubscriber:
         if self._task is not None:
             return
         self._running = True
+        self._loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._run_loop())
         logger.info("FrigateMQTTSubscriber starting")
 
     async def stop(self) -> None:
-        """Stop the subscriber."""
+        """Stop the subscriber.
+
+        Safe to call from any event loop — if called from a different
+        loop than the one that started the subscriber, uses
+        call_soon_threadsafe to cancel the task in the correct loop.
+        """
         self._running = False
-        if self._task:
-            self._task.cancel()
+        self._connected = False
+        if self._task is not None:
+            current_loop = None
             try:
-                await self._task
-            except asyncio.CancelledError:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
                 pass
+
+            if current_loop is self._loop:
+                # Same loop — cancel directly
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
+            elif self._loop is not None and not self._loop.is_closed():
+                # Different loop — cancel thread-safely
+                self._loop.call_soon_threadsafe(self._task.cancel)
             self._task = None
         logger.info("FrigateMQTTSubscriber stopped")
 
@@ -96,6 +115,8 @@ class FrigateMQTTSubscriber:
 
         backoff = 1
         max_backoff = 60
+        auth_failures = 0
+        max_auth_failures = 5
 
         while self._running:
             try:
@@ -105,15 +126,16 @@ class FrigateMQTTSubscriber:
                     username=self.config.mqtt_user or None,
                     password=self.config.mqtt_password or None,
                 ) as client:
+                    # Subscribe BEFORE setting _connected so a subscribe
+                    # failure doesn't leave a false "connected" state
+                    await client.subscribe(TOPIC_EVENTS)
+                    await client.subscribe(TOPIC_REVIEWS)
                     self._connected = True
                     backoff = 1  # reset backoff on successful connect
+                    auth_failures = 0  # reset auth failure counter
                     logger.info(
                         f"Frigate MQTT connected to {self.config.mqtt_host}:{self.config.mqtt_port}"
                     )
-
-                    # Subscribe to topics
-                    await client.subscribe(TOPIC_EVENTS)
-                    await client.subscribe(TOPIC_REVIEWS)
                     logger.info(f"Subscribed to {TOPIC_EVENTS}, {TOPIC_REVIEWS}")
 
                     # Message loop
@@ -127,10 +149,31 @@ class FrigateMQTTSubscriber:
             except Exception as e:
                 if not self._running:
                     break
-                logger.warning(f"Frigate MQTT disconnected: {e}, reconnecting in {backoff}s")
                 self._connected = False
+
+                # Detect authentication failures and stop retrying after N attempts
+                err_str = str(e).lower()
+                if "auth" in err_str or "not authorized" in err_str or "bad user" in err_str:
+                    auth_failures += 1
+                    if auth_failures >= max_auth_failures:
+                        logger.error(
+                            f"Frigate MQTT: authentication failed {auth_failures} times, "
+                            f"stopping. Check MQTT credentials."
+                        )
+                        break
+                    logger.warning(
+                        f"Frigate MQTT: auth failed ({auth_failures}/{max_auth_failures}), "
+                        f"retrying in {backoff}s"
+                    )
+                else:
+                    logger.warning(f"Frigate MQTT disconnected: {e}, reconnecting in {backoff}s")
+
                 await asyncio.sleep(backoff)
+                # Exponential backoff with jitter
+                import random
                 backoff = min(backoff * 2, max_backoff)
+                jitter = random.uniform(0, backoff * 0.1)
+                backoff = int(backoff + jitter)
 
         self._connected = False
 
