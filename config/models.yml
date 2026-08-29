@@ -34,6 +34,14 @@ llm_config:
     endpoint_id: ep_local_ollama
     model: ""
 
+  # Local-only model for sensitive data processing (system configs, secrets,
+  # persona memory, cognitive tick). Endpoint URL is enforced to be
+  # loopback/localhost by the config normaliser.
+  secure_model:
+    enabled: false
+    endpoint_id: ep_local_ollama
+    model: ""
+
 # Compression system (Phase 72 port from LinuxBrain)
 # 3-tier: LinguaCompressor (178MB neural) -> SemanticCompressor (rule-based) -> Noop
 compression:

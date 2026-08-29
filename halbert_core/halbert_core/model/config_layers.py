@@ -103,7 +103,7 @@ def _warn_about_unreadable_shapes(path: Path, raw: Mapping[str, Any]) -> None:
     if dropped:
         logger.warning(
             "config layer %s declares %s inside llm_config; the layer schema is "
-            "chat_model / specialist_model / vision_model, so these are ignored",
+            "chat_model / specialist_model / vision_model / secure_model, so these are ignored",
             path, ", ".join(dropped),
         )
 

@@ -54,7 +54,7 @@ def test_repo_template_has_empty_model_slots():
 
     raw = yaml.safe_load((repo_root() / "config" / "models.yml").read_text())
     llm = raw["llm_config"]
-    for slot in ("chat_model", "specialist_model", "vision_model"):
+    for slot in ("chat_model", "specialist_model", "vision_model", "secure_model"):
         assert llm[slot]["model"] == ""
         assert llm[slot]["enabled"] is False
     for ep in llm["saved_endpoints"]:

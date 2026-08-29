@@ -18,7 +18,7 @@ def test_get_config_shape(models_config_dir):
     with patch.object(routes.llm_store, "ensure_local_ollama_endpoint", return_value=False):
         out = routes.get_llm_config()
     data = out["data"]
-    assert set(data["llm_config"]) == {"saved_endpoints", "chat_model", "specialist_model", "vision_model"}
+    assert set(data["llm_config"]) == {"saved_endpoints", "chat_model", "specialist_model", "vision_model", "secure_model"}
     assert "ollama" in data["chat_capable_providers"]
     assert "anthropic" in data["chat_capable_providers"]
 

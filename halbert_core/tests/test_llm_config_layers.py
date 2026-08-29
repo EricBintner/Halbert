@@ -19,7 +19,7 @@ GPU_BOX = "http://gpu-box:11434"
 LOCAL_EP = {"id": "e_local", "name": "Local", "provider": "ollama", "url": OLLAMA, "api_key": ""}
 GPU_EP = {"id": "e_gpu", "name": "GPU box", "provider": "ollama", "url": GPU_BOX, "api_key": ""}
 
-# A fully configured global file: all three slots pinned on the local runtime.
+# A fully configured global file: all four slots present, three pinned on the local runtime.
 GLOBAL_FILE = {
     "compression": {"backend": "lingua", "enabled": True},
     "llm_config": {
@@ -27,6 +27,7 @@ GLOBAL_FILE = {
         "chat_model": {"enabled": True, "endpoint_id": "e_local", "model": "chat-a"},
         "specialist_model": {"enabled": True, "endpoint_id": "e_local", "model": "spec-b"},
         "vision_model": {"enabled": True, "endpoint_id": "e_local", "model": "vision-c"},
+        "secure_model": {"enabled": False, "endpoint_id": "", "model": ""},
     },
 }
 
@@ -76,6 +77,7 @@ def test_workspace_pinning_one_slot_leaves_its_siblings_alone(models_config_dir,
         "chat_model": "chat-a",
         "specialist_model": "spec-workspace",
         "vision_model": "vision-c",
+        "secure_model": "",
     }
 
 
@@ -87,9 +89,11 @@ def test_a_layer_with_empty_slots_wipes_nothing(models_config_dir, tmp_path, mon
         "chat_model": {"enabled": False, "endpoint_id": "", "model": ""},
         "specialist_model": {"enabled": False, "endpoint_id": "", "model": ""},
         "vision_model": {"enabled": False, "endpoint_id": "", "model": ""},
+        "secure_model": {"enabled": False, "endpoint_id": "", "model": ""},
     }, monkeypatch)
     assert _models(store.load()) == {
         "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-c",
+        "secure_model": "",
     }
 
 
@@ -104,11 +108,13 @@ def test_session_beats_workspace_beats_global_per_slot(models_config_dir, tmp_pa
         "chat_model": "chat-session",
         "specialist_model": "spec-workspace",
         "vision_model": "vision-c",
+        "secure_model": "",
     }
     assert _models(store.load()) == {           # another session sees the file layers
         "chat_model": "chat-workspace",
         "specialist_model": "spec-workspace",
         "vision_model": "vision-c",
+        "secure_model": "",
     }
 
 
@@ -181,7 +187,8 @@ def test_the_setting_survives_a_write_and_can_be_written_by_the_store(models_con
     on_disk = yaml.safe_load((models_config_dir / "models.yml").read_text())
     assert on_disk["workspace_models_config"] == str(path)
     assert _models(store.load()) == {
-        "chat_model": "chat-edited", "specialist_model": "spec-b", "vision_model": "vision-declared"}
+        "chat_model": "chat-edited", "specialist_model": "spec-b", "vision_model": "vision-declared",
+        "secure_model": ""}
 
 
 def test_a_declared_workspace_that_does_not_exist_warns_and_is_skipped(models_config_dir, tmp_path,
@@ -204,7 +211,8 @@ def test_an_unparsable_workspace_falls_back_to_the_global_layer(models_config_di
     broken.write_text('llm_config:\n  saved_endpoints: [{id: e1, url: "http://x"\n')
     monkeypatch.setenv(WORKSPACE_ENV_VAR, str(broken))
     assert _models(store.load()) == {
-        "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-c"}
+        "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-c",
+        "secure_model": ""}
 
 
 def test_env_var_wins_over_the_global_file_setting(models_config_dir, tmp_path, monkeypatch):
@@ -285,7 +293,8 @@ def test_load_global_ignores_every_layer_above_it(models_config_dir, tmp_path, m
     layers.set_session_slot("s1", "vision_model", "vision-session", "e_local")
     with layers.bind_session("s1"):
         assert _models(store.load_global()) == {
-            "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-c"}
+            "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-c",
+            "secure_model": ""}
         assert store.load_global_file()["compression"] == {"backend": "lingua", "enabled": True}
 
 
@@ -330,10 +339,12 @@ def test_clearing_a_pin_falls_back_to_the_file_layers(models_config_dir):
     layers.set_session_slot("s1", "vision_model", "vision-session", "e_local")
     layers.clear_session_slot("s1", "chat_model")
     assert _models(store.load("s1")) == {
-        "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-session"}
+        "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-session",
+        "secure_model": ""}
     layers.clear_session("s1")
     assert _models(store.load("s1")) == {
-        "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-c"}
+        "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-c",
+        "secure_model": ""}
 
 
 def test_session_pins_are_bounded(models_config_dir):
@@ -608,11 +619,12 @@ def test_the_editor_is_served_the_global_layer_with_the_effective_view_beside_it
     _picker_state(models_config_dir, tmp_path, monkeypatch)
     served = routes.get_llm_config(session_id="s1")["data"]
     assert _models(served["llm_config"]) == {
-        "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-c"}
+        "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-c",
+        "secure_model": ""}
     assert [e["id"] for e in served["llm_config"]["saved_endpoints"]] == ["e_local"]
     assert _models(served["effective"]["llm_config"]) == {
         "chat_model": "chat-session", "specialist_model": "spec-workspace",
-        "vision_model": "vision-c"}
+        "vision_model": "vision-c", "secure_model": ""}
     assert served["effective"]["overridden_slots"] == {
         "chat_model": "session", "specialist_model": "workspace"}
 
@@ -625,7 +637,8 @@ def test_the_effective_view_has_a_route_of_its_own_and_no_way_to_write_it(
     data = routes.get_effective_llm_config(session_id="s1")["data"]
     assert data["llm_config"]["specialist_model"]["model"] == "spec-workspace"
     assert data["slot_layers"] == {
-        "chat_model": "session", "specialist_model": "workspace", "vision_model": "global"}
+        "chat_model": "session", "specialist_model": "workspace", "vision_model": "global",
+        "secure_model": "global"}
     assert data["layers"] == ["global", "workspace", "session"]
     assert not [r for r in routes.router.routes
                 if r.path == "/llm/config/effective" and set(r.methods) - {"GET", "HEAD"}]
@@ -641,7 +654,8 @@ def test_a_put_still_edits_the_global_layer_under_a_bound_session(
             "vision_model": {"enabled": True, "endpoint_id": "e_local", "model": "vision-edited"}})
         saved = routes.update_llm_config(body)["data"]
     assert _models(saved["llm_config"]) == {
-        "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-edited"}
+        "chat_model": "chat-a", "specialist_model": "spec-b", "vision_model": "vision-edited",
+        "secure_model": ""}
     on_disk = yaml.safe_load((models_config_dir / "models.yml").read_text())["llm_config"]
     assert [e["id"] for e in on_disk["saved_endpoints"]] == ["e_local"]
     assert on_disk["specialist_model"]["model"] == "spec-b"

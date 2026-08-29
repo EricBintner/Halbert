@@ -108,7 +108,7 @@ class TierRouterConfig:
         """
         Convert models.yml format to TierRouterConfig.
 
-        Reads the ``llm_config`` slots (chat_model/specialist_model/vision_model)
+        Reads the ``llm_config`` slots (chat_model/specialist_model/vision_model/secure_model)
         when present; falls back to the pre-migration orchestrator/specialist/
         vision keys for files that haven't been normalised yet.
         """
