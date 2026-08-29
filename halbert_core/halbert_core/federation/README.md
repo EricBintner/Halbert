@@ -118,3 +118,49 @@ satellite's MCP server, not a bespoke API.
 - `psutil` — already a dependency (used by telemetry_agent)
 - `requests` — already a hard dependency (used by fleet_proxy)
 - No new hard dependencies (Haloysius subtractive contract preserved)
+
+## Design Requirements (Handoff §11)
+
+### 4-Tier Turn Classification (§11.3)
+
+The `ComputeRouter` enforces strict turn classification to prevent
+GPU VRAM exhaustion from cognitive monologue flooding:
+
+| Turn Type | Offload? | Priority | Fallback |
+|-----------|----------|----------|----------|
+| `cognitive_monologue` | NO (local) | — | Template thoughts |
+| `interactive_user` | YES | P2 | 1.5s timeout → local fallback |
+| `high_value_event` | YES | P3 | Heuristic rules |
+| `sleep_consolidation` | YES | P3 batch | Deferred until Desktop idle |
+
+### 1.5s Voice Timeout (§11.4)
+
+`ComputeBroker.VOICE_QUEUE_TIMEOUT_S = 1.5` — Priority 2 requests
+abort queue acquisition after 1.5s and trigger local fallback. This
+ensures users never experience awkward silence at a smart speaker.
+
+### Reserved Priority 1 Slot (§11.4)
+
+`reserved_priority1_slots=1` — Slot 1 is dedicated to the active local
+Desktop user. Slots 2-4 are shared between satellite voice and batch.
+
+### 3-Failure Health Threshold (§11.6)
+
+`_failure_threshold=3` — The peer health probe requires 3 consecutive
+failures before transitioning ONLINE→OFFLINE. A single success resets
+the counter. This prevents flapping during DHCP renewals and Wi-Fi
+roaming.
+
+### Dual-Action Node Card (§11.2)
+
+`NodeFleetCockpit.tsx` renders each node with two actions:
+- **[Inspect]** — Opens a diagnostic drawer (MCP proxy) without leaving
+  the Desktop context
+- **[Switch]** — Calls `setInstanceEndpoint()` to teleport the full UI
+  to the satellite's dashboard
+
+### StatusBadge Variants (§11.2)
+
+- `online` — emerald/green
+- `fallback` — amber/yellow (peer offline, local model running)
+- `offline` — slate/red

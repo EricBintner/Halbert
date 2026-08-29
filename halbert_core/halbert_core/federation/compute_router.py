@@ -36,32 +36,53 @@ viable (10-15 tok/s on N100, per the low-power hardware handoff §7.1).
 
 On ``LAPTOP_16GB`` and above, a 7B-8B model is viable.
 
-H8 — Turn-type-aware deferral
--------------------------------
+H8 — Turn-type-aware deferral (4-tier classification per §11.3)
+-----------------------------------------------------------------
 The satellite's ``advance_turn`` (cognitive monologue) is a continuous
-tick.  If the Desktop sleeps, monologue turns must NOT be replayed on
-wake (they'd flood the Desktop with 200+ queued requests).  Only
-user-initiated and automation-triggered turns are deferred.
+tick.  If 10 satellites offloaded their monologue every 5-10 seconds,
+the Desktop would receive 60-120 inference requests per minute —
+permanently exhausting GPU VRAM (§11.3 Cognitive Contention Finding).
 
-Turn types:
-  - ``monologue``: cognitive tick — fall back to template thoughts, do NOT defer
-  - ``user``: explicit user question — defer to queue, replay on wake
-  - ``automation``: HA/Frigate trigger — defer to queue, replay on wake
+The 4-tier turn classification policy (§11.3):
 
-Fallback chain (revised for hardware awareness)
------------------------------------------------
+  Turn Classification       | Offload?    | Fallback if Desktop offline
+  --------------------------|-------------|-----------------------------
+  ``cognitive_monologue``   | NO (local)  | Template thoughts (never deferred)
+  ``interactive_user``      | YES (P2)    | Fast CPU template / micro-model (< 1.5s)
+  ``high_value_event``      | YES (P3)    | Local heuristic rule evaluation
+  ``sleep_consolidation``   | YES (P3)    | Deferred until Desktop awake + idle
+
+Monologue turns are NEVER deferred (they'd flood the Desktop on wake
+with 200+ queued requests).  Interactive user turns get a 1.5s queue
+timeout (§11.4) — if the Desktop doesn't have a slot open in 1.5s, the
+satellite aborts and runs local fallback.  Sleep consolidation is
+batch-deferred until the Desktop is awake and idle.
+
+Network Flapping Mitigation (§11.6)
+------------------------------------
+Workstations enter sleep, undergo DHCP renewals, and experience Wi-Fi
+roaming.  The router maintains a rolling health window with a
+3-consecutive-failure threshold before transitioning ONLINE→OFFLINE.
+This prevents rapid flapping between local and remote models during
+minor network packet loss.
+
+Fallback chain (revised for hardware awareness + 4-tier turns)
+---------------------------------------------------------------
 ::
 
     1. Desktop Compute Peer (LAN / GPU) [1.5s health probe]
        └─► If Online: Stream generation from peer's GPU model
+       └─► cognitive_monologue: SKIP (never offloaded, go to step 3)
     2. Local Model (if hardware profile supports it)
        └─► SBC_LOW_POWER: SKIP (OOM risk) → go to step 3
        └─► ENTRY_8GB: 3B Q4 model (10-15 tok/s)
        └─► LAPTOP_16GB+: 7B-8B model
     3. Template Thoughts (always available, zero compute)
-       └─► For monologue turns: use template, do NOT defer
-       └─► For user/automation turns: use template as interim, defer to queue
-    4. Deferred Task Queue (user + automation turns only)
+       └─► cognitive_monologue: use template, do NOT defer
+       └─► interactive_user: use template as interim, defer to queue
+       └─► high_value_event: use heuristic rules, defer to queue
+       └─► sleep_consolidation: defer to queue (no interim needed)
+    4. Deferred Task Queue (interactive_user + high_value_event + sleep_consolidation)
        └─► Replayed when Desktop peer comes back online
 """
 from __future__ import annotations
@@ -76,14 +97,22 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Turn types (H8)
+# Turn types (H8, §11.3 — 4-tier classification)
 # ---------------------------------------------------------------------------
 
 class TurnType(str, Enum):
-    """The type of cognitive turn, determining deferral policy (H8)."""
-    MONOLOGUE = "monologue"      # advance_turn cognitive tick — never deferred
-    USER = "user"                # explicit user question — deferred to queue
-    AUTOMATION = "automation"    # HA/Frigate trigger — deferred to queue
+    """The type of cognitive turn, determining offload and deferral policy.
+
+    Per §11.3, there are four turn classifications with distinct rules:
+    - cognitive_monologue: NEVER offloaded (would flood Desktop GPU)
+    - interactive_user: Offloaded with 1.5s queue timeout (§11.4)
+    - high_value_event: Offloaded as Priority 3 (Frigo/person detection)
+    - sleep_consolidation: Offloaded as Priority 3 batch (3 AM synthesis)
+    """
+    COGNITIVE_MONOLOGUE = "cognitive_monologue"  # advance_turn tick — strictly local
+    INTERACTIVE_USER = "interactive_user"        # voice/chat input — P2, 1.5s timeout
+    HIGH_VALUE_EVENT = "high_value_event"        # Frigate/security alert — P3
+    SLEEP_CONSOLIDATION = "sleep_consolidation"  # daily memory synthesis — P3 batch
 
 
 # ---------------------------------------------------------------------------
@@ -148,12 +177,18 @@ class ComputeRouter:
         self.hardware_profile = hardware_profile
         self.health_probe_interval = health_probe_interval
 
-        # Peer health state
+        # Peer health state (§11.6 — 3-consecutive-failure threshold)
+        # The rolling health window prevents rapid flapping between local
+        # and remote models during minor network packet loss, DHCP
+        # renewals, or Wi-Fi roaming latency.
         self._peer_online: bool = False
         self._last_probe: float = 0.0
         self._probe_lock = None  # asyncio.Lock, created lazily
+        self._consecutive_failures: int = 0
+        self._failure_threshold: int = 3  # §11.6: 3 failures before OFFLINE
 
-        # Deferred task queue (H8 — user/automation turns only)
+        # Deferred task queue (H8 — interactive_user + high_value_event +
+        # sleep_consolidation only; cognitive_monologue is never deferred)
         self._deferred_queue: list = []  # TODO(federation-9.6): use asyncio.Queue
 
         logger.info(
@@ -165,7 +200,7 @@ class ComputeRouter:
         self,
         messages: list,
         model: str,
-        turn_type: TurnType = TurnType.USER,
+        turn_type: TurnType = TurnType.INTERACTIVE_USER,
         tools: Optional[list] = None,
     ) -> FallbackResult:
         """Route an inference request through the fallback chain.
@@ -173,15 +208,26 @@ class ComputeRouter:
         This is the main entry point.  Called by the satellite's agent
         loop when it needs LLM inference.
 
+        Per §11.3, cognitive_monologue turns are NEVER sent to the peer
+        (they run strictly local with template thoughts).  All other turn
+        types attempt the peer first, with a 1.5s queue timeout for
+        interactive_user turns (§11.4).
+
         TODO(federation-9.6): Implement the full fallback chain:
-        1. Probe peer health (if stale)
-        2. If peer online: call PeerProvider → return FallbackResult(source="peer")
+        1. If turn_type == COGNITIVE_MONOLOGUE: skip peer, go to step 3
+        2. Probe peer health (if stale, respecting 3-failure threshold)
+           a. If peer online: call PeerProvider with appropriate priority
+              - interactive_user: P2 with 1.5s queue timeout (§11.4)
+              - high_value_event: P3
+              - sleep_consolidation: P3 batch
+           b. Return FallbackResult(source="peer")
         3. If peer offline and hardware supports local model:
            a. Call local model → return FallbackResult(source="local_model")
         4. If peer offline and hardware does NOT support local model (SBC_LOW_POWER):
-           a. For monologue: return FallbackResult(source="template")
-           b. For user/automation: return FallbackResult(source="template", deferred=True)
-              and enqueue the request for replay when peer returns
+           a. cognitive_monologue: return FallbackResult(source="template")
+           b. interactive_user: return FallbackResult(source="template", deferred=True)
+           c. high_value_event: return FallbackResult(source="heuristic", deferred=True)
+           d. sleep_consolidation: return FallbackResult(source="deferred", deferred=True)
         """
         raise NotImplementedError("ComputeRouter.route() — TODO(federation-9.6)")
 
@@ -192,8 +238,15 @@ class ComputeRouter:
         with the bearer token.  Timeout after 1.5s.  Update _peer_online
         and _last_probe.
 
-        The probe is intentionally lightweight — it hits a health
-        endpoint, not a model endpoint, so it costs no GPU time.
+        §11.6 Network Flapping Mitigation:
+        A single probe failure does NOT transition to OFFLINE.  The
+        router tracks ``_consecutive_failures`` and only marks the peer
+        as offline after ``_failure_threshold`` (default 3) consecutive
+        failures.  A single success resets the failure counter to 0.
+
+        This prevents rapid flapping between local and remote models
+        during minor network packet loss, DHCP renewals, or Wi-Fi
+        roaming latency.
         """
         raise NotImplementedError("ComputeRouter._probe_peer_health() — TODO(federation-9.6)")
 
@@ -211,12 +264,25 @@ class ComputeRouter:
                                          "server_128gb_plus")
 
     def _should_defer(self, turn_type: TurnType) -> bool:
-        """Whether a turn should be deferred to the replay queue (H8).
+        """Whether a turn should be deferred to the replay queue (H8, §11.3).
 
-        Monologue turns are NEVER deferred (they'd flood the Desktop on
-        wake).  User and automation turns ARE deferred.
+        Per the 4-tier classification:
+        - cognitive_monologue: NEVER deferred (would flood Desktop on wake)
+        - interactive_user: deferred (replay when peer returns)
+        - high_value_event: deferred (replay when peer returns)
+        - sleep_consolidation: deferred (batch replay when Desktop is idle)
         """
-        return turn_type != TurnType.MONOLOGUE
+        return turn_type != TurnType.COGNITIVE_MONOLOGUE
+
+    def _should_offload(self, turn_type: TurnType) -> bool:
+        """Whether a turn should be offloaded to the Desktop peer at all.
+
+        Per §11.3, cognitive_monologue is NEVER offloaded — it runs
+        strictly local using template thoughts.  All other turn types
+        are eligible for peer offload (subject to peer health and
+        hardware profile).
+        """
+        return turn_type != TurnType.COGNITIVE_MONOLOGUE
 
     async def replay_deferred(self) -> int:
         """Replay deferred tasks when the peer comes back online.
