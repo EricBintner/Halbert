@@ -126,7 +126,7 @@ class FallbackResult:
     This extends ``ModelSelection`` (from tier_router.py) with
     federation-specific fields.
     """
-    source: str                    # "peer" | "local_model" | "template" | "deferred"
+    source: str                    # "peer" | "local_model" | "template" | "heuristic" | "deferred"
     model_id: Optional[str] = None
     peer_node_id: Optional[str] = None
     fallback_used: bool = False
@@ -145,10 +145,11 @@ class ComputeRouter:
     This is instantiated on SATELLITE nodes (not the Compute Host).  It
     decides where to send each inference request:
 
-    1. Try the Desktop peer (if online and healthy)
+    1. Try the Desktop peer (if online and healthy, never for cognitive_monologue)
     2. Fall back to local model (if hardware supports it)
     3. Fall back to template thoughts (always available)
-    4. Defer to queue (user/automation turns only, not monologue)
+    4. Defer to queue (interactive_user, high_value_event, and
+       sleep_consolidation turns only; cognitive_monologue is never deferred)
 
     The router reuses ``TierRouter``'s health tracking and fallback
     mechanisms.  It does NOT replace ``TierRouter`` — it wraps it with

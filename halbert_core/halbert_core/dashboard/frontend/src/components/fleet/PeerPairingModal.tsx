@@ -19,31 +19,29 @@
  *      For Tailscale, the user uses the "Manual Pair" tab to enter the
  *      peer's URL directly.
  *
+ * §11.2 — DiscoveredPeerCard is extracted to its own component for
+ *      Storybook isolation. This modal imports and uses it instead of
+ *      an inline row component.
+ *
  * Design:
  * - Two tabs: "Discovered" (mDNS list) and "Manual" (URL + token entry)
- * - Discovered tab: list of DiscoveredPeer with a "Pair" button each
+ * - Discovered tab: list of DiscoveredPeerCard components
  * - Manual tab: URL input + optional token (for pre-shared token pairing)
  * - PIN confirmation step: 4-digit PIN displayed for the user to confirm
  * - No emojis (per global rules) — uses lucide-react icons
  */
 
-import { useState, useEffect } from 'react'
+import * as React from 'react'
+import { useState } from 'react'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import { Radio, Search, Link2, Check, Loader2 } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import {
-  useDiscoveredPeers,
-} from '@/hooks/useDiscoveredPeers'
-import {
-  requestPairing, verifyPairing, setPeerToken,
-  type DiscoveredPeer, type PairResponse,
-} from '@/lib/peerApi'
+import { Radio, Search, Link2, Loader2 } from 'lucide-react'
+import { useDiscoveredPeers } from '@/hooks/useDiscoveredPeers'
+import { DiscoveredPeerCard } from './DiscoveredPeerCard'
 
 interface PeerPairingModalProps {
   /** Called when the modal is closed (X button or backdrop click). */
@@ -91,7 +89,7 @@ export function PeerPairingModal({ onClose, onPaired }: PeerPairingModalProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Discovered peers list (mDNS)
+// Discovered peers list (mDNS) — uses extracted DiscoveredPeerCard (§11.2)
 // ---------------------------------------------------------------------------
 
 function DiscoveredPeersList({ onClose, onPaired }: { onClose: () => void; onPaired: () => void }) {
@@ -131,96 +129,13 @@ function DiscoveredPeersList({ onClose, onPaired }: { onClose: () => void; onPai
   return (
     <div className="space-y-1.5 max-h-64 overflow-y-auto">
       {peers.map((peer) => (
-        <DiscoveredPeerRow
+        <DiscoveredPeerCard
           key={peer.node_id}
           peer={peer}
           onClose={onClose}
           onPaired={onPaired}
         />
       ))}
-    </div>
-  )
-}
-
-function DiscoveredPeerRow({
-  peer, onClose, onPaired,
-}: {
-  peer: DiscoveredPeer
-  onClose: () => void
-  onPaired: () => void
-}) {
-  const [pairing, setPairing] = useState(false)
-  const [pairResponse, setPairResponse] = useState<PairResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  const handlePair = async () => {
-    setPairing(true)
-    setError(null)
-    try {
-      // Step 1: Request pairing → get PIN
-      const resp = await requestPairing({
-        node_id: peer.node_id,
-        node_name: peer.node_name,
-        role: peer.role,
-        capabilities: peer.capabilities,
-        endpoint: peer.endpoint,
-      })
-      setPairResponse(resp)
-      // TODO(federation-9.1): The PIN needs to be confirmed by the user
-      // on the Desktop UI. For now, we auto-verify (development mode).
-      // In production, the Desktop shows a confirmation dialog and the
-      // user enters the PIN on the satellite (or vice versa).
-      const verified = await verifyPairing({
-        pin: resp.pin,
-        node_id: peer.node_id,
-      })
-      setPeerToken(verified.token)
-      onPaired()
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Pairing failed')
-    } finally {
-      setPairing(false)
-    }
-  }
-
-  return (
-    <div className="flex items-center gap-2 p-2 rounded border border-border hover:border-primary/30 transition-colors">
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium truncate">{peer.node_name}</p>
-        <p className="text-[10px] text-muted-foreground font-mono truncate">
-          {peer.endpoint}
-        </p>
-        {peer.compute_backends.length > 0 && (
-          <div className="flex flex-wrap gap-0.5 mt-0.5">
-            {peer.compute_backends.map((backend) => (
-              <Badge key={backend} variant="outline" className="text-[8px] px-1 py-0">
-                {backend}
-              </Badge>
-            ))}
-          </div>
-        )}
-      </div>
-      <Button
-        size="sm"
-        className="h-7 text-[10px]"
-        onClick={handlePair}
-        disabled={pairing}
-      >
-        {pairing ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
-        ) : pairResponse ? (
-          <>
-            <Check className="h-3 w-3 mr-1" />
-            PIN: {pairResponse.pin}
-          </>
-        ) : (
-          'Pair'
-        )}
-      </Button>
-      {error && (
-        <span className="text-[9px] text-destructive">{error}</span>
-      )}
     </div>
   )
 }
