@@ -71,7 +71,7 @@ async def get_system_status() -> Dict[str, Any]:
     }
 
 
-def get_cpu_temp() -> float | None:
+def get_cpu_temp() -> Optional[float]:
     """Get CPU temperature if available."""
     try:
         temps = psutil.sensors_temperatures()
