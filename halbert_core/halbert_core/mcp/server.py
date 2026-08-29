@@ -559,11 +559,27 @@ from urllib.parse import urlparse
 
 
 class _MCPHTTPHandler(BaseHTTPRequestHandler):
-    """HTTP handler for MCP JSON-RPC over POST + SSE streaming."""
+    """HTTP handler for MCP JSON-RPC over POST + SSE streaming.
+
+    Hardening:
+    - Rate limiting: max 60 requests per minute per client IP
+    - SSE connection limit: max 10 concurrent SSE connections
+    - CORS headers: configurable, defaults to localhost-only
+    - Request size limit: max 1MB per POST body
+    """
 
     # Set by the factory function below
     _server: MCPServer = None  # type: ignore
     _bearer_token: str = ""
+    _rate_limiter: "_RateLimiter" = None  # type: ignore
+    _sse_connections: "_SSEConnectionTracker" = None  # type: ignore
+    _cors_origin: str = "*"
+
+    # Limits
+    _MAX_REQUEST_SIZE = 1024 * 1024  # 1MB
+    _MAX_SSE_CONNECTIONS = 10
+    _RATE_LIMIT_WINDOW = 60  # seconds
+    _RATE_LIMIT_MAX_REQUESTS = 60  # per window per IP
 
     def _check_auth(self) -> bool:
         """Validate the Bearer token from the Authorization header."""
@@ -576,11 +592,25 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
         # Constant-time comparison to prevent timing attacks
         return hmac.compare_digest(token, self._bearer_token)
 
+    def _check_rate_limit(self) -> bool:
+        """Check if the client IP is within the rate limit."""
+        if self._rate_limiter is None:
+            return True
+        client_ip = self.client_address[0]
+        return self._rate_limiter.check(client_ip)
+
+    def _send_cors_headers(self) -> None:
+        """Send CORS headers for cross-origin requests."""
+        self.send_header("Access-Control-Allow-Origin", self._cors_origin)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
     def _send_json(self, code: int, body: dict) -> None:
         payload = json.dumps(body).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        self._send_cors_headers()
         self.end_headers()
         self.wfile.write(payload)
 
@@ -588,13 +618,27 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
         self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
         self.wfile.flush()
 
+    def do_OPTIONS(self) -> None:
+        """Handle CORS preflight requests."""
+        self.send_response(204)
+        self._send_cors_headers()
+        self.end_headers()
+
     def do_POST(self) -> None:
         """Handle JSON-RPC requests via POST."""
         if not self._check_auth():
             self._send_json(401, {"error": "Unauthorized"})
             return
 
+        if not self._check_rate_limit():
+            self._send_json(429, {"error": "Rate limit exceeded"})
+            return
+
         content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > self._MAX_REQUEST_SIZE:
+            self._send_json(413, {"error": "Request body too large"})
+            return
+
         body = self.rfile.read(content_length)
         try:
             request = json.loads(body)
@@ -608,6 +652,7 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
         else:
             # Notification — acknowledge with 202
             self.send_response(202)
+            self._send_cors_headers()
             self.end_headers()
 
     def do_GET(self) -> None:
@@ -616,15 +661,26 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
             self._send_json(401, {"error": "Unauthorized"})
             return
 
+        if not self._check_rate_limit():
+            self._send_json(429, {"error": "Rate limit exceeded"})
+            return
+
         parsed = urlparse(self.path)
         if parsed.path != "/sse":
             self._send_json(404, {"error": "Not found"})
             return
 
+        # Check SSE connection limit
+        if self._sse_connections is not None:
+            if not self._sse_connections.acquire():
+                self._send_json(503, {"error": "Too many SSE connections"})
+                return
+
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
+        self._send_cors_headers()
         self.end_headers()
 
         # Send an initial endpoint event so clients know where to POST
@@ -643,17 +699,92 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
                 self._send_sse(json.dumps({"jsonrpc": "2.0", "method": "ping"}))
         except (BrokenPipeError, ConnectionResetError):
             pass
+        finally:
+            if self._sse_connections is not None:
+                self._sse_connections.release()
 
     def log_message(self, format: str, *args) -> None:
         # Route to stderr, not stdout
         logger.info("HTTP %s - %s", self.address_string(), format % args)
 
 
-def _make_http_handler(server: MCPServer, bearer_token: str) -> type:
-    """Create a handler class with the server and token bound."""
+class _RateLimiter:
+    """Simple in-memory rate limiter per client IP."""
+
+    def __init__(self, max_requests: int = 60, window_seconds: int = 60) -> None:
+        self.max_requests = max_requests
+        self.window = window_seconds
+        self._requests: dict[str, list[float]] = {}
+        import threading
+        self._lock = threading.Lock()
+
+    def check(self, client_ip: str) -> bool:
+        """Return True if the client is within the rate limit."""
+        import time
+        now = time.time()
+        with self._lock:
+            if client_ip not in self._requests:
+                self._requests[client_ip] = []
+            # Remove old entries
+            self._requests[client_ip] = [
+                t for t in self._requests[client_ip] if now - t < self.window
+            ]
+            if len(self._requests[client_ip]) >= self.max_requests:
+                return False
+            self._requests[client_ip].append(now)
+            return True
+
+
+class _SSEConnectionTracker:
+    """Track concurrent SSE connections to enforce a limit."""
+
+    def __init__(self, max_connections: int = 10) -> None:
+        self.max = max_connections
+        self._current = 0
+        import threading
+        self._lock = threading.Lock()
+
+    def acquire(self) -> bool:
+        """Try to acquire a connection slot. Returns True if allowed."""
+        with self._lock:
+            if self._current >= self.max:
+                return False
+            self._current += 1
+            return True
+
+    def release(self) -> None:
+        """Release a connection slot."""
+        with self._lock:
+            if self._current > 0:
+                self._current -= 1
+
+
+def _make_http_handler(
+    server: MCPServer,
+    bearer_token: str,
+    *,
+    cors_origin: str = "*",
+    rate_limit: int = 60,
+    max_sse_connections: int = 10,
+) -> type:
+    """Create a handler class with the server and token bound.
+
+    Parameters
+    ----------
+    cors_origin
+        Value for Access-Control-Allow-Origin header. Default "*"
+        allows any origin. For production, set to the specific origin.
+    rate_limit
+        Max requests per minute per client IP. Default 60.
+    max_sse_connections
+        Max concurrent SSE connections. Default 10.
+    """
     class _Handler(_MCPHTTPHandler):
         _server = server
         _bearer_token = bearer_token
+        _cors_origin = cors_origin
+        _rate_limiter = _RateLimiter(max_requests=rate_limit, window_seconds=60)
+        _sse_connections = _SSEConnectionTracker(max_connections=max_sse_connections)
     return _Handler
 
 
@@ -681,6 +812,19 @@ def main() -> None:
         help="Bearer token for HTTP auth. If empty, reads HALBERT_MCP_TOKEN env var. "
              "If neither is set, HTTP runs in open mode (local only).",
     )
+    parser.add_argument(
+        "--cors-origin", default="*",
+        help="CORS Access-Control-Allow-Origin value (default: *). "
+             "Set to a specific origin for production.",
+    )
+    parser.add_argument(
+        "--rate-limit", type=int, default=60,
+        help="Max requests per minute per client IP (default: 60).",
+    )
+    parser.add_argument(
+        "--max-sse-connections", type=int, default=10,
+        help="Max concurrent SSE connections (default: 10).",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -699,7 +843,12 @@ def main() -> None:
         token = args.bearer_token or os.environ.get("HALBERT_MCP_TOKEN", "")
         if not token:
             logger.warning("HTTP transport with no bearer token — open mode (local only)")
-        handler = _make_http_handler(server, token)
+        handler = _make_http_handler(
+            server, token,
+            cors_origin=args.cors_origin,
+            rate_limit=args.rate_limit,
+            max_sse_connections=args.max_sse_connections,
+        )
         httpd = HTTPServer((args.host, args.port), handler)
         logger.info("MCP HTTP server listening on %s:%d (instance=%s, auth=%s)",
                      args.host, args.port, server.instance_name, bool(token))

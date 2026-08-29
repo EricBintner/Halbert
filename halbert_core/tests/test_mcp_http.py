@@ -164,3 +164,72 @@ class TestMultiInstance:
 
         s4, _ = _post(url1, {"jsonrpc": "2.0", "id": 1, "method": "initialize"}, token=token2)
         assert s4 == 401
+
+
+class TestRateLimiting:
+    """Rate limiting prevents abuse from a single client IP."""
+
+    def test_rate_limit_returns_429(self, http_server_factory):
+        """After exceeding the rate limit, returns 429."""
+        # Start with a low rate limit
+        mcp = MCPServer(instance_name="test")
+        handler = _make_http_handler(mcp, "", rate_limit=3)
+        httpd = HTTPServer(("127.0.0.1", 0), handler)
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{port}"
+        try:
+            # First 3 requests should succeed
+            for _ in range(3):
+                status, _ = _post(url, {"jsonrpc": "2.0", "id": 1, "method": "ping"})
+                assert status == 200
+            # 4th should be rate limited
+            status, resp = _post(url, {"jsonrpc": "2.0", "id": 1, "method": "ping"})
+            assert status == 429
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=2)
+
+
+class TestCORS:
+    """CORS headers are present on responses."""
+
+    def test_cors_headers_on_post(self, http_server_factory):
+        """POST responses include CORS headers."""
+        url, _ = http_server_factory(token="")
+        data = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}).encode()
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.headers.get("Access-Control-Allow-Origin") == "*"
+            assert "POST" in resp.headers.get("Access-Control-Allow-Methods", "")
+
+    def test_options_preflight(self, http_server_factory):
+        """OPTIONS preflight returns 204 with CORS headers."""
+        url, _ = http_server_factory(token="")
+        req = urllib.request.Request(url, method="OPTIONS")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 204
+            assert resp.headers.get("Access-Control-Allow-Origin") == "*"
+
+
+class TestRequestSizeLimit:
+    """Request body size is limited."""
+
+    def test_oversized_request_rejected(self, http_server_factory):
+        """POST bodies larger than 1MB are rejected with 413."""
+        url, _ = http_server_factory(token="")
+        # Create a body larger than 1MB
+        big_data = "x" * (1024 * 1024 + 100)
+        data = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {"x": big_data}}).encode()
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            assert False, "Should have raised an error"
+        except (urllib.error.HTTPError, urllib.error.URLError) as e:
+            # HTTPError: server responded with 413 before reading body
+            # URLError: broken pipe because server closed connection before
+            #   the client finished sending the oversized body
+            # Both are acceptable — the server rejected the request
+            if isinstance(e, urllib.error.HTTPError):
+                assert e.code == 413
