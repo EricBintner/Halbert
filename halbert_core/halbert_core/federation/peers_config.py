@@ -79,7 +79,7 @@ class PeerCredential:
 
     node_id: str                           # unique identifier (hostname or user-provided)
     node_name: str                         # human-readable display name
-    role: str                              # "compute_host" | "satellite"
+    role: str                              # "compute_provider" | "satellite"
     token_hash: str                        # "sha256:<hex>"
     paired_at: str                         # ISO 8601 timestamp
     last_seen: Optional[str] = None        # ISO 8601, updated on each authenticated request
@@ -181,6 +181,7 @@ class PeersConfig:
 
     def _save(self) -> None:
         """Atomically persist peers to disk (temp file + rename)."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         data = {"peers": [p.to_dict() for p in self._peers.values()]}
         tmp = self._path.with_suffix(".tmp")
         with open(tmp, "w") as f:

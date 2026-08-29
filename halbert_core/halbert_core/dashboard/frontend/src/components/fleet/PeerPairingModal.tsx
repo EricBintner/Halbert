@@ -35,7 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Radio, KeyRound, Search, Link2, Check, Loader2 } from 'lucide-react'
+import { Radio, Search, Link2, Check, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   useDiscoveredPeers,

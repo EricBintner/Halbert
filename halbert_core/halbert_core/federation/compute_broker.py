@@ -76,20 +76,23 @@ class ComputePriority(IntEnum):
 class ComputeRequest:
     """A queued compute request, ordered by (priority, timestamp).
 
-    The ``order=True`` on the dataclass makes this sortable by priority
-    (ascending — lower number = higher priority) then by timestamp
-    (FIFO within the same priority).
+    Uses ``field(compare=True/False)`` (NOT ``metadata={"compare": ...}``
+    which the dataclasses module ignores). Only ``priority`` and
+    ``timestamp`` participate in ordering; all other fields are excluded
+    so that non-comparable types (list, dict, None Future) don't break
+    PriorityQueue sorting on tie-breaks.
     """
-    priority: int = field(metadata={"compare": True})  # ComputePriority value
-    timestamp: float = field(default_factory=time.time, metadata={"compare": True})
+    # Comparison fields (sort by priority then timestamp):
+    priority: int = field(compare=True)  # ComputePriority value
+    timestamp: float = field(default_factory=time.time, compare=True)
     # Non-comparison fields:
-    peer_node_id: str = field(default="", metadata={"compare": False})
-    model: str = field(default="", metadata={"compare": False})
-    messages: list = field(default_factory=list, metadata={"compare": False})
-    tools: Optional[list] = field(default=None, metadata={"compare": False})
+    peer_node_id: str = field(default="", compare=False)
+    model: str = field(default="", compare=False)
+    messages: list = field(default_factory=list, compare=False)
+    tools: Optional[list] = field(default=None, compare=False)
     # Future for the result:
-    _future: asyncio.Future = field(default=None, metadata={"compare": False})
-    _preempted: bool = field(default=False, metadata={"compare": False})
+    _future: asyncio.Future = field(default=None, compare=False)
+    _preempted: bool = field(default=False, compare=False)
 
 
 # ---------------------------------------------------------------------------

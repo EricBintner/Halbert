@@ -45,7 +45,7 @@ export interface UseDiscoveredPeersResult {
  */
 export function useDiscoveredPeers(enabled: boolean = true): UseDiscoveredPeersResult {
   const [peers, setPeers] = useState<DiscoveredPeer[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(enabled)
   const [error, setError] = useState<string | null>(null)
 
   const fetchPeers = useCallback(async () => {
@@ -62,7 +62,10 @@ export function useDiscoveredPeers(enabled: boolean = true): UseDiscoveredPeersR
   }, [])
 
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled) {
+      setLoading(false)
+      return
+    }
 
     // Initial fetch
     fetchPeers()

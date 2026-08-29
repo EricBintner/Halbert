@@ -92,3 +92,16 @@ export function DialogDescription({ children, className }: DialogDescriptionProp
     </p>
   )
 }
+
+interface DialogFooterProps {
+  children: React.ReactNode
+  className?: string
+}
+
+export function DialogFooter({ children, className }: DialogFooterProps) {
+  return (
+    <div className={cn("flex justify-end gap-2 pt-2", className)}>
+      {children}
+    </div>
+  )
+}

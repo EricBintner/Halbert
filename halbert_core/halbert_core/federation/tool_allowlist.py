@@ -108,9 +108,9 @@ def is_tool_allowed_for_peer(tool_name: str) -> bool:
 def filter_tools_for_peer(tool_names: List[str]) -> List[str]:
     """Filter a list of tool names to only those allowed for peers.
 
-    Logs a warning for each denied tool so the operator can see what
-    was filtered out (useful for debugging "why didn't the model call
-    tool X?" questions).
+    Logs at debug level for each denied tool so the operator can see
+    what was filtered out (useful for debugging "why didn't the model
+    call tool X?" questions).
     """
     allowed: List[str] = []
     for name in tool_names:

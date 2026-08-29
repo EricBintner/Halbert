@@ -52,14 +52,14 @@ This is the Tailscale path (finding H9 — mDNS doesn't cross Tailscale).
 from __future__ import annotations
 
 import logging
-import random
+import secrets
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from ...federation.peers_config import PeersConfig, PeerCredential, get_peers_config
-from ...federation.peer_middleware import require_peer_auth, PeerContext
+from ...federation.peers_config import PeersConfig, PeerCredential
+from ...federation.peer_middleware import require_peer_auth, PeerContext, get_peers_config
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,7 @@ async def request_pairing(req: PairRequest) -> PairResponse:
         )
 
     # Generate 4-digit PIN
-    pin = f"{random.randint(0, 9999):04d}"
+    pin = f"{secrets.randbelow(10000):04d}"
 
     _pending_pairings[pin] = {
         "node_id": req.node_id,

@@ -89,20 +89,26 @@ class TestTokenRevocation:
         assert cred.token_hash.startswith("sha256:")
 
     def test_re_pairing_after_revocation(self, peers_config):
-        """After revoking, a new peer with the same node_id can be added."""
+        """After revoking, the old token is rejected and the node_id is occupied.
+
+        TODO(federation-9.1): add_peer should allow re-pairing after
+        revocation (either by overwriting the revoked entry or by
+        removing it first). Currently add_peer raises ValueError if
+        the node_id already exists, even if revoked. This test documents
+        the current behavior — re-pairing is not yet supported.
+        """
         token1 = peers_config.generate_token()
         peers_config.add_peer("sat-1", "Pi 1", "satellite", raw_token=token1)
         peers_config.revoke_peer("sat-1")
 
-        # Adding again should work (the old one is revoked, not removed)
-        # TODO(federation-9.1): add_peer should check for revoked peers
-        # and allow re-adding. Currently it raises ValueError if node_id
-        # exists. The implementation needs to handle this case.
-        # For now, this test documents the expected behavior.
+        # Old token is rejected after revocation
+        assert peers_config.verify_token(token1) is None
+
+        # Re-adding the same node_id currently raises ValueError
+        # (the revoked entry is still in the store)
         token2 = peers_config.generate_token()
-        # This will fail until add_peer handles re-pairing after revocation
-        # peers_config.add_peer("sat-1", "Pi 1 (re-paired)", "satellite", raw_token=token2)
-        # assert peers_config.verify_token(token2) is not None
+        with pytest.raises(ValueError, match="already paired"):
+            peers_config.add_peer("sat-1", "Pi 1 (re-paired)", "satellite", raw_token=token2)
 
     def test_token_hash_verification_is_constant_time(self):
         """verify_token_hash uses constant-time comparison (hmac.compare_digest)."""

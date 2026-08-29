@@ -135,7 +135,6 @@ class ChatCompletionResponse(BaseModel):
 
 @router.post(
     "/api/compute/v1/chat/completions",
-    dependencies=[Depends(require_peer_auth)],
     response_model=ChatCompletionResponse,
 )
 async def peer_compute_chat(
@@ -220,7 +219,6 @@ async def peer_compute_chat(
 
 @router.get(
     "/api/compute/v1/models",
-    dependencies=[Depends(require_peer_auth)],
 )
 async def peer_compute_models(
     peer: PeerContext = Depends(require_peer_auth),

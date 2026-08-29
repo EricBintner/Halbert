@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
-from ...federation.peers_config import get_peers_config
+from ...federation.peer_middleware import get_peers_config
 from ...federation.fleet_proxy import get_fleet_proxy, FleetProxy
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,17 @@ router = APIRouter()
 # Models
 # ---------------------------------------------------------------------------
 
+class FleetVitals(BaseModel):
+    """Live vitals for a fleet node (matches the frontend FleetNodeStatus.vitals shape)."""
+    cpu_percent: float = 0.0
+    memory_percent: float = 0.0
+    memory_available_mb: float = 0.0
+    temperature_c: Optional[float] = None
+    uptime_seconds: float = 0.0
+    load_average_1m: Optional[float] = None
+    disk_percent: float = 0.0
+
+
 class FleetNodeStatus(BaseModel):
     """Status of a single satellite node in the fleet."""
     node_id: str
@@ -59,7 +70,7 @@ class FleetNodeStatus(BaseModel):
     last_seen: Optional[str] = None
     capabilities: List[str] = Field(default_factory=list)
     # Telemetry is populated lazily (only for online nodes)
-    vitals: Optional[Dict[str, Any]] = None
+    vitals: Optional[FleetVitals] = None
     discovery_count: Optional[int] = None
 
 

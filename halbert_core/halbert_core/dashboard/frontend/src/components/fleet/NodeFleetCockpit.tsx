@@ -26,7 +26,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Cpu, MemoryStick, Thermometer, Clock, Activity,
+  Cpu, MemoryStick, Thermometer, Clock,
   Server, Wifi, WifiOff, RefreshCw, Plus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
