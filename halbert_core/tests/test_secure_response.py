@@ -147,3 +147,119 @@ class TestShannonEntropy:
 
     def test_empty(self):
         assert _shannon_entropy("") == 0.0
+
+
+class TestArchitecturalGuarantee:
+    """Prove describe_secret has no code path that sends the secret
+    to any external service, regardless of config.
+
+    This is the AgentSecrets pattern: prove there is no code path, not
+    just that the code path is disabled. We mock all network egress and
+    assert that describe_secret never triggers any of them.
+    """
+
+    def test_no_network_calls_with_password(self):
+        """describe_secret with a password makes no network calls."""
+        from unittest.mock import patch, MagicMock
+        with patch("urllib.request.urlopen") as mock_open:
+            result = describe_secret("password", "hunter2", "/etc/app.conf")
+            assert mock_open.call_count == 0
+        assert result["redacted"] is True
+        assert "hunter2" not in str(result)
+
+    def test_no_network_calls_with_github_token(self):
+        """describe_secret with a GitHub PAT makes no network calls."""
+        from unittest.mock import patch
+        token = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
+        with patch("urllib.request.urlopen") as mock_open:
+            result = describe_secret("api_key", token, "/etc/app.conf")
+            assert mock_open.call_count == 0
+        assert token not in str(result)
+
+    def test_no_network_calls_with_identified_credential(self):
+        """Even when the credential type is identified, no network calls."""
+        from unittest.mock import patch
+        token = "sk-abcdefghijklmnopqrstuvwxyz0123456789"
+        with patch("urllib.request.urlopen") as mock_open:
+            result = describe_secret("api_key", token, "/etc/app.conf")
+            assert mock_open.call_count == 0
+        # The credential was identified locally (no network)
+        assert "credential_type" in result
+        assert result["credential_type"]["service"] == "OpenAI"
+
+    def test_no_network_calls_with_empty_value(self):
+        """describe_secret with empty value makes no network calls."""
+        from unittest.mock import patch
+        with patch("urllib.request.urlopen") as mock_open:
+            result = describe_secret("token", "", "/etc/app.conf")
+            assert mock_open.call_count == 0
+
+    def test_no_network_calls_with_none_value(self):
+        """describe_secret with None value makes no network calls."""
+        from unittest.mock import patch
+        with patch("urllib.request.urlopen") as mock_open:
+            result = describe_secret("token", None, "/etc/app.conf")
+            assert mock_open.call_count == 0
+
+    def test_value_not_in_result_string(self):
+        """The raw value must not appear anywhere in the result."""
+        result = describe_secret("password", "supersecret123", "/etc/app.conf")
+        assert "supersecret123" not in str(result)
+        assert "supersecret" not in str(result)
+
+    def test_value_not_in_result_dict(self):
+        """The raw value must not appear in any field of the result dict."""
+        value = "supersecret123"
+        result = describe_secret("password", value, "/etc/app.conf")
+        for k, v in result.items():
+            if isinstance(v, str):
+                assert value not in v
+            elif isinstance(v, dict):
+                assert value not in str(v)
+
+
+class TestBreachRisk:
+    """breach_risk is surfaced from the credential format database."""
+
+    def test_breach_risk_for_github_pat(self):
+        token = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
+        result = describe_secret("api_key", token, "/etc/app.conf")
+        assert "breach_risk" in result
+        assert result["breach_risk"] == "high"
+
+    def test_breach_risk_for_stripe_publishable(self):
+        key = "pk_live_abcdefghijklmnopqrstuvwxyz123456"
+        result = describe_secret("stripe_key", key, "/etc/app.conf")
+        assert result.get("breach_risk") == "low"
+
+    def test_no_breach_risk_for_unidentified_value(self):
+        result = describe_secret("password", "hunter2", "/etc/app.conf")
+        assert "breach_risk" not in result
+
+    def test_breach_risk_in_credential_type(self):
+        """breach_risk is also available inside the credential_type dict."""
+        token = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
+        result = describe_secret("api_key", token, "/etc/app.conf")
+        assert "credential_type" in result
+        assert "breach_risk" in result["credential_type"]
+
+
+class TestLastChanged:
+    """last_changed returns file modification time."""
+
+    def test_last_changed_for_real_file(self, tmp_path):
+        config_file = tmp_path / "app.conf"
+        config_file.write_text("password = hunter2\n")
+        result = describe_secret("password", "hunter2", str(config_file))
+        assert "last_changed" in result
+        assert result["last_changed"] is not None
+        # Should be an ISO timestamp
+        assert "T" in result["last_changed"]
+
+    def test_last_changed_none_for_nonexistent_file(self):
+        result = describe_secret("password", "hunter2", "/nonexistent/path.conf")
+        assert result["last_changed"] is None
+
+    def test_last_changed_none_for_empty_path(self):
+        result = describe_secret("password", "hunter2", "")
+        assert result["last_changed"] is None

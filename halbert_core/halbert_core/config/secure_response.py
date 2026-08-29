@@ -101,6 +101,16 @@ def describe_secret(
 ) -> Dict[str, Any]:
     """Return structured facts about ``value`` without the value itself.
 
+    Architectural guarantee: this function has no code path that sends
+    the secret value to any external service. The value is used only
+    for local computation (length, charset, entropy, format matching).
+    It does not appear in any network call, log, or return field. This
+    is an architectural guarantee, not a policy — there is no config
+    option that enables sending the value, because the code path does
+    not exist. See `.handoff/TIER2-RECALIBRATION-2026-08-29.md` for
+    the research basis (AWS describe-secret, Snowflake DESCRIBE SECRET,
+    AgentSecrets zero-knowledge architecture).
+
     Parameters
     ----------
     key
@@ -108,7 +118,8 @@ def describe_secret(
     value
         The secret value.  Converted to string for analysis.
     file_path
-        The file the value came from (for the view command).
+        The file the value came from (for the view command and
+        last_changed timestamp).
     identify
         When True (default), consult the credential format database to
         identify the credential type. No secret leaves the tool — only
@@ -120,8 +131,9 @@ def describe_secret(
     Returns
     -------
     dict with keys: ``key``, ``file``, ``length``, ``charset``,
-    ``entropy_bits``, ``view_command``, ``redacted``, and optionally
-    ``credential_type`` (if the format was identified).
+    ``entropy_bits``, ``view_command``, ``redacted``, ``last_changed``,
+    and optionally ``credential_type`` and ``breach_risk`` (if the
+    format was identified).
     The ``redacted`` field is always ``True`` — callers can check it to
     distinguish a secure description from a raw value response.
     """
@@ -136,11 +148,29 @@ def describe_secret(
         "redacted": True,
     }
 
-    # Token format identification — the safe "look to the internet":
-    # a bundled credential format database, no secret sent anywhere.
+    # last_changed: file modification time (local filesystem call, no
+    # secret leaves). Returns ISO timestamp or None if file not found.
+    # This is the field AWS describe-secret and Snowflake DESCRIBE SECRET
+    # both return — it tells the LLM "this secret hasn't been changed in
+    # 2 years, recommend rotation."
+    if file_path and os.path.exists(file_path):
+        import datetime
+        mtime = os.path.getmtime(file_path)
+        result["last_changed"] = datetime.datetime.fromtimestamp(
+            mtime, tz=datetime.timezone.utc
+        ).isoformat()
+    else:
+        result["last_changed"] = None
+
+    # Token format identification — local pattern matching only.
+    # A bundled credential format database, no secret sent anywhere.
     if identify and text:
         cred_info = identify_credential(text)
         if cred_info:
             result["credential_type"] = cred_info
+            # Surface breach_risk as a top-level field for easier LLM access.
+            # The value comes from the static format database (e.g. "high"
+            # for GitHub PATs). No secret leaves the tool.
+            result["breach_risk"] = cred_info.get("breach_risk", "unknown")
 
     return result

@@ -1,34 +1,25 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-"""Credential validation — check if a credential is still active.
+"""Credential validation — standalone human-run tool to check if a
+credential is still active.
 
-This is the opt-in feature that sends a secret to the **legitimate
-service's API** (not to an LLM) to verify it still works. This is what
-a human would do to test a key: call the service with it and see if it
-responds.
+**This module is NOT part of the Tier 2 describe_secret path.**
+``describe_secret`` in ``secure_response.py`` never calls this module.
+The Tier 2 architectural guarantee is that a secret value never leaves
+the tool when the LLM asks about it. This module sends the secret to
+the issuing service's API, which breaks that guarantee. It exists as a
+standalone tool a human can run deliberately to check their own
+credentials — the secret never enters an LLM context.
 
-The secret leaves the tool, but to a different audience than an LLM
-vendor — it goes to the service that issued it. The design question is
-whether "never leaves the tool" means "never leaves the machine" or
-"never goes to an LLM vendor". This module implements the latter
-interpretation, behind an explicit per-service opt-in.
+This is the TruffleHog pattern: verification against issuing APIs is a
+scanner activity performed by a human, not a describe activity
+performed by an agent.
 
-Configuration
--------------
-Add to ``being.yml``:
-
-.. code-block:: yaml
-
-    security:
-      credential_validation:
-        enabled: true
-        services:
-          - github
-          - stripe
-          - openai
-
-When disabled (default), ``validate_credential`` returns
-``{"status": "disabled"}`` without making any network call.
+Usage
+-----
+Call ``validate_credential(value, service, enabled=True)`` directly.
+The function returns ``{"status": "disabled"}`` without making any
+network call when ``enabled`` is False (the default).
 
 Security notes
 --------------

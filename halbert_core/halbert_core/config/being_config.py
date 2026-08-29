@@ -32,55 +32,6 @@ VALID_SECRET_TIERS = {"local_only", "cloud_ok_acknowledged"}
 
 
 @dataclass
-class CredentialValidationConfig:
-    """Opt-in credential validation settings.
-
-    When enabled, ``describe_secret`` calls the legitimate service's API
-    (not an LLM) to check if a credential is still active. This is what
-    a human would do to test a key. The secret leaves the tool but goes
-    to the service that issued it, not to an LLM vendor.
-
-    Disabled by default. Per-service opt-in via the ``services`` list.
-    """
-    enabled: bool = False
-    services: List[str] = field(default_factory=list)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "CredentialValidationConfig":
-        known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
-        return cls(**known)
-
-
-@dataclass
-class CompromiseCheckConfig:
-    """Opt-in compromise detection settings.
-
-    When enabled, checks if credentials have been leaked in public breaches.
-    Two methods:
-
-    - HIBP: sends only SHA-1 hash prefix (5 chars). Full hash never leaves
-      the machine. K-anonymity model.
-    - GitHub scanning: sends full token to GitHub API (the issuing service).
-
-    Disabled by default.
-    """
-    enabled: bool = False
-    hibp: bool = False
-    github_scanning: bool = False
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "CompromiseCheckConfig":
-        known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
-        return cls(**known)
-
-
-@dataclass
 class SecurityConfig:
     """Security tier settings for config value routing.
 
@@ -94,6 +45,12 @@ class SecurityConfig:
     carry a fail-closed assertion: reject any tag ending in ``:cloud``,
     reject any provider outside ``LOCAL_GPU_PROVIDERS``, never infer
     locality from the endpoint URL.
+
+    No ``credential_validation`` / ``compromise_check`` fields — those
+    modules send the secret to external services (issuing APIs, HIBP),
+    which breaks the architectural guarantee that ``describe_secret``
+    never sends the secret value anywhere. They exist as standalone
+    human-run tools, not as part of the Tier 2 describe path.
     """
     operational_tier: str = "cloud_ok"  # cloud_ok | local_only | redact
     secret_tier: str = "local_only"     # local_only | cloud_ok_acknowledged
@@ -107,12 +64,6 @@ class SecurityConfig:
     # a user expose database passwords (which they trust ZDR with) while
     # keeping SSH private keys and API tokens local-only.
     cloud_ok_keys: List[str] = field(default_factory=list)
-    credential_validation: CredentialValidationConfig = field(
-        default_factory=CredentialValidationConfig
-    )
-    compromise_check: CompromiseCheckConfig = field(
-        default_factory=CompromiseCheckConfig
-    )
 
     def validate(self) -> None:
         if self.operational_tier not in VALID_OPERATIONAL_TIERS:
@@ -132,15 +83,6 @@ class SecurityConfig:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "SecurityConfig":
         known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
-        # Handle nested configs
-        if "credential_validation" in known and isinstance(known["credential_validation"], dict):
-            known["credential_validation"] = CredentialValidationConfig.from_dict(
-                known["credential_validation"]
-            )
-        if "compromise_check" in known and isinstance(known["compromise_check"], dict):
-            known["compromise_check"] = CompromiseCheckConfig.from_dict(
-                known["compromise_check"]
-            )
         return cls(**known)
 
 

@@ -1,35 +1,35 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-"""Compromise detection — check if a credential has been leaked publicly.
+"""Compromise detection — standalone human-run tool to check if a
+credential has been leaked publicly.
 
-This is the highest security value enhancement: telling the user their
-credential is compromised without revealing the credential to an LLM.
+**This module is NOT part of the Tier 2 describe_secret path.**
+``describe_secret`` in ``secure_response.py`` never calls this module.
+The Tier 2 architectural guarantee is that a secret value never leaves
+the tool when the LLM asks about it. The GitHub scanning path in this
+module sends the full token to GitHub's API, which breaks that
+guarantee. It exists as a standalone tool a human can run deliberately
+to check their own credentials — the secret never enters an LLM context.
 
-Two detection methods, both opt-in:
+Two detection methods:
 
-1. **HIBP (Have I Been Pwned) password check** — sends only a SHA-1 hash
-   prefix (5 chars) to the HIBP API. The full hash never leaves the
-   machine. Returns the number of breaches the password appears in.
+1. **HIBP (Have I Been Pwned) password check** — sends only a SHA-1
+   hash prefix (5 chars) to the HIBP API. The full hash never leaves
+   the machine. Returns the number of breaches the password appears in.
+   This method is closer to architecturally safe (k-anonymity model),
+   but is still not wired into describe_secret to keep the boundary
+   simple and unconditional.
 
 2. **GitHub secret scanning** — for tokens with known prefixes (ghp_,
-   sk-, etc.), checks if the token has been found in public GitHub repos.
-   This sends the full token to GitHub's API, which is the same audience
-   that would have found it in a repo anyway.
+   sk-, etc.), checks if the token has been found in public GitHub
+   repos. This sends the full token to GitHub's API.
 
-Configuration
--------------
-Add to ``being.yml``:
-
-.. code-block:: yaml
-
-    security:
-      compromise_check:
-        enabled: true
-        hibp: true           # password breach check via hash prefix
-        github_scanning: true # token exposure check via GitHub API
-
-When disabled (default), ``check_compromised`` returns
-``{"status": "disabled"}`` without making any network call.
+Usage
+-----
+Call ``check_compromised(value, enabled=True, hibp=True,
+github_scanning=True)`` directly. The function returns
+``{"status": "disabled"}`` without making any network call when
+``enabled`` is False (the default).
 """
 from __future__ import annotations
 
