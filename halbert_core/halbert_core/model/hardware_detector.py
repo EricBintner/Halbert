@@ -21,7 +21,8 @@ import logging
 
 from ..utils.platform import (
     is_linux, is_macos, is_mac_apple_silicon,
-    get_unified_memory_gb, get_platform_info
+    get_unified_memory_gb, get_platform_info,
+    detect_metal_gpu, apple_intelligence_eligible,
 )
 from ..obs.logging import get_logger
 
@@ -61,10 +62,15 @@ class HardwareCapabilities:
     # Mac-specific
     is_apple_silicon: bool = False
     unified_memory_gb: Optional[int] = None
-    
+
+    # Apple Intelligence (FoundationModels) — on-device LLM via ANE
+    metal_gpu: Optional[Dict[str, Any]] = None
+    apple_intelligence_available: bool = False
+    apple_intelligence_bridge_running: bool = False
+
     # Computed profile
     profile: HardwareProfile = HardwareProfile.UNKNOWN
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
@@ -78,6 +84,9 @@ class HardwareCapabilities:
             "gpu_memory_gb": self.gpu_memory_gb,
             "is_apple_silicon": self.is_apple_silicon,
             "unified_memory_gb": self.unified_memory_gb,
+            "metal_gpu": self.metal_gpu,
+            "apple_intelligence_available": self.apple_intelligence_available,
+            "apple_intelligence_bridge_running": self.apple_intelligence_bridge_running,
             "profile": self.profile.value,
         }
 
@@ -267,7 +276,18 @@ class HardwareDetector:
         # Mac-specific
         is_apple = is_mac_apple_silicon()
         unified_mem = get_unified_memory_gb() if is_apple else None
-        
+        metal = detect_metal_gpu() if is_apple else None
+
+        # Apple Intelligence: eligible by hardware, available if the bridge
+        # is also running. The bridge may not be bundled yet (Swift sidecar
+        # is a separate deliverable), so eligibility without the bridge is
+        # a valid state — the endpoint is registered but inert until the
+        # bridge exists.
+        ai_eligible = apple_intelligence_eligible() if is_apple else False
+        bridge_running = False
+        if ai_eligible:
+            bridge_running = self._probe_apple_foundation_bridge()
+
         # Create capabilities object
         capabilities = HardwareCapabilities(
             total_ram_gb=total_ram_gb,
@@ -280,6 +300,9 @@ class HardwareDetector:
             gpu_memory_gb=gpu_memory,
             is_apple_silicon=is_apple,
             unified_memory_gb=unified_mem,
+            metal_gpu=metal,
+            apple_intelligence_available=ai_eligible,
+            apple_intelligence_bridge_running=bridge_running,
         )
         
         # Determine hardware profile
@@ -344,9 +367,28 @@ class HardwareDetector:
                 return None
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
-        
+
         return None
-    
+
+    def _probe_apple_foundation_bridge(self) -> bool:
+        """Check whether the Swift FoundationModels bridge is running on loopback.
+
+        The bridge (``halbert-foundation-bridge``) is a Tauri sidecar that
+        exposes Apple Intelligence via an OpenAI-compatible HTTP server on
+        port 11435. When it answers, Apple Intelligence is fully available;
+        when it does not, the host is *eligible* but the endpoint is inert
+        until the bridge is bundled and started.
+        """
+        try:
+            import requests as _requests
+            resp = _requests.get(
+                "http://127.0.0.1:11435/v1/models",
+                timeout=0.5,
+            )
+            return resp.status_code == 200
+        except Exception:
+            return False
+
     def _classify_hardware(self, hw: HardwareCapabilities) -> HardwareProfile:
         """
         Classify hardware into a profile category.

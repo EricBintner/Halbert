@@ -188,6 +188,7 @@ function fakeTransport(options: FakeOptions = {}): FakeTransport {
       return {
         ollama: { running: true, url: LOCAL.url, models: ['local-plain'] },
         lmStudio: { running: false, url: EXTRA.url, models: [] },
+        appleFoundation: { running: false, url: '', models: [] },
       }
     }
   }

@@ -43,7 +43,7 @@ import type {
   SavedEndpoint,
   UseModelPickerResult,
 } from '@halbert/model-picker'
-import { Brain, Check, ChevronDown, Cloud, HardDrive, X } from 'lucide-react'
+import { Brain, Check, ChevronDown, Cloud, Cpu, HardDrive, X } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { QuickSetup } from './QuickSetup'
 import { CloudDisclosureModal } from '@/components/legal'
@@ -423,6 +423,26 @@ export function ModelSettings() {
           >
             {picker.error}
           </p>
+        ) : null}
+
+        {/* Apple Intelligence: when the bridge is running, show a distinct
+            banner so the user knows the on-device model is available with
+            zero download. The provider also appears in the Local group of
+            the providers accordion below. */}
+        {picker.discovery?.appleFoundation?.running ? (
+          <div className="flex items-start gap-3 rounded-lg border border-success/40 bg-success-muted px-4 py-3">
+            <Cpu className="mt-0.5 h-5 w-5 shrink-0 text-success" aria-hidden="true" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">
+                Apple Intelligence — On-Device Model Available
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Built-in foundation model running on the Apple Neural Engine.
+                Zero download, zero config. Data never leaves this Mac.
+                Assign it to the Secure (Local) role below.
+              </p>
+            </div>
+          </div>
         ) : null}
 
         <ModelSettingsDrawer

@@ -26,6 +26,7 @@ function configEnvelope(savedEndpoints: unknown[]): unknown {
         chat_model: { enabled: false, endpoint_id: '', model: '' },
         specialist_model: { enabled: false, endpoint_id: '', model: '' },
         vision_model: { enabled: false, endpoint_id: '', model: '' },
+        secure_model: { enabled: false, endpoint_id: '', model: '' },
       },
       chat_capable_providers: [],
     },
@@ -56,6 +57,7 @@ describe('modelPickerTransport', () => {
               chat_model: { enabled: true, endpoint_id: 'ep_1', model: 'guide-x' },
               specialist_model: { enabled: false, endpoint_id: '', model: '' },
               vision_model: { enabled: false, endpoint_id: '', model: '' },
+              secure_model: { enabled: false, endpoint_id: '', model: '' },
             },
             chat_capable_providers: ['ollama', 'anthropic'],
           },
@@ -83,6 +85,7 @@ describe('modelPickerTransport', () => {
               chat_model: { enabled: false, endpoint_id: '', model: '' },
               specialist_model: { enabled: false, endpoint_id: '', model: '' },
               vision_model: { enabled: false, endpoint_id: '', model: '' },
+              secure_model: { enabled: false, endpoint_id: '', model: '' },
             },
             chat_capable_providers: [],
           },
@@ -92,6 +95,33 @@ describe('modelPickerTransport', () => {
       const config = await createModelPickerTransport().loadConfig()
 
       expect('apiKey' in config.endpoints[0]).toBe(false)
+    })
+
+    it('maps secure_model assignment from the backend', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({
+          data: {
+            llm_config: {
+              saved_endpoints: [
+                { id: 'ep_ai', name: 'Apple Intelligence', provider: 'apple-foundation', url: 'http://127.0.0.1:11435' },
+              ],
+              chat_model: { enabled: false, endpoint_id: '', model: '' },
+              specialist_model: { enabled: false, endpoint_id: '', model: '' },
+              vision_model: { enabled: false, endpoint_id: '', model: '' },
+              secure_model: { enabled: true, endpoint_id: 'ep_ai', model: 'apple-foundation-3b' },
+            },
+            chat_capable_providers: ['apple-foundation'],
+          },
+        }),
+      )
+
+      const config = await createModelPickerTransport().loadConfig()
+
+      expect(config.assignments.secure_model).toEqual({
+        endpointId: 'ep_ai',
+        model: 'apple-foundation-3b',
+        enabled: true,
+      })
     })
   })
 
@@ -105,6 +135,7 @@ describe('modelPickerTransport', () => {
               chat_model: { enabled: false, endpoint_id: '', model: '' },
               specialist_model: { enabled: false, endpoint_id: '', model: '' },
               vision_model: { enabled: false, endpoint_id: '', model: '' },
+              secure_model: { enabled: false, endpoint_id: '', model: '' },
             },
             chat_capable_providers: [],
           },
@@ -135,6 +166,7 @@ describe('modelPickerTransport', () => {
               chat_model: { enabled: true, endpoint_id: 'ep_1', model: 'guide-x' },
               specialist_model: { enabled: false, endpoint_id: '', model: '' },
               vision_model: { enabled: false, endpoint_id: '', model: '' },
+              secure_model: { enabled: false, endpoint_id: '', model: '' },
             },
             chat_capable_providers: [],
           },
@@ -318,12 +350,13 @@ describe('modelPickerTransport', () => {
   })
 
   describe('discoverLocal', () => {
-    it('maps ollama/lm_studio to camelCase LocalDiscovery', async () => {
+    it('maps ollama/lm_studio/apple_foundation to camelCase LocalDiscovery', async () => {
       fetchMock.mockResolvedValueOnce(
         jsonResponse({
           data: {
             ollama: { running: true, url: 'http://localhost:11434', version: '0.5.1', models: ['model-a'] },
             lm_studio: { running: false, url: 'http://localhost:1234', models: [] },
+            apple_foundation: { running: true, url: 'http://127.0.0.1:11435', models: ['apple-foundation-3b'] },
           },
         }),
       )
@@ -333,7 +366,23 @@ describe('modelPickerTransport', () => {
       expect(discovery).toEqual({
         ollama: { running: true, url: 'http://localhost:11434', version: '0.5.1', models: ['model-a'] },
         lmStudio: { running: false, url: 'http://localhost:1234', models: [] },
+        appleFoundation: { running: true, url: 'http://127.0.0.1:11435', models: ['apple-foundation-3b'] },
       })
+    })
+
+    it('defaults appleFoundation to stopped when backend omits it', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({
+          data: {
+            ollama: { running: false, url: 'http://localhost:11434', models: [] },
+            lm_studio: { running: false, url: 'http://localhost:1234', models: [] },
+          },
+        }),
+      )
+
+      const discovery = await createModelPickerTransport().discoverLocal!()
+
+      expect(discovery.appleFoundation).toEqual({ running: false, url: '', models: [] })
     })
   })
 
@@ -345,6 +394,7 @@ describe('modelPickerTransport', () => {
           chat_model: { enabled: true, endpoint_id: 'ep1', model: 'model-global' },
           specialist_model: { enabled: false, endpoint_id: '', model: '' },
           vision_model: { enabled: false, endpoint_id: '', model: '' },
+          secure_model: { enabled: false, endpoint_id: '', model: '' },
         },
         chat_capable_providers: ['ollama'],
         effective: {
@@ -353,6 +403,7 @@ describe('modelPickerTransport', () => {
             chat_model: { enabled: true, endpoint_id: 'ep1', model: 'model-inforce' },
             specialist_model: { enabled: false, endpoint_id: '', model: '' },
             vision_model: { enabled: false, endpoint_id: '', model: '' },
+            secure_model: { enabled: false, endpoint_id: '', model: '' },
           },
           overridden_slots: { chat_model: 'workspace' },
         },
@@ -375,6 +426,7 @@ describe('modelPickerTransport', () => {
           chat_model: { enabled: true, endpoint_id: '', model: 'model-a' },
           specialist_model: { enabled: false, endpoint_id: '', model: '' },
           vision_model: { enabled: false, endpoint_id: '', model: '' },
+          secure_model: { enabled: false, endpoint_id: '', model: '' },
         },
         chat_capable_providers: ['ollama'],
       } }))

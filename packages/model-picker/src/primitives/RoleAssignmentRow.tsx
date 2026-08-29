@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import type { HTMLAttributes, ReactNode } from 'react'
 import type { AppRole, EndpointTestResult } from '../types'
+import { providerDescriptor } from '../types'
 import type { UseModelPickerResult } from '../useModelPicker'
 
 /**
@@ -57,11 +58,12 @@ export function RoleAssignmentRow({
     .filter((m) => m.endpointId === endpointId)
 
   // A local-only role must not offer cloud endpoints in its dropdown.
+  // Filter by provider locality, not by whether a model has been discovered
+  // on the endpoint: Apple Intelligence has a built-in model with no
+  // Ollama-style listing, and a fresh Ollama install may have no models
+  // pulled yet. Both should still appear in the Secure dropdown.
   const endpointChoices = role.requiresLocal
-    ? picker.chatCapableEndpoints.filter((e) => {
-        const model = picker.models.find((m) => m.endpointId === e.id)
-        return model?.isLocal ?? false
-      })
+    ? picker.chatCapableEndpoints.filter((e) => providerDescriptor(e.provider).isLocal)
     : picker.chatCapableEndpoints
 
   // An endpoint that is down lists nothing, and a stored assignment would then
