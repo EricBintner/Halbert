@@ -91,7 +91,11 @@ function stubPicker(
     isPinned: false,
     refresh: vi.fn(async () => {}),
     refreshModels: vi.fn(async () => {}),
-    discoverLocal: vi.fn(async () => {}),
+    discoverLocal: vi.fn(async (): Promise<any> => ({
+      ollama: { running: false, url: '', models: [] },
+      lmStudio: { running: false, url: '', models: [] },
+      appleFoundation: { running: false, url: '', models: [] },
+    })),
     assignRole: vi.fn(async () => {}),
     clearRole: vi.fn(async () => {}),
     saveEndpoint: vi.fn(async () => {}),
