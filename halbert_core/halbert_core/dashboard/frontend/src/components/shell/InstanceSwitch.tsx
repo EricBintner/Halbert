@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { Monitor, Home as HomeIcon, ChevronDown, Plus, Check } from 'lucide-react'
+import { Monitor, Home as HomeIcon, ChevronDown, Plus, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -173,6 +173,13 @@ export function InstanceSwitch() {
               <p className="text-[10px] text-muted-foreground truncate">{inst.endpoint}</p>
             </div>
             {activeEndpoint === inst.endpoint && <Check className="h-3 w-3 text-success" />}
+            <button
+              onClick={(e) => { e.stopPropagation(); handleRemoveInstance(inst.endpoint) }}
+              className="ml-auto flex-shrink-0 p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+              aria-label={`Remove ${inst.label}`}
+            >
+              <X className="h-3 w-3" />
+            </button>
           </DropdownMenuItem>
         ))}
 
