@@ -493,6 +493,7 @@ function SecuritySettings() {
     secret_tier: 'local_only',
     public_files: ['/etc/hosts', '/etc/hostname', '/etc/fstab'],
     extra_secret_keys: [],
+    cloud_ok_keys: [],
   }
 
   return (
@@ -719,6 +720,48 @@ function SecuritySettings() {
                 const lines = e.target.value.split('\n').map((s: string) => s.trim()).filter(Boolean)
                 if (JSON.stringify(lines) !== JSON.stringify(sec.extra_secret_keys || [])) {
                   saveSecurity({ extra_secret_keys: lines })
+                }
+              }}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Per-Key Cloud OK Escape Hatch */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Shield className="h-5 w-5" />
+            Per-Key Cloud Escape Hatch
+          </CardTitle>
+          <CardDescription>
+            Specific key names allowed to go to cloud models even when the
+            global secret tier is locked to local_only. Use this to expose
+            database passwords (which you trust your LLM vendor with) while
+            keeping SSH private keys and API tokens local-only.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="rounded-md border border-yellow-500/50 bg-yellow-500/5 p-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+              <p className="text-sm">
+                Keys listed here bypass the Tier 2 boundary. Their raw values
+                will appear in your cloud LLM vendor's inference logs. Only
+                list keys whose values you are willing to expose.
+              </p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Keys (one per line)</Label>
+            <textarea
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              defaultValue={(sec.cloud_ok_keys || []).join('\n')}
+              placeholder="db_password&#10;redis_password"
+              onBlur={(e) => {
+                const lines = e.target.value.split('\n').map((s: string) => s.trim()).filter(Boolean)
+                if (JSON.stringify(lines) !== JSON.stringify(sec.cloud_ok_keys || [])) {
+                  saveSecurity({ cloud_ok_keys: lines })
                 }
               }}
             />
