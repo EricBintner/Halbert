@@ -478,3 +478,120 @@ All files are scaffolded with detailed inline comments referencing the findings 
 | File | Purpose |
 |------|---------|
 | `halbert_core/halbert_core/federation/README.md` | Architecture overview, finding references, implementation order |
+
+---
+
+## §10 — Scaffold Completion Log
+
+**Date:** 2026-08-29
+**Branch:** `feat/federated-fleet` (merged to `main`, pushed to `origin`)
+**Commits:**
+- `928c9166` — scaffold: federated multi-node compute & fleet (Phase 9+)
+- `a2ca6677` — fix: scrutiny pass on federation scaffold (13 issues)
+- `9fff12a7` — merge: federated multi-node compute & fleet scaffold (Phase 9+)
+
+### What was built
+
+28 files, ~5,100 lines of structural scaffolding across backend, frontend,
+and test layers. Every file has detailed inline docstrings referencing the
+15 review findings (C1-C5, H6-H10, M11-M14, L15) and `TODO(federation-9.x)`
+markers pointing to the implementation step that fills in the logic.
+
+**Backend (10 files in `federation/`):** peers_config, peer_middleware,
+peer_discovery, compute_endpoint, compute_broker, compute_router,
+tool_allowlist, telemetry_agent, fleet_proxy, __init__.
+
+**Backend (1 file in `model/providers/`):** peer.py (PeerProvider).
+
+**Backend (2 files in `dashboard/routes/`):** peers.py, fleet.py.
+
+**Frontend (4 files):** peerApi.ts, useDiscoveredPeers.ts,
+NodeFleetCockpit.tsx, PeerPairingModal.tsx. Plus DialogFooter added to
+dialog.tsx.
+
+**Tests (8 files, 59 passing, 16 skipped):** test_peer_redaction,
+test_peer_tool_allowlist, test_token_revocation, test_secure_model_no_offload,
+test_hardware_profile_fallback, test_split_brain, test_compute_broker,
+test_peer_discovery.
+
+**Integration:** peers and fleet routers registered in `app.py`.
+
+### Scrutiny pass (13 issues found and fixed)
+
+After the initial scaffold, a full reverse-engineering review found 13
+issues across 4 severity levels. All were fixed before merge:
+
+**CRITICAL (2):**
+- `peers.py` and `fleet.py` imported `get_peers_config` from
+  `peers_config` — but it lives in `peer_middleware`. Would have raised
+  `ImportError` at first request.
+- Routes were not registered in `app.py` — `include_router` calls missing.
+
+**HIGH (3):**
+- `peers_config._save()` didn't create the parent directory before
+  writing the tmp file — `FileNotFoundError` on first write to a fresh
+  config dir.
+- `ComputeRequest` dataclass used `metadata={"compare": True/False}`
+  which the `dataclasses` module silently ignores. `order=True` would
+  have compared all fields including non-comparable `list`/`dict`/`None`
+  types, breaking `PriorityQueue` sorting on tie-breaks. Fixed to use
+  `field(compare=True/False)`.
+- `PeerPairingModal.tsx` imported `DialogFooter` from `dialog.tsx` which
+  didn't export it. Added the `DialogFooter` component to `dialog.tsx`.
+
+**MEDIUM (5):**
+- Role vocabulary inconsistent: `peers_config.py` docstring said
+  `"compute_host"` but `peer_discovery.py` and `peers.py` used
+  `"compute_provider"`. Standardized on `"compute_provider"`.
+- `compute_endpoint.py` had `dependencies=[Depends(require_peer_auth)]`
+  on routes that also had `peer: PeerContext = Depends(require_peer_auth)`
+  as a parameter — double auth path. Removed the redundant
+  `dependencies=[]`.
+- `tool_allowlist.py` docstring said "logs a warning" but the code used
+  `logger.debug`. Fixed the docstring.
+- `NodeFleetCockpit.tsx` imported `Activity` from lucide-react but never
+  used it — `noUnusedLocals` compile error. Removed.
+- `PeerPairingModal.tsx` imported `KeyRound` from lucide-react but never
+  used it. Removed.
+- `fleet.py` `FleetNodeStatus.vitals` was `Optional[Dict[str, Any]]` but
+  the frontend typed it as a structured object with fixed fields
+  (`cpu_percent`, `memory_percent`, etc.). Added `FleetVitals` Pydantic
+  model to match the frontend shape.
+
+**LOW (3):**
+- `peers.py` PIN generation used `random.randint(0, 9999)` — not
+  cryptographically secure. Changed to `secrets.randbelow(10000)`.
+- `useDiscoveredPeers.ts` initialized `loading=true` but if `enabled=false`
+  the effect returned early and `loading` stayed `true` forever. Fixed to
+  initialize from `enabled` and set `false` in the early-return path.
+- `test_re_pairing_after_revocation` had no assertions — trivially passed.
+  Added real assertions documenting the current behavior (re-pairing
+  raises `ValueError` because the revoked entry is still in the store).
+
+### Test results
+
+```
+59 passed, 16 skipped in 0.10s
+```
+
+The 16 skipped tests are marked `TODO(federation-9.x)` and will be
+unskipped as each implementation step is completed.
+
+### Next steps
+
+The scaffold is ready for implementation. The recommended order is the
+10-step sequence in §8 above:
+
+1. **Step 9.1** — Peer auth = MCP token, one middleware, per-peer tokens
+2. **Step 9.2** — Extend Instance Switcher with remote peers
+3. **Step 9.3** — `peer://` provider, 1:1 cross-machine link
+4. **Step 9.4** — `redact_text()` + tool allowlist on compute endpoint
+5. **Step 9.5** — Satellite telemetry = discovery snapshot + vitals
+6. **Step 9.6** — Hardware-profile-aware fallback
+7. **Step 9.7** — mDNS auto-discovery (lazy `zeroconf`, LAN-only)
+8. **Step 9.8** — Concurrency broker, scale to N
+9. **Step 9.9** — Fleet Cockpit = Desktop as MCP client
+10. **Step 9.10** — `apple-foundation` as advertised peer capability
+
+Each step's TODO markers in the scaffolded files point to the exact
+functions that need implementation.
