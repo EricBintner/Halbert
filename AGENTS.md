@@ -2,6 +2,18 @@
 
 - Never add "Co-Authored-By" trailers (or any "Generated with Devin" attribution) to commit messages. Commits must be clean with no bot attribution.
 
+## Environment & Version Standards
+
+- **Node.js**: Standardized on **Node.js 22 LTS** (`.nvmrc: 22`).
+- **Package Manager**: npm 10.9+ / pnpm 10.29+ with workspace linking.
+- **Python Runtime**: Python `>=3.10` (recommended `3.11` or `3.12`).
+- **React Ecosystem**:
+  - Shared Libraries (`@halbert/model-picker`, `@halbert/design-system`): Strict dual peer-dependency support (`peerDependencies: "react": "^18.2.0 || ^19.0.0"`).
+  - Desktop App (`halbert_core/dashboard/frontend`): React 18.2 ➔ planned upgrade path to React 19.
+- **Desktop Shell**: Standardized on **Tauri v2** (`@tauri-apps/api: ^2.x`, Rust `tauri = "2"`).
+- **Core Toolchain**: TypeScript `^5.6.3`, Vite `^5.4.14`+, Vitest `^2.1.9`+, Storybook `^8.4.7`.
+- **Haloysius Subtractive Contract**: Only 2 hard dependencies (`pyyaml>=6.0`, `requests>=2.31.0`); all heavy/ML stacks must remain function-level lazy optional extras.
+
 <!-- prep-managed-start -->
 ## SourcePrep Integration
 
