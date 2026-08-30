@@ -34,6 +34,10 @@ This documentation serves two audiences:
 | [explorations.md](explorations.md) | Design-to-implementation catalog — every idea mapped to concrete code seams, with curation at section 10 |
 | [REVIEW-DIRECTION-2026-08-23.md](REVIEW-DIRECTION-2026-08-23.md) | External review — overall direction and planning critique |
 | [REVIEW-DESIGN-MECHANICS-2026-08-23.md](REVIEW-DESIGN-MECHANICS-2026-08-23.md) | External review — user flows and interaction mechanics design doc |
+| [11-response-modality-handoff.md](11-response-modality-handoff.md) | Response Modality Handoff: Chat, voice, watched terminals, and visual handoff interaction architecture |
+| [12-scrutiny-and-reverse-engineering-modality-handoff.md](12-scrutiny-and-reverse-engineering-modality-handoff.md) | Deep Scrutiny & Reverse-Engineering Audit: Identifying 6 critical DSP, concurrency, and session landmines in modality handoff |
+| [13-adversarial-review-modality-handoff.md](13-adversarial-review-modality-handoff.md) | Theoretical Foundations & Blue-Sky Review: How humans truly want to engage with an embodied computer/home voice assistant |
+| [14-system-prompts-and-modality-gap-analysis.md](14-system-prompts-and-modality-gap-analysis.md) | Embodied System Prompts & Codebase Gap Analysis: Modality-aware prompt engineering, <speech> demuxing, and file-by-file implementation gaps |
 
 ---
 
