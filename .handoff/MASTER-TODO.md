@@ -7,9 +7,9 @@ lost between sessions. Strike through and date when done.
 
 ## Dead Code Cleanup (from Analyze button refactor, 2026-08-28)
 
-- [ ] Remove `api.analyzeDiscoveries()` from `dashboard/frontend/src/lib/api.ts` — defined, never called from any frontend file after AIAnalysisPanel was rewired to `/api/agent/message`.
-- [ ] Remove or deprecate `POST /api/discoveries/analyze/{analysis_type}` endpoint in `dashboard/routes/discovery.py` (lines ~434-476) and its helpers (`_call_llm_analysis`, `_build_analysis_context`, `_generate_fallback_analysis`). No frontend caller remains. Keep if other non-frontend consumers exist — verify first.
-- [ ] Remove or wire the `context` field on `SendMessageRequest` in `dashboard/routes/agent.py` (line ~51). It is accepted by the Pydantic model but never read by `send_message()` or `process()`. Either remove it or thread it through to the agent as seeded context.
+- [x] ~~Remove `api.analyzeDiscoveries()` from `dashboard/frontend/src/lib/api.ts`~~ — Done 2026-08-30.
+- [x] ~~Remove `POST /api/discoveries/analyze/{analysis_type}` endpoint + helpers~~ — Done 2026-08-30. Also removed `AnalysisRequest` model.
+- [x] ~~Remove `context` field on `SendMessageRequest`~~ — Done 2026-08-30. Verified never read by `send_message()` or frontend.
 
 ## GPU Page — Roll into Analyze tooling
 
@@ -92,13 +92,10 @@ just no code path enabled.
   passing.
 - [x] **Step 5: Update tests.** Done — no tests referenced the removed
   dataclasses. All existing tests pass.
-- [ ] **Follow-up: Move validation/compromise modules to CLI.** The
-  modules `config/credential_validation.py` and
-  `config/compromise_detection.py` are standalone human-run tools
-  with corrected docstrings but still live in `config/`. Move them to
-  a `cli/` directory with console_scripts entries
-  (`halbert-check-credential`, `halbert-check-breach`) in a future
-  session.
+- [x] **Follow-up: Move validation/compromise modules to CLI.** Done
+  2026-08-30. Moved to `cli/` package with console_scripts entries
+  (`halbert-check-credential`, `halbert-check-breach`). Updated test
+  imports and pyproject.toml.
 
 ## Remaining Security Scope (from original review, not yet started)
 
