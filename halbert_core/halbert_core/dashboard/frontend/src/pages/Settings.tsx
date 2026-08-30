@@ -43,6 +43,7 @@ import {
   Info,
   Palette,
   SlidersHorizontal,
+  AudioLines,
 } from 'lucide-react'
 import { PageHeader, DataVersionCard } from '@/components/domain'
 import {
@@ -55,6 +56,7 @@ import {
 } from '@/components/domain'
 import { ModelSettings } from '@/components/llm'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
+import { AudioSettings, SpeakerProfilesCard, VoiceEnrollmentModal } from '@/components/audio'
 import { LegalNoticesModal } from '@/components/legal/LegalNoticesModal'
 import { apiUrl } from '@/lib/apiBase'
 
@@ -1433,6 +1435,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
       { id: 'alerts', label: 'Alert Rules', icon: Bell },
       { id: 'security', label: 'Trust Boundary', icon: Lock },
       { id: 'vision', label: 'Vision', icon: Eye },
+      { id: 'audio', label: 'Audio & Voice', icon: AudioLines },
     ],
   },
   {
@@ -1478,6 +1481,7 @@ export function Settings() {
   const [settingsQuery, setSettingsQuery] = useState('')
   const [showComponentLibrary, setShowComponentLibrary] = useState(false)
   const [showLegalNotices, setShowLegalNotices] = useState(false)
+  const [showEnrollmentModal, setShowEnrollmentModal] = useState(false)
 
   // Scan context for coordinated system-wide scanning
   const { triggerDeepScan, isDeepScanning } = useScan()
@@ -3124,6 +3128,12 @@ export function Settings() {
           <VisionSettings />
         </TabsContent>
 
+        {/* Audio Tab */}
+        <TabsContent value="audio" className="space-y-4">
+          <AudioSettings />
+          <SpeakerProfilesCard onEnroll={() => setShowEnrollmentModal(true)} />
+        </TabsContent>
+
         {/* About Tab */}
         <TabsContent value="about" className="space-y-4">
           <Card>
@@ -3203,6 +3213,17 @@ export function Settings() {
 
       {/* Legal Notices Modal */}
       <LegalNoticesModal open={showLegalNotices} onOpenChange={setShowLegalNotices} />
+
+      {/* Voice Enrollment Modal */}
+      {showEnrollmentModal && (
+        <VoiceEnrollmentModal
+          onClose={() => setShowEnrollmentModal(false)}
+          onEnrolled={() => {
+            setToast({ open: true, message: 'Speaker enrolled successfully!', variant: 'success' })
+            setShowEnrollmentModal(false)
+          }}
+        />
+      )}
     </div>
   )
 }

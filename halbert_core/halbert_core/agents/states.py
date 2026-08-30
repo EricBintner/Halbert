@@ -243,6 +243,13 @@ class StateContext:
     # scope without defining a full skill.
     retrieval_scope: Optional[str] = None
 
+    # Auditory cortex: the verified speaker role for this turn. Voice turns
+    # set this from speaker_id verification (admin/member/guest/restricted/
+    # unknown). Text/chat turns default to "admin" — text chat is already
+    # authenticated via the dashboard session. The RoleGate in tools/role_gate
+    # uses this to tighten (never loosen) the base safety classification.
+    speaker_role: str = "admin"
+
     def add_observation(self, observation: str):
         """Add an observation from tool execution."""
         self.observations.append(observation)

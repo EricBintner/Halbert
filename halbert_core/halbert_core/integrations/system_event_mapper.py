@@ -202,6 +202,32 @@ class SystemEventMapper:
                 trigger=source,
             )
 
+        elif event_type == "acoustic_anomaly":
+            intensity = 0.9 if severity == "critical" else 0.5
+            cognition.worries.add_worry(
+                content=f"Acoustic anomaly: {detail}",
+                source=source,
+                category="acoustic_safety",
+                intensity=intensity,
+                intrusion_rate=0.6 if severity == "critical" else 0.2,
+            )
+            cognition.emotional_state.add_emotion(
+                emotion=self._emotion("FEAR"),
+                intensity=intensity * 0.8,
+                source=source,
+            )
+            cognition.emotional_state.add_emotion(
+                emotion=self._emotion("VIGILANCE"),
+                intensity=intensity * 0.7,
+                source=source,
+            )
+            cognition.drives.add_drive(
+                category=self._drive("SAFETY"),
+                content=f"Investigate acoustic anomaly: {detail}",
+                intensity=intensity * 0.8,
+                trigger=source,
+            )
+
         # Update state trackers
         if event_type == "disk_failure" and "disk_health" in self._trackers:
             self._trackers["disk_health"].update_health(source, severity)

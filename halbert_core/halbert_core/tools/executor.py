@@ -58,16 +58,23 @@ class ToolExecutor:
         self,
         safety: ToolSafetyFramework = None,
         audit_fn: Callable = None,
+        role_gate=None,
     ):
         """
         Initialize the tool executor.
-        
+
         Args:
             safety: Safety framework for risk classification
             audit_fn: Optional function to call for audit logging
+            role_gate: Optional RoleGate wrapper for speaker-role-based access
+                       control. When set, classify() goes through the gate
+                       (which can tighten but never loosen the base result).
+                       When None, the bare safety framework is used (all
+                       turns treated as admin — backward compatible).
         """
         self.safety = safety or ToolSafetyFramework()
         self.audit_fn = audit_fn
+        self.role_gate = role_gate
         
         # Registered tools
         self.tools: Dict[str, Callable] = {}
@@ -304,16 +311,21 @@ class ToolExecutor:
         args: Dict[str, Any],
         session_id: str = None,
         confirmed: bool = False,
+        speaker_role: str = "admin",
     ) -> ExecutionResult:
         """
         Execute a tool with safety checks.
-        
+
         Args:
             tool_name: Name of the tool to execute
             args: Tool arguments
             session_id: Optional session ID for audit
             confirmed: Whether user has confirmed (for HIGH risk)
-            
+            speaker_role: The verified role of the speaker
+                ('admin', 'member', 'guest', 'restricted', 'unknown').
+                Text/chat turns default to 'admin' (already authenticated).
+                Voice turns set this from speaker_id verification.
+
         Returns:
             ExecutionResult with success status and result/error
         """
@@ -341,8 +353,13 @@ class ToolExecutor:
                 risk_level=RiskLevel.SAFE,
             )
 
-        # Classify risk
-        safety_result = self.safety.classify(tool_name, args)
+        # Classify risk — use RoleGate if configured (can tighten, never loosen)
+        if self.role_gate is not None:
+            safety_result = self.role_gate.classify(
+                tool_name, args, speaker_role=speaker_role
+            )
+        else:
+            safety_result = self.safety.classify(tool_name, args)
         
         # Block CRITICAL
         if safety_result.risk_level == RiskLevel.CRITICAL:

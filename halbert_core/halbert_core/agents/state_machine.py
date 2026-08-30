@@ -2330,6 +2330,7 @@ class AgentStateMachine:
             tool_args,
             session_id=self.ctx.session_id,
             confirmed=confirmed,
+            speaker_role=self.ctx.speaker_role,
         ))
         try:
             while True:

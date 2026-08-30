@@ -27,6 +27,7 @@ from ..findings.proposals import ProposalStore
 from ..findings.detectors.dropin_conflicts import DropinConflictDetector
 from ..findings.detectors.fstab_phantom import FstabPhantomDetector
 from ..findings.detectors.permissions_hygiene import PermissionsHygieneDetector
+from ..findings.detectors.acoustic_anomaly import AcousticAnomalyDetector
 from ..config.being_config import BeingConfig, load_being_config
 from ..autonomy.guardrails import GuardrailEnforcer
 from .events import ProactiveEvent, get_event_bus
@@ -42,6 +43,7 @@ _EVENT_CATEGORY = {
     "dropin_conflicts": "config",
     "fstab_phantom": "storage",
     "permissions_hygiene": "security",
+    "acoustic_anomaly": "acoustic",
 }
 
 
@@ -73,10 +75,12 @@ class DetectorRunner:
         self.reflex_matcher = reflex_matcher
 
         # Register detectors
+        self.acoustic_detector = AcousticAnomalyDetector()
         self.detectors = [
             DropinConflictDetector(),
             FstabPhantomDetector(),
             PermissionsHygieneDetector(),
+            self.acoustic_detector,
         ]
 
     async def run_all(self) -> List[ProactiveEvent]:
