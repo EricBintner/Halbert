@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from halbert_core.config.compromise_detection import (
+from halbert_core.cli.compromise_detection import (
     check_compromised,
     _sha1_upper,
     _check_hibp,

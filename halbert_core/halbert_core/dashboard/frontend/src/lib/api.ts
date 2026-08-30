@@ -74,13 +74,6 @@ export const api = {
     })
   },
 
-  analyzeDiscoveries(analysisType: string, deep = false) {
-    return request(`/api/discoveries/analyze/${encodeURIComponent(analysisType)}`, {
-      method: 'POST',
-      body: JSON.stringify({ deep }),
-    })
-  },
-
   getMentionables() {
     return request('/api/discoveries/mentionables')
   },

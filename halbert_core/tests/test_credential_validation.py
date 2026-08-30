@@ -22,7 +22,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from halbert_core.config.credential_validation import (
+from halbert_core.cli.credential_validation import (
     validate_credential,
     available_services,
     _is_validation_enabled,

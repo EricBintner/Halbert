@@ -9,11 +9,11 @@ The server speaks JSON-RPC 2.0 over stdin/stdout, implementing the MCP
 content passes its result through ``mcp_response()`` (the egress boundary)
 before returning.
 
-Tool list (12 tools):
+Tool list (13 tools):
   get_vitals, get_discoveries, get_findings, get_proposals,
   get_proactive_events, get_being_config, get_config_value,
   get_config_structure, get_config_diff, get_config_dependencies,
-  search_knowledge, run_scanner
+  search_knowledge, run_scanner, approve_proposal
 
 Usage:
   halbert-mcp-serve                          # stdio (default)
@@ -290,6 +290,40 @@ def _tool_run_scanner(params: Dict[str, Any]) -> Dict[str, Any]:
         return mcp_response({"type": scanner_type, "error": str(e)})
 
 
+def _tool_approve_proposal(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Approve and execute a pending proposal (Phase 4b — gated, high risk).
+
+    This is a write action that modifies config files on the host.
+    Gating: requires explicit ``confirm=True`` to prevent an LLM from
+    applying changes without user awareness. The proposal must be in
+    PENDING status. Execution goes through ``handle_approval_decision``
+    which backs up, applies, and rolls back on failure.
+    """
+    proposal_id = params.get("proposal_id", "")
+    if not proposal_id:
+        return {"error": "proposal_id is required"}
+    if not params.get("confirm", False):
+        return {
+            "error": "proposal approval requires confirm=true",
+            "detail": (
+                "Approving a proposal applies config changes to the host. "
+                "Set confirm=true to proceed. Inspect the proposal first "
+                "with get_proposals to review changes and blast radius."
+            ),
+            "proposal_id": proposal_id,
+        }
+    try:
+        from ..findings.proposal_generator import handle_approval_decision
+        result = handle_approval_decision(
+            request_id=proposal_id,
+            approved=True,
+            reason=params.get("reason", "approved via MCP"),
+        )
+        return mcp_response(result)
+    except Exception as e:
+        return mcp_response({"proposal_id": proposal_id, "error": str(e)})
+
+
 # ---------------------------------------------------------------------------
 # Tool registry
 # ---------------------------------------------------------------------------
@@ -307,6 +341,7 @@ TOOL_HANDLERS: Dict[str, Any] = {
     "get_config_dependencies": _tool_get_config_dependencies,
     "search_knowledge": _tool_search_knowledge,
     "run_scanner": _tool_run_scanner,
+    "approve_proposal": _tool_approve_proposal,
 }
 
 # Tool schemas for the MCP initialize response
@@ -446,6 +481,32 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 },
             },
             "required": ["type", "confirm"],
+        },
+    },
+    {
+        "name": "approve_proposal",
+        "description": (
+            "Approve and execute a pending config change proposal. "
+            "GATED: requires confirm=true. This applies real config changes "
+            "to the host — inspect the proposal with get_proposals first."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "proposal_id": {"type": "string", "description": "The proposal ID to approve"},
+                "confirm": {
+                    "type": "boolean",
+                    "description": (
+                        "Must be true to proceed. Approving applies config "
+                        "changes to the host filesystem."
+                    ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional reason for approval (recorded in audit log)",
+                },
+            },
+            "required": ["proposal_id", "confirm"],
         },
     },
 ]
