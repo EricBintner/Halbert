@@ -186,6 +186,11 @@ class SensesConfig:
 class BeingConfig:
     """Configuration for how the being behaves and communicates."""
 
+    # --- Persona metadata (multi-persona system) ---
+    persona_id: str = "default"  # slug id matching the persona filename
+    display_name: str = "Default"  # human-readable persona name
+    created_at: str = ""  # ISO timestamp of persona creation
+
     voice: str = "first_person"  # first_person | the_computer | hybrid
     proactivity: str = "balanced"  # off | quiet | balanced | assertive
     purpose: str = ""  # free text v1
@@ -476,15 +481,20 @@ def save_being_config(config: BeingConfig, path: Optional[str] = None) -> None:
         # Atomic write: write to temp file then rename, so a concurrent
         # reader never sees a partially-written file. Restricted to 0o600
         # because being.yml can contain security config references.
+        #
+        # Resolve symlinks: being.yml may be a symlink to personas/<id>.yml
+        # in multi-persona mode. We must write to the target file, not
+        # replace the symlink itself.
+        write_path = config_path.resolve() if config_path.is_symlink() else config_path
         import tempfile
         fd, tmp_path = tempfile.mkstemp(
-            dir=str(config_path.parent), suffix=".yml.tmp", prefix=".being_"
+            dir=str(write_path.parent), suffix=".yml.tmp", prefix=".being_"
         )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 yaml.dump(clean, f, default_flow_style=False, sort_keys=False)
             os.chmod(tmp_path, 0o600)
-            os.replace(tmp_path, str(config_path))
+            os.replace(tmp_path, str(write_path))
         except Exception:
             try:
                 os.unlink(tmp_path)

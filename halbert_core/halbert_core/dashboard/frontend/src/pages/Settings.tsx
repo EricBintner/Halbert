@@ -699,9 +699,14 @@ function BeingSettings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [personas, setPersonas] = useState<any[]>([])
+  const [activePersonaId, setActivePersonaId] = useState<string>('default')
+  const [showNewPersona, setShowNewPersona] = useState(false)
+  const [newPersonaName, setNewPersonaName] = useState('')
 
   useEffect(() => {
     loadConfig()
+    loadPersonas()
   }, [])
 
   const loadConfig = async () => {
@@ -710,11 +715,77 @@ function BeingSettings() {
       if (resp.ok) {
         const data = await resp.json()
         setConfig(data.config)
+        setActivePersonaId(data.config.persona_id || 'default')
       }
     } catch (e) {
       console.error('Failed to load personality config:', e)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadPersonas = async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/persona/list`)
+      if (resp.ok) {
+        const data = await resp.json()
+        setPersonas(data.personas || [])
+        setActivePersonaId(data.active_id || 'default')
+      }
+    } catch (e) {
+      console.error('Failed to load personas:', e)
+    }
+  }
+
+  const createPersona = async () => {
+    if (!newPersonaName.trim()) return
+    try {
+      const resp = await fetch(`${API_BASE}/api/persona`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ display_name: newPersonaName.trim() }),
+      })
+      if (resp.ok) {
+        setShowNewPersona(false)
+        setNewPersonaName('')
+        await loadPersonas()
+      }
+    } catch (e) {
+      setToast('Error: Failed to create persona')
+      setTimeout(() => setToast(null), 3000)
+    }
+  }
+
+  const activatePersona = async (id: string) => {
+    if (id === activePersonaId) return
+    try {
+      const resp = await fetch(`${API_BASE}/api/persona/${id}/activate`, { method: 'POST' })
+      if (resp.ok) {
+        setActivePersonaId(id)
+        await loadConfig()
+        setToast('Persona switched')
+        setTimeout(() => setToast(null), 2000)
+      }
+    } catch (e) {
+      setToast('Error: Failed to switch persona')
+      setTimeout(() => setToast(null), 3000)
+    }
+  }
+
+  const deletePersona = async (id: string) => {
+    if (!confirm('Delete this persona? This cannot be undone.')) return
+    try {
+      const resp = await fetch(`${API_BASE}/api/persona/${id}`, { method: 'DELETE' })
+      if (resp.ok) {
+        await loadPersonas()
+      } else {
+        const err = await resp.json()
+        setToast(`Error: ${err.detail || 'Failed to delete'}`)
+        setTimeout(() => setToast(null), 3000)
+      }
+    } catch (e) {
+      setToast('Error: Network failure')
+      setTimeout(() => setToast(null), 3000)
     }
   }
 
@@ -754,6 +825,78 @@ function BeingSettings() {
 
   return (
     <div className="space-y-4">
+      {/* Persona Switcher */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5" />
+            Personas
+          </CardTitle>
+          <CardDescription>
+            Switch between personas or create a new one. Only one persona is active at a time.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-3">
+            {personas.map((p) => (
+              <div
+                key={p.id}
+                className={`group relative rounded-lg border p-4 cursor-pointer transition-colors min-w-[160px] ${
+                  p.id === activePersonaId
+                    ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                    : 'border-input hover:border-primary/50'
+                }`}
+                onClick={() => activatePersona(p.id)}
+              >
+                <div className="flex items-center gap-2">
+                  <div className={`h-2 w-2 rounded-full ${p.id === activePersonaId ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
+                  <span className="font-medium text-sm">{p.display_name}</span>
+                </div>
+                {p.id === activePersonaId && (
+                  <span className="text-xs text-primary mt-1 block">Active</span>
+                )}
+                {p.id !== activePersonaId && personas.length > 1 && (
+                  <button
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                    onClick={(e) => { e.stopPropagation(); deletePersona(p.id) }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            ))}
+            {/* New persona button / input */}
+            {showNewPersona ? (
+              <div className="rounded-lg border border-primary p-4 min-w-[200px]">
+                <Input
+                  autoFocus
+                  placeholder="Persona name..."
+                  value={newPersonaName}
+                  onChange={(e) => setNewPersonaName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') createPersona()
+                    if (e.key === 'Escape') { setShowNewPersona(false); setNewPersonaName('') }
+                  }}
+                  className="mb-2"
+                />
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={createPersona} disabled={!newPersonaName.trim()}>Create</Button>
+                  <Button size="sm" variant="outline" onClick={() => { setShowNewPersona(false); setNewPersonaName('') }}>Cancel</Button>
+                </div>
+              </div>
+            ) : (
+              <button
+                className="rounded-lg border border-dashed border-input p-4 min-w-[160px] flex flex-col items-center justify-center gap-1 text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors"
+                onClick={() => setShowNewPersona(true)}
+              >
+                <Plus className="h-5 w-5" />
+                <span className="text-sm">New Persona</span>
+              </button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Character (Phase 3) */}
       <Card>
         <CardHeader>
