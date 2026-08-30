@@ -232,12 +232,31 @@ export function createModelPickerTransport(): ModelPickerTransport {
     },
 
     async discoverLocal(): Promise<LocalDiscovery> {
-      const res = await fetch(apiUrl('/api/llm/discover'))
-      const data = await unwrap(res)
+      // The daemon may be offline (fetch rejects) or the discover route may
+      // return an error envelope. Both are expected on a fresh install or
+      // when the backend has not started yet, so they degrade to a "nothing
+      // running" discovery rather than surfacing as an error banner.
+      const OFFLINE: LocalDiscovery = {
+        ollama: { running: false, url: 'http://localhost:11434', models: [] },
+        lmStudio: { running: false, url: 'http://localhost:1234', models: [] },
+        appleFoundation: { running: false, url: '', models: [] },
+      }
+      let res: Response
+      try {
+        res = await fetch(apiUrl('/api/llm/discover'))
+      } catch {
+        return OFFLINE
+      }
+      let data: any
+      try {
+        data = await unwrap(res)
+      } catch {
+        return OFFLINE
+      }
       return {
-        ollama: data.ollama,
-        lmStudio: data.lm_studio,
-        appleFoundation: data.apple_foundation ?? { running: false, url: '', models: [] },
+        ollama: data.ollama ?? OFFLINE.ollama,
+        lmStudio: data.lm_studio ?? OFFLINE.lmStudio,
+        appleFoundation: data.apple_foundation ?? OFFLINE.appleFoundation,
       }
     },
   }

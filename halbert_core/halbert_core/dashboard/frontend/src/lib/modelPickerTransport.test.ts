@@ -384,6 +384,27 @@ describe('modelPickerTransport', () => {
 
       expect(discovery.appleFoundation).toEqual({ running: false, url: '', models: [] })
     })
+
+    it('returns an offline discovery when the daemon is unreachable (fetch rejects)', async () => {
+      fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+      const discovery = await createModelPickerTransport().discoverLocal!()
+
+      expect(discovery.ollama).toEqual({ running: false, url: 'http://localhost:11434', models: [] })
+      expect(discovery.lmStudio).toEqual({ running: false, url: 'http://localhost:1234', models: [] })
+      expect(discovery.appleFoundation).toEqual({ running: false, url: '', models: [] })
+    })
+
+    it('returns an offline discovery when the backend sends an error envelope', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ error: { code: 'INTERNAL', message: 'boom' } }, 500),
+      )
+
+      const discovery = await createModelPickerTransport().discoverLocal!()
+
+      expect(discovery.ollama.running).toBe(false)
+      expect(discovery.lmStudio.running).toBe(false)
+    })
   })
 
   describe('layered configuration', () => {
