@@ -152,8 +152,8 @@ class TestToolCall:
             "proposal_id": "nonexistent-id",
             "confirm": True,
         })
-        # handle_approval_decision returns linked=False for unknown IDs
-        assert result.get("linked") is False or "error" in result
+        assert "error" in result
+        assert "not found" in result["error"]
 
 
 class TestTierRouting:

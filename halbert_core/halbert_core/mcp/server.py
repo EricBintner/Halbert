@@ -296,8 +296,8 @@ def _tool_approve_proposal(params: Dict[str, Any]) -> Dict[str, Any]:
     This is a write action that modifies config files on the host.
     Gating: requires explicit ``confirm=True`` to prevent an LLM from
     applying changes without user awareness. The proposal must be in
-    PENDING status. Execution goes through ``handle_approval_decision``
-    which backs up, applies, and rolls back on failure.
+    PENDING status. Execution goes through ``ProposalGenerator`` which
+    backs up, applies, and rolls back on failure.
     """
     proposal_id = params.get("proposal_id", "")
     if not proposal_id:
@@ -313,12 +313,49 @@ def _tool_approve_proposal(params: Dict[str, Any]) -> Dict[str, Any]:
             "proposal_id": proposal_id,
         }
     try:
-        from ..findings.proposal_generator import handle_approval_decision
-        result = handle_approval_decision(
-            request_id=proposal_id,
-            approved=True,
-            reason=params.get("reason", "approved via MCP"),
+        from ..findings.proposals import ProposalStore, ProposalStatus
+        from ..findings.proposal_generator import ProposalGenerator
+        from ..findings.store import FindingStore
+        from ..approval.engine import ApprovalEngine
+        from ..tools.write_config import WriteConfig
+        from ..findings.blast_radius import BlastRadiusCalculator
+
+        store = ProposalStore()
+        proposal = store.get(proposal_id)
+        if proposal is None:
+            return mcp_response({
+                "proposal_id": proposal_id,
+                "error": "proposal not found",
+            })
+
+        terminal = {
+            ProposalStatus.APPLIED.value,
+            ProposalStatus.ROLLED_BACK.value,
+            ProposalStatus.REJECTED.value,
+        }
+        if proposal.status in terminal:
+            return mcp_response({
+                "proposal_id": proposal_id,
+                "status": proposal.status,
+                "idempotent": True,
+                "execution": proposal.execution_result or None,
+            })
+
+        if proposal.status != ProposalStatus.PENDING.value:
+            return mcp_response({
+                "proposal_id": proposal_id,
+                "error": f"proposal is in status '{proposal.status}', expected 'pending'",
+            })
+
+        generator = ProposalGenerator(
+            finding_store=FindingStore(),
+            proposal_store=store,
+            approval_engine=ApprovalEngine(),
+            write_config=WriteConfig(),
+            blast_radius=BlastRadiusCalculator(),
         )
+        store.approve(proposal_id, approval_request_id=proposal.approval_request_id or "")
+        result = generator.execute_proposal(proposal_id, reason=params.get("reason", "approved via MCP"))
         return mcp_response(result)
     except Exception as e:
         return mcp_response({"proposal_id": proposal_id, "error": str(e)})
