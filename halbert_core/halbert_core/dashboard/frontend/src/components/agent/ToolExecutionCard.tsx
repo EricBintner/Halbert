@@ -91,10 +91,14 @@ export function ToolExecutionCard({ execution, onRetry, blockId, blockOutput, bl
       className={`rounded-lg border ${config.borderColor} ${config.bgColor} overflow-hidden`}
       data-terminal-block={blockId}
     >
-      {/* Header — StatusLight on a surface strip, not the status-tinted body */}
-      <div
-        className="flex items-center justify-between p-2 cursor-pointer hover:bg-opacity-80 bg-surface"
+      {/* Header — StatusLight on a surface strip, not the status-tinted body.
+          A <button> so keyboard users can expand/collapse with Enter/Space. */}
+      <button
+        type="button"
+        className="flex items-center justify-between p-2 cursor-pointer hover:bg-opacity-80 bg-surface w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
         onClick={() => setIsExpanded(!isExpanded)}
+        aria-expanded={isExpanded}
+        aria-controls={`tool-content-${execution.executionId}`}
       >
         <div className="flex items-center gap-2">
           <StatusLight
@@ -112,10 +116,10 @@ export function ToolExecutionCard({ execution, onRetry, blockId, blockOutput, bl
             </div>
           </div>
         </div>
-        <span className="text-muted-foreground text-xs">
+        <span className="text-muted-foreground text-xs" aria-hidden="true">
           {isExpanded ? '\u25B2' : '\u25BC'}
         </span>
-      </div>
+      </button>
 
       {/* Plan B: short block one-line result (not expanded) */}
       {isShortBlock && !isExpanded && (
@@ -125,7 +129,12 @@ export function ToolExecutionCard({ execution, onRetry, blockId, blockOutput, bl
       )}
 
       {isExpanded && (
-        <div className="border-t p-2 space-y-2">
+        <div
+          id={`tool-content-${execution.executionId}`}
+          role="region"
+          aria-label={`${execution.tool} details`}
+          className="border-t p-2 space-y-2"
+        >
           <div>
             <div className="text-[10px] font-medium text-muted-foreground mb-1">Arguments</div>
             <pre className="text-[10px] bg-muted rounded p-1.5 overflow-x-auto border">

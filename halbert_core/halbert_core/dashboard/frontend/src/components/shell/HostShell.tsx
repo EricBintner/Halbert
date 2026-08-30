@@ -52,6 +52,20 @@ export function HostShell() {
     navigate(MODEL_SETTINGS_ROUTE);
   }, [navigate, setMode]);
 
+  /**
+   * "Run in Terminal" buttons in code blocks dispatch this. Layout.tsx
+   * already listens for `halbert:run-command` and stages the command in the
+   * composer via runOnHost — so dispatching the event is the correct wiring.
+   * Without this, the buttons in code blocks were inert in the host shell.
+   *
+   * Returns a resolved Promise to satisfy the RunCommand type signature;
+   * the actual command is staged (not executed) by runOnHost.
+   */
+  const handleRunCommand = useCallback((command: string) => {
+    window.dispatchEvent(new CustomEvent('halbert:run-command', { detail: { command } }));
+    return Promise.resolve({});
+  }, []);
+
   return (
     <div className="flex h-full min-h-0 min-w-0">
       {/* One polite status region and one assertive alert region for the
@@ -61,12 +75,17 @@ export function HostShell() {
       <div
         ref={conversationRef}
         className="flex-1 min-w-0 flex flex-col bg-background border-r border-border"
+        aria-label="Conversation"
       >
-        <AgentChat className="h-full" onOpenModelSettings={openModelSettings} />
+        <AgentChat
+          className="h-full"
+          onOpenModelSettings={openModelSettings}
+          onRunCommand={handleRunCommand}
+        />
       </div>
 
       {/* Context stage — half the surface on a wide window, never a strip */}
-      <aside className="hidden md:flex w-1/2 max-w-[640px] min-w-[320px] shrink-0">
+      <aside className="hidden md:flex w-1/2 max-w-[640px] min-w-[320px] shrink-0" aria-label="Context stage">
         <ContextStage className="w-full" onJumpToTerminal={jumpToTerminal} />
       </aside>
     </div>

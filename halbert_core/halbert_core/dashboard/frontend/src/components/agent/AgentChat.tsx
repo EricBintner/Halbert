@@ -295,6 +295,14 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     },
   });
 
+  // Announce agent errors assertively so screen-reader users know a retry
+  // button is available. The banner is visual-only without this.
+  useEffect(() => {
+    if (agentError) {
+      announce(agentError, { assertive: true });
+    }
+  }, [agentError]);
+
   // Load mentionables on mount
   useEffect(() => {
     const loadMentionables = async () => {
@@ -1195,6 +1203,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
             <textarea
               ref={inputRef}
               value={input}
+              aria-label="Message Halbert"
               onChange={(e) => {
                 handleInputChange(e);
                 autoResizeTextarea();

@@ -316,6 +316,44 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(null);
 
+  // rAF buffering: LLMs emit 30-80 tokens/sec but the screen refreshes at
+  // ~60 Hz. Writing each token to React state as it arrives causes one
+  // re-render per token and O(n^2) string concatenation. Instead, chunks
+  // accumulate in refs and flush to state once per animation frame.
+  const responseBufferRef = useRef('');
+  const thinkingBufferRef = useRef('');
+  const rafRef = useRef<number | null>(null);
+
+  const scheduleFlush = useCallback(() => {
+    if (rafRef.current !== null) return; // Already scheduled
+    rafRef.current = requestAnimationFrame(() => {
+      if (responseBufferRef.current) {
+        setResponse(r => r + responseBufferRef.current);
+        responseBufferRef.current = '';
+      }
+      if (thinkingBufferRef.current) {
+        setThinking(t => t + thinkingBufferRef.current);
+        thinkingBufferRef.current = '';
+      }
+      rafRef.current = null;
+    });
+  }, []);
+
+  const flushNow = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    if (responseBufferRef.current) {
+      setResponse(r => r + responseBufferRef.current);
+      responseBufferRef.current = '';
+    }
+    if (thinkingBufferRef.current) {
+      setThinking(t => t + thinkingBufferRef.current);
+      thinkingBufferRef.current = '';
+    }
+  }, []);
+
   // Cleanup on unmount or when isStreaming changes - cancel backend request
   // to prevent zombie processing.
   //
@@ -337,6 +375,17 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       }
     };
   }, [isStreaming]);
+
+  // Cancel any pending rAF flush on unmount to avoid a state update
+  // after the component is gone.
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, []);
 
   const initSession = useCallback((sessionId: string) => {
     setSession({
@@ -482,15 +531,18 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           return { ...prev, pendingConfirmation: confirmation };
 
         case 'response_chunk':
-          console.log('[AGENT] response_chunk:', JSON.stringify(event.content));
-          setResponse(r => r + (event.content as string));
+          responseBufferRef.current += event.content as string;
+          scheduleFlush();
           return prev;
 
         case 'thinking':
-          setThinking(t => t + (event.content as string));
+          thinkingBufferRef.current += event.content as string;
+          scheduleFlush();
           return prev;
 
         case 'response_complete':
+          // Flush any buffered text before applying the final content.
+          flushNow();
           // Tolerate provenance riding on the completion event as well as
           // the dedicated response_provenance event.
           if (Array.isArray(event.provenance)) {
@@ -859,11 +911,13 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       }
       
       stopTimeoutCheck();
+      flushNow();
       setIsStreaming(false);
     }).catch((err) => {
       stopTimeoutCheck();
       if (err.name !== 'AbortError') {
         console.error('Agent stream error:', err);
+        flushNow();
         setIsStreaming(false);
         setSession(prev => prev ? { ...prev, state: 'error', error: err.message || 'Connection error' } : null);
         options.onError?.(err.message || 'Connection error');
@@ -872,7 +926,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     
     // Store abort controller for cancel functionality
     eventSourceRef.current = { close: () => { stopTimeoutCheck(); controller.abort(); } } as EventSource;
-  }, [initSession, handleEvent, options]);
+  }, [initSession, handleEvent, options, scheduleFlush, flushNow]);
 
   const confirmAction = useCallback((actionId: string, confirmed: boolean) => {
     if (!sessionIdRef.current) return;
@@ -931,6 +985,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           }
         }
 
+        flushNow();
         setIsStreaming(false);
       };
 
@@ -938,10 +993,11 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     }).catch(err => {
       if (err.name === 'AbortError') return; // User cancelled, not an error
       console.error('Confirmation error:', err);
+      flushNow();
       setIsStreaming(false);
       setSession(prev => prev ? { ...prev, error: String(err) } : null);
     });
-  }, [handleEvent]);
+  }, [handleEvent, flushNow]);
 
   const cancel = useCallback(() => {
     eventSourceRef.current?.close();
