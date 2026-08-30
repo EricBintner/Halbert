@@ -243,6 +243,13 @@ class StateContext:
     # scope without defining a full skill.
     retrieval_scope: Optional[str] = None
 
+    # Trust boundary: True once this turn's assembled context was flagged by
+    # detect_secure_content (secret content or sensitive provenance). Latched
+    # in PLANNING — once True it stays True for the whole turn. The LLM
+    # adapter resolves secure turns to a local model only and fails closed
+    # when none is configured.
+    secure_context: bool = False
+
     # Auditory cortex: the verified speaker role for this turn. Voice turns
     # set this from speaker_id verification (admin/member/guest/restricted/
     # unknown). Text/chat turns default to "admin" — text chat is already

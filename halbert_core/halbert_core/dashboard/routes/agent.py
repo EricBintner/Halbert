@@ -379,6 +379,26 @@ class TurnModel(NamedTuple):
     reason: str          # human-readable, for the handoff banner and logs
 
 
+def _endpoint_is_local(provider: str, endpoint: str) -> bool:
+    """Locality verdict for the secure gate.
+
+    The endpoint URL decides: a provider named "ollama" can still point at a
+    remote host, so provider membership in LOCAL_GPU_PROVIDERS is not proof.
+    On-device providers (MLX, Apple Foundation) have no network egress by
+    construction and pass without a URL check.
+    """
+    from ...model.llm_config import _is_local_url
+    if (provider or "") in ("mlx", "apple-foundation"):
+        return True
+    return _is_local_url(endpoint or "")
+
+
+class _SecureContentBlocked(Exception):
+    """A secure turn found no local model to answer with. Raised rather than
+    routed: silently sending secrets to a cloud endpoint is the failure this
+    exception exists to prevent."""
+
+
 def _resolve_turn_model(
     prompt: str,
     intake_result=None,
@@ -395,22 +415,26 @@ def _resolve_turn_model(
     point of Locked Mode: a user who pins a local model must never discover
     afterwards that a cloud specialist answered and billed them.
 
-    When ``secure=True``, the resolved model is forced to a local provider
-    (one in ``LOCAL_GPU_PROVIDERS``).  If the router or pin selected a cloud
-    model, it falls back to the guide model — which is local ollama by
-    default.  This prevents secrets in the context from reaching a cloud
-    vendor.  The fallback is logged and reported in the turn reason.
+    When ``secure=True`` the turn carries secrets (the context-assembly
+    backstop flagged it), and the boundary beats everything, pins included:
 
-    Resolution is done per call from models.yml rather than cached on the
-    adapter, because one adapter instance is shared by every concurrent
-    request.
+    1. The dedicated ``secure_model`` slot answers when configured — it is
+       guaranteed local-only by ``llm_config.normalise``.
+    2. Otherwise the normally-resolved model answers, but only if its
+       endpoint is local (loopback URL or an on-device provider).
+    3. Otherwise the guide answers if the guide is local.
+    4. Otherwise the turn fails closed with ``_SecureContentBlocked``.
+
+    A false positive costs a local-model answer; a false negative ships a
+    secret to a cloud vendor. Resolution is done per call from models.yml
+    rather than cached on the adapter, because one adapter instance is shared
+    by every concurrent request.
     """
     from ...model.client import (
         get_configured_model, get_ollama_endpoint, get_specialist_model,
         get_vision_model, provider_for, resolve_endpoint_by_id,
         score_query_complexity,
     )
-    from ...model.client import LOCAL_GPU_PROVIDERS
 
     guide_model = get_configured_model()
     guide_endpoint = get_ollama_endpoint()
@@ -436,6 +460,40 @@ def _resolve_turn_model(
     except Exception as e:
         logger.debug(f"Persona model override not applied: {e}")
 
+    # ── 0.5. Secure gate ────────────────────────────────────────────────
+    # The trust boundary beats pins and routing. Order: dedicated secure
+    # slot, then the normally-resolved model if local, then a local guide,
+    # then fail closed.
+    if secure:
+        from ...model.client import get_secure_model
+        sec_model, sec_endpoint, sec_provider = get_secure_model()
+        if sec_model:
+            return TurnModel(
+                sec_model, sec_endpoint, sec_provider or "ollama",
+                "guide", False, False,
+                "Secure content — dedicated local secure model",
+            )
+
+    def gate(turn: "TurnModel") -> "TurnModel":
+        """Force a secure turn onto a local endpoint or fail closed."""
+        if not secure or _endpoint_is_local(turn.provider, turn.endpoint):
+            return turn
+        if guide_model and _endpoint_is_local(guide_provider, guide_endpoint):
+            logger.info(
+                "Secure content: %s is cloud-bound (%s @ %s) — local guide answers",
+                turn.model, turn.provider, turn.endpoint,
+            )
+            return TurnModel(
+                guide_model, guide_endpoint, guide_provider, "guide",
+                False, False,
+                f"Secure content — {turn.model} is cloud-bound; answered locally",
+            )
+        raise _SecureContentBlocked(
+            "This turn contains sensitive content (secrets or credentials) and "
+            "no local model is configured to answer it. Configure a local guide "
+            "or secure model in Settings → AI Models."
+        )
+
     # ── 1. Explicit model pin ────────────────────────────────────────────
     if model_override:
         # An id from the picker is exact; without one, match the pinned name
@@ -454,38 +512,38 @@ def _resolve_turn_model(
                 url, provider = vis_endpoint, vis_provider or "ollama"
             else:
                 url, provider = guide_endpoint, guide_provider
-        return TurnModel(
+        return gate(TurnModel(
             model=model_override, endpoint=url, provider=provider,
             tier="guide", pinned=True, escalated=False,
             reason=f"Pinned to {model_override}",
-        )
+        ))
 
     # ── 2. Tier pin ──────────────────────────────────────────────────────
     if tier_override in ("guide", "specialist", "vision"):
         if tier_override == "specialist":
             model, url, provider = get_specialist_model()
             if model:
-                return TurnModel(model, url, provider or "ollama", "specialist",
-                                 True, False, "Pinned to the specialist tier")
+                return gate(TurnModel(model, url, provider or "ollama", "specialist",
+                                      True, False, "Pinned to the specialist tier"))
             logger.info("Specialist tier pinned but not configured; using guide")
         elif tier_override == "vision":
             model, url, provider = get_vision_model()
             if model:
-                return TurnModel(model, url, provider or "ollama", "vision",
-                                 True, False, "Pinned to the vision tier")
+                return gate(TurnModel(model, url, provider or "ollama", "vision",
+                                      True, False, "Pinned to the vision tier"))
             logger.info("Vision tier pinned but not configured; using guide")
         if not guide_model:
             raise HTTPException(400, _NO_MODEL_MSG)
-        return TurnModel(guide_model, guide_endpoint, guide_provider, "guide",
-                         True, False, "Pinned to the guide tier")
+        return gate(TurnModel(guide_model, guide_endpoint, guide_provider, "guide",
+                              True, False, "Pinned to the guide tier"))
 
     # ── 3. Automatic routing (unchanged behaviour) ───────────────────────
     if images or (intake_result is not None
                   and intake_result.recommended_model == "vision"):
         model, url, provider = get_vision_model()
         if model:
-            return TurnModel(model, url, provider or "ollama", "vision",
-                             False, False, "Image attached")
+            return gate(TurnModel(model, url, provider or "ollama", "vision",
+                                  False, False, "Image attached"))
 
     if not guide_model:
         raise HTTPException(400, _NO_MODEL_MSG)
@@ -500,24 +558,11 @@ def _resolve_turn_model(
             use_specialist = score >= 0.5
             reason = f"Complexity score {score:.2f} (threshold 0.50)"
         if use_specialist:
-            # ── Secure content fallback ───────────────────────────────────
-            # If secure=True and the specialist is a cloud provider, fall
-            # back to the guide model (local ollama) rather than sending
-            # secrets to a cloud vendor.  A false positive costs a
-            # local-model answer; a false negative ships a secret.
-            if secure and (spec_provider or "ollama") not in LOCAL_GPU_PROVIDERS:
-                logger.info(
-                    "Secure content: specialist %s is cloud (%s), falling back to guide",
-                    spec_model, spec_provider,
-                )
-                return TurnModel(guide_model, guide_endpoint, guide_provider,
-                                 "guide", False, False,
-                                 f"Secure content — specialist was cloud, used local guide")
-            return TurnModel(spec_model, spec_endpoint, spec_provider or "ollama",
-                             "specialist", False, True, reason)
+            return gate(TurnModel(spec_model, spec_endpoint, spec_provider or "ollama",
+                                  "specialist", False, True, reason))
 
-    return TurnModel(guide_model, guide_endpoint, guide_provider, "guide",
-                     False, False, "Routine query")
+    return gate(TurnModel(guide_model, guide_endpoint, guide_provider, "guide",
+                          False, False, "Routine query"))
 
 
 def _report_model(
@@ -557,11 +602,14 @@ class _ModelUnreachable(Exception):
     a missing credential — while the turn can still be handed to another one."""
 
 
-def _fallback_to_guide(turn: TurnModel, requested: str) -> Optional[TurnModel]:
+def _fallback_to_guide(turn: TurnModel, requested: str,
+                       secure: bool = False) -> Optional[TurnModel]:
     """The guide's turn to answer in place of one that could not be reached.
 
     ``None`` when the guide is what already failed: asking it again is the loop
-    this fallback exists to avoid.
+    this fallback exists to avoid. Also ``None`` on a secure turn when the
+    guide endpoint is not local — a stand-in that ships the secrets the first
+    model was chosen to protect is not a fallback, it is a leak.
     """
     from ...model.client import (
         get_configured_model, get_ollama_endpoint, provider_for,
@@ -571,13 +619,21 @@ def _fallback_to_guide(turn: TurnModel, requested: str) -> Optional[TurnModel]:
     if not guide_model or guide_model == turn.model:
         return None
     guide_endpoint = get_ollama_endpoint()
+    guide_provider = provider_for(guide_endpoint)
+    if secure and not _endpoint_is_local(guide_provider, guide_endpoint):
+        logger.error(
+            "Secure turn: %s unreachable and the guide (%s @ %s) is not local — "
+            "failing closed rather than answering from a cloud endpoint",
+            requested, guide_model, guide_endpoint,
+        )
+        return None
     # pinned/escalated are cleared: the guide answered because the choice
     # failed, not because anyone chose it, and a banner reading "pinned" over a
     # model the user never picked is worse than no banner at all.
     return turn._replace(
         model=guide_model,
         endpoint=guide_endpoint,
-        provider=provider_for(guide_endpoint),
+        provider=guide_provider,
         tier="guide",
         pinned=False,
         escalated=False,
@@ -666,7 +722,7 @@ class LLMClientAdapter:
 
     async def chat(self, messages, tools=None, intake_result=None, images=None,
                    model_override=None, tier_override=None, endpoint_id=None,
-                   on_model_selected=None, routing_prompt=None):
+                   on_model_selected=None, routing_prompt=None, secure=False):
         """Call LLM with messages, routing to specialist for complex queries.
 
         Tool schemas are forwarded to the model and any tool calls come back on
@@ -690,6 +746,9 @@ class LLMClientAdapter:
                 produced the content, after any fallback has settled.
             routing_prompt: The text the complexity router should score. The
                 caller's question, not the message it ends up inside.
+            secure: This turn's assembled context was flagged as containing
+                secrets. The turn resolves to a local model only (secure_model
+                slot, else a local guide), and fails closed when none exists.
 
         Every override is a parameter, never instance state: one adapter is
         shared by all concurrent requests, so anything stored on ``self``
@@ -730,7 +789,7 @@ class LLMClientAdapter:
 
         turn = _resolve_turn_model(
             prompt, intake_result, images, model_override, tier_override,
-            endpoint_id,
+            endpoint_id, secure=secure,
         )
         logger.info(
             f"Agent turn model: {turn.model} @ {turn.endpoint} "
@@ -770,7 +829,7 @@ class LLMClientAdapter:
                 # Re-resolve without the vision path so the turn still answers.
                 turn = _resolve_turn_model(
                     prompt, intake_result, None, model_override, tier_override,
-                    endpoint_id,
+                    endpoint_id, secure=secure,
                 )
 
         model, endpoint, provider = turn.model, turn.endpoint, turn.provider
@@ -809,7 +868,9 @@ class LLMClientAdapter:
             logger.error(f"LLM call failed: {e}")
             # Never strand the turn: if a specialist or a pinned model is
             # unreachable, answer with the guide and let the UI say so.
-            guide = _fallback_to_guide(turn, requested)
+            # On a secure turn the guide must itself be local — see
+            # _fallback_to_guide.
+            guide = _fallback_to_guide(turn, requested, secure=secure)
             if guide is None:
                 raise
             logger.warning(
@@ -837,7 +898,7 @@ class LLMClientAdapter:
     
     async def stream(self, messages, intake_result=None, images=None,
                      model_override=None, tier_override=None, endpoint_id=None,
-                     on_model_selected=None, routing_prompt=None):
+                     on_model_selected=None, routing_prompt=None, secure=False):
         """Stream response from LLM with true incremental streaming.
 
         This — not chat() — is the production response path: the state machine
@@ -875,7 +936,7 @@ class LLMClientAdapter:
 
         turn = _resolve_turn_model(
             prompt, intake_result, images, model_override, tier_override,
-            endpoint_id,
+            endpoint_id, secure=secure,
         )
         logger.info(
             f"Agent stream model: {turn.model} @ {turn.endpoint} "
@@ -897,7 +958,7 @@ class LLMClientAdapter:
                 yield chunk
             return
         except _ModelUnreachable as unreachable:
-            guide = _fallback_to_guide(turn, requested)
+            guide = _fallback_to_guide(turn, requested, secure=secure)
             if guide is None:
                 logger.error(f"Stream failed with no guide to stand in: {unreachable}")
                 yield f"\n\n[Error: {unreachable}]"
