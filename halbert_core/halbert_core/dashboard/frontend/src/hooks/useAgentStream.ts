@@ -341,7 +341,11 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
   const initSession = useCallback((sessionId: string) => {
     setSession({
       sessionId,
-      state: 'idle',
+      // 'planning', not 'idle': initSession is only called when a turn is
+      // being sent (sendMessage / confirmAction). The backend's first
+      // state_change event takes a few seconds to arrive over SSE; showing
+      // 'idle' during that gap makes it look like nothing happened.
+      state: 'planning',
       plan: [],
       currentStep: 0,
       loopCount: 0,
