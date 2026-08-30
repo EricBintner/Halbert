@@ -46,13 +46,19 @@ const STATE_CONFIG: Record<AgentState, { label: string; color: string; bgColor: 
     bgColor: 'bg-warning-muted dark:bg-warning/20',
     pulseColor: 'bg-warning'
   },
-  observing: { 
-    label: 'Observing', 
-    color: 'text-warning dark:text-warning', 
+  observing: {
+    label: 'Observing',
+    color: 'text-warning dark:text-warning',
     bgColor: 'bg-warning-muted dark:bg-warning/20',
     pulseColor: 'bg-warning'
   },
-  responding: { 
+  reflecting: {
+    label: 'Reflecting',
+    color: 'text-purple-600 dark:text-purple-400',
+    bgColor: 'bg-purple-100 dark:bg-purple-500/20',
+    pulseColor: 'bg-purple-500'
+  },
+  responding: {
     label: 'Responding', 
     color: 'text-success dark:text-success', 
     bgColor: 'bg-success-muted dark:bg-success/20',
@@ -79,7 +85,7 @@ const SIZE_CLASSES = {
 };
 
 export function StateBadge({ state, size = 'md', showPulse = true }: StateBadgeProps) {
-  const config = STATE_CONFIG[state];
+  const config = STATE_CONFIG[state] ?? STATE_CONFIG.idle;
   const isActive = !['idle', 'error'].includes(state);
   
   return (

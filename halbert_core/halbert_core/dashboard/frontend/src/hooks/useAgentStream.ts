@@ -17,15 +17,16 @@ import { announce } from '@/lib/announce';
 // Types
 // -----------------------------------------------------------------------------
 
-export type AgentState = 
-  | 'idle' 
-  | 'planning' 
-  | 'searching' 
+export type AgentState =
+  | 'idle'
+  | 'planning'
+  | 'searching'
   | 'reading'
-  | 'executing' 
-  | 'observing' 
+  | 'executing'
+  | 'observing'
+  | 'reflecting'
   | 'responding'
-  | 'awaiting_confirmation' 
+  | 'awaiting_confirmation'
   | 'error';
 
 export type CRAGAction = 'CORRECT' | 'INCORRECT' | 'AMBIGUOUS' | 'PENDING';
