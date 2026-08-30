@@ -24,7 +24,7 @@ An adversarial review (`13-adversarial-review-modality-handoff.md`) identified t
 ## 2. Detailed Task Breakdown & Implementation Steps
 
 ### Task 7.1: Fix Wyoming Speaker Role & Session ID
-- **File:** [`halbert_core/halbert_core/voice/wyoming_agent.py`](file:///Volumes/4TB-BAD/Halbert/halbert_core/halbert_core/voice/wyoming_agent.py)
+- **File:** [`halbert_core/halbert_core/integrations/wyoming_agent.py`](file:///Volumes/4TB-BAD/Halbert/halbert_core/halbert_core/integrations/wyoming_agent.py)
   1. Fix default speaker role: Pass `speaker_role="unknown"` (or the HA authenticated user role) into `agent.process()`.
   2. Mint a unique UUID per voice turn (`session_id=str(uuid.uuid4())`).
   3. Thread HA's incoming `conversation_id` as `thread_id` to `process()`.

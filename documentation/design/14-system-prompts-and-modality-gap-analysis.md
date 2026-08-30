@@ -275,7 +275,7 @@ An exhaustive codebase inspection revealed the exact architectural delta between
   1. Inject `ThreadManager` into `HalbertWyomingAgent`.
   2. Query `thread_manager.get_or_open_thread_id()` on incoming voice turn.
   3. Mint per-turn UUID `session_id=f"wyoming-{uuid.uuid4().hex[:8]}"`.
-  4. Pass `origin="satellite"`, `area_id=area_id`, and `thread_id` into `agent.process()`.
+  4. Pass `thread_id` into `agent.process()`. (Note: `process()` already accepts `thread_id` at state_machine.py L372. The `origin` and `area_id` params do NOT exist on `process()` — they would need to be added to the signature or passed via `modality_context`.)
 
 #### Gap 4: Rust Audio Capture & macOS Non-Activating HUD (`src-tauri/`)
 * **Current State:** `src-tauri/src/lib.rs` contains system vitals commands (`get_system_metrics`), but zero audio capture code or floating panel bindings.
@@ -290,7 +290,7 @@ An exhaustive codebase inspection revealed the exact architectural delta between
   1. Build `AcousticAura.tsx` in Layout header reacting to pipeline states (`idle`, `listening`, `thinking`, `speaking`).
   2. Build `VoiceCompanionPill.tsx` for desktop floating HUD.
   3. Build `ModalityHandoffBadge.tsx` displaying where artifacts landed (e.g. `[ 🖥️ Diff Staged on Screen ]`).
-  4. Build `AcousticEventCard.tsx` for YAMNet environmental anomaly feeds.
+  4. Build `AcousticEventCard.tsx` for CED-tiny environmental anomaly feeds. (Note: codebase uses CED-tiny, not YAMNet — see `audio/acoustic/audio_tagger.py`.)
 
 ---
 
