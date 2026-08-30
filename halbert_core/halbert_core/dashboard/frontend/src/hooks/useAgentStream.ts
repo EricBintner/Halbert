@@ -520,7 +520,11 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
         case 'error':
           const errorMsg = event.message as string;
           options.onError?.(errorMsg);
-          return { ...prev, error: errorMsg };
+          // Stop streaming — an error event is terminal. Without this, the
+          // UI keeps pulsing "responding" if the backend sends error
+          // without a subsequent session_ended.
+          queueMicrotask(() => setIsStreaming(false));
+          return { ...prev, error: errorMsg, state: 'error' };
 
         case 'loop_warning':
           return { 
@@ -875,37 +879,46 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
 
     // Close existing connection
     eventSourceRef.current?.close();
-    
+
     setIsStreaming(true);
-    
+
     // Clear pending confirmation
     setSession(prev => prev ? { ...prev, pendingConfirmation: null } : null);
 
     // Create new SSE connection for confirmation
+    const controller = new AbortController();
     const url = apiUrl(`/api/agent/confirm/${sessionIdRef.current}`);
-    
+
+    // Store the controller so cancel() can abort the confirmation stream.
+    // Without this, the Stop button is dead during a confirmation response
+    // and isStreaming stays true forever.
+    eventSourceRef.current = {
+      close: () => { controller.abort(); },
+    } as EventSource;
+
     fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action_id: actionId, confirmed })
+      body: JSON.stringify({ action_id: actionId, confirmed }),
+      signal: controller.signal,
     }).then(response => {
       if (!response.ok) {
         throw new Error(`Confirmation failed: ${response.status}`);
       }
-      
+
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-      
+
       const readStream = async () => {
         if (!reader) return;
-        
+
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          
+
           const text = decoder.decode(value);
           const lines = text.split('\n');
-          
+
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               try {
@@ -917,12 +930,13 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
             }
           }
         }
-        
+
         setIsStreaming(false);
       };
-      
+
       readStream();
     }).catch(err => {
+      if (err.name === 'AbortError') return; // User cancelled, not an error
       console.error('Confirmation error:', err);
       setIsStreaming(false);
       setSession(prev => prev ? { ...prev, error: String(err) } : null);

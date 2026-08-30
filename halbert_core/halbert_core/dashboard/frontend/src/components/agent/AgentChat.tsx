@@ -24,6 +24,7 @@ import {
   Image as ImageIcon,
   X as XIcon,
   Camera,
+  ArrowDown,
 } from 'lucide-react';
 import { useAgentStream, type AgentSession } from '../../hooks/useAgentStream';
 import { useTimeline, type UseTimelineReturn } from '../../hooks/useTimeline';
@@ -188,6 +189,20 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   const [agentError, setAgentError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Whether the user is near the bottom of the scroll container. Auto-scroll
+  // only fires when this is true, so scrolling up to read an old answer
+  // during streaming is not yanked away on every token. The threshold is
+  // 100px — generous enough for sub-pixel rounding, tight enough that the
+  // user doesn't have to scroll all the way to the last pixel to re-pin.
+  const [isAtBottom, setIsAtBottom] = useState(true);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setIsAtBottom(distanceFromBottom < 100);
+  }, []);
 
   /**
    * Drain requests parked by the dashboard bridge.
@@ -443,9 +458,9 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   // question nobody asked and undoes the navigation that was asked for.
   const tailTurnId = turns.length > 0 ? turns[turns.length - 1].turnId : null;
   useEffect(() => {
-    if (anchored) return;
+    if (anchored || !isAtBottom) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [tailTurnId, anchored, liveUser, response, session?.toolExecutions]);
+  }, [tailTurnId, anchored, isAtBottom, liveUser, response, session?.toolExecutions]);
 
   // Process queued messages when streaming completes
   useEffect(() => {
@@ -868,7 +883,11 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
         />
       )}
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 relative">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-4 py-4 space-y-4 relative"
+      >
         {/* Empty state: the host introduces itself — only when there is
             nothing stored and nothing in flight. `loadFailed` is the rest of
             that condition: an empty timeline because the request could not
@@ -1074,6 +1093,26 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
 
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Floating "Jump to latest" — shown when the user has scrolled up
+          during streaming and is not in an anchored (thread-chip) view.
+          Clicking re-pins to the bottom and re-enables auto-scroll. */}
+      {!isAtBottom && !anchored && (
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => {
+              messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+              setIsAtBottom(true);
+            }}
+            aria-label="Jump to latest"
+            className="absolute bottom-2 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs text-foreground shadow-lg hover:bg-muted transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          >
+            <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+            Jump to latest
+          </button>
+        </div>
+      )}
 
       {/* Mention Autocomplete */}
       {showMentions && filteredMentionables.length > 0 && (
