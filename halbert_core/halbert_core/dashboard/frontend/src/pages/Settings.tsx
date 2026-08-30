@@ -466,9 +466,15 @@ function SecuritySettings() {
       if (resp.ok) {
         const data = await resp.json()
         setConfig(data.config)
+      } else {
+        // Fail closed: a stale poll must not keep showing an unlocked
+        // state after the server has relocked (TTL expiry, relock from
+        // another client). Drop the config so the controls disappear.
+        setConfig(null)
       }
     } catch (e) {
       console.error('Failed to load security config:', e)
+      setConfig(null)
     } finally {
       setLoading(false)
     }
@@ -670,8 +676,13 @@ function SecuritySettings() {
       <EscapeHatchConfirmationModal
         open={showEscapeModal}
         onClose={() => setShowEscapeModal(false)}
-        onConfirm={(ttl) => {
-          const updates: Record<string, any> = { secret_tier: 'cloud_ok_acknowledged' }
+        onConfirm={(ttl, phrase) => {
+          const updates: Record<string, any> = {
+            secret_tier: 'cloud_ok_acknowledged',
+            // The backend re-verifies this phrase — the modal's check is UX
+            // friction, not the enforcement boundary.
+            phrase,
+          }
           if (ttl === '1h') {
             const expiry = new Date(Date.now() + 3600_000)
             updates.secret_tier_expiry = expiry.toISOString()

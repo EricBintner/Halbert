@@ -205,7 +205,9 @@ def _tool_get_config_value(params: Dict[str, Any]) -> Dict[str, Any]:
         result = get_config_value(
             path, key,
             operational_tier=sec.operational_tier,
-            secret_tier=sec.secret_tier,
+            # effective_secret_tier() is the single TTL decision point;
+            # get_config_value re-checks the expiry internally as backstop.
+            secret_tier=sec.effective_secret_tier(),
             secret_tier_expiry=sec.secret_tier_expiry,
             public_files=set(sec.public_files),
             extra_secret_keys=sec.extra_secret_keys,
