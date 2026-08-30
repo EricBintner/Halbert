@@ -138,3 +138,104 @@ recalibration and can proceed in parallel:
   (MCP boundary, secure routing) verified working 2026-08-29. Exclude
   globs still strip key material (*.key, *.pem, id_rsa*, etc.)
   regardless. **Deferred — user chose to skip for now.**
+
+## Response Modality & Voice Path (from adversarial review, 2026-08-30)
+
+Adversarial review of the modality handoff design docs (doc 11
+interaction spec, doc 12 scrutiny, audio architecture doc 01).
+Full findings: `documentation/design/13-adversarial-review-modality-handoff.md`
+
+### Critical — Fix before any voice path goes live
+
+- [ ] **Wyoming agent runs voice turns with `speaker_role="admin"` by default.**
+  `wyoming_agent.py` calls `agent.process()` directly, bypassing the audio
+  pipeline. `StateContext.speaker_role` defaults to `"admin"` (states.py
+  L251), so every voice turn from a kitchen satellite gets admin-level tool
+  access. Fix: pass `speaker_role="unknown"` (or HA-provided role) from
+  `wyoming_agent.py` to `process()`.
+- [ ] **No markdown-to-plaintext converter anywhere in the codebase.**
+  `tts_engine.py` passes text directly to `self._tts.generate(text)` with
+  zero preprocessing. Piper will speak `## headers` and ```` ``` ````.
+  Need a `strip_markdown_for_speech()` utility before any voice path goes
+  live. Also needed for `proactive_speak()` which sends raw markdown to
+  HA's `tts.speak` service.
+- [ ] **Wyoming `session_id` is hardcoded to PID.**
+  `wyoming_agent.py` L130: `session_id=f"wyoming-{os.getpid()}"`. Concurrent
+  satellite requests collide. Fix: mint UUID per turn, pass HA's
+  `conversation_id` as `thread_id` (the param already exists on
+  `process()` at state_machine.py L372 — it's just never passed).
+
+### High — Architectural gaps blocking modality-aware responses
+
+- [ ] **No modality signal reaches the prompt builder.**
+  `build_response_prompt()` (agent_prompts.py L579) has no parameter for
+  modality, intent, or response style. `process()` (state_machine.py L365)
+  also has no modality parameter. Need: `modality` field on
+  `StateContext`, parameter on `process()`, conditional branch in
+  `build_response_prompt()`.
+- [ ] **`<speech>` tags would need defanging like `<continuity>` tags.**
+  The proposed dual-stream `<speech>...</speech>` delimiter would be
+  forgeable from untrusted text (command output, log lines) unless the
+  existing `_CONTINUITY_TAG_RE` defanging (agent_prompts.py L197) is
+  extended to cover `<speech>` tags.
+- [ ] **AEC is designed but `audio_capture.rs` doesn't exist.**
+  `local_mic.py` docstring says Rust side applies AEC via
+  webrtc-audio-processing, and `audio/config.py` has `aec_enabled: bool =
+  True`, but the only Rust files are `lib.rs`, `main.rs`, `build.rs`. No
+  `audio_capture.rs`, no AEC implementation. Without it, Halbert's own
+  TTS output triggers VAD false barge-in (self-interruption loop).
+- [ ] **Barge-in handler exists but is not wired.**
+  `BargeInHandler` (audio/speech/barge_in.py) is fully implemented with
+  token creation, local TTS cancellation, and satellite stop. But it's
+  never instantiated or called by `AudioPipelineCoordinator`. The
+  <120ms barge-in latency budget is unmeasurable.
+
+### Medium — Should address during modality work
+
+- [ ] **`proactive_speak()` sends raw markdown to HA TTS.**
+  `wyoming_agent.py` L295 sends text directly to HA's `tts.speak` service
+  with no markdown stripping. Same fix as the critical markdown stripper
+  above — route through the same utility.
+- [ ] **`UserPreferences.verbosity` is dead code.**
+  `prompts/context.py` L225 defines `verbosity: str = "concise"` but it's
+  never instantiated or consumed. The `output-format.xml` prompt component
+  with context-sensitive length guidelines is also loaded but never sent
+  to the model (`build_system_prompt()` is never called in production).
+  Wire in or remove as part of modality work.
+- [ ] **Two parallel Wyoming paths don't coordinate.**
+  `integrations/wyoming_agent.py` (TCP JSONL, direct agent.process()) and
+  `audio/ingress/wyoming_ingress.py` (feeds ring buffer, goes through
+  VAD/ASR/speaker ID) serve different purposes but the architecture
+  doesn't clarify when each is used or how they coordinate.
+
+### Low — Documentation corrections
+
+- [ ] **Doc 11 has factual errors vs codebase.** 5 of 8 frontend
+  components don't exist (2 have wrong filenames). SSE
+  `DualStreamMessageEvent` contract is incompatible with actual flat
+  `StreamEvent` class. Modality routing matrix has zero implementation.
+- [ ] **Doc 12 has 3 factual errors.** Claimed `process()` needs
+  `thread_id` added (already exists). Claimed AEC should be Python-side
+  (it's planned for Rust). Presented NSPanel keyboard trap as existing
+  vulnerability (no floating panel code exists).
+- [ ] **Audio architecture doc (01) has 4 discrepancies.** Still says
+  "YAMNet" in diagrams when code explicitly says "NOT YAMNet, uses
+  CED-tiny". Claims `coordinator.py` (actual: `pipeline.py`). Claims 3
+  acoustic files that don't exist (`yamnet.py`, `taxonomy.py`,
+  `anomaly_detector.py`).
+
+## Frontend — Settings Monolith Modular Decomposition
+
+The settings page (`dashboard/frontend/src/pages/Settings.tsx`) is currently a 3,273-line monolith (133 KB) containing 10 tabs inline.
+
+- [ ] **Decompose `Settings.tsx` into modular tab components in `src/components/settings/tabs/`**:
+  - `types.ts` — shared alert rule, system info, and discovery stats types
+  - `SystemTab.tsx` — system info readouts, discovery cache, and system profile scan triggers
+  - `KnowledgeTab.tsx` — document scrapers, staged embeddings, and ChromaDB collection stats
+  - `SafetyTab.tsx` — trust boundary telemetry, Tier 1/2 rocker controls, and escape hatch modal
+  - `VisionTab.tsx` — camera privacy gates, resolution, and OCR toggles
+  - `AlertsTab.tsx` — systemd and disk alert rules table
+  - `BeingTab.tsx` — persona and identity prompt editor
+  - `AboutTab.tsx` — version badges, legal notices triggers, and developer tool viewer
+  - `DebugTab.tsx` — raw log stream viewer and test error dispatchers
+  - Refactor `Settings.tsx` to a thin ~120-line coordinator / NavRail shell.

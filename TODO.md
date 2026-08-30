@@ -9,7 +9,7 @@
 ## 🎯 Progress Overview
 
 ```
-[░░░░░░░░░░] 0% Complete (18 Tasks Pending, 0 In Progress, 0 Done)
+[░░░░░░░░░░] 0% Complete (19 Tasks Pending, 0 In Progress, 0 Done)
 ```
 
 | Workstream | Focus Area | Status | Priority |
@@ -26,12 +26,13 @@
 ## 📋 Workstream Breakdown
 
 ### Workstream 1: Baseline Cleanup & Build Stabilization (P0)
-*Objective: Unblock frontend builds, eliminate dead scaffolding, and unify chat execution.*
+*Objective: Unblock frontend builds, eliminate dead scaffolding, unify chat execution, and decompose monolithic UI files.*
 
 - [ ] **WS1.1 Fix Frontend Build Tracking**: Remove bare `lib/` rule from `.gitignore` and ensure `frontend/src/lib/api.ts` and `frontend/src/lib/utils.ts` are committed and tracked.
 - [ ] **WS1.2 Decommission Dead Runtime Scaffolds**: Remove unused `runtime/langgraph_engine.py` and legacy `runtime/graph.py` files.
 - [ ] **WS1.3 Unify Chat Hot Path**: Retire the orphaned 4,240-line `dashboard/routes/chat.py` in favor of the clean Phase 36 SSE state machine in `dashboard/routes/agent.py`.
 - [ ] **WS1.4 Purge Deprecated In-Memory RAGPipeline**: Remove the dual-instantiation of the deprecated `rag/pipeline.py` on the live query path.
+- [ ] **WS1.5 Settings Monolith Modular Decomposition**: Refactor the monolithic 3,273-line `halbert_core/dashboard/frontend/src/pages/Settings.tsx` into clean, isolated domain tab components in `src/components/settings/tabs/` (`SystemTab`, `KnowledgeTab`, `SafetyTab`, `VisionTab`, `AlertsTab`, `BeingTab`, `AboutTab`, `DebugTab`) with shared types in `types.ts`, reducing `Settings.tsx` to a thin ~120-line coordinator/NavRail shell.
 
 ---
 
