@@ -868,7 +868,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
         />
       )}
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 relative">
         {/* Empty state: the host introduces itself — only when there is
             nothing stored and nothing in flight. `loadFailed` is the rest of
             that condition: an empty timeline because the request could not
