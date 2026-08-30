@@ -12,6 +12,7 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
       '@tokens': path.resolve(__dirname, './shared-tokens'),
+      '@halbert/design-system': path.resolve(__dirname, '../../packages/design-system/src'),
     },
   },
   server: {

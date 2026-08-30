@@ -18,12 +18,26 @@ export type {
   HalbertMarkDensity,
   HalbertMarkTone,
 } from './primitives/HalbertMark'
+export { WhyChip } from './primitives/WhyChip'
+export type { WhyChipProps, ProvenanceRef } from './primitives/WhyChip'
+export { StatusLight } from './primitives/StatusLight'
+export type { StatusLightProps, StatusLightState } from './primitives/StatusLight'
+export { EmptyState } from './primitives/EmptyState'
+export type { EmptyStateProps } from './primitives/EmptyState'
+export { ModuleLoadError } from './primitives/ModuleLoadError'
+export type { ModuleLoadErrorProps } from './primitives/ModuleLoadError'
+export { Collapsible, CollapsibleGroup } from './primitives/Collapsible'
+export type { CollapsibleProps, CollapsibleGroupProps } from './primitives/Collapsible'
 
 // Surfaces
 export { AppWindow } from './surfaces/AppWindow'
 export type { AppWindowProps } from './surfaces/AppWindow'
 export { MetricCard } from './surfaces/MetricCard'
 export type { MetricCardProps } from './surfaces/MetricCard'
+export { ThinkingPanel } from './surfaces/ThinkingPanel'
+export type { ThinkingPanelProps } from './surfaces/ThinkingPanel'
+export { DiffBlock, DiffSummary } from './surfaces/DiffBlock'
+export type { DiffBlockProps, DiffSummaryProps } from './surfaces/DiffBlock'
 
 // Utilities
 export { cx } from './lib'

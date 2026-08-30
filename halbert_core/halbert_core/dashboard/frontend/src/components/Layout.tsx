@@ -43,7 +43,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { LegalNoticesModal } from '@/components/legal'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { ConfigEditor } from './ConfigEditor'
-import { HalbertMark } from '@/components/brand/HalbertMark'
+import { HalbertMark } from '@halbert/design-system'
 import { ModeSwitch } from './shell/ModeSwitch'
 import { InstanceSwitch, type InstanceInfo } from './shell/InstanceSwitch'
 import { AcousticAuraIndicator } from '@/components/audio'

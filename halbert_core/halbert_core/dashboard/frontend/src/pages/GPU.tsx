@@ -303,7 +303,7 @@ export function GPU() {
                   <div className="flex items-center gap-2">
                     {/* GPU Role Selector */}
                     <Select
-                      variant="sm"
+                      size="sm"
                       value={gpu.role || 'auto'}
                       onChange={async (e) => {
                         const newRole = e.target.value

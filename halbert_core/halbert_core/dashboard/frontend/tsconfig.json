@@ -23,7 +23,8 @@
     /* Path mapping */
     "paths": {
       "@/*": ["./src/*"],
-      "@halbert/model-picker": ["../../../../packages/model-picker/src"]
+      "@halbert/model-picker": ["../../../../packages/model-picker/src"],
+      "@halbert/design-system": ["../../../../packages/design-system/src"]
     }
   },
   "include": ["src"],
