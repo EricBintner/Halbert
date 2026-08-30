@@ -46,6 +46,7 @@ import { ConfigEditor } from './ConfigEditor'
 import { HalbertMark } from '@/components/brand/HalbertMark'
 import { ModeSwitch } from './shell/ModeSwitch'
 import { InstanceSwitch, type InstanceInfo } from './shell/InstanceSwitch'
+import { AcousticAuraIndicator } from '@/components/audio'
 import { HostShell } from './shell/HostShell'
 import { useDebug } from '@/contexts/DebugContext'
 import { useShellMode } from '@/contexts/ShellModeContext'
@@ -386,6 +387,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <ModeSwitch />
 
         <InstanceSwitch />
+
+        <AcousticAuraIndicator />
 
         <div className="flex-1" />
 

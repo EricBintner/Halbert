@@ -91,8 +91,9 @@ class VoiceActivityDetector:
         config = sherpa_onnx.VadModelConfig()
         config.silero_vad.model = self._model_path
         config.silero_vad.threshold = self._start_threshold
-        config.silero_vad.min_silence_duration_ms = self._min_silence_ms
-        config.silero_vad.min_speech_duration_ms = 100
+        # sherpa-onnx uses float seconds, not ms
+        config.silero_vad.min_silence_duration = self._min_silence_ms / 1000.0
+        config.silero_vad.min_speech_duration = 0.1  # 100ms
         config.sample_rate = SAMPLE_RATE
         config.provider = "cpu"
         config.num_threads = 1
@@ -137,7 +138,7 @@ class VoiceActivityDetector:
                 self._detector.pop()
 
                 start_ms = seg.start / SAMPLE_RATE * 1000
-                end_ms = (seg.start + seg.length) / SAMPLE_RATE * 1000
+                end_ms = (seg.start + len(seg.samples)) / SAMPLE_RATE * 1000
                 segments.append(SpeechSegment(
                     start_ms=start_ms,
                     end_ms=end_ms,

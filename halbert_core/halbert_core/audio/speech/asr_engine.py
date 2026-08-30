@@ -71,24 +71,22 @@ class StreamingASR:
             self._joiner = f"{models_dir}/joiner-epoch-99-avg-1.int8.onnx"
             self._tokens = f"{models_dir}/tokens.txt"
 
-        config = sherpa_onnx.OnlineRecognizerConfig(
-            model_config=sherpa_onnx.OnlineModelConfig(
-                zipformer=sherpa_onnx.OnlineZipformerModelConfig(
-                    encoder=self._encoder,
-                    decoder=self._decoder,
-                    joiner=self._joiner,
-                ),
-                tokens=self._tokens,
-                num_threads=self._num_threads,
-                provider="cpu",
-            ),
+        # Use the high-level factory — OnlineRecognizer.from_transducer
+        # handles all the config nesting (OnlineModelConfig.transducer,
+        # EndpointConfig, ProviderConfig) internally.
+        self._recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+            tokens=self._tokens,
+            encoder=self._encoder,
+            decoder=self._decoder,
+            joiner=self._joiner,
+            num_threads=self._num_threads,
+            decoding_method="greedy_search",
             enable_endpoint_detection=True,
             rule1_min_trailing_silence=2.0,
             rule2_min_trailing_silence=1.0,
             rule3_min_utterance_length=20,
+            provider="cpu",
         )
-
-        self._recognizer = sherpa_onnx.OnlineRecognizer(config)
         self._sherpa = sherpa_onnx
         self._initialized = True
         logger.info(f"Streaming ASR initialized: {self._encoder}")

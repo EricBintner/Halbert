@@ -31,8 +31,14 @@ class AudioTagger:
     Lazy-imports sherpa_onnx on first use.
     """
 
-    def __init__(self, model_path: str = "", num_threads: int = 2):
+    def __init__(
+        self,
+        model_path: str = "",
+        labels_path: str = "",
+        num_threads: int = 2,
+    ):
         self._model_path = model_path
+        self._labels_path = labels_path
         self._num_threads = num_threads
         self._classifier = None
         self._initialized = False
@@ -60,28 +66,39 @@ class AudioTagger:
                 data_subdir("audio", "models", "ced-tiny.onnx")
             )
 
-        # Try CED model first, fall back to Zipformer audio tagging
+        if not self._labels_path:
+            from ...utils.paths import data_subdir
+            self._labels_path = str(
+                data_subdir("audio", "models", "ced-tiny-labels.txt")
+            )
+
+        # CED: ced is a plain string path (not a config object).
+        # Zipformer: uses OfflineZipformerAudioTaggingModelConfig.
+        # num_threads/provider go inside AudioTaggingModelConfig.
+        # AudioTaggingConfig requires labels (path to label file) and top_k.
         try:
             config = sherpa_onnx.AudioTaggingConfig(
                 model=sherpa_onnx.AudioTaggingModelConfig(
-                    ced=sherpa_onnx.CedModelConfig(
-                        model=self._model_path,
-                    ),
+                    ced=self._model_path,
+                    num_threads=self._num_threads,
+                    provider="cpu",
                 ),
-                num_threads=self._num_threads,
-                provider="cpu",
+                labels=self._labels_path,
+                top_k=5,
             )
             self._classifier = sherpa_onnx.AudioTagging(config)
         except Exception:
             # Fall back to Zipformer audio tagging
             config = sherpa_onnx.AudioTaggingConfig(
                 model=sherpa_onnx.AudioTaggingModelConfig(
-                    zipformer=sherpa_onnx.AudioTaggingZipformerModelConfig(
+                    zipformer=sherpa_onnx.OfflineZipformerAudioTaggingModelConfig(
                         model=self._model_path,
                     ),
+                    num_threads=self._num_threads,
+                    provider="cpu",
                 ),
-                num_threads=self._num_threads,
-                provider="cpu",
+                labels=self._labels_path,
+                top_k=5,
             )
             self._classifier = sherpa_onnx.AudioTagging(config)
 
@@ -110,20 +127,18 @@ class AudioTagger:
         stream.accept_waveform(SAMPLE_RATE, float_samples)
         stream.input_finished()
 
+        # compute() returns a list of AudioEvent objects (not get_result)
+        events = self._classifier.compute(stream, top_k=top_k)
         results = []
-        for i in range(top_k):
-            try:
-                event = self._classifier.get_result(stream, i)
-                if event and event.prob > 0.1:
-                    results.append({
-                        "class": event.name,
-                        "confidence": event.prob,
-                        "is_anomaly": _is_anomaly_class(event.name),
-                        "severity": _anomaly_severity(event.name),
-                        "decibel": _estimate_db(pcm_bytes),
-                    })
-            except Exception:
-                break
+        for event in events:
+            if event.prob > 0.1:
+                results.append({
+                    "class": event.name,
+                    "confidence": event.prob,
+                    "is_anomaly": _is_anomaly_class(event.name),
+                    "severity": _anomaly_severity(event.name),
+                    "decibel": _estimate_db(pcm_bytes),
+                })
 
         return results
 

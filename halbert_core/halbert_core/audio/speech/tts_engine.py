@@ -77,9 +77,10 @@ class PiperTTS:
                 vits=sherpa_onnx.OfflineTtsVitsModelConfig(
                     model=self._voice_model,
                 ),
+                num_threads=self._num_threads,
+                provider="cpu",
+                debug=False,
             ),
-            num_threads=self._num_threads,
-            provider="cpu",
         )
 
         self._tts = sherpa_onnx.OfflineTts(config)
@@ -113,11 +114,11 @@ class PiperTTS:
             """Run TTS in a thread to avoid blocking the event loop."""
             audio = self._tts.generate(
                 text,
-                speaker_id=self._speaker_id,
+                sid=self._speaker_id,
                 speed=self._speed,
             )
             samples = []
-            for i in range(audio.num_samples):
+            for i in range(len(audio.samples)):
                 samples.append(audio.samples[i])
             return samples, audio.sample_rate
 
@@ -149,10 +150,10 @@ class PiperTTS:
 
         audio = self._tts.generate(
             text,
-            speaker_id=self._speaker_id,
+            sid=self._speaker_id,
             speed=self._speed,
         )
-        samples = [audio.samples[i] for i in range(audio.num_samples)]
+        samples = [audio.samples[i] for i in range(len(audio.samples))]
         pcm_bytes = struct.pack(
             f'<{len(samples)}h',
             *[max(-32768, min(32767, int(s * 32767))) for s in samples],

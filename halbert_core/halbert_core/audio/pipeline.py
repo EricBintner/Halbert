@@ -439,6 +439,7 @@ class AudioPipelineCoordinator:
 
     def _energy_below_floor(self, pcm: bytes) -> bool:
         """Check if audio energy is below the configured floor (dB)."""
+        import math
         import struct
         n = len(pcm) // 2
         if n == 0:
@@ -449,10 +450,7 @@ class AudioPipelineCoordinator:
         rms = (sum_sq / n) ** 0.5
         if rms == 0:
             return True
-        # Convert to dB (16-bit full scale = 32768)
-        db = 20 * (rms / 32768.0) ** 0.5 if rms > 0 else -999
-        # Actually: dBFS = 20 * log10(rms / 32768)
-        import math
+        # dBFS = 20 * log10(rms / 32768)
         db = 20 * math.log10(max(rms, 1) / 32768.0)
         return db < self._config.acoustic_events.energy_floor_db
 

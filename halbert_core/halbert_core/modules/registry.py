@@ -103,6 +103,23 @@ class ModuleRegistry:
             icon="BookOpen",
             description="Log excerpt viewer with highlighting",
         ))
+        self.register(ModuleDef(
+            name="acoustic-anomaly",
+            component="AcousticAnomalyModule",
+            data_fetcher="/api/audio/anomaly",
+            prop_contract={
+                "sound_class": "string",
+                "confidence": "number",
+                "area_id": "string",
+                "decibel_level": "number",
+                "anomaly_severity": "number",
+                "source": "string",
+                "timestamp": "string",
+            },
+            standalone_route="/modules/acoustic-anomaly",
+            icon="AlertTriangle",
+            description="Acoustic anomaly event card (smoke alarm, glass break, etc.)",
+        ))
 
     def register(self, module: ModuleDef) -> None:
         """Register a module."""

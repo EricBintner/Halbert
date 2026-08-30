@@ -121,7 +121,11 @@ def get_agent():
 
         # Initialize components
         safety = ToolSafetyFramework()
-        tool_executor = ToolExecutor(safety=safety)
+        # Wrap safety in RoleGate so speaker_role from voice turns can
+        # tighten (never loosen) tool access. Text/chat turns default to
+        # 'admin' (already authenticated via dashboard session).
+        from ...tools.role_gate import RoleGate
+        tool_executor = ToolExecutor(safety=safety, role_gate=RoleGate(safety))
         tool_executor.register_system_tools()
 
         # Conditional vision tool registration — only register capture

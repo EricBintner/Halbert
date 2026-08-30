@@ -93,10 +93,11 @@ class SpeakerIdentifier:
             debug=False,
         )
         self._extractor = sherpa_onnx.SpeakerEmbeddingExtractor(config)
-        self._manager = sherpa_onnx.SpeakerEmbeddingManager(config)
+        # Manager takes the embedding dimension, not a config object
+        self._manager = sherpa_onnx.SpeakerEmbeddingManager(self._extractor.dim)
         self._sherpa = sherpa_onnx
         self._initialized = True
-        logger.info(f"Speaker ID initialized: {self._model_path} (256-dim CAM++)")
+        logger.info(f"Speaker ID initialized: {self._model_path} ({self._extractor.dim}-dim CAM++)")
 
     def extract_embedding(self, pcm_bytes: bytes) -> Optional[list]:
         """Extract a 256-dim speaker embedding from PCM audio.
@@ -239,7 +240,7 @@ class SpeakerIdentifier:
         if embedding is None:
             return False, 0.0
 
-        if not self._manager.contains(speaker_id):
+        if speaker_id not in self._manager:
             return False, 0.0
 
         matched = self._manager.verify(speaker_id, embedding, self._threshold)
@@ -256,7 +257,7 @@ class SpeakerIdentifier:
         """List all enrolled speaker IDs."""
         self._ensure_initialized()
         assert self._manager is not None
-        return list(self._manager.speaker_ids)
+        return list(self._manager.all_speakers)
 
     @property
     def embedding_dim(self) -> int:
