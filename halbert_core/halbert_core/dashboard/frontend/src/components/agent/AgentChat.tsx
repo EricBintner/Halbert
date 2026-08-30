@@ -496,6 +496,8 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
         foldLiveTurn();
         cancelledRef.current = false;
         setLiveUser(userMsg);
+        // Same as handleSend: re-pin to the bottom for the new turn.
+        setIsAtBottom(true);
         sendMessage(nextMessage, undefined, picker.selection);
         setInput('');
       }, 100);
@@ -825,6 +827,9 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     setAgentError(null);
     setAttachedImages([]);
     setExpandedProvenanceModules([]);
+    // Re-pin to the bottom: sending a message means the user wants to see
+    // it and the response, even if they had scrolled up to read something.
+    setIsAtBottom(true);
 
     // No conversation id: the server resolves the subject. A session id
     // names one turn, so the hook mints a fresh one per send.

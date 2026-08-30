@@ -434,6 +434,17 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       announce('Waiting for your approval', { assertive: true });
     }
 
+    // Buffer streaming text outside the setSession updater. Updaters must
+    // stay pure (StrictMode runs them twice); appending inside would
+    // double every token. Same pattern as terminal events above.
+    if (event.type === 'response_chunk') {
+      responseBufferRef.current += event.content as string;
+      scheduleFlush();
+    } else if (event.type === 'thinking') {
+      thinkingBufferRef.current += event.content as string;
+      scheduleFlush();
+    }
+
     setSession(prev => {
       if (!prev) return prev;
 
@@ -530,16 +541,6 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           options.onConfirmationRequired?.(confirmation);
           return { ...prev, pendingConfirmation: confirmation };
 
-        case 'response_chunk':
-          responseBufferRef.current += event.content as string;
-          scheduleFlush();
-          return prev;
-
-        case 'thinking':
-          thinkingBufferRef.current += event.content as string;
-          scheduleFlush();
-          return prev;
-
         case 'response_complete':
           // Flush any buffered text before applying the final content.
           flushNow();
@@ -575,7 +576,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           // Stop streaming — an error event is terminal. Without this, the
           // UI keeps pulsing "responding" if the backend sends error
           // without a subsequent session_ended.
-          queueMicrotask(() => setIsStreaming(false));
+          setIsStreaming(false);
           return { ...prev, error: errorMsg, state: 'error' };
 
         case 'loop_warning':
@@ -799,6 +800,16 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     setThinking('');
     setProvenance([]);
     setModuleInvocations([]);
+
+    // Clear any buffered text and cancel a pending rAF from a previous
+    // turn. Without this, a cancel mid-stream leaves buffered tokens that
+    // would prepend to the next turn's response.
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    responseBufferRef.current = '';
+    thinkingBufferRef.current = '';
     
     // A session id names ONE TURN, never a conversation. Continuity is the
     // server's job: it resolves the subject thread itself and tells us which
@@ -966,12 +977,14 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       const readStream = async () => {
         if (!reader) return;
 
+        let buffer = '';
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const text = decoder.decode(value);
-          const lines = text.split('\n');
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
           for (const line of lines) {
             if (line.startsWith('data: ')) {
@@ -1002,12 +1015,18 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
   const cancel = useCallback(() => {
     eventSourceRef.current?.close();
     setIsStreaming(false);
-    
+
+    // Flush any buffered text so it lands in the response before the turn
+    // is folded, and clear the refs so nothing leaks into the next turn.
+    flushNow();
+    responseBufferRef.current = '';
+    thinkingBufferRef.current = '';
+
     if (sessionIdRef.current) {
       fetch(apiUrl(`/api/agent/cancel/${sessionIdRef.current}`), { method: 'POST' })
         .catch(err => console.error('Cancel error:', err));
     }
-  }, []);
+  }, [flushNow]);
 
   const reset = useCallback(() => {
     cancel();
