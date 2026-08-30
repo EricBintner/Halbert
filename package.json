@@ -1,0 +1,15 @@
+{
+  "name": "halbert-monorepo",
+  "private": true,
+  "packageManager": "npm@10.9.3",
+  "workspaces": [
+    "packages/*",
+    "halbert_core/halbert_core/dashboard/frontend"
+  ],
+  "scripts": {
+    "dev": "npm --workspace=halbert-dashboard run dev",
+    "build": "npm run --workspaces --if-present build",
+    "test": "npm run --workspaces --if-present test",
+    "typecheck": "npm run --workspaces --if-present typecheck"
+  }
+}
