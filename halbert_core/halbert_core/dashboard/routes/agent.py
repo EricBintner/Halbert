@@ -48,7 +48,6 @@ class SendMessageRequest(BaseModel):
     """
     message: str = Field(..., description="User message")
     session_id: Optional[str] = Field(None, description="Session ID (auto-generated if not provided)")
-    context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
     # Phase 4: Vision/image support (ported from chat.py)
     images: Optional[List[str]] = Field(None, description="Base64-encoded images for vision model")
     # Performance tweaks - sent from frontend Settings > AI > Performance Tweaks

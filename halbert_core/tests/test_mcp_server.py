@@ -56,7 +56,7 @@ class TestProtocol:
         resp = server.handle_request(req)
         assert "result" in resp
         tools = resp["result"]["tools"]
-        assert len(tools) == 17
+        assert len(tools) == 18
         # Instance name should be in descriptions
         assert "[test]" in tools[0]["description"]
 
@@ -68,7 +68,7 @@ class TestProtocol:
             "get_vitals", "get_discoveries", "get_findings", "get_proposals",
             "get_proactive_events", "get_being_config", "get_config_value",
             "get_config_structure", "get_config_diff", "get_config_dependencies",
-            "search_knowledge", "run_scanner",
+            "search_knowledge", "run_scanner", "approve_proposal",
             # HA tools (Phase 1)
             "ha_get_entities", "ha_get_entity_state", "ha_call_service",
             "get_autonomy_level", "set_autonomy_level",
@@ -139,6 +139,24 @@ class TestToolCall:
     def test_run_scanner_missing_type(self, server):
         result = self._call(server, "run_scanner")
         assert "error" in result
+
+    def test_approve_proposal_missing_id(self, server):
+        result = self._call(server, "approve_proposal")
+        assert "error" in result
+        assert "proposal_id" in result["error"]
+
+    def test_approve_proposal_requires_confirm(self, server):
+        result = self._call(server, "approve_proposal", {"proposal_id": "abc123"})
+        assert "error" in result
+        assert "confirm" in result["error"]
+
+    def test_approve_proposal_not_found(self, server):
+        result = self._call(server, "approve_proposal", {
+            "proposal_id": "nonexistent-id",
+            "confirm": True,
+        })
+        assert "error" in result
+        assert "not found" in result["error"]
 
 
 class TestTierRouting:

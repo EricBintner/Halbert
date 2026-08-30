@@ -38,6 +38,8 @@ export { ThinkingPanel } from './surfaces/ThinkingPanel'
 export type { ThinkingPanelProps } from './surfaces/ThinkingPanel'
 export { DiffBlock, DiffSummary } from './surfaces/DiffBlock'
 export type { DiffBlockProps, DiffSummaryProps } from './surfaces/DiffBlock'
+export { NavRail } from './surfaces/NavRail'
+export type { NavRailProps, NavRailSection, NavRailItem } from './surfaces/NavRail'
 
 // Utilities
 export { cx } from './lib'

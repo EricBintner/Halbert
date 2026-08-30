@@ -15,9 +15,8 @@
  * disappears when the sidebar does.
  */
 
-import { useState, useEffect } from 'react'
-import { Info, Palette, ExternalLink, FileText } from 'lucide-react'
-import { Link, useLocation } from 'react-router-dom'
+import { useState, useEffect, useCallback } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
@@ -29,8 +28,7 @@ import {
   Wifi,
   Share2,
   Shield,
-  Settings,
-  Bug,
+  Settings as SettingsIcon,
   Cpu,
   Container,
   Code2,
@@ -39,61 +37,56 @@ import {
   ScanSearch,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
-import { LegalNoticesModal } from '@/components/legal'
-import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { ConfigEditor } from './ConfigEditor'
-import { HalbertMark } from '@halbert/design-system'
+import { HalbertMark, NavRail, type NavRailSection } from '@halbert/design-system'
 import { ModeSwitch } from './shell/ModeSwitch'
 import { InstanceSwitch, type InstanceInfo } from './shell/InstanceSwitch'
 import { AcousticAuraIndicator } from '@/components/audio'
 import { HostShell } from './shell/HostShell'
-import { useDebug } from '@/contexts/DebugContext'
 import { useShellMode } from '@/contexts/ShellModeContext'
 import { askHost, runOnHost, configWithHost } from '@/lib/hostConversation'
 import { apiUrl } from '@/lib/apiBase'
 
-type NavItem = { name: string; href: string; icon: typeof LayoutDashboard }
+type NavItem = { id: string; label: string; icon: typeof LayoutDashboard }
 type NavSection = { label: string; items: NavItem[] }
 
 const navSections: NavSection[] = [
   {
     label: 'Overview',
     items: [
-      { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-      { name: 'Home', href: '/home', icon: HomeIcon },
+      { id: '/', label: 'Dashboard', icon: LayoutDashboard },
+      { id: '/home', label: 'Home', icon: HomeIcon },
     ],
   },
   {
     label: 'System',
     items: [
-      { name: 'Services', href: '/services', icon: Server },
-      { name: 'Storage', href: '/storage', icon: HardDrive },
-      { name: 'Backups', href: '/backups', icon: Archive },
-      { name: 'Apps', href: '/apps', icon: Package },
-      { name: 'Security', href: '/security', icon: Shield },
+      { id: '/services', label: 'Services', icon: Server },
+      { id: '/storage', label: 'Storage', icon: HardDrive },
+      { id: '/backups', label: 'Backups', icon: Archive },
+      { id: '/apps', label: 'Apps', icon: Package },
+      { id: '/security', label: 'Security', icon: Shield },
     ],
   },
   {
     label: 'Network',
     items: [
-      { name: 'Network', href: '/network', icon: Wifi },
-      { name: 'Sharing', href: '/sharing', icon: Share2 },
+      { id: '/network', label: 'Network', icon: Wifi },
+      { id: '/sharing', label: 'Sharing', icon: Share2 },
     ],
   },
   {
     label: 'Development',
     items: [
-      { name: 'Containers', href: '/containers', icon: Container },
-      { name: 'GPU', href: '/gpu', icon: Cpu },
-      { name: 'Development', href: '/development', icon: Code2 },
+      { id: '/containers', label: 'Containers', icon: Container },
+      { id: '/gpu', label: 'GPU', icon: Cpu },
+      { id: '/development', label: 'Development', icon: Code2 },
     ],
   },
   {
     label: 'Utility',
     items: [
-      { name: 'Approvals', href: '/approvals', icon: CheckCircle },
-      { name: 'Settings', href: '/settings', icon: Settings },
+      { id: '/approvals', label: 'Approvals', icon: CheckCircle },
     ],
   },
 ]
@@ -133,14 +126,11 @@ function ProgressPill({ icon, label, percent, detail, tone }: ProgressPillProps)
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
-  const { isDebugMode, setDebugMode, logs, clearLogs } = useDebug()
+  const navigate = useNavigate()
   const { isEngaged, setMode } = useShellMode()
 
   // Global config editor state (triggered from chat "Edit Config" button)
   const [editingConfigPath, setEditingConfigPath] = useState<string | null>(null)
-  const [showAbout, setShowAbout] = useState(false)
-  const [showLegalNotices, setShowLegalNotices] = useState(false)
-  const [showComponentLibrary, setShowComponentLibrary] = useState(false)
 
   // Indexing status state (moved from Settings)
   const [indexing, setIndexing] = useState(false)
@@ -183,13 +173,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
     items: section.items.filter((item) => {
       if (!instanceInfo) return true
       // Hide Home tab if instance doesn't have home feature
-      if (item.href === '/home' && !instanceInfo.features.home) return false
+      if (item.id === '/home' && !instanceInfo.features.home) return false
       // Hide Development/GPU tabs if instance doesn't have development feature
-      if ((item.href === '/gpu' || item.href === '/development' || item.href === '/containers')
+      if ((item.id === '/gpu' || item.id === '/development' || item.id === '/containers')
           && !instanceInfo.features.development) return false
       return true
     }),
   })).filter((section) => section.items.length > 0)
+
+  /** Settings is not a dashboard tab — it overtakes the shell. The gear in the
+   * top bar is the only entry point, so the rail never shows a Settings item. */
+  const isSettingsRoute = location.pathname === '/settings'
+
+  const openSettings = useCallback(() => {
+    setMode('browsing')
+    navigate('/settings')
+  }, [navigate, setMode])
+
+  const handleNavSelect = useCallback((id: string) => {
+    navigate(id)
+  }, [navigate])
 
   // Listen for open-config-editor events from chat
   /**
@@ -412,78 +415,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
         )}
 
         <span className="text-[11px] text-muted-foreground font-mono hidden md:inline">v0.1.1</span>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-7 w-7" title="About">
-              <Info className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => setShowAbout(true)}>
-              <Info className="h-4 w-4 mr-2" />
-              About Halbert
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setShowLegalNotices(true)}>
-              <FileText className="h-4 w-4 mr-2" />
-              Legal Notices
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setShowComponentLibrary(true)}>
-              <Palette className="h-4 w-4 mr-2" />
-              Developer Tools
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <a href="/docs" target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4 mr-2" />
-                Documentation
-              </a>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+
+        {/* Settings entry — top-right corner, always present in both modes.
+         * Not a dashboard tab: it overtakes the shell, so the gear is the
+         * only way in. About, Legal Notices, and Developer Tools all live
+         * inside the Settings page now. */}
         <Button
-          variant={isDebugMode ? 'default' : 'ghost'}
+          variant={isSettingsRoute ? 'default' : 'ghost'}
           size="icon"
-          className={cn('h-6 w-6', isDebugMode && 'bg-success hover:bg-success/90 text-primary-foreground')}
-          onClick={() => setDebugMode(!isDebugMode)}
-          title={isDebugMode ? 'Debug ON' : 'Debug'}
+          className="h-7 w-7"
+          onClick={openSettings}
+          title="Settings"
+          aria-label="Open settings"
         >
-          <Bug className="h-3 w-3" />
+          <SettingsIcon className="h-4 w-4" />
         </Button>
       </header>
-
-      {/* About dialog */}
-      {showAbout && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowAbout(false)}>
-          <div className="bg-card border rounded-lg shadow-lg max-w-md w-full mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2">
-              <HalbertMark size={24} density="medium" tone="accent" />
-              <h2 className="text-lg font-semibold">Halbert</h2>
-            </div>
-            <p className="text-sm text-muted-foreground">AI-powered system assistant</p>
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">Version</p>
-              <p className="text-sm font-mono">Development Build (v0.1.1)</p>
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" size="sm" onClick={() => { setShowAbout(false); setShowLegalNotices(true) }}>
-                <FileText className="h-4 w-4 mr-1" />
-                Legal Notices
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setShowAbout(false)}>
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Legal Notices Modal */}
-      <LegalNoticesModal open={showLegalNotices} onOpenChange={setShowLegalNotices} />
-
-      {/* Component Library Viewer */}
-      {showComponentLibrary && (
-        <ComponentLibraryViewer onClose={() => setShowComponentLibrary(false)} />
-      )}
 
       {/* Mode content */}
       <div className="flex-1 min-h-0 overflow-hidden">
@@ -493,36 +440,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
           ) : (
             <HostShell />
           )
+        ) : isSettingsRoute ? (
+          /* Settings overtakes the dashboard: no dashboard rail, no padded
+           * main wrapper. The Settings page renders its own NavRail (in the
+           * same position) plus its content, filling the whole surface. */
+          <div className="h-full w-full overflow-hidden">
+            {children}
+          </div>
         ) : (
           <div className="flex h-full overflow-hidden">
-            {/* Navigation rail */}
-            <nav className="w-60 shrink-0 border-r border-border bg-background overflow-y-auto px-3 py-4 space-y-5">
-              {filteredSections.map((section) => (
-                <div key={section.label} className="space-y-1">
-                  <p className="px-3 text-[10px] font-mono font-semibold uppercase tracking-wider text-muted-foreground/70 mb-1">
-                    {section.label}
-                  </p>
-                  {section.items.map((item) => {
-                    const isActive = location.pathname === item.href
-                    return (
-                      <Link
-                        key={item.name}
-                        to={item.href}
-                        className={cn(
-                          'flex items-center gap-2.5 px-3 py-2 rounded-md text-xs font-medium transition-all',
-                          isActive
-                            ? 'bg-secondary text-foreground font-semibold border border-border/80 shadow-xs'
-                            : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground'
-                        )}
-                      >
-                        <item.icon className={cn("h-4 w-4 shrink-0", isActive ? "text-primary" : "text-muted-foreground")} />
-                        {item.name}
-                      </Link>
-                    )
-                  })}
-                </div>
-              ))}
-            </nav>
+            {/* Navigation rail — shared NavRail component, identical
+             * typography to the settings rail by construction. */}
+            <NavRail
+              sections={filteredSections as NavRailSection[]}
+              activeId={location.pathname}
+              onSelect={handleNavSelect}
+            />
 
             {/* Page content */}
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -536,52 +469,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         )}
       </div>
-
-      {/* Debug Panel - non-overlaying, stats on left, logs on right */}
-      {isDebugMode && (
-        <div className="border-t bg-muted h-48 flex text-xs font-mono shrink-0">
-          {/* Left: Stats */}
-          <div className="w-48 border-r border-border p-3 flex flex-col gap-2">
-            <div className="text-success font-bold flex items-center gap-1">
-              <Bug className="h-3 w-3" /> Debug Mode
-            </div>
-            <div className="space-y-1 text-muted-foreground">
-              {/* Chat metrics were written only by the removed drawer. Rather
-                * than render four readouts that can only ever say 0 and '-',
-                * say so — a dead sensor reports that it is dead. */}
-              <div>[chat metrics unwired]</div>
-            </div>
-          </div>
-          {/* Right: Logs */}
-          <div className="flex-1 flex flex-col min-w-0">
-            <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card">
-              <span className="text-foreground">Logs ({logs.length})</span>
-              <button onClick={clearLogs} className="text-muted-foreground hover:text-foreground text-[10px]">Clear</button>
-            </div>
-            <div className="flex-1 overflow-auto p-2">
-              {logs.length === 0 ? (
-                <div className="text-muted-foreground text-center py-4">No logs yet. Interact with the app to see logs.</div>
-              ) : (
-                logs.slice().reverse().map(log => (
-                  <div key={log.id} className={cn(
-                    "py-0.5",
-                    log.type === 'error' && "text-error",
-                    log.type === 'timing' && "text-warning",
-                    log.type === 'request' && "text-info",
-                    log.type === 'response' && "text-success",
-                    log.type === 'info' && "text-foreground"
-                  )}>
-                    <span className="text-muted-foreground">[{log.timestamp.toLocaleTimeString()}]</span>
-                    <span className="text-muted-foreground ml-1">[{log.category}]</span>
-                    <span className="ml-1">{log.message}</span>
-                    {log.duration && <span className="text-muted-foreground ml-1">({log.duration.toFixed(0)}ms)</span>}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

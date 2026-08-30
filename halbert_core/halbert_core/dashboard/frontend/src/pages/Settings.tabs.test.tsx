@@ -21,6 +21,17 @@ vi.mock('@/contexts/ScanContext', () => ({
   useScan: () => ({ triggerDeepScan: vi.fn(), isDeepScanning: false }),
 }))
 
+vi.mock('@/contexts/DebugContext', () => ({
+  useDebug: () => ({
+    isDebugMode: false,
+    setDebugMode: vi.fn(),
+    logs: [],
+    clearLogs: vi.fn(),
+    chatMetrics: { totalRequests: 0, totalTokensEstimate: 0, averageResponseTime: 0 },
+    updateChatMetrics: vi.fn(),
+  }),
+}))
+
 vi.mock('@/lib/tauri', () => ({
   getSystemInfo: vi.fn().mockResolvedValue(null),
   isTauri: () => false,

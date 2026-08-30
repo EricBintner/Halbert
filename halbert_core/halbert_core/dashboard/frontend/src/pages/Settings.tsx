@@ -1,23 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useCallback, useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useScan } from '@/contexts/ScanContext'
+import { useDebug } from '@/contexts/DebugContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { Toast } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/api'
 import type { SystemInfo } from '@/lib/tauri'
 import { getSystemInfo } from '@/lib/tauri'
-import { 
-  Settings as SettingsIcon, 
-  Bell, 
-  Cpu, 
+import { NavRail, type NavRailSection } from '@halbert/design-system'
+import {
+  Bell,
+  Cpu,
   Database,
   RefreshCw,
   Trash2,
@@ -33,7 +34,6 @@ import {
   ExternalLink,
   ScanSearch,
   Clock,
-  Search,
   Shield,
   AlertTriangle,
   Lock,
@@ -44,8 +44,10 @@ import {
   Palette,
   SlidersHorizontal,
   AudioLines,
+  ArrowLeft,
+  Bug,
 } from 'lucide-react'
-import { PageHeader, DataVersionCard } from '@/components/domain'
+import { DataVersionCard } from '@/components/domain'
 import {
   TrustBoundaryTelemetryBar,
   Tier1RockerControl,
@@ -59,6 +61,7 @@ import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { AudioSettings, SpeakerProfilesCard, VoiceEnrollmentModal } from '@/components/audio'
 import { LegalNoticesModal } from '@/components/legal/LegalNoticesModal'
 import { apiUrl } from '@/lib/apiBase'
+import { cn } from '@/lib/utils'
 
 const API_BASE = apiUrl('/api')
 
@@ -1407,7 +1410,7 @@ function SensesSettings() {
  * mistyped link — so it opens the first tab, which is what a bare /settings
  * does too.
  */
-const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'security', 'vision', 'about'] as const
+const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'security', 'vision', 'audio', 'about', 'debug'] as const
 const DEFAULT_SETTINGS_TAB = SETTINGS_TABS[0]
 
 type SettingsNavItem = { id: string; label: string; icon: typeof Cpu }
@@ -1446,6 +1449,11 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
       { id: 'about', label: 'About', icon: Info },
     ],
   },
+  {
+    id: 'developer',
+    label: 'Developer',
+    items: [{ id: 'debug', label: 'Debug', icon: Bug }],
+  },
 ]
 
 /** The tab a URL asks for, or the default when it asks for nothing usable. */
@@ -1468,6 +1476,7 @@ export function Settings() {
    * worse back button.
    */
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
   const activeTab = settingsTabFromParam(searchParams.get('tab'))
   const selectTab = useCallback((next: string) => {
     setSearchParams((current) => {
@@ -1477,8 +1486,9 @@ export function Settings() {
     }, { replace: true })
   }, [setSearchParams])
 
-  // Settings sidebar search filter
-  const [settingsQuery, setSettingsQuery] = useState('')
+  // Debug panel state (moved here from the Layout top bar)
+  const { isDebugMode, setDebugMode, logs, clearLogs } = useDebug()
+
   const [showComponentLibrary, setShowComponentLibrary] = useState(false)
   const [showLegalNotices, setShowLegalNotices] = useState(false)
   const [showEnrollmentModal, setShowEnrollmentModal] = useState(false)
@@ -2071,65 +2081,34 @@ export function Settings() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <PageHeader
-        icon={<SettingsIcon className="h-8 w-8" />}
-        title="Settings"
-        description="Configure Halbert behavior, AI models, and system settings"
-        hideScanButton
+    <div className="flex h-full overflow-hidden">
+      {/* Settings rail — the same NavRail component the dashboard uses, so the
+       * typography is identical by construction. It sits in the exact position
+       * the dashboard rail occupied, with a back button to leave settings. */}
+      <NavRail
+        tabMode
+        sections={SETTINGS_SECTIONS as NavRailSection[]}
+        activeId={activeTab}
+        onSelect={selectTab}
+        searchable
+        searchPlaceholder="Filter settings…"
+        header={
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            className="flex items-center gap-2.5 w-full px-3 py-2 rounded-md text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-all"
+            aria-label="Back to dashboard"
+          >
+            <ArrowLeft className="h-4 w-4 shrink-0" />
+            Back
+          </button>
+        }
       />
 
-      <Tabs value={activeTab} onValueChange={selectTab} orientation="vertical" className="flex gap-6">
-        <aside className="w-56 shrink-0 space-y-4">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder="Filter settings..."
-              value={settingsQuery}
-              onChange={(e) => setSettingsQuery(e.target.value)}
-              className="pl-8 h-9"
-              onKeyDown={(e) => { if (e.key === 'Escape') setSettingsQuery('') }}
-            />
-          </div>
-          <TabsList className="flex flex-col h-auto w-full items-stretch gap-4 bg-transparent p-0">
-            {SETTINGS_SECTIONS.map((section) => {
-              const filteredItems = section.items.filter((item) => {
-                if (!settingsQuery) return true
-                const q = settingsQuery.toLowerCase()
-                return (
-                  item.label.toLowerCase().includes(q) ||
-                  section.label.toLowerCase().includes(q) ||
-                  item.id.includes(q)
-                )
-              })
-              if (filteredItems.length === 0) return null
-              return (
-                <div key={section.id} className="space-y-1">
-                  <p className="px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {section.label}
-                  </p>
-                  {filteredItems.map((item) => {
-                    const Icon = item.icon
-                    return (
-                      <TabsTrigger
-                        key={item.id}
-                        value={item.id}
-                        className="flex w-full items-center justify-start gap-2 rounded-md px-3 py-2 text-sm transition-colors data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-muted data-[state=inactive]:hover:text-foreground"
-                      >
-                        <Icon className="h-4 w-4 shrink-0" />
-                        {item.label}
-                      </TabsTrigger>
-                    )
-                  })}
-                </div>
-              )
-            })}
-          </TabsList>
-        </aside>
-
-        <div className="flex-1 min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <main className="flex-1 p-6 md:p-8 overflow-auto">
+          <div className="max-w-6xl mx-auto w-full">
+            <Tabs value={activeTab} onValueChange={selectTab}>
 
         {/* System Tab */}
         <TabsContent value="system" className="space-y-4">
@@ -3195,8 +3174,72 @@ export function Settings() {
             </CardContent>
           </Card>
         </TabsContent>
-        </div>
-      </Tabs>
+
+        {/* Debug Tab — moved from the Layout top bar to the end of settings */}
+        <TabsContent value="debug" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Bug className="h-5 w-5" />
+                Debug Mode
+              </CardTitle>
+              <CardDescription>
+                Toggle diagnostic logging and inspect captured log entries.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="debug-toggle">Enable debug logging</Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    When on, request, response, timing, and error events are captured below.
+                  </p>
+                </div>
+                <Button
+                  id="debug-toggle"
+                  variant={isDebugMode ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setDebugMode(!isDebugMode)}
+                >
+                  {isDebugMode ? 'Debug ON' : 'Debug OFF'}
+                </Button>
+              </div>
+
+              <div className="border border-border rounded-md flex flex-col max-h-96">
+                <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card">
+                  <span className="text-sm text-foreground">Logs ({logs.length})</span>
+                  <button onClick={clearLogs} className="text-muted-foreground hover:text-foreground text-[10px]">Clear</button>
+                </div>
+                <div className="flex-1 overflow-auto p-2 text-xs font-mono">
+                  {logs.length === 0 ? (
+                    <div className="text-muted-foreground text-center py-4">No logs yet. Interact with the app to see logs.</div>
+                  ) : (
+                    logs.slice().reverse().map(log => (
+                      <div key={log.id} className={cn(
+                        "py-0.5",
+                        log.type === 'error' && "text-error",
+                        log.type === 'timing' && "text-warning",
+                        log.type === 'request' && "text-info",
+                        log.type === 'response' && "text-success",
+                        log.type === 'info' && "text-foreground"
+                      )}>
+                        <span className="text-muted-foreground">[{log.timestamp.toLocaleTimeString()}]</span>
+                        <span className="text-muted-foreground ml-1">[{log.category}]</span>
+                        <span className="ml-1">{log.message}</span>
+                        {log.duration && <span className="text-muted-foreground ml-1">({log.duration.toFixed(0)}ms)</span>}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+            </Tabs>
+          </div>
+        </main>
+      </div>
             
       {/* Toast Notifications */}
       <Toast

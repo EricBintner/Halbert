@@ -117,6 +117,9 @@ audio-fingerprint = [
 
 [project.scripts]
 halbert = "halbert_core.dashboard.__main__:main"
+halbert-mcp-serve = "halbert_core.mcp.server:main"
+halbert-check-credential = "halbert_core.cli.check_credential:main"
+halbert-check-breach = "halbert_core.cli.check_breach:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -812,3 +812,134 @@
 }
 .hb-diff-summary__info { display: flex; align-items: center; gap: var(--space-2); font-size: 10px; color: var(--color-ink); }
 .hb-diff-summary__actions { display: flex; align-items: center; gap: var(--space-1); }
+
+/* --------------------------------------------------------------- navrail -- */
+/* The shared left rail for the dashboard and the settings panel. One
+ * component, one stylesheet, so the two rails cannot drift apart in
+ * typography — which is the defect this block exists to close. Every value is
+ * a token variable, so it tracks the theme and the contrast gate. */
+
+.hb-navrail {
+  width: 240px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-line);
+  background-color: var(--color-canvas);
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  font-family: var(--font-sans);
+}
+
+.hb-navrail__header {
+  flex-shrink: 0;
+}
+
+.hb-navrail__search {
+  position: relative;
+  flex-shrink: 0;
+}
+.hb-navrail__search-icon {
+  position: absolute;
+  left: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: var(--color-ink-tertiary);
+  pointer-events: none;
+}
+.hb-navrail__search-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-3) 0 calc(var(--space-2) + 18px);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  transition: border-color var(--duration-switch) var(--ease-switch);
+}
+.hb-navrail__search-input::placeholder { color: var(--color-ink-tertiary); }
+.hb-navrail__search-input:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.hb-navrail__sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.hb-navrail__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.hb-navrail__section-label {
+  margin: 0 0 var(--space-1) 0;
+  padding: 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: color-mix(in srgb, var(--color-ink-tertiary) 70%, transparent);
+}
+
+.hb-navrail__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-ink-tertiary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--duration-switch) var(--ease-switch),
+              color var(--duration-switch) var(--ease-switch),
+              border-color var(--duration-switch) var(--ease-switch);
+}
+.hb-navrail__item:hover {
+  background-color: color-mix(in srgb, var(--color-surface-subtle) 40%, transparent);
+  color: var(--color-ink);
+}
+.hb-navrail__item[data-active='true'] {
+  background-color: var(--color-surface-subtle);
+  color: var(--color-ink);
+  font-weight: 600;
+  border-color: color-mix(in srgb, var(--color-line) 80%, transparent);
+  box-shadow: 0 1px 2px 0 rgba(28, 25, 23, 0.05);
+}
+.hb-navrail__item:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.hb-navrail__icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--color-ink-tertiary);
+}
+.hb-navrail__item[data-active='true'] .hb-navrail__icon {
+  color: var(--color-accent-strong);
+}
+
+.hb-navrail__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

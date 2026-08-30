@@ -88,9 +88,9 @@ npx tsc --noEmit
 
 ### API Port Override
 
-The dev server proxies `/api`, `/llm`, `/compute`, and `/ws` to
-`localhost:8000` by default. Set `HALBERT_API_PORT` to target a different
-backend:
+The dev server proxies `/api`, `/global`, `/llm`, `/embedding`, `/compute`,
+and `/ws` to `localhost:8000` by default. Set `HALBERT_API_PORT` to target a
+different backend:
 
 ```bash
 HALBERT_API_PORT=8001 npm run dev
