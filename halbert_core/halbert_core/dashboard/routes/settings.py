@@ -13,17 +13,26 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 from pathlib import Path
+import asyncio
+import threading
 import yaml
 import logging
-import threading
 from datetime import datetime, timezone
 
 from ...utils.platform import get_config_dir
 
 logger = logging.getLogger('halbert.dashboard')
 
-# Lock for concurrent being config read-modify-write operations
-_being_config_lock = threading.Lock()
+# Lock for concurrent being config read-modify-write operations.
+# asyncio.Lock, not threading.Lock: the holder is an async endpoint, and a
+# threading lock held across blocking file I/O stalls the event loop for
+# every other request.
+_being_config_lock = asyncio.Lock()
+
+# Server-side enforcement of the Tier 2 escape-hatch phrase. The modal's
+# client-side check is UX friction; this is the boundary — without it a
+# bare curl to POST /settings/being could unlock all secrets.
+UNLOCK_PHRASE = "EXPOSE SECRETS"
 
 router = APIRouter()
 
@@ -3014,7 +3023,7 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
     """Update being configuration. Validates and persists to being.yml."""
     try:
         from ...config.being_config import load_being_config, save_being_config
-        with _being_config_lock:
+        async with _being_config_lock:
             cfg = load_being_config()
 
             # Apply partial updates (only non-None fields)
@@ -3057,6 +3066,25 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
                 from ...config.being_config import SecurityConfig
                 existing = cfg.security.to_dict() if cfg.security else {}
                 merged = {**existing, **update.security}
+                # The phrase rides inside the security dict (one POST for the
+                # modal); it is enforcement metadata, not config — pop it
+                # before from_dict would silently drop it as unknown.
+                phrase = merged.pop("phrase", None)
+                # Unlocking Tier 2 requires the confirmation phrase, verified
+                # here — the modal's client-side check is friction, not the
+                # boundary. Relock (local_only) never requires it.
+                transitioning_to_unlock = (
+                    merged.get("secret_tier") == "cloud_ok_acknowledged"
+                    and existing.get("secret_tier") != "cloud_ok_acknowledged"
+                )
+                if transitioning_to_unlock:
+                    normalized = " ".join(str(phrase or "").split()).upper()
+                    if normalized != UNLOCK_PHRASE:
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"Unlocking secrets requires the confirmation "
+                                   f"phrase: {UNLOCK_PHRASE}",
+                        )
                 # If the new secret_tier is local_only, clear TTL fields
                 if merged.get("secret_tier") == "local_only":
                     merged["secret_tier_expiry"] = None
@@ -3081,6 +3109,10 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
         if "security" in resp and isinstance(resp["security"], dict):
             resp["security"].pop("volatile_unlock", None)
         return {"status": "ok", "config": resp}
+    except HTTPException:
+        # Phrase enforcement and friends must not be rewritten to 500s by
+        # the generic handler below.
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -3098,7 +3130,6 @@ async def get_security_telemetry() -> Dict[str, Any]:
     Recursively walks nested dict/list structures in tree and sections.
     """
     try:
-        import datetime
         import json
         import os
         from ...config.being_config import load_being_config
@@ -3110,15 +3141,9 @@ async def get_security_telemetry() -> Dict[str, Any]:
         public_files = set(sec.public_files) if sec.public_files else set()
         extra_secret_keys = sec.extra_secret_keys or []
 
-        # Check if the escape hatch has expired at runtime
-        effective_secret_tier = sec.secret_tier
-        if effective_secret_tier == "cloud_ok_acknowledged" and sec.secret_tier_expiry:
-            try:
-                expiry = datetime.datetime.fromisoformat(sec.secret_tier_expiry)
-                if datetime.datetime.now(expiry.tzinfo) > expiry:
-                    effective_secret_tier = "local_only"
-            except (ValueError, TypeError):
-                pass
+        # Single source of truth for the TTL decision — an inline re-check
+        # here drifted from the queries.py copy once already.
+        effective_secret_tier = sec.effective_secret_tier()
 
         def _flatten_pairs(obj, prefix=""):
             """Recursively extract (key, value) leaf pairs from nested structures."""

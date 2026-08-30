@@ -245,6 +245,102 @@ class TestNoModelConfigured:
 
 
 # -----------------------------------------------------------------------------
+# Secure content gate (Scope 01 review): the trust boundary beats routing
+# -----------------------------------------------------------------------------
+
+SECURE_SLOT = ("secure-model", "http://localhost:11434", "ollama")
+
+
+class TestSecureGate:
+    """``secure=True`` must land the turn on a local endpoint or fail closed.
+
+    The context-assembly backstop (detect_secure_content) flags turns whose
+    assembled context carries secrets. Until this gate existed the flag was
+    set on AssembledContext and read by no one.
+    """
+
+    @pytest.fixture
+    def secure_slot(self, slots, monkeypatch):
+        """Controllable secure_model slot on top of the slots fixture."""
+        import halbert_core.model.client as client
+        holder = {"secure": None}
+        monkeypatch.setattr(client, "get_secure_model",
+                            lambda: holder["secure"] or (None, "", ""))
+        return holder
+
+    def test_secure_turn_uses_secure_slot_when_configured(self, secure_slot):
+        secure_slot["secure"] = SECURE_SLOT
+        turn = _resolve_turn_model(COMPLEX, secure=True)
+        assert turn.model == "secure-model"
+        assert "Secure content" in turn.reason
+
+    def test_secure_slot_beats_a_pin(self, secure_slot):
+        """Even an explicit cloud pin must not receive secrets."""
+        secure_slot["secure"] = SECURE_SLOT
+        turn = _resolve_turn_model(TRIVIAL, model_override="pinned-x",
+                                   secure=True)
+        assert turn.model == "secure-model"
+
+    def test_cloud_specialist_falls_back_to_local_guide(self, secure_slot):
+        turn = _resolve_turn_model(COMPLEX, secure=True)
+        assert turn.model == GUIDE[0]
+        assert "Secure content" in turn.reason
+
+    def test_local_specialist_still_answers(self, slots, secure_slot):
+        slots["specialist"] = ("spec-local", "http://localhost:11434", "ollama")
+        turn = _resolve_turn_model(COMPLEX, secure=True)
+        assert turn.model == "spec-local"
+
+    def test_remote_ollama_endpoint_is_not_local(self, slots, secure_slot):
+        """Provider name is not proof: a remote ollama URL must not pass."""
+        slots["specialist"] = ("spec-remote", "http://192.168.1.50:11434", "ollama")
+        turn = _resolve_turn_model(COMPLEX, secure=True)
+        assert turn.model == GUIDE[0]
+
+    def test_cloud_pin_overridden_by_gate(self, slots, secure_slot):
+        slots["endpoints"]["ep_cloud"] = ("https://api.cloud.test", "openai", None)
+        turn = _resolve_turn_model(TRIVIAL, model_override="pinned-cloud",
+                                   endpoint_id="ep_cloud", secure=True)
+        assert turn.model == GUIDE[0]
+        assert turn.pinned is False
+
+    def test_cloud_vision_gated_to_guide(self, slots, secure_slot):
+        slots["vision"] = ("vis-cloud", "https://api.cloud.test", "openai")
+        turn = _resolve_turn_model(TRIVIAL, images=["b64"], secure=True)
+        assert turn.model == GUIDE[0]
+
+    def test_fails_closed_when_nothing_local(self, slots, secure_slot):
+        """Cloud guide + cloud specialist + no secure slot → raise, never leak."""
+        from halbert_core.dashboard.routes.agent import _SecureContentBlocked
+        slots["guide"] = ("guide-cloud", "https://api.cloud.test", "openai")
+        with pytest.raises(_SecureContentBlocked):
+            _resolve_turn_model(TRIVIAL, secure=True)
+
+    def test_non_secure_turns_unchanged(self, secure_slot):
+        assert _resolve_turn_model(COMPLEX).model == SPECIALIST[0]
+        assert _resolve_turn_model(TRIVIAL).model == GUIDE[0]
+
+    def test_fallback_to_guide_refuses_cloud_guide_on_secure_turn(self, slots, secure_slot):
+        from halbert_core.dashboard.routes.agent import (
+            TurnModel, _fallback_to_guide,
+        )
+        slots["guide"] = ("guide-cloud", "https://api.cloud.test", "openai")
+        dead = TurnModel("dead-model", "http://localhost:11434", "ollama",
+                         "guide", False, False, "dead")
+        assert _fallback_to_guide(dead, "dead-model", secure=True) is None
+
+    def test_fallback_to_guide_allows_local_guide_on_secure_turn(self, slots, secure_slot):
+        from halbert_core.dashboard.routes.agent import (
+            TurnModel, _fallback_to_guide,
+        )
+        dead = TurnModel("dead-model", "http://localhost:11434", "ollama",
+                         "guide", False, False, "dead")
+        guide = _fallback_to_guide(dead, "dead-model", secure=True)
+        assert guide is not None
+        assert guide.model == GUIDE[0]
+
+
+# -----------------------------------------------------------------------------
 # The request/context plumbing
 # -----------------------------------------------------------------------------
 

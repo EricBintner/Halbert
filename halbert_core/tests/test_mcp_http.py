@@ -24,9 +24,9 @@ def http_server_factory():
     """Factory that starts an HTTP server on a free port and returns its URL + token."""
     servers = []
 
-    def _start(token: str = "", host: str = "127.0.0.1"):
+    def _start(token: str = "", host: str = "127.0.0.1", cors_origin: str = ""):
         mcp = MCPServer(instance_name="test", hostname="test-host")
-        handler = _make_http_handler(mcp, token)
+        handler = _make_http_handler(mcp, token, cors_origin=cors_origin)
         # Port 0 = OS picks a free port
         httpd = HTTPServer((host, 0), handler)
         port = httpd.server_address[1]
@@ -193,24 +193,41 @@ class TestRateLimiting:
 
 
 class TestCORS:
-    """CORS headers are present on responses."""
+    """CORS is default-deny; an explicit origin is echoed with Vary."""
 
-    def test_cors_headers_on_post(self, http_server_factory):
-        """POST responses include CORS headers."""
+    def test_cors_default_deny_on_post(self, http_server_factory):
+        """With no origin configured, POST responses carry no CORS headers."""
         url, _ = http_server_factory(token="")
         data = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}).encode()
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=5) as resp:
-            assert resp.headers.get("Access-Control-Allow-Origin") == "*"
-            assert "POST" in resp.headers.get("Access-Control-Allow-Methods", "")
+            assert resp.headers.get("Access-Control-Allow-Origin") is None
 
-    def test_options_preflight(self, http_server_factory):
-        """OPTIONS preflight returns 204 with CORS headers."""
+    def test_cors_explicit_origin_on_post(self, http_server_factory):
+        """An explicit origin is echoed, with Vary: Origin."""
+        url, _ = http_server_factory(token="", cors_origin="http://localhost:5173")
+        data = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}).encode()
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.headers.get("Access-Control-Allow-Origin") == "http://localhost:5173"
+            assert "POST" in resp.headers.get("Access-Control-Allow-Methods", "")
+            assert resp.headers.get("Vary") == "Origin"
+
+    def test_options_preflight_default_deny(self, http_server_factory):
+        """OPTIONS preflight returns 204 but no Allow-Origin by default."""
         url, _ = http_server_factory(token="")
         req = urllib.request.Request(url, method="OPTIONS")
         with urllib.request.urlopen(req, timeout=5) as resp:
             assert resp.status == 204
-            assert resp.headers.get("Access-Control-Allow-Origin") == "*"
+            assert resp.headers.get("Access-Control-Allow-Origin") is None
+
+    def test_options_preflight_explicit_origin(self, http_server_factory):
+        """OPTIONS preflight echoes the configured origin."""
+        url, _ = http_server_factory(token="", cors_origin="http://localhost:5173")
+        req = urllib.request.Request(url, method="OPTIONS")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 204
+            assert resp.headers.get("Access-Control-Allow-Origin") == "http://localhost:5173"
 
 
 class TestRequestSizeLimit:

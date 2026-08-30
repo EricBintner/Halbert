@@ -149,3 +149,61 @@ class TestLoadSaveWithSecurity:
         loaded = load_being_config(path)
         assert loaded.security.operational_tier == "cloud_ok"
         assert loaded.security.secret_tier == "local_only"
+
+
+class TestVolatileUnlock:
+    """The 'until restart' escape hatch relocks once per process, not per load."""
+
+    def _write_volatile_unlock(self, path):
+        with open(path, "w") as f:
+            yaml.dump({"security": {
+                "secret_tier": "cloud_ok_acknowledged",
+                "volatile_unlock": True,
+            }}, f)
+
+    def test_first_load_relocks(self, tmp_path):
+        """A stale volatile unlock from a previous process relocks on load."""
+        path = str(tmp_path / "being.yml")
+        self._write_volatile_unlock(path)
+
+        loaded = load_being_config(path)
+        assert loaded.security.secret_tier == "local_only"
+        assert loaded.security.volatile_unlock is False
+
+        # And the relock is persisted, so later processes see clean state
+        with open(path) as f:
+            raw = yaml.safe_load(f)
+        assert raw["security"]["secret_tier"] == "local_only"
+        assert raw["security"].get("volatile_unlock") in (None, False)
+
+    def test_second_load_same_process_does_not_relock(self, tmp_path):
+        """The 'until restart' unlock must survive loads within one process.
+
+        Regression: load_being_config is called per request (dashboard) and
+        per tool call (MCP), so relocking on every load made the volatile
+        option self-defeating — the very next read after unlocking relocked.
+        """
+        path = str(tmp_path / "being.yml")
+        # Simulate: this process already did its first-load check...
+        with open(path, "w") as f:
+            yaml.dump({"voice": "hybrid"}, f)
+        load_being_config(path)  # benign file → guard consumed
+        # ...then the user unlocked 'until restart'
+        self._write_volatile_unlock(path)
+
+        loaded = load_being_config(path)
+        assert loaded.security.secret_tier == "cloud_ok_acknowledged"
+        assert loaded.security.volatile_unlock is True
+
+        # And the file on disk still carries the marker for the NEXT process
+        with open(path) as f:
+            raw = yaml.safe_load(f)
+        assert raw["security"]["volatile_unlock"] is True
+
+    def test_new_process_still_relocks(self, tmp_path):
+        """A fresh path (i.e. a fresh process's first load) relocks."""
+        path = str(tmp_path / "being.yml")
+        self._write_volatile_unlock(path)
+
+        loaded = load_being_config(path)
+        assert loaded.security.secret_tier == "local_only"

@@ -1623,6 +1623,16 @@ class AgentStateMachine:
                 retrieval_scope=self.ctx.retrieval_scope,
             )
             context_content = assembled.content
+            # Trust boundary latch: once the assembler's backstop flags this
+            # turn's context as carrying secrets, every model call this turn
+            # (planning, responding, re-entries) must resolve local-only.
+            if getattr(assembled, "secure", False):
+                if not self.ctx.secure_context:
+                    logger.info(
+                        "Secure content in assembled context — this turn is "
+                        "restricted to local models"
+                    )
+                self.ctx.secure_context = True
             yield StreamEvent.context_loaded(
                 self.ctx.session_id,
                 "assembled",
@@ -1676,6 +1686,7 @@ class AgentStateMachine:
             images=self.ctx.images if self.ctx else None,
             model_override=self.ctx.model_override if self.ctx else None,
             tier_override=self.ctx.tier_override if self.ctx else None,
+            secure=self.ctx.secure_context if self.ctx else False,
             # What the complexity router scores. The final message is the
             # question with the continuity hint glued to its front (D1), and
             # routing on that picked the specialist for "hi".
@@ -1706,6 +1717,7 @@ class AgentStateMachine:
                 self.ctx.observations,
                 model_override=self.ctx.model_override,
                 tier_override=self.ctx.tier_override,
+                secure=self.ctx.secure_context,
             )
             self.ctx.confidence = crag_result.confidence
             self.ctx.crag_action = CRAGAction(crag_result.action.value)
@@ -2544,6 +2556,7 @@ class AgentStateMachine:
                 self.ctx.observations,
                 model_override=self.ctx.model_override,
                 tier_override=self.ctx.tier_override,
+                secure=self.ctx.secure_context,
             )
 
             self.ctx.confidence = crag_result.confidence
@@ -2710,6 +2723,7 @@ class AgentStateMachine:
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,
                 tier_override=self.ctx.tier_override if self.ctx else None,
+                secure=self.ctx.secure_context if self.ctx else False,
                 on_model_selected=selected.append,
                 # The question, not the hint that rides in front of it (D1).
                 routing_prompt=self.ctx.user_query if self.ctx else "",
@@ -2732,6 +2746,7 @@ class AgentStateMachine:
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,
                 tier_override=self.ctx.tier_override if self.ctx else None,
+                secure=self.ctx.secure_context if self.ctx else False,
                 on_model_selected=selected.append,
                 # The question, not the hint that rides in front of it (D1).
                 routing_prompt=self.ctx.user_query if self.ctx else "",

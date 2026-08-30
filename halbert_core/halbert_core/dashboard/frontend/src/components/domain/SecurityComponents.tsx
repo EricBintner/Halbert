@@ -327,7 +327,7 @@ type TTLChoice = '1h' | 'restart' | 'permanent'
 interface EscapeHatchModalProps {
   open: boolean
   onClose: () => void
-  onConfirm: (ttl: TTLChoice) => void
+  onConfirm: (ttl: TTLChoice, phrase: string) => void
   disabled?: boolean
 }
 
@@ -423,7 +423,7 @@ export function EscapeHatchConfirmationModal({
             onChange={(e) => setPhrase(e.target.value)}
             onKeyDown={(e: KeyboardEvent) => {
               if (e.key === 'Enter' && phraseValid && !disabled) {
-                onConfirm(ttl)
+                onConfirm(ttl, phrase)
               }
             }}
             placeholder={REQUIRED_PHRASE}
@@ -446,7 +446,7 @@ export function EscapeHatchConfirmationModal({
           </Button>
           <Button
             disabled={!phraseValid || disabled}
-            onClick={() => onConfirm(ttl)}
+            onClick={() => onConfirm(ttl, phrase)}
             className={cn(
               'bg-status-critical text-white hover:bg-status-critical/90 font-semibold',
               !phraseValid && 'opacity-40 cursor-not-allowed',

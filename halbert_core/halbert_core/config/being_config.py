@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import threading
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -75,10 +76,10 @@ class SecurityConfig:
     # via effective_secret_tier().
     secret_tier_expiry: Optional[str] = None
     # Volatile unlock: if True, the secret_tier is reset to local_only
-    # on the next load_being_config call (i.e. on process restart).
-    # This implements the "until restart" TTL option without requiring
-    # a background timer. Persisted to YAML so the next load can see it
-    # and relock; cleared by load_being_config after relocking.
+    # on the first load_being_config call of each process (i.e. on
+    # process restart). This implements the "until restart" TTL option
+    # without requiring a background timer. Persisted to YAML so the next
+    # process can see it and relock; cleared after relocking.
     volatile_unlock: bool = False
 
     def validate(self) -> None:
@@ -400,6 +401,20 @@ def resolve_timezone(tz_name: str) -> str:
     return "UTC"
 
 
+# Config paths whose volatile-unlock relock has already run in THIS process.
+#
+# The volatile ("until restart") escape hatch is persisted to YAML so a fresh
+# process can see it and relock — but load_being_config is called per request
+# (dashboard routes) and per tool call (MCP server), not once at startup.
+# Without this guard the very next load after unlocking relocks immediately:
+# "until restart" actually meant "until the next config read", and the
+# relock's save_being_config call wrote being.yml on every load. Keyed by
+# path so multi-instance setups (one being.yml per instance) and tests with
+# per-test tmp paths each get their own once-per-process check.
+_volatile_relock_done: set = set()
+_volatile_relock_lock = threading.Lock()
+
+
 def load_being_config(path: Optional[str] = None) -> BeingConfig:
     """Load being config from YAML file.
 
@@ -407,6 +422,15 @@ def load_being_config(path: Optional[str] = None) -> BeingConfig:
     Raises ValueError if the file contains invalid values.
     """
     config_path = Path(path) if path else _default_path()
+
+    # Consume this process's first-load check for this path BEFORE the
+    # exists() early-return: on a fresh install being.yml is created by the
+    # unlock POST itself, and the guard must already be spent by then or
+    # the next load relocks the unlock it just wrote.
+    config_key = str(config_path)
+    with _volatile_relock_lock:
+        first_load_this_process = config_key not in _volatile_relock_done
+        _volatile_relock_done.add(config_key)
 
     if not config_path.exists():
         logger.info(f"No being config at {config_path}, using defaults")
@@ -422,11 +446,12 @@ def load_being_config(path: Optional[str] = None) -> BeingConfig:
 
     config = BeingConfig.from_dict(data)
 
-    # Volatile unlock: reset to local_only on load (process restart).
-    # The volatile_unlock flag is persisted so the next load can see it
-    # and relock. After relocking, persist the cleaned state to disk.
+    # Volatile unlock: reset to local_only on the FIRST load in each
+    # process (i.e. on process restart). The volatile_unlock flag is
+    # persisted so the next process can see it and relock; later loads in
+    # the same process must not relock — see _volatile_relock_done above.
     relocked = False
-    if config.security.volatile_unlock:
+    if config.security.volatile_unlock and first_load_this_process:
         logger.info("Volatile unlock detected on load — relocking secrets to local_only")
         config.security.secret_tier = "local_only"
         config.security.volatile_unlock = False

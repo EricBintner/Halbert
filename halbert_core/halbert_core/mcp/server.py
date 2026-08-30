@@ -161,7 +161,14 @@ def _tool_get_proactive_events(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _tool_get_being_config(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Voice, proactivity, quiet hours — no secrets."""
+    """Voice, proactivity, quiet hours — persona settings only.
+
+    ``ha_token`` (Home Assistant long-lived access token) and ``ha_url``
+    (which may embed credentials) are stripped explicitly: the dispatch
+    layer's ``mcp_response()`` wrap is the belt, this is the suspenders.
+    A bearer-authenticated MCP client is still an egress path to a cloud
+    vendor, and a long-lived HA token must never cross it.
+    """
     try:
         from ..config.being_config import load_being_config
         config = load_being_config()
@@ -169,6 +176,10 @@ def _tool_get_being_config(params: Dict[str, Any]) -> Dict[str, Any]:
         # Strip security config — it contains routing policy, not user-facing
         # settings, and the security tab is the right place to see it.
         d.pop("security", None)
+        # Strip credentials — the old "no secrets" docstring was wrong:
+        # to_dict() carries ha_token in plaintext.
+        d.pop("ha_token", None)
+        d.pop("ha_url", None)
         return d
     except Exception as e:
         return {"error": str(e)}
@@ -194,7 +205,9 @@ def _tool_get_config_value(params: Dict[str, Any]) -> Dict[str, Any]:
         result = get_config_value(
             path, key,
             operational_tier=sec.operational_tier,
-            secret_tier=sec.secret_tier,
+            # effective_secret_tier() is the single TTL decision point;
+            # get_config_value re-checks the expiry internally as backstop.
+            secret_tier=sec.effective_secret_tier(),
             secret_tier_expiry=sec.secret_tier_expiry,
             public_files=set(sec.public_files),
             extra_secret_keys=sec.extra_secret_keys,
@@ -845,12 +858,36 @@ class MCPServer:
         return tools
 
     def handle_request(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Handle a single JSON-RPC request and return a response (or None for notifications)."""
-        method = request.get("method", "")
-        params = request.get("params", {})
+        """Handle a single JSON-RPC request and return a response (or None for notifications).
+
+        Protocol rules enforced here:
+        - Batch requests (JSON arrays) are rejected with -32600 instead of
+          crashing on ``request.get`` — do_POST/run_stdio do not guard this.
+        - ``jsonrpc`` must be ``"2.0"`` and ``method`` a non-empty string.
+        - A notification (no ``id`` member) never gets a response, not even
+          an error — the spec forbids it. An explicit ``"id": null`` is an
+          id and still gets one.
+        """
+        if not isinstance(request, dict):
+            return self._error(None, -32600, "Invalid request: batch arrays are not supported")
+
+        is_notification = "id" not in request
         req_id = request.get("id")
 
         try:
+            if request.get("jsonrpc") != "2.0":
+                if is_notification:
+                    return None
+                return self._error(req_id, -32600,
+                                   "Invalid request: jsonrpc must be \"2.0\"")
+            method = request.get("method")
+            if not isinstance(method, str) or not method:
+                if is_notification:
+                    return None
+                return self._error(req_id, -32600,
+                                   "Invalid request: method must be a non-empty string")
+            params = request.get("params") or {}
+
             if method == "initialize":
                 self._initialized = True
                 result = {
@@ -863,37 +900,51 @@ class MCPServer:
                         "version": "0.1.0",
                     },
                 }
-                return self._success(req_id, result) if req_id is not None else None
+                return None if is_notification else self._success(req_id, result)
 
             if method == "notifications/initialized":
                 # Notification — no response
                 return None
 
             if method == "tools/list":
-                return self._success(req_id, {"tools": self._tool_list()}) if req_id is not None else None
+                return None if is_notification else self._success(req_id, {"tools": self._tool_list()})
 
             if method == "tools/call":
+                if not isinstance(params, dict):
+                    if is_notification:
+                        return None
+                    return self._error(req_id, -32602, "params must be an object")
                 tool_name = params.get("name", "")
                 tool_args = params.get("arguments", {})
                 handler = TOOL_HANDLERS.get(tool_name)
                 if handler is None:
+                    if is_notification:
+                        return None
                     return self._error(req_id, -32601, f"Unknown tool: {tool_name}")
-                result = handler(tool_args)
-                # Tools that return host config content already pass through
-                # mcp_response() internally. Tools that return runtime state
-                # (vitals, discoveries, findings) do not need it — they carry
-                # no config values.
+                # The egress boundary is enforced HERE, at the single choke
+                # point, not left to each tool author: every tool result
+                # passes through mcp_response() whether or not the handler
+                # remembered (get_being_config's ha_token leak is what
+                # happens when it is left to the handler). Per-tool wraps
+                # stay as harmless double-redaction.
+                result = mcp_response(handler(tool_args))
+                if is_notification:
+                    return None
                 return self._success(req_id, {
                     "content": [{"type": "text", "text": json.dumps(result, default=str)}],
-                }) if req_id is not None else None
+                })
 
             if method == "ping":
-                return self._success(req_id, {}) if req_id is not None else None
+                return None if is_notification else self._success(req_id, {})
 
+            if is_notification:
+                return None
             return self._error(req_id, -32601, f"Unknown method: {method}")
 
         except Exception as e:
             logger.error("Request handling error: %s\n%s", e, traceback.format_exc())
+            if is_notification:
+                return None
             return self._error(req_id, -32603, f"Internal error: {e}")
 
     def _success(self, req_id: Any, result: Any) -> Dict[str, Any]:
@@ -947,7 +998,7 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
     _bearer_token: str = ""
     _rate_limiter: "_RateLimiter" = None  # type: ignore
     _sse_connections: "_SSEConnectionTracker" = None  # type: ignore
-    _cors_origin: str = "*"
+    _cors_origin: str = ""
 
     # Limits
     _MAX_REQUEST_SIZE = 1024 * 1024  # 1MB
@@ -960,10 +1011,10 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
         if not self._bearer_token:
             return True  # No token configured — open mode (local only)
         auth = self.headers.get("Authorization", "")
-        if not auth.startswith("Bearer "):
-            return False
-        token = auth[7:]
-        # Constant-time comparison to prevent timing attacks
+        # Always run the constant-time comparison, even when the Bearer
+        # prefix is missing, so the branch timing does not leak which
+        # header format was used.
+        token = auth[7:] if auth.startswith("Bearer ") else ""
         return hmac.compare_digest(token, self._bearer_token)
 
     def _check_rate_limit(self) -> bool:
@@ -974,10 +1025,20 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
         return self._rate_limiter.check(client_ip)
 
     def _send_cors_headers(self) -> None:
-        """Send CORS headers for cross-origin requests."""
+        """Send CORS headers for cross-origin requests.
+
+        Default-deny: with no origin configured, no CORS headers are
+        emitted at all, so browsers block every cross-origin read. A
+        bearer token plus ``Access-Control-Allow-Origin: *`` would let any
+        website drive the server from the browser of anyone who has the
+        token — the origin must be named explicitly.
+        """
+        if not self._cors_origin:
+            return
         self.send_header("Access-Control-Allow-Origin", self._cors_origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Vary", "Origin")
 
     def _send_json(self, code: int, body: dict) -> None:
         payload = json.dumps(body).encode("utf-8")
@@ -1083,7 +1144,16 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
 
 
 class _RateLimiter:
-    """Simple in-memory rate limiter per client IP."""
+    """Simple in-memory rate limiter per client IP.
+
+    ``time.monotonic`` rather than wall clock: an NTP step or manual clock
+    change must not expire buckets early (forward jump) or freeze a client
+    out past the window (backward jump). The client-key dict is bounded —
+    evicting the least-recently-active key when full — so many distinct
+    source IPs cannot grow memory without limit.
+    """
+
+    _MAX_CLIENTS = 1024
 
     def __init__(self, max_requests: int = 60, window_seconds: int = 60) -> None:
         self.max_requests = max_requests
@@ -1095,9 +1165,16 @@ class _RateLimiter:
     def check(self, client_ip: str) -> bool:
         """Return True if the client is within the rate limit."""
         import time
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             if client_ip not in self._requests:
+                if len(self._requests) >= self._MAX_CLIENTS:
+                    # Evict the client whose newest timestamp is oldest.
+                    stalest = min(
+                        self._requests,
+                        key=lambda k: self._requests[k][-1] if self._requests[k] else 0.0,
+                    )
+                    del self._requests[stalest]
                 self._requests[client_ip] = []
             # Remove old entries
             self._requests[client_ip] = [
@@ -1137,7 +1214,7 @@ def _make_http_handler(
     server: MCPServer,
     bearer_token: str,
     *,
-    cors_origin: str = "*",
+    cors_origin: str = "",
     rate_limit: int = 60,
     max_sse_connections: int = 10,
 ) -> type:
@@ -1146,8 +1223,10 @@ def _make_http_handler(
     Parameters
     ----------
     cors_origin
-        Value for Access-Control-Allow-Origin header. Default "*"
-        allows any origin. For production, set to the specific origin.
+        Value for Access-Control-Allow-Origin header. Default "" emits no
+        CORS headers at all (browsers block cross-origin reads). Set an
+        explicit origin to allow one; "*" works but is discouraged on an
+        authenticated endpoint.
     rate_limit
         Max requests per minute per client IP. Default 60.
     max_sse_connections
@@ -1187,9 +1266,10 @@ def main() -> None:
              "If neither is set, HTTP runs in open mode (local only).",
     )
     parser.add_argument(
-        "--cors-origin", default="*",
-        help="CORS Access-Control-Allow-Origin value (default: *). "
-             "Set to a specific origin for production.",
+        "--cors-origin", default="",
+        help="CORS Access-Control-Allow-Origin value (default: none — no CORS "
+             "headers, browsers block cross-origin reads). Set an explicit "
+             "origin to allow it; avoid '*' on an authenticated endpoint.",
     )
     parser.add_argument(
         "--rate-limit", type=int, default=60,
@@ -1215,20 +1295,46 @@ def main() -> None:
         server.run_stdio()
     elif args.transport == "http":
         token = args.bearer_token or os.environ.get("HALBERT_MCP_TOKEN", "")
+        if token and len(token) < 32:
+            # A short token is brute-forceable over HTTP. Fail closed —
+            # generate a proper one with `python -m halbert_core.mcp.server`
+            # helpers or `secrets.token_urlsafe(32)`.
+            print(
+                "Refusing to start: bearer token is shorter than 32 characters. "
+                "Use a high-entropy token (e.g. `python -c 'import secrets; "
+                "print(secrets.token_urlsafe(32))'`).",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         if not token:
             logger.warning("HTTP transport with no bearer token — open mode (local only)")
+        if args.cors_origin == "*":
+            logger.warning(
+                "CORS origin '*' on an authenticated endpoint lets any website "
+                "drive this server from a browser that has the token"
+            )
         handler = _make_http_handler(
             server, token,
             cors_origin=args.cors_origin,
             rate_limit=args.rate_limit,
             max_sse_connections=args.max_sse_connections,
         )
-        httpd = HTTPServer((args.host, args.port), handler)
+        # ThreadingHTTPServer: the SSE handler blocks for the life of the
+        # connection, and under plain HTTPServer that one connection stalls
+        # every other client. daemon_threads so a stuck stream cannot hang
+        # shutdown.
+        from http.server import ThreadingHTTPServer
+        httpd = ThreadingHTTPServer((args.host, args.port), handler)
+        httpd.daemon_threads = True
         logger.info("MCP HTTP server listening on %s:%d (instance=%s, auth=%s)",
                      args.host, args.port, server.instance_name, bool(token))
         print(f"Halbert MCP server listening on http://{args.host}:{args.port}", file=sys.stderr)
         if token:
-            print(f"Bearer token: {token}", file=sys.stderr)
+            # Never print the token itself: stderr lands in journald, Docker
+            # logs, and shell history. The operator already has it (they set
+            # --bearer-token or HALBERT_MCP_TOKEN).
+            print("Bearer auth: enabled (token not echoed — use the value you provided)",
+                  file=sys.stderr)
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

@@ -109,10 +109,11 @@ class CRAGEvaluator:
         observations: List[str] = None,
         model_override: str = None,
         tier_override: str = None,
+        secure: bool = False,
     ) -> CRAGResult:
         """
         Evaluate if documents can answer the query.
-        
+
         Args:
             query: The user's query
             documents: Retrieved documents with 'content' field
@@ -122,7 +123,11 @@ class CRAGEvaluator:
                 caller's LLM adapter, so without it a pinned cheap model
                 would still let CRAG escalate to the specialist.
             tier_override: Tier pinned for this turn, same reasoning.
-            
+            secure: This turn's context was flagged as carrying secrets.
+                Forwarded to the adapter so the completeness check resolves
+                local-only; on failure the heuristic fallback answers
+                instead (fail-safe).
+
         Returns:
             CRAGResult with action recommendation
         """
@@ -147,7 +152,8 @@ class CRAGEvaluator:
         
         # Assess completeness (can documents answer the query?)
         completeness = await self._assess_completeness(
-            query, documents, observations, model_override, tier_override
+            query, documents, observations, model_override, tier_override,
+            secure,
         )
         
         # Assess freshness
@@ -252,16 +258,18 @@ class CRAGEvaluator:
         observations: List[str] = None,
         model_override: str = None,
         tier_override: str = None,
+        secure: bool = False,
     ) -> float:
         """
         Assess if documents fully answer the query.
-        
+
         Uses LLM if available, otherwise heuristic assessment.
         """
         if self.llm:
             try:
                 return await self._llm_completeness_check(
-                    query, documents, observations, model_override, tier_override
+                    query, documents, observations, model_override,
+                    tier_override, secure,
                 )
             except Exception as e:
                 logger.warning(f"LLM completeness check failed: {e}")
@@ -276,6 +284,7 @@ class CRAGEvaluator:
         observations: List[str] = None,
         model_override: str = None,
         tier_override: str = None,
+        secure: bool = False,
     ) -> float:
         """Use LLM to assess completeness."""
         # Build document summaries
@@ -309,6 +318,7 @@ Reply with just the number (e.g., "0.7")."""
             messages=[{"role": "user", "content": prompt}],
             model_override=model_override,
             tier_override=tier_override,
+            secure=secure,
         )
         
         content = response.content if hasattr(response, 'content') else str(response)

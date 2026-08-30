@@ -241,3 +241,95 @@ class TestEgressBoundary:
         # Even with cloud_ok_acknowledged, the mcp_response boundary
         # should redact the password value in the output
         assert "hunter2" not in content_text
+
+
+class TestProtocolHardening:
+    """JSON-RPC robustness: batch arrays, notifications, validation."""
+
+    def test_batch_array_rejected_not_crash(self, server):
+        """A JSON-RPC batch (array) returns -32600 instead of raising."""
+        resp = server.handle_request([{"jsonrpc": "2.0", "id": 1, "method": "ping"}])
+        assert resp is not None
+        assert resp["error"]["code"] == -32600
+        assert resp["id"] is None
+
+    def test_notification_unknown_method_no_response(self, server):
+        """A notification (no id) never gets a response, not even an error."""
+        resp = server.handle_request({"jsonrpc": "2.0", "method": "bogus"})
+        assert resp is None
+
+    def test_notification_tools_call_no_response(self, server):
+        resp = server.handle_request({
+            "jsonrpc": "2.0", "method": "tools/call",
+            "params": {"name": "get_vitals", "arguments": {}},
+        })
+        assert resp is None
+
+    def test_notification_error_path_no_response(self, server):
+        """Even an internal error on a notification produces no response."""
+        resp = server.handle_request({
+            "jsonrpc": "2.0", "method": "tools/call",
+            "params": {"name": "get_config_value", "arguments": {"path": None}},
+        })
+        assert resp is None
+
+    def test_missing_jsonrpc_version_rejected(self, server):
+        resp = server.handle_request({"id": 1, "method": "ping"})
+        assert resp["error"]["code"] == -32600
+
+    def test_wrong_jsonrpc_version_rejected(self, server):
+        resp = server.handle_request({"jsonrpc": "1.0", "id": 1, "method": "ping"})
+        assert resp["error"]["code"] == -32600
+
+    def test_missing_method_rejected(self, server):
+        resp = server.handle_request({"jsonrpc": "2.0", "id": 1})
+        assert resp["error"]["code"] == -32600
+
+    def test_explicit_null_id_gets_response(self, server):
+        """An explicit "id": null is an id, not a notification."""
+        resp = server.handle_request({"jsonrpc": "2.0", "id": None, "method": "ping"})
+        assert resp is not None
+        assert resp["id"] is None
+        assert "result" in resp
+
+
+class TestUniversalEgressBoundary:
+    """The dispatch layer wraps EVERY tool result in mcp_response()."""
+
+    def test_being_config_strips_ha_credentials(self, server, monkeypatch):
+        """get_being_config must never emit the Home Assistant token."""
+        from halbert_core.config.being_config import BeingConfig
+
+        def mock_load():
+            bc = BeingConfig()
+            bc.ha_url = "http://homeassistant.local:8123"
+            bc.ha_token = "ha-secret-token-value-123"
+            return bc
+
+        monkeypatch.setattr(
+            "halbert_core.config.being_config.load_being_config", mock_load)
+
+        req = {
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "get_being_config", "arguments": {}},
+        }
+        resp = server.handle_request(req)
+        content_text = resp["result"]["content"][0]["text"]
+        assert "ha-secret-token-value-123" not in content_text
+        assert "ha_token" not in content_text
+        assert "ha_url" not in content_text
+
+    def test_dispatch_wraps_unwrapped_handler(self, server, monkeypatch):
+        """A handler that forgets mcp_response is still redacted at dispatch."""
+        monkeypatch.setitem(
+            TOOL_HANDLERS, "get_vitals",
+            lambda params: {"password": "hunter2", "note": "nothing to see"},
+        )
+        req = {
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "get_vitals", "arguments": {}},
+        }
+        resp = server.handle_request(req)
+        content_text = resp["result"]["content"][0]["text"]
+        assert "hunter2" not in content_text
+        assert "<secret>" in content_text
