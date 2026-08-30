@@ -269,7 +269,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -298,6 +298,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(compute.router, tags=["compute"])  # Endpoint capacity probe
     app.include_router(legal.router, tags=["legal"])  # LEG-MOD-01/02: Legal notices & cloud disclosure
     app.include_router(vision.router, prefix="/api", tags=["vision"])  # Screen capture for vision model
+    app.include_router(audio.router, prefix="/api", tags=["audio"])  # Auditory cortex
     app.include_router(home.router, prefix="/api", tags=["home"])  # Home Assistant panel
     app.include_router(frigate.router, prefix="/api", tags=["frigate"])  # Frigate NVR panel
     app.include_router(instance.router, tags=["instance"])  # Multi-instance info

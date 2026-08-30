@@ -97,6 +97,24 @@ vision = [
   "opencv-python>=4.8",
 ]
 
+# Auditory cortex — sherpa-onnx for VAD/ASR/speaker-ID/audio-tagging/TTS.
+# Zero PyTorch: sherpa-onnx uses ONNX Runtime only. GPU via ORT CUDA EP.
+audio-inference = [
+  "sherpa-onnx>=1.10",
+  "onnxruntime>=1.16",
+]
+
+# Wake word spotting (openWakeWord). Requires a trained "Hey Halbert" model.
+audio-wake-word = [
+  "openwakeword>=0.6",
+  "numpy>=1.24",
+]
+
+# Acoustic fingerprinting (Chromaprint + AcoustID). Requires network for lookup.
+audio-fingerprint = [
+  "pyacoustid>=1.3",
+]
+
 [project.scripts]
 halbert = "halbert_core.dashboard.__main__:main"
 
