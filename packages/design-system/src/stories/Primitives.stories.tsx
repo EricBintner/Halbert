@@ -110,6 +110,49 @@ export const Badges: StoryObj = {
   ),
 }
 
+export const BadgeWithIcon: StoryObj = {
+  name: 'StatusBadge/Icon',
+  render: () => {
+    const dot = (
+      <svg width={6} height={6} viewBox="0 0 6 6" aria-hidden="true">
+        <circle cx={3} cy={3} r={3} fill="currentColor" />
+      </svg>
+    )
+    return (
+      <>
+        <Note>
+          The <code>icon</code> prop places a node before the label. Commonly a small SVG dot
+          or glyph. The icon inherits the tone colour via <code>currentColor</code>.
+        </Note>
+        <Row>
+          <StatusBadge tone="nominal" icon={dot}>Running</StatusBadge>
+          <StatusBadge tone="warning" icon={dot}>Degraded</StatusBadge>
+          <StatusBadge tone="critical" icon={dot}>Offline</StatusBadge>
+        </Row>
+      </>
+    )
+  },
+}
+
+export const BadgeAliases: StoryObj = {
+  name: 'StatusBadge/Aliases',
+  render: () => (
+    <>
+      <Note>
+        Tone aliases — <code>success</code>, <code>error</code>/<code>danger</code>,
+        and <code>info</code> — map to the canonical tone names so dashboard consumers don't
+        have to translate.
+      </Note>
+      <Row>
+        <StatusBadge tone="success">success → nominal</StatusBadge>
+        <StatusBadge tone="error">error → critical</StatusBadge>
+        <StatusBadge tone="danger">danger → critical</StatusBadge>
+        <StatusBadge tone="info">info → telemetry</StatusBadge>
+      </Row>
+    </>
+  ),
+}
+
 /* ------------------------------------------------------------ Form fields -- */
 
 export const FormFields: StoryObj = {
