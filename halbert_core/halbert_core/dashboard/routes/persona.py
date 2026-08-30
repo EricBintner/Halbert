@@ -7,7 +7,7 @@ Provides REST API for persona switching and memory management.
 """
 
 from __future__ import annotations
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 import logging
 
 try:
@@ -21,6 +21,13 @@ from ...persona import PersonaManager, Persona, PersonaSwitchError, MemoryPurge
 from ...persona.store import PersonaStore
 
 logger = logging.getLogger('halbert.dashboard')
+
+# Shared with settings.py to prevent races between persona switch and config save.
+try:
+    from .settings import _being_config_lock
+except ImportError:
+    import threading
+    _being_config_lock = threading.Lock()
 
 
 # Pydantic models for request/response
@@ -225,7 +232,8 @@ async def activate_persona(persona_id: str) -> Dict[str, Any]:
     """Switch the active persona. Swaps the being.yml symlink and hot-reloads the agent."""
     try:
         store = PersonaStore()
-        store.activate(persona_id)
+        with _being_config_lock:
+            store.activate(persona_id)
         # Hot-reload the running agent's personality
         try:
             from .agent import get_agent

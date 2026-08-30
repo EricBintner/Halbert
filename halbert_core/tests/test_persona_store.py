@@ -72,6 +72,12 @@ class TestPersonaStore:
         assert s1.id == "work"
         assert s2.id == "work-2"
 
+    def test_create_persona_reserved_id(self, store):
+        """Persona ids that conflict with API routes get suffixed."""
+        store.list_personas()
+        s = store.create_persona("Status")
+        assert s.id == "status-2"  # "status" is reserved
+
     def test_activate_persona(self, store):
         """Activating a persona swaps the symlink."""
         store.list_personas()

@@ -16,7 +16,7 @@ import datetime
 import logging
 import os
 import re
-import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -33,6 +33,10 @@ def _slugify(name: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9_-]", "-", name.strip().lower())
     slug = re.sub(r"-+", "-", slug).strip("-")
     return slug or "persona"
+
+
+# Reserved ids that conflict with API route paths.
+_RESERVED_IDS = {"status", "list", "switch", "memory"}
 
 
 def _now_iso() -> str:
@@ -89,11 +93,20 @@ class PersonaStore:
     def _write_persona_file(self, path: Path, data: Dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         clean = {k: v for k, v in data.items() if v is not None and v != ""}
-        tmp = path.with_suffix(".yml.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            yaml.dump(clean, f, default_flow_style=False, sort_keys=False)
-        os.chmod(tmp, 0o600)
-        os.replace(str(tmp), str(path))
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(path.parent), suffix=".yml.tmp", prefix=".persona_"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                yaml.dump(clean, f, default_flow_style=False, sort_keys=False)
+            os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, str(path))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def _resolve_symlink_target(self) -> Optional[Path]:
         """Return the persona file that being.yml points to, or None."""
@@ -139,10 +152,12 @@ class PersonaStore:
         target = self._persona_path(persona_id)
         if not target.exists():
             raise FileNotFoundError(f"Persona file not found: {target}")
-        # Atomic symlink swap: create temp symlink, then rename.
-        if self.being_yml.is_symlink() or self.being_yml.exists():
-            self.being_yml.unlink()
-        self.being_yml.symlink_to(target)
+        # Atomic symlink swap: create temp symlink, then rename over old one.
+        tmp_link = self.being_yml.with_name(".being.yml.tmp-link")
+        if tmp_link.exists() or tmp_link.is_symlink():
+            tmp_link.unlink()
+        tmp_link.symlink_to(target)
+        os.replace(str(tmp_link), str(self.being_yml))
         logger.info("Active persona → %s", persona_id)
 
     # ── public API ────────────────────────────────────────────────────
@@ -192,10 +207,10 @@ class PersonaStore:
         """
         self.personas_dir.mkdir(parents=True, exist_ok=True)
         persona_id = _slugify(display_name)
-        # Ensure unique id.
+        # Ensure unique id, skipping reserved ids that conflict with routes.
         base_id = persona_id
         counter = 2
-        while self._persona_path(persona_id).exists():
+        while persona_id in _RESERVED_IDS or self._persona_path(persona_id).exists():
             persona_id = f"{base_id}-{counter}"
             counter += 1
         path = self._persona_path(persona_id)
