@@ -18,6 +18,7 @@ except ImportError:
     FASTAPI_AVAILABLE = False
 
 from ...persona import PersonaManager, Persona, PersonaSwitchError, MemoryPurge
+from ...persona.store import PersonaStore
 
 logger = logging.getLogger('halbert.dashboard')
 
@@ -34,6 +35,10 @@ if FASTAPI_AVAILABLE:
         persona: str
         user: str = "dashboard"
         export_before: bool = True
+
+    class CreatePersonaRequest(BaseModel):
+        """Request to create a new persona."""
+        display_name: str
 
 
 # Create router
@@ -70,29 +75,18 @@ async def get_persona_status() -> Dict[str, Any]:
 
 
 @router.get("/list")
-async def list_personas() -> List[Dict[str, Any]]:
+async def list_personas() -> Dict[str, Any]:
     """
-    List available personas.
+    List all personas with the active one marked.
     
-    Returns:
-        [
-            {
-                "id": "it_admin",
-                "name": "IT Administrator",
-                "description": "Professional system management",
-                "icon": "🔧",
-                "enabled": true,
-                "active": true,
-                "memory_dir": "core"
-            },
-            ...
-        ]
+    Returns::
+    
+        {"personas": [...], "active_id": "default"}
     """
     try:
-        manager = PersonaManager()
-        personas = manager.list_personas()
-        return personas
-    
+        store = PersonaStore()
+        personas = [p.to_dict() for p in store.list_personas()]
+        return {"personas": personas, "active_id": store.get_active_id()}
     except Exception as e:
         logger.error(f"Error listing personas: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -180,4 +174,69 @@ async def purge_memory(request: MemoryPurgeRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error purging memory: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Multi-persona CRUD endpoints ──────────────────────────────────────
+
+@router.post("")
+async def create_persona(request: CreatePersonaRequest) -> Dict[str, Any]:
+    """Create a new persona."""
+    try:
+        store = PersonaStore()
+        summary = store.create_persona(request.display_name)
+        return {"status": "ok", "persona": summary.to_dict()}
+    except Exception as e:
+        logger.error(f"Error creating persona: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{persona_id}")
+async def get_persona(persona_id: str) -> Dict[str, Any]:
+    """Get a persona's full config."""
+    try:
+        store = PersonaStore()
+        return {"status": "ok", "config": store.get_persona(persona_id)}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Persona not found: {persona_id}")
+    except Exception as e:
+        logger.error(f"Error getting persona: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{persona_id}")
+async def delete_persona(persona_id: str) -> Dict[str, Any]:
+    """Delete a persona. Cannot delete the active or last persona."""
+    try:
+        store = PersonaStore()
+        store.delete_persona(persona_id)
+        return {"status": "ok"}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Persona not found: {persona_id}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error deleting persona: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{persona_id}/activate")
+async def activate_persona(persona_id: str) -> Dict[str, Any]:
+    """Switch the active persona. Swaps the being.yml symlink and hot-reloads the agent."""
+    try:
+        store = PersonaStore()
+        store.activate(persona_id)
+        # Hot-reload the running agent's personality
+        try:
+            from .agent import get_agent
+            agent = get_agent()
+            if agent and hasattr(agent, 'prompt_builder'):
+                agent.prompt_builder.reload_personality()
+        except Exception as e:
+            logger.warning(f"Agent hot-reload after persona switch: {e}")
+        return {"status": "ok", "active_id": persona_id}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Persona not found: {persona_id}")
+    except Exception as e:
+        logger.error(f"Error activating persona: {e}")
         raise HTTPException(status_code=500, detail=str(e))

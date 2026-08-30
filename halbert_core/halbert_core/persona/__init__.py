@@ -9,6 +9,7 @@ Handles persona switching, state management, memory isolation, and auto-context 
 from .manager import PersonaManager, Persona, PersonaSwitchError
 from .memory_purge import MemoryPurge, PurgeConfirmation
 from .context_detector import ContextDetector, ContextSignal, ContextPreferences
+from .store import PersonaStore, PersonaSummary
 
 __all__ = [
     "PersonaManager",
@@ -19,4 +20,6 @@ __all__ = [
     "ContextDetector",
     "ContextSignal",
     "ContextPreferences",
+    "PersonaStore",
+    "PersonaSummary",
 ]
