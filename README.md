@@ -47,7 +47,7 @@ Because Halbert understands its own environment, it speaks in a natural, hybrid 
 
 ## Capabilities
 
-### 💬 System-Aware Intelligence
+### System-Aware Intelligence
 - **Grounded in Reality** — Answers are backed by live data retrieved directly from your system rather than abstract guesswork or canned disclaimers.
 - **Hybrid AI by Default** — Pairs the reasoning power of leading cloud models (Claude, OpenAI, Gemini, DeepSeek) for chat with a dedicated, on-device local model for sensitive security operations.
 - **100% Offline Capable** — Easily configured to run fully offline using [Ollama](https://ollama.ai/), Apple Silicon MLX, Apple Intelligence on-device models, or `llama.cpp`.
@@ -56,25 +56,25 @@ Because Halbert understands its own environment, it speaks in a natural, hybrid 
 - **16,000+ Built-In Documentation Guides** — Fast hybrid search (BM25 + dense vector retrieval) across Linux man pages, Arch Wiki, systemd guides, BSD handbooks, and macOS references.
 - **Remembers Your System's "Why"** — Keeps track of *why* specific configurations exist, remembering the purpose behind custom scripts, network rules, and storage layouts across reboots.
 
-### 🎙️ Natural Voice & Hearing
+### Natural Voice & Hearing
 - **Wyoming Voice Protocol** — Built-in Wyoming voice streaming (port `10400`) that connects directly with Home Assistant voice satellites, smart speakers, and desk microphones.
 - **Fast Local Speech Stack** — Instant local Speech-to-Text (Streaming Zipformer ASR, Silero VAD) and clear neural Text-to-Speech (Piper) with full barge-in support (interrupt whenever you want).
 - **Room & Spatial Context** — Understands where you are. Asking *"turn on the light"* from an office satellite knows to illuminate the office without needing room qualifiers.
 - **Speaker Safety (`RoleGate`)** — Uses voice biometrics (CAM++ embeddings) so guests or unknown voices cannot trigger privileged system operations.
 - **Proactive Spoken Alerts** — Announces urgent hardware warnings or security events out loud, with automatic quiet hours during sleep or guest modes.
 
-### 🔌 Connect Your AI Tools (Model Context Protocol)
+### Connect Your AI Tools (Model Context Protocol)
 - **Built-In MCP Server** — Lets external AI tools (Claude Desktop, Cursor, Windsurf, Google Antigravity) safely interact with your machine over fast local stdio or token-authenticated network streams.
 - **Camera Privacy Gate (`CameraDataGate`)** — When sharing camera or video data with external AI agents, Halbert exposes only structured text descriptions (e.g. *"front door: person detected at 2:15 PM"*), strictly isolating and redacting raw images and video feeds.
 - **Dynamic Code & Docs Intelligence** — Connects to SourcePrep tools (`prep`, `prep_search`, `prep_impact`, `prep_audit`, `prep_observe`, `prep_concepts`) to inspect code structure, dependencies, and rationale.
 
-### 🏡 Smart Home & Homelab Companion
+### Smart Home & Homelab Companion
 - **Two Modes in One** — Switch effortlessly between **Host Mode** (focusing on system administration and dev tools) and **Home Mode** (focusing on household devices, sensors, and cameras).
 - **Home Assistant Integration (HACS)** — Includes a custom integration (`custom_components/halbert`) so Halbert can serve as the primary voice and conversation brain for your smart home with Assist API tools.
 - **Frigate NVR Video Intelligence** — Monitors camera events in real time, keeps track of object detection trends, and remembers episodic visual events for up to 7 days.
 - **Homelab Overview** — Keeps your network mesh (Tailscale, WireGuard), file shares (NFS, SMB), and container stacks running smoothly in one place.
 
-### 🍏 Built for macOS and Linux
+### Built for macOS and Linux
 - **Flagship Linux Support** — Full-featured assistant for Ubuntu, Fedora, Arch, Debian, and server environments.
 - **macOS Pro & Free Editions**:
   - **Halbert Pro (macOS)**: Direct-distribution app with Full Disk Access, deep dotfile management (`~/.zshrc`, Homebrew, `launchd`), and native Apple Silicon / Apple Intelligence on-device inference.
@@ -82,13 +82,13 @@ Because Halbert understands its own environment, it speaks in a natural, hybrid 
 - **Multi-Session Tabs** — Open tabs for each of your machines (your laptop, your home server, your cloud devbox). Each tab connects directly to that machine's telemetry and environment.
 - **Fleet Mesh & Personalities** — Link multiple Halbert instances together to share tasks across your network, or switch between distinct AI personas with zero downtime.
 
-### 🧬 Keep Your Settings & Shell Healthy
+### Keep Your Settings & Shell Healthy
 - **Ambient Dotfile Discovery** — Automatically finds and maps your configuration files (`~/.zshrc`, `~/.config`, `~/.gitconfig`, `~/.ssh`, launch daemons, systemd units).
 - **Environment & PATH Tracer** — Traces how your shell loads variables (`.zshenv` → `.zprofile` → `/etc/paths.d` → `.zshrc`) to explain why a command or version is being shadowed.
 - **Clean Up Tool Clutter** — Detects duplicate aliases, broken symlinks, orphaned configs, and version conflicts across package managers (`mise`, `asdf`, `nvm`, `pyenv`, `brew`).
 - **Safe Diffs with Undo** — Shows clear before-and-after diffs with Monaco editor integration and creates automatic backups before applying changes, so you can roll back with a single click.
 
-### 🛡️ Safe, Transparent, and Always in Control
+### Safe, Transparent, and Always in Control
 - **Approvals Before Action** — When Halbert proposes a change, it explains what will happen, simulates the outcome, and waits for your confirmation.
 - **Custom Policy Rules** — Define what Halbert can and cannot touch using simple rules in `~/.config/halbert/policy.yml` (sensitive credentials are never shown in plain text).
 - **Early Anomaly Detection** — Spots runaway CPU spikes, memory leaks, and repeating errors early, with automated recovery playbooks.
@@ -193,7 +193,7 @@ halbert policy-show
 
 ## Ecosystem Integrations
 
-### 🏡 Home Assistant (HACS Integration)
+### Home Assistant (HACS Integration)
 Halbert includes a native custom component for Home Assistant located in [`custom_components/halbert`](custom_components/halbert/README.md).
 
 1. Copy `custom_components/halbert` to your Home Assistant `config/custom_components/` directory (or add this repository as a Custom Repository in HACS).
@@ -201,7 +201,7 @@ Halbert includes a native custom component for Home Assistant located in [`custo
 3. Point the integration to your Halbert Wyoming server (`localhost:10400`).
 4. In **Settings → Voice Assistants**, assign Halbert as your primary conversation agent.
 
-### 🎙️ Wyoming Voice Pipeline
+### Wyoming Voice Pipeline
 Enable the Wyoming protocol server in Halbert by starting the agent with `WYOMING_ENABLED=1`:
 
 ```bash
@@ -210,7 +210,7 @@ export WYOMING_PORT=10400
 python halbert_core/halbert_core/integrations/wyoming_agent.py
 ```
 
-### 🔌 Model Context Protocol (MCP) Configuration
+### Model Context Protocol (MCP) Configuration
 Connect external AI developer tools (Claude Desktop, Cursor, Windsurf) to Halbert's MCP server:
 
 ```json
