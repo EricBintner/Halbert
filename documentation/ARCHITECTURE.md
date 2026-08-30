@@ -10,14 +10,27 @@ This document provides a high-level overview of Halbert's architecture. For deta
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         User Interface  ✅                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────────┐  │
-│  │   CLI       │  │  Dashboard  │  │        REST API                 │  │
-│  │ (main.py)   │  │  (React)    │  │       (FastAPI)                 │  │
-│  └──────┬──────┘  └──────┬──────┘  └────────────────┬────────────────┘  │
-└─────────┼────────────────┼──────────────────────────┼───────────────────┘
-          │                │                          │
-          ▼                ▼                          ▼
+│                      Tauri 2 Desktop Shell  ✅                          │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                    React SPA (Vite)                              │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────┐  │  │
+│  │  │ @halbert/    │  │ @halbert/    │  │   shadcn/ui + Tailwind │  │  │
+│  │  │ model-picker │  │ design-system│  │   (host-only styling)  │  │  │
+│  │  │ (headless)   │  │ (primitives) │  │                        │  │  │
+│  │  └──────┬───────┘  └──────────────┘  └────────────────────────┘  │  │
+│  │         │ modelPickerTransport                                   │  │
+│  └─────────┼─────────────────────────────────────────────────────────┘  │
+│            │ REST / SSE / WebSocket                                    │
+└────────────┼────────────────────────────────────────────────────────────┘
+             │
+     ┌───────┴────────┐
+     ▼                ▼
+┌──────────┐  ┌──────────────────────────────────────────────────────────┐
+│  CLI     │  │              FastAPI Backend (port 8000)  ✅              │
+│ (main.py)│  │  /llm/config  /api/llm/discover  /api/agent/stream       │
+└──────────┘  └──────────────────────┬───────────────────────────────────┘
+                                     │
+                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         Chat Engine  ✅                                 │
 │  ┌──────────────────────────────────────────────────────────────────┐   │
@@ -66,11 +79,62 @@ This document provides a high-level overview of Halbert's architecture. For deta
 
 | Component | Location | Purpose | Status |
 |-----------|----------|---------|--------|
-| **Dashboard** | `halbert_core/dashboard/` | React + FastAPI web interface | ✅ |
-| **REST API** | `halbert_core/dashboard/routes/` | Programmatic access | ✅ |
+| **Tauri 2 Shell** | `dashboard/frontend/src-tauri/` | Native desktop window, system tray, IPC | ✅ |
+| **React SPA** | `dashboard/frontend/src/` | Single-page application (Vite + Tailwind) | ✅ |
+| **@halbert/model-picker** | `packages/model-picker/` | Headless model picker (local discovery, BYOK, tier routing) | ✅ |
+| **@halbert/design-system** | `packages/design-system/` | Olivetti Vermilion & Bone primitives (Button, Select, Badge) | ✅ |
+| **REST API** | `halbert_core/dashboard/routes/` | Programmatic access (FastAPI) | ✅ |
 | **CLI** | `Halbert/main.py` | Command-line interface | 🔄 |
 
-The dashboard is the primary interface with 16 pages covering system management. The REST API provides full programmatic access.
+The dashboard is the primary interface. It ships as a **Tauri 2** desktop
+app — a native window with system tray wrapping a React SPA built by Vite.
+The SPA consumes two decoupled workspace packages:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  React SPA (host app)                       │
+│                                                             │
+│  ┌─────────────────┐         ┌──────────────────────────┐   │
+│  │ @halbert/       │         │ @halbert/                │   │
+│  │ model-picker    │         │ design-system            │   │
+│  │                 │         │                          │   │
+│  │ • useModelPicker│         │ • Button, Select         │   │
+│  │ • ProviderCard  │         │ • StatusBadge, Input     │   │
+│  │ • ModelSelector │         │ • HalbertMark, AppWindow │   │
+│  │ • QuickSwitch   │         │ • MetricCard             │   │
+│  │                 │         │                          │   │
+│  │ peer: react 18/19│        │ peer: react 18/19        │   │
+│  │ zero I/O        │         │ zero Tailwind in source  │   │
+│  │ zero classNames │         │ plain CSS + tokens       │   │
+│  └────────┬────────┘         └──────────────────────────┘   │
+│           │                                                 │
+│           │ modelPickerTransport.ts                         │
+│           │ (the ONE adapter to Halbert's backend)          │
+│           │                                                 │
+└───────────┼─────────────────────────────────────────────────┘
+            │
+            ▼ REST / SSE
+┌─────────────────────────────────────────────────────────────┐
+│              FastAPI Backend (port 8000)                    │
+│  /llm/config  /api/llm/discover  /api/agent/stream          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Package boundary invariants:**
+
+- `@halbert/model-picker` is fully headless — zero I/O, zero hardcoded
+  class names, zero slot names. It defines a `ModelPickerTransport`
+  interface that the host implements. `check:boundary` enforces 0
+  violations across all 16 source files.
+- `@halbert/design-system` ships plain CSS backed by shared design tokens
+  (`shared-tokens/tokens.css`). No Tailwind in library source, so it works
+  under both Tailwind v3 and v4 hosts. Styles are imported once via
+  `@import "@halbert/design-system/styles.css"` in `src/index.css`.
+- Both packages declare `react: "^18.2.0 || ^19.0.0"` as a peer
+  dependency, enabling a future React 19 upgrade without republishing.
+
+The REST API provides full programmatic access with 17 route pages
+covering system management.
 
 ### 2. Chat Engine ✅
 

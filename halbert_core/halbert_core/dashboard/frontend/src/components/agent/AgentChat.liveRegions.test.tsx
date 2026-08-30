@@ -286,6 +286,7 @@ function routeWithModels() {
           chat_model: { enabled: true, endpoint_id: 'ep1', model: 'model-alpha' },
           specialist_model: { enabled: false, endpoint_id: '', model: '' },
           vision_model: { enabled: false, endpoint_id: '', model: '' },
+          secure_model: { enabled: false, endpoint_id: '', model: '' },
         },
         chat_capable_providers: ['ollama'],
       } })

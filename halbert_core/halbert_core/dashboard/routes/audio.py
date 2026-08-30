@@ -27,10 +27,10 @@ router = APIRouter(prefix="/audio", tags=["audio"])
 
 if FASTAPI_AVAILABLE:
 
-    from ..audio.config import (
+    from ...audio.config import (
         load_config, save_config, AudioConfig,
     )
-    from ..audio.is_available import is_audio_available
+    from ...audio.is_available import is_audio_available
 
     # ── Config endpoints ────────────────────────────────────────────
 
@@ -133,7 +133,7 @@ if FASTAPI_AVAILABLE:
     async def list_speakers():
         """List enrolled speaker profiles."""
         try:
-            from ..audio.storage.speaker_store import SpeakerProfileStore
+            from ...audio.storage.speaker_store import SpeakerProfileStore
             store = SpeakerProfileStore()
             profiles = store.list_all()
             return {
@@ -174,8 +174,8 @@ if FASTAPI_AVAILABLE:
             import uuid
             audio_bytes = base64.b64decode(req.audio_base64)
 
-            from ..audio.speech.speaker_id import SpeakerIdentifier
-            from ..audio.storage.speaker_store import SpeakerProfileStore
+            from ...audio.speech.speaker_id import SpeakerIdentifier
+            from ...audio.storage.speaker_store import SpeakerProfileStore
 
             ident = SpeakerIdentifier(threshold=req.threshold)
             embedding = ident.extract_embedding(audio_bytes)
@@ -217,7 +217,7 @@ if FASTAPI_AVAILABLE:
         try:
             audio_bytes = base64.b64decode(req.audio_base64)
 
-            from ..audio.speech.speaker_id import SpeakerIdentifier
+            from ...audio.speech.speaker_id import SpeakerIdentifier
             ident = SpeakerIdentifier()
             matched, score = ident.verify(speaker_id, audio_bytes)
 
@@ -235,7 +235,7 @@ if FASTAPI_AVAILABLE:
     async def delete_speaker(speaker_id: str):
         """Delete a speaker profile."""
         try:
-            from ..audio.storage.speaker_store import SpeakerProfileStore
+            from ...audio.storage.speaker_store import SpeakerProfileStore
             store = SpeakerProfileStore()
             if store.delete(speaker_id):
                 return {"status": "ok", "deleted": speaker_id}

@@ -29,6 +29,101 @@ This guide covers installing Halbert on Linux systems.
 - **Ollama** — Local LLM inference engine
 - **systemd** — For journald access (standard on most distros)
 
+### Desktop UI & Frontend Prerequisites
+
+The Halbert dashboard ships as a **Tauri 2** desktop app (native window,
+system tray) backed by a React + Vite SPA. Building or developing the
+desktop UI requires the Node.js and Rust toolchains in addition to Python.
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| **Node.js** | 22 LTS | Frontend dev server, build, and tests |
+| **npm** | 10+ | Workspace package management |
+| **Rust / Cargo** | stable | Tauri native shell compilation |
+| **Tauri CLI** | 2.x | `npm run tauri:dev` / `npm run tauri:build` |
+
+#### Node.js 22 LTS
+
+```bash
+# Using nvm (recommended)
+nvm install 22
+nvm use 22
+node --version   # v22.x.x
+```
+
+#### Rust / Cargo toolchain
+
+```bash
+# Install rustup (one-time)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# Verify
+rustc --version
+cargo --version
+```
+
+On Linux you also need the Tauri system dependencies:
+
+```bash
+# Ubuntu / Debian
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+# Fedora
+sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file \
+  libxdo-devel libappindicator-gtk3-devel librsvg2-devel
+
+# Arch
+sudo pacman -S webkit2gtk base-devel curl wget file xdotool \
+  openssl appindicator-gtk3 librsvg
+```
+
+#### Frontend development
+
+The frontend lives in `halbert_core/halbert_core/dashboard/frontend/` and
+consumes two workspace packages (`@halbert/model-picker`,
+`@halbert/design-system`) from the repo root. Install from the repo root so
+npm workspaces resolve the symlinks:
+
+```bash
+# From the repo root — installs the frontend + all workspace packages
+npm install
+
+# Browser-only dev server (proxies API to localhost:8000)
+cd halbert_core/halbert_core/dashboard/frontend
+npm run dev
+
+# Native Tauri desktop window (starts dev server + opens native app)
+npm run tauri:dev
+
+# Production desktop build (.deb / .AppImage / .rpm)
+npm run tauri:build
+```
+
+#### Sibling repo: Haloysius (cognition layer)
+
+The persona cognition layer is an optional extra. It is not on PyPI —
+install it from a sibling checkout:
+
+```bash
+# Clone alongside Halbert
+cd /Volumes/4TB-BAD   # or wherever you keep your repos
+git clone https://github.com/MagneticAnomaly/Haloysius.git
+
+# Install into the same virtualenv as Halbert
+source .venv/bin/activate
+pip install -e Haloysius/
+
+# Verify the cognition extra resolves
+pip install -e halbert_core/[cognition]
+```
+
+Without Haloysius installed, Halbert boots cleanly — cognition tick, app
+seam, and state trackers are simply skipped. All `haloysius.*` imports are
+lazy (inside function bodies), so the core runtime never raises
+`ImportError` when the package is absent.
+
 ---
 
 ## Quick Install

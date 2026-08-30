@@ -101,7 +101,8 @@ function fromSavedEndpoint(ep: SavedEndpoint): RawEndpoint {
   }
 }
 
-function toRoleAssignment(slot: RawSlot): RoleAssignment {
+function toRoleAssignment(slot: RawSlot | undefined): RoleAssignment {
+  if (!slot) return { endpointId: '', model: '', enabled: false }
   return { endpointId: slot.endpoint_id, model: slot.model, enabled: slot.enabled }
 }
 

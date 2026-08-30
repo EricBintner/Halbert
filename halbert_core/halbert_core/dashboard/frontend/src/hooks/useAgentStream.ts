@@ -315,12 +315,20 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(null);
 
-  // Cleanup on unmount - cancel backend request to prevent zombie processing
+  // Cleanup on unmount or when isStreaming changes - cancel backend request
+  // to prevent zombie processing.
+  //
+  // The source is captured at effect-run time, NOT read from the ref at
+  // cleanup time. When sendMessage sets isStreaming=true, React re-renders
+  // and runs this cleanup from the previous render (isStreaming was false).
+  // By then sendMessage has already stored the NEW AbortController in
+  // eventSourceRef.current. Reading the ref in the cleanup would abort the
+  // fetch that was just started — the "Idle" with no response bug.
   useEffect(() => {
+    const source = eventSourceRef.current;
     return () => {
-      // Close the SSE connection
-      eventSourceRef.current?.close();
-      
+      source?.close();
+
       // Cancel backend request if streaming
       if (sessionIdRef.current && isStreaming) {
         fetch(apiUrl(`/api/agent/cancel/${sessionIdRef.current}`), { method: 'POST' })

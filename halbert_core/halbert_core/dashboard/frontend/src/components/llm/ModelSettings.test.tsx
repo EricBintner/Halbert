@@ -27,6 +27,7 @@ function emptyLlmConfig() {
     chat_model: { enabled: false, endpoint_id: '', model: '' },
     specialist_model: { enabled: false, endpoint_id: '', model: '' },
     vision_model: { enabled: false, endpoint_id: '', model: '' },
+    secure_model: { enabled: false, endpoint_id: '', model: '' },
   }
 }
 

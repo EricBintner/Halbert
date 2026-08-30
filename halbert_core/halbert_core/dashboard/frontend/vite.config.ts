@@ -14,8 +14,11 @@ import path from 'path'
  * the default behaviour and makes the other case possible.
  */
 const API_PORT = process.env.HALBERT_API_PORT ?? '8000'
-const HTTP_TARGET = `http://localhost:${API_PORT}`
-const WS_TARGET = `ws://localhost:${API_PORT}`
+// 127.0.0.1, not localhost: Node resolves localhost to ::1 (IPv6) first,
+// and the backend binds 127.0.0.1 (IPv4) only, so a localhost target makes
+// every proxied request fail with a 500 and the chat shows "Idle" instantly.
+const HTTP_TARGET = `http://127.0.0.1:${API_PORT}`
+const WS_TARGET = `ws://127.0.0.1:${API_PORT}`
 
 function proxyTargets() {
   const http = ['/api', '/global', '/llm', '/embedding', '/compute']
