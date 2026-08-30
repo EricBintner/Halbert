@@ -80,7 +80,7 @@ compression = [
 # haloysius import in halbert_core/integrations is guarded, so the core runs
 # without it (cognition tick, app seam, and state trackers are simply skipped).
 cognition = [
-  "haloysius>=0.1.1",
+  "haloysius>=0.2.0",
 ]
 
 dev = [
