@@ -4,7 +4,9 @@
 > **Document:** `.handoff/HANDOFF-AUDIO-AI-ARCHITECTURE-AND-UX-2026-08-29.md`  
 > **Author:** Eric Bintner & Halbert Research  
 > **Date:** 2026-08-29  
-> **Status:** Design Complete — Ready for Technical Review & UI Component Implementation  
+> **Status:** SUPERSEDED — Technical scrutiny found 5 critical, 7 high, 4 medium, 5 low issues.
+> See `.handoff/audio/00-REVIEW-SUMMARY.md` for corrected architecture and work breakdown.
+> Original research suite (`audio-research/01-03`) remains valid as background; corrections in `01-CORRECTED-ARCHITECTURE.md` are what implementation must follow.  
 > **Target Platforms:** macOS Desktop (Tauri Pro / Menu Bar), Linux Homelab Server (HAOS / Docker), Web Dashboard  
 
 ---
