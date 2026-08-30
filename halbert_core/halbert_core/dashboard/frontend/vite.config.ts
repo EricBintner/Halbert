@@ -13,11 +13,6 @@ import path from 'path'
  * once) could not be reached without editing this file. HALBERT_API_PORT keeps
  * the default behaviour and makes the other case possible.
  */
-const MODEL_PICKER_SRC = path.resolve(
-  __dirname,
-  '../../../../packages/model-picker/src',
-)
-
 const API_PORT = process.env.HALBERT_API_PORT ?? '8000'
 const HTTP_TARGET = `http://localhost:${API_PORT}`
 const WS_TARGET = `ws://localhost:${API_PORT}`
@@ -38,17 +33,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      // Consumed from source rather than a built artifact: there is no npm
-      // workspace in this repo, and the package is TypeScript with react as a
-      // peer dependency, so vite transpiles it alongside the app.
-      '@halbert/model-picker': MODEL_PICKER_SRC,
     },
   },
   server: {
     proxy: proxyTargets(),
-    // The dev server refuses to serve files outside its root, which would make
-    // the aliased package 403 on every import.
-    fs: { allow: ['..', MODEL_PICKER_SRC] },
   },
   // vite preview does not read server.proxy, so the production build could not
   // be previewed against a running backend without this.

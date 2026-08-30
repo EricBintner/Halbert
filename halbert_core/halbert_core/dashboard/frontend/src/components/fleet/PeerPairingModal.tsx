@@ -144,7 +144,7 @@ function DiscoveredPeersList({ onClose, onPaired }: { onClose: () => void; onPai
 // Manual pairing (Tailscale / no mDNS)
 // ---------------------------------------------------------------------------
 
-function ManualPairingForm({ onClose, onPaired }: { onClose: () => void; onPaired: () => void }) {
+function ManualPairingForm({ onClose, onPaired: _onPaired }: { onClose: () => void; onPaired: () => void }) {
   const [nodeId, setNodeId] = useState('')
   const [endpoint, setEndpoint] = useState('http://')
   const [pairing, setPairing] = useState(false)
