@@ -419,20 +419,27 @@ class SourcePrepAdapter:
 
 
 def retrieval_adapter_for_variant() -> Optional[SourcePrepAdapter]:
-    """SourcePrepAdapter for sysadmin instances; None for home variants.
+    """SourcePrepAdapter if the sourceprep capability is available; None otherwise.
 
-    Home automation variants run without SourcePrep entirely — the HA agent
-    answers from live HA state and conversational context, never a
-    documentation index (handoff HOME-AUTOMATION-SIMPLIFICATION-2026-08-30,
-    S2). The ContextAssembler tolerates a missing retrieval source; only
-    this gate decides whether the retrieval backend is constructed at all.
+    Capability-based: a node runs SourcePrep retrieval only if it has the
+    sourceprep capability. The variant preset sets defaults (home = no
+    sourceprep), but being.yml capabilities: section can override — a
+    Mac Studio with HA configured can do both. The ContextAssembler
+    tolerates a missing retrieval source; only this gate decides whether
+    the retrieval backend is constructed at all.
     """
     try:
-        from ..integrations.cognition_wiring import is_home_variant
-        if is_home_variant():
+        from ..capabilities import has_capability, CAP_SOURCEPREP
+        if not has_capability(CAP_SOURCEPREP):
             return None
     except Exception:  # pragma: no cover - gating must never block assembly
-        pass
+        # Fallback to variant gate if capabilities module unavailable
+        try:
+            from ..integrations.cognition_wiring import is_home_variant
+            if is_home_variant():
+                return None
+        except Exception:
+            pass
     return SourcePrepAdapter()
 
 

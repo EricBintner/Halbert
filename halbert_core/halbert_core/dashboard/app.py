@@ -269,7 +269,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -304,6 +304,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(instance.router, tags=["instance"])  # Multi-instance info
     app.include_router(peers.router, tags=["peers"])  # Phase 9.1: Peer pairing
     app.include_router(fleet.router, tags=["fleet"])  # Phase 9.9: Fleet Cockpit
+    app.include_router(conversations.router, tags=["conversations"])  # P3b: Peer conversation API
     
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"
@@ -420,17 +421,20 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         
         # Start ingestion service in background (non-blocking)
         # Uses daemon threads so won't block shutdown
-        # Multi-instance: skip sysadmin-only services on the home variant.
-        # The home variant is a thin client (N100/Pi) that offloads to a
-        # remote backend — it skips scheduler, config watcher, terminal
-        # sessions, and ingestion/discovery.
+        # Capability-based gating: a node runs ingestion only if it has
+        # the ingestion capability. The variant preset sets defaults
+        # (home = no ingestion), but being.yml capabilities: section can
+        # override — a Mac Studio with HA configured can do both.
+        from ..capabilities import get_capability_registry, CAP_INGESTION, CAP_DISCOVERY, CAP_SCHEDULER, CAP_CONFIG_WATCHER, CAP_SOURCEPREP, CAP_TERMINAL, CAP_HA_CONNECTION
         from ..integrations.cognition_wiring import _get_variant
         _variant = _get_variant()
+        _caps = get_capability_registry()
+        _caps.probe()
         _is_home = _variant == "home"
-        if _is_home:
+        if _is_home and not _caps.has(CAP_INGESTION):
             logger.info("Running in home variant — heavy services skipped")
-        if _is_home:
-            logger.info("Ingestion service skipped (HALBERT_VARIANT=home)")
+        if not _caps.has(CAP_INGESTION):
+            logger.info("Ingestion service skipped (no ingestion capability)")
         else:
             def start_ingestion_delayed():
                 """Start ingestion after a short delay to let ChromaDB initialize."""
@@ -452,9 +456,9 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         # Auto-scan discovery engine on startup so dashboard pages have data
         # without requiring a manual scan click. Runs in a daemon thread after
         # a short delay to avoid competing with ChromaDB/ingestion init.
-        # Multi-instance: skip sysadmin discovery on the home variant
-        if _is_home:
-            logger.info("Discovery scan skipped (HALBERT_VARIANT=home)")
+        # Capability-based: skip if no discovery capability.
+        if not _caps.has(CAP_DISCOVERY):
+            logger.info("Discovery scan skipped (no discovery capability)")
         else:
             def start_discovery_scan_delayed():
                 """Run all discovery scanners in the background on startup."""
@@ -473,9 +477,9 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             logger.info("Discovery scan starting in background...")
         
         # Phase 23: Start scheduler (re-enabled with delayed start)
-        # home skips the scheduler — autonomous jobs run on the remote backend
-        if _is_home:
-            logger.info("Scheduler skipped (home variant)")
+        # Capability-based: skip if no scheduler capability.
+        if not _caps.has(CAP_SCHEDULER):
+            logger.info("Scheduler skipped (no scheduler capability)")
         else:
             def start_scheduler_delayed():
                 """Start scheduler after a short delay."""
@@ -597,9 +601,9 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         # Phase 5+7 / T5a.2 + T7e.1: watch host config files (Linux hosts only).
         # The whole thing no-ops gracefully if the platform is unsupported,
         # the manifest is missing/unwatched, or SourcePrep is down.
-        # home skips the config watcher — no local config tree to watch.
-        if _is_home:
-            logger.info("Config watcher skipped (home variant)")
+        # Capability-based: skip if no config_watcher capability.
+        if not _caps.has(CAP_CONFIG_WATCHER):
+            logger.info("Config watcher skipped (no config_watcher capability)")
         else:
             def start_config_watcher():
                 global _config_watcher
@@ -618,10 +622,8 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                         create_detector_trigger_callback,
                     )
                     change_callbacks = [create_detector_trigger_callback()]
-                    # S2: the SourcePrep re-index callback is a sysadmin-instance
-                    # feature — home variants run without SourcePrep, so their
-                    # watcher only drives detector triggers.
-                    if not _is_home:
+                    # SourcePrep re-index callback only if sourceprep capability
+                    if _caps.has(CAP_SOURCEPREP):
                         change_callbacks.insert(0, create_sourceprep_reindex_callback())
                     watcher = ConfigWatcher(
                         manifest_path=str(manifest),
@@ -637,8 +639,8 @@ def create_app(enable_cors: bool = True) -> FastAPI:
 
         # Terminal session manager (B1b): start the idle/dead session reaper so
         # exited PTY sessions don't permanently exhaust the session cap.
-        # home skips terminal sessions — no local shell access on thin clients.
-        if not _is_home:
+        # Capability-based: skip if no terminal capability.
+        if _caps.has(CAP_TERMINAL):
             try:
                 from ..streaming.session_manager import get_terminal_manager
                 get_terminal_manager().start_reaper()
@@ -647,8 +649,8 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 logger.warning(f"Failed to start terminal session reaper: {e}")
 
         # Phase 2: Start HA WebSocket event stream if configured
-        # home can use HA creds from being.yml instead of ha_config.yml
-        if _is_home:
+        # Capability-based: start if HA connection is configured.
+        if _caps.has(CAP_HA_CONNECTION):
             try:
                 from ..config.being_config import load_being_config
                 from ..integrations.home_assistant.ha_config import seed_ha_config_from_being

@@ -219,9 +219,9 @@ def _ensure_app_seam_wired() -> None:
     routes/agent.py calls get_cognition_tick() before get_event_mapper(),
     so the seam must be wired here for the thought generator to find it.
 
-    S2: home variants run without SourcePrep, so the seam is wired with
-    no retrieval backend for them — template thoughts and persona memory
-    never consult a documentation index on an HA node.
+    Capability-based: skip SourcePrep retrieval if the sourceprep
+    capability is not available. The variant preset sets defaults
+    (home = no sourceprep), but being.yml can override.
     """
     try:
         from haloysius.seam import get_app_seam
@@ -229,7 +229,15 @@ def _ensure_app_seam_wired() -> None:
         if get_app_seam() is None:
             from . import app_seam
 
-            app_seam.wire_halbert_seam(skip_retrieval=is_home_variant())
+            # Use capability registry instead of hard variant gate
+            try:
+                from ..capabilities import has_capability, CAP_SOURCEPREP
+                skip_retrieval = not has_capability(CAP_SOURCEPREP)
+            except Exception:
+                # Fallback to variant gate if capabilities module unavailable
+                skip_retrieval = is_home_variant()
+
+            app_seam.wire_halbert_seam(skip_retrieval=skip_retrieval)
     except Exception as e:
         logger.warning(f"Could not wire app seam (non-fatal): {e}")
 
