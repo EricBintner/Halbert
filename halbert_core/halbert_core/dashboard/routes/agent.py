@@ -140,13 +140,16 @@ def get_agent():
 
         # SEARCHING state retrieval: SourcePrep (RAGServiceAdapter is
         # deprecated on the chat path).
-        # S2: home variants run without SourcePrep — the HA agent answers
-        # from live HA state and conversational context. rag_service stays
-        # None; the SEARCHING state guards every rag call with
-        # `if self.rag:`, so it simply gathers from the remaining sources.
+        # Capability-based: SourcePrep retrieval only if the sourceprep
+        # capability is available. The variant preset sets defaults
+        # (home = no sourceprep), but being.yml can override.
         rag_service = None
-        if not _is_home_variant():
-            rag_service = SourcePrepAdapter()
+        try:
+            from ...capabilities import has_capability, CAP_SOURCEPREP
+            if has_capability(CAP_SOURCEPREP):
+                rag_service = SourcePrepAdapter()
+        except Exception:
+            pass
         # R9: ChromaDB-backed memory fenced off the agent path.
         # memory_service is deliberately None — recall is Halbert-owned (receipts/FTS5).
         memory_service = None
@@ -413,12 +416,10 @@ def _endpoint_is_local(provider: str, endpoint: str) -> bool:
 def _is_home_variant() -> bool:
     """True when the instance variant is home.
 
-    secure_model is a sysadmin-instance slot (see
-    ``integrations/cognition_wiring.is_home_variant``): home automation
-    variants never configure it, so the dedicated secure branch is skipped
-    for them and the local-guide / fail-closed chain decides instead (S1).
-    HA variants also run without SourcePrep retrieval, so the
-    SEARCHING-state rag_service stays None for them (S2).
+    Retained for callers that need the variant label directly (e.g. UI
+    display). SourcePrep retrieval and secure_model gating now use the
+    capability registry (CAP_SOURCEPREP, CAP_SECURE_MODEL) instead of
+    this hard variant gate.
     """
     try:
         from ...integrations.cognition_wiring import is_home_variant
@@ -500,12 +501,17 @@ def _resolve_turn_model(
     # ── 0.5. Secure gate ────────────────────────────────────────────────
     # The trust boundary beats pins and routing. Order: dedicated secure
     # slot, then the normally-resolved model if local, then a local guide,
-    # then fail closed. The dedicated slot is skipped for home automation
-    # variants: secure_model is a sysadmin-instance slot they never
-    # configure (an HA variant's LLM reaches the house through tool calls
-    # that abstract credentials away), so the gate below enforces the same
+    # then fail closed. The dedicated slot is only used when the
+    # secure_model capability is available (a local-only secure endpoint
+    # is configured). Otherwise the gate below enforces the same
     # local-or-fail-closed boundary on the remaining chain.
-    if secure and not _is_home_variant():
+    _has_secure_cap = False
+    try:
+        from ...capabilities import has_capability, CAP_SECURE_MODEL
+        _has_secure_cap = has_capability(CAP_SECURE_MODEL)
+    except Exception:
+        pass
+    if secure and _has_secure_cap:
         from ...model.client import get_secure_model
         sec_model, sec_endpoint, sec_provider = get_secure_model()
         if sec_model:

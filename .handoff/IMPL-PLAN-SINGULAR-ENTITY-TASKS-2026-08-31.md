@@ -130,7 +130,26 @@ Cross-device conversation continuity. Each node runs its own `ThreadManager` aga
 - New or extend: `halbert_core/halbert_core/dashboard/routes/conversations.py`
 - Reference: `halbert_core/halbert_core/agents/conversation_sqlite.py` (methods to expose)
 
-**Endpoints:** One per public method of `SqliteConversationStore`. All protected by peer bearer auth.
+**Endpoints:** Implemented per the **P3a wire contract** (P3a has landed — see
+`halbert_core/halbert_core/agents/peer_conversation_store.py` module docstring
+for the authoritative version):
+
+- `POST /api/conversations/invoke` with `{"method": <name>, "args": [...], "kwargs": {...}}`,
+  peer bearer auth. Server allowlists `method` against `PEER_CONVERSATION_METHODS`
+  (exported from `peer_conversation_store.py`), calls the same-named method on the
+  local `SqliteConversationStore`, and answers `200 {"value": <return value>}`
+  (including `null`/`false`/`[]`, which are ordinary answers, not errors).
+  A failed redaction answers `500 {"error": {"type": "RedactionFailed", "message": ...}}`.
+  No `mcp_response()` redaction — internal entity communication.
+- `GET /api/conversations/health` → `{"healthy": bool, "connected": bool}`.
+- `Conversation`-carrying methods (`get`/`create`/`get_or_create` return, `save`
+  accepts) pass `Conversation.to_dict()` at the wire.
+
+A single dispatch endpoint (not one route per method) is deliberate: the proxy's
+41 public methods share one envelope, so neither side can drift per-method.
+`tests/test_peer_conversation_store.py` contains an executable reference
+implementation (`FakeConversationServer`) backed by the real store — P3b's
+routes must answer the same envelope, and its tests can reuse that fixture.
 
 **Acceptance:** curl tests against a running HA server show all CRUD operations working.
 

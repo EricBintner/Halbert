@@ -304,7 +304,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(instance.router, tags=["instance"])  # Multi-instance info
     app.include_router(peers.router, tags=["peers"])  # Phase 9.1: Peer pairing
     app.include_router(fleet.router, tags=["fleet"])  # Phase 9.9: Fleet Cockpit
-    app.include_router(conversations.router, tags=["conversations"])  # P3b: Peer conversation API
+    app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])  # P3b: Peer conversation API
     
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"
@@ -426,13 +426,8 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         # (home = no ingestion), but being.yml capabilities: section can
         # override — a Mac Studio with HA configured can do both.
         from ..capabilities import get_capability_registry, CAP_INGESTION, CAP_DISCOVERY, CAP_SCHEDULER, CAP_CONFIG_WATCHER, CAP_SOURCEPREP, CAP_TERMINAL, CAP_HA_CONNECTION
-        from ..integrations.cognition_wiring import _get_variant
-        _variant = _get_variant()
         _caps = get_capability_registry()
         _caps.probe()
-        _is_home = _variant == "home"
-        if _is_home and not _caps.has(CAP_INGESTION):
-            logger.info("Running in home variant — heavy services skipped")
         if not _caps.has(CAP_INGESTION):
             logger.info("Ingestion service skipped (no ingestion capability)")
         else:

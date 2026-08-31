@@ -69,10 +69,16 @@ def auto_provision_apple_intelligence(hardware: HardwareCapabilities) -> bool:
     if not hardware.apple_intelligence_available:
         return False
 
-    if _is_home_variant():
+    _has_secure_cap = False
+    try:
+        from ..capabilities import has_capability, CAP_SECURE_MODEL
+        _has_secure_cap = has_capability(CAP_SECURE_MODEL)
+    except Exception:
+        pass
+    if not _has_secure_cap:
         logger.debug(
-            "Home automation variant — Apple Intelligence provisioning skipped "
-            "(secure_model is a sysadmin-instance slot)"
+            "Apple Intelligence provisioning skipped "
+            "(no secure_model capability)"
         )
         return False
 

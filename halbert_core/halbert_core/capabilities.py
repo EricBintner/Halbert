@@ -158,15 +158,18 @@ def _probe_sourceprep() -> bool:
 
 
 def _probe_local_llm() -> bool:
-    """Is a local LLM endpoint configured (Ollama/LMStudio URL)?"""
+    """Is a local LLM endpoint configured (Ollama/LMStudio URL)?
+
+    Checks the chat_model, specialist_model, and secure_model slots for
+    a URL pointing at localhost or a LAN address.
+    """
     try:
-        from .model.llm_config import get_model_config
-        cfg = get_model_config()
+        from .model.llm_config import resolve
         for slot in ("chat_model", "specialist_model", "secure_model"):
-            model = getattr(cfg, slot, None)
-            if model and hasattr(model, "url") and model.url:
+            model = resolve(slot)
+            if model and model.url:
                 url = str(model.url)
-                if "localhost" in url or "127.0.0.1" in url or ".lan:" in url:
+                if "localhost" in url or "127.0.0.1" in url or "0.0.0.0" in url:
                     return True
         return False
     except Exception:
@@ -174,14 +177,15 @@ def _probe_local_llm() -> bool:
 
 
 def _probe_secure_model() -> bool:
-    """Is a secure (local-only) model endpoint configured?"""
+    """Is a secure (local-only) model endpoint configured?
+
+    Checks the secure_model slot for an enabled, local URL.
+    """
     try:
-        from .model.llm_config import get_model_config
-        cfg = get_model_config()
-        if hasattr(cfg, "secure_model") and cfg.secure_model:
-            url = str(getattr(cfg.secure_model, "url", ""))
-            if "localhost" in url or "127.0.0.1" in url:
-                return True
+        from .model.llm_config import resolve, _is_local_url
+        model = resolve("secure_model")
+        if model and model.url and _is_local_url(model.url):
+            return True
         return False
     except Exception:
         return False

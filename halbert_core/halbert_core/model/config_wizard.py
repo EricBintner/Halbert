@@ -134,14 +134,21 @@ class ConfigWizard:
         # Apple Intelligence: provision secure_model (and chat_model on
         # 16-24GB Macs) before looking at Ollama. On 16-24GB Macs the
         # single-model rule means chat_model is already set and the Ollama
-        # model lookup below is skipped. Home automation variants skip the
-        # provisioning: secure_model is a sysadmin-instance slot they never
-        # configure, so the store is left untouched for them.
+        # model lookup below is skipped. Apple Intelligence provisioning
+        # for secure_model is gated by the secure_model capability —
+        # the variant preset sets defaults (home = no secure_model), but
+        # being.yml can override.
         if hardware.apple_intelligence_available:
-            if _is_home_variant():
+            _has_secure_cap = False
+            try:
+                from ..capabilities import has_capability, CAP_SECURE_MODEL
+                _has_secure_cap = has_capability(CAP_SECURE_MODEL)
+            except Exception:
+                pass
+            if not _has_secure_cap:
                 logger.info(
-                    "Home automation variant — Apple Intelligence provisioning "
-                    "skipped (secure_model is a sysadmin-instance slot)"
+                    "Apple Intelligence provisioning skipped "
+                    "(no secure_model capability)"
                 )
             else:
                 auto_provision_apple_intelligence(hardware)
@@ -251,17 +258,23 @@ class ConfigWizard:
             print(f"  - {note}")
         print()
 
-        # Apple Intelligence provisioning. Home automation variants skip
-        # it: secure_model is a sysadmin-instance slot they never configure
-        # (chat_model still gets Apple Intelligence on 16-24GB Macs — that
-        # is the Mac's own on-device use, written by _build_config).
+        # Apple Intelligence provisioning. Gated by the secure_model
+        # capability — the variant preset sets defaults (home = no
+        # secure_model), but being.yml can override. chat_model still
+        # gets Apple Intelligence on 16-24GB Macs — that is the Mac's
+        # own on-device use, written by _build_config).
         if hardware.apple_intelligence_available:
-            home_variant = _is_home_variant()
-            if not home_variant:
+            _has_secure_cap = False
+            try:
+                from ..capabilities import has_capability, CAP_SECURE_MODEL
+                _has_secure_cap = has_capability(CAP_SECURE_MODEL)
+            except Exception:
+                pass
+            if _has_secure_cap:
                 auto_provision_apple_intelligence(hardware)
             print("Apple Intelligence (On-Device) detected:")
-            if home_variant:
-                print("  secure_model: left empty (home automation variant — sysadmin instances only)")
+            if not _has_secure_cap:
+                print("  secure_model: left empty (no secure_model capability)")
             else:
                 print(f"  secure_model: Apple Intelligence (zero download, ANE-powered)")
             mem = hardware.unified_memory_gb or 0
@@ -476,7 +489,13 @@ class ConfigWizard:
         ai_model = llm_config.APPLE_FOUNDATION_MODEL if ai_available else ""
         mem = hardware.unified_memory_gb or 0
         ai_takes_chat = ai_available and mem and mem <= 24
-        secure_allowed = not _is_home_variant()
+        _has_secure_cap = False
+        try:
+            from ..capabilities import has_capability, CAP_SECURE_MODEL
+            _has_secure_cap = has_capability(CAP_SECURE_MODEL)
+        except Exception:
+            pass
+        secure_allowed = _has_secure_cap
         secure_model = ai_model if secure_allowed else ""
         secure_ep_id = ai_ep_id if secure_allowed else ""
 

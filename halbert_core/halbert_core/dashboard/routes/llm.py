@@ -205,18 +205,18 @@ def get_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
         #
         # The hardware detection (system_profiler + sysctl + bridge probe)
         # is expensive (~1s), so it is skipped when the apple-foundation
-        # endpoint is already registered — the common case after first boot —
-        # and for home variants, which never provision
-        # secure_model.
+        # endpoint is already registered — the common case after first boot.
+        # Gated by the secure_model capability — the variant preset sets
+        # defaults (home = no secure_model), but being.yml can override.
         try:
-            from ...integrations.cognition_wiring import is_home_variant
+            from ...capabilities import has_capability, CAP_SECURE_MODEL
             from ...model.auto_provision import auto_provision_apple_intelligence
             from ...model import llm_config as _cfg
             already_provisioned = any(
                 ep.get("provider") == _cfg.APPLE_FOUNDATION_PROVIDER
                 for ep in _cfg.load_global(use_cache=False).get("saved_endpoints", [])
             )
-            if not already_provisioned and not is_home_variant():
+            if not already_provisioned and has_capability(CAP_SECURE_MODEL):
                 from ...model.hardware_detector import HardwareDetector
                 hw = HardwareDetector().detect()
                 auto_provision_apple_intelligence(hw)

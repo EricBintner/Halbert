@@ -310,3 +310,82 @@ class TestBackwardCompatibility:
         assert reg.has(CAP_DISCOVERY) is False
         # HA was gated by `_is_home` (only home started it)
         assert reg.has(CAP_HA_CONNECTION) is True
+
+
+# ---------------------------------------------------------------------------
+# Probe implementation — verify the real probe functions use correct APIs
+# ---------------------------------------------------------------------------
+
+class TestProbeImplementations:
+    """Verify the probes call the real APIs, not the non-existent get_model_config."""
+
+    def test_probe_local_llm_uses_llm_config_resolve(self):
+        """_probe_local_llm should use llm_config.resolve(), not get_model_config."""
+        from halbert_core.capabilities import _probe_local_llm
+        # Should not raise ImportError — the function must use the real API
+        result = _probe_local_llm()
+        assert isinstance(result, bool)
+
+    def test_probe_secure_model_uses_llm_config_resolve(self):
+        """_probe_secure_model should use llm_config.resolve(), not get_model_config."""
+        from halbert_core.capabilities import _probe_secure_model
+        result = _probe_secure_model()
+        assert isinstance(result, bool)
+
+    def test_probe_local_llm_returns_true_when_local_model_configured(self):
+        """With a local model configured, _probe_local_llm should detect it."""
+        from halbert_core.capabilities import _probe_local_llm
+        from halbert_core.model.llm_config import ResolvedModel
+
+        mock_model = ResolvedModel(
+            model="test", url="http://localhost:11434", provider="ollama", api_key=""
+        )
+        with patch("halbert_core.model.llm_config.resolve", return_value=mock_model):
+            assert _probe_local_llm() is True
+
+    def test_probe_local_llm_returns_false_for_remote_only(self):
+        """With only remote models, _probe_local_llm should return False."""
+        from halbert_core.capabilities import _probe_local_llm
+        from halbert_core.model.llm_config import ResolvedModel
+
+        mock_model = ResolvedModel(
+            model="test", url="https://api.openai.com", provider="openai", api_key=""
+        )
+        with patch("halbert_core.model.llm_config.resolve", return_value=mock_model):
+            assert _probe_local_llm() is False
+
+    def test_probe_local_llm_returns_false_when_no_model(self):
+        """With no model configured, _probe_local_llm should return False."""
+        from halbert_core.capabilities import _probe_local_llm
+        with patch("halbert_core.model.llm_config.resolve", return_value=None):
+            assert _probe_local_llm() is False
+
+    def test_probe_secure_model_returns_true_when_local_secure_configured(self):
+        """With a local secure model, _probe_secure_model should detect it."""
+        from halbert_core.capabilities import _probe_secure_model
+        from halbert_core.model.llm_config import ResolvedModel
+
+        mock_model = ResolvedModel(
+            model="secure", url="http://localhost:11434", provider="ollama", api_key=""
+        )
+        with patch("halbert_core.model.llm_config.resolve", return_value=mock_model):
+            with patch("halbert_core.model.llm_config._is_local_url", return_value=True):
+                assert _probe_secure_model() is True
+
+    def test_probe_secure_model_returns_false_for_remote_url(self):
+        """A secure model pointing at a remote URL should not count."""
+        from halbert_core.capabilities import _probe_secure_model
+        from halbert_core.model.llm_config import ResolvedModel
+
+        mock_model = ResolvedModel(
+            model="secure", url="https://api.openai.com", provider="openai", api_key=""
+        )
+        with patch("halbert_core.model.llm_config.resolve", return_value=mock_model):
+            with patch("halbert_core.model.llm_config._is_local_url", return_value=False):
+                assert _probe_secure_model() is False
+
+    def test_probe_secure_model_returns_false_when_not_configured(self):
+        """No secure_model slot configured → False."""
+        from halbert_core.capabilities import _probe_secure_model
+        with patch("halbert_core.model.llm_config.resolve", return_value=None):
+            assert _probe_secure_model() is False
