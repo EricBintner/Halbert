@@ -1497,7 +1497,11 @@ class AgentStateMachine:
                 messages[0]["content"] += "\n\n" + _defang_system_row(content)
                 continue
             messages.append({"role": role, "content": content})
-        query = self.ctx.user_query
+        # Phase 2: use the defanged query if modality wiring set one
+        # (strips <speech>/<text>/<modality_context> control tags from
+        # untrusted user input per spec 5.11). Falls back to the raw
+        # query when the engine is not installed or defanging was skipped.
+        query = getattr(self, "_defanged_query", None) or self.ctx.user_query
         messages.append({
             "role": "user",
             "content": f"{tail}\n\n{query}" if tail else query,
@@ -2677,6 +2681,10 @@ class AgentStateMachine:
         """
         logger.info(f"RESPONDING: confidence={self.ctx.confidence:.2f}")
 
+        # Reset per-turn modality state so a previous turn's defanged
+        # query can't leak into this one.
+        self._defanged_query = None
+
         # Phase 2 modality wiring: resolve the turn's delivery modality
         # (TEXT/VOICE) from the channel capability + cognitive state, and
         # defang modality control tags from the user input (spec 5.11).
@@ -2888,6 +2896,7 @@ class AgentStateMachine:
         try:
             if modality_ctx is not None:
                 from ..integrations.modality_wiring import (
+                    apply_pronunciation,
                     demux_response,
                     get_display_text,
                     get_speech_text,
@@ -2905,12 +2914,15 @@ class AgentStateMachine:
                         getattr(modality_ctx, "recommended_modality", None),
                         "value", "text",
                     )
+                    # Apply pronunciation substitutions to the speech text
+                    # so TTS pronounces domain terms correctly (spec 5.14).
+                    speech_text = apply_pronunciation(get_speech_text(payload))
                     yield StreamEvent(
                         type="modality_resolved",
+                        session_id=self.ctx.session_id,
                         data={
-                            "session_id": self.ctx.session_id,
                             "modality": modality_value,
-                            "speech_text": get_speech_text(payload),
+                            "speech_text": speech_text,
                             "display_text": get_display_text(payload),
                         },
                     )
@@ -2923,9 +2935,9 @@ class AgentStateMachine:
                                 continue
                             yield StreamEvent(
                                 type="speech_segment",
+                                session_id=self.ctx.session_id,
                                 data={
-                                    "session_id": self.ctx.session_id,
-                                    "text": seg.text,
+                                    "text": apply_pronunciation(seg.text),
                                     "role": getattr(
                                         getattr(seg, "role", None),
                                         "value", "persona",

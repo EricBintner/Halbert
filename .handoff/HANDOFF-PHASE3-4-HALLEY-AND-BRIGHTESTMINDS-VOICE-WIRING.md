@@ -4,6 +4,13 @@
 **Status:** Ready for consumer-side implementation
 **Originating Work:** Halbert Phase 2 (commit `0a2c3dfd` on `feat/modality-voice-phase2`) + Haloysius Phase 1 engine (branch `worktree-modality-voice-phase1`)
 
+> **Per-app handoffs split from this document:**
+> - **Halley (Phase 3):** `PHASE3-HALLEY-VOICE-WIRING-HANDOFF.md` — detailed wiring tasks, code sketches, verification, risks
+> - **BrightestMinds (Phase 4):** `PHASE4-BRIGHTESTMINDS-VOICE-WIRING-HANDOFF.md` — detailed wiring tasks, code sketches, verification, risks
+>
+> The per-app files are the authoritative handoffs for each consumer team. This
+> combined document remains as the cross-consumer overview and verification matrix.
+
 ---
 
 ## 1. What's Done
@@ -13,8 +20,8 @@
 - **Spec:** `docs/MODALITY-VOICE-SPEC.md` (1600 lines)
 - **Modules built:** `modality/types.py`, `modality/resolver.py`, `modality/prosody.py`, `modality/demuxer.py`, `modality/pronunciation.py`, `modality/prompt_builder.py`
 - **Seam extensions:** `VoiceBackend`, `ChannelCapability`, `VoiceAuthGate`, `SpeakerIdentity`, `EarconBackend` protocols in `seam.py`
-- **Blocks resolved:** B1 (lifecycle), B2 (life-safety bypass), B4, B5, B6, B7 (cross-channel secret leak)
-- **Tests:** Full unit + subtractive contract suite in `src/haloysius/modality/tests/`
+- **Blocks resolved:** B1 (asymmetric channel markers), B2 (life-safety bypass advisory-only), B3 (import-scan as canonical §8 check), B4 (voice-id precedence), B5 (barge-in consumer-defined), B6 (staged_actions schema), B7 (cross-channel secret leak)
+- **Tests:** 635 engine tests + 62,208 life-safety probe combinations in `src/haloysius/modality/tests/`
 
 ### Phase 2: Halbert Consumer Wiring (complete)
 - **Branch:** `feat/modality-voice-phase2` at `/Users/ericbintner/.config/superpowers/worktrees/Halbert/modality-voice-phase2/`
