@@ -31,7 +31,7 @@ logger = get_logger("halbert")
 
 class HardwareProfile(str, Enum):
     """Hardware profile categories."""
-    SBC_LOW_POWER = "sbc_low_power"       # <=4GB RAM (Pi 4 2GB, legacy Celeron)
+    SBC_LOW_POWER = "sbc_low_power"       # <4GB RAM (Pi 4 2GB, legacy Celeron)
     ENTRY_8GB = "entry_8gb"               # 4-8GB RAM (N100, Pi 5 4GB, older laptops)
     LAPTOP_16GB = "laptop_16gb"
     WORKSTATION_32GB = "workstation_32gb"

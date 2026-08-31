@@ -26,7 +26,7 @@ This module adds:
 
 H7 — Hardware-profile-aware fallback
 -------------------------------------
-On ``SBC_LOW_POWER`` (≤4GB RAM, e.g., Pi 4 2GB), a local 3B model will
+On ``SBC_LOW_POWER`` (<4GB RAM, e.g., Pi 4 2GB), a local 3B model will
 OOM.  The fallback chain must NOT attempt to load a micro-model on these
 devices.  Instead, it falls back to template thoughts
 (``HALBERT_LLM_THOUGHTS=0``) and defers the request.
@@ -398,7 +398,7 @@ class ComputeRouter:
         """Check if the local hardware profile can run a useful local model.
 
         Per finding H7 and the low-power hardware handoff §7.1:
-        - SBC_LOW_POWER (≤4GB): False — OOM risk, use template thoughts
+        - SBC_LOW_POWER (<4GB): False — OOM risk, use template thoughts
         - ENTRY_8GB (4-8GB): True — 3B Q4 model at 10-15 tok/s
         - LAPTOP_16GB+: True — 7B-8B model
         - UNKNOWN: False — conservative, don't risk OOM
