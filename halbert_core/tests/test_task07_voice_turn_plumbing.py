@@ -77,6 +77,11 @@ class TestWyomingTurnPlumbing:
         assert first.startswith("wyoming-")
         assert second.startswith("wyoming-")
 
+    async def test_thread_manager_is_wired_into_the_turn(self, wyoming, fake_agent):
+        """Voice turns persist to the same thread store as chat turns."""
+        await wyoming._process_agent_turn(fake_agent, "hello", "")
+        assert fake_agent.calls[0].get("thread_manager") is not None
+
 
 class TestProcessSpeakerRolePlumbing:
     async def test_process_forwards_speaker_role_to_context(self, monkeypatch):

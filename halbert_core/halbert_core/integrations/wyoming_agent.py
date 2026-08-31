@@ -151,6 +151,16 @@ class HalbertWyomingAgent:
 
         response_chunks: list[str] = []
 
+        # Voice turns persist to the same thread store as chat turns (doc 14
+        # Gap 3): with the ThreadManager wired, a conversation_id maps to the
+        # same thread dashboard turns use, and a voice turn arriving with no
+        # conversation yet opens one — continuity survives across modalities.
+        try:
+            from ..agents.threads import get_thread_manager
+            thread_manager = get_thread_manager()
+        except Exception:
+            thread_manager = None
+
         try:
             # asyncio.timeout() is 3.11+; the project floor is 3.10, so the
             # turn is bounded with wait_for instead.
@@ -161,6 +171,7 @@ class HalbertWyomingAgent:
                     # TASK-07: group voice turns by HA conversation, the same
                     # way dashboard turns group by chat thread.
                     thread_id=conversation_id or None,
+                    thread_manager=thread_manager,
                     # TASK-07: the satellite protocol carries no verified
                     # speaker — a voice turn must never inherit the
                     # dashboard-chat "admin" default, or the RoleGate
