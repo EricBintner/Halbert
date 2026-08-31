@@ -87,6 +87,7 @@ Fallback chain (revised for hardware awareness + 4-tier turns)
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -207,37 +208,133 @@ class ComputeRouter:
         """Route an inference request through the fallback chain.
 
         This is the main entry point.  Called by the satellite's agent
-        loop when it needs LLM inference.
+        loop when it needs LLM inference.  It returns the *placement
+        decision* — a :class:`FallbackResult` saying where the request
+        goes — the generation itself is executed by the caller through
+        ``PeerProvider`` / ``TierRouter``.
 
-        Per §11.3, cognitive_monologue turns are NEVER sent to the peer
-        (they run strictly local with template thoughts).  All other turn
-        types attempt the peer first, with a 1.5s queue timeout for
-        interactive_user turns (§11.4).
+        Chain (per §11.3 and finding H7):
+        1. cognitive_monologue is NEVER offloaded.  It goes straight to
+           the local model when the hardware profile supports one, else
+           to template thoughts — never deferred, never to the peer.
+        2. All other turn types probe the peer (when one is configured)
+           and offload when it is online.
+        3. Peer offline (or none configured) + hardware supports a local
+           model (ENTRY_8GB and above): fall back to the local model.
+        4. Peer offline + SBC_LOW_POWER / UNKNOWN: no local model is
+           EVER attempted (OOM risk).  Template thoughts serve the turn,
+           and everything except cognitive_monologue is deferred to the
+           replay queue:
+           - interactive_user: template as interim, deferred
+           - high_value_event: heuristic rules, deferred
+           - sleep_consolidation: deferred only
 
-        TODO(federation-9.6): Implement the full fallback chain:
-        1. If turn_type == COGNITIVE_MONOLOGUE: skip peer, go to step 3
-        2. Probe peer health (if stale, respecting 3-failure threshold)
-           a. If peer online: call PeerProvider with appropriate priority
-              - interactive_user: P2 with 1.5s queue timeout (§11.4)
-              - high_value_event: P3
-              - sleep_consolidation: P3 batch
-           b. Return FallbackResult(source="peer")
-        3. If peer offline and hardware supports local model:
-           a. Call local model → return FallbackResult(source="local_model")
-        4. If peer offline and hardware does NOT support local model (SBC_LOW_POWER):
-           a. cognitive_monologue: return FallbackResult(source="template")
-           b. interactive_user: return FallbackResult(source="template", deferred=True)
-           c. high_value_event: return FallbackResult(source="heuristic", deferred=True)
-           d. sleep_consolidation: return FallbackResult(source="deferred", deferred=True)
+        Note: a ``source="peer"`` decision cannot yet produce tokens —
+        ``PeerProvider``'s HTTP methods are still
+        TODO(federation-9.3).  The decision layer is complete; the
+        transport lands with Phase 9.3.
         """
-        raise NotImplementedError("ComputeRouter.route() — TODO(federation-9.6)")
+        # 1. Cognitive monologue is strictly local (§11.3).
+        if not self._should_offload(turn_type):
+            if self._hardware_supports_local_model():
+                return FallbackResult(
+                    source="local_model",
+                    model_id=model,
+                    reason="cognitive_monologue runs strictly local (never offloaded)",
+                )
+            return self._template_fallback(messages, model, turn_type, tools)
+
+        # 2. Peer first, when one is configured.
+        if self.peer_endpoint:
+            peer_online = await self._probe_peer_health()
+            if peer_online:
+                return FallbackResult(
+                    source="peer",
+                    model_id=model,
+                    peer_node_id=self._peer_node_id(),
+                    reason="peer online — offloading to compute peer",
+                )
+
+        # 3. Peer offline (or none configured): local model if the
+        #    hardware profile supports one (ENTRY_8GB and above).
+        if self._hardware_supports_local_model():
+            return FallbackResult(
+                source="local_model",
+                model_id=model,
+                fallback_used=True,
+                fallback_from="peer",
+                reason="peer offline — falling back to the local model",
+            )
+
+        # 4. SBC_LOW_POWER / UNKNOWN: no local model attempt (H7).
+        #    Template thoughts now, deferral for replayable turn types.
+        return self._template_fallback(messages, model, turn_type, tools)
+
+    def _template_fallback(
+        self,
+        messages: list,
+        model: str,
+        turn_type: TurnType,
+        tools: Optional[list],
+    ) -> FallbackResult:
+        """Serve a turn from template thoughts on hardware with no local model.
+
+        Per §11.3, cognitive_monologue is served a template and is NEVER
+        deferred (a wake-up flood of 200+ queued monologue turns would
+        exhaust the Desktop).  Every other turn type is queued for
+        replay when the peer returns: interactive_user gets the template
+        as an interim, high_value_event is answered by heuristic rules,
+        and sleep_consolidation needs no interim at all.
+        """
+        source_by_turn = {
+            TurnType.COGNITIVE_MONOLOGUE: "template",
+            TurnType.INTERACTIVE_USER: "template",
+            TurnType.HIGH_VALUE_EVENT: "heuristic",
+            TurnType.SLEEP_CONSOLIDATION: "deferred",
+        }
+        source = source_by_turn[turn_type]
+        deferred = self._should_defer(turn_type)
+        if deferred:
+            self._deferred_queue.append({
+                "model": model,
+                "turn_type": turn_type.value,
+                "messages": messages,
+                "tools": tools,
+                "queued_at": time.time(),
+            })
+        return FallbackResult(
+            source=source,
+            fallback_used=True,
+            fallback_from="peer",
+            deferred=deferred,
+            reason=(
+                "peer offline and no local model on this hardware profile "
+                "(H7) — template thoughts; request deferred for replay"
+                if deferred else
+                "peer offline and no local model on this hardware profile "
+                "(H7) — template thoughts (cognitive_monologue is never deferred)"
+            ),
+        )
+
+    def _peer_node_id(self) -> Optional[str]:
+        """Best-effort node label for the configured peer endpoint, or None.
+
+        The router is not told the peer's node_id (that lives in
+        peers.json / mDNS discovery); the endpoint host stands in for
+        logging until Phase 9 discovery wires the real identity.
+        """
+        if not self.peer_endpoint:
+            return None
+        endpoint = self.peer_endpoint.replace("peer://", "http://", 1)
+        return endpoint.split("//", 1)[-1].split("/", 1)[0] or None
 
     async def _probe_peer_health(self) -> bool:
         """Sub-second health probe to the Desktop peer.
 
-        TODO(federation-9.6): GET <peer_endpoint>/api/compute/v1/health
-        with the bearer token.  Timeout after 1.5s.  Update _peer_online
-        and _last_probe.
+        GET ``<peer_endpoint>/api/compute/v1/health`` with the bearer
+        token, 1.5s timeout, run off the event loop.  Results are cached
+        for ``health_probe_interval`` seconds so a burst of turns probes
+        the peer once, not once per turn.
 
         §11.6 Network Flapping Mitigation:
         A single probe failure does NOT transition to OFFLINE.  The
@@ -248,8 +345,54 @@ class ComputeRouter:
         This prevents rapid flapping between local and remote models
         during minor network packet loss, DHCP renewals, or Wi-Fi
         roaming latency.
+
+        The peer-side health route is not scaffolded in
+        ``compute_endpoint.py`` yet (TODO(federation-9.x)), so probes
+        against a current peer fail — which is honest: the router stays
+        on its fallback chain until Phase 9 ships the route.
         """
-        raise NotImplementedError("ComputeRouter._probe_peer_health() — TODO(federation-9.6)")
+        if not self.peer_endpoint:
+            return False
+
+        now = time.monotonic()
+        if self._last_probe and (now - self._last_probe) < self.health_probe_interval:
+            return self._peer_online
+
+        if self._probe_lock is None:
+            self._probe_lock = asyncio.Lock()
+        async with self._probe_lock:
+            # Re-check under the lock: a concurrent probe may have just
+            # refreshed the cache.
+            now = time.monotonic()
+            if self._last_probe and (now - self._last_probe) < self.health_probe_interval:
+                return self._peer_online
+
+            loop = asyncio.get_running_loop()
+            healthy = await loop.run_in_executor(None, self._http_health_probe)
+            self._last_probe = now
+
+            if healthy:
+                self._peer_online = True
+                self._consecutive_failures = 0
+            else:
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self._failure_threshold:
+                    self._peer_online = False
+
+            return self._peer_online
+
+    def _http_health_probe(self) -> bool:
+        """Blocking single GET of the peer's health route (executor-safe)."""
+        import requests
+
+        endpoint = self.peer_endpoint.replace("peer://", "http://", 1)
+        url = endpoint.rstrip("/") + "/api/compute/v1/health"
+        headers = {"Authorization": f"Bearer {self.peer_token}"} if self.peer_token else {}
+        try:
+            resp = requests.get(url, headers=headers, timeout=1.5)
+            return resp.status_code == 200
+        except Exception:
+            return False
 
     def _hardware_supports_local_model(self) -> bool:
         """Check if the local hardware profile can run a useful local model.

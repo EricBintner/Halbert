@@ -9,14 +9,16 @@ It never recommends or names specific models.
 """
 
 from __future__ import annotations
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
+import re
 import yaml
 
 from . import llm_config
 from .auto_provision import auto_provision_apple_intelligence
 from .hardware_detector import (
-    HardwareDetector, HardwareCapabilities, ModelBudget, pick_installed_model
+    HardwareDetector, HardwareCapabilities, HardwareProfile, ModelBudget,
+    pick_installed_model,
 )
 from ..utils.ollama import list_models_raw, DEFAULT_ENDPOINT
 from ..obs.logging import get_logger
@@ -92,23 +94,38 @@ class ConfigWizard:
         chosen = pick_installed_model(list_models_raw(endpoint), budget)
         return chosen["name"] if chosen else None
     
-    def run_auto(self, model: Optional[str] = None, endpoint: str = DEFAULT_ENDPOINT) -> Dict[str, Any]:
+    def run_auto(
+        self,
+        model: Optional[str] = None,
+        endpoint: str = DEFAULT_ENDPOINT,
+        peer: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Run automatic configuration (non-interactive).
-        
+
         Detects hardware and writes a configuration around ``model``. When no
         model is given, the largest already-installed model that fits the
         budget is used; if none fits, the guide model is left unset and must
         be chosen in Settings -> AI Models.
-        
+
+        Offload-only devices (SBC_LOW_POWER, <4GB RAM) run no local model at
+        all: the installed-model lookup is skipped and the configuration
+        carries the compute peer ``peer`` instead — a compute peer is
+        required for LLM functionality on these devices.
+
         Args:
             model: Model name as served by the endpoint (optional)
             endpoint: Ollama endpoint used to look up installed models
-        
+            peer: Compute peer address (hostname:port, or a peer:// URL)
+                for offload-only devices
+
         Returns:
             Configuration dictionary
         """
         logger.info("Running automatic configuration")
+
+        # Normalise the --peer value to the peer:// URL form up front
+        peer = self._resolve_peer(peer)
 
         # Detect hardware
         hardware = self.detect_hardware()
@@ -134,6 +151,22 @@ class ConfigWizard:
         budget = self.get_budget(hardware)
         logger.info(f"Model budget: {budget.summary}")
 
+        # Offload-only devices (SBC_LOW_POWER, <4GB RAM) run no local
+        # model: the budget is zeroed, nothing installed can fit, and
+        # the configuration carries a compute peer instead. Template
+        # thoughts cover the peer-asleep gap.
+        if hardware.profile == HardwareProfile.SBC_LOW_POWER:
+            if peer:
+                logger.info(f"Offload-only device — compute peer: {peer}")
+            else:
+                logger.warning(
+                    "Offload-only device (SBC_LOW_POWER) with no compute peer — "
+                    "pass --peer <hostname:port> so LLM work can be offloaded"
+                )
+            return self._build_config(
+                None, "ollama", budget, hardware, endpoint=endpoint, peer_url=peer,
+            )
+
         # On 16-24GB Macs with Apple Intelligence, chat_model is already
         # assigned — skip the Ollama model lookup.
         chat_already_set = (
@@ -152,19 +185,35 @@ class ConfigWizard:
                 logger.warning("No model configured - choose one in Settings -> AI Models")
 
         # Build configuration
-        config = self._build_config(model, "ollama", budget, hardware, endpoint=endpoint)
+        config = self._build_config(
+            model, "ollama", budget, hardware, endpoint=endpoint, peer_url=peer,
+        )
 
         return config
     
-    def run_interactive(self, endpoint: str = DEFAULT_ENDPOINT) -> Dict[str, Any]:
+    def run_interactive(
+        self,
+        endpoint: str = DEFAULT_ENDPOINT,
+        peer: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Run interactive configuration wizard.
-        
-        Guides user through setup with prompts.
-        
+
+        Guides user through setup with prompts. Offload-only devices
+        (SBC_LOW_POWER, <4GB RAM) are never offered local models — the
+        wizard prompts for a compute peer address instead.
+
+        Args:
+            endpoint: Ollama endpoint used to look up installed models
+            peer: Default compute peer address (from --peer), pre-filled
+                in the prompt on offload-only devices
+
         Returns:
             Configuration dictionary
         """
+        # Normalise the --peer default to the peer:// URL form up front
+        peer = self._resolve_peer(peer)
+
         print("=" * 70)
         print("Halbert MODEL CONFIGURATION WIZARD")
         print("=" * 70)
@@ -222,32 +271,47 @@ class ConfigWizard:
                 print(f"  chat_model: not set (configure cloud or local model in Settings)")
             print()
 
-        # Installed models on the endpoint (the user's own, not suggestions)
-        installed = list_models_raw(endpoint)
-        default_model = None
-        if installed:
-            print(f"Models installed on {endpoint}:")
-            for entry in installed:
-                size_gb = (entry.get("size") or 0) / (1024 ** 3)
-                fits = "fits" if budget.fits_bytes(entry.get("size") or 0) else "too large"
-                print(f"  - {entry.get('name')}  ({size_gb:.1f} GB, {fits})")
-            chosen = pick_installed_model(installed, budget)
-            default_model = chosen["name"] if chosen else None
+        # Offload-only devices (SBC_LOW_POWER, <4GB RAM) run no local
+        # model at all: skip the installed-model listing and the
+        # guide-model prompt, and point the node at a compute peer.
+        peer_url: Optional[str] = None
+        model: Optional[str] = None
+        if hardware.profile == HardwareProfile.SBC_LOW_POWER:
+            print("Local LLM: not supported on this device — offload only.")
+            print("  A compute peer (a Halbert node with a GPU or Apple Silicon) is")
+            print("  required for LLM functionality; template thoughts cover the gap")
+            print("  while the peer is asleep.")
+            print()
+            peer_url = self._prompt_compute_peer(peer)
         else:
-            print("No models found on the endpoint. Pull one that fits the budget with")
-            print("  ollama pull <model>")
-        print()
-        
-        prompt = "Guide model name"
-        if default_model:
-            prompt += f" [{default_model}]"
-        prompt += " (leave blank to choose later in Settings): "
-        model = input(prompt).strip() or default_model
-        
+            # Installed models on the endpoint (the user's own, not suggestions)
+            installed = list_models_raw(endpoint)
+            default_model = None
+            if installed:
+                print(f"Models installed on {endpoint}:")
+                for entry in installed:
+                    size_gb = (entry.get("size") or 0) / (1024 ** 3)
+                    fits = "fits" if budget.fits_bytes(entry.get("size") or 0) else "too large"
+                    print(f"  - {entry.get('name')}  ({size_gb:.1f} GB, {fits})")
+                chosen = pick_installed_model(installed, budget)
+                default_model = chosen["name"] if chosen else None
+            else:
+                print("No models found on the endpoint. Pull one that fits the budget with")
+                print("  ollama pull <model>")
+            print()
+
+            prompt = "Guide model name"
+            if default_model:
+                prompt += f" [{default_model}]"
+            prompt += " (leave blank to choose later in Settings): "
+            model = input(prompt).strip() or default_model
+
         print()
         print("Configuration:")
         print(f"  Guide model: {model or 'not set'}")
-        print(f"  Provider: ollama")
+        if peer_url:
+            print(f"  Compute peer: {peer_url}")
+        print(f"  Provider: {'peer (offload)' if peer_url else 'ollama'}")
         print()
         
         # Ask for confirmation
@@ -259,14 +323,112 @@ class ConfigWizard:
             return {}
         
         # Build configuration
-        config = self._build_config(model, "ollama", budget, hardware, endpoint=endpoint)
-        
+        config = self._build_config(
+            model, "ollama", budget, hardware, endpoint=endpoint, peer_url=peer_url,
+        )
+
         print()
         print("✅ Configuration created!")
-        if not model:
+        if peer_url:
+            print("   Compute peer saved — this device offloads all LLM work to it")
+        elif not model:
             print("   No model configured — choose one in Settings → AI Models")
-        
+
         return config
+
+    def _resolve_peer(self, raw: Optional[str]) -> Optional[str]:
+        """Normalise a --peer value to the peer:// URL form.
+
+        A malformed value is logged and dropped (None), never a hard
+        error: the wizard still writes a valid config without a peer.
+        """
+        if not raw:
+            return None
+        url, error = self._normalise_peer_url(raw)
+        if error:
+            logger.warning(f"Ignoring compute peer {raw!r}: {error}")
+            return None
+        return url
+
+    def _prompt_compute_peer(self, default: Optional[str] = None) -> Optional[str]:
+        """Prompt for a compute peer address, with an optional reachability test.
+
+        Accepts hostname:port (LAN IP, mDNS name, or Tailscale name), with
+        or without an http(s):// or peer:// scheme; a missing port defaults
+        to the fleet's usual 8000. Returns the normalized peer:// URL, or
+        None when the user leaves it blank.
+        """
+        print("Compute peer (another Halbert node that serves LLM requests):")
+        prompt = "Compute peer address"
+        if default:
+            prompt += f" [{default}]"
+        prompt += " (hostname:port, port defaults to 8000 — leave blank to configure later): "
+
+        url: Optional[str] = None
+        while url is None:
+            raw = input(prompt).strip() or (default or "")
+            if not raw:
+                print("No compute peer configured — rerun the wizard with --peer <hostname:port>")
+                print()
+                return None
+            url, error = self._normalise_peer_url(raw)
+            if error:
+                print(f"  {error}")
+
+        print()
+        choice = input(f"Test {url} now? [Y/n]: ").strip().lower()
+        if choice not in ('n', 'no'):
+            ok, detail = self._test_compute_peer(url)
+            if ok:
+                print(f"  Peer reachable ({detail}).")
+            else:
+                print(f"  Could not reach the peer: {detail}")
+                print("  The address is still saved — check the peer and retest later.")
+        print()
+        return url
+
+    @staticmethod
+    def _normalise_peer_url(raw: str) -> Tuple[Optional[str], Optional[str]]:
+        """Normalise a user-entered peer address to the models.yml peer:// form.
+
+        Returns:
+            (peer_url, None) on success, or (None, reason) when the address
+            cannot be parsed.
+        """
+        value = raw.strip().rstrip("/")
+        for prefix in ("peer://", "http://", "https://"):
+            if value.lower().startswith(prefix):
+                value = value[len(prefix):]
+                break
+        value = value.split("/", 1)[0]   # compute endpoints are host:port only
+        match = re.match(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)(?::(\d{1,5}))?$", value)
+        if not match:
+            return None, f"'{raw}' is not a hostname:port address"
+        host = match.group(1)
+        port = match.group(2) or "8000"
+        if not 1 <= int(port) <= 65535:
+            return None, f"port {port} in '{raw}' is out of range"
+        return f"peer://{host}:{port}", None
+
+    @staticmethod
+    def _test_compute_peer(url: str) -> Tuple[bool, str]:
+        """Best-effort reachability test of a compute peer's health route.
+
+        Returns:
+            (reachable, detail) — detail says why not on failure. The test
+            never raises: an unreachable peer is an ordinary outcome, the
+            address is saved either way.
+        """
+        import requests
+
+        http_url = url.replace("peer://", "http://", 1) + "/api/compute/v1/health"
+        try:
+            resp = requests.get(http_url, timeout=1.5)
+            if resp.status_code == 200:
+                return True, "health route answered"
+            return False, f"HTTP {resp.status_code}"
+        except Exception as e:
+            return False, str(e)
     
     def _build_config(
         self,
@@ -275,6 +437,7 @@ class ConfigWizard:
         budget: ModelBudget,
         hardware: HardwareCapabilities,
         endpoint: str = DEFAULT_ENDPOINT,
+        peer_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Build configuration dictionary using the llm_config schema.
@@ -285,6 +448,11 @@ class ConfigWizard:
             budget: Model size budget
             hardware: Hardware capabilities
             endpoint: Endpoint URL for the local Ollama
+            peer_url: Compute peer endpoint to save (peer://host:port),
+                as prompted on offload-only devices. The endpoint is
+                saved for the Compute Peer settings surface to assign;
+                on an offload-only device no local model exists, so the
+                slots stay unset here.
 
         Returns:
             Configuration dictionary
@@ -336,6 +504,17 @@ class ConfigWizard:
                 "name": "Apple Intelligence (On-Device)",
                 "provider": llm_config.APPLE_FOUNDATION_PROVIDER,
                 "url": llm_config.APPLE_FOUNDATION_URL,
+                "api_key": "",
+            })
+        if peer_url:
+            # Offload target for devices that run no local model. The
+            # peer:// scheme is the models.yml shape the peer provider
+            # resolves to http:// for the actual call.
+            endpoints.append({
+                "id": "ep_compute_peer",
+                "name": "Compute Peer",
+                "provider": "peer",
+                "url": peer_url,
                 "api_key": "",
             })
 
