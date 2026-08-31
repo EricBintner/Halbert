@@ -56,7 +56,8 @@ import {
   MachinedTagInput,
   type TelemetryCounts,
 } from '@/components/domain'
-import { ModelSettings } from '@/components/llm'
+import { ModelSettings, ComputePeerCard } from '@/components/llm'
+import { useInstanceVariant } from '@/hooks/useInstanceVariant'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { AudioSettings, SpeakerProfilesCard, VoiceEnrollmentModal } from '@/components/audio'
 import { LegalNoticesModal } from '@/components/legal/LegalNoticesModal'
@@ -1497,6 +1498,14 @@ export function Settings() {
     }, { replace: true })
   }, [setSearchParams])
 
+  // The AI tab is the one surface that changes shape by variant: a
+  // home/home-light node has no model picker — it is a pure client of the
+  // workstation's compute endpoint — so it gets the ComputePeerCard instead.
+  // An unknown variant keeps the full picker: a failed info route must not
+  // shrink the surface on the machine that needs it.
+  const variant = useInstanceVariant()
+  const isHomeVariant = variant === 'home' || variant === 'home-light'
+
   // Debug panel state (moved here from the Layout top bar)
   const { isDebugMode, setDebugMode, logs, clearLogs } = useDebug()
 
@@ -2236,11 +2245,10 @@ export function Settings() {
           </Card>
         </TabsContent>
 
-        {/* AI Models Tab - includes model config and knowledge sources */}
+        {/* AI Models Tab - the full picker on sysadmin, the compute-peer link
+            on home/home-light (which run no model of their own) */}
         <TabsContent value="ai" className="space-y-4">
-          <ModelSettings />
-
-
+          {isHomeVariant ? <ComputePeerCard /> : <ModelSettings />}
         </TabsContent>
 
         {/* Knowledge Tab - ChromaDB + Self-Knowledge + RAG */}

@@ -3,3 +3,4 @@
 export { ProbeButton } from './ProbeButton';
 export type { ProbeButtonProps, ProbeResult, ProbeButtonState } from './ProbeButton';
 export { ModelSettings, needsDisclosure } from './ModelSettings';
+export { ComputePeerCard } from './ComputePeerCard';
