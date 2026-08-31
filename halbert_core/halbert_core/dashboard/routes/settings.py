@@ -20,6 +20,7 @@ import logging
 from datetime import datetime, timezone
 
 from ...utils.platform import get_config_dir
+from ...config.security_constants import UNLOCK_PHRASE
 
 logger = logging.getLogger('halbert.dashboard')
 
@@ -31,8 +32,56 @@ _being_config_lock = asyncio.Lock()
 
 # Server-side enforcement of the Tier 2 escape-hatch phrase. The modal's
 # client-side check is UX friction; this is the boundary — without it a
-# bare curl to POST /settings/being could unlock all secrets.
-UNLOCK_PHRASE = "EXPOSE SECRETS"
+# bare curl to POST /settings/being could unlock all secrets. The phrase
+# itself lives in config/security_constants.py (shared with the MCP
+# path); it is never echoed back in an error response.
+
+def _normalized_key_set(keys) -> set:
+    """Normalize hatch/secret key names the way queries.py matches them."""
+    return {
+        str(k).strip().lower().replace("-", "").replace("_", "")
+        for k in (keys or [])
+    }
+
+
+def _increases_secret_exposure(existing: Dict[str, Any],
+                               merged: Dict[str, Any]) -> bool:
+    """True if a security update widens what may egress to cloud.
+
+    The phrase gates every exposure-increasing act, not just a fresh
+    unlock — hatch additions and expiry extensions expose the same
+    values an unlock does. Locking DOWN (relock, hatch removal, expiry
+    shortening) returns False: friction on the safe direction only
+    delays the relock.
+    """
+    # Unlock: local_only → cloud_ok_acknowledged.
+    if (merged.get("secret_tier") == "cloud_ok_acknowledged"
+            and existing.get("secret_tier") != "cloud_ok_acknowledged"):
+        return True
+
+    # Hatch additions: any cloud_ok_keys entry that was not present
+    # before the change. Removals are fine — only net additions widen.
+    if (_normalized_key_set(merged.get("cloud_ok_keys"))
+            - _normalized_key_set(existing.get("cloud_ok_keys"))):
+        return True
+
+    # TTL extension while unlocked: a later expiry, or None (permanent).
+    if (merged.get("secret_tier") == "cloud_ok_acknowledged"
+            and existing.get("secret_tier") == "cloud_ok_acknowledged"):
+        new_exp = merged.get("secret_tier_expiry")
+        old_exp = existing.get("secret_tier_expiry")
+        if new_exp != old_exp:
+            if new_exp is None:
+                return True   # permanent
+            if old_exp is None:
+                return False  # bounding a permanent unlock shortens it
+            try:
+                if datetime.fromisoformat(new_exp) > \
+                        datetime.fromisoformat(old_exp):
+                    return True
+            except (TypeError, ValueError):
+                return True   # unparseable → fail safe
+    return False
 
 router = APIRouter()
 
@@ -3022,78 +3071,83 @@ async def get_being_config() -> Dict[str, Any]:
 async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
     """Update being configuration. Validates and persists to being.yml."""
     try:
-        from ...config.being_config import load_being_config, save_being_config
+        # The being_config composite holds the cross-process advisory lock
+        # across the whole load-modify-save cycle (REV-01 F4), so a stale
+        # object can never revert a change another process persisted
+        # mid-cycle (e.g. a relock). Aliased — this route shares the name.
+        from ...config.being_config import (
+            update_being_config as update_being_config_locked,
+        )
         async with _being_config_lock:
-            cfg = load_being_config()
 
-            # Apply partial updates (only non-None fields)
-            if update.voice is not None:
-                cfg.voice = update.voice
-            if update.proactivity is not None:
-                cfg.proactivity = update.proactivity
-            if update.purpose is not None:
-                cfg.purpose = update.purpose
-            if update.quiet_hours is not None:
-                cfg.quiet_hours = update.quiet_hours
-            if update.morning_report is not None:
-                cfg.morning_report = update.morning_report
-            if update.category_overrides is not None:
-                cfg.category_overrides = update.category_overrides
-            # Personality
-            if update.personality_profile is not None:
-                cfg.personality_profile = update.personality_profile
-            if update.archetype_id is not None:
-                cfg.archetype_id = update.archetype_id if update.archetype_id else None
-            if update.tone_descriptors is not None:
-                cfg.tone_descriptors = update.tone_descriptors
-            if update.speech_patterns is not None:
-                cfg.speech_patterns = update.speech_patterns
-            if update.directives is not None:
-                cfg.directives = update.directives
-            if update.custom_personality_prompt is not None:
-                cfg.custom_personality_prompt = update.custom_personality_prompt
-            # Character (Phase 3)
-            if update.name is not None:
-                cfg.name = update.name
-            if update.voice_presentation is not None:
-                cfg.voice_presentation = update.voice_presentation
-            if update.model is not None:
-                cfg.model = update.model if update.model else None
-            if update.model_endpoint_id is not None:
-                cfg.model_endpoint_id = update.model_endpoint_id if update.model_endpoint_id else None
-            # Security (MCP trust boundary)
-            if update.security is not None:
-                from ...config.being_config import SecurityConfig
-                existing = cfg.security.to_dict() if cfg.security else {}
-                merged = {**existing, **update.security}
-                # The phrase rides inside the security dict (one POST for the
-                # modal); it is enforcement metadata, not config — pop it
-                # before from_dict would silently drop it as unknown.
-                phrase = merged.pop("phrase", None)
-                # Unlocking Tier 2 requires the confirmation phrase, verified
-                # here — the modal's client-side check is friction, not the
-                # boundary. Relock (local_only) never requires it.
-                transitioning_to_unlock = (
-                    merged.get("secret_tier") == "cloud_ok_acknowledged"
-                    and existing.get("secret_tier") != "cloud_ok_acknowledged"
-                )
-                if transitioning_to_unlock:
-                    normalized = " ".join(str(phrase or "").split()).upper()
-                    if normalized != UNLOCK_PHRASE:
-                        raise HTTPException(
-                            status_code=403,
-                            detail=f"Unlocking secrets requires the confirmation "
-                                   f"phrase: {UNLOCK_PHRASE}",
-                        )
-                # If the new secret_tier is local_only, clear TTL fields
-                if merged.get("secret_tier") == "local_only":
-                    merged["secret_tier_expiry"] = None
-                    merged["volatile_unlock"] = False
-                cfg.security = SecurityConfig.from_dict(merged)
-                cfg.security.validate()
+            def mutate(cfg) -> None:
+                # Apply partial updates (only non-None fields)
+                if update.voice is not None:
+                    cfg.voice = update.voice
+                if update.proactivity is not None:
+                    cfg.proactivity = update.proactivity
+                if update.purpose is not None:
+                    cfg.purpose = update.purpose
+                if update.quiet_hours is not None:
+                    cfg.quiet_hours = update.quiet_hours
+                if update.morning_report is not None:
+                    cfg.morning_report = update.morning_report
+                if update.category_overrides is not None:
+                    cfg.category_overrides = update.category_overrides
+                # Personality
+                if update.personality_profile is not None:
+                    cfg.personality_profile = update.personality_profile
+                if update.archetype_id is not None:
+                    cfg.archetype_id = update.archetype_id if update.archetype_id else None
+                if update.tone_descriptors is not None:
+                    cfg.tone_descriptors = update.tone_descriptors
+                if update.speech_patterns is not None:
+                    cfg.speech_patterns = update.speech_patterns
+                if update.directives is not None:
+                    cfg.directives = update.directives
+                if update.custom_personality_prompt is not None:
+                    cfg.custom_personality_prompt = update.custom_personality_prompt
+                # Character (Phase 3)
+                if update.name is not None:
+                    cfg.name = update.name
+                if update.voice_presentation is not None:
+                    cfg.voice_presentation = update.voice_presentation
+                if update.model is not None:
+                    cfg.model = update.model if update.model else None
+                if update.model_endpoint_id is not None:
+                    cfg.model_endpoint_id = update.model_endpoint_id if update.model_endpoint_id else None
+                # Security (MCP trust boundary)
+                if update.security is not None:
+                    from ...config.being_config import SecurityConfig
+                    existing = cfg.security.to_dict() if cfg.security else {}
+                    merged = {**existing, **update.security}
+                    # The phrase rides inside the security dict (one POST for the
+                    # modal); it is enforcement metadata, not config — pop it
+                    # before from_dict would silently drop it as unknown.
+                    phrase = merged.pop("phrase", None)
+                    # The confirmation phrase gates every change that INCREASES
+                    # secret exposure — unlock, hatch addition, expiry extension
+                    # — verified here; the modal's client-side check is friction,
+                    # not the boundary. Locking down never requires it. The
+                    # phrase itself is never echoed: a 403 that repeats the
+                    # challenge hands an agent driving the API the answer.
+                    # Raising here aborts the composite — nothing is persisted.
+                    if _increases_secret_exposure(existing, merged):
+                        normalized = " ".join(str(phrase or "").split()).upper()
+                        if normalized != UNLOCK_PHRASE:
+                            raise HTTPException(
+                                status_code=403,
+                                detail="This change increases secret exposure "
+                                       "and requires the confirmation phrase.",
+                            )
+                    # If the new secret_tier is local_only, clear TTL fields
+                    if merged.get("secret_tier") == "local_only":
+                        merged["secret_tier_expiry"] = None
+                        merged["volatile_unlock"] = False
+                    cfg.security = SecurityConfig.from_dict(merged)
+                    cfg.security.validate()
 
-            # Validate + save
-            save_being_config(cfg)
+            cfg = update_being_config_locked(mutate)
 
         # Hot-reload personality into the running agent
         try:

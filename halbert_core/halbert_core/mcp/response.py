@@ -40,6 +40,14 @@ Design
    pair rule handles the secret check and the generic dict-key rule skips
    the ``"key"`` and ``"value"`` entries.
 
+3. **Acknowledged egress exception.**  A dict carrying
+   ``_egress_ack: True`` — set only by ``config.queries.get_config_value``
+   after verifying tier + acknowledgment + TTL — keeps its ``"value"``
+   field raw. The exception is per-dict and per-field; the marker itself
+   is dropped. Without it, the per-key escape hatch would be inert for
+   vocabulary keys (rule 1 re-redacts what the tier legitimately let
+   through) while leaking silently for user-classified keys.
+
 After the structural rules, every remaining string is passed through
 ``redact_text()``, which catches credentials embedded in text:
 ``key=value`` shapes, PEM blocks, JWTs, URL-embedded credentials,
@@ -65,6 +73,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..ingestion.redaction import _is_secret_key, redact_text
+from ..config.security_constants import EGRESS_ACK_FIELD
 
 _SECRET_MARKER = "<secret>"
 
@@ -114,9 +123,19 @@ def _redact_dict(d: dict) -> dict:
 
     After both rules, every remaining string value is passed through
     ``redact_text()``.
+
+    Acknowledged egress exception: a dict carrying
+    ``_egress_ack: True`` (set only by ``config.queries.get_config_value``
+    after verifying tier + acknowledgment + TTL) keeps its ``"value"``
+    field raw. The exception is per-dict and per-field — everything else
+    in the payload is still redacted, sibling dicts are unaffected, and
+    the marker itself never egresses. This is what makes the per-key
+    escape hatch behave identically for vocabulary keys and
+    ``extra_secret_keys``-classified keys.
     """
     result = {}
     has_secret_key_field = False
+    egress_ack = d.get(EGRESS_ACK_FIELD) is True
 
     # Rule 1: config-value-pair shape.
     key_val = d.get("key")
@@ -124,6 +143,14 @@ def _redact_dict(d: dict) -> dict:
         has_secret_key_field = True
 
     for k, v in d.items():
+        # Acknowledged egress: enforcement metadata never egresses.
+        if egress_ack and k == EGRESS_ACK_FIELD:
+            continue
+        # Acknowledged egress: this one value crosses deliberately.
+        if egress_ack and k == "value":
+            result[k] = v
+            continue
+
         if has_secret_key_field and k == "value":
             # Rule 1: value field under a secret key — replace outright.
             if v is not None and not isinstance(v, bool):

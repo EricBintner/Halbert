@@ -151,6 +151,89 @@ def test_non_string_scalars_pass_through():
     assert result == payload
 
 
+# --- Acknowledged egress marker (REV-01 F3) ------------------------------
+#
+# get_config_value sets ``_egress_ack: True`` on a payload only after
+# verifying tier + acknowledgment + TTL. When the choke point sees the
+# marker, the dict's ``value`` field is the one deliberate exception —
+# everything else in the payload is still redacted, and the marker
+# itself never egresses.
+
+def test_egress_ack_lets_acknowledged_value_cross():
+    payload = {
+        "path": "/etc/app.conf", "key": "password",
+        "tier": 2, "value": "hunter2-acknowledged",
+        "acknowledged": True, "_egress_ack": True,
+    }
+    result = mcp_response(payload)
+    assert result["value"] == "hunter2-acknowledged"
+    assert result["key"] == "password"  # key name is not a credential
+    assert "_egress_ack" not in result  # enforcement metadata never egresses
+
+
+def test_egress_ack_marker_is_dropped_from_output():
+    payload = {"key": "api_key", "value": "sk-live-1", "_egress_ack": True}
+    result = mcp_response(payload)
+    assert "_egress_ack" not in result
+    assert result["value"] == "sk-live-1"
+
+
+def test_without_marker_vocabulary_value_still_redacted():
+    payload = {"path": "/etc/app.conf", "key": "password", "value": "hunter2"}
+    result = mcp_response(payload)
+    assert result["value"] == "<secret>"
+
+
+def test_egress_ack_exempts_only_that_dicts_value_field():
+    """Everything else in the acknowledged dict still gets the full
+    treatment — embedded credentials in sibling text are caught by the
+    text pass."""
+    payload = {
+        "_egress_ack": True,
+        "key": "password",
+        "value": "hunter2-acknowledged",
+        "note": "backup password=hunter2-inline",
+    }
+    result = mcp_response(payload)
+    assert result["value"] == "hunter2-acknowledged"
+    assert "hunter2-inline" not in str(result)
+
+
+def test_egress_ack_does_not_leak_to_sibling_dicts():
+    """The marker is per-dict: an acknowledged result in a list must not
+    open the door for other payloads in the same response."""
+    payload = {
+        "results": [
+            {"key": "password", "value": "hunter2-ack", "_egress_ack": True},
+            {"key": "password", "value": "hunter2-not-ack"},
+        ]
+    }
+    result = mcp_response(payload)
+    assert result["results"][0]["value"] == "hunter2-ack"
+    assert result["results"][1]["value"] == "<secret>"
+
+
+def test_nested_secret_dict_keys_still_redacted_under_marker():
+    payload = {
+        "_egress_ack": True,
+        "value": "hunter2-acknowledged",
+        "config": {"token": "tok-sentinel-98765"},
+    }
+    result = mcp_response(payload)
+    assert result["value"] == "hunter2-acknowledged"
+    assert "tok-sentinel-98765" not in str(result)
+    assert result["config"]["token"] == "<secret>"
+
+
+def test_forged_string_marker_is_ignored():
+    """Only a literal True honors the exception — a string that merely
+    spells the marker name is not an acknowledgment."""
+    payload = {"key": "password", "value": "hunter2-forged",
+               "_egress_ack": "true"}
+    result = mcp_response(payload)
+    assert "hunter2-forged" not in str(result)
+
+
 def test_input_is_not_mutated():
     original = {"key": "password", "value": "hunter2-original"}
     mcp_response(original)

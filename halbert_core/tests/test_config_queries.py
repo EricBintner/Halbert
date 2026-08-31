@@ -142,7 +142,150 @@ class TestGetConfigValue:
         assert result["value"] == 3333
 
 
-class TestGetConfigStructure:
+class TestEgressAckMarker:
+    """REV-01 F3: acknowledged raw egress carries an explicit marker.
+
+    When the effective tier legitimately permits raw egress for this key
+    (per-key hatch match OR global cloud_ok_acknowledged, TTL still
+    valid), get_config_value marks the payload with ``_egress_ack: True``
+    so the MCP choke point lets the value cross instead of re-redacting
+    it. No other path may set the marker.
+    """
+
+    def test_hatch_key_sets_egress_ack_marker(self, temp_config_env):
+        """Vocabulary key in the per-key hatch, global tier locked."""
+        result = get_config_value(
+            temp_config_env["config_file"], "Password",
+            secret_tier="local_only", cloud_ok_keys=["password"])
+        assert result["tier"] == 2
+        assert result["value"] == "hunter2"
+        assert result["acknowledged"] is True
+        assert result["_egress_ack"] is True
+
+    def test_global_ack_sets_egress_ack_marker(self, temp_config_env):
+        result = get_config_value(
+            temp_config_env["config_file"], "Password",
+            secret_tier="cloud_ok_acknowledged")
+        assert result["value"] == "hunter2"
+        assert result["_egress_ack"] is True
+
+    def test_locked_tier2_sets_no_marker(self, temp_config_env):
+        result = get_config_value(
+            temp_config_env["config_file"], "Password",
+            secret_tier="local_only")
+        assert "value" not in result
+        assert result["redacted"] is True
+        assert "_egress_ack" not in result
+
+    def test_expired_acknowledgement_sets_no_marker(self, temp_config_env):
+        """An expired TTL downgrades before the marker could be set."""
+        result = get_config_value(
+            temp_config_env["config_file"], "Password",
+            secret_tier="cloud_ok_acknowledged",
+            secret_tier_expiry="2001-01-01T00:00:00+00:00")
+        assert "value" not in result
+        assert result["redacted"] is True
+        assert "_egress_ack" not in result
+
+    def test_lower_tiers_set_no_marker(self, temp_config_env):
+        """Tier 0/1 raw values are cloud-safe by classification — no
+        acknowledgment is involved, so no marker."""
+        tier0 = get_config_value(temp_config_env["config_file"], "Enabled")
+        assert tier0["tier"] == 0
+        assert "_egress_ack" not in tier0
+
+        tier1 = get_config_value(temp_config_env["config_file"], "Port",
+                                 operational_tier="cloud_ok")
+        assert tier1["tier"] == 1
+        assert "_egress_ack" not in tier1
+
+    def test_error_payloads_set_no_marker(self, temp_config_env):
+        result = get_config_value(temp_config_env["config_file"], "NonExistent")
+        assert "error" in result
+        assert "_egress_ack" not in result
+
+
+class TestHatchEgressSymmetry:
+    """REV-01 F3 end-to-end: all key classes behave identically at the
+    choke point. A vocabulary key and an extra_secret_keys key both
+    cross raw when acknowledged, and both stay ``<secret>``/described
+    otherwise. (Historically the vocabulary key was re-redacted by
+    mcp_response while the extra_secret_keys key leaked — the marker
+    makes the two agree in both directions.)
+    """
+
+    def _setup(self, tmp_path, monkeypatch, extra_file=None):
+        conf_file = tmp_path / "test.conf"
+        conf_file.write_text(
+            "[Service]\n"
+            "ExecStart=/usr/bin/myapp\n"
+            "Port=2222\n"
+            "Password=hunter2\n"
+            "Enabled=true\n"
+        )
+        canon_dir = tmp_path / "canon"
+        snap_dir = tmp_path / "snapshots"
+        canon_dir.mkdir(exist_ok=True)
+        snap_dir.mkdir(exist_ok=True)
+        includes = f"  - '{tmp_path / 'test.conf'}'\n"
+        if extra_file:
+            includes += f"  - '{extra_file}'\n"
+        manifest = tmp_path / "manifest.yml"
+        manifest.write_text(f"include:\n{includes}exclude: []\nparsers: {{}}\n")
+        monkeypatch.setattr("halbert_core.config.snapshot.CANON_DIR", str(canon_dir))
+        monkeypatch.setattr("halbert_core.config.snapshot.SNAP_DIR", str(snap_dir))
+        monkeypatch.setattr("halbert_core.config.queries.CANON_DIR", str(canon_dir))
+        monkeypatch.setattr("halbert_core.config.queries.SNAP_DIR", str(snap_dir))
+        monkeypatch.setattr("halbert_core.config.drift.CANON_DIR", str(canon_dir))
+        snapshot(str(manifest), redact=False)
+        return str(tmp_path / "test.conf"), str(extra_file) if extra_file else None
+
+    def _query(self, path, key, **kwargs):
+        from halbert_core.mcp.response import mcp_response
+        raw = get_config_value(path, key, **kwargs)
+        return raw, mcp_response(raw)
+
+    def test_vocabulary_key_crosses_when_hatched(self, tmp_path, monkeypatch):
+        conf, _ = self._setup(tmp_path, monkeypatch)
+        raw, out = self._query(conf, "Password",
+                               secret_tier="local_only",
+                               cloud_ok_keys=["password"])
+        assert raw["_egress_ack"] is True
+        assert out["value"] == "hunter2"      # crosses raw
+        assert "_egress_ack" not in out       # marker never egresses
+
+    def test_vocabulary_key_redacted_when_not_hatched(self, tmp_path, monkeypatch):
+        conf, _ = self._setup(tmp_path, monkeypatch)
+        raw, out = self._query(conf, "Password", secret_tier="local_only")
+        assert "_egress_ack" not in raw
+        assert "hunter2" not in str(out)
+        assert out.get("value") != "hunter2"
+
+    def test_extra_secret_key_crosses_when_hatched(self, tmp_path, monkeypatch):
+        extra = tmp_path / "extra.conf"
+        extra.write_text("[Device]\nSerial=XK-9827-4415-B2\n")
+        conf, extra_path = self._setup(tmp_path, monkeypatch, extra_file=extra)
+        raw, out = self._query(extra_path, "Serial",
+                               secret_tier="local_only",
+                               extra_secret_keys=["serial"],
+                               cloud_ok_keys=["serial"])
+        assert out["value"] == "XK-9827-4415-B2"
+        assert "_egress_ack" not in out
+
+    def test_extra_secret_key_redacted_when_not_hatched(self, tmp_path, monkeypatch):
+        extra = tmp_path / "extra.conf"
+        extra.write_text("[Device]\nSerial=XK-9827-4415-B2\n")
+        conf, extra_path = self._setup(tmp_path, monkeypatch, extra_file=extra)
+        raw, out = self._query(extra_path, "Serial",
+                               secret_tier="local_only",
+                               extra_secret_keys=["serial"])
+        assert "XK-9827-4415-B2" not in str(out)
+
+    def test_global_unlock_crosses_for_vocabulary_key(self, tmp_path, monkeypatch):
+        conf, _ = self._setup(tmp_path, monkeypatch)
+        raw, out = self._query(conf, "Password",
+                               secret_tier="cloud_ok_acknowledged")
+        assert out["value"] == "hunter2"
     """get_config_structure returns shape, no values."""
 
     def test_ini_structure(self, temp_config_env):

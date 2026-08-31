@@ -38,6 +38,7 @@ import os
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .parser import parse as parse_config
+from .security_constants import EGRESS_ACK_FIELD
 from .sensitivity import classify_sensitivity
 from .secure_response import describe_secret
 from .secret_correlation import describe_with_correlations
@@ -258,6 +259,13 @@ def get_config_value(
     is computed at runtime — an expired timestamp downgrades
     cloud_ok_acknowledged to local_only immediately, without needing a
     config reload.
+
+    Acknowledged egress marker: when a Tier 2 value legitimately crosses
+    (hatch match or acknowledged tier), the result carries
+    ``_egress_ack: True`` so the MCP response boundary lets the value
+    through instead of re-redacting it — the hatch then behaves
+    identically for vocabulary and user-classified keys. The marker is
+    set only here; see ``security_constants.EGRESS_ACK_FIELD``.
     """
     # Runtime TTL check — never trust a stale cloud_ok_acknowledged
     if secret_tier == "cloud_ok_acknowledged" and secret_tier_expiry:
@@ -320,6 +328,14 @@ def get_config_value(
         if key_is_cloud_ok or secret_tier == "cloud_ok_acknowledged":
             result["value"] = value
             result["acknowledged"] = True
+            # Choke-point awareness (REV-01 F3): the effective tier has
+            # legitimately cleared this key for raw egress (per-key hatch
+            # match or acknowledged global tier, TTL re-checked above), so
+            # mark the payload for the MCP boundary. Without the marker,
+            # mcp_response re-redacts vocabulary keys, making the hatch
+            # behave differently for different key classes. Only this
+            # code path may set the marker — see security_constants.
+            result[EGRESS_ACK_FIELD] = True
         else:  # local_only (default)
             result["description"] = describe_with_correlations(key, value, path)
             result["redacted"] = True
