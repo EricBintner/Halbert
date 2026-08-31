@@ -310,9 +310,14 @@ def _tool_approve_proposal(params: Dict[str, Any]) -> Dict[str, Any]:
 
     This is a write action that modifies config files on the host.
     Gating: requires explicit ``confirm=True`` to prevent an LLM from
-    applying changes without user awareness. The proposal must be in
-    PENDING status. Execution goes through ``ProposalGenerator`` which
-    backs up, applies, and rolls back on failure.
+    applying changes without user awareness, and — for high-risk
+    proposals — the confirmation phrase. A client-supplied boolean is the
+    caller's own flag, not consent, and every paired satellite holds a
+    bearer token (REV-02 F1). High-risk means the proposal's linked
+    finding is critical, or its finding cannot be loaded (fail closed).
+    The proposal must be in PENDING status. Execution goes through
+    ``ProposalGenerator`` which backs up, applies, and rolls back on
+    failure.
     """
     proposal_id = params.get("proposal_id", "")
     if not proposal_id:
@@ -362,8 +367,34 @@ def _tool_approve_proposal(params: Dict[str, Any]) -> Dict[str, Any]:
                 "error": f"proposal is in status '{proposal.status}', expected 'pending'",
             })
 
+        finding_store = FindingStore()
+        finding = None
+        try:
+            finding = finding_store.get(proposal.finding_id)
+        except Exception as e:
+            logger.debug("approve_proposal finding lookup failed: %s", e)
+            finding = None
+        if finding is None or finding.severity == "critical":
+            # Same high-friction phrase the dashboard's Tier 2 unlock
+            # enforces (config/security_constants.py is the single home of
+            # the literal). Deliberately not echoed in the rejection — this
+            # error is exactly what a prompt-injected agent reads.
+            from ..config.security_constants import UNLOCK_PHRASE
+            phrase = params.get("phrase")
+            normalized = " ".join(str(phrase or "").split()).upper()
+            if normalized != UNLOCK_PHRASE:
+                return mcp_response({
+                    "error": (
+                        "approving this proposal requires the confirmation "
+                        "phrase in the 'phrase' parameter (the same phrase "
+                        "the dashboard Security tab shows)"
+                    ),
+                    "proposal_id": proposal_id,
+                    "high_risk": True,
+                })
+
         generator = ProposalGenerator(
-            finding_store=FindingStore(),
+            finding_store=finding_store,
             proposal_store=store,
             approval_engine=ApprovalEngine(),
             write_config=WriteConfig(),
@@ -529,11 +560,52 @@ def _tool_get_autonomy_level(params: Dict[str, Any]) -> Dict[str, Any]:
         return mcp_response({"error": str(e)})
 
 
+# Exposure ordering of the autonomy levels: observe does nothing
+# unattended, orchestrate auto-executes through Level 2. Used to decide
+# whether a set_autonomy_level call increases what the house can do
+# without a human in the loop.
+_AUTONOMY_RANK = {"observe": 0, "suggest": 1, "act": 2, "orchestrate": 3}
+
+
+def _autonomy_change_is_escalation(
+    current_level: str,
+    current_overrides: Optional[Dict[str, Any]],
+    new_level: str,
+    new_overrides: Optional[Dict[str, Any]],
+) -> bool:
+    """True if the change would raise what the house may do unattended.
+
+    Either the global level rises, or some domain's effective level
+    rises: the level in force for a domain is its current override if it
+    has one, else the current global level; after the change it is the
+    new override if the overrides dict is being replaced wholesale, else
+    the new global level.
+    """
+    rank = _AUTONOMY_RANK
+    if rank.get(new_level, 0) > rank.get(current_level, 0):
+        return True
+    if new_overrides is None:
+        return False
+    current_overrides = current_overrides or {}
+    for domain in set(current_overrides) | set(new_overrides):
+        in_force = current_overrides.get(domain, current_level)
+        after = new_overrides.get(domain, new_level)
+        if rank.get(after, 0) > rank.get(in_force, 0):
+            return True
+    return False
+
+
 def _tool_set_autonomy_level(params: Dict[str, Any]) -> Dict[str, Any]:
     """Set the autonomy level. Requires confirmation.
 
     This is a high-friction operation — changing the autonomy level
-    affects what the house can do without asking.
+    affects what the house can do without asking. Any change that
+    INCREASES what the house may do unattended (raising the level, or
+    raising a per-domain override above what is currently in force) also
+    requires the confirmation phrase — a client-supplied ``confirm``
+    boolean is the caller's own flag, not consent, and every paired
+    satellite holds a bearer token (REV-02 F1). Decreases stay on the
+    plain ``confirm=true`` gate.
     """
     level = params.get("level", "")
     confirm = params.get("confirm", False)
@@ -550,6 +622,25 @@ def _tool_set_autonomy_level(params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         from ..config.being_config import load_being_config, save_being_config
         cfg = load_being_config()
+        if _autonomy_change_is_escalation(
+                cfg.autonomy_level, cfg.autonomy_overrides, level, overrides):
+            # Same high-friction phrase the dashboard's Tier 2 unlock
+            # enforces (config/security_constants.py is the single home of
+            # the literal). The phrase is deliberately not echoed in the
+            # rejection — this error is exactly what a prompt-injected
+            # agent reads.
+            from ..config.security_constants import UNLOCK_PHRASE
+            phrase = params.get("phrase")
+            normalized = " ".join(str(phrase or "").split()).upper()
+            if normalized != UNLOCK_PHRASE:
+                return mcp_response({
+                    "error": (
+                        "raising the autonomy level requires the confirmation "
+                        "phrase in the 'phrase' parameter (the same phrase the "
+                        "dashboard Security tab shows)"
+                    ),
+                    "requested_level": level,
+                })
         cfg.autonomy_level = level
         if overrides is not None:
             cfg.autonomy_overrides = overrides
@@ -750,6 +841,14 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
                     "type": "string",
                     "description": "Optional reason for approval (recorded in audit log)",
                 },
+                "phrase": {
+                    "type": "string",
+                    "description": (
+                        "Required for high-risk proposals (critical finding): "
+                        "the confirmation phrase shown in the dashboard "
+                        "Security tab."
+                    ),
+                },
             },
             "required": ["proposal_id", "confirm"],
         },
@@ -811,8 +910,10 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     {
         "name": "set_autonomy_level",
         "description": (
-            "Set the home autonomy level. GATED: requires confirm=true. "
-            "Levels: observe, suggest, act, orchestrate."
+            "Set the home autonomy level. GATED: requires confirm=true; "
+            "raising the level (or any per-domain override) additionally "
+            "requires the confirmation phrase shown in the dashboard "
+            "Security tab. Levels: observe, suggest, act, orchestrate."
         ),
         "inputSchema": {
             "type": "object",
@@ -828,6 +929,14 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 "overrides": {
                     "type": "object",
                     "description": "Per-domain overrides (e.g. {\"lock\": \"suggest\"})",
+                },
+                "phrase": {
+                    "type": "string",
+                    "description": (
+                        "Required when the change raises what the house may "
+                        "do unattended: the confirmation phrase shown in "
+                        "the dashboard Security tab."
+                    ),
                 },
             },
             "required": ["level", "confirm"],
