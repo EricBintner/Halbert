@@ -6,10 +6,7 @@ import { useScan } from '@/contexts/ScanContext'
 import { useDebug } from '@/contexts/DebugContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { Toast } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/api'
@@ -19,17 +16,11 @@ import { NavRail, type NavRailSection } from '@halbert/design-system'
 import {
   Bell,
   Cpu,
-  Trash2,
   Brain,
   BookOpen,
-  Check,
-  X,
-  Plus,
   ExternalLink,
   Shield,
-  AlertTriangle,
   Lock,
-  FileCode,
   Sparkles,
   Eye,
   Info,
@@ -58,6 +49,8 @@ import {
   type TrendingSuggestion,
   type UserStack,
 } from '@/components/settings/tabs/KnowledgeTab'
+import { SafetyTab, type AIRule, type NewRule, type ToolPolicy } from '@/components/settings/tabs/SafetyTab'
+import { AlertsTab, type AlertRule } from '@/components/settings/tabs/AlertsTab'
 import { useInstanceVariant } from '@/hooks/useInstanceVariant'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { AudioSettings, SpeakerProfilesCard, VoiceEnrollmentModal } from '@/components/audio'
@@ -66,14 +59,6 @@ import { apiUrl } from '@/lib/apiBase'
 import { cn } from '@/lib/utils'
 
 const API_BASE = apiUrl('/api')
-
-interface AlertRule {
-  id: string
-  name: string
-  description: string
-  severity: string
-  enabled: boolean
-}
 
 /**
  * The tabs this page has, in the order they are shown. Also the whitelist for
@@ -182,7 +167,7 @@ export function Settings() {
   const [discoveryStats, setDiscoveryStats] = useState<DiscoveryStats | null>(null)
   
   // Policy state
-  const [policy, setPolicy] = useState<{default_allow: boolean, tools: Record<string, {allow: boolean}>}>({
+  const [policy, setPolicy] = useState<ToolPolicy>({
     default_allow: true,
     tools: {}
   })
@@ -243,17 +228,9 @@ export function Settings() {
   // Note: deepScanning state moved to ScanContext (isDeepScanning)
   
   // AI Rules state
-  interface AIRule {
-    id: string
-    rule: string
-    category: string
-    priority: string
-    enabled: boolean
-    created_at?: string
-  }
   const [aiRules, setAiRules] = useState<AIRule[]>([])
   const [aiRulesExamples, setAiRulesExamples] = useState<string[]>([])
-  const [newRule, setNewRule] = useState({ rule: '', category: 'general', priority: 'high' })
+  const [newRule, setNewRule] = useState<NewRule>({ rule: '', category: 'general', priority: 'high' })
   const [addingRule, setAddingRule] = useState(false)
 
   useEffect(() => {
@@ -809,323 +786,26 @@ export function Settings() {
 
         {/* Safety Tab - Consolidated AI Rules, Policy, and Guardrails */}
         <TabsContent value="safety" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5" />
-                Custom AI Rules
-              </CardTitle>
-              <CardDescription>
-                Define rules and guardrails for edge cases the AI should always follow.
-                These override general advice when they apply to your specific setup.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Existing rules - shown first */}
-              {aiRules.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <AlertTriangle className="h-8 w-8 mx-auto mb-3 opacity-50" />
-                  <p className="font-medium">No custom rules yet</p>
-                  <p className="text-sm mt-1">
-                    Add rules below to help the AI understand your specific setup and edge cases.
-                  </p>
-                  {aiRulesExamples.length > 0 && (
-                    <div className="mt-4 text-left max-w-lg mx-auto">
-                      <p className="text-xs font-medium mb-2">Example rules:</p>
-                      <ul className="text-xs space-y-1 text-muted-foreground">
-                        {aiRulesExamples.map((ex, i) => (
-                          <li key={i} className="flex items-start gap-2">
-                            <span className="text-primary">•</span>
-                            <span>{ex}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <p className="text-sm text-muted-foreground">
-                    {aiRules.length} rule{aiRules.length !== 1 ? 's' : ''} active. 
-                    The AI will always consider these when providing advice.
-                  </p>
-                  {aiRules.map((rule) => (
-                    <div
-                      key={rule.id}
-                      className={`flex items-start justify-between p-3 rounded-lg border ${
-                        rule.enabled ? 'bg-background' : 'bg-muted/50 opacity-60'
-                      }`}
-                    >
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Badge variant={rule.priority === 'high' ? 'default' : 'outline'} className="text-xs">
-                            {rule.priority}
-                          </Badge>
-                          <Badge variant="secondary" className="text-xs">
-                            {rule.category}
-                          </Badge>
-                          {!rule.enabled && (
-                            <Badge variant="outline" className="text-xs text-muted-foreground">
-                              Disabled
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="text-sm">{rule.rule}</p>
-                      </div>
-                      <div className="flex items-center gap-2 ml-4">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleToggleRule(rule)}
-                          title={rule.enabled ? 'Disable rule' : 'Enable rule'}
-                        >
-                          {rule.enabled ? (
-                            <Check className="h-4 w-4 text-success" />
-                          ) : (
-                            <X className="h-4 w-4" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeleteRule(rule.id)}
-                          className="text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              
-              {/* Add new rule form - at bottom */}
-              <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
-                <div className="space-y-2">
-                  <Label htmlFor="new-rule">Add a New Rule</Label>
-                  <Input
-                    id="new-rule"
-                    value={newRule.rule}
-                    onChange={(e) => setNewRule(prev => ({ ...prev, rule: e.target.value }))}
-                    placeholder="e.g., My NAS mounts may be offline - don't treat unmounted network shares as errors"
-                    className="text-sm"
-                  />
-                </div>
-                
-                <div className="flex gap-4 items-end">
-                  <div className="space-y-2 flex-1">
-                    <Label htmlFor="rule-category">Category</Label>
-                    <Select
-                      id="rule-category"
-                      value={newRule.category}
-                      onChange={(e) => setNewRule(prev => ({ ...prev, category: e.target.value }))}
-                    >
-                      <option value="general">General</option>
-                      <option value="storage">Storage</option>
-                      <option value="kernel">Kernel</option>
-                      <option value="network">Network</option>
-                      <option value="security">Security</option>
-                      <option value="docker">Docker/Containers</option>
-                      <option value="packages">Packages</option>
-                    </Select>
-                  </div>
-                  
-                  <div className="space-y-2 flex-1">
-                    <Label htmlFor="rule-priority">Priority</Label>
-                    <Select
-                      id="rule-priority"
-                      value={newRule.priority}
-                      onChange={(e) => setNewRule(prev => ({ ...prev, priority: e.target.value }))}
-                    >
-                      <option value="high">High (Always apply)</option>
-                      <option value="medium">Medium</option>
-                      <option value="low">Low (Context-dependent)</option>
-                    </Select>
-                  </div>
-                  
-                  <Button 
-                    onClick={handleAddRule}
-                    disabled={!newRule.rule.trim() || addingRule}
-                    size="sm"
-                  >
-                    <Plus className="h-4 w-4 mr-1" />
-                    Add Rule
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Tool Policy Section */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Lock className="h-5 w-5" />
-                Tool Policy
-              </CardTitle>
-              <CardDescription>
-                Control which tools the AI can execute. Tools not explicitly configured follow the default policy.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="p-4 bg-muted/50 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">Default Allow</p>
-                    <p className="text-sm text-muted-foreground">
-                      When enabled, tools are allowed unless explicitly denied
-                    </p>
-                  </div>
-                  <Button
-                    variant={policy.default_allow ? "default" : "outline"}
-                    size="sm"
-                    disabled={savingPolicy}
-                    onClick={async () => {
-                      setSavingPolicy(true)
-                      try {
-                        const newPolicy = { ...policy, default_allow: !policy.default_allow }
-                        await fetch(`${API_BASE}/settings/policy`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ policy: newPolicy })
-                        })
-                        setPolicy(newPolicy)
-                      } catch (err) {
-                        console.error('Failed to update policy:', err)
-                      }
-                      setSavingPolicy(false)
-                    }}
-                  >
-                    {policy.default_allow ? (
-                      <><Check className="h-4 w-4 mr-1" /> Enabled</>
-                    ) : (
-                      <><X className="h-4 w-4 mr-1" /> Disabled</>
-                    )}
-                  </Button>
-                </div>
-              </div>
-              
-              <div className="space-y-2">
-                <h4 className="font-medium text-sm">Tool Overrides</h4>
-                <p className="text-sm text-muted-foreground">
-                  Click to toggle individual tool permissions
-                </p>
-                <div className="grid gap-2 mt-2">
-                  {Object.entries(policy.tools || {}).map(([toolName, config]) => (
-                    <div key={toolName} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <FileCode className="h-4 w-4" />
-                        <span className="font-mono text-sm">{toolName}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant={config.allow ? "default" : "destructive"}
-                          size="sm"
-                          disabled={savingPolicy}
-                          onClick={async () => {
-                            setSavingPolicy(true)
-                            try {
-                              await fetch(`${API_BASE}/settings/policy/tool`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ tool: toolName, allow: !config.allow })
-                              })
-                              setPolicy(prev => ({
-                                ...prev,
-                                tools: { ...prev.tools, [toolName]: { allow: !config.allow } }
-                              }))
-                            } catch (err) {
-                              console.error('Failed to update tool policy:', err)
-                            }
-                            setSavingPolicy(false)
-                          }}
-                        >
-                          {config.allow ? 'Allowed' : 'Denied'}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={savingPolicy}
-                          onClick={async () => {
-                            setSavingPolicy(true)
-                            try {
-                              await fetch(`${API_BASE}/settings/policy/tool/${toolName}`, {
-                                method: 'DELETE'
-                              })
-                              setPolicy(prev => {
-                                const newTools = { ...prev.tools }
-                                delete newTools[toolName]
-                                return { ...prev, tools: newTools }
-                              })
-                            } catch (err) {
-                              console.error('Failed to delete tool policy:', err)
-                            }
-                            setSavingPolicy(false)
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                  {Object.keys(policy.tools || {}).length === 0 && (
-                    <p className="text-sm text-muted-foreground p-3">
-                      No tool overrides configured. All tools follow the default policy.
-                    </p>
-                  )}
-                </div>
-              </div>
-              
-              <div className="pt-4 border-t">
-                <p className="text-xs text-muted-foreground">
-                  Policy file: <code className="px-1 py-0.5 bg-muted rounded">{policyPath || 'config/policy.yml'}</code>
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
+          <SafetyTab
+            aiRules={aiRules}
+            aiRulesExamples={aiRulesExamples}
+            newRule={newRule}
+            setNewRule={setNewRule}
+            addingRule={addingRule}
+            onAddRule={handleAddRule}
+            onDeleteRule={handleDeleteRule}
+            onToggleRule={handleToggleRule}
+            policy={policy}
+            setPolicy={setPolicy}
+            savingPolicy={savingPolicy}
+            setSavingPolicy={setSavingPolicy}
+            policyPath={policyPath}
+          />
         </TabsContent>
 
         {/* Alerts Tab */}
         <TabsContent value="alerts" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bell className="h-5 w-5" />
-                Alert Rules
-              </CardTitle>
-              <CardDescription>
-                Configure when alerts are triggered
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {alertRules.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Loading alert rules...</p>
-              ) : (
-                <div className="space-y-4">
-                  {alertRules.map((rule) => (
-                    <div
-                      key={rule.id}
-                      className="flex items-center justify-between p-3 rounded-lg border"
-                    >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium">{rule.name}</p>
-                          <Badge variant="outline" className="text-xs">
-                            {rule.severity}
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-muted-foreground">{rule.description}</p>
-                      </div>
-                      <Badge variant={rule.enabled ? "default" : "outline"}>
-                        {rule.enabled ? "Enabled" : "Disabled"}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <AlertsTab alertRules={alertRules} />
         </TabsContent>
 
         {/* Being Tab */}
