@@ -1,20 +1,31 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-"""`snapshot()`'s canonical JSON must carry no plaintext credential.
+"""`snapshot()`'s two sinks have two different redaction contracts (REV-01 F1).
 
-The raw-text sink under `data/config/raw/` has been redacted since Phase A,
-but the canonical JSON written one line later carried the same file twice
-over -- once parsed into `sections`/`tree`, once as a full-text `lines`
-array -- with every value verbatim. `CANON_DIR` is not staged into a
-searchable scope, so this was never an *index* leak; it is plaintext
-credentials on disk from the one pipeline whose stated job includes removing
-them, and both `drift.py` and `edge_extractor.py` read it.
+The canon DB under `data/config/canon/` is RAW BY DESIGN — the user-owned,
+localhost-only private index that tier routing, `describe_secret`, the
+correlation index, `drift.py` and `edge_extractor.py` all read. The Tier-2
+feature set is built on real values: a redacted canon fed `describe_secret`
+the `<secret>` placeholder and it reported the placeholder's length and
+entropy for every credential on the machine, and the correlation index
+collapsed every secret onto one hash (false correlations for rotation
+advice). What protects the raw canon is the egress boundaries — tier
+routing answers `local_only` with metadata only, and the MCP dispatch choke
+point redacts every `tools/call` result — both pinned by
+`test_tier2_guarantee.py` and `test_security_roles.py`.
 
-The fix must not disturb `hash`. Drift detection compares hashes to decide
-whether a file changed at all, so a hash computed over redacted content would
-report every credential-bearing file as modified on the first run after the
-change and then never again -- silently, because the comparison would still
-be self-consistent.
+The raw-text sink under `data/config/raw/` is the opposite: ALWAYS redacted,
+whatever the canon's state. It is a grep-able debugging mirror, not an input
+to any secret-aware feature.
+
+`redact=True` remains available for callers that want a redacted canon; its
+line-count and shape guarantees (the PEM-block test) stay pinned here.
+
+Neither contract may disturb `hash`. Drift detection compares hashes to
+decide whether a file changed at all, so a hash computed over redacted
+content would report every credential-bearing file as modified on the first
+run after the change and then never again -- silently, because the
+comparison would still be self-consistent.
 """
 from __future__ import annotations
 
@@ -195,29 +206,53 @@ def test_an_empty_config_file_still_snapshots(tmp_path, monkeypatch):
     assert canon["hash"] == hashlib.sha256(b"").hexdigest()
 
 
-def test_canon_json_carries_no_plaintext_credential(snapshotted):
-    """Not one secret survives anywhere in either canonical file."""
+def test_raw_text_sink_carries_no_plaintext_credential(snapshotted, tmp_path):
+    """The grep-able debugging mirror is ALWAYS redacted, whatever the canon."""
+    raw_dir = tmp_path / "out" / "raw"
     for name, blob in snapshotted.items():
+        raw = (raw_dir / f"{blob['entry']['hash']}.txt").read_text(encoding="utf-8")
         for secret in ALL_SECRETS:
-            assert secret not in blob["text"], f"{secret!r} leaked into {name}"
+            assert secret not in raw, f"{secret!r} survived in the raw sink of {name}"
 
 
-def test_canon_json_redacts_both_the_parsed_values_and_the_lines(snapshotted):
-    """The two carriers are separate: `sections`/`tree` and `lines`.
+def test_canon_is_raw_by_design(snapshotted):
+    """The private index carries the real values the Tier-2 features need.
 
-    Redacting only one of them still writes the file's secrets to disk, so
-    each is asserted on its own terms rather than through the whole-file
-    substring check above.
+    Both carriers are asserted on their own terms: `sections`/`tree` (parsed
+    values) and `lines` (the full-text mirror inside the canon record).
     """
     conf = snapshotted["wg0.conf"]["canon"]
-    assert WG_PRIVATE_KEY not in str(conf["sections"])
-    assert PSK_PASSPHRASE not in str(conf["sections"])
-    assert WG_PRIVATE_KEY not in str(conf["lines"])
-    assert PSK_PASSPHRASE not in str(conf["lines"])
+    assert WG_PRIVATE_KEY in str(conf["sections"])
+    assert PSK_PASSPHRASE in str(conf["sections"])
+    assert WG_PRIVATE_KEY in str(conf["lines"])
+    assert PSK_PASSPHRASE in str(conf["lines"])
 
     tree = snapshotted["wifi.yaml"]["canon"]["tree"]
-    assert tree["wifi"]["home"]["psk"] != YAML_PSK
-    assert tree["wifi"]["guest"][0]["password"] != YAML_PASSWORD
+    assert tree["wifi"]["home"]["psk"] == YAML_PSK
+    assert tree["wifi"]["guest"][0]["password"] == YAML_PASSWORD
+
+
+def test_describe_secret_receives_real_values(snapshotted, monkeypatch):
+    """The Tier-2 feature the raw canon exists for: real metadata, not the
+    placeholder's. With the old redacted canon this reported length 8,
+    entropy 2.75 — the properties of the string `<secret>` — for every
+    credential on the machine.
+    """
+    from halbert_core.config import queries as queries_mod
+    from halbert_core.config.queries import get_config_value
+
+    monkeypatch.setattr(
+        queries_mod, "CANON_DIR", snapshot_mod.CANON_DIR, raising=True
+    )
+    monkeypatch.setattr(
+        queries_mod, "SNAP_DIR", snapshot_mod.SNAP_DIR, raising=True
+    )
+    path = str(snapshotted["wg0.conf"]["source"])
+    result = get_config_value(path, "PrivateKey")
+    assert "description" in result
+    description = result["description"]
+    assert description["length"] == len(WG_PRIVATE_KEY)
+    assert description["entropy_bits"] != 2.75  # the placeholder's entropy
 
 
 def test_canon_json_keeps_the_shape_of_what_it_redacted(snapshotted):
@@ -289,35 +324,48 @@ def test_canon_keeps_the_path_and_kind_it_is_looked_up_by(snapshotted):
 
 
 @pytest.mark.parametrize("name", ["wg0.conf", "wifi.yaml"])
-def test_raw_sink_and_canon_lines_agree(snapshotted, tmp_path, name):
-    """Canon's `lines` carry what the raw sink carries.
+def test_raw_sink_is_canon_lines_through_redaction(snapshotted, tmp_path, name):
+    """The raw sink is what the canon's `lines` look like post-`redact_text`.
 
-    The two sinks are written from the same source text one line apart. If
-    they can disagree, one of them is the weaker guarantee and the module has
-    no single answer to "what does redaction leave behind".
-
-    `bundle.conf` is excluded and gets its own test: it is the one deliberate
-    divergence, because the raw sink may collapse a PEM block's lines and a
-    line-numbered sink may not.
+    The two sinks are written from the same source text one line apart; the
+    canon keeps it verbatim and the raw sink runs it through `redact_text`.
+    Asserting the transform (rather than equality, as the redacted-canon era
+    did) keeps the pair honest without coupling the two contracts.
     """
+    from halbert_core.ingestion.redaction import redact_text
+
     raw_dir = tmp_path / "out" / "raw"
     blob = snapshotted[name]
     raw = (raw_dir / f"{blob['entry']['hash']}.txt").read_text(encoding="utf-8")
     from_canon = "\n".join(ln["text"] for ln in blob["canon"]["lines"])
-    assert from_canon == raw.rstrip("\n")
+    assert redact_text(from_canon) == raw.rstrip("\n")
 
 
-def test_pem_block_is_removed_without_renumbering_the_file(snapshotted):
-    """A PEM block loses its body and keeps its height.
+def test_pem_block_is_removed_without_renumbering_the_file(snapshotted, tmp_path, monkeypatch):
+    """A PEM block loses its body and keeps its height — the redact=True canon.
 
     `PEM_RE` is the only pattern in the redaction module whose match spans
     lines, and `redact_text` replaces the whole block with one marker. That is
-    right for the raw text sink and wrong here: it would move every line below
-    the block up by the block's height, and `edge_extractor.py` cites
-    `lines[*].n`. So canon keeps the block's newlines and empties its
-    interior.
+    right for the raw text sink and wrong for a line-numbered canon: it would
+    move every line below the block up by the block's height, and
+    `edge_extractor.py` cites `lines[*].n`. So the redacted canon keeps the
+    block's newlines and empties its interior. The raw-by-default canon keeps
+    the block verbatim.
     """
-    canon = snapshotted["bundle.conf"]["canon"]
+    # Re-run the snapshot with an explicitly redacted canon into fresh dirs.
+    etc = snapshotted["wg0.conf"]["source"].parent
+    manifest = tmp_path / "manifest-redacted.yml"
+    manifest.write_text(
+        f"include:\n  - {etc}/*.conf\nexclude: []\n", encoding="utf-8"
+    )
+    canon_dir = tmp_path / "out-redacted" / "canon"
+    monkeypatch.setattr(snapshot_mod, "CANON_DIR", str(canon_dir))
+    monkeypatch.setattr(snapshot_mod, "RAW_DIR", str(tmp_path / "out-redacted" / "raw"))
+    monkeypatch.setattr(snapshot_mod, "SNAP_DIR", str(tmp_path / "out-redacted" / "snap"))
+    summary = snapshot_mod.snapshot(str(manifest), redact=True)
+    entry = next(e for e in summary if e["path"].endswith("bundle.conf"))
+    canon = json.loads((canon_dir / f"{entry['hash']}.json").read_text(encoding="utf-8"))
+
     texts = [ln["text"] for ln in canon["lines"]]
     assert len(texts) == len(BUNDLE_CONF.splitlines())
     assert [ln["n"] for ln in canon["lines"]] == list(range(1, len(texts) + 1))

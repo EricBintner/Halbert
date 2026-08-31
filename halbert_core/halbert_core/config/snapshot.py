@@ -43,13 +43,26 @@ def _load_canon_for_correlation(h: str) -> Dict[str, Any] | None:
         return None
 
 
-# The canonical JSON carries the same file twice over -- once parsed into
-# `sections`/`tree`, once as a full-text `lines` array -- so writing it
-# verbatim put every credential the raw sink had just redacted back on disk
-# one line later. CANON_DIR is not staged into a searchable scope, so this was
-# never an index leak, but it is plaintext credentials written by the pipeline
-# whose stated job includes removing them, and drift.py and edge_extractor.py
-# both read it.
+# Canon-DB design (REV-01 F1, reconciled 2026-08-31): the canon under
+# CANON_DIR is RAW BY DESIGN — the user-owned, localhost-only private index
+# that tier routing (queries.py), describe_secret, the correlation index,
+# drift.py and edge_extractor.py all read. The Tier-2 feature set is built
+# on real values: describe_secret fed the "<secret>" placeholder reports
+# the placeholder's length and entropy (8, 2.75) for every credential, the
+# correlation index collapses every secret onto one hash, and the whole
+# recalibration goes inert. What protects raw canon is the egress
+# boundaries — tier routing answers local_only with metadata only, and the
+# MCP dispatch choke point redacts every tools/call result — both pinned by
+# test_tier2_guarantee.py and test_security_roles.py.
+#
+# The RAW_DIR text mirror is the opposite: ALWAYS redacted, whatever the
+# canon's state. It is a grep-able debugging copy, not an input to any
+# secret-aware feature, and redacting it costs nothing. (History: the canon
+# was briefly redacted too — that design is what made describe_secret inert,
+# and the two writers disagreed file-by-file anyway.)
+#
+# `redact=True` remains available for callers that genuinely want a
+# redacted canon (none in-tree today); the default is False.
 #
 # `path`, `hash` and `kind` are addressing, not content, and are left alone.
 # `hash` especially: parser.parse() computes it over the *original* bytes and
@@ -77,7 +90,13 @@ def _redact_canon(canon: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 @trace_call("config.snapshot")
-def snapshot(manifest_path: str, *, redact: bool = True) -> List[Dict[str, Any]]:
+def snapshot(manifest_path: str, *, redact: bool = False) -> List[Dict[str, Any]]:
+    """Snapshot a manifest's files into the config canon DB.
+
+    ``redact`` controls the CANON records only, and defaults to False —
+    raw-by-design, see the design note above. The RAW_DIR text mirror is
+    redacted unconditionally.
+    """
     man = Manifest.from_file(manifest_path)
     files = man.iter_paths()
     ts = datetime.now(timezone.utc).isoformat()
@@ -97,9 +116,9 @@ def snapshot(manifest_path: str, *, redact: bool = True) -> List[Dict[str, Any]]
                 raw_txt = None
             h = canon.get("hash", "")
             if raw_txt is not None and h:
-                safe_txt = redact_text(raw_txt) if redact else raw_txt
+                # The text mirror is always redacted — see the design note.
                 with open(os.path.join(RAW_DIR, f"{h}.txt"), "w", encoding="utf-8") as f:
-                    f.write(safe_txt)
+                    f.write(redact_text(raw_txt))
             if h:
                 canon_out = _redact_canon(canon) if redact else canon
                 with open(os.path.join(CANON_DIR, f"{h}.json"), "w", encoding="utf-8") as f:
