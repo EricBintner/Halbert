@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { apiUrl } from '@/lib/apiBase'
+import type { SpeakerStatus } from '@/components/voice/SpeakerBadge'
 import { AudioLines, Mic, Volume2, Shield, AlertTriangle, Music, Loader2, Moon } from 'lucide-react'
 
 interface AudioConfig {
@@ -30,6 +31,9 @@ interface AudioStatus {
   available: boolean
   sherpa_onnx_installed: boolean
   state: string
+  /** Last identified speaker (O4) — null until a speech turn has run;
+   * absent on the static fallback payload (no coordinator). */
+  speaker?: SpeakerStatus | null
   engines: {
     vad: boolean
     asr: boolean

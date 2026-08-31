@@ -118,6 +118,13 @@ class AudioPipelineCoordinator:
         self._barge_in_handler = None
         self._active_barge_in_token = None
 
+        # Last speaker-ID turn observation (O4). Surfaced via get_status()
+        # so /api/audio/status can tell the frontend who was talking. Only
+        # the speech track writes it — that is the one path that performs
+        # identification; Wyoming satellite transcripts carry no speaker ID
+        # and must not clobber a real one.
+        self._last_speaker_observation: Optional[VoiceTurnObservation] = None
+
     @property
     def state(self) -> AudioState:
         return self._state
@@ -429,6 +436,10 @@ class AudioPipelineCoordinator:
             audio_duration_ms=len(pcm) // 32,  # 16kHz * 2 bytes = 32 bytes/ms
         )
 
+        # O4: remember the turn even when no one was recognized — the badge
+        # must go back to "unidentified" rather than keep a stale match.
+        self._last_speaker_observation = observation
+
         if self.on_voice_turn:
             try:
                 await self.on_voice_turn(observation)
@@ -534,12 +545,30 @@ class AudioPipelineCoordinator:
                 logger.error(f"State change callback error: {e}")
 
     def get_status(self) -> dict:
-        """Status dict for the /api/audio/status endpoint."""
+        """Status dict for the /api/audio/status endpoint.
+
+        ``speaker`` is ``null`` until the first speech-track turn runs; after
+        that it mirrors the last turn's ``VoiceTurnObservation`` fields
+        (name may be empty and role 'unknown' for an unrecognized speaker —
+        represented faithfully here, never invented server-side). The
+        observation's transcript text is deliberately NOT exposed: the
+        status frame answers who was talking, not what was said.
+        """
+        last = self._last_speaker_observation
         return {
             "enabled": self._config.enabled,
             "running": self._running,
             "available": is_audio_available(),
             "state": self._state.value,
+            "speaker": (
+                {
+                    "name": last.speaker_name,
+                    "role": last.speaker_role,
+                    "confidence": last.speaker_confidence,
+                }
+                if last is not None
+                else None
+            ),
             "ingress_sources": [
                 a.status for a in self._ingress_adapters
             ],
