@@ -90,8 +90,13 @@ class TestHAClient:
         mock_resp.json = AsyncMock(return_value={"message": "API running."})
         mock_resp.raise_for_status = MagicMock()
 
-        mock_session = AsyncMock()
-        mock_session.request.return_value.__aenter__ = AsyncMock(return_value=mock_resp)
+        # aiohttp's session.request() returns an async context manager
+        # directly (not a coroutine), so use MagicMock + __aenter__/__aexit__
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session = MagicMock()
+        mock_session.request = MagicMock(return_value=mock_cm)
         mock_session.closed = False
         client._session = mock_session
 
@@ -103,8 +108,8 @@ class TestHAClient:
         config = HAConfig(url="http://ha.local:8123", token="test")
         client = HAClient(config)
 
-        mock_session = AsyncMock()
-        mock_session.request.side_effect = Exception("Connection refused")
+        mock_session = MagicMock()
+        mock_session.request = MagicMock(side_effect=Exception("Connection refused"))
         mock_session.closed = False
         client._session = mock_session
 
@@ -123,8 +128,11 @@ class TestHAClient:
         mock_resp.json = AsyncMock(return_value=[{"entity_id": "light.living_room", "state": "on"}])
         mock_resp.raise_for_status = MagicMock()
 
-        mock_session = AsyncMock()
-        mock_session.request.return_value.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session = MagicMock()
+        mock_session.request = MagicMock(return_value=mock_cm)
         mock_session.closed = False
         client._session = mock_session
 
@@ -149,8 +157,11 @@ class TestHAClient:
         mock_resp.json = AsyncMock(return_value=states)
         mock_resp.raise_for_status = MagicMock()
 
-        mock_session = AsyncMock()
-        mock_session.request.return_value.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session = MagicMock()
+        mock_session.request = MagicMock(return_value=mock_cm)
         mock_session.closed = False
         client._session = mock_session
 

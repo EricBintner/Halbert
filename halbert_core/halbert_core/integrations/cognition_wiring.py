@@ -291,14 +291,30 @@ def get_event_mapper():
         # Start background scan
         _event_mapper.start_background_scan()
 
-        # Wrap in composite with Frigate event mapper if available
+        # Wrap in composite with HA and Frigate event mappers if available.
+        # Both are optional (HA/Frigate may not be configured); the composite
+        # filters None entries. Without this wiring the HA event stream feeds
+        # the mapper but populate_cognition() is never called on it, so the
+        # persona never learns from the house and the pending-event queue
+        # grows without bound (REV-03 F1).
+        secondary_mappers = []
+        ha_mapper = get_ha_event_mapper()
+        if ha_mapper is not None:
+            secondary_mappers.append(ha_mapper)
+            logger.info("HA event mapper added to composite")
         frigate_mapper = get_frigate_event_mapper()
         if frigate_mapper is not None:
+            secondary_mappers.append(frigate_mapper)
+            logger.info("Frigate event mapper added to composite")
+        if secondary_mappers:
             _event_mapper = CompositeEventMapper(
                 primary=_event_mapper,
-                secondary_mappers=[frigate_mapper],
+                secondary_mappers=secondary_mappers,
             )
-            logger.info("Event mapper wrapped with Frigate composite")
+            logger.info(
+                f"Event mapper wrapped with composite "
+                f"({len(secondary_mappers)} secondary)"
+            )
 
     return _event_mapper
 

@@ -38,6 +38,7 @@ FILTERED_DOMAINS: Set[str] = {
     "fan",
     "media_player",
     "vacuum",
+    "sensor",  # debounced via DEBOUNCE_DOMAINS (REV-03 F11)
 }
 
 # Telemetry domains debounced N seconds — only last value per window
@@ -67,6 +68,7 @@ class HAEventStream:
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self._running = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._debounce: Dict[str, Dict[str, float]] = {}  # domain -> {entity_id: last_ts}
         self._msg_id = 0
 
@@ -90,30 +92,75 @@ class HAEventStream:
         if self._running:
             return
         self._running = True
+        self._loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._run_loop())
         logger.info("HA event stream started")
 
     async def stop(self) -> None:
-        """Stop the WebSocket listener."""
+        """Stop the WebSocket listener.
+
+        Safe to call from any event loop (REV-03 F10). The stream runs
+        on a dedicated loop in a daemon thread; uvicorn's shutdown runs
+        on a different loop. Awaiting a foreign-loop task raises
+        RuntimeError, so we use call_soon_threadsafe when the loops
+        differ (same pattern as FrigateMQTTSubscriber).
+        """
         self._running = False
-        if self._ws and not self._ws.closed:
-            await self._ws.close()
-        if self._session and not self._session.closed:
-            await self._session.close()
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        current_loop = None
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
+        if current_loop is self._loop:
+            # Same loop — close directly
+            if self._ws and not self._ws.closed:
+                await self._ws.close()
+            if self._session and not self._session.closed:
+                await self._session.close()
+            if self._task:
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
+        elif self._loop is not None and not self._loop.is_closed():
+            # Different loop — cancel thread-safely
+            self._loop.call_soon_threadsafe(self._cancel_safely)
         logger.info("HA event stream stopped")
 
+    def _cancel_safely(self) -> None:
+        """Cancel the task from its own loop (called via call_soon_threadsafe)."""
+        if self._ws and not self._ws.closed:
+            asyncio.ensure_future(self._ws.close(), loop=self._loop)
+        if self._session and not self._session.closed:
+            asyncio.ensure_future(self._session.close(), loop=self._loop)
+        if self._task:
+            self._task.cancel()
+
     async def _run_loop(self) -> None:
-        """Main loop: connect, authenticate, subscribe, receive."""
+        """Main loop: connect, authenticate, subscribe, receive.
+
+        Reloads HA config on each reconnect (REV-03 F13) so a rotated
+        token takes effect without a restart. Auth failures are terminal
+        — no point retrying every 5s forever with a bad token.
+        """
         while self._running:
             try:
+                # Reload config so a rotated token takes effect (REV-03 F13)
+                from .ha_config import load_ha_config
+                self.config = load_ha_config()
+                if not self.config.is_configured():
+                    logger.warning("HA config no longer configured — stopping stream")
+                    self._running = False
+                    break
                 await self._connect_and_listen()
             except asyncio.CancelledError:
+                break
+            except HAAuthError as e:
+                # Auth failure is terminal — don't retry forever (REV-03 F13)
+                logger.error(f"HA auth failed (terminal): {e}")
+                self._running = False
                 break
             except Exception as e:
                 logger.warning(f"HA event stream error: {e}")
@@ -144,7 +191,7 @@ class HAEventStream:
             msg = await self._ws.receive(timeout=10)
             data = json.loads(msg.data)
             if data.get("type") != "auth_ok":
-                raise HAEventStreamError(f"Auth failed: {data.get('message', 'unknown')}")
+                raise HAAuthError(f"Auth failed: {data.get('message', 'unknown')}")
 
             logger.info("HA WebSocket authenticated")
 
@@ -228,3 +275,10 @@ class HAEventStream:
 
 class HAEventStreamError(Exception):
     """Raised when the HA WebSocket stream encounters an error."""
+
+
+class HAAuthError(HAEventStreamError):
+    """Raised when HA WebSocket authentication fails.
+
+    Treated as terminal by _run_loop — no retry loop (REV-03 F13).
+    """

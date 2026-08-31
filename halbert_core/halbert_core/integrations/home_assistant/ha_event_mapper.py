@@ -30,6 +30,11 @@ class HAEventMapper:
     and flushed on each cognitive tick.
     """
 
+    # Maximum pending events before oldest are dropped. Prevents unbounded
+    # memory growth if cognition ticks are slow or the agent is idle
+    # (REV-03 F1). media_player attributes are large; 500 events is ~2MB.
+    MAX_PENDING_EVENTS = 500
+
     def __init__(self, trackers: Optional[Dict] = None):
         self._pending_events: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
@@ -44,6 +49,9 @@ class HAEventMapper:
         """
         with self._lock:
             self._pending_events.append(event)
+            # Cap the queue: drop oldest if over limit (REV-03 F1).
+            if len(self._pending_events) > self.MAX_PENDING_EVENTS:
+                del self._pending_events[: len(self._pending_events) - self.MAX_PENDING_EVENTS]
 
     def populate_cognition(self, cognition) -> None:
         """Flush pending events into PersonaCognition cognitive layers.
