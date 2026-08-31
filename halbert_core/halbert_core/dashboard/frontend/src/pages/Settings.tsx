@@ -3,10 +3,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useScan } from '@/contexts/ScanContext'
-import { useDebug } from '@/contexts/DebugContext'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { Toast } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/api'
@@ -18,13 +14,11 @@ import {
   Cpu,
   Brain,
   BookOpen,
-  ExternalLink,
   Shield,
   Lock,
   Sparkles,
   Eye,
   Info,
-  Palette,
   AudioLines,
   ArrowLeft,
   Bug,
@@ -51,12 +45,13 @@ import {
 } from '@/components/settings/tabs/KnowledgeTab'
 import { SafetyTab, type AIRule, type NewRule, type ToolPolicy } from '@/components/settings/tabs/SafetyTab'
 import { AlertsTab, type AlertRule } from '@/components/settings/tabs/AlertsTab'
+import { AboutTab } from '@/components/settings/tabs/AboutTab'
+import { DebugTab } from '@/components/settings/tabs/DebugTab'
 import { useInstanceVariant } from '@/hooks/useInstanceVariant'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { AudioSettings, SpeakerProfilesCard, VoiceEnrollmentModal } from '@/components/audio'
 import { LegalNoticesModal } from '@/components/legal/LegalNoticesModal'
 import { apiUrl } from '@/lib/apiBase'
-import { cn } from '@/lib/utils'
 
 const API_BASE = apiUrl('/api')
 
@@ -151,9 +146,6 @@ export function Settings() {
   // shrink the surface on the machine that needs it.
   const variant = useInstanceVariant()
   const isHomeVariant = variant === 'home'
-
-  // Debug panel state (moved here from the Layout top bar)
-  const { isDebugMode, setDebugMode, logs, clearLogs } = useDebug()
 
   const [showComponentLibrary, setShowComponentLibrary] = useState(false)
   const [showLegalNotices, setShowLegalNotices] = useState(false)
@@ -831,125 +823,15 @@ export function Settings() {
 
         {/* About Tab */}
         <TabsContent value="about" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Info className="h-5 w-5" />
-                About Halbert
-              </CardTitle>
-              <CardDescription>
-                AI-powered Linux system assistant
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <h4 className="font-medium">Version</h4>
-                <p className="text-sm text-muted-foreground">Development Build</p>
-              </div>
-
-              <div className="space-y-2">
-                <h4 className="font-medium">Developer Tools</h4>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Explore the UI component library used to build Halbert.
-                </p>
-                <Button variant="outline" onClick={() => setShowComponentLibrary(true)}>
-                  <Palette className="h-4 w-4 mr-2" />
-                  View Component Library
-                </Button>
-              </div>
-
-              <div className="space-y-2">
-                <h4 className="font-medium">Legal & Third-Party Notices</h4>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Licenses and attributions for Halbert, its RAG corpus sources,
-                  software dependencies, and bundled foundation models.
-                </p>
-                <Button variant="outline" onClick={() => setShowLegalNotices(true)}>
-                  <Shield className="h-4 w-4 mr-2" />
-                  View Legal Notices
-                </Button>
-              </div>
-
-              <div className="space-y-2">
-                <h4 className="font-medium">Links</h4>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="ghost" size="sm" asChild>
-                    <a href="https://github.com" target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="h-4 w-4 mr-1" />
-                      GitHub
-                    </a>
-                  </Button>
-                  <Button variant="ghost" size="sm" asChild>
-                    <a href="/docs" target="_blank" rel="noopener noreferrer">
-                      <BookOpen className="h-4 w-4 mr-1" />
-                      Documentation
-                    </a>
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <AboutTab
+            onOpenComponentLibrary={() => setShowComponentLibrary(true)}
+            onOpenLegalNotices={() => setShowLegalNotices(true)}
+          />
         </TabsContent>
 
         {/* Debug Tab — moved from the Layout top bar to the end of settings */}
         <TabsContent value="debug" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bug className="h-5 w-5" />
-                Debug Mode
-              </CardTitle>
-              <CardDescription>
-                Toggle diagnostic logging and inspect captured log entries.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="debug-toggle">Enable debug logging</Label>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    When on, request, response, timing, and error events are captured below.
-                  </p>
-                </div>
-                <Button
-                  id="debug-toggle"
-                  variant={isDebugMode ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setDebugMode(!isDebugMode)}
-                >
-                  {isDebugMode ? 'Debug ON' : 'Debug OFF'}
-                </Button>
-              </div>
-
-              <div className="border border-border rounded-md flex flex-col max-h-96">
-                <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card">
-                  <span className="text-sm text-foreground">Logs ({logs.length})</span>
-                  <button onClick={clearLogs} className="text-muted-foreground hover:text-foreground text-[10px]">Clear</button>
-                </div>
-                <div className="flex-1 overflow-auto p-2 text-xs font-mono">
-                  {logs.length === 0 ? (
-                    <div className="text-muted-foreground text-center py-4">No logs yet. Interact with the app to see logs.</div>
-                  ) : (
-                    logs.slice().reverse().map(log => (
-                      <div key={log.id} className={cn(
-                        "py-0.5",
-                        log.type === 'error' && "text-error",
-                        log.type === 'timing' && "text-warning",
-                        log.type === 'request' && "text-info",
-                        log.type === 'response' && "text-success",
-                        log.type === 'info' && "text-foreground"
-                      )}>
-                        <span className="text-muted-foreground">[{log.timestamp.toLocaleTimeString()}]</span>
-                        <span className="text-muted-foreground ml-1">[{log.category}]</span>
-                        <span className="ml-1">{log.message}</span>
-                        {log.duration && <span className="text-muted-foreground ml-1">({log.duration.toFixed(0)}ms)</span>}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <DebugTab />
         </TabsContent>
 
             </Tabs>
