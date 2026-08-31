@@ -688,6 +688,21 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                         logger.debug(f"Coordinator cleanup after failed start: {stop_err}")
                 app.state.audio_coordinator = None
 
+        # Voice mode (O3): TTS egress hub — the dashboard's mouth. A dumb
+        # relay from the agent state machine to /api/audio/tts subscribers,
+        # deliberately NOT gated on the audio capability: it forwards
+        # nothing until a browser subscribes, and only the synthesis (in the
+        # state machine hook) needs the audio stack. Aliased onto app.state
+        # per the plan; the state machine reaches it through the module
+        # singleton (the get_event_bus pattern) because it holds no app ref.
+        from .routes.tts_egress import get_tts_egress_hub
+        app.state.tts_egress = get_tts_egress_hub()
+        # When the pipeline runs, the state machine's TTS hook mints
+        # coordinator-owned barge-in tokens through this reference (so VAD
+        # barge-in cancels browser playback too); without it the hook falls
+        # back to a standalone token.
+        get_tts_egress_hub().set_pipeline(app.state.audio_coordinator)
+
         # Phase 2: Start HA WebSocket event stream if configured
         # Capability-based: start if HA connection is configured.
         if _caps.has(CAP_HA_CONNECTION):

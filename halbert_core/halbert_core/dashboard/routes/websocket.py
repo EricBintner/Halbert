@@ -10,6 +10,11 @@ WebSocket routes.
   pipeline's dashboard ingress (``WebRtcIngress``). Closed with 1013 ("try
   again later") when no coordinator/ingress is running — the pipeline is
   capability-gated and optional.
+- ``/api/audio/tts`` (O3): TTS egress downlink — the agent state machine's
+  spoken Piper PCM streamed to the browser that subscribed with the turn's
+  session id. Server->client frames only (begin/binary PCM/end/cancelled),
+  except the {"type": "cancel"} control frame the browser can send to barge
+  in (see ``routes/tts_egress.py`` for the protocol).
 
   Terminal message protocol (JSON, both directions):
     client -> server: {"type": "stdin",  "data": "..."}
@@ -152,3 +157,54 @@ async def audio_stream_endpoint(websocket: WebSocket):
         await websocket.close(code=1013)  # try again later — pipeline disabled
         return
     await ingress.handle_websocket(websocket)
+
+
+@router.websocket("/api/audio/tts")
+async def tts_egress_endpoint(websocket: WebSocket, session_id: str = ""):
+    """TTS egress downlink for voice sessions (O3).
+
+    Subscribes the socket to the session's audio on the TTS egress hub; the
+    agent state machine then publishes the turn's spoken Piper PCM here as
+    begin / binary s16le frames / end (or cancelled). The hub is a dumb relay
+    and exists even when the audio pipeline is down — only the *synthesis*
+    needs the audio stack, gated on the subscriber check where it happens —
+    so this route never refuses on capability grounds.
+
+    Client -> server frames are ignored except ``{"type": "cancel"}``, the
+    barge-in control frame: it fires the session's barge-in token (aborting
+    in-flight synthesis) and answers with ``{"type": "cancelled"}``.
+    """
+    await websocket.accept()
+    if not session_id:
+        await websocket.close(code=4400, reason="session_id required")
+        return
+
+    # app.py aliases the singleton onto app.state; a fresh test app (or one
+    # that never ran startup) falls back to the module singleton, which is
+    # the same hub the state machine publishes through.
+    hub = getattr(websocket.app.state, "tts_egress", None)
+    if hub is None:
+        from .tts_egress import get_tts_egress_hub
+        hub = get_tts_egress_hub()
+
+    unsubscribe = hub.subscribe(session_id, websocket)
+    logger.info(f"TTS egress: browser subscribed to session {session_id}")
+    try:
+        while True:
+            # Receiving keeps the connection alive and surfaces disconnects;
+            # the only frame with meaning is the barge-in control frame.
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            if "text" in message:
+                try:
+                    parsed = json.loads(message["text"])
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if parsed.get("type") == "cancel":
+                    await hub.cancel(session_id)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        unsubscribe()
+        logger.info(f"TTS egress: browser unsubscribed from session {session_id}")
