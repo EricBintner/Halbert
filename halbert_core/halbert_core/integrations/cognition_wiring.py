@@ -213,21 +213,69 @@ def get_cognition():
 
 
 def _create_memory_adapter():
-    """Create a HaloysiusMemoryAdapter backed by PersonaMemoryStore.
+    """Create a HaloysiusMemoryAdapter backed by a PersonaMemoryStore.
 
     This connects advance_turn's thought promotion to persistent memory.
+
+    In singular entity mode (canonical_memory_url set in being.yml, P2c)
+    the adapter is backed by a ``PeerMemoryBackend`` that proxies
+    smart_add/search to the canonical HA server over the peer HTTP link,
+    so both cognitions share one autobiography. Otherwise, a local
+    ``PersonaMemoryStore`` as before.
     """
     try:
-        from haloysius.memory_v2.store import PersonaMemoryStore
         from .haloysius_memory_adapter import HaloysiusMemoryAdapter
 
-        store = PersonaMemoryStore(_get_persona_id())
+        store = _create_memory_store()
         adapter = HaloysiusMemoryAdapter(store)
-        logger.info(f"Created HaloysiusMemoryAdapter for {_get_persona_id()}")
+        logger.info(
+            "Created HaloysiusMemoryAdapter for %s (%s)",
+            _get_persona_id(),
+            "peer-backed" if _get_canonical_memory_url() else "local",
+        )
         return adapter
     except Exception as e:
         logger.warning(f"Could not create memory adapter: {e}")
         return None
+
+
+def _create_memory_store():
+    """Create the memory store based on singular entity config (P2c).
+
+    When ``canonical_memory_url`` is set in being.yml, returns a
+    ``PeerMemoryBackend`` that proxies to the canonical host. Otherwise,
+    a local ``PersonaMemoryStore``. Falls back to the local store when
+    the peer token is missing or the backend cannot be imported — a
+    cognition tick with local memory beats no cognition at all.
+    """
+    canonical_memory_url = _get_canonical_memory_url()
+    if canonical_memory_url:
+        try:
+            from haloysius.memory_v2.peer_backend import PeerMemoryBackend
+
+            token = _get_peer_token()
+            if not token:
+                logger.warning(
+                    "canonical_memory_url is set but no peer_token configured "
+                    "— falling back to local PersonaMemoryStore"
+                )
+            else:
+                logger.info(
+                    "Memory adapter: using PeerMemoryBackend at %s",
+                    canonical_memory_url,
+                )
+                return PeerMemoryBackend(
+                    peer_url=canonical_memory_url,
+                    bearer_token=token,
+                )
+        except ImportError as e:
+            logger.warning(
+                f"Failed to import PeerMemoryBackend (falling back to local): {e}"
+            )
+
+    from haloysius.memory_v2.store import PersonaMemoryStore
+
+    return PersonaMemoryStore(_get_persona_id())
 
 
 def _ensure_app_seam_wired() -> None:
