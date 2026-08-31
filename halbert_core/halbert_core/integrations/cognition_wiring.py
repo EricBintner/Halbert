@@ -78,6 +78,66 @@ def _get_scene_context() -> str:
         return "system administration"
 
 
+def _get_body_name() -> str:
+    """Get the body name — which physical body the entity is speaking from.
+
+    Priority: BeingConfig.body_name > variant-based default.
+
+    In singular entity mode, the prompt builder includes this so the entity
+    knows where it is ("You are currently at your desk body"). In
+    independent mode, it's a device label for logging/UI.
+    """
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        if cfg.body_name:
+            return cfg.body_name
+    except Exception:
+        pass
+    # Variant-based default
+    if _get_variant() == "home":
+        return "home"
+    return "workstation"
+
+
+def _get_canonical_memory_url() -> str:
+    """Get the canonical memory URL for singular entity mode.
+
+    Returns the URL of the canonical memory host, or empty string if
+    this node uses local memory (independent entity mode).
+    """
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        return cfg.canonical_memory_url or ""
+    except Exception:
+        return ""
+
+
+def _get_canonical_thread_url() -> str:
+    """Get the canonical thread URL for singular entity mode.
+
+    Returns the URL of the canonical thread host, or empty string if
+    this node uses local threads (independent entity mode).
+    """
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        return cfg.canonical_thread_url or ""
+    except Exception:
+        return ""
+
+
+def is_singular_entity_mode() -> bool:
+    """True when this node is in singular entity mode (proxies memory to a canonical host).
+
+    Singular mode means: shared persona_id + shared memory + shared threads
+    = one entity with multiple bodies. Independent mode (current behavior)
+    means each node has its own persona_id, memory, and threads.
+    """
+    return bool(_get_canonical_memory_url())
+
+
 def _get_variant() -> str:
     """Get the instance variant.
 

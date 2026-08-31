@@ -231,6 +231,22 @@ class BeingConfig:
     scene_context: str = ""  # e.g. "smart home automation"
     persona_id_override: str = ""  # e.g. "home"
 
+    # --- Singular entity / multi-body ---
+    # body_name labels which physical body the entity is speaking from
+    # (e.g. "desk", "home"). In singular mode, the prompt builder includes
+    # it so the entity knows where it is. In independent mode it's a device
+    # label for logging/UI.
+    body_name: str = ""  # e.g. "desk", "home". Empty = variant-based default.
+    # Singular entity mode: when canonical_memory_url is set, this node's
+    # PersonaMemoryStore proxies reads/writes to the canonical host over
+    # the peer link. When unset, this node uses local memory (independent
+    # entity mode — current behavior).
+    canonical_memory_url: str = ""  # e.g. "http://n150.lan:8001/api/memory"
+    # Same for conversation threads: when canonical_thread_url is set, this
+    # node's ThreadManager reads/writes to the canonical host's shared
+    # SQLite conversation store via a thin data-access proxy.
+    canonical_thread_url: str = ""  # e.g. "http://n150.lan:8001/api/conversations"
+
     # --- Home Assistant connection (home variant stores HA creds here
     # instead of a separate ha_config.yml, so being.yml is the single
     # file a home user needs to deploy) ---
@@ -305,6 +321,24 @@ class BeingConfig:
         if vision.interval_seconds < 10:
             raise ValueError(
                 f"senses.vision.interval_seconds must be >= 10, got {vision.interval_seconds}"
+            )
+        # Singular entity / multi-body validation
+        if self.canonical_memory_url and not self.canonical_memory_url.startswith(("http://", "https://")):
+            raise ValueError(
+                f"canonical_memory_url must be an http(s) URL, got '{self.canonical_memory_url}'"
+            )
+        if self.canonical_thread_url and not self.canonical_thread_url.startswith(("http://", "https://")):
+            raise ValueError(
+                f"canonical_thread_url must be an http(s) URL, got '{self.canonical_thread_url}'"
+            )
+        # If canonical URLs are set but persona_id_override is empty, warn
+        # (the user may be mid-config and hasn't set the shared persona yet).
+        if (self.canonical_memory_url or self.canonical_thread_url) and not self.persona_id_override:
+            logger.warning(
+                "canonical_memory_url/canonical_thread_url set but persona_id_override "
+                "is empty — this node will proxy memory/threads to the canonical host "
+                "but use a different persona_id. Set persona_id_override to the shared "
+                "persona id for singular entity mode."
             )
         # Home identity validation
         if self.variant not in VALID_VARIANTS:
