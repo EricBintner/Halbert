@@ -129,6 +129,12 @@ halbert_core/halbert_core/dashboard/frontend/src/
 
 ## 4. Phase 1 [FABLE] — The Audio-Reactive Mark Engine (build now)
 
+> **Build status: ✅ COMPLETE on this branch** (2026-08-31). F1 `e1aec3f2`, F2 `e8dbd809`,
+> F3 `7fea0a61`, F4 `b67c852a`, F5 `a6d8edfd`. Suite: 53/53 passing (29 baseline + 24 new),
+> `tsc --noEmit` clean, `build-storybook` builds. One as-built correction vs. the code blocks
+> below: lane-1 static leg top is `82.67` (not 82.68) — the shipped test and this document's
+> blocks were both corrected.
+
 Design-system package commands (run from `packages/design-system/`):
 - Test: `npm run test` (vitest, jsdom) · Typecheck: `npm run typecheck` · Stories: `npm run storybook`
 - Baseline verified on this branch: **29/29 tests pass**.
@@ -173,7 +179,7 @@ describe('mark voice geometry', () => {
   it('matches the verified static mark model', () => {
     expect(TINE_COUNT).toBe(10) // spine + 9 lanes
     expect(laneRadius(9)).toBe(432)
-    expect(laneTop(1)).toBeCloseTo(82.68, 2)
+    expect(laneTop(1)).toBeCloseTo(82.67, 2)
     expect(laneTop(9)).toBeCloseTo(512, 5) // lane 9 has no legs
   })
 
@@ -182,7 +188,7 @@ describe('mark voice geometry', () => {
     // spine: M 512 80 ... 512 512
     expect(firstPoint(STATIC_TINE_PATHS[0])).toEqual([512, 80])
     // lane 1 left-leg top
-    expect(firstPoint(STATIC_TINE_PATHS[1])).toEqual([464, 82.68])
+    expect(firstPoint(STATIC_TINE_PATHS[1])).toEqual([464, 82.67])
     // lane 9 bare semicircle: (80,512) .. (944,512)
     expect(firstPoint(STATIC_TINE_PATHS[9])).toEqual([80, 512])
     const lane9 = points(STATIC_TINE_PATHS[9])
@@ -689,7 +695,7 @@ describe('energy sources', () => {
     }
     const src = createAnalyserEnergySource(fakeAnalyser, 48000)
     const out = new Float32Array(10)
-    expect(src.readEnergies(out)).toBe(10)
+    expect(src.readEnergies(out, 0)).toBe(10)
     expect(out[0]).toBeCloseTo(1, 5) // brilliance ring lights up
     expect(out[4]).toBeCloseTo(0, 5) // vocal core stays dark
   })
@@ -930,7 +936,6 @@ Decisions 2 & 5: 10 `<path>` refs mutated directly; static first paint; `idle` u
 ```tsx
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-import * as React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render } from '@testing-library/react'
 
@@ -1239,7 +1244,7 @@ export * from './voice'
 
 - [ ] **Step 4: Run tests + typecheck**
   - `npx vitest run src/test/audioReactiveMark.test.tsx` → 5 pass
-  - `npm run test` → 29 baseline + 25 new = 54 pass
+  - `npm run test` → 29 baseline + 24 new = 53 pass
   - `npm run typecheck` → clean
 
 - [ ] **Step 5: Commit**
@@ -1605,7 +1610,7 @@ Fix `HalbertMark.tsx` JSDoc density thresholds (says ≥96px, code says >64px) a
 
 ## 8. Acceptance & Risk
 
-**Phase 1 acceptance (this session):** `npm run test` in `packages/design-system` → 54 passing; `npm run typecheck` clean; Storybook Voice stories animate from synthetic sources without a mic; static first-paint markup byte-identical to the standalone mark geometry; energy-source lifecycle starts/stops with mount; all junction-pinning invariants test-enforced.
+**Phase 1 acceptance (this session):** ✅ `npm run test` in `packages/design-system` → 53 passing; `npm run typecheck` clean; `build-storybook` builds; Voice stories animate from synthetic sources without a mic; static first-paint markup byte-identical to the standalone mark geometry; energy-source lifecycle starts/stops with mount; all junction-pinning invariants test-enforced.
 
 **Known risks & deferrals:**
 1. **WebKitGTK gap** — Tauri on Linux renders WebKitGTK, not Chromium: Web Audio FFT and getUserMedia AEC are weaker there. Voice Mode is verified in Chromium; P4 decides the Tauri appliance story after hardware testing. (Spec diagram says "Kiosk Chromium" — this plan makes that explicit.)
