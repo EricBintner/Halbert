@@ -38,6 +38,7 @@ This documentation serves two audiences:
 | [12-scrutiny-and-reverse-engineering-modality-handoff.md](12-scrutiny-and-reverse-engineering-modality-handoff.md) | Deep Scrutiny & Reverse-Engineering Audit: Identifying 6 critical DSP, concurrency, and session landmines in modality handoff |
 | [13-adversarial-review-modality-handoff.md](13-adversarial-review-modality-handoff.md) | Theoretical Foundations & Blue-Sky Review: How humans truly want to engage with an embodied computer/home voice assistant |
 | [14-system-prompts-and-modality-gap-analysis.md](14-system-prompts-and-modality-gap-analysis.md) | Embodied System Prompts & Codebase Gap Analysis: Modality-aware prompt engineering, <speech> demuxing, and file-by-file implementation gaps |
+| [15-voice-mode-visual-ui-and-touchscreen-spec.md](15-voice-mode-visual-ui-and-touchscreen-spec.md) | Voice Mode Visual UI & Touchscreen Architecture: Audio-reactive Halbert Mark SVG vibration mechanics, N150 appliance power management, and touch interactions |
 
 ---
 
