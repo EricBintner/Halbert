@@ -14,7 +14,7 @@ import logging
 from typing import Optional
 
 try:
-    from fastapi import APIRouter, HTTPException
+    from fastapi import APIRouter, HTTPException, Request
     from pydantic import BaseModel
     FASTAPI_AVAILABLE = True
 except ImportError:
@@ -110,14 +110,20 @@ if FASTAPI_AVAILABLE:
     # ── Status endpoint ─────────────────────────────────────────────
 
     @router.get("/status")
-    async def get_audio_status():
-        """Audio subsystem status."""
+    async def get_audio_status(request: Request):
+        """Audio subsystem status — live when the pipeline coordinator is up."""
+        coordinator = getattr(request.app.state, "audio_coordinator", None)
+        if coordinator is not None:
+            try:
+                return coordinator.get_status()
+            except Exception as e:
+                logger.warning(f"coordinator status failed, using static fallback: {e}")
         cfg = load_config()
         return {
             "enabled": cfg.enabled,
             "available": is_audio_available(),
             "sherpa_onnx_installed": is_audio_available(),
-            "state": "idle",  # TODO: read from pipeline coordinator
+            "state": "idle",  # TODO: live once app.state.audio_coordinator is wired (O2)
             "engines": {
                 "vad": is_audio_available(),
                 "asr": is_audio_available(),
