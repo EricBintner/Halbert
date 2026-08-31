@@ -2676,7 +2676,32 @@ class AgentStateMachine:
         RESPONDING state: Generate final response.
         """
         logger.info(f"RESPONDING: confidence={self.ctx.confidence:.2f}")
-        
+
+        # Phase 2 modality wiring: resolve the turn's delivery modality
+        # (TEXT/VOICE) from the channel capability + cognitive state, and
+        # defang modality control tags from the user input (spec 5.11).
+        # When the engine is not installed, this is a no-op (text-only).
+        modality_ctx = None
+        try:
+            from ..integrations.modality_wiring import (
+                build_modality_context,
+                defang_user_input,
+                resolve_turn_modality,
+                should_speak,
+            )
+            modality_ctx = build_modality_context(
+                user_query=self.ctx.user_query,
+                speaker_role=self.ctx.speaker_role,
+            )
+            if modality_ctx is not None:
+                modality_ctx = resolve_turn_modality(modality_ctx)
+                # Defang the user query in conversation history (spec 5.11).
+                # The original query is preserved in ctx.user_query; the
+                # defanged version is applied to the messages array below.
+                self._defanged_query = defang_user_input(self.ctx.user_query)
+        except Exception as e:
+            logger.debug(f"Modality wiring skipped (non-fatal): {e}")
+
         # Build response prompt. Neither ``history`` nor ``continuity`` is
         # passed any more:
         #   * the prior turns are the messages array (_build_messages), and
@@ -2690,15 +2715,28 @@ class AgentStateMachine:
         # them from ``context``, and _receipt_block still feeds the
         # no-builder path below.
         if self.prompts:
+            # Phase 2.5: pass the resolved modality so the prompt builder
+            # can request plain text for voice turns (no markdown waste).
+            response_modality = "text"
+            if modality_ctx is not None:
+                try:
+                    resolved_mod = getattr(modality_ctx, "recommended_modality", None)
+                    if resolved_mod is not None:
+                        response_modality = resolved_mod.value.lower()
+                except Exception:
+                    pass
             prompt = self.prompts.build_response_prompt(
                 query=self.ctx.user_query,
                 context=self.ctx.retrieved_context,
                 observations=self.ctx.observations,
                 tools_supported=getattr(self.llm, "tools_supported", None),
+                response_modality=response_modality,
             )
             logger.info("Using AgentPromptBuilder for response prompt")
         else:
-            prompt = self._build_simple_response_prompt()
+            prompt = self._build_simple_response_prompt(
+                response_modality=response_modality,
+            )
             logger.info("Using simple response prompt (no prompt builder)")
 
         # DEBUG: Log the prompt to verify markdown instructions are included
@@ -2842,6 +2880,78 @@ class AgentStateMachine:
                 self.ctx.session_id, inv["module"], inv.get("props", {})
             )
             logger.info(f"Module invoked: {inv['module']}")
+
+        # Phase 2 modality wiring: demux the response into a MultiStreamPayload
+        # and emit modality + speech SSE events for the frontend. When the
+        # engine is not installed or the modality is TEXT, this is a no-op
+        # (the display_text is the clean_response, no speech segments).
+        try:
+            if modality_ctx is not None:
+                from ..integrations.modality_wiring import (
+                    demux_response,
+                    get_display_text,
+                    get_speech_text,
+                    should_speak,
+                )
+                payload = demux_response(
+                    clean_response,
+                    modality_ctx,
+                    session_id=self.ctx.session_id,
+                    thread_id=self.ctx.thread_id or "",
+                )
+                if payload is not None:
+                    # Emit modality decision event for the frontend.
+                    modality_value = getattr(
+                        getattr(modality_ctx, "recommended_modality", None),
+                        "value", "text",
+                    )
+                    yield StreamEvent(
+                        type="modality_resolved",
+                        data={
+                            "session_id": self.ctx.session_id,
+                            "modality": modality_value,
+                            "speech_text": get_speech_text(payload),
+                            "display_text": get_display_text(payload),
+                        },
+                    )
+                    # If voice modality, emit speech segments for the audio
+                    # pipeline. The frontend's useAgentStream hook routes
+                    # these to the audio playback component.
+                    if should_speak(modality_ctx):
+                        for seg in getattr(payload, "segments", []):
+                            if not getattr(seg, "is_spoken", False):
+                                continue
+                            yield StreamEvent(
+                                type="speech_segment",
+                                data={
+                                    "session_id": self.ctx.session_id,
+                                    "text": seg.text,
+                                    "role": getattr(
+                                        getattr(seg, "role", None),
+                                        "value", "persona",
+                                    ),
+                                    "prosody": {
+                                        "rate": getattr(
+                                            getattr(seg, "prosody", None),
+                                            "rate", 1.0,
+                                        ),
+                                        "volume": getattr(
+                                            getattr(seg, "prosody", None),
+                                            "volume", 1.0,
+                                        ),
+                                        "whisper": getattr(
+                                            getattr(seg, "prosody", None),
+                                            "whisper", False,
+                                        ),
+                                    },
+                                },
+                            )
+                        logger.info(
+                            f"Emitted {len([s for s in getattr(payload, 'segments', []) if getattr(s, 'is_spoken', False)])} "
+                            f"speech segments for voice delivery"
+                        )
+        except Exception as e:
+            logger.debug(f"Modality demux/delivery skipped (non-fatal): {e}")
 
         # Final committed text is the stripped response — see the stripping
         # note above. Streaming may have already shown the raw tail, so
@@ -3099,7 +3209,7 @@ class AgentStateMachine:
             "and cite sources when available."
         )
 
-    def _build_simple_response_prompt(self) -> str:
+    def _build_simple_response_prompt(self, response_modality: str = "text") -> str:
         """Build a simple response prompt when no prompt builder available."""
         # Receipts are rendered in their own block, so continuity cannot spend
         # the five retrieval slots (see _retrieval_documents).
@@ -3113,6 +3223,21 @@ class AgentStateMachine:
 
         obs_text = "\n".join([f"- {obs}" for obs in self.ctx.observations])
 
+        # Phase 2.5: modality-conditional formatting (same logic as
+        # AgentPromptBuilder.build_response_prompt).
+        if response_modality == "voice":
+            formatting_line = (
+                "- Respond in plain text suitable for speech: short "
+                "sentences, no markdown syntax, no code blocks"
+            )
+            response_style = "plain text, spoken naturally"
+        else:
+            formatting_line = (
+                "- Use **markdown formatting**: headers (##), bullet "
+                "points (-), **bold**, `code`, code blocks (```bash)"
+            )
+            response_style = "markdown formatting"
+
         return f"""{self._fallback_identity()}
 
 Answer this question: {self.ctx.user_query}
@@ -3125,8 +3250,8 @@ What I've done:
 
 Instructions:
 - Provide a helpful, accurate response
-- Use **markdown formatting**: headers (##), bullet points (-), **bold**, `code`, code blocks (```bash)
+{formatting_line}
 - Cite sources when possible
 - Be concise but complete
 
-Your response (use markdown formatting):"""
+Your response ({response_style}):"""

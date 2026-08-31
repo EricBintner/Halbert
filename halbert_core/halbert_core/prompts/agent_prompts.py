@@ -399,17 +399,22 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         except Exception as e:
             logger.warning(f"Personality reload failed: {e}")
 
-    def _generate_personality(self) -> str:
+    def _generate_personality(self, response_modality: str = "text") -> str:
         """Generate the personality prompt section from BeingConfig.
 
         Returns an empty string when no personality is configured or when
         Haloysius is unavailable.
+
+        Phase 2.5: ``response_modality`` is passed through to
+        ``generate_personality_section`` so voice-presentation guidance
+        is omitted for voice turns (handled by the engine's
+        PersonaVoiceProfile instead).
         """
         if self._being_cfg is None:
             return ""
         try:
             from ..persona.personality_prompt import generate_personality_section
-            return generate_personality_section(self._being_cfg)
+            return generate_personality_section(self._being_cfg, response_modality)
         except Exception as e:
             logger.warning(f"Personality generation failed: {e}")
             return ""
@@ -585,6 +590,7 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         history: Optional[List[Dict[str, Any]]] = None,
         continuity: str = "",
         tools_supported: Optional[bool] = None,
+        response_modality: str = "text",
     ) -> str:
         """
         Build prompt for RESPONDING state.
@@ -676,6 +682,24 @@ The user is asking about your state. Follow these rules:
         preface_parts.extend(self._continuity_section(continuity, tools_supported))
         preface = ("\n\n".join(preface_parts) + "\n\n") if preface_parts else ""
 
+        # Phase 2.5: modality-conditional formatting. When the engine
+        # resolved VOICE, the demuxer strips markdown before synthesis
+        # anyway, so asking the model for markdown wastes tokens and can
+        # confuse prosody. For VOICE, request plain spoken-language text.
+        # For TEXT (or no engine), keep the original markdown instruction.
+        if response_modality == "voice":
+            formatting_line = (
+                "- Respond in plain text suitable for speech: short "
+                "sentences, no markdown syntax, no code blocks"
+            )
+            response_style = "plain text, spoken naturally"
+        else:
+            formatting_line = (
+                "- Use **markdown formatting**: headers (##), bullet "
+                "points (-), **bold**, `code`, code blocks (```bash)"
+            )
+            response_style = "markdown formatting"
+
         prompt = f"""{preface}## Task
 Answer this question: {query}
 
@@ -687,14 +711,14 @@ Answer this question: {query}
 
 ## Instructions
 - Provide a helpful, accurate response based on the available information
-- Use **markdown formatting**: headers (##), bullet points (-), **bold**, `code`, code blocks (```bash)
+{formatting_line}
 - Cite sources when possible (e.g., "According to the systemd documentation...")
 - Be concise but complete
 - If you're uncertain, clearly state your confidence level
 - Suggest follow-up actions if appropriate
 {reactive_instructions}
 
-Your response (use markdown formatting):"""
+Your response ({response_style}):"""
 
         return prompt
     

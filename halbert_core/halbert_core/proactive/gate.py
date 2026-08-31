@@ -57,6 +57,12 @@ class ProactiveGate:
         Returns:
             (True, "") if the event should be shown.
             (False, reason) if the event should be suppressed.
+
+        Phase 2.5: the quiet-hours check delegates to the engine's
+        ``should_speak_proactively()`` when the modality engine is
+        available, which applies the ``QuietHoursPolicy`` with
+        life-safety bypass (B2). Falls back to the local quiet-hours
+        check when the engine is not installed.
         """
         # 1. Check proactivity dial — a per-category override wins over the
         #    global dial when one exists for this event's category.
@@ -69,9 +75,18 @@ class ProactiveGate:
         if event_severity < min_severity:
             return False, f"proactivity dial is '{dial}' (requires severity >= {min_severity})"
 
-        # 2. Check quiet hours (suppress non-critical)
-        if self.config.quiet_hours and event.severity != "critical":
-            if self._in_quiet_hours():
+        # 2. Check quiet hours — delegate to the engine's
+        #    should_speak_proactively() when available (applies
+        #    QuietHoursPolicy with life-safety bypass B2). Fall back to
+        #    the local check when the engine is not installed.
+        if event.severity != "critical":
+            quiet_active = self._check_quiet_hours_engine(event)
+            if quiet_active is not None:
+                # Engine returned a definitive answer.
+                if not quiet_active:
+                    return False, "quiet hours active (non-critical suppressed)"
+            elif self.config.quiet_hours and self._in_quiet_hours():
+                # Fallback: local quiet-hours check.
                 return False, "quiet hours active (non-critical suppressed)"
 
         # 3. Check guardrails (safe mode suppresses non-critical)
@@ -98,6 +113,29 @@ class ProactiveGate:
 
         # 5. All checks passed
         return True, ""
+
+    def _check_quiet_hours_engine(self, event: ProactiveEvent) -> bool | None:
+        """Delegate quiet-hours check to the engine when available.
+
+        Returns True if the event should be allowed (not quiet hours or
+        life-safety bypass), False if it should be suppressed, or None
+        if the engine is not available (caller falls back to local check).
+        """
+        try:
+            from ..integrations.modality_wiring import (
+                is_life_safety_event,
+                should_speak_proactively,
+            )
+            # Life-safety events bypass quiet hours unconditionally (B2).
+            event_category = getattr(event, "category", None) or ""
+            if is_life_safety_event(event_category):
+                return True
+            # Check quiet hours via the engine's policy.
+            quiet_hours_active = self._in_quiet_hours()
+            allowed = should_speak_proactively(event_category, quiet_hours=quiet_hours_active)
+            return allowed
+        except Exception:
+            return None
 
     def _in_quiet_hours(self) -> bool:
         """Check if the current time is within quiet hours."""
