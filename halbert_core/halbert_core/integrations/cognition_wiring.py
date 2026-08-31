@@ -128,6 +128,23 @@ def _get_canonical_thread_url() -> str:
         return ""
 
 
+def _get_peer_token() -> str:
+    """Get the bearer token for authenticating to the canonical host.
+
+    Priority: being.yml peer_token > HALBERT_PEER_TOKEN env var.
+    Returns empty string if not configured.
+    """
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        token = cfg.peer_token or ""
+        if token:
+            return token
+    except Exception:
+        pass
+    return os.environ.get("HALBERT_PEER_TOKEN", "")
+
+
 def is_singular_entity_mode() -> bool:
     """True when this node is in singular entity mode (proxies memory to a canonical host).
 

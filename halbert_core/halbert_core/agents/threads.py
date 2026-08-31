@@ -1013,21 +1013,71 @@ _manager_lock = threading.Lock()
 
 
 def get_thread_manager() -> ThreadManager:
-    """Process-wide manager over the default conversations database."""
+    """Process-wide manager over the default conversations database.
+
+    In singular entity mode (canonical_thread_url set in being.yml), the
+    manager uses a ``PeerConversationStore`` that proxies all reads/writes
+    to the canonical HA server over the peer HTTP link.  Otherwise, it
+    uses a local ``SqliteConversationStore`` as before (P3c).
+    """
     global _manager
     manager = _manager
     if manager is None:
         with _manager_lock:
             if _manager is None:
-                mgr = ThreadManager(SqliteConversationStore(_cs._DEFAULT_DB))
+                store = _create_conversation_store()
+                mgr = ThreadManager(store)
                 # R8: wire the consolidator so it runs at the end of each
                 # idle tick (close sweep). Fail-soft, never blocks a turn.
-                try:
-                    from ..continuity.consolidation import Consolidator
-                    from ..continuity.state_store import StateStore, default_state_db_path
-                    mgr.set_consolidator(Consolidator(mgr.store, StateStore(default_state_db_path())))
-                except Exception as e:
-                    logger.warning(f"consolidator wiring failed (non-fatal): {e}")
+                # Skip for PeerConversationStore — consolidation runs on the
+                # canonical host, not the satellite.
+                if not isinstance(store, _PeerConversationStoreType):
+                    try:
+                        from ..continuity.consolidation import Consolidator
+                        from ..continuity.state_store import StateStore, default_state_db_path
+                        mgr.set_consolidator(Consolidator(mgr.store, StateStore(default_state_db_path())))
+                    except Exception as e:
+                        logger.warning(f"consolidator wiring failed (non-fatal): {e}")
                 _manager = mgr
             manager = _manager
     return manager
+
+
+def _create_conversation_store():
+    """Create the conversation store based on singular entity config (P3c).
+
+    When ``canonical_thread_url`` is set in being.yml, returns a
+    ``PeerConversationStore`` that proxies to the canonical host.
+    Otherwise, returns a local ``SqliteConversationStore``.
+    """
+    try:
+        from ..integrations.cognition_wiring import (
+            _get_canonical_thread_url,
+            _get_peer_token,
+        )
+        thread_url = _get_canonical_thread_url()
+        if thread_url:
+            from .peer_conversation_store import PeerConversationStore
+            token = _get_peer_token()
+            if not token:
+                logger.warning(
+                    "canonical_thread_url is set but no peer_token configured "
+                    "— falling back to local SqliteConversationStore"
+                )
+                return SqliteConversationStore(_cs._DEFAULT_DB)
+            logger.info("ThreadManager: using PeerConversationStore at %s", thread_url)
+            return PeerConversationStore(
+                peer_url=thread_url,
+                bearer_token=token,
+            )
+    except Exception as e:
+        logger.warning(f"Failed to create PeerConversationStore (falling back to local): {e}")
+
+    return SqliteConversationStore(_cs._DEFAULT_DB)
+
+
+# Type alias for isinstance check (avoids importing if not available)
+try:
+    from .peer_conversation_store import PeerConversationStore as _PeerConversationStoreType
+except ImportError:
+    _PeerConversationStoreType = type(None)  # never matches

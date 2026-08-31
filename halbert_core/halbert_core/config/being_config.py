@@ -246,6 +246,10 @@ class BeingConfig:
     # node's ThreadManager reads/writes to the canonical host's shared
     # SQLite conversation store via a thin data-access proxy.
     canonical_thread_url: str = ""  # e.g. "http://n150.lan:8001/api/conversations"
+    # Bearer token for authenticating to the canonical host (same token
+    # family as the peer pairing token).  Required when canonical_*_url is
+    # set.  Can also be set via HALBERT_PEER_TOKEN env var.
+    peer_token: str = ""  # e.g. "hbt_abc123..."
 
     # --- Home Assistant connection (home variant stores HA creds here
     # instead of a separate ha_config.yml, so being.yml is the single
