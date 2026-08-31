@@ -19,13 +19,11 @@
  * the real spoken output (Decision 1 — the browser is the audio terminal).
  */
 
-import { apiBase } from './apiBase'
+import { wsUrl } from './apiBase'
 
 /** Absolute /api/audio/tts URL for a turn's session id (ws/wss scheme). */
 export function ttsStreamUrl(sessionId: string): string {
-  const origin = apiBase() || window.location.origin
-  const wsOrigin = origin.replace(/^http/, 'ws') // http -> ws, https -> wss
-  return `${wsOrigin}/api/audio/tts?session_id=${encodeURIComponent(sessionId)}`
+  return `${wsUrl('/api/audio/tts')}?session_id=${encodeURIComponent(sessionId)}`
 }
 
 export class TtsPlaybackClient {
@@ -50,15 +48,25 @@ export class TtsPlaybackClient {
 
   /** Open the WebSocket and prepare the playback graph.
    *
-   * `onDone` fires exactly once when the stream is over — after `end`,
-   * after `cancelled`, or when the socket closes. */
+   * `onDone` fires exactly once per streamed turn — after `end`, after
+   * `cancelled`, or when the socket closes (a later `begin` on the same
+   * connection re-arms it: the server streams many turns per socket).
+   * Idempotent: a second call while connected does nothing (React 18
+   * StrictMode double-invokes effects). */
   connect(onDone?: () => void): void {
+    if (this.ws) return
     this.onDone = onDone
     this.finished = false
     try {
       this.ctx = new AudioContext()
       this.outNode = this.ctx.createGain()
       this.outNode.connect(this.ctx.destination)
+      // Chrome starts contexts suspended outside a user gesture; without a
+      // resume every scheduled source is silently dead. Idempotent, and
+      // failure just leaves the browser's own gesture policy in charge.
+      if (this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {})
+      }
     } catch {
       // No Web Audio (unsupported browser, torn-down jsdom): stay silent,
       // keep the socket so the session state still tracks.
@@ -126,6 +134,9 @@ export class TtsPlaybackClient {
     switch (frame.type) {
       case 'begin':
         this.sampleRate = Number(frame.sample_rate) || 0
+        // A new turn on the same connection: re-arm the once-per-turn
+        // onDone (the socket itself stays open across turns).
+        this.finished = false
         break
       case 'end':
         this.finish()

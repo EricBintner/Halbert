@@ -27,8 +27,13 @@ interface ScheduledSource {
 
 class StubAudioContext {
   static instances: StubAudioContext[] = []
+  /** State the NEXT constructed context starts in. 'suspended' by default:
+   * Chrome's no-gesture state, the case connect() must rescue. */
+  static nextState: 'suspended' | 'running' = 'suspended'
   currentTime = 0
   closed = false
+  state: 'suspended' | 'running' = StubAudioContext.nextState
+  resume = vi.fn(() => Promise.resolve())
   destination = { node: 'destination' }
   sources: ScheduledSource[] = []
 
@@ -138,6 +143,7 @@ function feedTurn(ws: StubWebSocket, sampleRate = 22050): void {
 
 beforeEach(() => {
   StubAudioContext.instances = []
+  StubAudioContext.nextState = 'suspended'
   StubWebSocket.instances = []
   vi.stubGlobal('AudioContext', StubAudioContext)
   vi.stubGlobal('WebSocket', StubWebSocket)
@@ -306,6 +312,47 @@ describe('TtsPlaybackClient protocol', () => {
     const ws = wsOf()
     expect(() => feedTurn(ws)).not.toThrow()
     expect(client.out).toBeNull()
+  })
+
+  it('resumes a suspended context (autoplay policy)', () => {
+    // Chrome starts AudioContexts suspended outside a user gesture; without
+    // the resume, every scheduled source is silently dead.
+    const client = makeClient()
+    client.connect()
+    expect(ctxOf().state).toBe('suspended')
+    expect(ctxOf().resume).toHaveBeenCalledTimes(1)
+    // A context that is already running is left alone.
+    StubAudioContext.nextState = 'running'
+    const second = makeClient()
+    second.connect()
+    expect(ctxOf().state).toBe('running')
+    expect(ctxOf().resume).toHaveBeenCalledTimes(0)
+  })
+
+  it('reports onDone once per turn across turns on one connection', () => {
+    const client = makeClient()
+    const onDone = vi.fn()
+    client.connect(onDone)
+    const ws = wsOf()
+    feedTurn(ws) // turn 1: begin -> PCM -> end
+    feedTurn(ws) // turn 2 on the same socket: begin re-arms onDone
+    expect(onDone).toHaveBeenCalledTimes(2)
+    // ...and the second turn's audio actually scheduled.
+    expect(ctxOf().sources.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('ignores a second connect() while already connected', () => {
+    // React 18 StrictMode double-invokes effects; the client must not open
+    // a second socket (or a second AudioContext) for it.
+    const client = makeClient()
+    client.connect()
+    client.connect()
+    expect(StubWebSocket.instances).toHaveLength(1)
+    expect(StubAudioContext.instances).toHaveLength(1)
+    // close() nulls the socket, so connect() after close() works again.
+    client.close()
+    client.connect()
+    expect(StubWebSocket.instances).toHaveLength(2)
   })
 })
 
