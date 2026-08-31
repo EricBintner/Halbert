@@ -88,6 +88,9 @@ class PairRequest(BaseModel):
     capabilities: List[str] = Field(default_factory=list, description="Capabilities the satellite offers")
     endpoint: Optional[str] = Field(None, description="Satellite's endpoint URL (for Desktop→Satellite MCP proxy)")
     compute_direction: str = Field("outbound", description="Compute flow: 'outbound' (local→peer) or 'inbound' (peer→local)")
+    wol_enabled: bool = Field(False, description="Enable Wake-on-LAN for this peer (LAN-only)")
+    wol_mac: Optional[str] = Field(None, description="MAC address for WoL (required if wol_enabled)")
+    wol_broadcast: Optional[str] = Field(None, description="Broadcast address for WoL (defaults to 255.255.255.255)")
 
 
 class PairResponse(BaseModel):
@@ -121,6 +124,9 @@ class PeerInfo(BaseModel):
     endpoint: Optional[str] = None
     capabilities: List[str] = Field(default_factory=list)
     compute_direction: str = "outbound"
+    wol_enabled: bool = False
+    wol_mac: Optional[str] = None
+    wol_broadcast: Optional[str] = None
 
 
 class ComputePeerLinkRequest(BaseModel):
@@ -179,6 +185,9 @@ async def request_pairing(req: PairRequest) -> PairResponse:
         "capabilities": req.capabilities,
         "endpoint": req.endpoint,
         "compute_direction": req.compute_direction,
+        "wol_enabled": req.wol_enabled,
+        "wol_mac": req.wol_mac,
+        "wol_broadcast": req.wol_broadcast,
     }
 
     logger.info("Pairing requested by %s (%s) — PIN generated", req.node_id, req.node_name)
@@ -225,6 +234,9 @@ async def verify_pairing(req: VerifyRequest) -> VerifyResponse:
             endpoint=pending.get("endpoint"),
             capabilities=pending.get("capabilities", []),
             compute_direction=pending.get("compute_direction", "outbound"),
+            wol_enabled=pending.get("wol_enabled", False),
+            wol_mac=pending.get("wol_mac"),
+            wol_broadcast=pending.get("wol_broadcast"),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
@@ -261,6 +273,9 @@ async def list_peers(
             endpoint=p.endpoint,
             capabilities=p.capabilities,
             compute_direction=p.compute_direction,
+            wol_enabled=p.wol_enabled,
+            wol_mac=p.wol_mac,
+            wol_broadcast=p.wol_broadcast,
         )
         for p in config.list_peers(include_revoked=True)
     ]
@@ -289,6 +304,34 @@ async def revoke_peer(
             detail=f"Peer {node_id} not found",
         )
     return {"status": "revoked", "node_id": node_id}
+
+
+class WolUpdateRequest(BaseModel):
+    """Update WoL settings on a peer."""
+    enabled: bool = Field(..., description="Enable or disable WoL for this peer")
+    mac: Optional[str] = Field(None, description="MAC address (required when enabling if not already set)")
+    broadcast: Optional[str] = Field(None, description="Broadcast address (optional, defaults to 255.255.255.255)")
+
+
+@router.put("/api/peers/{node_id}/wol")
+async def update_wol(
+    node_id: str,
+    req: WolUpdateRequest,
+    peer: PeerContext = Depends(require_peer_auth),
+) -> Dict[str, Any]:
+    """Toggle Wake-on-LAN for a paired peer (P6c).
+
+    WoL is LAN-only and off by default.  When enabled, the ComputeRouter
+    (P6b) will attempt to wake this peer before falling through to
+    template degraded mode.
+    """
+    config = get_peers_config()
+    if not config.set_wol(node_id, req.enabled, req.mac, req.broadcast):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Peer {node_id} not found",
+        )
+    return {"status": "updated", "node_id": node_id, "wol_enabled": req.enabled}
 
 
 # ---------------------------------------------------------------------------

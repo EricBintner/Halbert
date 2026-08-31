@@ -91,6 +91,14 @@ class PeerCredential:
 
     Both directions are supported so that either node can be the compute
     issuer.  The default is ``"outbound"`` (HA → workstation).
+
+    Wake-on-LAN (P6c)
+    -----------------
+    ``wol_enabled`` controls whether the HA server should attempt to wake
+    this peer before falling through to template degraded mode.  WoL is
+    LAN-only (magic packets don't cross routers or Tailscale) and off by
+    default.  When enabled, ``wol_mac`` and ``wol_broadcast`` provide the
+    addressing for the magic packet.
     """
 
     node_id: str                           # unique identifier (hostname or user-provided)
@@ -103,6 +111,10 @@ class PeerCredential:
     endpoint: Optional[str] = None         # "http://192.168.1.50:8000" (for Desktop→Satellite MCP proxy)
     capabilities: List[str] = field(default_factory=list)  # ["gpu_llm", "sourceprep", "vision"]
     compute_direction: str = "outbound"    # "outbound" (local→peer) | "inbound" (peer→local)
+    # WoL (P6c) — LAN-only, default off
+    wol_enabled: bool = False              # True = attempt WoL before template fallback
+    wol_mac: Optional[str] = None          # "AA:BB:CC:DD:EE:FF" — required if wol_enabled
+    wol_broadcast: Optional[str] = None    # "192.168.1.255" — defaults to 255.255.255.255
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -120,6 +132,9 @@ class PeerCredential:
             endpoint=d.get("endpoint"),
             capabilities=d.get("capabilities", []),
             compute_direction=d.get("compute_direction", "outbound"),
+            wol_enabled=d.get("wol_enabled", False),
+            wol_mac=d.get("wol_mac"),
+            wol_broadcast=d.get("wol_broadcast"),
         )
 
     def is_compute_target(self) -> bool:
@@ -241,6 +256,18 @@ class PeersConfig:
             if not p.revoked and p.is_compute_target()
         ]
 
+    def list_wol_enabled_peers(self) -> List[PeerCredential]:
+        """List peers with WoL enabled (for ComputeRouter pre-fallback wake).
+
+        P6c — Returns non-revoked outbound peers with ``wol_enabled=True``
+        and a valid ``wol_mac``.  The ComputeRouter (P6b) calls this
+        before falling through to template degraded mode.
+        """
+        return [
+            p for p in self._peers.values()
+            if not p.revoked and p.wol_enabled and p.wol_mac
+        ]
+
     def verify_token(self, raw_token: str) -> Optional[PeerCredential]:
         """Verify a bearer token against all stored peer tokens.
 
@@ -273,6 +300,9 @@ class PeersConfig:
         endpoint: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
         compute_direction: str = "outbound",
+        wol_enabled: bool = False,
+        wol_mac: Optional[str] = None,
+        wol_broadcast: Optional[str] = None,
     ) -> PeerCredential:
         """Pair a new peer. Generates a credential with hashed token.
 
@@ -282,6 +312,11 @@ class PeersConfig:
         Args:
             compute_direction: "outbound" (this node offloads to peer,
                 default) or "inbound" (peer offloads to this node).
+            wol_enabled: If True, ComputeRouter will attempt WoL before
+                template fallback when this peer is offline (P6c).
+            wol_mac: MAC address for WoL (required if wol_enabled).
+            wol_broadcast: Broadcast address for WoL (defaults to
+                255.255.255.255 at send time if not set).
         """
         with self._lock:
             if node_id in self._peers:
@@ -295,12 +330,15 @@ class PeersConfig:
                 endpoint=endpoint,
                 capabilities=capabilities or [],
                 compute_direction=compute_direction,
+                wol_enabled=wol_enabled,
+                wol_mac=wol_mac,
+                wol_broadcast=wol_broadcast,
             )
             self._peers[node_id] = cred
             self._save()
             logger.info(
-                "Paired new peer: %s (%s) as %s, direction=%s",
-                node_id, node_name, role, compute_direction,
+                "Paired new peer: %s (%s) as %s, direction=%s, wol=%s",
+                node_id, node_name, role, compute_direction, wol_enabled,
             )
             return cred
 
@@ -317,6 +355,33 @@ class PeersConfig:
             peer.revoked = True
             self._save()
             logger.warning("Revoked peer: %s (%s)", node_id, peer.node_name)
+            return True
+
+    def set_wol(
+        self,
+        node_id: str,
+        enabled: bool,
+        mac: Optional[str] = None,
+        broadcast: Optional[str] = None,
+    ) -> bool:
+        """Update WoL settings on an existing peer (P6c).
+
+        Returns True if the peer was found and updated, False if not found.
+        When enabling, ``mac`` must be provided (or already set on the peer).
+        """
+        with self._lock:
+            peer = self._peers.get(node_id)
+            if peer is None:
+                return False
+            peer.wol_enabled = enabled
+            if mac is not None:
+                peer.wol_mac = mac
+            if broadcast is not None:
+                peer.wol_broadcast = broadcast
+            if enabled and not peer.wol_mac:
+                logger.warning("WoL enabled for %s but no MAC address set", node_id)
+            self._save()
+            logger.info("WoL %s for peer %s: mac=%s", "enabled" if enabled else "disabled", node_id, peer.wol_mac)
             return True
 
     def update_last_seen(self, node_id: str) -> None:
