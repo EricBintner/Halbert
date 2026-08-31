@@ -45,12 +45,27 @@ describe('AcousticAnomalyModule', () => {
     expect(screen.getByText('Confirm')).toBeTruthy()
   })
 
-  it('labels severity 3 as critical and offers the emergency action', () => {
+  it('labels severity 3 as critical', () => {
     render(<AcousticAnomalyModule data={data({ anomaly_severity: 3 })} />)
 
     expect(screen.getByText('Critical Acoustic Anomaly')).toBeTruthy()
     expect(screen.getByText('Critical')).toBeTruthy()
-    expect(screen.getByText('Call Emergency')).toBeTruthy()
+  })
+
+  it('hides the unwired action buttons by default (no dead destructive button on a life-safety card)', () => {
+    render(<AcousticAnomalyModule data={data({ anomaly_severity: 3 })} />)
+
+    expect(screen.queryByText('Call Emergency')).toBeNull()
+    expect(screen.queryByText('View Camera')).toBeNull()
+    expect(screen.queryByText('Mute / False Alarm')).toBeNull()
+  })
+
+  it('shows the action buttons only when the caller opts in (showActions)', () => {
+    render(<AcousticAnomalyModule data={data({ anomaly_severity: 3 })} showActions />)
+
+    expect(screen.getByText('View Camera')).toBeTruthy()
+    expect(screen.getByText('Mute / False Alarm')).toBeTruthy()
+    expect(screen.getByText('Call Emergency')).toBeTruthy() // critical-only
   })
 
   it('falls back to Unknown for a missing area', () => {

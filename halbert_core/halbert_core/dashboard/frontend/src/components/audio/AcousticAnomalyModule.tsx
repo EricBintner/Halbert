@@ -2,8 +2,14 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 // Acoustic anomaly module — renders acoustic event cards in conversation.
 //
-// Registered in the module registry as 'acoustic-anomaly'.
-// Shows sound class, location, confidence, dB level, and action buttons.
+// Registered in the module registry as 'acoustic-anomaly' (O5) and rendered
+// by the proactive-events badge for acoustic findings.
+// Shows sound class, location, confidence, dB level, and severity tier.
+//
+// The action buttons (View Camera / Mute / Call Emergency) have no handlers
+// yet, so they are hidden by default (showActions): a dead destructive
+// button on a life-safety card is worse than no button. A caller that wires
+// them up opts in.
 
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -22,6 +28,12 @@ export interface AcousticAnomalyData {
   action_taken?: string
 }
 
+export interface AcousticAnomalyModuleProps {
+  data: AcousticAnomalyData
+  /** Render the (currently unwired) action buttons. Default: false. */
+  showActions?: boolean
+}
+
 const SEVERITY_LABELS = ['Info', 'Warning', 'Confirm', 'Critical']
 const SEVERITY_COLORS = [
   'bg-blue-100 text-blue-700',
@@ -30,7 +42,7 @@ const SEVERITY_COLORS = [
   'bg-red-100 text-red-700',
 ]
 
-export function AcousticAnomalyModule({ data }: { data: AcousticAnomalyData }) {
+export function AcousticAnomalyModule({ data, showActions = false }: AcousticAnomalyModuleProps) {
   const severity = data.anomaly_severity || 0
   const severityLabel = SEVERITY_LABELS[severity] || 'Info'
   const severityColor = SEVERITY_COLORS[severity] || SEVERITY_COLORS[0]
@@ -90,7 +102,10 @@ export function AcousticAnomalyModule({ data }: { data: AcousticAnomalyData }) {
           </div>
         )}
 
-        {/* Action buttons */}
+        {/* Action buttons — hidden unless the caller wires them up
+            (showActions): no handler means no button, especially the
+            destructive one on a life-safety card. */}
+        {showActions && (
         <div className="flex gap-2">
           <Button size="sm" variant="outline">
             <Camera className="h-3 w-3 mr-1" />
@@ -107,6 +122,7 @@ export function AcousticAnomalyModule({ data }: { data: AcousticAnomalyData }) {
             </Button>
           )}
         </div>
+        )}
       </CardContent>
     </Card>
   )

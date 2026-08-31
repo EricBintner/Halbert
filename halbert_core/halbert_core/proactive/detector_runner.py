@@ -82,6 +82,11 @@ class DetectorRunner:
             PermissionsHygieneDetector(),
             self.acoustic_detector,
         ]
+        # Detector classes that already logged a failure warning (O5: the
+        # acoustic bridge can invoke _run_detector per sound event, so a
+        # persistently failing detector — e.g. a locked DB — must not warn
+        # every few seconds; repeats drop to debug).
+        self._detector_warned: set = set()
 
     async def run_all(self) -> List[ProactiveEvent]:
         """Run all detectors and publish events for new findings.
@@ -189,7 +194,15 @@ class DetectorRunner:
                         except Exception as e:
                             logger.warning(f"reflex publish failed: {e}")
         except Exception as e:
-            logger.warning(f"Detector {detector.__class__.__name__} failed: {e}")
+            # Warning-once per detector class: the acoustic bridge (O5) can
+            # call this per sound event, so a persistent failure must not
+            # warn every few seconds.
+            name = detector.__class__.__name__
+            if name in self._detector_warned:
+                logger.debug(f"Detector {name} failed (repeat): {e}")
+            else:
+                self._detector_warned.add(name)
+                logger.warning(f"Detector {name} failed: {e}")
 
         return published_events
 

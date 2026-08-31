@@ -165,9 +165,14 @@ class TestAttachAndChain:
             "source": "ambient",
             "timestamp": event.data["timestamp"],
         }
-        assert datetime.fromisoformat(event.data["timestamp"])
-        # The finding row is stored and linked
-        assert store.get(event.finding_id).detector == "acoustic_anomaly"
+        # UTC-aware ISO-8601 (the store's convention; JS Date parses it)
+        assert event.data["timestamp"].endswith("+00:00")
+        assert datetime.fromisoformat(event.data["timestamp"]).utcoffset() is not None
+        # The finding row is stored and linked, and the transient structured
+        # payload is NOT persisted (no DB column — round-trip strips it).
+        stored = store.get(event.finding_id)
+        assert stored.detector == "acoustic_anomaly"
+        assert stored.data is None
         # The gate was consulted (quiet hours / proactivity dial apply)
         assert len(gate.seen) == 1
 
@@ -235,7 +240,76 @@ class TestSeverityAndDedup:
 
 
 # ---------------------------------------------------------------------------
-# 6: optional-detector no-op (warning-once)
+# 6: quiet hours — a severity-2 anomaly still wakes (O5 review fix 2)
+# ---------------------------------------------------------------------------
+
+class TestQuietHoursWake:
+    """End-to-end: the real ProactiveGate must let a confirmed (severity-2)
+    acoustic anomaly through during quiet hours. It maps to Finding severity
+    "warning", which quiet hours would otherwise suppress — the exact window
+    in which the urgent wake chain must fire."""
+
+    async def test_severity_2_passes_real_gate_during_quiet_hours(
+        self, store, bus, monkeypatch
+    ):
+        from halbert_core.proactive.gate import ProactiveGate
+
+        monkeypatch.setattr(ProactiveGate, "_in_quiet_hours", lambda self: True)
+        gate = ProactiveGate(
+            BeingConfig(quiet_hours={"start": "22:00", "end": "07:00"}),
+            guardrail_enforcer=SimpleNamespace(safe_mode_active=False),
+            finding_store=store,
+        )
+        runner = DetectorRunner(
+            finding_store=store,
+            proposal_store=FakeProposalStore(),
+            being_config=BeingConfig(quiet_hours={"start": "22:00", "end": "07:00"}),
+            guardrails=SimpleNamespace(safe_mode_active=False),
+            gate=gate,
+        )
+        bridge = AcousticAnomalyBridge(runner_factory=lambda: runner)
+
+        published = await bridge.handle(
+            obs(anomaly_severity=2, sound_class="glass_breaking")
+        )
+
+        assert len(published) == 1
+        assert published[0].category == "acoustic"
+        assert len(bus.get_recent()) == 1
+
+    async def test_severity_1_acoustic_still_suppressed_in_quiet_hours(
+        self, store, bus, monkeypatch
+    ):
+        from halbert_core.proactive.gate import ProactiveGate
+
+        monkeypatch.setattr(ProactiveGate, "_in_quiet_hours", lambda self: True)
+        gate = ProactiveGate(
+            BeingConfig(quiet_hours={"start": "22:00", "end": "07:00"}),
+            guardrail_enforcer=SimpleNamespace(safe_mode_active=False),
+            finding_store=store,
+        )
+        runner = DetectorRunner(
+            finding_store=store,
+            proposal_store=FakeProposalStore(),
+            being_config=BeingConfig(quiet_hours={"start": "22:00", "end": "07:00"}),
+            guardrails=SimpleNamespace(safe_mode_active=False),
+            gate=gate,
+        )
+        bridge = AcousticAnomalyBridge(runner_factory=lambda: runner)
+
+        published = await bridge.handle(
+            obs(anomaly_severity=1, sound_class="mechanical_fan", confidence=0.9)
+        )
+
+        # Stored (the detector ran) but suppressed by quiet hours — only
+        # wake-worthy severity bypasses, not every acoustic event.
+        assert published == []
+        assert bus.get_recent() == []
+        assert len(store.list_all()) == 1
+
+
+# ---------------------------------------------------------------------------
+# 7: optional-detector no-op (warning-once)
 # ---------------------------------------------------------------------------
 
 class TestOptionalNoop:

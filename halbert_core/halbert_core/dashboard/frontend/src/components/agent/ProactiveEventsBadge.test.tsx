@@ -81,6 +81,9 @@ describe('ProactiveEventsBadge acoustic branch (O5)', () => {
     expect(screen.getByText('smoke_alarm')).toBeTruthy()
     expect(screen.getByText('88 dB')).toBeTruthy()
     expect(screen.getByText('kitchen')).toBeTruthy()
+    // The module's unwired action buttons stay hidden here — no dead
+    // destructive "Call Emergency" on a life-safety card.
+    expect(screen.queryByText('Call Emergency')).toBeNull()
   })
 
   it('keeps snooze/dismiss available on acoustic events', () => {

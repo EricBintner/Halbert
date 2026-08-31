@@ -137,6 +137,76 @@ class TestQuietHours:
         assert gate.should_notify(make_event(severity="warning"))[0] is True
 
 
+def make_acoustic_event(anomaly_severity, severity="warning", data="default"):
+    """Acoustic anomaly finding event, as DetectorRunner publishes it (O5).
+
+    ``data="default"`` builds the structured payload; pass None for an event
+    without one.
+    """
+    if data == "default":
+        data = {
+            "sound_class": "glass_breaking",
+            "confidence": 0.9,
+            "area_id": "hall",
+            "decibel_level": 74.0,
+            "anomaly_severity": anomaly_severity,
+            "source": "ambient",
+            "timestamp": "2026-08-31T12:00:00+00:00",
+        }
+    return ProactiveEvent.create(
+        type="finding",
+        severity=severity,
+        title="Acoustic anomaly: Glass break",
+        body="Detected Glass break at 90% confidence.",
+        category="acoustic",
+        data=data,
+    )
+
+
+class TestAcousticLifeSafetyBypass:
+    """O5: a CONFIRMED acoustic anomaly (tagger anomaly_severity >= 2) is
+    life-safety for quiet hours. It maps to Finding severity "warning",
+    which quiet hours would otherwise suppress — exactly the window in which
+    the urgent wake chain must fire. (The engine's LIFE_SAFETY_EVENT_TYPES
+    keys on sound classes, not the "acoustic" category, so it cannot make
+    this call — the structured payload's severity is authoritative.)"""
+
+    def _quiet_gate(self, monkeypatch):
+        # 15:00 inside the 14:00-18:00 quiet window (the _FrozenDateTime
+        # pattern from TestQuietHours).
+        monkeypatch.setattr(gate_mod, "datetime", _FrozenDateTime)
+        _FrozenDateTime.frozen = datetime(2026, 8, 24, 15, 0)
+        return make_gate(quiet_hours={"start": "14:00", "end": "18:00"})
+
+    def test_severity_2_bypasses_quiet_hours(self, monkeypatch):
+        gate = self._quiet_gate(monkeypatch)
+        allowed, reason = gate.should_notify(make_acoustic_event(2))
+        assert allowed is True
+        assert reason == ""
+
+    def test_severity_1_acoustic_still_suppressed_in_quiet_hours(self, monkeypatch):
+        gate = self._quiet_gate(monkeypatch)
+        allowed, reason = gate.should_notify(make_acoustic_event(1))
+        assert allowed is False
+        assert "quiet hours" in reason
+
+    def test_bypass_requires_the_structured_payload(self, monkeypatch):
+        gate = self._quiet_gate(monkeypatch)
+        # category alone (old events / a publisher without data) must not
+        # trust a missing severity
+        allowed, _ = gate.should_notify(make_acoustic_event(2, data=None))
+        assert allowed is False
+
+    def test_bypass_does_not_leak_to_other_categories(self, monkeypatch):
+        gate = self._quiet_gate(monkeypatch)
+        event = ProactiveEvent.create(
+            type="finding", severity="warning", title="t", body="b",
+            category="security",
+            data={"anomaly_severity": 3, "sound_class": "smoke_alarm"},
+        )
+        assert gate.should_notify(event)[0] is False
+
+
 class TestCategoryOverrides:
     def test_override_beats_stricter_global_dial(self):
         gate = make_gate(

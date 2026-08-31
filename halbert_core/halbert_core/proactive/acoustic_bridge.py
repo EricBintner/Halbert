@@ -20,15 +20,17 @@ This module owns that connection:
         ->  GET /api/being/events SSE -> useBeingEvents -> timeline/badge
 
 The scheduled 6-hour detector sweep and the config-watcher sweep keep their
-own ad-hoc ``DetectorRunner`` instances; this bridge holds ONE long-lived
-runner so pushed events are drained immediately (an urgent anomaly must wake
-the screen now, not at the next sweep) while sharing the FindingStore (and
-therefore the dedup + snooze semantics) with those sweeps.
+own ad-hoc ``DetectorRunner`` instances; this bridge builds a fresh runner
+PER EVENT (events are rare — energy-floor gated and deduped; the sweeps
+already rebuild per run, so this matches their pattern). Per-event
+construction also means the gate never acts on a stale BeingConfig snapshot
+from boot time, and dedup semantics survive because they live in the shared
+FindingStore database, not the runner object.
 
-Everything here is optional: the runner is built lazily on the first acoustic
-event, and if the findings stack cannot be constructed the event is dropped
-with a single warning (warning-once, the O3 ``_egress_log_once`` pattern) —
-never a raise into the audio pipeline, never a boot failure.
+Everything here is optional: the runner is only built when a sound event
+actually arrives, and if the findings stack cannot be constructed the event
+is dropped with a single warning (warning-once, the O3 ``_egress_log_once``
+pattern) — never a raise into the audio pipeline, never a boot failure.
 
 Voice Mode Phase 2 / O5.
 """
@@ -45,20 +47,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Signature of the lazy DetectorRunner constructor (injected in tests).
+# Signature of the per-event DetectorRunner constructor (injected in tests).
 _RunnerFactory = Callable[[], "object"]
 
 
 class AcousticAnomalyBridge:
     """Feeds coordinator acoustic observations into the findings chain.
 
-    Holds one lazily-built DetectorRunner for the life of the process. The
-    runner is ONLY built when a sound event actually arrives — a dashboard
-    without a working findings stack must boot (and stream audio) normally.
+    Builds a DetectorRunner per acoustic event (see module docstring); a
+    dashboard without a working findings stack must boot (and stream audio)
+    normally.
     """
 
     def __init__(self, runner_factory: Optional[_RunnerFactory] = None):
-        self._runner = None
         self._runner_factory: _RunnerFactory = runner_factory or self._default_runner
         self._warned: set = set()
 
@@ -68,24 +69,22 @@ class AcousticAnomalyBridge:
 
         return DetectorRunner()
 
-    def _get_runner(self):
-        """Return the cached runner, building it on first use.
+    def _build_runner(self):
+        """Build a fresh DetectorRunner for this event, or None on failure.
 
-        Construction failure is warning-once (the site, not the event, is the
-        wiring problem worth an operator's attention); the failed attempt is
-        NOT cached, so a transient failure (locked SQLite, partial config)
-        recovers on the next event.
+        Construction failure is warning-once (the site, not the event, is
+        the wiring problem worth an operator's attention); the next event
+        simply tries again, so a transient failure (locked SQLite, partial
+        config) recovers by itself.
         """
-        if self._runner is None:
-            try:
-                self._runner = self._runner_factory()
-            except Exception as e:
-                self._log_once(
-                    "runner_init",
-                    f"DetectorRunner unavailable — acoustic events dropped: {e}",
-                )
-                return None
-        return self._runner
+        try:
+            return self._runner_factory()
+        except Exception as e:
+            self._log_once(
+                "runner_init",
+                f"DetectorRunner unavailable — acoustic events dropped: {e}",
+            )
+            return None
 
     def _log_once(self, site: str, message: str) -> None:
         """Warn once per failure site, then drop to debug (O3 pattern)."""
@@ -103,9 +102,11 @@ class AcousticAnomalyBridge:
         Maps the observation onto ``AcousticAnomalyDetector.add_event``'s
         field names verbatim, then drains just the acoustic detector. Returns
         the events that passed the gate (empty when the findings stack is
-        unavailable — the no-op path). Never raises.
+        unavailable — the no-op path). Never raises: ``run_acoustic`` cannot
+        throw (``DetectorRunner._run_detector`` swallows every detector
+        failure into a warning-once log line).
         """
-        runner = self._get_runner()
+        runner = self._build_runner()
         detector = getattr(runner, "acoustic_detector", None)
         if runner is None or detector is None:
             self._log_once(
@@ -128,11 +129,7 @@ class AcousticAnomalyBridge:
             self._log_once("add_event", f"Acoustic add_event failed: {e}")
             return []
 
-        try:
-            return await runner.run_acoustic()
-        except Exception as e:
-            self._log_once("run_acoustic", f"Acoustic detector sweep failed: {e}")
-            return []
+        return await runner.run_acoustic()
 
 
 # ---------------------------------------------------------------------------

@@ -78,8 +78,10 @@ class ProactiveGate:
         # 2. Check quiet hours — delegate to the engine's
         #    should_speak_proactively() when available (applies
         #    QuietHoursPolicy with life-safety bypass B2). Fall back to
-        #    the local check when the engine is not installed.
-        if event.severity != "critical":
+        #    the local check when the engine is not installed. Confirmed
+        #    acoustic anomalies (O5) are life-safety too and bypass like
+        #    "critical" — see _is_wake_worthy_acoustic().
+        if event.severity != "critical" and not self._is_wake_worthy_acoustic(event):
             quiet_active = self._check_quiet_hours_engine(event)
             if quiet_active is not None:
                 # Engine returned a definitive answer.
@@ -113,6 +115,25 @@ class ProactiveGate:
 
         # 5. All checks passed
         return True, ""
+
+    def _is_wake_worthy_acoustic(self, event: ProactiveEvent) -> bool:
+        """True for a confirmed acoustic anomaly: tagger severity >= 2 (O5).
+
+        The Voice Mode wake chain treats these as life-safety — a confirmed
+        anomaly (glass break, intrusion) at 3am is exactly when it matters —
+        so they bypass quiet hours exactly like the engine's B2 life-safety
+        set. That set (LIFE_SAFETY_EVENT_TYPES) keys on sound *classes*
+        (smoke_alarm, ...), while the gate only sees the "acoustic"
+        *category*, so it can never fire for these events; the structured
+        payload's ``anomaly_severity`` is the authoritative signal here.
+        Without this bypass a severity-2 anomaly maps to Finding severity
+        "warning" and is silently dropped during quiet hours — precisely the
+        window in which it must wake the screen.
+        """
+        if (getattr(event, "category", None) or "") != "acoustic":
+            return False
+        data = getattr(event, "data", None)
+        return isinstance(data, dict) and data.get("anomaly_severity", 0) >= 2
 
     def _check_quiet_hours_engine(self, event: ProactiveEvent) -> bool | None:
         """Delegate quiet-hours check to the engine when available.
