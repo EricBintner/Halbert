@@ -148,3 +148,87 @@ class TestHAConnectionFields:
             assert loaded.ha_token == "tok"
             assert loaded.scene_context == "smart home automation"
             assert loaded.persona_id_override == "home"
+
+
+class TestSingularEntityFields:
+    """body_name, canonical_memory_url, canonical_thread_url for singular entity mode."""
+
+    def test_defaults_are_empty(self):
+        cfg = BeingConfig()
+        assert cfg.body_name == ""
+        assert cfg.canonical_memory_url == ""
+        assert cfg.canonical_thread_url == ""
+
+    def test_body_name_set(self):
+        cfg = BeingConfig(body_name="desk")
+        cfg.validate()
+        assert cfg.body_name == "desk"
+
+    def test_canonical_memory_url_valid(self):
+        cfg = BeingConfig(canonical_memory_url="http://n150.lan:8001/api/memory")
+        cfg.validate()
+        assert cfg.canonical_memory_url == "http://n150.lan:8001/api/memory"
+
+    def test_canonical_thread_url_valid(self):
+        cfg = BeingConfig(canonical_thread_url="http://n150.lan:8001/api/conversations")
+        cfg.validate()
+        assert cfg.canonical_thread_url == "http://n150.lan:8001/api/conversations"
+
+    def test_canonical_memory_url_rejects_non_http(self):
+        cfg = BeingConfig(canonical_memory_url="ftp://bad")
+        with pytest.raises(ValueError, match="canonical_memory_url must be an http"):
+            cfg.validate()
+
+    def test_canonical_thread_url_rejects_non_http(self):
+        cfg = BeingConfig(canonical_thread_url="ftp://bad")
+        with pytest.raises(ValueError, match="canonical_thread_url must be an http"):
+            cfg.validate()
+
+    def test_canonical_urls_without_persona_id_warns(self, caplog):
+        """Setting canonical URLs without persona_id_override should log a warning."""
+        cfg = BeingConfig(canonical_memory_url="http://n150.lan:8001/api/memory")
+        with caplog.at_level("WARNING"):
+            cfg.validate()
+        assert "persona_id_override" in caplog.text
+
+    def test_singular_entity_round_trip(self):
+        cfg = BeingConfig(
+            persona_id_override="halbert",
+            body_name="desk",
+            canonical_memory_url="http://n150.lan:8001/api/memory",
+            canonical_thread_url="http://n150.lan:8001/api/conversations",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "being.yml"
+            save_being_config(cfg, str(path))
+            loaded = load_being_config(str(path))
+            assert loaded.persona_id_override == "halbert"
+            assert loaded.body_name == "desk"
+            assert loaded.canonical_memory_url == "http://n150.lan:8001/api/memory"
+            assert loaded.canonical_thread_url == "http://n150.lan:8001/api/conversations"
+
+    def test_independent_mode_round_trip(self):
+        """Independent entity mode: no canonical URLs, own persona_id."""
+        cfg = BeingConfig(
+            persona_id_override="halbert-desk",
+            body_name="desk",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "being.yml"
+            save_being_config(cfg, str(path))
+            loaded = load_being_config(str(path))
+            assert loaded.persona_id_override == "halbert-desk"
+            assert loaded.body_name == "desk"
+            assert loaded.canonical_memory_url == ""
+            assert loaded.canonical_thread_url == ""
+
+    def test_empty_fields_not_written_to_yaml(self):
+        """Empty string fields should not appear in YAML output."""
+        cfg = BeingConfig()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "being.yml"
+            save_being_config(cfg, str(path))
+            text = path.read_text()
+            assert "body_name" not in text
+            assert "canonical_memory_url" not in text
+            assert "canonical_thread_url" not in text

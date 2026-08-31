@@ -78,6 +78,83 @@ def _get_scene_context() -> str:
         return "system administration"
 
 
+def _get_body_name() -> str:
+    """Get the body name — which physical body the entity is speaking from.
+
+    Priority: BeingConfig.body_name > variant-based default.
+
+    In singular entity mode, the prompt builder includes this so the entity
+    knows where it is ("You are currently at your desk body"). In
+    independent mode, it's a device label for logging/UI.
+    """
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        if cfg.body_name:
+            return cfg.body_name
+    except Exception:
+        pass
+    # Variant-based default
+    if _get_variant() == "home":
+        return "home"
+    return "workstation"
+
+
+def _get_canonical_memory_url() -> str:
+    """Get the canonical memory URL for singular entity mode.
+
+    Returns the URL of the canonical memory host, or empty string if
+    this node uses local memory (independent entity mode).
+    """
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        return cfg.canonical_memory_url or ""
+    except Exception:
+        return ""
+
+
+def _get_canonical_thread_url() -> str:
+    """Get the canonical thread URL for singular entity mode.
+
+    Returns the URL of the canonical thread host, or empty string if
+    this node uses local threads (independent entity mode).
+    """
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        return cfg.canonical_thread_url or ""
+    except Exception:
+        return ""
+
+
+def _get_peer_token() -> str:
+    """Get the bearer token for authenticating to the canonical host.
+
+    Priority: being.yml peer_token > HALBERT_PEER_TOKEN env var.
+    Returns empty string if not configured.
+    """
+    try:
+        from ..config.being_config import load_being_config
+        cfg = load_being_config()
+        token = cfg.peer_token or ""
+        if token:
+            return token
+    except Exception:
+        pass
+    return os.environ.get("HALBERT_PEER_TOKEN", "")
+
+
+def is_singular_entity_mode() -> bool:
+    """True when this node is in singular entity mode (proxies memory to a canonical host).
+
+    Singular mode means: shared persona_id + shared memory + shared threads
+    = one entity with multiple bodies. Independent mode (current behavior)
+    means each node has its own persona_id, memory, and threads.
+    """
+    return bool(_get_canonical_memory_url())
+
+
 def _get_variant() -> str:
     """Get the instance variant.
 
@@ -136,21 +213,69 @@ def get_cognition():
 
 
 def _create_memory_adapter():
-    """Create a HaloysiusMemoryAdapter backed by PersonaMemoryStore.
+    """Create a HaloysiusMemoryAdapter backed by a PersonaMemoryStore.
 
     This connects advance_turn's thought promotion to persistent memory.
+
+    In singular entity mode (canonical_memory_url set in being.yml, P2c)
+    the adapter is backed by a ``PeerMemoryBackend`` that proxies
+    smart_add/search to the canonical HA server over the peer HTTP link,
+    so both cognitions share one autobiography. Otherwise, a local
+    ``PersonaMemoryStore`` as before.
     """
     try:
-        from haloysius.memory_v2.store import PersonaMemoryStore
         from .haloysius_memory_adapter import HaloysiusMemoryAdapter
 
-        store = PersonaMemoryStore(_get_persona_id())
+        store = _create_memory_store()
         adapter = HaloysiusMemoryAdapter(store)
-        logger.info(f"Created HaloysiusMemoryAdapter for {_get_persona_id()}")
+        logger.info(
+            "Created HaloysiusMemoryAdapter for %s (%s)",
+            _get_persona_id(),
+            "peer-backed" if _get_canonical_memory_url() else "local",
+        )
         return adapter
     except Exception as e:
         logger.warning(f"Could not create memory adapter: {e}")
         return None
+
+
+def _create_memory_store():
+    """Create the memory store based on singular entity config (P2c).
+
+    When ``canonical_memory_url`` is set in being.yml, returns a
+    ``PeerMemoryBackend`` that proxies to the canonical host. Otherwise,
+    a local ``PersonaMemoryStore``. Falls back to the local store when
+    the peer token is missing or the backend cannot be imported — a
+    cognition tick with local memory beats no cognition at all.
+    """
+    canonical_memory_url = _get_canonical_memory_url()
+    if canonical_memory_url:
+        try:
+            from haloysius.memory_v2.peer_backend import PeerMemoryBackend
+
+            token = _get_peer_token()
+            if not token:
+                logger.warning(
+                    "canonical_memory_url is set but no peer_token configured "
+                    "— falling back to local PersonaMemoryStore"
+                )
+            else:
+                logger.info(
+                    "Memory adapter: using PeerMemoryBackend at %s",
+                    canonical_memory_url,
+                )
+                return PeerMemoryBackend(
+                    peer_url=canonical_memory_url,
+                    bearer_token=token,
+                )
+        except ImportError as e:
+            logger.warning(
+                f"Failed to import PeerMemoryBackend (falling back to local): {e}"
+            )
+
+    from haloysius.memory_v2.store import PersonaMemoryStore
+
+    return PersonaMemoryStore(_get_persona_id())
 
 
 def _ensure_app_seam_wired() -> None:
@@ -159,9 +284,9 @@ def _ensure_app_seam_wired() -> None:
     routes/agent.py calls get_cognition_tick() before get_event_mapper(),
     so the seam must be wired here for the thought generator to find it.
 
-    S2: home variants run without SourcePrep, so the seam is wired with
-    no retrieval backend for them — template thoughts and persona memory
-    never consult a documentation index on an HA node.
+    Capability-based: skip SourcePrep retrieval if the sourceprep
+    capability is not available. The variant preset sets defaults
+    (home = no sourceprep), but being.yml can override.
     """
     try:
         from haloysius.seam import get_app_seam
@@ -169,7 +294,15 @@ def _ensure_app_seam_wired() -> None:
         if get_app_seam() is None:
             from . import app_seam
 
-            app_seam.wire_halbert_seam(skip_retrieval=is_home_variant())
+            # Use capability registry instead of hard variant gate
+            try:
+                from ..capabilities import has_capability, CAP_SOURCEPREP
+                skip_retrieval = not has_capability(CAP_SOURCEPREP)
+            except Exception:
+                # Fallback to variant gate if capabilities module unavailable
+                skip_retrieval = is_home_variant()
+
+            app_seam.wire_halbert_seam(skip_retrieval=skip_retrieval)
     except Exception as e:
         logger.warning(f"Could not wire app seam (non-fatal): {e}")
 

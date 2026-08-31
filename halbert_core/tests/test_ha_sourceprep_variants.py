@@ -23,15 +23,36 @@ from halbert_core.integrations import cognition_wiring
 
 
 @pytest.fixture
-def variant(monkeypatch):
+def variant(monkeypatch, capability_registry):
     """Controllable variant behind every consumer's resolution chain.
 
     Patched at cognition_wiring._get_variant — the single source backend
     gating uses (being.yml > HALBERT_VARIANT env > 'sysadmin') — so each
     consumer's lazy lookup is exercised for real.
+
+    F5: gating now reads the capability registry, not the variant
+    directly. The holder syncs writes into the isolated registry (probes
+    off, preset-driven), so sysadmin wires SourcePrep and home does not —
+    the exact matrix this file pins — on any machine, regardless of
+    whether this developer's venv can import sourceprep.
     """
-    holder = {"variant": "sysadmin"}
+
+    class _VariantHolder(dict):
+        """A variant holder whose writes the capability registry follows."""
+
+        def __init__(self):
+            super().__init__(variant="sysadmin")
+            self.registry = None
+
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            if key == "variant" and self.registry is not None:
+                self.registry.set_variant(value)
+
+    holder = _VariantHolder()
     monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: holder["variant"])
+    capability_registry.set_variant("sysadmin")
+    holder.registry = capability_registry
     return holder
 
 

@@ -59,6 +59,7 @@ class ToolExecutor:
         safety: ToolSafetyFramework = None,
         audit_fn: Callable = None,
         role_gate=None,
+        peer_tool_proxy=None,
     ):
         """
         Initialize the tool executor.
@@ -71,10 +72,15 @@ class ToolExecutor:
                        (which can tighten but never loosen the base result).
                        When None, the bare safety framework is used (all
                        turns treated as admin — backward compatible).
+            peer_tool_proxy: Optional PeerToolProxy for routing tool calls
+                       to a paired peer when the tool doesn't exist locally.
+                       When set and a tool is unknown locally, the executor
+                       tries the peer before returning "Unknown tool".
         """
         self.safety = safety or ToolSafetyFramework()
         self.audit_fn = audit_fn
         self.role_gate = role_gate
+        self.peer_tool_proxy = peer_tool_proxy
         
         # Registered tools
         self.tools: Dict[str, Callable] = {}
@@ -333,6 +339,34 @@ class ToolExecutor:
         
         # Check if tool exists
         if tool_name not in self.tools:
+            # Try peer tool proxy (singular entity mode): route the tool
+            # call to a paired peer that has this capability.
+            if self.peer_tool_proxy is not None:
+                try:
+                    if self.peer_tool_proxy.has_tool(tool_name):
+                        logger.info(
+                            f"Routing tool '{tool_name}' to peer "
+                            f"{self.peer_tool_proxy.peer_url}"
+                        )
+                        peer_result = self.peer_tool_proxy.call_tool(
+                            tool_name, args
+                        )
+                        elapsed = (time.time() - start) * 1000
+                        self._audit(
+                            tool_name, args, session_id,
+                            success=True,
+                        )
+                        return ExecutionResult(
+                            success=True,
+                            result=peer_result,
+                            execution_time_ms=elapsed,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Peer tool proxy failed for '{tool_name}': {e}"
+                    )
+                    # Fall through to "Unknown tool" below
+
             return ExecutionResult(
                 success=False,
                 error=f"Unknown tool: {tool_name}",

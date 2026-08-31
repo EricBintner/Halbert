@@ -37,11 +37,9 @@ logger = logging.getLogger('halbert.model.tier_router')
 def _is_home_variant() -> bool:
     """True when the active instance runs a home automation variant.
 
-    secure_model is a sysadmin-instance slot: home variants
-    never configure it (an HA variant's LLM reaches the house through tool
-    calls that abstract credentials away), so the slot is not read for
-    them. The import is lazy so the model layer carries no module-level
-    dependency on the integrations package.
+    Retained for backward compatibility. secure_model gating now uses
+    the capability registry (CAP_SECURE_MODEL) instead of this hard
+    variant gate.
     """
     try:
         from ..integrations.cognition_wiring import is_home_variant
@@ -150,9 +148,18 @@ class TierRouterConfig:
         chat = _resolve_slot('chat_model')
         spec = _resolve_slot('specialist_model')
         vision = _resolve_slot('vision_model')
-        # secure_model is a sysadmin-instance slot: home automation
-        # variants never configure it, so the slot is not read for them.
-        secure = None if _is_home_variant() else _resolve_slot('secure_model')
+        # secure_model is only resolved when the secure_model capability
+        # is available (a local-only secure endpoint is configured).
+        # The variant preset sets defaults (home = no secure_model), but
+        # being.yml can override — a Mac Studio with HA configured can
+        # still use a local secure model.
+        _has_secure_cap = False
+        try:
+            from ..capabilities import has_capability, CAP_SECURE_MODEL
+            _has_secure_cap = has_capability(CAP_SECURE_MODEL)
+        except Exception:
+            pass
+        secure = _resolve_slot('secure_model') if _has_secure_cap else None
 
         # Fall back to legacy keys when llm_config slots are empty
         if chat is None:
