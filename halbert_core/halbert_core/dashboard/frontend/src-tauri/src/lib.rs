@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+//! Desktop shell for the Halbert dashboard.
+//!
+//! Besides the backend sidecar lifecycle, this crate hosts the voice
+//! workstream's Rust pieces: opt-in microphone capture with acoustic echo
+//! cancellation (`audio_capture`, features `voice-capture` / `aec`).
+
+mod audio_capture;
+
 use serde::Serialize;
 use sysinfo::System;
 use std::path::PathBuf;
@@ -485,6 +493,7 @@ pub fn run() {
                 .js_init_script(init_script)
                 .build(),
         )
+        .manage(audio_capture::AudioCaptureState::new())
         .invoke_handler(tauri::generate_handler![
             greet,
             get_system_info,
@@ -495,7 +504,12 @@ pub fn run() {
             get_active_jobs,
             get_memory_stats,
             get_documents,
-            get_api_base
+            get_api_base,
+            audio_capture::start_audio_capture,
+            audio_capture::stop_audio_capture,
+            audio_capture::set_mic_muted,
+            audio_capture::get_audio_capture_status,
+            audio_capture::feed_tts_reference
         ])
         .setup(|app| {
             spawn_backend(app.handle())?;
