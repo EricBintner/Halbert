@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """The CLI wizard writes the llm_config schema, never the legacy keys."""
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from halbert_core.model import llm_config as store
 from halbert_core.model.config_wizard import ConfigWizard
@@ -14,8 +16,14 @@ def _wizard():
 
 
 def _hardware():
+    # Explicit numeric/bool attrs: _build_config does arithmetic on
+    # unified_memory_gb (`mem <= 24`), which a bare MagicMock fails with
+    # TypeError. Apple Intelligence off keeps these tests about the schema,
+    # not the AI branch.
     return MagicMock(profile=MagicMock(value="apple_silicon"), total_ram_gb=32,
-                     platform="darwin", is_apple_silicon=True)
+                     platform="darwin", is_apple_silicon=True,
+                     unified_memory_gb=32, apple_intelligence_available=False,
+                     apple_intelligence_bridge_running=False)
 
 
 def _budget():
@@ -39,6 +47,53 @@ def test_build_config_without_model_leaves_chat_unset():
     assert store.normalise(cfg["llm_config"])["chat_model"]["enabled"] is False
 
 
+# ── U6 S1/W2: the wizard's secure_model write is sysadmin-only ──────────
+
+
+def _ai_hardware():
+    """Apple-Intelligence-eligible host (32GB Mac: AI takes secure, not chat)."""
+    return MagicMock(profile=MagicMock(value="apple_silicon"), total_ram_gb=32,
+                     platform="darwin", is_apple_silicon=True,
+                     unified_memory_gb=32, apple_intelligence_available=True,
+                     apple_intelligence_bridge_running=True)
+
+
+def _ai_budget():
+    budget = MagicMock()
+    budget.to_dict.return_value = {"max_params_b_4bit": 14}
+    return budget
+
+
+@pytest.mark.parametrize("variant", ["home"])
+def test_build_config_home_variants_write_empty_secure_slot(variant):
+    """home carry no secure_model — and the slot must be written
+    EMPTY, not omitted, because save_config deep-merges all slots."""
+    with patch("halbert_core.model.config_wizard._is_home_variant",
+               return_value=True), \
+         patch("halbert_core.model.auto_provision._is_home_variant",
+               return_value=True):
+        cfg = _wizard()._build_config(None, "ollama", _ai_budget(), _ai_hardware())
+    secure = cfg["llm_config"]["secure_model"]
+    assert secure == {"enabled": False, "endpoint_id": "", "model": ""}
+    # The apple-foundation endpoint still registers — chat/specialist may
+    # use it until the compute-peer setting lands (U6 S3).
+    eps = [e for e in cfg["llm_config"]["saved_endpoints"]
+           if e["provider"] == "apple-foundation"]
+    assert len(eps) == 1
+
+
+def test_build_config_sysadmin_writes_ai_secure_slot():
+    with patch("halbert_core.model.config_wizard._is_home_variant",
+               return_value=False), \
+         patch("halbert_core.model.auto_provision._is_home_variant",
+               return_value=False):
+        cfg = _wizard()._build_config(None, "ollama", _ai_budget(), _ai_hardware())
+    secure = cfg["llm_config"]["secure_model"]
+    assert secure["enabled"] is True
+    assert secure["model"] == store.APPLE_FOUNDATION_MODEL
+    assert secure["endpoint_id"] == "ep_apple_foundation"
+
+
 def test_validate_config_requires_llm_config(tmp_path):
     p = tmp_path / "models.yml"
     p.write_text("orchestrator: {model: x}\nrouting: {}\nhandoff: {}\n")
@@ -48,6 +103,7 @@ def test_validate_config_requires_llm_config(tmp_path):
         "  chat_model: {enabled: false, endpoint_id: '', model: ''}\n"
         "  specialist_model: {enabled: false, endpoint_id: '', model: ''}\n"
         "  vision_model: {enabled: false, endpoint_id: '', model: ''}\n"
+        "  secure_model: {enabled: false, endpoint_id: '', model: ''}\n"
         "routing: {}\nhandoff: {}\n"
     )
     assert _wizard().validate_config(p) is True

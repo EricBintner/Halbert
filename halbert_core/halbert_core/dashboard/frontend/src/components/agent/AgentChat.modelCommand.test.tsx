@@ -6,6 +6,11 @@
  * The parser has its own unit tests. These cover the wiring the parser cannot
  * see: that a command never reaches the backend, that it moves the same pin
  * the pill shows, and that ordinary input is still sent.
+ *
+ * The pin surface exists on the sysadmin variant; a home variant
+ * is a pure client of the workstation's compute endpoint (S3), carries no
+ * model control at all, and answers `/model` by saying so — those are the
+ * tests at the bottom.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -39,7 +44,13 @@ const IDENTITY = {
 
 let fetchMock: ReturnType<typeof vi.fn>
 
+// The variant each test's instance reports. Most of the suite runs as
+// sysadmin — the one variant where the pin surface exists. The home tests at
+// the bottom switch this before rendering.
+let instanceVariant = 'sysadmin'
+
 beforeEach(() => {
+  instanceVariant = 'sysadmin'
   // jsdom implements neither, and AgentChat uses both on mount.
   Element.prototype.scrollIntoView = vi.fn()
   HTMLCanvasElement.prototype.getContext = vi.fn() as never
@@ -47,6 +58,7 @@ beforeEach(() => {
   fetchMock = vi.fn(async (url: string) => {
     const u = String(url)
     if (u.includes('/api/identity')) return jsonResponse(IDENTITY)
+    if (u.includes('/api/instance/info')) return jsonResponse({ variant: instanceVariant })
     if (u.includes('/llm/config')) {
       return jsonResponse({ data: {
         llm_config: {
@@ -162,5 +174,38 @@ describe('AgentChat /model command', () => {
       ([, init]) => (init as RequestInit | undefined)?.method === 'PUT',
     )
     expect(writes).toEqual([])
+  })
+})
+
+describe('AgentChat /model on a peer-governed (home) variant', () => {
+  beforeEach(() => {
+    instanceVariant = 'home'
+  })
+
+  it('carries no model control in the composer', async () => {
+    render(<AgentChat />)
+    await screen.findByRole('textbox')
+    // The variant arrives after mount; wait for the pill to be gone rather
+    // than asserting against the one render pass before the info lands.
+    await waitFor(() => expect(screen.queryByRole('combobox')).not.toBeInTheDocument())
+  })
+
+  it('answers /model by naming the workstation, and never reaches the agent', async () => {
+    render(<AgentChat />)
+    await screen.findByRole('textbox')
+    await waitFor(() => expect(screen.queryByRole('combobox')).not.toBeInTheDocument())
+
+    await type('/model auto')
+    await waitFor(() =>
+      expect(screen.getByText(/governed by the paired workstation/i)).toBeInTheDocument(),
+    )
+    expect(sends()).toHaveLength(0)
+  })
+
+  it('still sends ordinary input', async () => {
+    render(<AgentChat />)
+    await screen.findByRole('textbox')
+    await type('is the front door locked')
+    await waitFor(() => expect(sends()).toHaveLength(1))
   })
 })

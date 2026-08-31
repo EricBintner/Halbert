@@ -10,6 +10,9 @@
  * role names and no I/O:
  *
  *  - Halbert's design language, through the drawer's `classNames` seams
+ *  - this instance's variant, applied to the role list before the drawer
+ *    sees it — a home instance offers no secure slot, and the package must
+ *    stay free of role-name logic to know that
  *  - the vision slot's "Auto: inherit from the chat model" copy when it is
  *    unassigned, so the UI never claims a dedicated vision model exists
  *    when there isn't one (never a model name — see UI-SPEC Q3)
@@ -47,7 +50,8 @@ import { Brain, Check, ChevronDown, Cloud, Cpu, HardDrive, X } from 'lucide-reac
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { QuickSetup } from './QuickSetup'
 import { CloudDisclosureModal } from '@/components/legal'
-import { HALBERT_MODEL_ROLES, modelPickerTransport } from '@/lib/halbertModelRoles'
+import { halbertRolesForVariant, modelPickerTransport } from '@/lib/halbertModelRoles'
+import { useInstanceVariant } from '@/hooks/useInstanceVariant'
 import { cn } from '@/lib/utils'
 
 const VISION_INHERIT_COPY =
@@ -349,9 +353,19 @@ interface PendingSave {
 }
 
 export function ModelSettings() {
+  // Variant-filtered roles, resolved before the picker sees them: the
+  // package renders whatever array it is handed, so a slot this variant does
+  // not offer (the secure slot on a home instance) has to be gone by then.
+  // Unknown variant keeps the full set, not an empty one.
+  const variant = useInstanceVariant()
+  const variantRoles = useMemo(
+    () => halbertRolesForVariant(variant),
+    [variant],
+  )
+
   const picker = useModelPicker({
     transport: modelPickerTransport,
-    roles: HALBERT_MODEL_ROLES,
+    roles: variantRoles,
   })
   const [pending, setPending] = useState<PendingSave | null>(null)
 
@@ -383,12 +397,12 @@ export function ModelSettings() {
 
   const displayRoles = useMemo(
     () =>
-      HALBERT_MODEL_ROLES.map((role) =>
+      variantRoles.map((role) =>
         role.id === 'vision_model' && visionUnassigned
           ? { ...role, description: VISION_INHERIT_COPY }
           : role,
       ),
-    [visionUnassigned],
+    [variantRoles, visionUnassigned],
   )
 
   const gatedPicker: UseModelPickerResult = useMemo(
@@ -428,7 +442,9 @@ export function ModelSettings() {
         {/* Apple Intelligence: when the bridge is running, show a distinct
             banner so the user knows the on-device model is available with
             zero download. The provider also appears in the Local group of
-            the providers accordion below. */}
+            the providers accordion below. The assignment sentence names the
+            secure role, which a home variant does not offer — pointing at a
+            row that is not there would say the assignment exists. */}
         {picker.discovery?.appleFoundation?.running ? (
           <div className="flex items-start gap-3 rounded-lg border border-success/40 bg-success-muted px-4 py-3">
             <Cpu className="mt-0.5 h-5 w-5 shrink-0 text-success" aria-hidden="true" />
@@ -439,7 +455,9 @@ export function ModelSettings() {
               <p className="text-xs text-muted-foreground">
                 Built-in foundation model running on the Apple Neural Engine.
                 Zero download, zero config. Data never leaves this Mac.
-                Assign it to the Secure (Local) role below.
+                {variantRoles.some((role) => role.id === 'secure_model')
+                  ? ' Assign it to the Secure (Local) role below.'
+                  : null}
               </p>
             </div>
           </div>

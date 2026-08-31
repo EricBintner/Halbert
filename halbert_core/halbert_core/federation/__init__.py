@@ -48,9 +48,10 @@ from __future__ import annotations
 
 __all__ = [
     # 9.1 — Peer auth (shared with MCP Phase 4b)
+    # (the FastAPI dependencies require_peer_auth / optional_peer_auth and
+    #  PeerContext live in peer_middleware.py — there is no middleware class)
     "PeersConfig",
     "PeerCredential",
-    "PeerAuthMiddleware",
     # 9.4 — Compute endpoint + redaction
     "PEER_ALLOWED_TOOLS",
     "is_tool_allowed_for_peer",
@@ -74,9 +75,6 @@ def __getattr__(name: str):  # pragma: no cover
     if name == "PeerCredential":
         from .peers_config import PeerCredential
         return PeerCredential
-    if name == "PeerAuthMiddleware":
-        from .peer_middleware import PeerAuthMiddleware
-        return PeerAuthMiddleware
     if name == "PEER_ALLOWED_TOOLS":
         from .tool_allowlist import PEER_ALLOWED_TOOLS
         return PEER_ALLOWED_TOOLS

@@ -253,3 +253,164 @@ class TestRouteIsMounted:
         resp = client.post("/compute/endpoint-probe", json={})
         assert resp.status_code != 404
         assert resp.status_code == 422  # missing endpoint_id
+
+
+# -----------------------------------------------------------------------------
+# POST /compute/peer-probe — the Compute Peer card's "Test Connection" button
+# (home automation simplification, S3 / W15)
+# -----------------------------------------------------------------------------
+
+PEER_URL = "peer://desktop.lan:8000"
+
+
+def _peer_probe(body, provider_mock, variant_value="home"):
+    """Run the route with the variant pinned and PeerProvider stubbed."""
+    from halbert_core.dashboard.routes import compute
+    from halbert_core.integrations import cognition_wiring
+
+    with patch.object(cognition_wiring, "_get_variant", lambda: variant_value), \
+         patch("halbert_core.model.providers.peer.PeerProvider", provider_mock):
+        return compute.peer_probe(compute.PeerProbeRequest(**body))
+
+
+def _stub_provider(healthy=True, models=("m-alpha", "m-beta")):
+    from types import SimpleNamespace
+
+    provider = MagicMock()
+    provider.health_check.return_value = healthy
+    provider.list_models.return_value = [
+        SimpleNamespace(model_id=m) for m in models
+    ]
+    factory = MagicMock(return_value=provider)
+    return factory, provider
+
+
+class TestPeerProbeRoute:
+
+    def test_healthy_peer_reports_the_model_list(self):
+        factory, provider = _stub_provider()
+        result = _peer_probe({"endpoint": "desktop.lan:8000"}, factory)["data"]
+
+        assert result["ok"] is True
+        assert result["models"] == ["m-alpha", "m-beta"]
+        assert result["url"] == PEER_URL
+        # The probe reuses the provider's health path and its model listing,
+        # so the card and TierRouter's health tracking ask the same question.
+        provider.health_check.assert_called_once()
+        provider.list_models.assert_called_once()
+
+    def test_address_shapes_are_normalised_like_the_link_route(self):
+        factory, _ = _stub_provider()
+        for address in ("desktop.lan:8000", PEER_URL,
+                        "http://desktop.lan:8000/", "https://desktop.lan:8000"):
+            factory.reset_mock()
+            result = _peer_probe({"endpoint": address}, factory)["data"]
+            assert result["url"] == PEER_URL
+
+    def test_dead_peer_reports_failure_with_a_hint_when_no_token(self):
+        factory, provider = _stub_provider(healthy=False)
+        result = _peer_probe({"endpoint": PEER_URL}, factory)["data"]
+
+        assert result["ok"] is False
+        assert result["models"] == []
+        assert "did not answer" in result["message"]
+        assert "token" in result["message"]
+        provider.list_models.assert_not_called()
+
+    def test_sysadmin_variant_is_refused(self):
+        factory, _ = _stub_provider()
+        result = _peer_probe({"endpoint": PEER_URL}, factory, variant_value="sysadmin")
+
+        assert "error" in result
+        assert result["error"]["code"] == "NOT_HOME_VARIANT"
+        factory.assert_not_called()
+
+    def test_an_address_without_a_host_is_rejected(self):
+        factory, _ = _stub_provider()
+        result = _peer_probe({"endpoint": "   "}, factory)
+
+        assert "error" in result
+        factory.assert_not_called()
+
+    def test_cloud_metadata_endpoints_are_never_probed(self):
+        factory, _ = _stub_provider()
+        result = _peer_probe({"endpoint": "169.254.169.254:8000"}, factory)
+
+        assert "error" in result
+        factory.assert_not_called()
+
+
+class TestPeerProbeStoredToken:
+    """The probe reuses the credential the link route persisted, so
+    "Test Connection" works after pairing without re-entering the token."""
+
+    def test_saved_peer_endpoint_api_key_is_used(self, models_config_dir):
+        from halbert_core.dashboard.routes import compute
+        from halbert_core.integrations import cognition_wiring
+        from halbert_core.model import llm_config as store
+
+        cfg = store.load()
+        cfg["saved_endpoints"].append({
+            "id": "ep-peer", "name": "Compute Peer", "provider": "peer",
+            "url": PEER_URL, "api_key": "tok-1",
+        })
+        store.save(cfg)
+
+        factory, _ = _stub_provider()
+        with patch.object(cognition_wiring, "_get_variant", lambda: "home"), \
+             patch("halbert_core.model.providers.peer.PeerProvider", factory):
+            compute.peer_probe(compute.PeerProbeRequest(endpoint=PEER_URL))
+
+        factory.assert_called_once_with(PEER_URL, "tok-1")
+
+    def test_saved_credential_is_used_for_the_same_address_only(self, models_config_dir):
+        from halbert_core.dashboard.routes import compute
+        from halbert_core.integrations import cognition_wiring
+        from halbert_core.model import llm_config as store
+
+        cfg = store.load()
+        cfg["saved_endpoints"].append({
+            "id": "ep-peer", "name": "Compute Peer", "provider": "peer",
+            "url": PEER_URL, "api_key": "tok-1",
+        })
+        store.save(cfg)
+
+        factory, _ = _stub_provider()
+        with patch.object(cognition_wiring, "_get_variant", lambda: "home"), \
+             patch("halbert_core.model.providers.peer.PeerProvider", factory):
+            compute.peer_probe(
+                compute.PeerProbeRequest(endpoint="other.lan:8000"))
+
+        factory.assert_called_once_with("peer://other.lan:8000", "")
+
+    def test_an_explicit_token_wins_over_the_stored_one(self, models_config_dir):
+        from halbert_core.dashboard.routes import compute
+        from halbert_core.integrations import cognition_wiring
+        from halbert_core.model import llm_config as store
+
+        cfg = store.load()
+        cfg["saved_endpoints"].append({
+            "id": "ep-peer", "name": "Compute Peer", "provider": "peer",
+            "url": PEER_URL, "api_key": "tok-1",
+        })
+        store.save(cfg)
+
+        factory, _ = _stub_provider()
+        with patch.object(cognition_wiring, "_get_variant", lambda: "home"), \
+             patch("halbert_core.model.providers.peer.PeerProvider", factory):
+            compute.peer_probe(
+                compute.PeerProbeRequest(endpoint=PEER_URL, token="tok-2"))
+
+        factory.assert_called_once_with(PEER_URL, "tok-2")
+
+
+class TestPeerProbeRouteIsMounted:
+
+    def test_app_serves_the_peer_probe_path(self):
+        from fastapi.testclient import TestClient
+        from halbert_core.dashboard.app import create_app
+
+        client = TestClient(create_app())
+        resp = client.post("/compute/peer-probe", json={})
+        assert resp.status_code != 404
+        assert resp.status_code == 422  # missing endpoint

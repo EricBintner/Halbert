@@ -121,6 +121,29 @@ class PeerInfo(BaseModel):
     capabilities: List[str] = Field(default_factory=list)
 
 
+class ComputePeerLinkRequest(BaseModel):
+    """Persist a paired compute peer as this node's LLM endpoint.
+
+    Sent by the Compute Peer card on a home variant after the
+    pairing handshake (mDNS discovery or the manual Tailscale path). The
+    workstation's address goes in ``endpoint``; ``token`` is the bearer
+    credential the workstation issued at ``/api/peers/verify``.
+    """
+    endpoint: str = Field(..., description="Workstation address: host:port, peer://host:port, or http(s)://host:port")
+    token: str = Field("", description="Bearer token from the workstation's /api/peers/verify")
+    name: str = Field("", description="Display name for the saved endpoint")
+    model: str = Field("", description="Model tag the slots request; empty = the workstation governs (handoff S3 5.2)")
+
+
+class ComputePeerLinkResponse(BaseModel):
+    """The persisted compute-peer link."""
+    status: str = "linked"
+    endpoint_id: str
+    url: str
+    model: str
+    slots: List[str]
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -261,6 +284,83 @@ async def revoke_peer(
             detail=f"Peer {node_id} not found",
         )
     return {"status": "revoked", "node_id": node_id}
+
+
+# ---------------------------------------------------------------------------
+# Compute-peer wiring (home automation simplification, S3 / W16)
+# ---------------------------------------------------------------------------
+
+def _peer_url(address: str) -> str:
+    """Normalise a user-supplied workstation address to ``peer://host:port``.
+
+    Accepts the three shapes a user pastes: a bare ``host:port`` (the
+    Compute Peer card's field), a saved ``peer://`` URL, or an ``http(s)://``
+    URL copied from the workstation's own address bar. Raises ValueError
+    on anything without a host.
+    """
+    import urllib.parse
+
+    u = (address or "").strip().rstrip("/")
+    if not u:
+        raise ValueError("empty peer address")
+    if u.startswith("peer://"):
+        pass
+    elif u.startswith(("http://", "https://")):
+        u = "peer://" + u.split("://", 1)[1]
+    else:
+        u = "peer://" + u
+    parsed = urllib.parse.urlparse(u)
+    if not parsed.netloc:
+        raise ValueError(f"no host in peer address {address!r}")
+    return u
+
+
+@router.post("/api/peers/compute-peer", response_model=ComputePeerLinkResponse)
+async def link_compute_peer(req: ComputePeerLinkRequest) -> ComputePeerLinkResponse:
+    """Persist a paired workstation as this node's compute endpoint.
+
+    Home automation simplification S3 (handoff
+    HOME-AUTOMATION-SIMPLIFICATION-2026-08-30, 5.2/W16): an HA node has
+    no model picker. Pairing with the workstation saves one ``peer://``
+    endpoint and points BOTH ``chat_model`` and ``specialist_model`` at
+    it — the same endpoint, the same model list — and the workstation's
+    own model configuration governs which model serves the requests.
+    ``secure_model`` is never touched: home never configure
+    it (S1), and a peer URL is not local, so even a hand-edited file is
+    disabled by llm_config's local-only enforcement.
+
+    Only home variants may set the link: a sysadmin instance
+    keeps the full model picker, where each slot is chosen per endpoint.
+    """
+    from ...integrations.cognition_wiring import is_home_variant
+
+    if not is_home_variant():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Compute-peer linking is a home feature; "
+                   "the sysadmin variant assigns models per slot in Settings.",
+        )
+
+    try:
+        url = _peer_url(req.endpoint)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    from ...model import llm_config as llm_store
+    from ...model.providers.peer import PEER_GOVERNED_MODEL
+
+    endpoint_id = llm_store.ensure_endpoint(
+        url, provider="peer", name=req.name or "Compute Peer", api_key=req.token,
+    )
+    model = req.model.strip() or PEER_GOVERNED_MODEL
+    for slot in ("chat_model", "specialist_model"):
+        llm_store.set_slot(slot, model, endpoint_id)
+
+    logger.info("Compute peer linked: %s (slots chat_model + specialist_model)", url)
+    return ComputePeerLinkResponse(
+        endpoint_id=endpoint_id, url=url, model=model,
+        slots=["chat_model", "specialist_model"],
+    )
 
 
 @router.get("/api/peers/discovered")

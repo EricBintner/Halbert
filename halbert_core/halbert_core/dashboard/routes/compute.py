@@ -10,6 +10,7 @@ from its published plan tier.
 
 Endpoints:
   - POST /compute/endpoint-probe  — probe a saved endpoint, recommend a cap
+  - POST /compute/peer-probe     — test a workstation's compute endpoint
 
 The probe deliberately calls the provider's *model listing* endpoint rather
 than generating anything. It costs no tokens, cannot be charged for, and has
@@ -61,6 +62,19 @@ class EndpointProbeRequest(BaseModel):
     """Probe a saved endpoint for its usable concurrency."""
     endpoint_id: str = Field(..., description="id of a saved endpoint")
     burst_size: int = Field(20, ge=1, le=50, description="parallel requests to fire")
+
+
+class PeerProbeRequest(BaseModel):
+    """Probe a workstation's compute endpoint (the Compute Peer card).
+
+    Sent by the "Test Connection" button on a home variant's
+    AI tab. ``endpoint`` is whatever the user typed — a bare ``host:port``,
+    a saved ``peer://`` URL, or an ``http(s)://`` URL — normalised the same
+    way the compute-peer link route normalises it, so testing and linking
+    can never disagree about which address they mean.
+    """
+    endpoint: str = Field(..., description="Workstation address: host:port, peer://host:port, or http(s)://host:port")
+    token: str = Field("", description="Bearer token issued by the workstation's pairing; empty falls back to the saved link's stored credential")
 
 
 def _find_endpoint(endpoint_id: str) -> Optional[Dict[str, Any]]:
@@ -268,3 +282,86 @@ def endpoint_probe(req: EndpointProbeRequest) -> Dict[str, Any]:
             "histogram_path": None,
         }
     }
+
+
+# ---------------------------------------------------------------------------
+# Compute-peer health probe (home automation simplification, S3 / W15)
+# ---------------------------------------------------------------------------
+
+# Never a compute peer: a probe of a cloud metadata service would be reading
+# the host's own cloud credentials, not testing a workstation link.
+_METADATA_HOSTS = {"169.254.169.254", "metadata.google.internal"}
+
+
+@router.post("/compute/peer-probe")
+def peer_probe(req: PeerProbeRequest) -> Dict[str, Any]:
+    """Probe a workstation's compute endpoint — the Compute Peer card's
+    "Test Connection" button.
+
+    Reuses ``PeerProvider``'s health probe (GET ``/api/compute/v1/models`` on
+    the peer — authenticated, read-only, costs no GPU time) so the card and
+    ``TierRouter``'s health tracking ask the peer the same question. The
+    model list the probe returns is the card's read-only summary of what the
+    workstation serves; an empty list is the honest state until the
+    workstation's models route is implemented (TODO(federation-9.3)) — the
+    workstation's own configuration still governs which model answers.
+
+    Home only, matching the compute-peer link route in
+    ``routes/peers.py``: a sysadmin instance assigns models per slot and has
+    no compute-peer surface to test. An omitted token falls back to the
+    credential the saved link already carries, so "Test Connection" works
+    after pairing without asking for the token again.
+    """
+    from ...integrations.cognition_wiring import is_home_variant
+    from ...model.providers.peer import PeerProvider
+    # Same normalisation as the link route, so the address that tested
+    # healthy is the address a subsequent link persists.
+    from .peers import _peer_url
+
+    if not is_home_variant():
+        return {"error": {
+            "code": "NOT_HOME_VARIANT",
+            "message": "Compute-peer probing is a home feature; "
+                       "the sysadmin variant assigns models per slot in Settings.",
+        }}
+
+    try:
+        url = _peer_url(req.endpoint)
+    except ValueError as e:
+        return {"error": {"code": "BAD_PEER_ADDRESS", "message": str(e)}}
+
+    if (urllib.parse.urlparse(url).hostname or "") in _METADATA_HOSTS:
+        return {"error": {
+            "code": "BAD_PEER_ADDRESS",
+            "message": "A cloud metadata endpoint is not a compute peer.",
+        }}
+
+    token = req.token
+    if not token:
+        # The saved link carries the credential the pairing issued; a probe
+        # must not require the user to re-enter it.
+        for ep in llm_store.load().get("saved_endpoints") or []:
+            if (ep.get("provider") == "peer"
+                    and (ep.get("url") or "").rstrip("/") == url):
+                token = ep.get("api_key") or ""
+                break
+
+    provider = PeerProvider(url, token)
+    ok = provider.health_check()
+
+    models: List[str] = []
+    message = (
+        f"Peer {url} answered the health probe."
+        if ok else
+        f"Peer {url} did not answer the health probe."
+    )
+    if ok:
+        try:
+            models = [m.model_id for m in provider.list_models()]
+        except Exception as e:
+            message = f"Peer is reachable but its model list failed: {e}"
+    elif not token:
+        message += (" No pairing token is stored for this address — if the "
+                    "workstation requires one, pair it first.")
+
+    return {"data": {"ok": ok, "message": message, "models": models, "url": url}}

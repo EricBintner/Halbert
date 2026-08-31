@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-"""Unit tests for Phase 3 HA config SourcePrep bridge and tools."""
+"""Unit tests for the Phase 3 HA config SourcePrep bridge.
+
+S2 (handoff HOME-AUTOMATION-SIMPLIFICATION-2026-08-30): home variants run
+without SourcePrep, so this bridge is default-disabled and the
+/home/config-search endpoints plus the ha_search_config LLM tools are
+retired (see test_ha_sourceprep_variants.py for the variant gating).
+These tests pin the bridge's opt-in behaviour for an operator who
+explicitly sets HA_SOURCEPREP_ENABLED=1.
+"""
 
 import os
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from halbert_core.integrations.home_assistant.ha_config_bridge import (
     HAConfigSourcePrep,
@@ -18,10 +24,17 @@ from halbert_core.integrations.home_assistant.ha_config_bridge import (
 
 class TestHAConfigSourcePrep:
     def test_from_env_defaults(self):
+        """S2: the bridge is default-disabled — HA variants have no
+        SourcePrep, so nothing short of an explicit opt-in turns it on."""
         config = HAConfigSourcePrep.from_env()
         assert config.project_id == "ha-config"
         assert config.sourceprep_url == "http://localhost:8400"
         assert config.ha_config_path == "/config"
+        assert config.enabled is False
+
+    def test_from_env_explicit_opt_in(self):
+        with patch.dict(os.environ, {"HA_SOURCEPREP_ENABLED": "1"}):
+            config = HAConfigSourcePrep.from_env()
         assert config.enabled is True
 
     def test_from_env_custom(self):
@@ -29,13 +42,24 @@ class TestHAConfigSourcePrep:
             "HA_SOURCEPREP_PROJECT_ID": "my-ha",
             "SOURCEPREP_URL": "http://sp:9000",
             "HA_CONFIG_PATH": "/homeassistant/config",
-            "HA_SOURCEPREP_ENABLED": "false",
+            "HA_SOURCEPREP_ENABLED": "true",
         }):
             config = HAConfigSourcePrep.from_env()
             assert config.project_id == "my-ha"
             assert config.sourceprep_url == "http://sp:9000"
             assert config.ha_config_path == "/homeassistant/config"
-            assert config.enabled is False
+            assert config.enabled is True
+
+    def test_default_disabled_env_search_is_a_no_op(self):
+        """With the S2 default, search_ha_config() must not touch the
+        network at all — from_env() yields enabled=False and the bridge
+        returns [] before a client is ever built."""
+        with patch(
+            "halbert_core.integrations.home_assistant.ha_config_bridge.get_client"
+        ) as mock_get:
+            results = search_ha_config("automations for the front door")
+        assert results == []
+        mock_get.assert_not_called()
 
 
 class TestCheckSourcePrepStatus:
@@ -176,94 +200,3 @@ class TestPushAutomationEdges:
                 {"id": "test", "file_path": "/test.yaml", "triggers": ["a"], "actions": ["b"]},
             ], config=config)
         assert result is False
-
-
-# --- Tool handler tests ---
-
-class TestHAConfigToolHandlers:
-    @pytest.mark.asyncio
-    async def test_search_config_handler_returns_results(self):
-        from halbert_core.integrations.home_assistant.ha_config_tools import _ha_search_config_handler
-
-        with patch("halbert_core.integrations.home_assistant.ha_config_tools.search_ha_config") as mock_search:
-            mock_search.return_value = [
-                {"file_path": "/config/automations.yaml", "content": "test auto", "score": 0.9},
-            ]
-            result = await _ha_search_config_handler({"query": "front door automations"})
-        assert "Found 1 config result" in result
-        assert "/config/automations.yaml" in result
-
-    @pytest.mark.asyncio
-    async def test_search_config_handler_no_results(self):
-        from halbert_core.integrations.home_assistant.ha_config_tools import _ha_search_config_handler
-
-        with patch("halbert_core.integrations.home_assistant.ha_config_tools.search_ha_config") as mock_search:
-            mock_search.return_value = []
-            result = await _ha_search_config_handler({"query": "test"})
-        assert "No HA config results found" in result
-
-    @pytest.mark.asyncio
-    async def test_search_config_handler_empty_query(self):
-        from halbert_core.integrations.home_assistant.ha_config_tools import _ha_search_config_handler
-
-        result = await _ha_search_config_handler({"query": ""})
-        assert "No query provided" in result
-
-    @pytest.mark.asyncio
-    async def test_config_status_handler_healthy(self):
-        from halbert_core.integrations.home_assistant.ha_config_tools import _ha_config_status_handler
-
-        with patch("halbert_core.integrations.home_assistant.ha_config_tools.check_sourceprep_status") as mock_status:
-            mock_status.return_value = {
-                "daemon_reachable": True,
-                "project_id": "ha-config",
-                "config_path": "/config",
-                "indexed": True,
-                "error": None,
-            }
-            result = await _ha_config_status_handler({})
-        assert "running" in result
-        assert "indexed" in result
-
-    @pytest.mark.asyncio
-    async def test_config_status_handler_not_reachable(self):
-        from halbert_core.integrations.home_assistant.ha_config_tools import _ha_config_status_handler
-
-        with patch("halbert_core.integrations.home_assistant.ha_config_tools.check_sourceprep_status") as mock_status:
-            mock_status.return_value = {
-                "daemon_reachable": False,
-                "project_id": "ha-config",
-                "config_path": "/config",
-                "indexed": False,
-                "error": "Connection refused",
-            }
-            result = await _ha_config_status_handler({})
-        assert "not reachable" in result
-
-    @pytest.mark.asyncio
-    async def test_config_status_handler_not_indexed(self):
-        from halbert_core.integrations.home_assistant.ha_config_tools import _ha_config_status_handler
-
-        with patch("halbert_core.integrations.home_assistant.ha_config_tools.check_sourceprep_status") as mock_status:
-            mock_status.return_value = {
-                "daemon_reachable": True,
-                "project_id": "ha-config",
-                "config_path": "/config",
-                "indexed": False,
-                "error": None,
-            }
-            result = await _ha_config_status_handler({})
-        assert "not indexed" in result
-
-
-class TestRegisterHAConfigTools:
-    def test_registration(self):
-        from halbert_core.integrations.home_assistant.ha_config_tools import register_ha_config_tools
-
-        executor = MagicMock()
-        register_ha_config_tools(executor)
-
-        assert executor.register.call_count == 2
-        registered_names = [call.kwargs["name"] for call in executor.register.call_args_list]
-        assert "ha_search_config" in registered_names
-        assert "ha_config_status" in registered_names

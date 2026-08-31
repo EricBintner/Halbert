@@ -81,16 +81,38 @@ def _get_scene_context() -> str:
 def _get_variant() -> str:
     """Get the instance variant.
 
-    Priority: BeingConfig.variant > HALBERT_VARIANT env > 'sysadmin'.
+    Priority: variant set in being.yml > HALBERT_VARIANT env > 'sysadmin'.
+
+    Only an explicit being.yml ``variant:`` key wins — load_being_config
+    fills in the 'sysadmin' default when the file or key is absent, which
+    would otherwise mask the env var (explicit_variant distinguishes them).
     """
     try:
-        from ..config.being_config import load_being_config
-        cfg = load_being_config()
-        if cfg.variant:
-            return cfg.variant
+        from ..config.being_config import explicit_variant
+        variant = explicit_variant()
+        if variant:
+            return variant
     except Exception:
         pass
     return os.environ.get("HALBERT_VARIANT", "sysadmin")
+
+
+# Home automation variant. ``secure_model`` is a sysadmin-instance slot:
+# an HA variant's LLM reaches the house through tool calls that abstract
+# credentials away (HA's API layer holds the tokens, never the prompt), so
+# home never configures, provisions, or resolves a dedicated
+# secure model (handoff HOME-AUTOMATION-SIMPLIFICATION-2026-08-30, S1).
+HA_VARIANTS = ("home",)
+
+
+def is_home_variant() -> bool:
+    """True when the active variant is a home automation variant.
+
+    Resolution follows :func:`_get_variant` (being.yml > HALBERT_VARIANT
+    env > 'sysadmin'), so gating here agrees with the per-variant service
+    skips in dashboard/app.py rather than reading the env var directly.
+    """
+    return _get_variant() in HA_VARIANTS
 
 
 def _create_cognition():
@@ -136,6 +158,10 @@ def _ensure_app_seam_wired() -> None:
 
     routes/agent.py calls get_cognition_tick() before get_event_mapper(),
     so the seam must be wired here for the thought generator to find it.
+
+    S2: home variants run without SourcePrep, so the seam is wired with
+    no retrieval backend for them — template thoughts and persona memory
+    never consult a documentation index on an HA node.
     """
     try:
         from haloysius.seam import get_app_seam
@@ -143,7 +169,7 @@ def _ensure_app_seam_wired() -> None:
         if get_app_seam() is None:
             from . import app_seam
 
-            app_seam.wire_halbert_seam()
+            app_seam.wire_halbert_seam(skip_retrieval=is_home_variant())
     except Exception as e:
         logger.warning(f"Could not wire app seam (non-fatal): {e}")
 

@@ -9,12 +9,12 @@ Phase 3: SourcePrep for HA configs. This module provides:
 3. A function to search HA configs via SourcePrep semantic search.
 4. A function to push HA automation dependency edges into SourcePrep.
 
-The home instance sets SOURCEPREP_PROJECT_ID=ha-config (or a custom ID)
-and this module provides the glue between HA config files and the
-SourcePrep retrieval backend.
-
-No Halbert refactoring needed — this is a consumer-side bridge that
-uses the existing SourcePrepClient API.
+S2 (handoff HOME-AUTOMATION-SIMPLIFICATION-2026-08-30): home variants run
+without SourcePrep — their agent answers from live HA state, never a
+documentation index. The bridge is therefore DEFAULT-DISABLED
+(``HA_SOURCEPREP_ENABLED`` now defaults to "0"); only an explicit
+opt-in re-enables it. The dashboard /home/config-search endpoints and
+the ha_search_config LLM tools built on this bridge have been retired.
 """
 
 from __future__ import annotations
@@ -36,7 +36,9 @@ class HAConfigSourcePrep:
     project_id: str = "ha-config"
     sourceprep_url: str = "http://localhost:8400"
     ha_config_path: str = "/config"  # HA config directory
-    enabled: bool = True
+    # S2: default-off. Home variants run without SourcePrep, so the bridge
+    # only runs for an operator who explicitly sets HA_SOURCEPREP_ENABLED=1.
+    enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "HAConfigSourcePrep":
@@ -45,7 +47,7 @@ class HAConfigSourcePrep:
             project_id=os.environ.get("HA_SOURCEPREP_PROJECT_ID", "ha-config"),
             sourceprep_url=os.environ.get("SOURCEPREP_URL", "http://localhost:8400"),
             ha_config_path=os.environ.get("HA_CONFIG_PATH", "/config"),
-            enabled=os.environ.get("HA_SOURCEPREP_ENABLED", "1").lower() in ("1", "true", "yes"),
+            enabled=os.environ.get("HA_SOURCEPREP_ENABLED", "0").lower() in ("1", "true", "yes"),
         )
 
 

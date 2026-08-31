@@ -10,7 +10,7 @@ Halbert supports running multiple instances on the same machine (or across machi
 
 - Python 3.10+ with Halbert installed (`pip install -e .`)
 - Ollama running on port 11434
-- SourcePrep daemon running on port 8400 (optional, for config awareness)
+- SourcePrep daemon running on port 8400 (optional; sysadmin/Host instance only — the Home instance runs without SourcePrep)
 
 ### Installation
 
@@ -99,7 +99,7 @@ The HACS custom integration should be configured to connect to the **home** inst
 | `HALBERT_LOG_DIR` | `/var/log/halbert` | `/var/log/halbert-home` | Log isolation |
 | `HALBERT_PORT` | `8000` | `8001` | Dashboard API port |
 | `WYOMING_PORT` | `10400` | `10401` | Wyoming voice TCP port |
-| `SOURCEPREP_PROJECT_ID` | `halbert-host` | `ha-config` | SourcePrep project |
+| `SOURCEPREP_PROJECT_ID` | `halbert-host` | *(not set)* | SourcePrep project (sysadmin/Host instance only — Home variants run without SourcePrep) |
 
 ### Model Configuration
 
@@ -108,9 +108,11 @@ Model selection is per-instance via `models.yml` (not env vars). Each instance s
 - **`chat_model`** — User's choice (cloud API or local). Cloud-encouraged.
 - **`specialist_model`** — Optional, for complex reasoning.
 - **`vision_model`** — Optional, for image understanding.
-- **`secure_model`** — Local-only model for sensitive data processing. Endpoint URL is enforced to be loopback/localhost.
+- **`secure_model`** — Local-only model for sensitive data processing. Endpoint URL is enforced to be loopback/localhost. **Sysadmin instance only.**
 
 The `secure_model` processes system configs, secrets, and persona memory. It must never point at a remote endpoint. The config normaliser will disable the slot with a warning if a non-local URL is detected.
+
+Home automation variants (`home`) keep `secure_model` **empty** in their `models.yml`: their LLM reaches Home Assistant through tool calls that abstract credentials away, so there is no sensitive-data reasoning to route to a dedicated local model. The slot is not auto-provisioned, not written by the config wizard, and not resolved on the secure turn path for those variants — a turn flagged as sensitive falls back to a local guide and fails closed if none exists.
 
 ### LAN / Tailscale GPU Offload
 
@@ -119,9 +121,9 @@ Low-power nodes (N100, Pi 5) can offload heavy model inference to a GPU machine 
 1. Run Ollama on the GPU machine: `ollama serve`
 2. In the low-power node's `models.yml`, add an endpoint pointing at the GPU machine's IP (e.g. `http://gpu-rig:11434`)
 3. Assign `chat_model` or `specialist_model` to that endpoint
-4. Keep `secure_model` pointing at localhost (the low-power node's own Ollama)
+4. `secure_model` is never offloaded: on a sysadmin instance keep it pointing at localhost (the low-power node's own Ollama); on a `home` instance the slot stays empty (see Model Configuration above)
 
-SourcePrep can similarly be offloaded by setting `SOURCEPREP_URL=http://<lan-host>:8400`.
+Home automation variants (`home`) do not use SourcePrep at all — not locally and not offloaded. Their agent answers from live Home Assistant state; anything complex enough to need documentation retrieval is sysadmin work, done from the workstation's Halbert instance (which keeps its own SourcePrep). Do not set `SOURCEPREP_URL` or `SOURCEPREP_PROJECT_ID` on a Home instance.
 
 ### Light Hardware Installation
 

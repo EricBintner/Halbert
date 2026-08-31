@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 VALID_VOICES = {"first_person", "the_computer", "hybrid"}
 VALID_PROACTIVITY = {"off", "quiet", "balanced", "assertive"}
 VALID_VOICE_PRESENTATIONS = {"not_defined", "male", "female"}
-VALID_VARIANTS = {"sysadmin", "home", "home-light"}
+VALID_VARIANTS = {"sysadmin", "home"}
 VALID_AUTONOMY_LEVELS = {"observe", "suggest", "act", "orchestrate"}
 VALID_OPERATIONAL_TIERS = {"cloud_ok", "local_only", "redact"}
 VALID_SECRET_TIERS = {"local_only", "cloud_ok_acknowledged"}
@@ -224,13 +224,13 @@ class BeingConfig:
     # Variant gates which startup services launch (sysadmin vs home).
     # scene_context overrides platform-derived cognition framing.
     # persona_id_override replaces hardcoded "halbert" in cognition_wiring.
-    variant: str = "sysadmin"  # sysadmin | home | home-light
+    variant: str = "sysadmin"  # sysadmin | home
     scene_context: str = ""  # e.g. "smart home automation"
     persona_id_override: str = ""  # e.g. "home"
 
-    # --- Home Assistant connection (light variant stores HA creds here
+    # --- Home Assistant connection (home variant stores HA creds here
     # instead of a separate ha_config.yml, so being.yml is the single
-    # file a home-light user needs to deploy) ---
+    # file a home user needs to deploy) ---
     ha_url: Optional[str] = None
     ha_token: Optional[str] = None
 
@@ -479,6 +479,42 @@ def load_being_config(path: Optional[str] = None) -> BeingConfig:
 
     logger.info(f"Loaded being config from {config_path} (voice={config.voice})")
     return config
+
+
+def explicit_variant() -> Optional[str]:
+    """Return the variant explicitly set in being.yml, or None.
+
+    ``load_being_config`` fills in the 'sysadmin' dataclass default when
+    the file or the ``variant:`` key is absent, which hides whether the
+    user actually chose a variant. This reads the raw file so resolution
+    chains (see ``cognition_wiring._get_variant``: being.yml > env >
+    'sysadmin') can fall through to their env default instead.
+
+    Raises ValueError on an unreadable file or an invalid variant, so
+    callers' except-fallbacks apply — same contract as load_being_config.
+    """
+    config_path = _default_path()
+    if not config_path.exists():
+        return None
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in {config_path}: {e}")
+    except OSError as e:
+        raise ValueError(f"Cannot read {config_path}: {e}")
+
+    if not isinstance(data, dict):
+        return None
+    variant = data.get("variant")
+    if not variant:
+        return None
+    if variant not in VALID_VARIANTS:
+        raise ValueError(
+            f"Invalid variant '{variant}'. Must be one of: {VALID_VARIANTS}"
+        )
+    return str(variant)
 
 
 def save_being_config(config: BeingConfig, path: Optional[str] = None) -> None:

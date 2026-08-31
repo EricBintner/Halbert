@@ -138,8 +138,15 @@ def get_agent():
         # Create agent context assembler (R9: no ChromaDB memory on agent path)
         context_assembler = create_agent_context_assembler()
 
-        # SEARCHING state retrieval: SourcePrep (RAGServiceAdapter is deprecated on the chat path)
-        rag_service = SourcePrepAdapter()
+        # SEARCHING state retrieval: SourcePrep (RAGServiceAdapter is
+        # deprecated on the chat path).
+        # S2: home variants run without SourcePrep — the HA agent answers
+        # from live HA state and conversational context. rag_service stays
+        # None; the SEARCHING state guards every rag call with
+        # `if self.rag:`, so it simply gathers from the remaining sources.
+        rag_service = None
+        if not _is_home_variant():
+            rag_service = SourcePrepAdapter()
         # R9: ChromaDB-backed memory fenced off the agent path.
         # memory_service is deliberately None — recall is Halbert-owned (receipts/FTS5).
         memory_service = None
@@ -392,6 +399,23 @@ def _endpoint_is_local(provider: str, endpoint: str) -> bool:
     return _is_local_url(endpoint or "")
 
 
+def _is_home_variant() -> bool:
+    """True when the instance variant is home.
+
+    secure_model is a sysadmin-instance slot (see
+    ``integrations/cognition_wiring.is_home_variant``): home automation
+    variants never configure it, so the dedicated secure branch is skipped
+    for them and the local-guide / fail-closed chain decides instead (S1).
+    HA variants also run without SourcePrep retrieval, so the
+    SEARCHING-state rag_service stays None for them (S2).
+    """
+    try:
+        from ...integrations.cognition_wiring import is_home_variant
+        return is_home_variant()
+    except Exception:
+        return False
+
+
 class _SecureContentBlocked(Exception):
     """A secure turn found no local model to answer with. Raised rather than
     routed: silently sending secrets to a cloud endpoint is the failure this
@@ -418,7 +442,10 @@ def _resolve_turn_model(
     backstop flagged it), and the boundary beats everything, pins included:
 
     1. The dedicated ``secure_model`` slot answers when configured — it is
-       guaranteed local-only by ``llm_config.normalise``.
+       guaranteed local-only by ``llm_config.normalise``. Home automation
+       variants (home) skip this branch: secure_model is a
+       sysadmin-instance slot they never configure, so resolution falls
+       straight to the chain below.
     2. Otherwise the normally-resolved model answers, but only if its
        endpoint is local (loopback URL or an on-device provider).
     3. Otherwise the guide answers if the guide is local.
@@ -462,8 +489,12 @@ def _resolve_turn_model(
     # ── 0.5. Secure gate ────────────────────────────────────────────────
     # The trust boundary beats pins and routing. Order: dedicated secure
     # slot, then the normally-resolved model if local, then a local guide,
-    # then fail closed.
-    if secure:
+    # then fail closed. The dedicated slot is skipped for home automation
+    # variants: secure_model is a sysadmin-instance slot they never
+    # configure (an HA variant's LLM reaches the house through tool calls
+    # that abstract credentials away), so the gate below enforces the same
+    # local-or-fail-closed boundary on the remaining chain.
+    if secure and not _is_home_variant():
         from ...model.client import get_secure_model
         sec_model, sec_endpoint, sec_provider = get_secure_model()
         if sec_model:

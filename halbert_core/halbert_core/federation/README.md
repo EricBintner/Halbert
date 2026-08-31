@@ -32,7 +32,7 @@ Satellite (Pi 5)                      Compute Host (Mac Studio)
 | 4-slot model | `model/llm_config.py`, `model/tier_router.py` | `chat_model`, `specialist_model`, `vision_model`, `secure_model` slots, fallback chains | C3, M11 |
 | Discovery engine | `discovery/` | Platform-aware scanners, structured `Discovery` objects | M12 |
 | Hardware profiles | `model/hardware_detector.py` | `SBC_LOW_POWER`, `ENTRY_8GB`, `LAPTOP_16GB`, etc. | H7 |
-| Apple Intelligence | `model/capabilities.py`, `model/auto_provision.py` | `apple-foundation` provider, Metal GPU detection | M13 |
+| Apple Intelligence | `model/capabilities.py`, `model/auto_provision.py` | `apple-foundation` provider, Metal GPU detection — **local-only** (the Mac's own slots; never a peer compute backend) | M13 |
 
 ## Files
 
@@ -102,7 +102,7 @@ for the full re-sequencing with finding references.
 | 9.7 | — | mDNS auto-discovery (lazy `zeroconf`, LAN-only) |
 | 9.8 | 9.1-9.4 | Concurrency broker, scale to N |
 | 9.9 | MCP server on satellite | Fleet Cockpit = Desktop as MCP client |
-| 9.10 | Apple Intelligence | `apple-foundation` as advertised peer capability |
+| 9.10 | Apple Intelligence | Negative constraint: advertise `ollama`/`vllm` in `compute_backends` only — Apple Intelligence is local-only and is never a peer backend |
 
 ## Security Boundary
 

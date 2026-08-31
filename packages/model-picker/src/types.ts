@@ -80,6 +80,14 @@ export interface AppRole {
   requiresLocal?: boolean
   /** An empty assignment is valid; the host has a fallback. */
   optional?: boolean
+  /**
+   * Host-supplied variant tags, carried untouched. The package never reads
+   * this — a host that runs differently on different machines filters its
+   * role array before handing it over, which keeps the no-role-logic rule:
+   * the picker renders whatever survives that filter and cannot tell a
+   * filtered-out slot ever existed.
+   */
+  variants?: string[]
 }
 
 /** What a role currently points at. */

@@ -340,6 +340,51 @@ class TestSecureGate:
         assert guide.model == GUIDE[0]
 
 
+class TestSecureGateHomeVariants:
+    """home never resolve the dedicated secure_model slot.
+
+    The variants never configure it (their LLM reaches the house through
+    tool calls that abstract credentials away), so a secure turn skips the
+    dedicated branch and falls through to the same local-guide /
+    fail-closed chain an unconfigured sysadmin instance uses — even when a
+    slot value somehow exists.
+    """
+
+    @pytest.fixture
+    def secure_slot(self, slots, monkeypatch):
+        """Controllable secure_model slot on top of the slots fixture."""
+        import halbert_core.model.client as client
+        holder = {"secure": None}
+        monkeypatch.setattr(client, "get_secure_model",
+                            lambda: holder["secure"] or (None, "", ""))
+        return holder
+
+    @pytest.fixture(params=["home"])
+    def home_variant(self, request, monkeypatch):
+        from halbert_core.integrations import cognition_wiring
+        monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: request.param)
+
+    def test_home_variant_ignores_the_secure_slot(self, home_variant, secure_slot):
+        secure_slot["secure"] = SECURE_SLOT
+        turn = _resolve_turn_model(COMPLEX, secure=True)
+        assert turn.model != "secure-model"
+        # The chain stands: the cloud specialist is gated back to the guide.
+        assert turn.model == GUIDE[0]
+        assert "Secure content" in turn.reason
+
+    def test_home_variant_fails_closed_despite_secure_slot(self, home_variant, secure_slot, slots):
+        from halbert_core.dashboard.routes.agent import _SecureContentBlocked
+        secure_slot["secure"] = SECURE_SLOT
+        slots["guide"] = ("guide-cloud", "https://api.cloud.test", "openai")
+        with pytest.raises(_SecureContentBlocked):
+            _resolve_turn_model(TRIVIAL, secure=True)
+
+    def test_sysadmin_variant_still_uses_the_secure_slot(self, secure_slot):
+        secure_slot["secure"] = SECURE_SLOT
+        turn = _resolve_turn_model(COMPLEX, secure=True)
+        assert turn.model == "secure-model"
+
+
 # -----------------------------------------------------------------------------
 # The request/context plumbing
 # -----------------------------------------------------------------------------

@@ -175,21 +175,11 @@ async def get_archetypes():
 
 
 # --- Phase 3: HA Config SourcePrep ---
-
-@router.get("/home/config-search/status")
-async def get_config_search_status():
-    """Check if SourcePrep is running and HA config project is indexed."""
-    from ...integrations.home_assistant.ha_config_bridge import check_sourceprep_status
-    return check_sourceprep_status()
-
-
-@router.get("/home/config-search")
-async def search_ha_config_api(q: str = Query(..., description="Search query"), k: int = Query(5, ge=1, le=10)):
-    """Search HA config files via SourcePrep semantic search."""
-    from ...integrations.home_assistant.ha_config_bridge import search_ha_config
-    results = search_ha_config(q, k=k)
-    return {"results": results, "count": len(results), "query": q}
-
+# Retired under S2 (handoff HOME-AUTOMATION-SIMPLIFICATION-2026-08-30):
+# home variants run without SourcePrep, so the /home/config-search and
+# /home/config-search/status endpoints no longer exist. The bridge module
+# (integrations/home_assistant/ha_config_bridge.py) remains, default-
+# disabled, for explicit opt-in use.
 
 # --- Phase 4: Wyoming Voice Agent ---
 

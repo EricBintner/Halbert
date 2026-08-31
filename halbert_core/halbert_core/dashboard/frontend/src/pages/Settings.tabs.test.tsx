@@ -12,7 +12,7 @@
  * Only the tab wiring is under test here. Everything the page loads on mount is
  * stubbed; none of it decides which tab is showing.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation } from 'react-router-dom'
@@ -46,6 +46,15 @@ vi.mock('@/lib/api', () => ({
 // which tab the URL opens — instead of about the picker's discovery state.
 vi.mock('@/components/llm', () => ({
   ModelSettings: () => <div data-testid="model-settings" />,
+  ComputePeerCard: () => <div data-testid="compute-peer-card" />,
+}))
+
+// The AI tab's surface is chosen by the instance's variant (U6 S3): the full
+// picker on sysadmin, the compute-peer link card on home. Mocking
+// the hook keeps this file off the network.
+const useInstanceVariantMock = vi.hoisted(() => vi.fn((): string | null => null))
+vi.mock('@/hooks/useInstanceVariant', () => ({
+  useInstanceVariant: useInstanceVariantMock,
 }))
 
 import { Settings } from './Settings'
@@ -67,8 +76,15 @@ function renderAt(entry: string) {
 /** The trigger for one tab, by its visible name. */
 const tab = (name: RegExp) => screen.getByRole('tab', { name })
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+  useInstanceVariantMock.mockReset()
+  useInstanceVariantMock.mockReturnValue(null)
+})
+
 describe('Settings tabs follow the URL', () => {
   beforeEach(() => {
+    useInstanceVariantMock.mockReturnValue(null)
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({}),
@@ -111,5 +127,45 @@ describe('Settings tabs follow the URL', () => {
       expect(screen.getByTestId('url')).toHaveTextContent('/settings?tab=ai'),
     )
     expect(tab(/Models & Providers/i)).toHaveAttribute('aria-selected', 'true')
+  })
+})
+
+describe('Settings AI tab follows the variant (U6 S3)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+      text: async () => '',
+    }))
+  })
+
+  it.each(['home'])(
+    'replaces the model picker with the compute-peer card on %s',
+    async (variant) => {
+      useInstanceVariantMock.mockReturnValue(variant)
+      renderAt('/settings?tab=ai')
+      await waitFor(() =>
+        expect(screen.getByTestId('compute-peer-card')).toBeInTheDocument(),
+      )
+      expect(screen.queryByTestId('model-settings')).not.toBeInTheDocument()
+    },
+  )
+
+  it('keeps the full picker on the sysadmin variant', async () => {
+    useInstanceVariantMock.mockReturnValue('sysadmin')
+    renderAt('/settings?tab=ai')
+    await waitFor(() =>
+      expect(screen.getByTestId('model-settings')).toBeInTheDocument(),
+    )
+    expect(screen.queryByTestId('compute-peer-card')).not.toBeInTheDocument()
+  })
+
+  it('keeps the full picker when the variant is unknown — a failed info route must not shrink the surface', async () => {
+    useInstanceVariantMock.mockReturnValue(null)
+    renderAt('/settings?tab=ai')
+    await waitFor(() =>
+      expect(screen.getByTestId('model-settings')).toBeInTheDocument(),
+    )
+    expect(screen.queryByTestId('compute-peer-card')).not.toBeInTheDocument()
   })
 })

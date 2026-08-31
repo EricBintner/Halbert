@@ -118,8 +118,8 @@ class TestTokenRevocation:
         assert verify_token_hash("wrong-token", hashed) is False
 
     @pytest.mark.skip(reason="TODO(federation-9.1) — requires peer_middleware FastAPI integration")
-    def test_middleware_rejects_revoked_token_within_one_request(self):
-        """The PeerAuthMiddleware rejects a revoked token on the next request.
+    def test_dependency_rejects_revoked_token_within_one_request(self):
+        """The peer auth dependency (require_peer_auth) rejects a revoked token on the next request.
 
         This test requires a running FastAPI app with the middleware
         installed. It verifies that after revoking a peer, the very next

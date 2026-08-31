@@ -465,7 +465,7 @@ class TestUnsupportedProviders:
         a branch for it in _do_llm_call."""
         assert CHAT_CAPABLE_PROVIDERS == (
             OPENAI_COMPATIBLE_PROVIDERS
-            | {"ollama", "llamacpp", "mlx", "anthropic"}
+            | {"ollama", "llamacpp", "mlx", "anthropic", "peer"}
         )
 
 

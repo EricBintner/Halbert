@@ -36,7 +36,7 @@ export interface DiscoveredPeer {
   port: number
   endpoint: string
   capabilities: string[]
-  compute_backends: string[]  // M13: ollama, apple_foundation, vllm, mlx
+  compute_backends: string[]  // M13: ollama, vllm (mlx host-local); apple_foundation is never advertised
 }
 
 /** A paired peer with credential stored in peers.json. */
@@ -241,5 +241,103 @@ export async function getNodeDiscoveries(nodeId: string): Promise<Record<string,
     headers: authHeaders(),
   })
   if (!res.ok) throw new Error(`Node discoveries failed: ${res.status}`)
+  return res.json()
+}
+
+// ---------------------------------------------------------------------------
+// Compute-peer endpoints (home automation simplification, S3 / W15)
+//
+// An HA node (home) has no model picker: it is a pure client of
+// the workstation's compute endpoint. The ComputePeerCard in Settings is the
+// one surface for that link — these are its three calls: read the saved
+// link, test it, persist it.
+// ---------------------------------------------------------------------------
+
+/** The saved compute-peer link, summarised for the card's read-only block. */
+export interface ComputePeerLinkSummary {
+  url: string
+  endpointId: string
+  /** A bearer token was stored by the pairing (never the token itself). */
+  hasToken: boolean
+  /** Whether each slot resolves to the peer endpoint (read-only report). */
+  slots: { chat_model: boolean; specialist_model: boolean }
+}
+
+/** Read the persisted compute-peer link from the model configuration. */
+export async function getComputePeerLink(): Promise<ComputePeerLinkSummary | null> {
+  const res = await fetch(`${API_BASE}/llm/config`)
+  if (!res.ok) throw new Error(`Model config failed: ${res.status}`)
+  const payload = await res.json()
+  const llm = payload?.data?.llm_config ?? payload?.llm_config
+  const endpoints: Array<{ id: string; url: string; provider: string; api_key?: string }> =
+    llm?.saved_endpoints ?? []
+  const peer = endpoints.find((e) => e?.provider === 'peer')
+  if (!peer) return null
+  const pointsHere = (slot: { enabled: boolean; endpoint_id: string } | undefined) =>
+    !!slot && slot.enabled && slot.endpoint_id === peer.id
+  return {
+    url: peer.url,
+    endpointId: peer.id,
+    hasToken: !!peer.api_key,
+    slots: {
+      chat_model: pointsHere(llm?.chat_model),
+      specialist_model: pointsHere(llm?.specialist_model),
+    },
+  }
+}
+
+/** Result of POST /compute/peer-probe — the card's "Test Connection" button. */
+export interface ComputePeerProbeResult {
+  ok: boolean
+  message: string
+  /** Model tags the workstation advertises; empty until its models route exists. */
+  models: string[]
+  url: string
+}
+
+/** Probe a workstation's compute endpoint (read-only, no GPU time). */
+export async function probeComputePeer(
+  endpoint: string,
+  token = '',
+): Promise<ComputePeerProbeResult> {
+  const res = await fetch(`${API_BASE}/compute/peer-probe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ endpoint, token }),
+  })
+  const payload = await res.json()
+  if (payload?.error) {
+    throw new Error(payload.error.message || 'Peer probe failed')
+  }
+  return payload.data as ComputePeerProbeResult
+}
+
+/** The persisted link, as returned by POST /api/peers/compute-peer. */
+export interface ComputePeerLink {
+  status: string
+  endpoint_id: string
+  url: string
+  model: string
+  slots: string[]
+}
+
+/** Persist the workstation as this node's compute endpoint.
+ *
+ * One peer:// endpoint is saved and both chat_model and specialist_model
+ * point at it — the same endpoint, the same model list — with the
+ * workstation's own model configuration governing which model serves.
+ * Home variants only (the route refuses the sysadmin variant).
+ */
+export async function linkComputePeer(
+  endpoint: string,
+  token = '',
+  name = '',
+): Promise<ComputePeerLink> {
+  const res = await fetch(`${API_BASE}/api/peers/compute-peer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ endpoint, token, name }),
+  })
+  if (!res.ok) throw new Error(`Link failed: ${res.status} ${await res.text()}`)
   return res.json()
 }

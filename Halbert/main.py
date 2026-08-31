@@ -1384,23 +1384,29 @@ def cmd_config_wizard_run(args):
     
     try:
         wizard = ConfigWizard()
-        
-        # Auto or interactive mode
+
+        # Auto or interactive mode. --peer supplies the compute peer for
+        # offload-only devices (SBC_LOW_POWER, <4GB RAM), which run no
+        # local model at all.
         if args.auto:
             print("Running automatic configuration...")
-            config = wizard.run_auto(model=args.model)
+            config = wizard.run_auto(model=args.model, peer=args.peer)
         else:
-            config = wizard.run_interactive()
-        
+            config = wizard.run_interactive(peer=args.peer)
+
         if not config:
             return
-        
+
         # Save configuration
         config_path = wizard.save_config(config)
         print(f"\n📄 Configuration saved to: {config_path}")
-        
-        if not config.get('orchestrator', {}).get('model'):
-            print("   No model configured — set one in Settings → AI Models or rerun with --model <model>")
+
+        chat = config.get('llm_config', {}).get('chat_model', {})
+        if not chat.get('model'):
+            if args.peer:
+                print("   No local model configured — LLM work offloads to the compute peer")
+            else:
+                print("   No model configured — set one in Settings → AI Models or rerun with --model <model>")
     
     except Exception as e:
         print(f"Error running configuration wizard: {e}")
@@ -1959,6 +1965,9 @@ def main():
     p_config_wizard = sub.add_parser('config-wizard', help='Run configuration wizard (Phase 5 M3)')
     p_config_wizard.add_argument('--auto', action='store_true', help='Run automatically without prompts')
     p_config_wizard.add_argument('--model', default=None, help='Guide model ID as served by your endpoint (default: largest installed model that fits)')
+    p_config_wizard.add_argument('--peer', default=None,
+                                 help='Compute peer address (hostname:port) for offload-only devices '
+                                      '(<4GB RAM): all LLM work is offloaded to the peer')
     p_config_wizard.set_defaults(func=cmd_config_wizard_run)
 
     p_config_validate = sub.add_parser('config-validate', help='Validate model configuration (Phase 5 M3)')

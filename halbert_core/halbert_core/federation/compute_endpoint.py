@@ -228,10 +228,11 @@ async def peer_compute_models(
     Returns an OpenAI-compatible model list so the ``PeerProvider`` can
     implement ``list_models()`` via a standard GET.
 
-    TODO(federation-9.3): Query the local Ollama / Apple Intelligence
-    / vLLM instances and merge into a single list.  Filter out models
-    that are not available for peer offload (e.g., secure_model is
-    never listed here — finding M11).
+    TODO(federation-9.3): Query the local Ollama / vLLM instances and
+    merge into a single list.  Filter out models that are not available
+    for peer offload (e.g., secure_model is never listed here — finding
+    M11; Apple Intelligence is local-only and never listed — it serves
+    the Mac's own slots, never peer offload).
     """
     # TODO(federation-9.3): Implement
     return {
@@ -254,7 +255,8 @@ async def _submit_to_broker(
     TODO(federation-9.3): Wire to ComputeBroker.submit() which:
     1. Enqueues the request with the peer's priority level
     2. Waits for a concurrency slot (semaphore)
-    3. Calls the local model (Ollama, Apple Intelligence, vLLM)
+    3. Calls the local model (Ollama, vLLM) — never Apple Intelligence,
+       which is local-only (the Mac's own slots)
     4. Returns the raw response (pre-redaction)
 
     For Phase 9.2a (1:1 validation), this is a direct call to the local

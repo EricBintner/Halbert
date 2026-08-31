@@ -31,7 +31,7 @@ logger = get_logger("halbert")
 
 class HardwareProfile(str, Enum):
     """Hardware profile categories."""
-    SBC_LOW_POWER = "sbc_low_power"       # <=4GB RAM (Pi 4 2GB, legacy Celeron)
+    SBC_LOW_POWER = "sbc_low_power"       # <4GB RAM (Pi 4 2GB, legacy Celeron)
     ENTRY_8GB = "entry_8gb"               # 4-8GB RAM (N100, Pi 5 4GB, older laptops)
     LAPTOP_16GB = "laptop_16gb"
     WORKSTATION_32GB = "workstation_32gb"
@@ -119,6 +119,10 @@ class ModelBudget:
     summary: str = ""
     notes: List[str] = field(default_factory=list)
 
+    # True when the profile cannot run any useful local model and all LLM
+    # work is offloaded to a compute peer (SBC_LOW_POWER).
+    offload_only: bool = False
+
     def fits(self, params_b: float, bits: int = 4) -> bool:
         """Return True if a model of ``params_b`` billion parameters fits."""
         limit = self.max_params_b_8bit if bits >= 8 else self.max_params_b_4bit
@@ -138,6 +142,7 @@ class ModelBudget:
             "provider": self.provider,
             "summary": self.summary,
             "notes": self.notes,
+            "offload_only": self.offload_only,
         }
 
 
@@ -203,6 +208,11 @@ def pick_installed_model(models: List[Dict[str, Any]], budget: ModelBudget) -> O
         The chosen entry (with an added ``params_b`` key) or None when no
         installed model fits. Embedding models are skipped.
     """
+    if budget.offload_only:
+        # Offload-only profiles run no local model at all — nothing fits,
+        # not even the ~1B size the raw memory arithmetic would allow.
+        return None
+
     best: Optional[Dict[str, Any]] = None
     best_key = (-1.0, -1.0)
 
@@ -432,13 +442,42 @@ class HardwareDetector:
         
         Args:
             hw: Hardware capabilities
-        
+
         Returns:
             ModelBudget with the largest parameter counts that fit at 4-bit
-            and 8-bit quantization, plus a human-readable summary.
+            and 8-bit quantization, plus a human-readable summary. For
+            SBC_LOW_POWER the budget is offload-only: zeroed parameter
+            counts, because a compute peer is required for LLM
+            functionality on these devices.
         """
         logger.info(f"Computing model size budget for profile: {hw.profile}")
-        
+
+        # SBC_LOW_POWER (<4GB RAM) runs no local model. The generic
+        # arithmetic below would still emit a ~1B-parameter budget on a 2GB
+        # host (2GB x 0.6 / 0.65), but a model that small is inadequate for
+        # any slot that needs it — so the tier is dropped entirely and all
+        # LLM work is offloaded to a compute peer, with template thoughts
+        # covering the peer-asleep gap.
+        if hw.profile == HardwareProfile.SBC_LOW_POWER:
+            logger.info("SBC_LOW_POWER profile — offload-only budget (no local model)")
+            return ModelBudget(
+                memory_budget_gb=0.0,
+                max_params_b_4bit=0,
+                max_params_b_8bit=0,
+                memory_source="ram",
+                provider="peer",
+                summary=(
+                    "Local LLM inference is not supported on this device: "
+                    "offload only — a compute peer is required for LLM functionality."
+                ),
+                notes=[
+                    "Offload only — a compute peer is required for LLM functionality",
+                    "Point this node at a peer with: halbert config-wizard --peer <hostname:port>",
+                    "While the peer is asleep, template thoughts stand in for LLM responses",
+                ],
+                offload_only=True,
+            )
+
         if hw.is_apple_silicon and hw.unified_memory_gb:
             memory_gb = hw.unified_memory_gb * UNIFIED_MEMORY_FRACTION
             source = "unified"
@@ -497,12 +536,26 @@ class HardwareDetector:
         
         Args:
             budget: Model size budget
-        
+
         Returns:
-            Dict with installation commands per provider
+            Dict with installation commands per provider. Offload-only
+            budgets get peer-configuration guidance instead of a local
+            model install/pull block.
         """
         commands: Dict[str, List[str]] = {}
-        
+
+        if budget.offload_only:
+            # No local model is installed or pulled on an offload-only
+            # device; the only setup is pointing it at a compute peer.
+            commands["peer"] = [
+                "# This device runs no local model — all LLM work is offloaded",
+                "# to a compute peer (a Halbert node with a GPU or Apple Silicon).",
+                "",
+                "# Point this node at the peer (hostname:port, LAN IP, or Tailscale name):",
+                "halbert config-wizard --peer <hostname:port>",
+            ]
+            return commands
+
         if budget.provider == "mlx":
             commands["mlx"] = [
                 "# Install MLX (Mac Apple Silicon only)",
