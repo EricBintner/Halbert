@@ -5,9 +5,13 @@
 //!
 //! Besides the backend sidecar lifecycle, this crate hosts the voice
 //! workstream's Rust pieces: opt-in microphone capture with acoustic echo
-//! cancellation (`audio_capture`, features `voice-capture` / `aec`).
+//! cancellation (`audio_capture`, features `voice-capture` / `aec`) and the
+//! opt-in floating voice HUD with its Esc/Space event tap (`floating_panel`,
+//! `hud_hotkey`).
 
 mod audio_capture;
+mod floating_panel;
+mod hud_hotkey;
 
 use serde::Serialize;
 use sysinfo::System;
@@ -494,6 +498,7 @@ pub fn run() {
                 .build(),
         )
         .manage(audio_capture::AudioCaptureState::new())
+        .manage(floating_panel::VoiceHudState::new())
         .invoke_handler(tauri::generate_handler![
             greet,
             get_system_info,
@@ -509,7 +514,10 @@ pub fn run() {
             audio_capture::stop_audio_capture,
             audio_capture::set_mic_muted,
             audio_capture::get_audio_capture_status,
-            audio_capture::feed_tts_reference
+            audio_capture::feed_tts_reference,
+            floating_panel::show_voice_hud,
+            floating_panel::hide_voice_hud,
+            floating_panel::get_voice_hud_status
         ])
         .setup(|app| {
             spawn_backend(app.handle())?;
