@@ -115,6 +115,7 @@ class PeerCredential:
     wol_enabled: bool = False              # True = attempt WoL before template fallback
     wol_mac: Optional[str] = None          # "AA:BB:CC:DD:EE:FF" — required if wol_enabled
     wol_broadcast: Optional[str] = None    # "192.168.1.255" — defaults to 255.255.255.255
+    wol_timeout: int = 90                  # seconds to wait for peer to wake up
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -130,11 +131,12 @@ class PeerCredential:
             last_seen=d.get("last_seen"),
             revoked=d.get("revoked", False),
             endpoint=d.get("endpoint"),
-            capabilities=d.get("capabilities", []),
-            compute_direction=d.get("compute_direction", "outbound"),
+            capabilities=(d.get("capabilities") or []),
+            compute_direction=(d.get("compute_direction") or "outbound").lower(),
             wol_enabled=d.get("wol_enabled", False),
             wol_mac=d.get("wol_mac"),
             wol_broadcast=d.get("wol_broadcast"),
+            wol_timeout=d.get("wol_timeout", 90),
         )
 
     def is_compute_target(self) -> bool:
@@ -259,13 +261,16 @@ class PeersConfig:
     def list_wol_enabled_peers(self) -> List[PeerCredential]:
         """List peers with WoL enabled (for ComputeRouter pre-fallback wake).
 
-        P6c — Returns non-revoked outbound peers with ``wol_enabled=True``
-        and a valid ``wol_mac``.  The ComputeRouter (P6b) calls this
-        before falling through to template degraded mode.
+        P6c — Returns non-revoked outbound compute targets with
+        ``wol_enabled=True`` and a valid ``wol_mac``.  The ComputeRouter
+        (P6b) calls this before falling through to template degraded mode.
+        Only outbound peers are returned — you can't wake a peer that
+        sends compute requests to you (inbound direction).
         """
         return [
             p for p in self._peers.values()
-            if not p.revoked and p.wol_enabled and p.wol_mac
+            if not p.revoked and p.is_compute_target()
+            and p.wol_enabled and p.wol_mac
         ]
 
     def verify_token(self, raw_token: str) -> Optional[PeerCredential]:
@@ -303,6 +308,7 @@ class PeersConfig:
         wol_enabled: bool = False,
         wol_mac: Optional[str] = None,
         wol_broadcast: Optional[str] = None,
+        wol_timeout: int = 90,
     ) -> PeerCredential:
         """Pair a new peer. Generates a credential with hashed token.
 
@@ -333,6 +339,7 @@ class PeersConfig:
                 wol_enabled=wol_enabled,
                 wol_mac=wol_mac,
                 wol_broadcast=wol_broadcast,
+                wol_timeout=wol_timeout,
             )
             self._peers[node_id] = cred
             self._save()
@@ -363,23 +370,31 @@ class PeersConfig:
         enabled: bool,
         mac: Optional[str] = None,
         broadcast: Optional[str] = None,
+        timeout: Optional[int] = None,
     ) -> bool:
         """Update WoL settings on an existing peer (P6c).
 
         Returns True if the peer was found and updated, False if not found.
-        When enabling, ``mac`` must be provided (or already set on the peer).
+        When enabling, ``mac`` must be provided (or already set on the peer)
+        — enabling WoL without a MAC leaves the peer in an unwakeable state
+        and is rejected (returns False).
         """
         with self._lock:
             peer = self._peers.get(node_id)
             if peer is None:
                 return False
-            peer.wol_enabled = enabled
             if mac is not None:
                 peer.wol_mac = mac
             if broadcast is not None:
                 peer.wol_broadcast = broadcast
+            if timeout is not None:
+                peer.wol_timeout = timeout
             if enabled and not peer.wol_mac:
-                logger.warning("WoL enabled for %s but no MAC address set", node_id)
+                logger.warning(
+                    "WoL enable rejected for %s: no MAC address set", node_id,
+                )
+                return False
+            peer.wol_enabled = enabled
             self._save()
             logger.info("WoL %s for peer %s: mac=%s", "enabled" if enabled else "disabled", node_id, peer.wol_mac)
             return True

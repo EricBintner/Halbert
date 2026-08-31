@@ -31,8 +31,9 @@ class TestConnectivityProbe:
             assert probe.is_online() is True
 
     def test_offline_on_connection_error(self):
+        import requests as req_module
         probe = ConnectivityProbe(probe_url="https://example.com", cache_interval=0.01)
-        with patch("requests.head", side_effect=Exception("DNS failure")):
+        with patch("requests.head", side_effect=req_module.ConnectionError("DNS failure")):
             assert probe.is_online() is False
 
     def test_offline_on_timeout(self):

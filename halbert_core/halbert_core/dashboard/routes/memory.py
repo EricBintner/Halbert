@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 
-from ...federation.peer_middleware import require_peer_auth, PeerContext
+from ...federation.peer_middleware import require_peer_auth
 
 logger = logging.getLogger('halbert.dashboard.routes.memory')
 
@@ -208,21 +208,33 @@ async def delete_memory_entry(collection: str, entry_id: str) -> Dict[str, Any]:
 # -------------------------------------------------------------------------
 
 
+_persona_stores: Dict[str, Any] = {}
+
+
 def _get_persona_memory_store():
     """Get the local PersonaMemoryStore for the current persona.
 
     Lazy import to avoid pulling haloysius at module load time (subtractive
-    contract). Returns None if haloysius is not installed.
+    contract). Returns None if haloysius is not installed. Cached per
+    persona_id so we don't re-instantiate the store (and its embedder) on
+    every request.
     """
     try:
         from haloysius.memory_v2.store import PersonaMemoryStore
         from ...integrations.cognition_wiring import _get_persona_id
 
         persona_id = _get_persona_id()
-        return PersonaMemoryStore(persona_id)
+        if persona_id not in _persona_stores:
+            _persona_stores[persona_id] = PersonaMemoryStore(persona_id)
+        return _persona_stores[persona_id]
     except Exception as e:
         logger.error(f"Could not create PersonaMemoryStore: {e}")
         return None
+
+
+def _reset_persona_memory_stores():
+    """Clear cached stores (for testing)."""
+    _persona_stores.clear()
 
 
 class PeerMemoryAddRequest(BaseModel):
@@ -330,7 +342,7 @@ async def peer_memory_get(memory_id: str) -> Dict[str, Any]:
 
 
 @router.delete(
-    "/{memory_id}",
+    "/delete/{memory_id}",
     dependencies=[Depends(require_peer_auth)],
 )
 async def peer_memory_delete(memory_id: str) -> Dict[str, Any]:

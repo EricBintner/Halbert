@@ -42,8 +42,11 @@ def parse_mac(mac_address: str) -> bytes:
     """Parse a MAC address string into 6 bytes.
 
     Accepts ``AA:BB:CC:DD:EE:FF`` or ``AA-BB-CC-DD-EE-FF`` (case-insensitive).
-    Raises ValueError on invalid format.
+    Surrounding whitespace is stripped.  Raises ValueError on invalid format.
     """
+    if not isinstance(mac_address, str):
+        raise ValueError(f"MAC address must be a string, got {type(mac_address).__name__}")
+    mac_address = mac_address.strip()
     if not _MAC_PATTERN.match(mac_address):
         raise ValueError(
             f"Invalid MAC address {mac_address!r} — expected AA:BB:CC:DD:EE:FF "
@@ -89,7 +92,7 @@ def send_wol_packet(
     """
     try:
         payload = build_magic_packet(mac_address)
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
         logger.error("WoL: %s", e)
         return False
 
@@ -102,7 +105,7 @@ def send_wol_packet(
             mac_address, broadcast_address, port, len(payload),
         )
         return True
-    except OSError as e:
+    except (OSError, TypeError) as e:
         logger.warning("WoL: failed to send magic packet to %s: %s", mac_address, e)
         return False
 

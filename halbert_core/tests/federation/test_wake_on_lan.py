@@ -152,3 +152,31 @@ class TestSendWolPacketDual:
         with patch("socket.socket", return_value=mock_sock):
             result = send_wol_packet_dual("AA:BB:CC:DD:EE:FF")
         assert result is False
+
+
+class TestParseMacEdgeCases:
+    def test_strips_whitespace(self):
+        """MAC with surrounding spaces should parse correctly."""
+        mac_bytes = parse_mac("  AA:BB:CC:DD:EE:FF  ")
+        assert len(mac_bytes) == 6
+        assert mac_bytes == bytes([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])
+
+    def test_non_string_raises_value_error(self):
+        with pytest.raises(ValueError, match="must be a string"):
+            parse_mac(None)
+        with pytest.raises(ValueError, match="must be a string"):
+            parse_mac(123)
+
+
+class TestSendWolPacketBadInputs:
+    def test_none_mac_returns_false(self):
+        result = send_wol_packet(None)
+        assert result is False
+
+    def test_none_broadcast_returns_false(self):
+        result = send_wol_packet("AA:BB:CC:DD:EE:FF", broadcast_address=None)
+        assert result is False
+
+    def test_non_string_broadcast_returns_false(self):
+        result = send_wol_packet("AA:BB:CC:DD:EE:FF", broadcast_address=12345)
+        assert result is False

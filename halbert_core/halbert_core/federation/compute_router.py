@@ -232,7 +232,7 @@ class ComputeRouter:
         # renewals, or Wi-Fi roaming latency.
         self._peer_online: bool = False
         self._last_probe: float = 0.0
-        self._probe_lock = None  # asyncio.Lock, created lazily
+        self._probe_lock = asyncio.Lock()  # created eagerly to avoid race
         self._consecutive_failures: int = 0
         self._failure_threshold: int = 3  # §11.6: 3 failures before OFFLINE
 
@@ -406,8 +406,6 @@ class ComputeRouter:
         if self._last_probe and (now - self._last_probe) < self.health_probe_interval:
             return self._peer_online
 
-        if self._probe_lock is None:
-            self._probe_lock = asyncio.Lock()
         async with self._probe_lock:
             # Re-check under the lock: a concurrent probe may have just
             # refreshed the cache.

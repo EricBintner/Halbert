@@ -312,7 +312,7 @@ class TestPeerMemoryDelete:
 
         with _patch_auth(), _patch_store(store):
             client = TestClient(app)
-            resp = client.delete("/api/memory/mem_001")
+            resp = client.delete("/api/memory/delete/mem_001")
 
         assert resp.status_code == 200
         assert resp.json()["deleted"] == "mem_001"
@@ -324,7 +324,7 @@ class TestPeerMemoryDelete:
 
         with _patch_auth(), _patch_store(store):
             client = TestClient(app)
-            resp = client.delete("/api/memory/nonexistent")
+            resp = client.delete("/api/memory/delete/nonexistent")
 
         assert resp.status_code == 404
 
@@ -334,5 +334,5 @@ class TestPeerMemoryDelete:
         app = FastAPI()
         app.include_router(router, prefix="/api/memory")
         client = TestClient(app)
-        resp = client.delete("/api/memory/mem_001")
+        resp = client.delete("/api/memory/delete/mem_001")
         assert resp.status_code in (401, 403)

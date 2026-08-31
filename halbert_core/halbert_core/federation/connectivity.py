@@ -121,10 +121,15 @@ class ConnectivityProbe:
         import requests
 
         try:
-            resp = requests.head(self._probe_url, timeout=self._timeout, allow_redirects=True)
+            resp = requests.head(
+                self._probe_url,
+                timeout=self._timeout,
+                allow_redirects=True,
+                headers={"User-Agent": "Halbert-ConnectivityProbe/1.0"},
+            )
             # Any HTTP response means we reached the internet — even 4xx/5xx.
             return resp.status_code is not None
-        except Exception:
+        except requests.RequestException:
             return False
 
     @property

@@ -87,6 +87,52 @@ class TestSetWol:
     def test_set_wol_nonexistent_peer(self, peers_config):
         assert peers_config.set_wol("nope", enabled=True, mac="AA:BB:CC:DD:EE:FF") is False
 
+    def test_set_wol_rejects_enable_without_mac(self, peers_config):
+        """Enabling WoL without a MAC is rejected (unwakeable state)."""
+        peers_config.add_peer("ws", "WS", "compute_provider", raw_token="t")
+        # No MAC provided, no MAC on peer — should return False
+        assert peers_config.set_wol("ws", enabled=True) is False
+        peer = peers_config.get_peer("ws")
+        assert peer.wol_enabled is False
+
+    def test_set_wol_timeout(self, peers_config):
+        peers_config.add_peer("ws", "WS", "compute_provider", raw_token="t")
+        peers_config.set_wol("ws", enabled=True, mac="AA:BB:CC:DD:EE:FF", timeout=120)
+        peer = peers_config.get_peer("ws")
+        assert peer.wol_timeout == 120
+
+    def test_wol_timeout_default_90(self, peers_config):
+        cred = peers_config.add_peer("ws", "WS", "compute_provider", raw_token="t")
+        assert cred.wol_timeout == 90
+
+    def test_wol_timeout_persists_to_disk(self, peers_config, tmp_path):
+        peers_config.add_peer(
+            "ws", "WS", "compute_provider", raw_token="t",
+            wol_enabled=True, wol_mac="AA:BB:CC:DD:EE:FF", wol_timeout=60,
+        )
+        reloaded = PeersConfig(config_path=tmp_path / "peers.json")
+        peer = reloaded.get_peer("ws")
+        assert peer.wol_timeout == 60
+
+    def test_wol_timeout_round_trips_through_dict(self):
+        cred = PeerCredential(
+            node_id="ws", node_name="WS", role="compute_provider",
+            token_hash="sha256:abc", paired_at="2026-01-01",
+            wol_enabled=True, wol_mac="AA:BB:CC:DD:EE:FF", wol_timeout=45,
+        )
+        d = cred.to_dict()
+        assert d["wol_timeout"] == 45
+        restored = PeerCredential.from_dict(d)
+        assert restored.wol_timeout == 45
+
+    def test_from_dict_defaults_wol_timeout_90_when_missing(self):
+        d = {
+            "node_id": "old", "node_name": "Old", "role": "compute_provider",
+            "token_hash": "sha256:abc", "paired_at": "2026-01-01",
+        }
+        cred = PeerCredential.from_dict(d)
+        assert cred.wol_timeout == 90
+
     def test_set_wol_broadcast(self, peers_config):
         peers_config.add_peer("ws", "WS", "compute_provider", raw_token="t")
         peers_config.set_wol("ws", enabled=True, mac="AA:BB:CC:DD:EE:FF", broadcast="10.0.0.255")
@@ -118,3 +164,19 @@ class TestListWolEnabledPeers:
     def test_empty_when_none_enabled(self, peers_config):
         peers_config.add_peer("ws", "WS", "compute_provider", raw_token="t")
         assert len(peers_config.list_wol_enabled_peers()) == 0
+
+    def test_excludes_inbound_peers(self, peers_config):
+        """WoL only applies to outbound compute targets, not inbound peers."""
+        peers_config.add_peer(
+            "ws", "WS", "compute_provider", raw_token="t",
+            wol_enabled=True, wol_mac="AA:BB:CC:DD:EE:FF",
+            compute_direction="outbound",
+        )
+        peers_config.add_peer(
+            "ha", "HA", "compute_provider", raw_token="t2",
+            wol_enabled=True, wol_mac="BB:CC:DD:EE:FF:AA",
+            compute_direction="inbound",
+        )
+        wol_peers = peers_config.list_wol_enabled_peers()
+        assert len(wol_peers) == 1
+        assert wol_peers[0].node_id == "ws"
