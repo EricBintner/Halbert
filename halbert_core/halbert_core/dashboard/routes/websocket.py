@@ -5,8 +5,13 @@ WebSocket routes.
 
 - ``/ws``: existing dashboard real-time update channel (unchanged).
 - ``/ws/terminal/{session_id}`` (B1f): bidirectional bridge to a PTY session.
+- ``/api/audio/stream`` (O2): browser microphone uplink — binary frames of
+  16kHz s16le mono PCM from the frontend AudioWorklet, handed to the audio
+  pipeline's dashboard ingress (``WebRtcIngress``). Closed with 1013 ("try
+  again later") when no coordinator/ingress is running — the pipeline is
+  capability-gated and optional.
 
-  Message protocol (JSON, both directions):
+  Terminal message protocol (JSON, both directions):
     client -> server: {"type": "stdin",  "data": "..."}
                       {"type": "resize", "cols": 80, "rows": 24}
     server -> client: {"type": "stdout", "data": "..."}
@@ -123,3 +128,27 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
     finally:
         logger.info(f"WS detached from terminal session {session_id}")
         # Leave the session alive for potential reattach; reaper reclaims idle.
+
+
+@router.websocket("/api/audio/stream")
+async def audio_stream_endpoint(websocket: WebSocket):
+    """Browser microphone uplink for the voice pipeline (O2).
+
+    Binary frames of 16kHz s16le mono PCM (frontend AudioWorklet) are
+    forwarded to the coordinator's dashboard ingress, which turns them
+    into ``AudioChunk``s (queue-full drop-oldest) for VAD/ASR.
+
+    The router is mounted without a prefix, so the path string above is
+    the public URL. Closing with 1013 ("try again later") rather than an
+    error code lets the frontend retry harmlessly when the audio pipeline
+    is disabled or still booting — audio is an optional capability.
+    """
+    await websocket.accept()
+    coordinator = getattr(websocket.app.state, "audio_coordinator", None)
+    ingress = None
+    if coordinator is not None:
+        ingress = coordinator.get_ingress("dashboard")
+    if ingress is None:
+        await websocket.close(code=1013)  # try again later — pipeline disabled
+        return
+    await ingress.handle_websocket(websocket)

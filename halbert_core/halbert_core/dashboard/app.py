@@ -426,7 +426,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         # the ingestion capability. The variant preset sets defaults
         # (home = no ingestion), but being.yml capabilities: section can
         # override — a Mac Studio with HA configured can do both.
-        from ..capabilities import get_capability_registry, CAP_INGESTION, CAP_DISCOVERY, CAP_SCHEDULER, CAP_CONFIG_WATCHER, CAP_SOURCEPREP, CAP_TERMINAL, CAP_HA_CONNECTION
+        from ..capabilities import get_capability_registry, CAP_INGESTION, CAP_DISCOVERY, CAP_SCHEDULER, CAP_CONFIG_WATCHER, CAP_SOURCEPREP, CAP_TERMINAL, CAP_HA_CONNECTION, CAP_AUDIO
         _caps = get_capability_registry()
         _caps.probe()
         if not _caps.has(CAP_INGESTION):
@@ -644,6 +644,30 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             except Exception as e:
                 logger.warning(f"Failed to start terminal session reaper: {e}")
 
+        # Voice mode (O2): audio pipeline coordinator — the dashboard's ears.
+        # Capability-gated presence check (config enabled + sherpa-onnx, probed
+        # in capabilities.py — never a variant check). being.yml
+        # ``capabilities: {audio: false}`` is the operator override. Audio is
+        # optional: a coordinator that fails to start leaves the coordinator
+        # slot None and the dashboard keeps booting (/api/audio/stream then
+        # answers 1013 "try again later").
+        app.state.audio_coordinator = None
+        if not _caps.has(CAP_AUDIO):
+            logger.info("Audio pipeline skipped (no audio capability)")
+        else:
+            try:
+                from ..audio.config import load_config as load_audio_config
+                from ..audio.pipeline import AudioPipelineCoordinator
+                from ..audio.ingress.webrtc_ingress import WebRtcIngress
+                coordinator = AudioPipelineCoordinator(config=load_audio_config())
+                await coordinator.add_ingress(WebRtcIngress(area_id="dashboard_voice"))
+                await coordinator.start()
+                app.state.audio_coordinator = coordinator
+                logger.info("Audio pipeline coordinator started (dashboard ingress attached)")
+            except Exception as e:
+                logger.warning(f"Audio pipeline failed to start (non-fatal): {e}")
+                app.state.audio_coordinator = None
+
         # Phase 2: Start HA WebSocket event stream if configured
         # Capability-based: start if HA connection is configured.
         if _caps.has(CAP_HA_CONNECTION):
@@ -802,6 +826,17 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 logger.info("Wyoming voice agent stopped")
         except Exception as e:
             logger.warning(f"Failed to stop Wyoming voice agent: {e}")
+
+        # Voice mode (O2): stop the audio pipeline coordinator (also closes
+        # any open /api/audio/stream WebSocket via the ingress stop()).
+        audio_coordinator = getattr(app.state, "audio_coordinator", None)
+        if audio_coordinator is not None:
+            try:
+                await audio_coordinator.stop()
+                app.state.audio_coordinator = None
+                logger.info("Audio pipeline coordinator stopped")
+            except Exception as e:
+                logger.warning(f"Failed to stop audio pipeline coordinator: {e}")
 
         # Close Frigate tools singleton client
         try:

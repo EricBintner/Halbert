@@ -188,6 +188,41 @@ class AudioPipelineCoordinator:
 
         logger.info("Audio pipeline stopped")
 
+    # ------------------------------------------------------------------
+    # Ingress registration (public surface for the dashboard bootstrap)
+    # ------------------------------------------------------------------
+
+    async def add_ingress(self, adapter) -> bool:
+        """Register and start an external ingress adapter.
+
+        Used by the dashboard bootstrap (O2) to attach the WebRTC/browser
+        ingress — the one adapter that has no config-file section of its
+        own. Starts the adapter (mirroring ``_init_ingress``) so its
+        ``chunks()`` iterator spins, then appends it to the adapter list;
+        the ``_ingress_to_buffer_loop`` picks up adapters dynamically, so
+        this is safe before or after ``start()``.
+
+        Returns True if the adapter was registered, False if its ``start()``
+        raised (the failure is logged and isolated — one broken ingress
+        never takes the pipeline or the dashboard down).
+        """
+        try:
+            await adapter.start()
+        except Exception as e:
+            logger.error(f"Ingress start failed ({adapter.source_type}): {e}")
+            return False
+        self._ingress_adapters.append(adapter)
+        logger.info(f"Ingress registered: {adapter.source_type} (area={adapter.area_id})")
+        return True
+
+    def get_ingress(self, source_type: str):
+        """Return the first registered ingress adapter with the given
+        ``source_type``, or None if none matches."""
+        return next(
+            (a for a in self._ingress_adapters if a.source_type == source_type),
+            None,
+        )
+
     async def _init_engines(self) -> None:
         """Initialize speech and acoustic engines (lazy)."""
         try:
