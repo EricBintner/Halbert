@@ -59,6 +59,8 @@ __all__ = [
     "ComputeRouter",
     # 9.8 — Concurrency broker
     "ComputeBroker",
+    # P4a — Internet connectivity detection
+    "ConnectivityProbe",
 ]
 
 
@@ -87,4 +89,7 @@ def __getattr__(name: str):  # pragma: no cover
     if name == "ComputeBroker":
         from .compute_broker import ComputeBroker
         return ComputeBroker
+    if name == "ConnectivityProbe":
+        from .connectivity import ConnectivityProbe
+        return ConnectivityProbe
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
