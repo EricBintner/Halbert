@@ -65,14 +65,15 @@ def _ai_budget():
 
 
 @pytest.mark.parametrize("variant", ["home"])
-def test_build_config_home_variants_write_empty_secure_slot(variant):
+def test_build_config_home_variants_write_empty_secure_slot(variant, capability_registry):
     """home carry no secure_model — and the slot must be written
-    EMPTY, not omitted, because save_config deep-merges all slots."""
-    with patch("halbert_core.model.config_wizard._is_home_variant",
-               return_value=True), \
-         patch("halbert_core.model.auto_provision._is_home_variant",
-               return_value=True):
-        cfg = _wizard()._build_config(None, "ollama", _ai_budget(), _ai_hardware())
+    EMPTY, not omitted, because save_config deep-merges all slots.
+
+    F5: the builder is capability-gated (CAP_SECURE_MODEL); the home
+    preset (no secure_model) is what this pins. The old
+    _is_home_variant patches are dead helpers post-F5."""
+    capability_registry.set_variant("home")
+    cfg = _wizard()._build_config(None, "ollama", _ai_budget(), _ai_hardware())
     secure = cfg["llm_config"]["secure_model"]
     assert secure == {"enabled": False, "endpoint_id": "", "model": ""}
     # The apple-foundation endpoint still registers — chat/specialist may
@@ -82,12 +83,11 @@ def test_build_config_home_variants_write_empty_secure_slot(variant):
     assert len(eps) == 1
 
 
-def test_build_config_sysadmin_writes_ai_secure_slot():
-    with patch("halbert_core.model.config_wizard._is_home_variant",
-               return_value=False), \
-         patch("halbert_core.model.auto_provision._is_home_variant",
-               return_value=False):
-        cfg = _wizard()._build_config(None, "ollama", _ai_budget(), _ai_hardware())
+def test_build_config_sysadmin_writes_ai_secure_slot(capability_registry):
+    # F5: pin the capability explicitly — a body eligible for a secure
+    # local model provisions it — instead of the dead variant helpers.
+    capability_registry.set_capability("secure_model", True)
+    cfg = _wizard()._build_config(None, "ollama", _ai_budget(), _ai_hardware())
     secure = cfg["llm_config"]["secure_model"]
     assert secure["enabled"] is True
     assert secure["model"] == store.APPLE_FOUNDATION_MODEL

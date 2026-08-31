@@ -48,23 +48,44 @@ def _budget():
 
 
 @pytest.fixture
-def variant(monkeypatch):
+def variant(monkeypatch, capability_registry):
     """Controllable variant behind every consumer's resolution chain.
 
     Patched at cognition_wiring._get_variant — the single source backend
     gating uses (being.yml > HALBERT_VARIANT env > 'sysadmin') — so the
     wizard's lazy lookup is exercised for real.
+
+    F5: the wizard's secure_model decisions are capability-gated now;
+    the holder syncs writes into the isolated registry (probes off,
+    preset-driven), so this file's variant matrix holds on any machine.
+    Sysadmin tests that expect secure provisioning pin the capability on
+    explicitly — the sysadmin *preset* defaults it off (an endpoint must
+    actually be configured).
     """
     from halbert_core.integrations import cognition_wiring
-    holder = {"variant": "sysadmin"}
+
+    class _VariantHolder(dict):
+        def __init__(self):
+            super().__init__(variant="sysadmin")
+            self.registry = None
+
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            if key == "variant" and self.registry is not None:
+                self.registry.set_variant(value)
+
+    holder = _VariantHolder()
     monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: holder["variant"])
+    capability_registry.set_variant("sysadmin")
+    holder.registry = capability_registry
     return holder
 
 
 # ── _build_config ──────────────────────────────────────────────────────
 
 
-def test_build_config_writes_secure_model_for_sysadmin(variant):
+def test_build_config_writes_secure_model_for_sysadmin(variant, capability_registry):
+    capability_registry.set_capability("secure_model", True)
     cfg = _wizard()._build_config("chat-a", "ollama", _budget(), _hardware_ai(),
                                   endpoint=OLLAMA)
     assert cfg["llm_config"]["secure_model"] == {
@@ -120,7 +141,8 @@ def test_run_auto_skips_apple_provisioning_for_home_variants(variant, monkeypatc
     provisioned.assert_not_called()
 
 
-def test_run_auto_provisions_for_sysadmin(variant, monkeypatch):
+def test_run_auto_provisions_for_sysadmin(variant, monkeypatch, capability_registry):
+    capability_registry.set_capability("secure_model", True)
     wizard, provisioned = _run_auto_wizard(monkeypatch)
     wizard.run_auto(model="chat-a", endpoint=OLLAMA)
     provisioned.assert_called_once()
@@ -146,7 +168,9 @@ def test_save_config_clears_a_stale_secure_slot_for_home_variant(variant, models
     assert store.load()["secure_model"] == {"enabled": False, "endpoint_id": "", "model": ""}
 
 
-def test_save_config_keeps_secure_model_for_sysadmin(variant, models_config_dir):
+def test_save_config_keeps_secure_model_for_sysadmin(variant, models_config_dir,
+                                                       capability_registry):
+    capability_registry.set_capability("secure_model", True)
     variant["variant"] = "sysadmin"
     wizard = _wizard()
     wizard.save_config(wizard._build_config("chat-a", "ollama", _budget(), _hardware_ai(),

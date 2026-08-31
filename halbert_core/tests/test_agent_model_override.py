@@ -360,9 +360,12 @@ class TestSecureGateHomeVariants:
         return holder
 
     @pytest.fixture(params=["home"])
-    def home_variant(self, request, monkeypatch):
+    def home_variant(self, request, monkeypatch, capability_registry):
         from halbert_core.integrations import cognition_wiring
         monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: request.param)
+        # F5: the secure gate is capability-gated now — the home preset
+        # (no secure_model) is what these tests pin, not the variant label.
+        capability_registry.set_variant(request.param)
 
     def test_home_variant_ignores_the_secure_slot(self, home_variant, secure_slot):
         secure_slot["secure"] = SECURE_SLOT
@@ -379,7 +382,13 @@ class TestSecureGateHomeVariants:
         with pytest.raises(_SecureContentBlocked):
             _resolve_turn_model(TRIVIAL, secure=True)
 
-    def test_sysadmin_variant_still_uses_the_secure_slot(self, secure_slot):
+    def test_sysadmin_variant_still_uses_the_secure_slot(
+        self, secure_slot, capability_registry,
+    ):
+        # F5: pin the capability explicitly — a body with a local secure
+        # endpoint uses the dedicated slot — instead of depending on this
+        # machine's real models.yml probe result.
+        capability_registry.set_capability("secure_model", True)
         secure_slot["secure"] = SECURE_SLOT
         turn = _resolve_turn_model(COMPLEX, secure=True)
         assert turn.model == "secure-model"

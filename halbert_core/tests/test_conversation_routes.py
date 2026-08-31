@@ -413,9 +413,18 @@ class TestAppPrefix:
     """Verify the router is mounted at /api/conversations."""
 
     def test_routes_have_correct_prefix(self):
-        app = _make_app()
-        # Starlette >= 1.6 lists an included router as an _IncludedRouter
-        # wrapper with no .path — only actual routes carry one.
-        routes = [r.path for r in app.routes if hasattr(r, "path")]
-        assert "/api/conversations/invoke" in routes
-        assert "/api/conversations/health" in routes
+        # Behavior over structure: Starlette >= 1.6 nests an included
+        # router's routes inside an _IncludedRouter wrapper, so
+        # introspecting app.routes is version-fragile. Hitting the
+        # endpoints answers the same question — the router is mounted at
+        # /api/conversations.
+        from fastapi.testclient import TestClient
+
+        client = TestClient(_make_app())
+        assert client.get("/api/conversations/health").status_code == 200
+        # The invoke route exists and answers (a bogus method is 400 from
+        # the allowlist, not 404 from a missing route).
+        resp = client.post("/api/conversations/invoke", json={
+            "method": "not_a_real_method", "args": [], "kwargs": {},
+        })
+        assert resp.status_code in (200, 400, 422)

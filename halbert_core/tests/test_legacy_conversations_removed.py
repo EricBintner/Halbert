@@ -36,9 +36,19 @@ def test_agent_conversations_endpoints_are_gone(client):
     assert client.delete("/api/agent/conversations/some-id").status_code == 404
 
 
-def test_conversations_route_module_is_gone():
+def test_conversations_route_module_is_the_peer_api_not_the_legacy_ui():
+    """The module name returned with P3b — as the peer conversation API
+    (invoke/health for singular-entity thread federation), not the legacy
+    conversation-list UI this guard removed in Plan A. What must stay
+    true: the module only serves the peer surface, and the legacy
+    agent-scoped list endpoints stay gone (the test above).
+    """
     import halbert_core.dashboard.routes  # noqa: F401  (parent package must import)
-    assert importlib.util.find_spec("halbert_core.dashboard.routes.conversations") is None
+    assert importlib.util.find_spec("halbert_core.dashboard.routes.conversations") is not None
+
+    from halbert_core.dashboard.routes import conversations
+    paths = {getattr(r, "path", "") for r in conversations.router.routes}
+    assert paths == {"/invoke", "/health"}, paths
 
 
 def test_json_stores_are_gone_from_agents_conversation():

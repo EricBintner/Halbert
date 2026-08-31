@@ -89,10 +89,25 @@ legacy `Halbert_CONFIG_DIR` spelling and platform paths.
   (private names, documented as retained); delete whenever those files
   are next touched.
 
-## Post-review regression watch (not F5)
+## Post-review regression watch (not F5) — resolved
 
-The concurrent session's commits introduced 11 new test failures on this
-branch (10 × `test_cognition_tick_once` — turns end at `responding` and
-never reach `idle` — and 1 × `test_conversation_routes::test_routes_have_
-correct_prefix`). These pass on the pre-session base `ffe74bdd` and are
-unrelated to F5; they are queued for the wrap-up pass after this review.
+The F5 conversion initially left 18 full-suite failures relative to the
+pre-session base (`ffe74bdd`): 16 tests across 7 files that still pinned
+the old variant-gate behavior (patching `_get_variant` or the now-dead
+`_is_home_variant` helpers, and passing only where the developer
+machine's real being.yml/models.yml probe results happened to match),
+plus an obsolete `test_conversations_route_module_is_gone` guard and a
+Starlette-fragile route-prefix introspection. All repaired in the
+follow-up commit: a shared `capability_registry` conftest fixture
+(isolated registry, probes off, preset-driven — the F5-correct way to
+control gating in tests), the variant-matrix suites rewired onto it with
+syncing holders, sysadmin secure-model expectations pinned explicitly
+rather than environmentally, the legacy-conversations guard refocused on
+"the module is the peer API, not the legacy UI", and the prefix test
+asserting endpoint behavior instead of route-object internals.
+
+An earlier draft of this section also blamed 10
+`test_cognition_tick_once` failures on the concurrent commits — wrong:
+those fail identically on the pre-session base in the full suite (they
+were truncated out of the first failure listing read). They are part of
+the pre-existing environmental set, not a regression.

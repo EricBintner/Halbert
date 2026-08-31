@@ -453,9 +453,14 @@ class TestContextAssembly:
 # -----------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_get_agent_uses_sourceprep_for_searching(monkeypatch):
+async def test_get_agent_uses_sourceprep_for_searching(monkeypatch, capability_registry):
     """The SEARCHING state's rag_service must be SourcePrep, not the
-    deprecated ChromaDB RAGServiceAdapter."""
+    deprecated ChromaDB RAGServiceAdapter.
+
+    F5: the wiring is capability-gated (CAP_SOURCEPREP), so pin the
+    capability on — a body that has SourcePrep — rather than relying on
+    this machine's install state."""
+    capability_registry.set_capability("sourceprep", True)
     from halbert_core.dashboard.routes import agent as agent_routes
     from halbert_core.context.adapters import SourcePrepAdapter
 

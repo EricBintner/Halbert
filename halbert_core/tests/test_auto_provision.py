@@ -163,9 +163,12 @@ class TestHomeVariantGate:
     away, so Apple Intelligence is not provisioned for them at all."""
 
     @pytest.fixture(params=["home"])
-    def home_variant(self, request, monkeypatch):
+    def home_variant(self, request, monkeypatch, capability_registry):
         from halbert_core.integrations import cognition_wiring
         monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: request.param)
+        # F5: provisioning is capability-gated (CAP_SECURE_MODEL); the
+        # home preset carries no secure_model, which is what this pins.
+        capability_registry.set_variant(request.param)
 
     def test_home_variant_skips_provisioning_entirely(self, home_variant, config_dir):
         """16GB host: both secure_model and chat_model would be assigned —
@@ -180,9 +183,13 @@ class TestHomeVariantGate:
         eps = [e for e in cfg["saved_endpoints"] if e["provider"] == "apple-foundation"]
         assert len(eps) == 0
 
-    def test_sysadmin_variant_provisions_as_before(self, config_dir, monkeypatch):
+    def test_sysadmin_variant_provisions_as_before(self, config_dir, monkeypatch,
+                                                    capability_registry):
         from halbert_core.integrations import cognition_wiring
         monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: "sysadmin")
+        # F5: pin the capability explicitly rather than inheriting this
+        # machine's real secure-model probe result.
+        capability_registry.set_capability("secure_model", True)
         hw = _hw(ai_available=True, unified_mem_gb=128)
         assert auto_provision_apple_intelligence(hw) is True
 

@@ -119,12 +119,17 @@ def test_second_boot_does_not_reselect(models_config_dir):
 
 
 @pytest.mark.parametrize("ha", ["home"])
-def test_home_variant_skips_apple_provisioning(models_config_dir, monkeypatch, ha):
+def test_home_variant_skips_apple_provisioning(models_config_dir, monkeypatch, ha,
+                                                capability_registry):
     """home never configure secure_model, so the auto-provisioning
-    (and the expensive hardware probe behind it) is not run for them."""
+    (and the expensive hardware probe behind it) is not run for them.
+
+    F5: provisioning is capability-gated (CAP_SECURE_MODEL); the home
+    preset carries no secure_model, which is what this pins."""
     from halbert_core.integrations import cognition_wiring
 
     monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: ha)
+    capability_registry.set_variant(ha)
     with patch.object(store, "_probe_ollama", return_value=False), \
          patch("halbert_core.model.hardware_detector.HardwareDetector") as detector:
         data = routes.get_llm_config()["data"]

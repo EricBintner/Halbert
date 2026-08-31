@@ -112,25 +112,32 @@ def _llm_config_spy():
 
 
 @pytest.mark.parametrize("ha", ["home"])
-def test_home_variant_does_not_read_the_secure_slot(monkeypatch, ha):
+def test_home_variant_does_not_read_the_secure_slot(monkeypatch, ha, capability_registry):
     """home never configure secure_model, so from_legacy_config
     does not read the slot for them — even a stale value left behind by a
-    sysadmin-style config cannot reach the router."""
+    sysadmin-style config cannot reach the router.
+
+    F5: the slot read is capability-gated (CAP_SECURE_MODEL); the home
+    preset carries no secure_model, which is what this pins."""
     from halbert_core.integrations import cognition_wiring
     from halbert_core.model import tier_router
 
     monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: ha)
+    capability_registry.set_variant(ha)
     spy = _llm_config_spy()
     cfg = tier_router.TierRouterConfig.from_legacy_config({"llm_config": spy})
     assert "secure_model" not in spy.read_keys
     assert cfg.models["guide-model"].model_id == "guide-a"
 
 
-def test_sysadmin_variant_reads_the_secure_slot(monkeypatch):
+def test_sysadmin_variant_reads_the_secure_slot(monkeypatch, capability_registry):
     from halbert_core.integrations import cognition_wiring
     from halbert_core.model import tier_router
 
     monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: "sysadmin")
+    # F5: pin the capability explicitly rather than inheriting this
+    # machine's real secure-model probe result.
+    capability_registry.set_capability("secure_model", True)
     spy = _llm_config_spy()
     tier_router.TierRouterConfig.from_legacy_config({"llm_config": spy})
     assert "secure_model" in spy.read_keys
