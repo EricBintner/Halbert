@@ -341,3 +341,134 @@ export async function linkComputePeer(
   if (!res.ok) throw new Error(`Link failed: ${res.status} ${await res.text()}`)
   return res.json()
 }
+
+// ---------------------------------------------------------------------------
+// Devices & entity-mode endpoints (P7a — routes/devices.py)
+// ---------------------------------------------------------------------------
+// The singular-entity product language: devices and bodies, not nodes and
+// peers. These wrap the devices router the Settings → Devices page drives.
+
+/** A paired device as the Devices page shows it (no token material). */
+export interface DeviceInfo {
+  node_id: string
+  node_name: string
+  role: string
+  endpoint: string | null
+  capabilities: string[]
+  compute_direction: string
+  wol_enabled: boolean
+  wol_mac: string | null
+  wol_broadcast: string | null
+  paired_at: string
+  last_seen: string | null
+  revoked: boolean
+}
+
+/** GET /api/devices — devices plus this node's entity identity. */
+export interface DevicesState {
+  status: string
+  entity_mode: 'singular' | 'independent'
+  body_name: string
+  canonical_memory_url: string
+  canonical_thread_url: string
+  devices: DeviceInfo[]
+}
+
+export interface EntityModeRequest {
+  mode: 'singular' | 'independent'
+  /** The canonical host; memory/thread URLs derive as {base}/api/memory
+   *  and {base}/api/conversations. */
+  base_url?: string
+  memory_url?: string
+  thread_url?: string
+}
+
+/** List paired devices + this node's entity identity. */
+export async function listDevices(): Promise<DevicesState> {
+  const res = await fetch(`${API_BASE}/api/devices`)
+  if (!res.ok) throw new Error(`Devices failed: ${res.status}`)
+  return res.json()
+}
+
+/** Toggle this node between singular and independent entity mode. */
+export async function setEntityMode(req: EntityModeRequest): Promise<DevicesState> {
+  const res = await fetch(`${API_BASE}/api/devices/entity-mode`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) throw new Error(`Entity mode failed: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+/** Label which physical body this node is ("desk", "home", "kitchen"). */
+export async function setBodyName(bodyName: string): Promise<DevicesState> {
+  const res = await fetch(`${API_BASE}/api/devices/body-name`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body_name: bodyName }),
+  })
+  if (!res.ok) throw new Error(`Body name failed: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+/** Store (or clear — empty string) the peer token for the canonical host. */
+export async function setDevicePeerToken(token: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/devices/peer-token`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+  if (!res.ok) throw new Error(`Peer token failed: ${res.status} ${await res.text()}`)
+}
+
+export interface WolToggleRequest {
+  enabled: boolean
+  mac?: string | null
+  broadcast?: string | null
+}
+
+/** Toggle Wake-on-LAN for a device (LAN-only, off by default). */
+export async function toggleDeviceWol(
+  nodeId: string, req: WolToggleRequest,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/devices/${encodeURIComponent(nodeId)}/wol`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) throw new Error(`WoL toggle failed: ${res.status}`)
+}
+
+export interface DiscoverResult {
+  status: 'discovered' | 'unreachable' | 'no-endpoint' | 'no-token'
+  node_id: string
+  tools?: number
+  capabilities: string[]
+}
+
+/** Live capability discovery against the device's MCP server. */
+export async function discoverCapabilities(
+  nodeId: string, token?: string,
+): Promise<DiscoverResult> {
+  const res = await fetch(
+    `${API_BASE}/api/devices/${encodeURIComponent(nodeId)}/discover`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(token ? { token } : {}),
+    },
+  )
+  if (!res.ok) throw new Error(`Discovery failed: ${res.status}`)
+  return res.json()
+}
+
+/** Remove a device: revoke (audit-retained) by default, or erase the
+ *  record entirely with forget ("Permanently Forget"). */
+export async function removeDevice(nodeId: string, forget = false): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/devices/${encodeURIComponent(nodeId)}${forget ? '?forget=true' : ''}`,
+    { method: 'DELETE' },
+  )
+  if (!res.ok) throw new Error(`Remove failed: ${res.status}`)
+}

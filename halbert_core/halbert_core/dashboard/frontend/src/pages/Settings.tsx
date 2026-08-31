@@ -17,6 +17,7 @@ import {
   Shield,
   Lock,
   Sparkles,
+  MonitorSmartphone,
   Eye,
   Info,
   AudioLines,
@@ -25,6 +26,7 @@ import {
 } from 'lucide-react'
 import { ModelSettings, ComputePeerCard } from '@/components/llm'
 import { BeingTab } from '@/components/settings/tabs/BeingTab'
+import { DevicesTab } from '@/components/settings/tabs/DevicesTab'
 import { SecurityTab } from '@/components/settings/tabs/SecurityTab'
 import { VisionTab } from '@/components/settings/tabs/VisionTab'
 import { SystemTab, type DiscoveryStats, type SystemProfile } from '@/components/settings/tabs/SystemTab'
@@ -63,7 +65,7 @@ const API_BASE = apiUrl('/api')
  * mistyped link — so it opens the first tab, which is what a bare /settings
  * does too.
  */
-const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'security', 'vision', 'audio', 'about', 'debug'] as const
+const SETTINGS_TABS = ['system', 'ai', 'knowledge', 'safety', 'alerts', 'being', 'devices', 'security', 'vision', 'audio', 'about', 'debug'] as const
 const DEFAULT_SETTINGS_TAB = SETTINGS_TABS[0]
 
 type SettingsNavItem = { id: string; label: string; icon: typeof Cpu }
@@ -72,8 +74,11 @@ type SettingsSection = { id: string; label: string; items: SettingsNavItem[] }
 const SETTINGS_SECTIONS: SettingsSection[] = [
   {
     id: 'being',
-    label: 'Personality',
-    items: [{ id: 'being', label: 'Identity & Voice', icon: Sparkles }],
+    label: 'Personality & Identity',
+    items: [
+      { id: 'being', label: 'Identity & Voice', icon: Sparkles },
+      { id: 'devices', label: 'Devices', icon: MonitorSmartphone },
+    ],
   },
   {
     id: 'intelligence',
@@ -803,6 +808,11 @@ export function Settings() {
         {/* Being Tab */}
         <TabsContent value="being" className="space-y-4">
           <BeingTab />
+        </TabsContent>
+
+        {/* Devices Tab (G12/P7b — singular entity management) */}
+        <TabsContent value="devices" className="space-y-4">
+          <DevicesTab />
         </TabsContent>
 
         {/* Security Tab */}
