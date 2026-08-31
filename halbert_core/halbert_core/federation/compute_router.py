@@ -98,6 +98,32 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# P4c — Template degraded marker
+# ---------------------------------------------------------------------------
+
+DEGRADED_MARKER_PREFIX = "[no thinking power"
+
+def is_degraded_response(text: str) -> bool:
+    """Check if a response text carries the degraded marker (P4c)."""
+    return DEGRADED_MARKER_PREFIX in text
+
+def apply_degraded_marker(text: str, result: "FallbackResult") -> str:
+    """Prepend the degraded marker to a response if the result is degraded.
+
+    P4c — When template thoughts or heuristic rules serve a turn, the
+    response includes a clear "no thinking power" indicator so the user
+    knows it's degraded.  This is a no-op when the result is NOT degraded.
+    """
+    marker = result.degraded_marker()
+    if marker is None:
+        return text
+    # Don't double-apply if already marked
+    if is_degraded_response(text):
+        return text
+    return f"{marker} {text}"
+
+
+# ---------------------------------------------------------------------------
 # Turn types (H8, §11.3 — 4-tier classification)
 # ---------------------------------------------------------------------------
 
@@ -134,6 +160,27 @@ class FallbackResult:
     fallback_from: Optional[str] = None
     deferred: bool = False
     reason: str = ""
+    degraded: bool = False         # P4c: True when template/heuristic (no real AI)
+
+    def degraded_marker(self) -> Optional[str]:
+        """P4c — Return a user-visible marker string when this result is degraded.
+
+        When template thoughts or heuristic rules serve a turn (no real AI
+        compute was available), this returns a clear indicator so the user
+        is never confused about whether they're talking to real AI.
+
+        Returns None when the result is NOT degraded (peer or local model
+        served the turn — real AI).
+        """
+        if not self.degraded:
+            return None
+        if self.source == "template":
+            return "[no thinking power — template response]"
+        if self.source == "heuristic":
+            return "[no thinking power — heuristic response]"
+        if self.source == "deferred":
+            return "[no thinking power — request deferred for replay when compute returns]"
+        return "[no thinking power]"
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +354,7 @@ class ComputeRouter:
             fallback_used=True,
             fallback_from="peer",
             deferred=deferred,
+            degraded=True,  # P4c: template/heuristic = no real AI
             reason=(
                 "peer offline and no local model on this hardware profile "
                 "(H7) — template thoughts; request deferred for replay"
