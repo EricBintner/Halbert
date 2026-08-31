@@ -18,6 +18,10 @@ export type {
   HalbertMarkDensity,
   HalbertMarkTone,
 } from './primitives/HalbertMark'
+
+// Voice Mode (audio-reactive mark engine)
+export * from './voice'
+
 export { WhyChip } from './primitives/WhyChip'
 export type { WhyChipProps, ProvenanceRef } from './primitives/WhyChip'
 export { StatusLight } from './primitives/StatusLight'

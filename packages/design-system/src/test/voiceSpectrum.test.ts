@@ -71,7 +71,7 @@ describe('energy sources', () => {
     }
     const src = createAnalyserEnergySource(fakeAnalyser, 48000)
     const out = new Float32Array(10)
-    expect(src.readEnergies(out)).toBe(10)
+    expect(src.readEnergies(out, 0)).toBe(10)
     expect(out[0]).toBeCloseTo(1, 5) // brilliance ring lights up
     expect(out[4]).toBeCloseTo(0, 5) // vocal core stays dark
   })
