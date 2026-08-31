@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 VALID_VOICES = {"first_person", "the_computer", "hybrid"}
 VALID_PROACTIVITY = {"off", "quiet", "balanced", "assertive"}
 VALID_VOICE_PRESENTATIONS = {"not_defined", "male", "female"}
-VALID_VARIANTS = {"sysadmin", "home", "home-light"}
+VALID_VARIANTS = {"sysadmin", "home"}
 VALID_AUTONOMY_LEVELS = {"observe", "suggest", "act", "orchestrate"}
 VALID_OPERATIONAL_TIERS = {"cloud_ok", "local_only", "redact"}
 VALID_SECRET_TIERS = {"local_only", "cloud_ok_acknowledged"}
@@ -224,13 +224,13 @@ class BeingConfig:
     # Variant gates which startup services launch (sysadmin vs home).
     # scene_context overrides platform-derived cognition framing.
     # persona_id_override replaces hardcoded "halbert" in cognition_wiring.
-    variant: str = "sysadmin"  # sysadmin | home | home-light
+    variant: str = "sysadmin"  # sysadmin | home
     scene_context: str = ""  # e.g. "smart home automation"
     persona_id_override: str = ""  # e.g. "home"
 
-    # --- Home Assistant connection (light variant stores HA creds here
+    # --- Home Assistant connection (home variant stores HA creds here
     # instead of a separate ha_config.yml, so being.yml is the single
-    # file a home-light user needs to deploy) ---
+    # file a home user needs to deploy) ---
     ha_url: Optional[str] = None
     ha_token: Optional[str] = None
 

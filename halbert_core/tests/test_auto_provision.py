@@ -158,11 +158,11 @@ class TestAutoProvisionAppleIntelligence:
 
 
 class TestHomeVariantGate:
-    """home/home-light never configure secure_model (S1): an HA variant's
+    """home never configure secure_model (S1): an HA variant's
     LLM reaches the house through tool calls that abstract credentials
     away, so Apple Intelligence is not provisioned for them at all."""
 
-    @pytest.fixture(params=["home", "home-light"])
+    @pytest.fixture(params=["home"])
     def home_variant(self, request, monkeypatch):
         from halbert_core.integrations import cognition_wiring
         monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: request.param)

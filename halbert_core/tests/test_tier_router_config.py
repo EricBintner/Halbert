@@ -111,9 +111,9 @@ def _llm_config_spy():
     })
 
 
-@pytest.mark.parametrize("ha", ["home", "home-light"])
+@pytest.mark.parametrize("ha", ["home"])
 def test_home_variant_does_not_read_the_secure_slot(monkeypatch, ha):
-    """home/home-light never configure secure_model, so from_legacy_config
+    """home never configure secure_model, so from_legacy_config
     does not read the slot for them — even a stale value left behind by a
     sysadmin-style config cannot reach the router."""
     from halbert_core.integrations import cognition_wiring

@@ -9,7 +9,7 @@ sensitive-data reasoning to route to a dedicated local model. These pin the
 wizard — one of the three writers that could fill the slot on an
 Apple-Intelligence-eligible Mac — to sysadmin instances only:
 
-- ``run_auto`` does not call the auto-provisioning for home/home-light
+- ``run_auto`` does not call the auto-provisioning for home
 - ``_build_config`` writes the slot empty (save_config deep-merges every
   slot, so omitting it would keep a stale assignment)
 - ``save_config`` clears a stale secure assignment on a home-variant rerun
@@ -74,7 +74,7 @@ def test_build_config_writes_secure_model_for_sysadmin(variant):
     }
 
 
-@pytest.mark.parametrize("ha", ["home", "home-light"])
+@pytest.mark.parametrize("ha", ["home"])
 def test_build_config_writes_secure_model_empty_for_home_variants(variant, ha):
     """The slot is written empty, not omitted — save_config deep-merges
     every slot, so an omission would keep whatever was there before."""
@@ -84,7 +84,7 @@ def test_build_config_writes_secure_model_empty_for_home_variants(variant, ha):
     assert cfg["llm_config"]["secure_model"] == {"enabled": False, "endpoint_id": "", "model": ""}
 
 
-@pytest.mark.parametrize("ha", ["home", "home-light"])
+@pytest.mark.parametrize("ha", ["home"])
 def test_home_variant_keeps_the_chat_model_rule(variant, ha):
     """Only secure_model is variant-gated: on a 16-24GB Mac the single
     local model rule still assigns chat_model (the Mac's own on-device use)."""
@@ -112,7 +112,7 @@ def _run_auto_wizard(monkeypatch):
     return wizard, provisioned
 
 
-@pytest.mark.parametrize("ha", ["home", "home-light"])
+@pytest.mark.parametrize("ha", ["home"])
 def test_run_auto_skips_apple_provisioning_for_home_variants(variant, monkeypatch, ha):
     variant["variant"] = ha
     wizard, provisioned = _run_auto_wizard(monkeypatch)

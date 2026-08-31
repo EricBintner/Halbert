@@ -207,7 +207,7 @@ def test_build_config_without_a_peer_writes_no_peer_endpoint():
 
 def test_save_config_round_trips_the_peer_endpoint(variant, models_config_dir):
     """The store mints the endpoint id; the peer:// URL and provider survive."""
-    variant["variant"] = "home-light"
+    variant["variant"] = "home"
     wizard = _wizard()
     wizard.save_config(wizard._build_config(
         None, "ollama", _budget_mock(), _sbc(),

@@ -97,12 +97,12 @@ def _get_variant() -> str:
     return os.environ.get("HALBERT_VARIANT", "sysadmin")
 
 
-# Home automation variants. ``secure_model`` is a sysadmin-instance slot:
+# Home automation variant. ``secure_model`` is a sysadmin-instance slot:
 # an HA variant's LLM reaches the house through tool calls that abstract
 # credentials away (HA's API layer holds the tokens, never the prompt), so
-# home/home-light never configure, provision, or resolve a dedicated
+# home never configures, provisions, or resolves a dedicated
 # secure model (handoff HOME-AUTOMATION-SIMPLIFICATION-2026-08-30, S1).
-HA_VARIANTS = ("home", "home-light")
+HA_VARIANTS = ("home",)
 
 
 def is_home_variant() -> bool:

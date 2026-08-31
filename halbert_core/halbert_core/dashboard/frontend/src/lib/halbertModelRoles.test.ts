@@ -32,15 +32,6 @@ describe('halbertRolesForVariant', () => {
     ])
   })
 
-  it('hides the secure role on the home-light variant', () => {
-    // D4: both home variants stay working; neither offers a secure slot.
-    expect(ids(halbertRolesForVariant('home-light'))).toEqual([
-      'chat_model',
-      'specialist_model',
-      'vision_model',
-    ])
-  })
-
   it('keeps every role when the variant cannot be resolved', () => {
     // The tag list is authoritative once a variant is known, but a variant
     // that never arrived (route failed, payload malformed) must not shrink

@@ -124,7 +124,7 @@ class PeerInfo(BaseModel):
 class ComputePeerLinkRequest(BaseModel):
     """Persist a paired compute peer as this node's LLM endpoint.
 
-    Sent by the Compute Peer card on a home/home-light variant after the
+    Sent by the Compute Peer card on a home variant after the
     pairing handshake (mDNS discovery or the manual Tailscale path). The
     workstation's address goes in ``endpoint``; ``token`` is the bearer
     credential the workstation issued at ``/api/peers/verify``.
@@ -325,11 +325,11 @@ async def link_compute_peer(req: ComputePeerLinkRequest) -> ComputePeerLinkRespo
     endpoint and points BOTH ``chat_model`` and ``specialist_model`` at
     it — the same endpoint, the same model list — and the workstation's
     own model configuration governs which model serves the requests.
-    ``secure_model`` is never touched: home/home-light never configure
+    ``secure_model`` is never touched: home never configure
     it (S1), and a peer URL is not local, so even a hand-edited file is
     disabled by llm_config's local-only enforcement.
 
-    Only home/home-light variants may set the link: a sysadmin instance
+    Only home variants may set the link: a sysadmin instance
     keeps the full model picker, where each slot is chosen per endpoint.
     """
     from ...integrations.cognition_wiring import is_home_variant
@@ -337,7 +337,7 @@ async def link_compute_peer(req: ComputePeerLinkRequest) -> ComputePeerLinkRespo
     if not is_home_variant():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Compute-peer linking is a home/home-light feature; "
+            detail="Compute-peer linking is a home feature; "
                    "the sysadmin variant assigns models per slot in Settings.",
         )
 

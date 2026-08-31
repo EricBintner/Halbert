@@ -420,15 +420,16 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         
         # Start ingestion service in background (non-blocking)
         # Uses daemon threads so won't block shutdown
-        # Multi-instance: skip sysadmin-only services on home and home-light variants.
-        # home-light additionally skips scheduler, config watcher, and ChromaDB-heavy
-        # init — it's a thin client for N100/Pi that offloads to a remote backend.
+        # Multi-instance: skip sysadmin-only services on the home variant.
+        # The home variant is a thin client (N100/Pi) that offloads to a
+        # remote backend — it skips scheduler, config watcher, terminal
+        # sessions, and ingestion/discovery.
         from ..integrations.cognition_wiring import _get_variant
         _variant = _get_variant()
-        _is_light = _variant == "home-light"
-        if _is_light:
-            logger.info("Running in home-light variant — heavy services skipped")
-        if _variant in ("home", "home-light"):
+        _is_home = _variant == "home"
+        if _is_home:
+            logger.info("Running in home variant — heavy services skipped")
+        if _is_home:
             logger.info("Ingestion service skipped (HALBERT_VARIANT=home)")
         else:
             def start_ingestion_delayed():
@@ -451,8 +452,8 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         # Auto-scan discovery engine on startup so dashboard pages have data
         # without requiring a manual scan click. Runs in a daemon thread after
         # a short delay to avoid competing with ChromaDB/ingestion init.
-        # Multi-instance: skip sysadmin discovery on home and home-light variants
-        if _variant in ("home", "home-light"):
+        # Multi-instance: skip sysadmin discovery on the home variant
+        if _is_home:
             logger.info("Discovery scan skipped (HALBERT_VARIANT=home)")
         else:
             def start_discovery_scan_delayed():
@@ -472,9 +473,9 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             logger.info("Discovery scan starting in background...")
         
         # Phase 23: Start scheduler (re-enabled with delayed start)
-        # home-light skips the scheduler — autonomous jobs run on the remote backend
-        if _is_light:
-            logger.info("Scheduler skipped (home-light variant)")
+        # home skips the scheduler — autonomous jobs run on the remote backend
+        if _is_home:
+            logger.info("Scheduler skipped (home variant)")
         else:
             def start_scheduler_delayed():
                 """Start scheduler after a short delay."""
@@ -596,9 +597,9 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         # Phase 5+7 / T5a.2 + T7e.1: watch host config files (Linux hosts only).
         # The whole thing no-ops gracefully if the platform is unsupported,
         # the manifest is missing/unwatched, or SourcePrep is down.
-        # home-light skips the config watcher — no local config tree to watch.
-        if _is_light:
-            logger.info("Config watcher skipped (home-light variant)")
+        # home skips the config watcher — no local config tree to watch.
+        if _is_home:
+            logger.info("Config watcher skipped (home variant)")
         else:
             def start_config_watcher():
                 global _config_watcher
@@ -620,7 +621,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                     # S2: the SourcePrep re-index callback is a sysadmin-instance
                     # feature — home variants run without SourcePrep, so their
                     # watcher only drives detector triggers.
-                    if _variant not in ("home", "home-light"):
+                    if not _is_home:
                         change_callbacks.insert(0, create_sourceprep_reindex_callback())
                     watcher = ConfigWatcher(
                         manifest_path=str(manifest),
@@ -636,8 +637,8 @@ def create_app(enable_cors: bool = True) -> FastAPI:
 
         # Terminal session manager (B1b): start the idle/dead session reaper so
         # exited PTY sessions don't permanently exhaust the session cap.
-        # home-light skips terminal sessions — no local shell access on thin clients.
-        if not _is_light:
+        # home skips terminal sessions — no local shell access on thin clients.
+        if not _is_home:
             try:
                 from ..streaming.session_manager import get_terminal_manager
                 get_terminal_manager().start_reaper()
@@ -646,15 +647,15 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 logger.warning(f"Failed to start terminal session reaper: {e}")
 
         # Phase 2: Start HA WebSocket event stream if configured
-        # home-light can use HA creds from being.yml instead of ha_config.yml
-        if _is_light:
+        # home can use HA creds from being.yml instead of ha_config.yml
+        if _is_home:
             try:
                 from ..config.being_config import load_being_config
                 from ..integrations.home_assistant.ha_config import save_ha_config, HAConfig
                 being_cfg = load_being_config()
                 if being_cfg.ha_url and being_cfg.ha_token:
                     save_ha_config(HAConfig(url=being_cfg.ha_url, token=being_cfg.ha_token))
-                    logger.info("HA config seeded from being.yml (home-light variant)")
+                    logger.info("HA config seeded from being.yml (home variant)")
             except Exception as e:
                 logger.warning(f"Failed to seed HA config from being.yml: {e}")
         try:

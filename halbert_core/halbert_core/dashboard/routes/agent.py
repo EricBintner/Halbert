@@ -400,7 +400,7 @@ def _endpoint_is_local(provider: str, endpoint: str) -> bool:
 
 
 def _is_home_variant() -> bool:
-    """True when the instance variant is home/home-light.
+    """True when the instance variant is home.
 
     secure_model is a sysadmin-instance slot (see
     ``integrations/cognition_wiring.is_home_variant``): home automation
@@ -443,7 +443,7 @@ def _resolve_turn_model(
 
     1. The dedicated ``secure_model`` slot answers when configured — it is
        guaranteed local-only by ``llm_config.normalise``. Home automation
-       variants (home/home-light) skip this branch: secure_model is a
+       variants (home) skip this branch: secure_model is a
        sysadmin-instance slot they never configure, so resolution falls
        straight to the chain below.
     2. Otherwise the normally-resolved model answers, but only if its

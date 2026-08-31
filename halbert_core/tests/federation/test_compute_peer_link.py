@@ -7,7 +7,7 @@ HOME-AUTOMATION-SIMPLIFICATION-2026-08-30, 5.2/W16): an HA node has no
 model picker. When it pairs with a workstation, ONE ``peer://`` endpoint
 is saved and BOTH ``chat_model`` and ``specialist_model`` point at it —
 the same endpoint, the same model list — with the workstation's own model
-configuration governing which model serves the requests. Home/home-light
+configuration governing which model serves the requests. Home
 variants only; the sysadmin variant keeps the per-slot picker.
 """
 import asyncio
@@ -49,7 +49,7 @@ def variant(monkeypatch):
 
 class TestLinkPersistsSlots:
 
-    @pytest.mark.parametrize("ha", ["home", "home-light"])
+    @pytest.mark.parametrize("ha", ["home"])
     def test_pairing_points_both_slots_at_the_peer(self, models_config_dir, variant, ha):
         variant(ha)
         out = _link()
@@ -112,7 +112,7 @@ class TestVariantGate:
         assert store.load()["saved_endpoints"] == []
         assert store.load()["chat_model"]["enabled"] is False
 
-    @pytest.mark.parametrize("ha", ["home", "home-light"])
+    @pytest.mark.parametrize("ha", ["home"])
     def test_real_resolution_agrees_for_ha_variants(self, models_config_dir,
                                                     monkeypatch, ha):
         """The gate uses cognition_wiring's variant resolution (being.yml >

@@ -247,7 +247,7 @@ export async function getNodeDiscoveries(nodeId: string): Promise<Record<string,
 // ---------------------------------------------------------------------------
 // Compute-peer endpoints (home automation simplification, S3 / W15)
 //
-// An HA node (home/home-light) has no model picker: it is a pure client of
+// An HA node (home) has no model picker: it is a pure client of
 // the workstation's compute endpoint. The ComputePeerCard in Settings is the
 // one surface for that link — these are its three calls: read the saved
 // link, test it, persist it.
@@ -326,7 +326,7 @@ export interface ComputePeerLink {
  * One peer:// endpoint is saved and both chat_model and specialist_model
  * point at it — the same endpoint, the same model list — with the
  * workstation's own model configuration governing which model serves.
- * Home/home-light variants only (the route refuses the sysadmin variant).
+ * Home variants only (the route refuses the sysadmin variant).
  */
 export async function linkComputePeer(
   endpoint: string,

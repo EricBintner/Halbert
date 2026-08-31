@@ -32,39 +32,27 @@ Nine commits on top of `main` (`1fd6dba1`):
 
 ---
 
-## 2. What remains — decisions, then code
+## 2. Decisions resolved
 
-### 2.1 D2 — the 4GB classification boundary (BLOCKS one test expectation)
+### 2.1 D2 — the 4GB classification boundary — RESOLVED (option b)
 
-Code classifies `SBC_LOW_POWER` as strictly **<4GB**: `hardware_detector.py:423-427` puts `>= 4` GB hosts in `ENTRY_8GB`, whose local-model support is `True` (`compute_router.py:254-266`, pinned by `halbert_core/tests/federation/test_hardware_profile_fallback.py:31-33`). The handoff's device table (§6.2) says 4GB hosts are offload-only. **Pick one:**
-- (a) move the boundary (`>= 4` → `> 4`) so 4GB hosts classify `SBC_LOW_POWER`, update `compute_router` docstrings + the fallback test; or
-- (b) keep the code and fix the handoff/READMEs to "<4GB" (the README currently says "4 GB RAM or less require a compute peer" — see `HANDOFF-README-HOME-AUTOMATION.md` §3.5/§3.7).
+**Decision: keep the code, fix the docs.** The code classifies `SBC_LOW_POWER` as strictly **<4GB** (`hardware_detector.py:423-427` puts `>= 4` GB hosts in `ENTRY_8GB`). W25 (`3ce98551`) corrected the stale `<=4GB` comments to `<4GB`. No code change needed.
 
-Note: `hardware_detector.py` is model-name-agnostic by design; there are no 1B/Q2_K strings in code anywhere.
+### 2.2 D4 — merge `home-light` into `home` — RESOLVED (yes, merged)
 
-### 2.2 D4 — should `home` merge into `home-light`?
+**Decision: merge.** There was never a real distinction between `home` and `home-light` — it has always been just `home`. The `home-light` variant was removed from `VALID_VARIANTS`, `HA_VARIANTS`, and all gating/checks across the backend, frontend, tests, and deploy docs. The single `home` variant now carries the thin-client behavior (skip scheduler, config watcher, terminal sessions, seed HA from being.yml). Committed in the D4 merge commit.
 
-The service-skip matrix in handoff §12.1 was **verified correct** against `dashboard/app.py`. Two nuances the matrix missed, both **strengthening the merge case**:
-1. The home-variant scheduler already runs with `enable_llm=False` (`app.py:490`) — its proactive jobs (detector sweep, morning report, VisualWatcher) are sysadmin-telemetry jobs that never use the LLM.
-2. `app.py:423-425`'s comment claims home-light skips "ChromaDB-heavy init" — **no such gating code exists**; ChromaDB is simply lazily imported by routes. (Trivial correction: the router block is `:274-306`, not `:272-306`.)
+### 2.3 Q3 — remove `vision_model` from HA variants? — RESOLVED (no, keep it)
 
-If merged: S2's config-watcher gating collapses into the merge, and one variant name disappears from all `HA_VARIANTS` checks.
+**Decision: keep `vision_model` on HA variants.** The handoff's "vestigial" reasoning was wrong for the actual use case. The vision_model slot exists for two reasons: (1) a text-only chat model needs a vision option, and (2) a user may want a specific vision model separate from the chat model. A sentient home AI with cloud chat + local vision is a legitimate configuration. The "graceful fallback to chat model" only works if the chat model is multimodal — if it isn't, removing vision_model silently breaks photo understanding. The slot stays.
 
-### 2.3 Q3 — remove `vision_model` from HA variants? (evidence says: safe)
+**Latent issue still worth fixing:** Frigate REST tools return snapshots as base64 data-URI *strings*, and the state machine only auto-routes dict results with an `"image"` key to the vision model (`state_machine.py:2464-2478`) — so today a Frigate snapshot lands as a giant text observation (context bloat), never reaching vision at all. This is a bug independent of the vision_model decision.
 
-Investigation verdict: **effectively vestigial on the HA/Frigate path.** The Frigate MQTT subscriber/event mapper never performs vision-model inference (Frigate does detection; Halbert consumes labels/scores). Remaining consumers on a home variant: images attached in dashboard chat, explicit vision pins, intake recommendations, capture tools (off on headless nodes), and peer vision offload. All fall through gracefully to the guide model when the slot is empty (which is how it ships). Removing the slot breaks nothing structurally; the one UX cost is attached-photo chat silently routing to a possibly non-multimodal chat model. Recommended: remove from the HA config surface, keep the fallbacks, document that a multimodal chat_model covers the photo case.
+### 2.4 Q4 — disable `advance_turn` on HA variants? — RESOLVED (no, premise was wrong)
 
-**Latent issue worth fixing either way:** Frigate REST tools return snapshots as base64 data-URI *strings*, and the state machine only auto-routes dict results with an `"image"` key to the vision model (`state_machine.py:2464-2478`) — so today a Frigate snapshot lands as a giant text observation (context bloat), never reaching vision at all.
+**Decision: keep `advance_turn`; the "haloysius-less install" scenario is not real.** Haloysius is fundamental — every Halbert install includes it. The handoff's concern about `get_cognition_tick()` raising `ImportError` on a "haloysius-less" install describes a configuration that does not exist in practice. The `[cognition]` extra is not optional for HA variants; haloysius is part of the core stack.
 
-### 2.4 Q4 — disable `advance_turn` on HA variants? **Read this first — it contains a live bug**
-
-Key facts (all verified in the current tree):
-- `advance_turn` fires **only on explicit chat turns** (dashboard + Wyoming share one agent singleton). There is no autonomous loop wired — `HomeCognitiveLoop` (`halbert_core/halbert_core/home/cognitive_loop.py`) is dead code, referenced only by `home/__init__.py` and its test.
-- Template-thoughts mode (default, `HALBERT_LLM_THOUGHTS` unset) does decay/trigger/reinforce/promotion with canned thoughts — zero LLM cost.
-- **The tick is the ONLY thing that drains the HA and Frigate event queues** (`state_machine.py:2607-2609` `populate_cognition`; queues are plain lists with no maxlen — `ha_event_mapper.py:34`, `frigate_event_mapper.py:120`).
-- **Live bug:** on any haloysius-less install (e.g. a `[light]` home-light node), `get_cognition_tick()` raises ImportError → tick is skipped → the HA WebSocket stream (`app.py:657-676`) and Frigate MQTT (`:700-732`) still start (ungated) → **the queues grow unbounded**. This leak exists on main today.
-
-So the real choice: (a) keep `advance_turn` on HA variants (it costs no LLM and drains the queues), or (b) disable it **together with** skipping/bounding the event streams. The current middle state (streams on, tick off) is the one configuration that actively leaks. If you disable the monologue, bound or skip the streams in the same change, or add a timer flush without advance_turn.
+**Defensive note:** the HA/Frigate event queues (`ha_event_mapper.py:34`, `frigate_event_mapper.py:120`) are plain lists with no `maxlen`. While the tick drains them in practice, bounding them with a `deque(maxlen=...)` would be a cheap defensive improvement. This is non-blocking.
 
 ### 2.5 Minor open findings from the verify pass (non-blocking)
 
@@ -86,9 +74,7 @@ So the real choice: (a) keep `advance_turn` on HA variants (it costs no LLM and 
 
 ## 4. Suggested next steps (in order)
 
-1. Resolve **Q4 first** — it contains the live unbounded-queue leak, which is a real bug regardless of the monologue decision. Minimal fix: bound both mapper queues (maxlen deque) + flush-or-drop policy; then decide keep-vs-disable with the streams in mind.
-2. **D2** — one-line code change or a docs fix; unblocks the final `test_hardware_profile_fallback` 4GB expectation.
-3. **Q3** — remove vision_model from the HA config surface (graceful fallbacks stay); consider routing Frigate snapshots as images instead of text observations.
-4. **D4** — merge decision; if yes, collapse the variant checks and delete the home-only service blocks.
-5. Minor findings §2.5 as cleanup.
-6. When all of Batch U6 is done, the follow-ups in the canonical handoff §10 (federated Phase 9) become the next target — this work deliberately precedes Phase 9.
+1. **Frigate snapshot routing bug** (from Q3 investigation): Frigate REST tools return snapshots as base64 data-URI strings, but the state machine only auto-routes dict results with an `"image"` key to the vision model. Fix: route Frigate snapshots as images, not text observations.
+2. **Defensive queue bounding** (from Q4 investigation): bound the HA/Frigate event queues with `deque(maxlen=...)` so a slow tick can never cause unbounded memory growth.
+3. Minor findings §2.5 as cleanup.
+4. When all of Batch U6 is done, the follow-ups in the canonical handoff §10 (federated Phase 9) become the next target — this work deliberately precedes Phase 9.

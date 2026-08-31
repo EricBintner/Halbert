@@ -53,7 +53,7 @@ def auto_provision_apple_intelligence(hardware: HardwareCapabilities) -> bool:
     Apple Intelligence. Does nothing when:
 
     - ``hardware.apple_intelligence_available`` is False
-    - the active variant is home/home-light (secure_model is a
+    - the active variant is home (secure_model is a
       sysadmin-instance slot, so Apple Intelligence is not provisioned
       for home automation variants at all)
     - the ``apple-foundation`` endpoint is already registered (idempotent)

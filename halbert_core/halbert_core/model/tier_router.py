@@ -37,7 +37,7 @@ logger = logging.getLogger('halbert.model.tier_router')
 def _is_home_variant() -> bool:
     """True when the active instance runs a home automation variant.
 
-    secure_model is a sysadmin-instance slot: home/home-light variants
+    secure_model is a sysadmin-instance slot: home variants
     never configure it (an HA variant's LLM reaches the house through tool
     calls that abstract credentials away), so the slot is not read for
     them. The import is lazy so the model layer carries no module-level

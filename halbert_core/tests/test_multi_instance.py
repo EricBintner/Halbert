@@ -167,7 +167,7 @@ class TestVariantResolution:
     def test_get_variant_being_config_wins_over_env(self, tmp_path):
         from halbert_core.integrations.cognition_wiring import _get_variant
         cfg_dir = self._write_being_yml(tmp_path, "variant: home\n")
-        env = {"HALBERT_CONFIG_DIR": cfg_dir, "HALBERT_VARIANT": "home-light"}
+        env = {"HALBERT_CONFIG_DIR": cfg_dir, "HALBERT_VARIANT": "home"}
         with patch.dict(os.environ, env, clear=False):
             assert _get_variant() == "home"
 
@@ -181,9 +181,9 @@ class TestVariantResolution:
 
     def test_get_variant_env_when_no_being_config(self, tmp_path):
         from halbert_core.integrations.cognition_wiring import _get_variant
-        env = {"HALBERT_CONFIG_DIR": str(tmp_path), "HALBERT_VARIANT": "home-light"}
+        env = {"HALBERT_CONFIG_DIR": str(tmp_path), "HALBERT_VARIANT": "home"}
         with patch.dict(os.environ, env, clear=False):
-            assert _get_variant() == "home-light"
+            assert _get_variant() == "home"
 
     def test_get_variant_invalid_being_config_falls_to_env(self, tmp_path):
         """An invalid variant in being.yml must not crash gating — the
@@ -210,7 +210,7 @@ class TestVariantResolution:
         env = {
             "HALBERT_PERSONA_ID": "home",
             "HALBERT_CONFIG_DIR": cfg_dir,
-            "HALBERT_VARIANT": "home-light",
+            "HALBERT_VARIANT": "home",
         }
         with patch.dict(os.environ, env, clear=False):
             result = __import__("asyncio").run(get_instance_info())
@@ -221,11 +221,11 @@ class TestVariantResolution:
         env = {
             "HALBERT_PERSONA_ID": "home",
             "HALBERT_CONFIG_DIR": str(tmp_path),
-            "HALBERT_VARIANT": "home-light",
+            "HALBERT_VARIANT": "home",
         }
         with patch.dict(os.environ, env, clear=False):
             result = __import__("asyncio").run(get_instance_info())
-        assert result["variant"] == "home-light"
+        assert result["variant"] == "home"
 
 
 class TestCognitionWiringDataSync:

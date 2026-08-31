@@ -1499,12 +1499,12 @@ export function Settings() {
   }, [setSearchParams])
 
   // The AI tab is the one surface that changes shape by variant: a
-  // home/home-light node has no model picker — it is a pure client of the
+  // home node has no model picker — it is a pure client of the
   // workstation's compute endpoint — so it gets the ComputePeerCard instead.
   // An unknown variant keeps the full picker: a failed info route must not
   // shrink the surface on the machine that needs it.
   const variant = useInstanceVariant()
-  const isHomeVariant = variant === 'home' || variant === 'home-light'
+  const isHomeVariant = variant === 'home'
 
   // Debug panel state (moved here from the Layout top bar)
   const { isDebugMode, setDebugMode, logs, clearLogs } = useDebug()
@@ -2246,7 +2246,7 @@ export function Settings() {
         </TabsContent>
 
         {/* AI Models Tab - the full picker on sysadmin, the compute-peer link
-            on home/home-light (which run no model of their own) */}
+            on home (which run no model of their own) */}
         <TabsContent value="ai" className="space-y-4">
           {isHomeVariant ? <ComputePeerCard /> : <ModelSettings />}
         </TabsContent>

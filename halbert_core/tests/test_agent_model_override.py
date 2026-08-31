@@ -341,7 +341,7 @@ class TestSecureGate:
 
 
 class TestSecureGateHomeVariants:
-    """home/home-light never resolve the dedicated secure_model slot.
+    """home never resolve the dedicated secure_model slot.
 
     The variants never configure it (their LLM reaches the house through
     tool calls that abstract credentials away), so a secure turn skips the
@@ -359,7 +359,7 @@ class TestSecureGateHomeVariants:
                             lambda: holder["secure"] or (None, "", ""))
         return holder
 
-    @pytest.fixture(params=["home", "home-light"])
+    @pytest.fixture(params=["home"])
     def home_variant(self, request, monkeypatch):
         from halbert_core.integrations import cognition_wiring
         monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: request.param)

@@ -7,7 +7,7 @@
  * see: that a command never reaches the backend, that it moves the same pin
  * the pill shows, and that ordinary input is still sent.
  *
- * The pin surface exists on the sysadmin variant; a home/home-light variant
+ * The pin surface exists on the sysadmin variant; a home variant
  * is a pure client of the workstation's compute endpoint (S3), carries no
  * model control at all, and answers `/model` by saying so — those are the
  * tests at the bottom.

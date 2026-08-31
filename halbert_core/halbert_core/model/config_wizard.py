@@ -31,7 +31,7 @@ def _is_home_variant() -> bool:
 
     secure_model is a sysadmin-instance slot: an HA variant's LLM reaches
     the house through tool calls that abstract credentials away, so the
-    wizard neither provisions nor writes the slot for home/home-light. The
+    wizard neither provisions nor writes the slot for home. The
     import is lazy so the model layer carries no module-level dependency
     on the integrations package.
     """

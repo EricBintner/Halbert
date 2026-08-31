@@ -67,7 +67,7 @@ class EndpointProbeRequest(BaseModel):
 class PeerProbeRequest(BaseModel):
     """Probe a workstation's compute endpoint (the Compute Peer card).
 
-    Sent by the "Test Connection" button on a home/home-light variant's
+    Sent by the "Test Connection" button on a home variant's
     AI tab. ``endpoint`` is whatever the user typed — a bare ``host:port``,
     a saved ``peer://`` URL, or an ``http(s)://`` URL — normalised the same
     way the compute-peer link route normalises it, so testing and linking
@@ -306,7 +306,7 @@ def peer_probe(req: PeerProbeRequest) -> Dict[str, Any]:
     workstation's models route is implemented (TODO(federation-9.3)) — the
     workstation's own configuration still governs which model answers.
 
-    Home/home-light only, matching the compute-peer link route in
+    Home only, matching the compute-peer link route in
     ``routes/peers.py``: a sysadmin instance assigns models per slot and has
     no compute-peer surface to test. An omitted token falls back to the
     credential the saved link already carries, so "Test Connection" works
@@ -321,7 +321,7 @@ def peer_probe(req: PeerProbeRequest) -> Dict[str, Any]:
     if not is_home_variant():
         return {"error": {
             "code": "NOT_HOME_VARIANT",
-            "message": "Compute-peer probing is a home/home-light feature; "
+            "message": "Compute-peer probing is a home feature; "
                        "the sysadmin variant assigns models per slot in Settings.",
         }}
 

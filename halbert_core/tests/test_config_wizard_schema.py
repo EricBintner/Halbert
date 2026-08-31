@@ -64,9 +64,9 @@ def _ai_budget():
     return budget
 
 
-@pytest.mark.parametrize("variant", ["home", "home-light"])
+@pytest.mark.parametrize("variant", ["home"])
 def test_build_config_home_variants_write_empty_secure_slot(variant):
-    """home/home-light carry no secure_model — and the slot must be written
+    """home carry no secure_model — and the slot must be written
     EMPTY, not omitted, because save_config deep-merges all slots."""
     with patch("halbert_core.model.config_wizard._is_home_variant",
                return_value=True), \

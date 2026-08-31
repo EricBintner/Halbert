@@ -50,7 +50,7 @@ vi.mock('@/components/llm', () => ({
 }))
 
 // The AI tab's surface is chosen by the instance's variant (U6 S3): the full
-// picker on sysadmin, the compute-peer link card on home/home-light. Mocking
+// picker on sysadmin, the compute-peer link card on home. Mocking
 // the hook keeps this file off the network.
 const useInstanceVariantMock = vi.hoisted(() => vi.fn((): string | null => null))
 vi.mock('@/hooks/useInstanceVariant', () => ({
@@ -139,7 +139,7 @@ describe('Settings AI tab follows the variant (U6 S3)', () => {
     }))
   })
 
-  it.each(['home', 'home-light'])(
+  it.each(['home'])(
     'replaces the model picker with the compute-peer card on %s',
     async (variant) => {
       useInstanceVariantMock.mockReturnValue(variant)

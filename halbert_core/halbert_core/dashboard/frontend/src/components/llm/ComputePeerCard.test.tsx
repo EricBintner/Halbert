@@ -2,7 +2,7 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * The compute-peer settings card — the AI tab's whole surface on a
- * home/home-light variant (U6 S3 frontend / W15).
+ * home variant (U6 S3 frontend / W15).
  *
  * An HA node has no model picker: the workstation's own configuration
  * governs which model answers. These tests pin the contract that replaces
@@ -181,7 +181,7 @@ describe('ComputePeerCard', () => {
       probe: {
         error: {
           code: 'NOT_HOME_VARIANT',
-          message: 'Compute-peer probing is a home/home-light feature.',
+          message: 'Compute-peer probing is a home feature.',
         },
       },
     })
@@ -191,7 +191,7 @@ describe('ComputePeerCard', () => {
     await user.click(testButton())
 
     await waitFor(() =>
-      expect(screen.getByRole('alert')).toHaveTextContent(/home\/home-light feature/i),
+      expect(screen.getByRole('alert')).toHaveTextContent(/home feature/i),
     )
   })
 

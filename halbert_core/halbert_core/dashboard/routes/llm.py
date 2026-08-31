@@ -192,7 +192,7 @@ def get_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
     ``apple-foundation`` endpoint is registered and assigned to
     ``secure_model`` (and ``chat_model`` on 16-24GB Macs) before the Ollama
     probe runs. This is idempotent and only fills empty slots. Home
-    automation variants (home/home-light) skip it entirely: secure_model is
+    automation variants (home) skip it entirely: secure_model is
     a sysadmin-instance slot they never configure.
     """
     from . import settings as settings_routes
@@ -206,7 +206,7 @@ def get_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
         # The hardware detection (system_profiler + sysctl + bridge probe)
         # is expensive (~1s), so it is skipped when the apple-foundation
         # endpoint is already registered — the common case after first boot —
-        # and for home/home-light variants, which never provision
+        # and for home variants, which never provision
         # secure_model.
         try:
             from ...integrations.cognition_wiring import is_home_variant

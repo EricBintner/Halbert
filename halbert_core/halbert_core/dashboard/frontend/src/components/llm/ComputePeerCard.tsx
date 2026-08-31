@@ -2,7 +2,7 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * The compute-peer settings card — the AI tab's whole surface on a
- * home/home-light variant (home automation simplification S3 / W15).
+ * home variant (home automation simplification S3 / W15).
  *
  * An HA node runs no model of its own: chat and specialist turns are served
  * by the paired workstation, and the workstation's own model configuration

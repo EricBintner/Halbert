@@ -4,7 +4,7 @@
  * useInstanceVariant — this instance's Halbert variant, from GET /api/instance/info.
  *
  * The variant is a deployment fact about the instance the dashboard is
- * attached to (sysadmin, home, home-light), resolved backend-side the same
+ * attached to (sysadmin, home), resolved backend-side the same
  * way service gating resolves it, so the UI and the launched services can
  * never disagree about what this instance is.
  *

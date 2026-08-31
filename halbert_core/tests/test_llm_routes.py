@@ -118,9 +118,9 @@ def test_second_boot_does_not_reselect(models_config_dir):
     assert cfg["chat_model"]["enabled"] is False
 
 
-@pytest.mark.parametrize("ha", ["home", "home-light"])
+@pytest.mark.parametrize("ha", ["home"])
 def test_home_variant_skips_apple_provisioning(models_config_dir, monkeypatch, ha):
-    """home/home-light never configure secure_model, so the auto-provisioning
+    """home never configure secure_model, so the auto-provisioning
     (and the expensive hardware probe behind it) is not run for them."""
     from halbert_core.integrations import cognition_wiring
 

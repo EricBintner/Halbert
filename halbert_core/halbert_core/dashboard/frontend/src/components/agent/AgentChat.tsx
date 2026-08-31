@@ -185,7 +185,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   // variant keeps the full set, so a failed info route never empties the
   // composer's model control.
   const variant = useInstanceVariant();
-  // A home/home-light node is a pure client of the workstation's compute
+  // A home node is a pure client of the workstation's compute
   // endpoint: no model is chosen here, so the composer carries no model
   // control at all. Hidden rather than rendered read-only — the pill's whole
   // job is choosing between models, its status is derived from a local model
@@ -193,7 +193,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   // need a new seam in a package that knows no peer provider. The settings
   // AI tab's ComputePeerCard is the one surface where the link lives.
   // An unknown variant keeps the pill, same fail-open as the role filter.
-  const peerGovernedVariant = variant === 'home' || variant === 'home-light';
+  const peerGovernedVariant = variant === 'home';
   const variantRoles = useMemo(
     () => halbertRolesForVariant(variant),
     [variant],
@@ -1284,7 +1284,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
         {/* The pill sits where the session id used to: the composer footer is
             the only place left that belongs to the next turn rather than to
             the transcript. Its popover therefore has to open upward.
-            On a home/home-light variant there is no pill to sit here at all
+            On a home variant there is no pill to sit here at all
             — see peerGovernedVariant above. */}
         <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
           <span>{isStreaming ? 'Agent working... type to queue' : 'Press Enter to send'}</span>

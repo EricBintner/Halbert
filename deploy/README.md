@@ -112,7 +112,7 @@ Model selection is per-instance via `models.yml` (not env vars). Each instance s
 
 The `secure_model` processes system configs, secrets, and persona memory. It must never point at a remote endpoint. The config normaliser will disable the slot with a warning if a non-local URL is detected.
 
-Home automation variants (`home` / `home-light`) keep `secure_model` **empty** in their `models.yml`: their LLM reaches Home Assistant through tool calls that abstract credentials away, so there is no sensitive-data reasoning to route to a dedicated local model. The slot is not auto-provisioned, not written by the config wizard, and not resolved on the secure turn path for those variants — a turn flagged as sensitive falls back to a local guide and fails closed if none exists.
+Home automation variants (`home`) keep `secure_model` **empty** in their `models.yml`: their LLM reaches Home Assistant through tool calls that abstract credentials away, so there is no sensitive-data reasoning to route to a dedicated local model. The slot is not auto-provisioned, not written by the config wizard, and not resolved on the secure turn path for those variants — a turn flagged as sensitive falls back to a local guide and fails closed if none exists.
 
 ### LAN / Tailscale GPU Offload
 
@@ -121,9 +121,9 @@ Low-power nodes (N100, Pi 5) can offload heavy model inference to a GPU machine 
 1. Run Ollama on the GPU machine: `ollama serve`
 2. In the low-power node's `models.yml`, add an endpoint pointing at the GPU machine's IP (e.g. `http://gpu-rig:11434`)
 3. Assign `chat_model` or `specialist_model` to that endpoint
-4. `secure_model` is never offloaded: on a sysadmin instance keep it pointing at localhost (the low-power node's own Ollama); on a `home`/`home-light` instance the slot stays empty (see Model Configuration above)
+4. `secure_model` is never offloaded: on a sysadmin instance keep it pointing at localhost (the low-power node's own Ollama); on a `home` instance the slot stays empty (see Model Configuration above)
 
-Home automation variants (`home` / `home-light`) do not use SourcePrep at all — not locally and not offloaded. Their agent answers from live Home Assistant state; anything complex enough to need documentation retrieval is sysadmin work, done from the workstation's Halbert instance (which keeps its own SourcePrep). Do not set `SOURCEPREP_URL` or `SOURCEPREP_PROJECT_ID` on a Home instance.
+Home automation variants (`home`) do not use SourcePrep at all — not locally and not offloaded. Their agent answers from live Home Assistant state; anything complex enough to need documentation retrieval is sysadmin work, done from the workstation's Halbert instance (which keeps its own SourcePrep). Do not set `SOURCEPREP_URL` or `SOURCEPREP_PROJECT_ID` on a Home instance.
 
 ### Light Hardware Installation
 

@@ -5,7 +5,7 @@
 (handoff HOME-AUTOMATION-SIMPLIFICATION-2026-08-30, W7-W12) The HA agent
 answers from live HA state and conversational context, never a
 documentation index, so no SourcePrepAdapter / SourcePrepRetrievalBackend
-may be constructed on any wiring path for home/home-light:
+may be constructed on any wiring path for home:
 
 - the context assembler factories (agent, wired, extended)
 - the dashboard agent's SEARCHING-state rag_service
@@ -38,7 +38,7 @@ def variant(monkeypatch):
 # ── Assembler factories ────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("ha", ["home", "home-light"])
+@pytest.mark.parametrize("ha", ["home"])
 def test_agent_assembler_has_no_retrieval_for_home_variants(variant, ha):
     variant["variant"] = ha
     from halbert_core.context import create_agent_context_assembler
@@ -58,7 +58,7 @@ def test_agent_assembler_wires_sourceprep_for_sysadmin(variant):
     assert isinstance(assembler.retrieval, SourcePrepAdapter)
 
 
-@pytest.mark.parametrize("ha", ["home", "home-light"])
+@pytest.mark.parametrize("ha", ["home"])
 def test_wired_assembler_has_no_retrieval_for_home_variants(variant, ha):
     variant["variant"] = ha
     from halbert_core.context import create_wired_context_assembler
@@ -76,7 +76,7 @@ def test_wired_assembler_wires_sourceprep_for_sysadmin(variant):
     assert isinstance(assembler.retrieval, SourcePrepAdapter)
 
 
-@pytest.mark.parametrize("ha", ["home", "home-light"])
+@pytest.mark.parametrize("ha", ["home"])
 def test_extended_assembler_has_no_retrieval_for_home_variants(variant, ha):
     variant["variant"] = ha
     from halbert_core.context.extra_adapters import create_extended_context_assembler
@@ -93,7 +93,7 @@ def test_extended_assembler_wires_sourceprep_for_sysadmin(variant):
     assert isinstance(assembler.retrieval, SourcePrepAdapter)
 
 
-@pytest.mark.parametrize("ha", ["home", "home-light"])
+@pytest.mark.parametrize("ha", ["home"])
 def test_retrieval_adapter_factory_returns_none_for_home_variants(variant, ha):
     """The backend must not be constructed at all — absence of a URL is
     not a mechanism; the gate is the only thing keeping it off an HA node."""
@@ -134,7 +134,7 @@ def _agent_routes(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("ha", ["home", "home-light"])
+@pytest.mark.parametrize("ha", ["home"])
 async def test_get_agent_has_no_rag_service_for_home_variants(monkeypatch, variant, ha):
     variant["variant"] = ha
     agent_routes = _agent_routes(monkeypatch)
@@ -164,7 +164,7 @@ async def test_get_agent_wires_sourceprep_for_sysadmin(monkeypatch, variant):
 # ── Haloysius app seam ─────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("ha", ["home", "home-light"])
+@pytest.mark.parametrize("ha", ["home"])
 def test_app_seam_wiring_skips_retrieval_for_home_variants(monkeypatch, variant, ha):
     pytest.importorskip("haloysius")
     import haloysius.seam as hs

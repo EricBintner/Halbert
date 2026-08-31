@@ -11,7 +11,7 @@
  *    chat model" copy when it is unassigned (D-4/UI-SPEC Q3)
  *  - the variant filter this file applies to the role list before the drawer
  *    sees it: the secure slot exists only on the sysadmin variant, and a
- *    home/home-light instance must not be offered it (U6/S1)
+ *    home instance must not be offered it (U6/S1)
  *  - the LEG-MOD-02 cloud disclosure gate carried over from the deleted
  *    EndpointManager: a cloud-provider endpoint must not be saved until the
  *    user accepts, a local one needs no gate at all
@@ -146,16 +146,6 @@ describe('ModelSettings', () => {
     )
   })
 
-  it('hides the secure role on the home-light variant', async () => {
-    fetchMock = makeRouter(emptyLlmConfig(), { variant: 'home-light' })
-    vi.stubGlobal('fetch', fetchMock)
-
-    render(<ModelSettings />)
-    expect(await screen.findByText('Chat (Guide)')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(screen.queryByText('Secure (Local)')).not.toBeInTheDocument(),
-    )
-  })
 
   it('keeps the secure role when the variant cannot be resolved', async () => {
     // The info route is unrouted, so the router throws and the variant stays
