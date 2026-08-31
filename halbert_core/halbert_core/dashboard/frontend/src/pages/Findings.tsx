@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * Security Page - View security configuration and status.
- * 
+ * Findings Page - Security scan findings and hardening status.
+ *
+ * Renamed from Security to resolve the route/name overlap with the
+ * Settings > Security tab (MCP trust gates). This page is the findings
+ * engine: the results of security discovery scans.
+ *
  * Based on Phase 9 research: docs/Phase9/deep-dives/08-security-hardening.md
  */
 
@@ -26,7 +30,7 @@ import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 import { SystemItemActions, StatusBadge, PageHeader } from '@/components/domain'
 import { useScanPage } from '@/hooks'
 
-interface SecurityItem {
+interface FindingItem {
   id: string
   name: string
   title: string
@@ -36,20 +40,20 @@ interface SecurityItem {
   data: Record<string, unknown>
 }
 
-export function Security() {
-  const [security, setSecurity] = useState<SecurityItem[]>([])
+export function Findings() {
+  const [findings, setFindings] = useState<FindingItem[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    loadSecurity()
+    loadFindings()
   }, [])
 
-  const loadSecurity = async () => {
+  const loadFindings = async () => {
     try {
       const data = await api.getDiscoveries('security')
-      setSecurity(data.discoveries || [])
+      setFindings(data.discoveries || [])
     } catch (error) {
-      console.error('Failed to load security:', error)
+      console.error('Failed to load findings:', error)
     } finally {
       setLoading(false)
     }
@@ -57,10 +61,10 @@ export function Security() {
 
   const { scanning, handleScan } = useScanPage({
     scanType: 'security',
-    onScanComplete: loadSecurity,
+    onScanComplete: loadFindings,
   })
 
-  const getIcon = (item: SecurityItem) => {
+  const getIcon = (item: FindingItem) => {
     if (item.name.includes('ssh')) return <Key className="h-5 w-5 text-info" />
     if (item.name.includes('sudo')) return <Users className="h-5 w-5 text-purple-500" />
     if (item.name.includes('fail2ban')) return <Shield className="h-5 w-5 text-success" />
@@ -69,10 +73,10 @@ export function Security() {
   }
 
   const stats = {
-    total: security.length,
-    secure: security.filter(s => s.severity === 'success').length,
-    warnings: security.filter(s => s.severity === 'warning').length,
-    issues: security.filter(s => s.severity === 'critical').length,
+    total: findings.length,
+    secure: findings.filter(s => s.severity === 'success').length,
+    warnings: findings.filter(s => s.severity === 'warning').length,
+    issues: findings.filter(s => s.severity === 'critical').length,
   }
 
   if (loading) {
@@ -88,8 +92,8 @@ export function Security() {
       {/* Header */}
       <PageHeader
         icon={<Shield className="h-8 w-8" />}
-        title="Security"
-        description="Security configuration and hardening status"
+        title="Findings"
+        description="Security scan findings and hardening status"
         scanning={scanning}
         onScan={handleScan}
       />
@@ -142,24 +146,24 @@ export function Security() {
         </Card>
       </div>
 
-      {/* Security Items */}
-      {security.length === 0 ? (
+      {/* Findings */}
+      {findings.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center">
             <Shield className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium mb-2">No Security Checks</h3>
+            <h3 className="text-lg font-medium mb-2">No Findings Yet</h3>
             <p className="text-muted-foreground mb-4">
               Click Scan to check your security configuration.
             </p>
             <Button variant="outline" onClick={handleScan} disabled={scanning}>
               <RefreshCw className={cn("h-4 w-4 mr-2", scanning && "animate-spin")} />
-              Scan Security
+              Scan for Findings
             </Button>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-4">
-          {security.map((item) => (
+          {findings.map((item) => (
             <Card key={item.id}>
               <CardContent className="p-4">
                 <div className="flex items-start justify-between">
@@ -253,17 +257,17 @@ export function Security() {
       {/* AI Analysis Panel */}
       <AIAnalysisPanel
         type="security"
-        title="Security"
-        canAnalyze={security.length > 0}
+        title="Findings"
+        canAnalyze={findings.length > 0}
         buildContext={() => {
-          const parts = [`## Security Analysis Context\n`]
+          const parts = [`## Findings Analysis Context\n`]
           parts.push(`- ${stats.total} security checks`)
           parts.push(`- ${stats.secure} secure`)
           parts.push(`- ${stats.warnings} warnings`)
           parts.push(`- ${stats.issues} issues\n`)
-          
+
           // List security issues
-          const issues = security.filter(s => s.severity === 'critical' || s.severity === 'warning')
+          const issues = findings.filter(s => s.severity === 'critical' || s.severity === 'warning')
           if (issues.length > 0) {
             parts.push(`### Issues Detected:`)
             issues.forEach(i => parts.push(`- ${i.title}: ${i.description}`))

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { useState, useEffect, useRef } from 'react'
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { Dashboard } from './pages/Dashboard'
 import { Terminal } from './pages/Terminal'
@@ -12,7 +12,7 @@ import { Containers } from './pages/Containers'
 import { Development } from './pages/Development'
 import { Network } from './pages/Network'
 import { Sharing } from './pages/Sharing'
-import { Security } from './pages/Security'
+import { Findings } from './pages/Findings'
 import { Backups } from './pages/Backups'
 import { Apps } from './pages/Apps'
 import { Approvals } from './pages/Approvals'
@@ -98,7 +98,10 @@ function App() {
                     <Route path="/development" element={<Development />} />
                     <Route path="/network" element={<Network />} />
                     <Route path="/sharing" element={<Sharing />} />
-                    <Route path="/security" element={<Security />} />
+                    <Route path="/findings" element={<Findings />} />
+                    {/* Legacy path: the page was renamed from Security to Findings
+                     * to resolve the name overlap with Settings > Security. */}
+                    <Route path="/security" element={<Navigate to="/findings" replace />} />
                     <Route path="/backups" element={<Backups />} />
                     <Route path="/apps" element={<Apps />} />
                     <Route path="/approvals" element={<Approvals />} />
