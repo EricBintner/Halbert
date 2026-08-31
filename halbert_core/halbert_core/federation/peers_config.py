@@ -65,6 +65,30 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Capability vocabulary (P5c)
+# ---------------------------------------------------------------------------
+
+#: The capabilities a paired peer can advertise.  Peers are configured by
+#: what hardware and services they have (the singular-entity handoff's
+#: "capabilities emerge from hardware"), and the HA server routes tool
+#: calls to a peer that has the capability a turn needs (P5b).
+#:
+#: This set is the vocabulary *this node* knows how to route.  An unknown
+#: capability in a peer record is kept but warned about — a peer running a
+#: newer Halbert may advertise one this node has not learned yet, and
+#: dropping it would break that peer after an upgrade in the wrong order.
+KNOWN_PEER_CAPABILITIES = frozenset({
+    "gpu_llm",         # local Ollama/LMStudio compute (discovery announces this)
+    "sourceprep",      # SourcePrep index / documentation lookup
+    "vision",          # cameras / Frigate / image processing
+    "terminal",        # watched terminals / shell execution
+    "sysadmin_tools",  # config editing, file management, diff proposals
+    "home_tools",      # Home Assistant entities, scenes, automations
+    "mcp",             # exposes an MCP server (P5a tool-routing target)
+})
+
+
+# ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
 
@@ -146,6 +170,10 @@ class PeerCredential:
     def is_compute_source(self) -> bool:
         """True if this peer sends compute requests to us (inbound direction)."""
         return self.compute_direction == "inbound"
+
+    def has_capability(self, capability: str) -> bool:
+        """True if this peer advertises ``capability`` (P5c)."""
+        return capability in self.capabilities
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +301,32 @@ class PeersConfig:
             and p.wol_enabled and p.wol_mac
         ]
 
+    # ------------------------------------------------------------------
+    # Capability routing (P5c)
+    # ------------------------------------------------------------------
+
+    def find_peers_with_capability(self, capability: str) -> List[PeerCredential]:
+        """Non-revoked peers that advertise ``capability``, in pairing order.
+
+        The HA server asks "which of my peers has sysadmin tools?" here
+        before routing a tool call over the peer link (P5b's
+        ``PeerToolProxy`` routing consults this).
+        """
+        return [
+            p for p in self._peers.values()
+            if not p.revoked and p.has_capability(capability)
+        ]
+
+    def find_peer_with_capability(self, capability: str) -> Optional[PeerCredential]:
+        """The first non-revoked peer with ``capability``, or None.
+
+        Deterministic (pairing order), so a given config always routes a
+        capability to the same peer.  Callers that need to consider peer
+        health should use ``find_peers_with_capability`` and probe.
+        """
+        peers = self.find_peers_with_capability(capability)
+        return peers[0] if peers else None
+
     def verify_token(self, raw_token: str) -> Optional[PeerCredential]:
         """Verify a bearer token against all stored peer tokens.
 
@@ -327,6 +381,15 @@ class PeersConfig:
         with self._lock:
             if node_id in self._peers:
                 raise ValueError(f"Peer {node_id!r} already paired — revoke first to re-pair")
+            unknown = [c for c in (capabilities or []) if c not in KNOWN_PEER_CAPABILITIES]
+            if unknown:
+                # Kept, not rejected: a newer peer may advertise a capability
+                # this node has not learned yet (see KNOWN_PEER_CAPABILITIES).
+                logger.warning(
+                    "Peer %s advertises unknown capabilities %s — stored but not "
+                    "routable by this node until its vocabulary learns them",
+                    node_id, unknown,
+                )
             cred = PeerCredential(
                 node_id=node_id,
                 node_name=node_name,
@@ -397,6 +460,33 @@ class PeersConfig:
             peer.wol_enabled = enabled
             self._save()
             logger.info("WoL %s for peer %s: mac=%s", "enabled" if enabled else "disabled", node_id, peer.wol_mac)
+            return True
+
+    def set_capabilities(
+        self, node_id: str, capabilities: List[str]
+    ) -> bool:
+        """Replace a peer's advertised capabilities (P5c).
+
+        Returns True if the peer was found and updated, False if not found.
+        Called by device capability discovery (P7a) after a peer announces
+        what it can do — e.g. a workstation that gained a GPU starts
+        advertising ``gpu_llm``.  Unknown capability names are kept with a
+        WARNING (same forward-compat rule as ``add_peer``).
+        """
+        with self._lock:
+            peer = self._peers.get(node_id)
+            if peer is None:
+                return False
+            unknown = [c for c in capabilities if c not in KNOWN_PEER_CAPABILITIES]
+            if unknown:
+                logger.warning(
+                    "Peer %s advertises unknown capabilities %s — stored but not "
+                    "routable by this node until its vocabulary learns them",
+                    node_id, unknown,
+                )
+            peer.capabilities = list(capabilities)
+            self._save()
+            logger.info("Capabilities for peer %s: %s", node_id, peer.capabilities)
             return True
 
     def update_last_seen(self, node_id: str) -> None:

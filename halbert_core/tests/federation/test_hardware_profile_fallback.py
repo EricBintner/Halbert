@@ -191,22 +191,22 @@ class TestHardwareProfileFallback:
         assert result.source == "deferred"
         assert result.deferred is True
 
-    async def test_entry_8gb_falls_back_to_local_model(self, monkeypatch):
-        """On ENTRY_8GB with peer offline, fallback is a 3B local model.
+    async def test_entry_8gb_uses_local_model_before_the_peer(self, monkeypatch):
+        """On ENTRY_8GB, the local 3B model is the primary offline path.
 
-        This test verifies:
-        1. Peer is offline
-        2. Hardware profile is ENTRY_8GB → can run local model
-        3. Fallback is the local 3B model (not template thoughts)
+        P4b reorder: with no cloud configured, capable hardware uses the
+        local model WITHOUT probing the peer — the peer is the third
+        tier now, not the first, so an online peer is never preferred
+        over this node's own model.
         """
         router = self._make_router("entry_8gb")
-        monkeypatch.setattr(router, "_http_health_probe", lambda: False)
+        monkeypatch.setattr(router, "_http_health_probe", lambda: True)
 
         result = await router.route([{"role": "user", "content": "hey"}], "m",
                                     turn_type=TurnType.INTERACTIVE_USER)
         assert result.source == "local_model"
-        assert result.fallback_used is True
-        assert result.fallback_from == "peer"
+        assert result.fallback_used is False
+        assert result.fallback_from is None
 
     def test_failure_threshold_is_3(self):
         """§11.6: The peer health failure threshold is 3 consecutive failures."""

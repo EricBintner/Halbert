@@ -52,6 +52,8 @@ __all__ = [
     #  PeerContext live in peer_middleware.py — there is no middleware class)
     "PeersConfig",
     "PeerCredential",
+    # P5c — Per-peer capability routing
+    "KNOWN_PEER_CAPABILITIES",
     # 9.4 — Compute endpoint + redaction
     "PEER_ALLOWED_TOOLS",
     "is_tool_allowed_for_peer",
@@ -77,6 +79,9 @@ def __getattr__(name: str):  # pragma: no cover
     if name == "PeerCredential":
         from .peers_config import PeerCredential
         return PeerCredential
+    if name == "KNOWN_PEER_CAPABILITIES":
+        from .peers_config import KNOWN_PEER_CAPABILITIES
+        return KNOWN_PEER_CAPABILITIES
     if name == "PEER_ALLOWED_TOOLS":
         from .tool_allowlist import PEER_ALLOWED_TOOLS
         return PEER_ALLOWED_TOOLS
