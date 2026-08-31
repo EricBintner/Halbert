@@ -9,21 +9,25 @@ when there's 1 used in 4 places. This matters for rotation advice:
 "rotate the password" should identify all locations.
 
 This module builds a correlation index by hashing each secret value
-(SHA-256, truncated) and grouping secrets by hash. The hash is
-one-way — the original value cannot be recovered from it.
+and grouping secrets by hash. The index is built from the canon DB and
+stored at ``~/.local/share/halbert/config/secret_correlations.json``.
 
-The index is built from the canon DB and stored at
-``~/.local/share/halbert/config/secret_correlations.json``.
-
-Security: the correlation index stores only hashes, never raw values.
-The hash is SHA-256 truncated to 16 hex chars — enough for collision
-resistance across a single machine's config files, not enough to be
-useful as a lookup table for rainbow tables (the full value space is
-too large).
+Security (REV-01 F5): the correlation index stores only hashes, never
+raw values — but a bare truncated SHA-256 does not slow a dictionary
+attack on human passwords (any candidate is hashed and compared), and
+the file enumerates *where every secret on the machine lives*. The
+stored hash is therefore HMAC-SHA256 keyed with a locally-generated
+random pepper, stored 0600 in a SEPARATE file from the index
+(``secret_correlations.pepper``) and generated on first use. An
+exfiltrated index alone then verifies nothing: without the pepper,
+no candidate can be tested against it. Verification (find_correlated_
+secrets) uses the same pepper. If the pepper is lost, the index fails
+closed — no matches, never a false positive.
 """
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -36,10 +40,86 @@ logger = logging.getLogger(__name__)
 
 _CORRELATION_FILE = os.path.join(data_dir(), "config", "secret_correlations.json")
 
+# The pepper lives in its own file BESIDE the index — never inside it —
+# so an exfiltrated or backed-up index alone is useless as a dictionary-
+# attack target or a secret-location map.
+_PEPPER_FILENAME = "secret_correlations.pepper"
+
+# Per-path pepper cache: keyed by pepper file path so tests (and multi-
+# instance setups) with distinct index dirs never share a pepper.
+_PEPPER_CACHE: Dict[str, bytes] = {}
+
+
+def _pepper_path() -> str:
+    """Path of the pepper file, beside the current correlation index."""
+    return os.path.join(
+        os.path.dirname(_CORRELATION_FILE) or ".", _PEPPER_FILENAME
+    )
+
+
+def _load_or_create_pepper() -> bytes:
+    """Return the pepper, generating it (0600, O_EXCL) on first use.
+
+    A lost or unreadable pepper is never fabricated from anything
+    guessable — on failure a fresh random value is used per call, which
+    fails closed (no correlation can verify).
+    """
+    pepper_file = _pepper_path()
+    cached = _PEPPER_CACHE.get(pepper_file)
+    if cached is not None:
+        return cached
+
+    try:
+        with open(pepper_file, "rb") as f:
+            key = f.read().strip()
+        if key:
+            _PEPPER_CACHE[pepper_file] = key
+            return key
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.warning(f"Cannot read correlation pepper: {e}")
+        return os.urandom(32)  # ephemeral — fails closed
+
+    # Generate on first use. O_CREAT|O_EXCL so two processes racing both
+    # end up with the same (first writer's) pepper.
+    try:
+        os.makedirs(os.path.dirname(pepper_file) or ".", exist_ok=True)
+        new_key = os.urandom(32).hex().encode("utf-8")
+        fd = os.open(pepper_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            os.write(fd, new_key)
+        finally:
+            os.close(fd)
+        os.chmod(pepper_file, 0o600)
+        key = new_key
+    except FileExistsError:
+        try:
+            with open(pepper_file, "rb") as f:
+                key = f.read().strip()
+        except OSError:
+            return os.urandom(32)  # ephemeral — fails closed
+    except OSError as e:
+        logger.warning(f"Cannot create correlation pepper: {e}")
+        return os.urandom(32)  # ephemeral — fails closed
+
+    if not key:
+        return os.urandom(32)
+    _PEPPER_CACHE[pepper_file] = key
+    return key
+
 
 def _secret_hash(value: str) -> str:
-    """Hash a secret value for correlation. One-way, truncated."""
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    """Hash a secret value for correlation.
+
+    HMAC-SHA256 keyed with the locally-stored pepper, truncated to 16
+    hex chars — enough for collision resistance across a single
+    machine's config files, and useless for offline verification
+    without the pepper.
+    """
+    return hmac.new(
+        _load_or_create_pepper(), value.encode("utf-8"), hashlib.sha256
+    ).hexdigest()[:16]
 
 
 def _extract_secrets_from_canon(
@@ -171,6 +251,10 @@ def find_correlated_secrets(
         return []
 
     index = load_correlation_index()
+    if not index:
+        # No index on disk — nothing to correlate. (Also keeps the
+        # read-only path from creating a pepper when there is no index.)
+        return []
     h = _secret_hash(value)
     locations = index.get(h, [])
 
