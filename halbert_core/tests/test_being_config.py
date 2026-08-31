@@ -5,12 +5,64 @@
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from halbert_core.config.being_config import (
     BeingConfig,
     VALID_VARIANTS,
+    explicit_variant,
     load_being_config,
     save_being_config,
 )
+
+
+class TestExplicitVariant:
+    """explicit_variant: variant only counts when being.yml says so.
+
+    BeingConfig.variant defaults to "sysadmin" and load_being_config returns
+    defaults for a missing file, so the dataclass cannot distinguish "being.yml
+    says sysadmin" from "being.yml says nothing". Variant resolution
+    (cognition_wiring._get_variant) needs that distinction or the
+    HALBERT_VARIANT env var is dead on env-only deployments.
+
+    Note: explicit_variant() reads from the default being.yml path and raises
+    ValueError on invalid variants (unlike u6's load_explicit_variant which
+    accepted a path and returned None). These tests mock the default path.
+    """
+
+    def test_missing_file_is_unset(self, monkeypatch):
+        import halbert_core.config.being_config as bc
+        monkeypatch.setattr(bc, "_default_path", lambda: __import__("pathlib").Path("/nonexistent/being.yml"))
+        assert explicit_variant() is None
+
+    def test_explicit_variant_is_returned(self, monkeypatch, tmp_path):
+        import halbert_core.config.being_config as bc
+        path = tmp_path / "being.yml"
+        save_being_config(BeingConfig(variant="home-light"), str(path))
+        monkeypatch.setattr(bc, "_default_path", lambda: path)
+        assert explicit_variant() == "home-light"
+
+    def test_file_without_variant_key_is_unset(self, monkeypatch, tmp_path):
+        import halbert_core.config.being_config as bc
+        path = tmp_path / "being.yml"
+        path.write_text("persona_name: Halbert\n")
+        monkeypatch.setattr(bc, "_default_path", lambda: path)
+        assert explicit_variant() is None
+
+    def test_invalid_variant_raises_value_error(self, monkeypatch, tmp_path):
+        import halbert_core.config.being_config as bc
+        path = tmp_path / "being.yml"
+        path.write_text("variant: not-a-variant\n")
+        monkeypatch.setattr(bc, "_default_path", lambda: path)
+        with pytest.raises(ValueError, match="Invalid variant"):
+            explicit_variant()
+
+    def test_non_dict_yaml_is_unset(self, monkeypatch, tmp_path):
+        import halbert_core.config.being_config as bc
+        path = tmp_path / "being.yml"
+        path.write_text("- just\n- a\n- list\n")
+        monkeypatch.setattr(bc, "_default_path", lambda: path)
+        assert explicit_variant() is None
 
 
 class TestHomeLightVariant:
