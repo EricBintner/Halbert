@@ -146,15 +146,13 @@ class TestErrorHandling:
 
     @patch("requests.post")
     def test_connection_error_raises_unavailable(self, mock_post, proxy):
-        import requests
-        mock_post.side_effect = requests.ConnectionError("refused")
+        mock_post.side_effect = _requests.ConnectionError("refused")
         with pytest.raises(PeerToolUnavailable, match="Cannot reach"):
             proxy.list_tools()
 
     @patch("requests.post")
     def test_timeout_raises_unavailable(self, mock_post, proxy):
-        import requests
-        mock_post.side_effect = requests.Timeout("timed out")
+        mock_post.side_effect = _requests.Timeout("timed out")
         with pytest.raises(PeerToolUnavailable, match="timed out"):
             proxy.list_tools()
 
