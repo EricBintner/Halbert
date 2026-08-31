@@ -414,6 +414,8 @@ class TestAppPrefix:
 
     def test_routes_have_correct_prefix(self):
         app = _make_app()
-        routes = [r.path for r in app.routes]
+        # Starlette >= 1.6 lists an included router as an _IncludedRouter
+        # wrapper with no .path — only actual routes carry one.
+        routes = [r.path for r in app.routes if hasattr(r, "path")]
         assert "/api/conversations/invoke" in routes
         assert "/api/conversations/health" in routes
