@@ -2,7 +2,9 @@
 
 **Date:** 2026-08-29  
 **Status:** Comprehensive Architecture, Handoff & Implementation Plan  
-**Target:** Halbert Workstations (macOS/Linux Desktop) + N Satellite Nodes (Raspberry Pi, Homelab, Laptops)  
+**Target:** Halbert Workstations (macOS/Linux Desktop) + N Satellite Nodes (Raspberry Pi, Homelab, Laptops)
+
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** the `home`/`home-light` (home automation) variants are simplified to pure compute clients of the workstation — no `secure_model` (slot infrastructure stays for `sysadmin` only), no SourcePrep, no model picker (a single "Compute Peer" setting; the workstation's picker governs), no 1B model tier (`SBC_LOW_POWER` is offload-only; 2B-3B is the minimum for local inference, 8GB+ hosts only), and Apple Intelligence is never a peer compute backend (mDNS `compute_backends` advertises `ollama`/`vllm` only). Affected recommendations in §1, §2, §3, §4 Pillar 3, §5, §7 (H7, M11, M13, L15), §8, §9, §10, and §11 are revised in place below. The simplification handoff §12 is the authoritative code-verified work list (W1-W25, decisions D1-D4) and its S1-S7 steps must land **before** the Phase 9 sequence in §8/§10.  
 
 ---
 
@@ -10,7 +12,7 @@
 
 Halbert operates on a **Federated Peer Model ("Sovereign Self, Shared Commons")**:
 * **Every device is a sovereign Halbert node:** Maintaining its own identity, SQLite state, local sensors, system baseline, and local automation rules.
-* **Compute is asymmetrical and opportunistic:** Low-power 24/7 nodes (e.g. Raspberry Pi 5 / Home Hubs) leverage high-power desktop nodes (e.g. Mac Studio, GPU devbox) for heavy compute (LLM inference, embeddings, batch maintenance) whenever the desktop is awake.
+* **Compute is asymmetrical and opportunistic:** Low-power 24/7 nodes (e.g. Raspberry Pi 5 / Home Hubs) leverage high-power desktop nodes (e.g. Mac Studio, GPU devbox) for heavy compute (LLM inference, sysadmin batch maintenance) whenever the desktop is awake. Per-node persona memory embeddings stay on the satellite — they are not SourcePrep and not offloadable (memory is per-node, per-identity), served locally via haloysius's ONNX/Ollama `MemoryEmbedder` (simplification §4.7).
 * **1:N Fleet Support from Day One:** A single Compute Host (Desktop) can pair with and support **multiple satellite nodes** (1 to 25+ nodes: Living Room Pi, Workshop Pi, Garage Cam, Homelab NAS, Travel Laptop) with prioritized concurrency queuing.
 * **Bi-directional value:**
   1. *Satellite ➔ Desktop:* Offloads heavy LLM inference and batch jobs to Desktop GPU.
@@ -25,7 +27,7 @@ Halbert operates on a **Federated Peer Model ("Sovereign Self, Shared Commons")*
 graph TD
     subgraph DesktopCockpit["Compute Host / Workstation (Mac Studio / Linux Devbox)"]
         HostIdentity["Sovereign Host Identity & DB"]
-        HostGPU["GPU & Local LLMs (Ollama / vLLM / MLX)"]
+        HostGPU["GPU & Local LLMs (Ollama / vLLM / MLX — peer-facing: Ollama / vLLM only; Apple Intelligence is Mac-local, never a peer backend)"]
         SPDaemon["SourcePrep Daemon & AST Graph"]
         FleetCockpit["Fleet Diagnostics Cockpit UI"]
         ComputeQueue["Compute Concurrency Broker (Priority Queue)"]
@@ -63,8 +65,8 @@ graph TD
 
 | Role | Typical Hardware | Primary Responsibilities | Compute Profile |
 | :--- | :--- | :--- | :--- |
-| **Compute Host (Workstation)** | Mac Studio, Linux GPU Rig, High-RAM Desktop | • Code development & SourcePrep daemon<br>• Fleet Diagnostics Cockpit<br>• Hosting 14B–70B LLMs & embedding models | Intermittent uptime (sleeps/travel), massive compute capacity |
-| **Ambient Sentinel (Home / Satellites)** | Raspberry Pi 4/5, mini-PC, IoT Hub, Travel Laptop | • 24/7 continuous ambient monitoring<br>• Voice / wake-word assistant<br>• Home Assistant / Frigate / Sensor integration<br>• Local device control | Always-on, low power, lightweight CPU compute |
+| **Compute Host (Workstation)** | Mac Studio, Linux GPU Rig, High-RAM Desktop | • Code development & SourcePrep daemon<br>• Fleet Diagnostics Cockpit<br>• Hosting 14B–70B LLMs for peer compute (satellite persona memory embeddings stay per-node local and are never hosted/offloaded — simplification §4.7) | Intermittent uptime (sleeps/travel), massive compute capacity |
+| **Ambient Sentinel (Home / Satellites)** | Raspberry Pi 4/5, mini-PC, IoT Hub, Travel Laptop | • 24/7 continuous ambient monitoring<br>• Voice / wake-word assistant<br>• Home Assistant / Frigate / Sensor integration<br>• Local device control | Always-on, low power, lightweight CPU compute. For `home`/`home-light` variants: pure compute client of the workstation — no local LLM (peer offload → template thoughts fallback), no `secure_model`, no SourcePrep, no model picker (single Compute Peer setting). Sysadmin-variant satellites retain local models + full picker. |
 
 ---
 
@@ -74,6 +76,7 @@ graph TD
 1. **Service Announcement:**
    * Compute Host advertises service type `_halbert._tcp` on local LAN / Tailnet.
    * TXT Record includes: `node_id`, `node_name`, `role=compute_provider`, `capabilities=gpu_llm,sourceprep,fleet_api`, `api_port=8000`.
+   * When the `compute_backends` TXT field is added, it lists `ollama,vllm` only — `apple_foundation` is never advertised (Apple Intelligence is Mac-local only; simplification §7.3/§7.4). `sourceprep` in capabilities stays correct: the host runs SourcePrep for its own sysadmin use; `home`/`home-light` satellites simply never query it (no `SOURCEPREP_URL` configured).
 2. **One-Click Pairing Handshake:**
    * Satellite discovers beacon and requests pairing.
    * Host displays pairing confirmation / 4-digit code.
@@ -89,15 +92,21 @@ graph TD
 * Built with an async concurrency semaphore (e.g. 4 concurrent inference slots with FIFO queueing).
 
 ### Pillar 3: Multi-Tier Fallback & Offline Resilience (When Desktop Sleeps)
-* Satellite nodes use an intelligent `ComputeRouter` with sub-second health probing:
+* Satellite nodes use an intelligent `ComputeRouter` with sub-second health probing. **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** the fallback chain is hardware-profile- and variant-aware — the local-micro-model tier is gone for `SBC_LOW_POWER` devices and for all `home`/`home-light` variants, and the 1B model tier is dropped as a supported configuration (2B-3B is the minimum for local inference, on 8GB+ hosts only).
   ```
   1. Desktop Compute Peer (LAN / GPU) [1.5s health probe]
-     └─► If Online: Stream generation from 32B GPU model
-  2. Local Micro-Model / Heuristic Engine (On-Device CPU quantized model)
-     └─► If Urgent & Desktop Asleep: Generate fast local response
-  3. Optional Cloud API (if configured and allowed by privacy policy)
-  4. Deferred Task Queue (Non-urgent maintenance tasks held until Desktop wakes)
+     └─► If Online: Stream generation from the peer's GPU model
+  2. If peer asleep / unreachable:
+     (a) SBC_LOW_POWER (<4GB in code — 4GB boundary is open decision D2,
+         simplification §12.1) and home/home-light variants:
+         deterministic template thoughts (HALBERT_LLM_THOUGHTS=0)
+         — NO local model attempt, no local model fallback tier
+     (b) ENTRY_8GB+ sysadmin-variant satellites: optional local 3B fallback
+         (offload preferred; 2B-3B is the minimum supported local tier)
+  3. Deferred Task Queue (user-initiated and automation-triggered turns only,
+     per H8 — monologue turns are never deferred/replayed)
   ```
+  The former "Optional Cloud API" tier is removed from the satellite chain for `home`/`home-light` variants — the HA fallback is template thoughts, not cloud. If a sysadmin-variant satellite configures a cloud API within its privacy policy, that remains a sysadmin-variant decision outside this chain.
 
 ### Pillar 4: Desktop Fleet Cockpit (Desktop ➔ Satellite Management)
 * Desktop UI includes a **Fleet Cockpit** & **Node Switcher**:
@@ -116,8 +125,8 @@ graph TD
 
 ### Phase 2: Compute Broker & Client Router
 - [ ] Implement `halbert_core/compute/broker.py` with priority queueing and concurrency semaphore on Compute Host.
-- [ ] Implement `halbert_core/compute/router.py` with multi-tier fallback pipeline on Satellite nodes.
-- [ ] Expose OpenAI-compatible `/api/compute/v1/chat/completions` endpoint for authenticated peers.
+- [ ] Implement `halbert_core/compute/router.py` with the fallback pipeline on Satellite nodes (hardware-profile- and variant-aware: `SBC_LOW_POWER` (<4GB in code — see D2) and `home`/`home-light` = peer → template thoughts, no local model tier, no 1B tier; 8GB+ sysadmin satellites may fall back to a local 3B — 2B-3B is the minimum supported local tier).
+- [ ] Expose OpenAI-compatible `/api/compute/v1/chat/completions` endpoint for authenticated peers. On Mac compute hosts, peer requests route to the Ollama backend — never `apple-foundation` (Apple Intelligence is Mac-local only and is not exposed in the peer-facing model list).
 
 ### Phase 3: Fleet Telemetry & Remote Diagnostics
 - [ ] Implement `halbert_core/runtime/telemetry_agent.py` on satellites for lightweight system metrics reporting.
@@ -128,6 +137,7 @@ graph TD
 - [ ] Build `NodeFleetCockpit.tsx` (Fleet dashboard cards, load gauges, connection status).
 - [ ] Build `NodeSwitcher.tsx` (Top-bar dropdown for switching active node context).
 - [ ] Build `PeerPairingModal.tsx` (Discovered peers list, one-click pair button, PIN confirmation).
+- [ ] **Revised 2026-08-30 (simplification §5.3/§5.4, W15):** build the **Compute Peer** settings card for `home`/`home-light` variants (hostname:port or Tailscale address + "Test Connection"), mounted in place of `<ModelSettings />` — the model picker is not rendered on HA nodes; the workstation's picker governs. Reuses fleet plumbing (`PeerPairingModal.tsx`, `DiscoveredPeerCard.tsx`, `routes/peers.py`). This is a net-new deliverable outside the 28-file scaffold; the sysadmin variant keeps the full picker.
 
 ---
 
@@ -188,7 +198,7 @@ Phase 7 (`HALBERT-MULTI-INSTANCE-DESIGN.md` + `HALBERT-MULTI-INSTANCE-REVIEW-FEE
 
 **C3. ComputeRouter duplicates `tier_router.py` / `cascade_router.py`.**
 
-The codebase already has `model/tier_router.py` with intelligent fallback chains, `cascade_router.py` (MetaHarnessRouter), and `error_recovery` manager. The proposed `compute/router.py` multi-tier fallback (Desktop → Local micro-model → Cloud → Deferred) is a *peer-aware extension* of the existing fallback machinery, not a new router.
+The codebase already has `model/tier_router.py` with intelligent fallback chains, `cascade_router.py` (MetaHarnessRouter), and `error_recovery` manager. The proposed `compute/router.py` multi-tier fallback (Desktop → Local micro-model → Cloud → Deferred — the pre-simplification chain; the variant- and hardware-aware chain in the revised Pillar 3 above supersedes it for `SBC_LOW_POWER` and `home`/`home-light` nodes) is a *peer-aware extension* of the existing fallback machinery, not a new router.
 
 **Why this matters:** `TierRouter` already tracks `_model_health`, `_last_health_check`, `ModelSelection.fallback_used`, `fallback_from`, and has a `RateLimiter` for 429/529 handling. Building a parallel router means two health-check systems, two fallback-tracking systems, and two places where cost-cascade logic lives. The `MetaHarnessRouter` (cascade_router.py) blends outcome evidence with priors — a peer endpoint should participate in that same evidence loop.
 
@@ -268,7 +278,7 @@ The low-power hardware handoff (`HANDOFF-LOW-POWER-HARDWARE-TIERS-AND-EDGE-CASES
 - Low-power handoff §7.1 — parameter table: 4B on Pi 4 = 3-5 tok/s, OOM risk
 - Low-power handoff §3 — "cognitive monologue defaults to template thoughts (`HALBERT_LLM_THOUGHTS=0`)" on ≤4GB
 
-**Resolution:** The `ComputeRouter` fallback must be **hardware-profile-aware** using the existing `SBC_LOW_POWER` / `ENTRY_8GB` profiles. On ≤4GB, realistic fallback is template thoughts + deferred queue, not a micro-model. On ≥8GB, the 3B fallback is valid. The `PeerProvider` in `tier_router.py` checks `HardwareProfile` before attempting local model fallback.
+**Resolution:** The `ComputeRouter` fallback must be **hardware-profile-aware** using the existing `SBC_LOW_POWER` / `ENTRY_8GB` profiles. **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` §6:** on `SBC_LOW_POWER` the fallback is template thoughts + deferred queue, and the router must not attempt local model loading **at all** — there is no local model tier in the chain. The 1B tier is dropped as a supported configuration; 2B-3B is the minimum for local inference, valid only on 8GB+ hosts, where the 3B fallback is valid but offload-preferred. Note: in code `SBC_LOW_POWER` is strictly <4GB (a 4GB host classifies `ENTRY_8GB`) — the 4GB boundary is open decision D2 (simplification §12.1) and blocks S4. The `PeerProvider` in `tier_router.py` checks `HardwareProfile` before attempting local model fallback; the scaffolded `_hardware_supports_local_model()` already excludes `sbc_low_power` and is pinned by `test_hardware_profile_fallback.py` — the remaining work is implementing `route()` to honor peer → template thoughts. Extended to variant level by the simplification: `home`/`home-light` variants are offload-only regardless of RAM.
 
 ---
 
@@ -279,6 +289,8 @@ The satellite's `advance_turn` is a continuous cognitive tick. If it offloads to
 **Why this matters:** If `advance_turn` queues 200 turns while the Desktop sleeps and replays them on wake, the Desktop gets a burst of 200 inference requests — a denial-of-service from the satellite's own cognition. Conversely, if `advance_turn` just drops turns, the satellite's cognitive state diverges from reality.
 
 **Resolution:** Define explicit behavior: when the Desktop peer is unreachable, the satellite's `advance_turn` falls back to template thoughts (per the low-power rule), and queued monologue turns are NOT replayed on wake (they'd flood). Only user-initiated and automation-triggered turns are deferred. State this in Pillar 3. The `ComputeRouter` distinguishes `turn_type: "monologue" | "user" | "automation"` and applies different deferral policies.
+
+**Open question (simplification §11 Q4, unresolved):** with template thoughts as the only monologue option on HA nodes (no local LLM, no monologue offload), decide whether `advance_turn` should be disabled entirely on `home`/`home-light` variants, with cognition running only on explicit user/automation triggers.
 
 ---
 
@@ -329,6 +341,8 @@ The 4-slot model (`chat_model`, `specialist_model`, `vision_model`, `secure_mode
 
 State this explicitly in the plan and enforce it in `PeerProvider.can_serve_slot()`.
 
+**Variant scope (revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` findings 1 & 3):** these rules are binding for **sysadmin-variant satellites**. For `home`/`home-light` satellites, `secure_model` is not configured at all — the MUST-NOT rule and `_is_local_url()` enforcement remain in the codebase as defense-in-depth but never fire there; `chat_model` and `specialist_model` both resolve to `peer://<workstation>:8000` with no per-slot user selection (no model picker on HA nodes — a single Compute Peer setting; the workstation's picker governs). Whether `vision_model` exists on HA variants at all is open (simplification §11 Q3 — Frigate may handle all vision, with Halbert consuming MQTT events).
+
 ---
 
 **M12. Telemetry agent duplicates the discovery engine.**
@@ -350,6 +364,8 @@ Phase 3 proposes `runtime/telemetry_agent.py` for "lightweight system metrics." 
 
 The recent Apple Intelligence integration (`HANDOFF-APPLE-INTELLIGENCE-IMPLEMENTATION-2026-08-29.md`) added `apple-foundation` as a local provider with Metal GPU detection and auto-provisioning. The Compute Host pillar (§2 diagram, §3 roles) lists only "Ollama / vLLM / MLX."
 
+**Status:** superseded — the resolution below was **revised 2026-08-30** and resolves this finding differently (see the resolution paragraph).
+
 **Why this matters:** A Mac Studio compute host's primary inference path may be Apple Intelligence on the ANE (Apple Neural Engine), not Ollama. Satellites need to know which backend the Desktop uses so they route to the right endpoint. The `apple-foundation` provider has different capabilities (on-device, no data leaves the Mac) that affect the sensitivity routing.
 
 **Code references:**
@@ -357,7 +373,7 @@ The recent Apple Intelligence integration (`HANDOFF-APPLE-INTELLIGENCE-IMPLEMENT
 - `halbert_core/halbert_core/model/hardware_detector.py:66-69` — `apple_intelligence_available`, `apple_intelligence_bridge_running` fields
 - `halbert_core/halbert_core/model/auto_provision.py` — auto-provisioning on first boot
 
-**Resolution:** Add Apple Intelligence / Metal as a first-class compute source. The `capabilities=gpu_llm` TXT record should distinguish `apple_foundation` vs `ollama` vs `vllm` so satellites route to the right backend. The mDNS TXT record gains a `compute_backends=ollama,apple_foundation` field.
+**Resolution (revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` finding 5 — resolved differently):** Apple Intelligence is deliberately **not** a peer compute source; the original §2/§3 omission was already correct for peer-facing purposes, and Apple Intelligence belongs only to the Mac's own slot configuration. The Mac runs two local backends: `apple-foundation` for the Mac's own `chat_model`/`secure_model` (personal, on-device, ANE-accelerated), and Ollama 7B-14B for serving peer compute requests from satellites. `compute_endpoint.py` routes peer requests to Ollama and never exposes Apple Intelligence in the peer-facing model list; `peer_discovery.py` advertises `compute_backends=ollama,vllm` (never `apple_foundation`); `PeerProvider.list_models()` receives only the Ollama model list. Rationale: Apple Intelligence is designed for on-device personal use — serving it as an inference endpoint for other machines may violate Apple's terms — and its 3B model is capability-mismatched for satellite reasoning versus an Ollama 7B-14B on the same Mac. The code references above remain valid context for the Mac-local path only.
 
 ---
 
@@ -390,8 +406,8 @@ The proposed tests cover load and failover but not the security-critical paths.
 - `test_peer_tool_allowlist.py`: peer prompts cannot invoke `run_scanner` / `approve_proposal` / file-read tools on the Desktop. Verifies `filter_tools_for_peer()` strips disallowed tools.
 - `test_token_revocation.py`: revoked peer token is rejected within one request cycle. Verifies `peer_middleware.py` checks `revoked` flag on every request.
 - `test_split_brain.py`: Desktop wakes, a deferred satellite task completed locally conflicts with a Desktop-side completion — define resolution (last-write-wins? Desktop-authoritative?).
-- `test_secure_model_no_offload.py`: `secure_model` slot never routes to a peer endpoint even when peer is online. Verifies `PeerProvider.can_serve_slot("secure_model")` returns `False`.
-- `test_hardware_profile_fallback.py`: on `SBC_LOW_POWER` profile, fallback uses template thoughts, not a micro-model. On `ENTRY_8GB`, fallback uses 3B local model.
+- `test_secure_model_no_offload.py`: `secure_model` slot never routes to a peer endpoint even when peer is online. Verifies `PeerProvider.can_serve_slot("secure_model")` returns `False`. *(Revised 2026-08-30: guardrail for sysadmin-variant satellites — `home`/`home-light` never configure the slot at all, so the check is moot there; it passes unchanged.)*
+- `test_hardware_profile_fallback.py`: on `SBC_LOW_POWER` profile, the router makes **no local model attempt** (no model load; peer → template thoughts only — the skip itself is already scaffolded and pinned by this test). On `ENTRY_8GB`, the local 3B fallback is permitted but offload-preferred. No 1B-tier configuration is supported anywhere. *(Revised 2026-08-30; update the 4GB-row expectations per open decision D2 before unskipping.)*
 
 ---
 
@@ -403,14 +419,14 @@ Given the completed foundations, the federated work should be framed as **Phase 
 |------|-----------|-------------|---------------------|
 | 9.1 | MCP Phase 4b (HTTP/SSE + bearer) | Peer auth = MCP token, one middleware. Per-peer tokens. | `federation/peer_middleware.py`, `federation/peers_config.py` |
 | 9.2 | Multi-Instance Phase 7 (Instance Switcher) | Extend switcher with remote peer entries (manual IP first). | `InstanceSwitch.tsx` (extend), `useDiscoveredPeers.ts` |
-| 9.3 | `tier_router.py` | Add `peer://` provider type with health probe. 1:1 cross-machine link. | `model/providers/peer.py` |
+| 9.3 | `tier_router.py` | Add `peer://` provider type with health probe. 1:1 cross-machine link. For `home`/`home-light`: `list_models()` is a health check only — never user-facing model selection (no model picker on HA nodes; the workstation's picker governs). Prerequisite: register `PeerProvider` in the model stack — `peer` is currently absent from `CHAT_CAPABLE_PROVIDERS`/`tier_router.py`/`providers/__init__.py`, so any peer slot is disabled as "not chat-capable" (W14). | `model/providers/peer.py` |
 | 9.4 | MCP Tier 0/1/2 redaction | Apply `redact_text()` + peer tool allowlist on compute endpoint. | `federation/tool_allowlist.py`, `federation/compute_endpoint.py` |
 | 9.5 | Discovery engine | Satellite telemetry = discovery snapshot + vitals deltas. | `federation/telemetry_agent.py` |
-| 9.6 | Low-power hardware profiles | Hardware-profile-aware fallback (template thoughts on ≤4GB). | `federation/compute_router.py` |
+| 9.6 | Low-power hardware profiles | Offload-only fallback on `SBC_LOW_POWER` (<4GB in code; 4GB boundary = open decision D2) and `home`/`home-light` variants — no local model tier, peer → template thoughts; optional 3B local fallback on 8GB+ sysadmin variants; 1B tier dropped. | `federation/compute_router.py` |
 | 9.7 | — | mDNS auto-discovery (lazy `zeroconf`, LAN-only). Tailscale = manual. | `federation/peer_discovery.py` |
 | 9.8 | 9.1-9.4 validated | Concurrency broker, scale to N (Phase 2b). | `federation/compute_broker.py` |
 | 9.9 | MCP server on satellite | Fleet Cockpit = Desktop as MCP client of satellite (no bespoke inspect API). | `federation/fleet_proxy.py`, `dashboard/routes/fleet.py` |
-| 9.10 | Apple Intelligence | `apple-foundation` as advertised peer capability. | (TXT record field in `peer_discovery.py`) |
+| 9.10 | Apple Intelligence (local-only) | Enforce `apple-foundation` is **not** a peer backend: advertise `compute_backends=ollama,vllm`; route peer requests on Mac hosts to Ollama; exclude Apple Intelligence models from `PeerProvider.list_models()`. | `peer_discovery.py` (TXT field), `compute_endpoint.py` (routing) |
 
 **Bottom line:** The vision is sound. The plan needs to be rewritten as an *extension* of MCP Phase 4b + Multi-Instance Phase 7 + the 4-slot model, not a greenfield architecture. The single most important fix is C4/C5 — the federated compute and inspection paths inherit the MCP redaction boundary and tool allowlist, or they are an unmonitored exfiltration channel.
 
@@ -430,10 +446,10 @@ All files are scaffolded with detailed inline comments referencing the findings 
 | `__init__.py` | Package init, public API exports | — |
 | `peers_config.py` | Per-peer credential store with token hashes, revocation | C1, M14 |
 | `peer_middleware.py` | FastAPI dependency: bearer token validation (shared with MCP 4b) | C1 |
-| `peer_discovery.py` | mDNS beacon/listener (lazy `zeroconf`, LAN-only) | H9, H10 |
-| `compute_endpoint.py` | OpenAI-compatible `/api/compute/v1/chat/completions` with redaction boundary | C4 |
+| `peer_discovery.py` | mDNS beacon/listener (lazy `zeroconf`, LAN-only). mDNS TXT `compute_backends` lists `ollama`/`vllm` only — `apple_foundation` is never advertised (strip the scaffolded `apple_foundation` references; see the simplification §7.4/§9 impact) | H9, H10, S6 |
+| `compute_endpoint.py` | OpenAI-compatible `/api/compute/v1/chat/completions` with redaction boundary. On Mac compute hosts, peer requests route to Ollama — never `apple-foundation`; the models route never lists Apple Intelligence | C4, S6 |
 | `compute_broker.py` | Priority queue + concurrency semaphore (max_concurrent=1 for 9.2a) | H6 |
-| `compute_router.py` | Hardware-profile-aware fallback chain (extends tier_router) | C3, H7, H8 |
+| `compute_router.py` | Hardware-profile-aware fallback chain (extends tier_router). Offload-only on `SBC_LOW_POWER` (local-model skip already scaffolded and tested in `_hardware_supports_local_model()`) and `home`/`home-light`: peer → template thoughts, no local model tier, no 1B tier, no `secure_model` routing (zero references in the file); remaining work is implementing `route()` | C3, H7, H8, S4 |
 | `tool_allowlist.py` | `PEER_ALLOWED_TOOLS` frozenset, `filter_tools_for_peer()` | C4, C5 |
 | `telemetry_agent.py` | Discovery engine snapshot + vitals deltas (reuses discovery/) | M12 |
 | `fleet_proxy.py` | Desktop-as-MCP-client proxy to satellite (no bespoke inspect API) | C5 |
@@ -442,7 +458,7 @@ All files are scaffolded with detailed inline comments referencing the findings 
 
 | File | Purpose | Finding |
 |------|---------|---------|
-| `peer.py` | `PeerProvider(ModelProvider)` — calls peer compute endpoint with bearer auth | C3, M11 |
+| `peer.py` | `PeerProvider(ModelProvider)` — calls peer compute endpoint with bearer auth; `can_serve_slot("secure_model")` returns `False` (unchanged; for `home`/`home-light` the slot doesn't exist at all, so this is moot); `list_models()` is used for health checking, not user selection. Prerequisite: register the provider in the model stack — `peer` is currently absent from `CHAT_CAPABLE_PROVIDERS`/`tier_router.py`/`providers/__init__.py` (W14) | C3, M11, S3 |
 
 ### Backend (`halbert_core/halbert_core/dashboard/routes/`)
 
@@ -468,16 +484,18 @@ All files are scaffolded with detailed inline comments referencing the findings 
 | `test_peer_tool_allowlist.py` | Peer prompts cannot invoke restricted tools | C4, L15 |
 | `test_token_revocation.py` | Revoked token rejected within one request cycle | M14, L15 |
 | `test_split_brain.py` | Deferred task conflict resolution | L15 |
-| `test_secure_model_no_offload.py` | `secure_model` never routes to peer | M11, L15 |
-| `test_hardware_profile_fallback.py` | SBC_LOW_POWER uses template thoughts, not micro-model | H7, L15 |
+| `test_secure_model_no_offload.py` | `secure_model` never routes to peer (guardrail for sysadmin-variant satellites; `home`/`home-light` never configure the slot) | M11, L15 |
+| `test_hardware_profile_fallback.py` | No local model attempt on `SBC_LOW_POWER` (peer → template thoughts only); `ENTRY_8GB` 3B fallback optional/offload-preferred; no 1B tier anywhere | H7, L15 |
 | `test_compute_broker.py` | Concurrency + priority preemption (Phase 2b) | H6 |
-| `test_peer_discovery.py` | mDNS packet serialization + handshake validation | H9 |
+| `test_peer_discovery.py` | mDNS packet serialization + handshake validation. **Revised 2026-08-30:** currently asserts `compute_backends == "ollama,apple_foundation"` — must be updated to `ollama,vllm` in the same change as the advertisement fix (W22/W23) | H9, S6 |
 
 ### Documentation
 
 | File | Purpose |
 |------|---------|
-| `halbert_core/halbert_core/federation/README.md` | Architecture overview, finding references, implementation order |
+| `halbert_core/halbert_core/federation/README.md` | Architecture overview, finding references, implementation order. **Revised 2026-08-30:** must record the simplification deltas — offload-only fallback on `SBC_LOW_POWER`/`home` variants, `compute_backends=ollama,vllm`, `secure_model` scoped to sysadmin, no model picker on HA nodes. Its current Apple Intelligence listing and "9.10 — apple-foundation as advertised peer capability" phase row must be rewritten as the negative constraint (W22) |
+
+> **Simplification impact (2026-08-30, per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` §9):** the 28-file scaffold list neither grows nor shrinks — only the Purpose/expectations of `peer_discovery.py`, `compute_endpoint.py`, `compute_router.py`, `peer.py`, `test_secure_model_no_offload.py`, `test_hardware_profile_fallback.py`, and `test_peer_discovery.py` change. The one net-new deliverable outside the scaffold is the `home`/`home-light` "Compute Peer" settings card (replaces the model picker; W15). Scaffold bug found during code verification: `federation/__init__.py` exports `PeerAuthMiddleware`, which `peer_middleware.py` does not define (it defines `require_peer_auth`/`optional_peer_auth`/`PeerContext`) — accessing `halbert_core.federation.PeerAuthMiddleware` raises `ImportError`; fix alongside S6 (W24).
 
 ---
 
@@ -575,23 +593,29 @@ issues across 4 severity levels. All were fixed before merge:
 ```
 
 The 16 skipped tests are marked `TODO(federation-9.x)` and will be
-unskipped as each implementation step is completed.
+unskipped as each implementation step is completed. **Revised 2026-08-30:**
+before unskipping the 9.6/9.10-related tests, update their expected behavior
+per the simplification (`test_hardware_profile_fallback`, 
+`test_secure_model_no_offload`, and `test_peer_discovery`'s
+`compute_backends` TXT assertions — W22/W23).
 
 ### Next steps
 
 The scaffold is ready for implementation. The recommended order is the
-10-step sequence in §8 above:
+10-step sequence in §8 above.
+
+**Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` §10:** implement S1-S7 of the simplification handoff **before** starting this sequence — they shrink the 9.3/9.6/9.10 targets so the federated Phase 9 work lands on a cleaner target: the HA node as a pure compute client with no local models, no SourcePrep, no `secure_model`, and no model picker.
 
 1. **Step 9.1** — Peer auth = MCP token, one middleware, per-peer tokens
 2. **Step 9.2** — Extend Instance Switcher with remote peers
-3. **Step 9.3** — `peer://` provider, 1:1 cross-machine link
+3. **Step 9.3** — `peer://` provider, 1:1 cross-machine link (register `PeerProvider` in the model stack — prerequisite, W14; for `home`/`home-light`, `list_models()` is a health check only — no model picker on HA nodes)
 4. **Step 9.4** — `redact_text()` + tool allowlist on compute endpoint
 5. **Step 9.5** — Satellite telemetry = discovery snapshot + vitals
-6. **Step 9.6** — Hardware-profile-aware fallback
+6. **Step 9.6** — Offload-only fallback (peer → template thoughts) on `SBC_LOW_POWER` and `home`/`home-light`; no local model tier; 1B tier dropped; optional 3B on 8GB+ sysadmin satellites
 7. **Step 9.7** — mDNS auto-discovery (lazy `zeroconf`, LAN-only)
 8. **Step 9.8** — Concurrency broker, scale to N
 9. **Step 9.9** — Fleet Cockpit = Desktop as MCP client
-10. **Step 9.10** — `apple-foundation` as advertised peer capability
+10. **Step 9.10** — Enforce Apple Intelligence as local-only: `compute_backends=ollama,vllm`; Mac peer endpoint routes peer requests to Ollama (never `apple-foundation`)
 
 Each step's TODO markers in the scaffolded files point to the exact
 functions that need implementation.
@@ -661,10 +685,12 @@ The `ComputeRouter` on satellite nodes enforces strict turn classification:
 
 | Turn Classification | Origin / Trigger | Offload to Desktop GPU? | Fallback Behavior if Desktop Offline |
 | :--- | :--- | :--- | :--- |
-| **`interactive_user`** | Wake-word voice query, chat input on satellite | **YES (Priority 2)** | Fast CPU template / local micro-model response (< 1.5s) |
+| **`interactive_user`** | Wake-word voice query, chat input on satellite | **YES (Priority 2)** | Template thoughts (deterministic, < 1.5s) on `home`/`home-light` and `SBC_LOW_POWER` devices; optional local 3B on 8GB+ sysadmin-variant satellites (offload-preferred) |
 | **`high_value_event`** | Frigate person detection, security anomaly alert | **YES (Priority 3)** | Local heuristic rule evaluation |
 | **`sleep_consolidation`** | Daily memory synthesis (scheduled 3:00 AM) | **YES (Priority 3, Batch)** | Deferred in queue until Desktop is awake and idle |
 | **`cognitive_monologue`** | Continuous background tick (`advance_turn`) | **NO (Strictly Local)** | Runs 100% on-device using template thoughts (`HALBERT_LLM_THOUGHTS=0`) |
+
+> **Revised 2026-08-30:** the `interactive_user` fallback cell drops "local micro-model response" for `home`/`home-light` and `SBC_LOW_POWER` — those nodes have no local model at all; template thoughts deliver the < 1.5s guarantee deterministically. **Open questions (simplification §11, unresolved):** (Q3) whether `vision_model` exists on HA variants at all — Frigate may handle all vision with Halbert consuming MQTT events; (Q4) whether `advance_turn` should be disabled entirely on `home`/`home-light` variants, given template thoughts are the only monologue option there — the `cognitive_monologue` row above assumes the monologue still runs.
 
 ---
 
@@ -681,7 +707,7 @@ When scaling to **1:N satellites (up to 25 nodes)**, latency budgets must govern
 * When a user speaks to a satellite in the kitchen:
   1. Satellite sends an inference request to Desktop with `priority=2` and a hard **1.5s queue timeout**.
   2. If the Desktop is online and a slot is open, generation begins immediately and streams back over HTTP/SSE.
-  3. If all slots are occupied and 1.5s elapses without acquisition, the satellite **aborts queue wait** and immediately triggers local fallback generation.
+  3. If all slots are occupied and 1.5s elapses without acquisition, the satellite **aborts queue wait** and immediately falls back to template thoughts (`home`/`home-light` and `SBC_LOW_POWER` — no local model exists) or local 3B generation (8GB+ sysadmin-variant satellites only).
   4. **Outcome:** The user never experiences an awkward 5-second silence while standing in front of an ambient smart home speaker.
 
 ---
@@ -700,7 +726,8 @@ A federated compute architecture fundamentally transforms the node-to-node bound
   │        DESKTOP COMPUTE ENDPOINT (compute_endpoint.py)   │
   │  1. Validate Bearer Token against peers_config.py      │
   │  2. Filter Tools: Strip all non-PEER_ALLOWED_TOOLS     │
-  │  3. Execute Model Generation (GPU / Apple Intelligence)│
+  │  3. Execute Model Generation (Ollama / vLLM — never    │
+  │     apple-foundation for peer requests)                │
   │  4. Apply mcp_response() + redact_text() on output     │
   └───────────────────────────┬────────────────────────────┘
                               │ Redacted Response Stream
@@ -714,6 +741,7 @@ A federated compute architecture fundamentally transforms the node-to-node bound
 1. **Unconditional `secure_model` Isolation:**
    * The `secure_model` slot handles local secrets, disk encryption keys, authentication credentials, and raw private storage.
    * `PeerProvider.can_serve_slot("secure_model")` unconditionally returns `False`. Remote offload of `secure_model` is forbidden by code architecture.
+   * **Scope note (revised 2026-08-30):** `home`/`home-light` variants do not configure `secure_model` at all — the guardrail remains in `PeerProvider`/`llm_config` as defense-in-depth but is exercised only by sysadmin-variant nodes. Sysadmin work on an HA device is performed from the workstation's Halbert (fleet cockpit / MCP client path) using the workstation's `secure_model`.
 2. **Egress Sanitization:**
    * Responses from the Desktop compute endpoint pass through `mcp_response()` before serialization, stripping accidental file paths, API tokens, or internal workstation credentials that may have appeared in model reasoning traces.
 3. **Cryptographic Token Revocation:**
@@ -727,7 +755,7 @@ Halbert's core contract mandates extreme portability:
 * **Subtractive Dependency Guard:** `zeroconf` is loaded strictly inside function-level `try/except ImportError` blocks. The core Halbert daemon will start, run, and execute all local functions with zero errors even if `zeroconf` is completely absent from the environment.
 * **Network Flapping Mitigation:**
   * Workstations frequently enter sleep, undergo DHCP lease renewals, or experience Wi-Fi roaming latency.
-  * The satellite `ComputeRouter` maintains a rolling health window (`_peer_health_state`) with a 3-consecutive-failure threshold before transitioning a peer from `ONLINE` to `OFFLINE`. This prevents rapid flapping between local and remote models during minor network packet loss.
+  * The satellite `ComputeRouter` maintains a rolling health window (`_peer_health_state`) with a 3-consecutive-failure threshold before transitioning a peer from `ONLINE` to `OFFLINE`. This prevents rapid flapping between peer-offload and fallback mode during minor network packet loss (fallback = local model on 8GB+ sysadmin-variant satellites; template thoughts on `home`/`home-light` and `SBC_LOW_POWER` devices, which have no local model to flap to).
 
 ---
 
@@ -737,12 +765,12 @@ Halbert's core contract mandates extreme portability:
 | :--- | :--- | :--- | :--- |
 | **9.1** | Authentication | `peer_middleware.py` | Unified MCP/Peer bearer auth with SHA-256 token hashing |
 | **9.2** | Navigation | `InstanceSwitch.tsx` | Discovery feed polling + manual IP fallback |
-| **9.3** | Inference Client | `model/providers/peer.py` | `ModelProvider` compliance + slot filtering |
+| **9.3** | Inference Client | `model/providers/peer.py` | `ModelProvider` compliance + slot filtering; for `home`/`home-light`, `list_models()` = health check only (no model picker; the workstation's picker governs); provider registration in the model stack is a prerequisite |
 | **9.4** | Redaction Boundary | `compute_endpoint.py` | `mcp_response()` output filtering + restricted tool allowlist |
 | **9.5** | Telemetry | `telemetry_agent.py` | Lightweight discovery snapshot diffing (no parallel scanners) |
-| **9.6** | Edge Fallback | `compute_router.py` | Hardware-profile awareness (template thoughts on ≤4GB) |
+| **9.6** | Edge Fallback | `compute_router.py` | Offload-only on `SBC_LOW_POWER` and `home`/`home-light` (no local model tier; peer → template thoughts); 2B-3B minimum on 8GB+ sysadmin satellites; 1B tier dropped |
 | **9.7** | Discovery | `peer_discovery.py` | Lazy `zeroconf` import (Haloysius subtractive contract) |
 | **9.8** | Concurrency | `compute_broker.py` | Priority queue with 1.5s voice timeout & GPU slot semaphore |
 | **9.9** | Fleet Diagnostics | `fleet_proxy.py` | Desktop-as-MCP-client to remote satellites |
-| **9.10** | Apple Silicon | `peer_discovery.py` | Advertisement of `apple_foundation` Metal/ANE backends |
+| **9.10** | Apple Silicon (local-only) | `peer_discovery.py`, `compute_endpoint.py` | `compute_backends` advertises `ollama`/`vllm` only; peer requests on Mac hosts route to Ollama, never `apple-foundation` |
 

@@ -38,6 +38,12 @@ Each packet contains:
 | **REV-10** | **Federated Fleet & Multi-Persona System** | **GLM-5.3 medium** | standalone | Directory-backed persona store, atomic symlink swap, reserved IDs, fleet peer pairing | [`.handoff/REVIEW-PACKET-10-FEDERATED-FLEET-AND-MULTI-PERSONA.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/REVIEW-PACKET-10-FEDERATED-FLEET-AND-MULTI-PERSONA.md) |
 | **REV-11** | **Chat UI Performance, State & A11y Audit** | **GLM-5.3 medium** | U3 | 2,447-line chat audit, SSE reader leaks, $O(n^2) \to O(1)$ rAF token buffer, 11 ARIA gaps | [`.handoff/REVIEW-PACKET-11-CHAT-UI-PERFORMANCE-AND-ACCESSIBILITY.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/REVIEW-PACKET-11-CHAT-UI-PERFORMANCE-AND-ACCESSIBILITY.md) |
 
+> **2026-08-30 simplification addendum:** REV-03, REV-05, REV-06, and REV-10 must also be reviewed against [`HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md):
+> - **REV-03** — verify home/home-light variants: `secure_model` unconfigured + hidden, no SourcePrep retrieval backend, no model picker (Compute Peer setting instead); persona memory embeddings are NOT SourcePrep and stay local.
+> - **REV-05** — Apple Intelligence is local-only (never a peer backend, S6); no 1B tier; `SBC_LOW_POWER` recommends offload-only (S4); `secure_model` is sysadmin-only (S1).
+> - **REV-06** — SourcePrep scoped RAG is workstation/sysadmin-only; HA variants must not instantiate the retrieval backend or configure `SOURCEPREP_URL`.
+> - **REV-10** — the HA node is a pure compute client (peer -> template thoughts fallback; no local models / SourcePrep / `secure_model` / picker); mDNS `compute_backends` advertises `ollama`/`vllm` only; S1-S7 land before federated Phase 9.
+
 ---
 
 ## 3. Central Master Task List

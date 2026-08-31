@@ -3,9 +3,9 @@
 **Living task list & AI review directory.** Items move here from session handoffs so nothing gets
 lost between sessions. Strike through and date when done.
 
-**Updated:** 2026-08-30 (model/effort reassessment + ultracode regrouping)  
+**Updated:** 2026-08-30 (model/effort reassessment + ultracode regrouping + home automation simplification — Batch U6)  
 **Master Review Portfolio:** 11 Comprehensive Review Packets (`.handoff/REVIEW-PACKET-*.md`)  
-**Active Incomplete Task Packets:** 10 Actionable Implementation Packets (`.handoff/TASK-PACKET-*.md`)
+**Active Incomplete Task Packets:** 10 Actionable Implementation Packets (`.handoff/TASK-PACKET-*.md`) + U6 simplification workstream
 
 > **2026-08-30 Reassessment (GLM-5.3).** All packets were previously tiered "Fable" (one "Opus").
 > After verifying actual code state, no remaining packet requires Fable. All implementation work is
@@ -29,6 +29,7 @@ sub-task, verify pass per finding). Batches are independent and may run in any o
 | **U3 — Frontend (Settings, Nav, Chat UI)** | TASK-02 (decomposition + nav + rename), TASK-08 (re-pointed at `useAgentStream.ts`/`AgentChat.tsx`; abort cleanup already present — a11y + token buffer remain), REV-08 + REV-11 reviews | GLM-5.3 medium (large fan-out; tab extraction parallelizes cleanly) | Settings.tsx is 3,283 lines (packet said 3,105/3,273 — stale). `ChatPanel.tsx` does not exist; packet references corrected. |
 | **U4 — Model Routing & Agent Tooling** | TASK-01 remainder (`HALBERT_MODEL` env override only), TASK-04 (GPU tool refactor), TASK-05 Task 5.2/5.3 (role harvester; Task 5.1 obsolete — see erratum), TASK-10 (merged — verification only), REV-05 + REV-06 reviews | GLM-5.3 medium | TASK-01 1.1 (secure_model)/1.2 (BeingConfig fields)/1.3 (home-light variant) already shipped; only the env-var override is left. Apple Intelligence merge landed (`11ded488`). |
 | **U5 — Founder Decisions (human-gated)** | TASK-06, REV-07 | GLM-5.3 high drafts all text; **decisions remain the founder's** — AI drafting cannot close FDR-DEC-01…04 | Not ultracode. Draft DCO/§7-exception/terms docs, correct `tauri.conf.json` path (see erratum), then present for founder approval. |
+| **U6 — Home Automation Simplification (S1-S7)** | [`HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md) (its §12 work list W1-W25 is authoritative) | GLM-5.3 medium | Remove `secure_model`, SourcePrep, and the model picker from `home`/`home-light` variants; drop the 1B tier (SBC_LOW_POWER offload-only); Apple Intelligence local-only (peer compute routes to Ollama); HA memory embeddings via Ollama/ONNX (NOT `sentence-transformers` in halbert_core — see the handoff §4.7 correction). Must land **before** federated Phase 9. Details: §3 "Home Automation Simplification" subsection below. |
 
 **Errata found during verification (fixed in packets/indexes):**
 1. **TASK-05 Task 5.1 is obsolete.** It instructs wiring `SendMessageRequest.context` into the agent — but the founder decision on 2026-08-30 was to *remove* the field (done, see §3). Packet updated; only the role harvester remains.
@@ -59,6 +60,12 @@ GLM-5.3 did not author this code, so it is a reasonably independent reviewer. Se
 | **REV-09** | **Auditory Cortex & Multimodal Audio AI Pipeline** | **GLM-5.3 medium** | U2 | [`REVIEW-PACKET-09-AUDITORY-CORTEX-AND-AUDIO-PIPELINE.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/REVIEW-PACKET-09-AUDITORY-CORTEX-AND-AUDIO-PIPELINE.md) |
 | **REV-10** | **Federated Fleet & Multi-Persona System Architecture** | **GLM-5.3 medium** | standalone | [`REVIEW-PACKET-10-FEDERATED-FLEET-AND-MULTI-PERSONA.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/REVIEW-PACKET-10-FEDERATED-FLEET-AND-MULTI-PERSONA.md) |
 | **REV-11** | **Chat UI Performance, Streaming State & Accessibility Audit** | **GLM-5.3 medium** | U3 | [`REVIEW-PACKET-11-CHAT-UI-PERFORMANCE-AND-ACCESSIBILITY.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/REVIEW-PACKET-11-CHAT-UI-PERFORMANCE-AND-ACCESSIBILITY.md) |
+
+> **2026-08-30 simplification addendum:** REV-03, REV-05, REV-06, and REV-10 must also be reviewed against [`HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md):
+> - **REV-03** — home/home-light have no `secure_model` (unconfigured + hidden), no SourcePrep retrieval backend, no model picker (Compute Peer setting instead); persona memory embeddings are NOT SourcePrep and stay local.
+> - **REV-05** — Apple Intelligence is local-only (never a peer backend); no 1B tier; `SBC_LOW_POWER` recommends offload-only; `secure_model` is sysadmin-only.
+> - **REV-06** — SourcePrep scoped RAG is workstation/sysadmin-only; HA variants must not instantiate the retrieval backend or configure `SOURCEPREP_URL`.
+> - **REV-10** — the HA node is a pure compute client (peer -> template thoughts fallback; no local models/SourcePrep/secure_model/picker); `compute_backends` advertises `ollama`/`vllm` only; S1-S7 land before federated Phase 9.
 
 ---
 
@@ -111,9 +118,25 @@ Status reflects code verification on 2026-08-30 — several packets were already
 - [ ] **ThreadManager injection into Wyoming agent** — Inject `ThreadManager` into `HalbertWyomingAgent`, query `get_or_open_thread_id()` on incoming voice turns. TASK-07 covers threading `conversation_id` as `thread_id` but not the ThreadManager injection itself. (See doc 14 Gap 3).
 - [ ] **Frontend voice UI components** — Build `AcousticAura.tsx` (header audio state visualizer), `VoiceCompanionPill.tsx` (floating HUD), `ModalityHandoffBadge.tsx` (where artifacts landed), `AcousticEventCard.tsx` (environmental anomaly chronicle card). Note: actual file is `AcousticAuraIndicator.tsx`, not `AcousticAura.tsx`. (See doc 14 Gap 5).
 - [ ] **macOS NSPanel + CGEventTap for floating HUD** — When `VoiceCompanionPill` is built, implement non-activating `NSPanel` with `CGEventTap` hotkey monitor for `Esc`/`Space` to avoid keyboard focus trap in background IDE. (See doc 12 Finding 4, doc 14 Gap 4).
-- [ ] **`HALBERT_MODEL` env var wiring** — Thread env override into `llm_config.resolve("chat_model")` (not `cognition_wiring.py`). Verified 2026-08-30: no `HALBERT_MODEL` handling exists anywhere in `halbert_core` Python. (See [`TASK-PACKET-01`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-01-SENTIENT-HOME-BUGFIX-AND-PHASE8.md), Batch U4).
-- [x] ~~**Add `secure_model` slot (`qwen3:4b`)**~~ Done — `llm_config.py:64` `SLOTS = ("chat_model", "specialist_model", "vision_model", "secure_model")` with local-only enforcement; `get_secure_model()` exported in `client.py:236`.
-- [x] ~~**Phase 8 Light Variant (`home-light`)**~~ Done in `app.py:423-432` (heavy services skipped on `home-light`) and `cognition_wiring.py:81-93` (`BeingConfig.variant` first, env fallback). App Store *packaging* itself remains part of TASK-06/U5.
+- [ ] **`HALBERT_MODEL` env var wiring** — Thread env override into `llm_config.resolve("chat_model")` (not `cognition_wiring.py`). Verified 2026-08-30: no `HALBERT_MODEL` handling exists anywhere in `halbert_core` Python. **Scope: main/sysadmin variants only** — home/home-light have no local model to override (chat/specialist resolve to the compute peer; see Batch U6). (See [`TASK-PACKET-01`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-01-SENTIENT-HOME-BUGFIX-AND-PHASE8.md), Batch U4).
+- [x] ~~**Add `secure_model` slot (`qwen3:4b`)**~~ Done — `llm_config.py:64` `SLOTS = ("chat_model", "specialist_model", "vision_model", "secure_model")` with local-only enforcement; `get_secure_model()` exported in `client.py:236`. **Revised 2026-08-30 (S1):** the slot is now **sysadmin-variant-only** — home/home-light must leave it unconfigured, gate its auto-provisioning, and hide its UI role row (Batch U6, W1-W6).
+- [x] ~~**Phase 8 Light Variant (`home-light`)**~~ Done in `app.py:423-432` (heavy services skipped on `home-light`) and `cognition_wiring.py:81-93` (`BeingConfig.variant` first, env fallback). **Revised 2026-08-30 (S1-S5):** what home-light *ships* is redefined — no `secure_model`, no SourcePrep, no model picker (Compute Peer setting instead); see Batch U6. App Store *packaging* itself remains part of TASK-06/U5.
+
+### Home Automation Simplification (Batch U6 — added 2026-08-30)
+
+Direction accepted per [`HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md) — its Section 12 (work items W1-W25, decisions D1-D4) is the **code-verified, authoritative** work list and supersedes the handoff's earlier code-impact prose where they differ. Lands **before** federated Phase 9.
+
+- [ ] **D1 — Unify variant resolution (prerequisite for S1/S3/S4)** — `GET /api/instance/info` (`dashboard/routes/instance.py:33`) reads only the `HALBERT_VARIANT` env var while backend gating uses `cognition_wiring._get_variant()` (being.yml > env > sysadmin). Make them agree, or a being.yml-set home variant gates backend services while the UI still renders the sysadmin picker.
+- [ ] **S1 — Remove `secure_model` from home/home-light** — gate Apple Intelligence auto-provisioning (`auto_provision.py:66-71`, triggered from `routes/llm.py:~208-217`), the config wizard's secure_model writes (`config_wizard.py:101-107, 262-327`), and the secure turn gate (`agent.py:465-476`); hide the role row via `variants: ["sysadmin"]` in `halbertModelRoles.ts` + host-side filtering in `ModelSettings.tsx` (not inside the shared package). (W1-W6)
+- [ ] **S2 — Remove SourcePrep from home/home-light** — nothing currently skips it for any variant: variant-gate the `SourcePrepAdapter`/assembler factories (`agent.py:136-142`, `context/adapters.py:337-343,429,455`, `extra_adapters.py:559`), pass `skip_retrieval=True` in `cognition_wiring.py:141-149`, drop the config-watcher reindex callback for `home` (`app.py:616-622`), retire the HA-config bridge surface (`ha_config_bridge.py` + `/home/config-search` routes; `ha_config_tools.py` is dead code), fix `deploy/halbert-home.service` + `deploy/README.md`. (W7-W13)
+- [ ] **S3 — Compute Peer setting replaces the model picker on HA nodes** — **prerequisite:** register `PeerProvider` in the model stack (`peer` is missing from `CHAT_CAPABLE_PROVIDERS`, `tier_router.py`, `providers/__init__.py` — any peer slot is currently disabled as "not chat-capable"); then ComputePeerCard mounted instead of `<ModelSettings />` (`Settings.tsx:2241`) + persist a `peer://` endpoint into `chat_model`/`specialist_model`. (W14-W16)
+- [ ] **S4 — Drop the 1B tier; `SBC_LOW_POWER` offload-only** — clamp `recommend_budget()`/`get_installation_commands()` (`hardware_detector.py:429-525`; the "1B tier" is emergent arithmetic, not a named recommendation), add the wizard compute-peer prompt (new functionality — the wizard has no profile gating today), implement `ComputeRouter.route()` (the SBC local-model skip itself **already exists and is tested**). Needs D2 first. (W17-W19)
+- [ ] **S5 — HA memory embeddings via Ollama/ONNX** — do **NOT** add `sentence-transformers` to halbert_core extras (wrong package — the on-path persona embedder is haloysius's ONNX/Ollama `MemoryEmbedder`; halbert_core's own `sentence-transformers` consumer is eval-only). Confirm the operative memory path (D3) first; optionally add a `[home]` extra = `[light]` + `[cognition]`. (W20-W21)
+- [ ] **S6 — Apple Intelligence local-only** — strip `apple_foundation` from the mDNS `compute_backends` contract (`peer_discovery.py:35-47,272-293`, `peers_config.py:88`, `federation/README.md:35,105`, `peer.py:45`, `compute_endpoint.py:231-232,257`); **update `test_peer_discovery.py:36,43,119` which asserts the old advertisement**; fix the `PeerAuthMiddleware` ImportError (`federation/__init__.py:53,77-79` imports a class that doesn't exist). (W22-W24)
+- [ ] **S7 — Revise `HANDOFF-LOW-POWER-HARDWARE-TIERS-AND-EDGE-CASES-2026-08-29.md`** — drop the 1B-1.5B tier row from the §7.1 capability table, the Q2_K/IQ2_XXS extreme-quantization research, and the "2B Q4 vs 4B Q2" analysis; 2B-3B is the minimum for local inference (8GB+ hosts only). (W25)
+- [ ] **D2 — 4GB boundary decision** — code classifies `SBC_LOW_POWER` as strictly <4GB (4GB hosts are `ENTRY_8GB` with local-model support `True`), but the handoff's table says 4GB = offload-only. Either move the boundary (`hardware_detector.py:423`, `compute_router.py:263`, `test_hardware_profile_fallback.py`) or correct the docs to "<4GB".
+- [ ] **D3 — Confirm the HA persona memory path** — the dashboard agent path wires `memory_service=None` (receipts/FTS5, `agent.py:144-146`); if that is operative on home nodes, S5 needs no packaging change at all.
+- [ ] **D4 — home vs home-light merge decision** — the per-variant service-skip matrix is recorded in the handoff §12.1; if `home` retires into `home-light`, S2's watcher gating collapses into the merge.
 
 ---
 
@@ -129,7 +152,8 @@ Status reflects code verification on 2026-08-30 — several packets were already
 ### Core Agent & Configuration Engine Subsystems
 - [x] ~~**Remove `context` field on `SendMessageRequest`**~~ — Done 2026-08-30.
 - [ ] **Role-Scoped Configuration Harvesting** — Implement `config/role_harvester.py` from `ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md`. (See [`TASK-PACKET-05`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-05-ROLE-SCOPED-CONFIG-AND-AGENT-CLEANUP.md)).
-- [ ] **Apple Intelligence Platform Bridge** — Merge `feat/apple-intelligence` and verify on macOS 15.1+ M-series Silicon. (See [`TASK-PACKET-10`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-10-APPLE-INTELLIGENCE-ONBOARDING-AND-TUNING.md)).
+- [x] ~~**Apple Intelligence Platform Bridge — merge**~~ Merged at `11ded488` (2026-08-30 erratum 3); platform verification on macOS 15.1+ M-series Silicon remains open. (See [`TASK-PACKET-10`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-10-APPLE-INTELLIGENCE-ONBOARDING-AND-TUNING.md), Batch U4).
+- [ ] **Apple Intelligence local-only scoping (S6, Batch U6)** — ensure `apple-foundation` is never exposed to peers: peer compute on a Mac routes to Ollama; mDNS `compute_backends` = `ollama`/`vllm` only; `PeerProvider` receives the Ollama model list only. (W22-W24 in the simplification handoff §12.)
 
 ---
 

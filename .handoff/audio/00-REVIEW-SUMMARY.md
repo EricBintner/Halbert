@@ -4,6 +4,7 @@
 > **Parent:** `.handoff/HANDOFF-AUDIO-AI-ARCHITECTURE-AND-UX-2026-08-29.md`
 > **Date:** 2026-08-29
 > **Status:** Scrutinized & Corrected — Ready for Implementation
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** partially superseded for `home` / `home-light` (voice/HA) targets — those nodes are pure compute clients (no local LLM: cognition offloads to the compute peer with template-thought fallback; no `secure_model`; no SourcePrep; no model picker — a single "Compute Peer" setting replaces it). All audio-ML components and corrections below are unaffected.
 > **Worktree:** `feat/auditory-cortex`
 
 ---
@@ -88,7 +89,7 @@ Each task in the work breakdown (file `04-PHASED-WORK-BREAKDOWN.md`) is assigned
 | Phase 2: Ingress + Desktop | 10 tasks | opus for Rust/transport, sonnet for Python ingress | max–ultracode |
 | Phase 3: Speaker ID + Safety | 7 tasks | opus for RoleGate design, sonnet for enrollment | xhigh–max |
 | Phase 4: Acoustic Events + Music | 6 tasks | sonnet for detection, haiku for wiring | high–xhigh |
-| Phase 5: Cloud Omni Live | 4 tasks | opus for WebRTC bridge, sonnet for UI toggle | xhigh–max |
+| Phase 5: Cloud Omni Live | 4 tasks | opus for WebRTC bridge, sonnet for UI toggle (desktop/sysadmin variant only) | xhigh–max |
 
 ---
 
@@ -102,7 +103,7 @@ Each task in the work breakdown (file `04-PHASED-WORK-BREAKDOWN.md`) is assigned
 - HA native Wyoming integration (no HACS needed)
 - Tauri v2 global hotkeys + menu bar tray (NSStatusItem)
 - Speaker ID enrollment/verification API (built into sherpa-onnx)
-- OpenAI Realtime API (WebSocket bidirectional audio)
-- Gemini Live API (WebSocket bidirectional, latency is soft ~200-370ms)
+- OpenAI Realtime API (WebSocket bidirectional audio) — **sysadmin/desktop variant only** (revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`, Finding 3): like Gemini Live below, any cloud realtime voice path is desktop-only; `home`/`home-light` nodes get no cloud voice path or backend toggle — their only LLM route is the compute peer
+- Gemini Live API (WebSocket bidirectional, latency is soft ~200-370ms) — **sysadmin/desktop variant only** (revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`, Finding 3): `home`/`home-light` nodes get no cloud/Live voice path or backend toggle; their only LLM route is the compute peer
 - The dual-track architecture (Speech vs Ambient) is correct
 - The 5-phase sequencing is mostly right (AEC pulled into Phase 2)

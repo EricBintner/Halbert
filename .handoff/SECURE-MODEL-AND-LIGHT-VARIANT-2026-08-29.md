@@ -2,6 +2,7 @@
 
 **Date:** 2026-08-29
 **Status:** Implemented, tested, pushed to `origin/main`
+**Update 2026-08-30:** per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`, `secure_model` now applies to the **`sysadmin` variant only** — `home`/`home-light` never configure, resolve, or display it. The slot infrastructure (`SLOTS` 4-slot tuple, `normalise()`/`_is_local_url` enforcement, tests, `models.yml` empty template) is unchanged and stays. See that handoff's Section 12 for the authoritative code-verified work list.
 **Commits:** `8e3c2002`, `3029943d`, `552b99d1`, `cca3591a`
 
 ---
@@ -16,10 +17,10 @@ A 4th model slot (`secure_model`) was added to Halbert's multi-instance model ar
 - `halbert_core/model/llm_config.py` — `SLOTS` tuple, `default_llm_config()`, `normalise()` local-only enforcement via `_is_local_url()`
 - `halbert_core/model/client.py` — `get_secure_model()` returns `(model, url, provider)` or `(None, "", "")`
 - `halbert_core/model/__init__.py` — exports `get_secure_model`
-- `halbert_core/model/config_wizard.py` — empty slot in wizard defaults, validation loop checks 4 slots
+- `halbert_core/model/config_wizard.py` — empty slot in wizard defaults, validation loop checks 4 slots *(2026-08-30: per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` W2/W19, the wizard must gain variant awareness — skip `secure_model` writes for `home`/`home-light`, writing the slot empty rather than omitting it since `save_config` deep-merges slots — and, as new functionality, prompt for a compute peer address on `SBC_LOW_POWER` devices instead of listing local models)*
 - `halbert_core/model/tier_router.py` — slot resolution in `from_legacy_config`, docstring updated
 - `halbert_core/model/config_layers.py` — layer schema warning includes `secure_model`
-- `halbert_core/model/hardware_detector.py` — `SBC_LOW_POWER` and `ENTRY_8GB` profiles for low-power devices
+- `halbert_core/model/hardware_detector.py` — `SBC_LOW_POWER` and `ENTRY_8GB` profiles for low-power devices *(2026-08-30: per the simplification handoff section 6 / W17-W18, `SBC_LOW_POWER` — strictly **<4GB** per code; a 4GB host classifies `ENTRY_8GB` — is offload-only: peer -> template thoughts, no local model tier. The 1B tier is dropped; 2B-3B is the minimum for local inference, on 8GB+ hosts only. The change lands in `recommend_budget()`/`get_installation_commands()`, not in `_classify_hardware()` itself, which returns only the profile enum. The 4GB boundary is open decision D2 in the handoff)*
 
 **Backend — variant & BeingConfig:**
 - `halbert_core/config/being_config.py` — `VALID_VARIANTS` now includes `"home-light"`; added `ha_url`/`ha_token` fields
@@ -29,14 +30,14 @@ A 4th model slot (`secure_model`) was added to Halbert's multi-instance model ar
 **Config & deploy:**
 - `config/models.yml` — `secure_model` empty slot in repo template
 - `deploy/halbert-home.service`, `deploy/halbert-host.service` — removed dead `HALBERT_MODEL` env var
-- `deploy/README.md` — 4-slot model config docs, LAN/Tailscale GPU offload, light install instructions
+- `deploy/README.md` — 4-slot model config docs, LAN/Tailscale GPU offload, light install instructions *(2026-08-30: pending update per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` — SourcePrep is not needed for HA variants (W13), secure_model is sysadmin-only (W6), HA settings use a Compute Peer field, and <4GB devices are offload-only)*
 - `halbert_core/pyproject.toml` — `[light]`, `[rag-legacy]`, `[full]` optional extras
 
 **Frontend — model picker UI:**
 - `packages/model-picker/src/types.ts` — `requiresLocal?: boolean` on `AppRole`
 - `packages/model-picker/src/useModelPicker.ts` — filters non-local models when `requiresLocal` is set
 - `packages/model-picker/src/primitives/RoleAssignmentRow.tsx` — endpoint dropdown filtered to local-only for `requiresLocal` roles
-- `halbert_core/dashboard/frontend/src/lib/halbertModelRoles.ts` — 4th role: `secure_model` with `requiresLocal: true, optional: true`
+- `halbert_core/dashboard/frontend/src/lib/halbertModelRoles.ts` — 4th role: `secure_model` with `requiresLocal: true, optional: true` *(2026-08-30: per the simplification handoff W4-W5, this role needs `variants: ["sysadmin"]`, with the filtering done **host-side** in `ModelSettings.tsx` before roles reach the picker — never inside the shared model-picker package, which stays role-name-agnostic. On `home`/`home-light` the picker itself is replaced by a Compute Peer setting)*
 
 **Tests:**
 - `tests/test_secure_model.py` — 21 tests (slot existence, defaults, local-only enforcement, normalise, resolve_from)
@@ -54,9 +55,11 @@ Halbert processes system configuration, secrets, and operational data. The exist
 But certain operations should **never** leave the machine:
 - **Secret description** — the `describe_secret` Tier 2 path in `SecurityConfig` already enforces this architecturally (no model, deterministic response). But if a local model is ever reintroduced for open-ended questions about secrets, it must be guaranteed local.
 - **Sensitive config analysis** — when Halbert reasons about SSH keys, credentials, or network topology, the prompt itself is sensitive even if the answer isn't a secret value.
-- **Air-gapped / home-light operation** — the `home-light` variant runs on N100/Pi devices that may have no internet. A slot that can only resolve to a local model guarantees the system degrades gracefully offline.
+- **Air-gapped sysadmin operation** — the `sysadmin` variant may run offline; a slot that can only resolve to a local model guarantees sensitive sysadmin reasoning degrades gracefully offline. *(Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`: this bullet originally cited `home-light`/N100/Pi operation. That no longer applies — HA nodes offload all LLM work to a compute peer and degrade to template thoughts when the peer is asleep, never to a local secure model, and sysadmin work on an HA device is done from the workstation's Halbert via the fleet cockpit/MCP path.)*
 
 ### Why a slot, not a flag
+
+*(2026-08-30: this rationale applies to the `sysadmin` variant only — `home`/`home-light` configure no `secure_model` and render no picker row; the workstation's model picker governs. See `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` sections 3 and 5.)*
 
 A separate slot (rather than a "local_only" boolean on `chat_model`) was chosen because:
 
@@ -75,7 +78,7 @@ The enforcement lives in `llm_config.normalise()`, which runs on every config re
 
 ### What `secure_model` is NOT
 
-- **Not a per-turn pin** — the `Tier` type in the model picker (`'guide' | 'specialist' | 'vision' | 'auto'`) does not include `'secure'`. Users don't pick "secure" from the chat pill. The backend routes to `secure_model` when it determines an operation requires local-only inference.
+- **Not a per-turn pin** — the `Tier` type in the model picker (`'guide' | 'specialist' | 'vision' | 'auto'`) does not include `'secure'`. Users don't pick "secure" from the chat pill. The backend routes to `secure_model` when it determines an operation requires local-only inference. *(2026-08-30: routing only applies to `sysadmin`; `home`/`home-light` leave the slot unconfigured — see `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`.)*
 - **Not hardcoded to a model name** — the slot ships empty (`model: ""`, `enabled: false`). The user picks which local model to assign. No model names are hardcoded anywhere in the codebase.
 - **Not a security boundary by itself** — the slot guarantees the model endpoint is local. It does not guarantee the model itself is trustworthy, that the prompt contains no sensitive data, or that the output is safe. It is one layer in a defence-in-depth strategy.
 
@@ -84,6 +87,8 @@ The enforcement lives in `llm_config.normalise()`, which runs on every config re
 ## 3. How It Works
 
 ### Configuration flow
+
+**Applies to the `sysadmin` variant only** *(2026-08-30, per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`)*. On `home`/`home-light` the secure_model row is hidden entirely (the role is tagged `variants: ["sysadmin"]` and filtered host-side in `ModelSettings.tsx`), and the model picker is replaced by a single **"Compute Peer"** setting — hostname:port or Tailscale address, plus a "Test Connection" button. The workstation's own model picker determines which models serve the HA node's requests.
 
 1. User opens Settings -> AI Models in the dashboard
 2. The 4th row "Secure (Local)" appears with `requiresLocal: true`
@@ -131,7 +136,7 @@ def _is_local_url(url: str) -> bool:
 
 ## 4. The `home-light` Variant
 
-A secondary deliverable was the `home-light` variant for thin clients (N100, Raspberry Pi). This is distinct from `secure_model` but related — both serve the "low-power, local-first" use case.
+A secondary deliverable was the `home-light` variant for thin clients (N100, Raspberry Pi). This is distinct from `secure_model`: the `secure_model` slot is sysadmin-only *(2026-08-30, per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`)*, while `home-light` is a low-power, **peer-client-first** node that offloads all LLM work to a compute peer (`peer://workstation:8000`) and falls back to template thoughts when the peer is asleep. The original "low-power, local-first" pairing is superseded: no LLM runs on the HA node, and <4GB devices are offload-only.
 
 ### What `home-light` skips at startup
 - Ingestion service (journald, hwmon)
@@ -144,6 +149,7 @@ A secondary deliverable was the `home-light` variant for thin clients (N100, Ras
 - HA WebSocket event stream (core home automation functionality)
 - Wyoming voice agent (if configured)
 - Frigate MQTT subscriber (if configured)
+- Persona memory embeddings — local, per-node, per-identity; NOT SourcePrep and never offloaded *(2026-08-30: served via haloysius's ONNX/Ollama `MemoryEmbedder` — e.g. `nomic-embed-text` through Ollama — with `haloysius[embeddings]` as the optional local-transformer upgrade; NOT `sentence-transformers` in halbert_core's extras. See `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` section 4.7; which memory path the HA persona actually consumes is open decision D3)*
 
 ### HA config seeding
 `home-light` can store Home Assistant credentials directly in `being.yml` (`ha_url`, `ha_token`) instead of requiring a separate `ha_config.yml`. At startup, if these fields are present, they're written to the HA config so the event stream can connect. This makes `being.yml` the single file a home-light user needs to deploy.
@@ -163,10 +169,12 @@ A secondary deliverable was the `home-light` variant for thin clients (N100, Ras
 | Extra | Includes | Use case |
 |-------|----------|----------|
 | `[light]` | Core deps only, no heavy ML | home-light variant, N100/Pi |
-| `[rag-legacy]` | `chromadb`, `sentence-transformers` | Hosts that need the old RAG pipeline |
+| `[rag-legacy]` | `chromadb`, `sentence-transformers` | Hosts that need the old RAG pipeline — never HA nodes |
 | `[full]` | Everything (`[light]` + `[rag-legacy]` + all heavy deps) | Full sysadmin install on capable hardware |
 
-Heavy libraries (`chromadb`, `sentence-transformers`) moved from hard dependencies to `[rag-legacy]`. A `home-light` install pulls only the core FastAPI + Ollama client stack.
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` (section 4.7 / W20):** `[rag-legacy]` must never be installed on `home`/`home-light` nodes — it bundles `chromadb`, which has no place on a home node now that SourcePrep is removed from HA variants (handoff section 4). The table's classification of `sentence-transformers` as RAG-legacy-only is also wrong for **persona memory embeddings**: those are not RAG and are required locally on HA nodes. The correction is *not* to add `sentence-transformers` to halbert_core's `[light]` — the on-path persona memory embedder is haloysius's `MemoryEmbedder` (ONNX/Ollama first, `sentence-transformers` only as haloysius's own optional `[embeddings]` fallback), while halbert_core's `sentence-transformers` consumer feeds only the eval/browser-only `HybridMemorySystem` off the agent path. Keep `[light]` unchanged; serve HA memory embeddings via Ollama (`nomic-embed-text`) or the haloysius ONNX embedder, optionally surfaced as a `[home]` extra = `[light]` + `[cognition]`. Which memory path the HA persona actually consumes is open decision D3.
+
+Heavy libraries (`chromadb`, `sentence-transformers`) moved from hard dependencies to `[rag-legacy]`. *(Revised 2026-08-30: a `home-light` install still pulls no heavy ML, but it is no longer "core FastAPI + Ollama client" for local model serving — no LLM runs on the HA node. All model work goes to `peer://workstation:8000` with template thoughts as fallback, and persona memory embeddings are served via haloysius's ONNX/Ollama embedder, not `sentence-transformers` in halbert_core. See `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` sections 4.7 and 8.)*
 
 ---
 
@@ -179,7 +187,7 @@ Heavy libraries (`chromadb`, `sentence-transformers`) moved from hard dependenci
 | `test_llm_config_layers.py` | 49 (updated) | All `_models()` assertions updated to 4-slot, `slot_layers` includes `secure_model` |
 | `test_llm_routes.py` | (updated) | API shape assertion includes `secure_model` |
 | `test_tier_router_config.py` | (updated) | Repo template check includes `secure_model` |
-| model-picker package | 103 | `requiresLocal` filtering in `modelsForRole`, `AppRole` type, no regressions |
+| model-picker package | 103 | `requiresLocal` filtering in `modelsForRole`, `AppRole` type, no regressions *(2026-08-30: does not yet cover variant-scoped role filtering or the Compute Peer setting — new test surface required by `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` S1/S3)* |
 
 **Pre-existing failures (not caused by this work):**
 - `test_llm_routes.py` and 1 test in `test_llm_config_layers.py` fail on Python 3.9 due to `contextlib.aclosing` import in `agent.py` (requires Python 3.10+). These are unrelated to `secure_model`.
@@ -191,11 +199,20 @@ Heavy libraries (`chromadb`, `sentence-transformers`) moved from hard dependenci
 - [ ] Verify `_is_local_url()` handles all edge cases: IPv6 loopback (`::1`), IPv6 unspecified (`::`), hostnames that resolve to loopback, hostnames that resolve to non-loopback
 - [ ] Verify `normalise()` disables the slot (not crashes) when a cloud URL is configured
 - [ ] Verify `get_secure_model()` returns `(None, "", "")` when slot is disabled/unconfigured
-- [ ] Verify the UI endpoint dropdown for `secure_model` shows only local endpoints
-- [ ] Verify the UI model dropdown for `secure_model` shows only local models
+- [ ] Verify the UI endpoint dropdown for `secure_model` shows only local endpoints **on the `sysadmin` variant** — and that on `home`/`home-light` the secure_model row is hidden entirely (role filtered host-side by `variants` in `ModelSettings.tsx`) and the model picker is replaced by the "Compute Peer" field (per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` S1/S3)
+- [ ] Verify the UI model dropdown for `secure_model` shows only local models **on `sysadmin`**; on `home`/`home-light` there is no model dropdown at all (the Compute Peer setting governs; the workstation's picker determines models)
 - [ ] Verify `home-light` variant skips scheduler, config watcher, terminal sessions
 - [ ] Verify `home-light` still starts HA event stream
 - [ ] Verify `being.yml` `ha_url`/`ha_token` round-trips through YAML correctly
 - [ ] Verify no hardcoded model names anywhere in the codebase
 - [ ] Verify `HALBERT_MODEL` env var is fully removed from systemd units (not just renamed)
-- [ ] Verify `[light]` extras in `pyproject.toml` don't pull `chromadb` or `sentence-transformers`
+- [ ] Verify `[light]` extras in `pyproject.toml` don't pull `chromadb` or `sentence-transformers` *(2026-08-30: this assertion stays correct — do NOT add `sentence-transformers` to halbert_core extras; HA persona memory embeddings are served via haloysius's ONNX/Ollama `MemoryEmbedder` with `haloysius[embeddings]` as the optional upgrade, and `[rag-legacy]` must never be installed on HA nodes. See `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` section 4.7 / W20)*
+
+**Added 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` (work list W1-W25):**
+
+- [ ] Verify that when variant is `home`/`home-light`, nothing initializes, auto-provisions, or resolves `secure_model` — in particular the Apple Intelligence auto-provisioning in `auto_provision.py` and the secure turn gate in `agent.py`/`tier_router.py` are variant-gated (S1, W1-W3)
+- [ ] Verify `home`/`home-light` have no SourcePrep wiring: no `SourcePrepRetrievalBackend` instantiation, no config-watcher reindex callback, and the HA-config SourcePrep bridge surface removed or default-disabled (S2, W7-W12)
+- [ ] Verify the HA variant settings page renders a "Compute Peer" field (hostname:port / Tailscale) + "Test Connection" button and does not mount the model picker (S3, W14-W16)
+- [ ] Verify `SBC_LOW_POWER` (<4GB per code, pending open decision D2 on the 4GB boundary) recommends offload-only with peer -> template thoughts, no local model tier, and that the wizard prompts for a compute peer address on such devices (S4, W17-W19)
+- [ ] Verify memory embeddings on HA nodes are served via haloysius's ONNX/Ollama embedder, with no `sentence-transformers` in halbert_core extras (S5, W20; pending open decision D3)
+- [ ] Open question (handoff D4): re-evaluate whether the `home` variant should be retired in favor of `home-light` as the single HA variant once SourcePrep and `secure_model` are removed from both

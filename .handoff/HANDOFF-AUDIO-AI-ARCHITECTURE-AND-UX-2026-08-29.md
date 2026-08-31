@@ -6,8 +6,9 @@
 > **Date:** 2026-08-29  
 > **Status:** SUPERSEDED — Technical scrutiny found 5 critical, 7 high, 4 medium, 5 low issues.
 > See `.handoff/audio/00-REVIEW-SUMMARY.md` for corrected architecture and work breakdown.
-> Original research suite (`audio-research/01-03`) remains valid as background; corrections in `01-CORRECTED-ARCHITECTURE.md` are what implementation must follow.  
-> **Target Platforms:** macOS Desktop (Tauri Pro / Menu Bar), Linux Homelab Server (HAOS / Docker), Web Dashboard  
+> Original research suite (`audio-research/01-03`) remains valid as background; corrections in `01-CORRECTED-ARCHITECTURE.md` are what implementation must follow.
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** for `home` / `home-light` (voice/HA) nodes, the corrected audio architecture is additionally superseded in part — these nodes are pure compute clients (no local LLM: conversational cognition offloads to the compute peer via ComputeRouter, with deterministic template thoughts as the peer-asleep fallback; no `secure_model`; no SourcePrep; no model picker — a single "Compute Peer" setting replaces it). All local audio-ML work in this document is unaffected and stands as written.
+> **Target Platforms:** macOS Desktop (Tauri Pro / Menu Bar; sysadmin variant, full model picker), Linux Homelab Server (HAOS / Docker; `home-light` variant — pure compute client, no local LLM, cognition via compute peer), Web Dashboard  
 
 ---
 
@@ -60,8 +61,8 @@ This document packages:
                          ▼                                                                          ▼
  ┌───────────────────────────────────────────────┐                          ┌───────────────────────────────────────────────┐
  │ VoiceTurnObservation                          │                          │ AcousticEventObservation                      │
- │ - text: "reboot host zfs pool"                │                          │ - class: "smoke_detector_alarm" (conf: 0.94)  │
- │ - speaker_id: "eric" (role: "admin")          │                          │ - music: "Daft Punk - Tron Legacy"            │
+ │ - text: "lock the front door and arm          │                          │ - class: "smoke_detector_alarm" (conf: 0.94)  │
+ │   the alarm"                                  │                          │ - music: "Daft Punk - Tron Legacy"            │
  │ - area_id: "office"                           │                          │ - anomaly_level: 3 (Critical Life Safety)     │
  └───────────────────────┬───────────────────────┘                          └───────────────────────┬───────────────────────┘
                          │                                                                          │
@@ -73,10 +74,12 @@ This document packages:
 ═════════════════════════════════════════════════════════════════════════════════════════════════════════
   ┌─────────────────────────────────┐   ┌─────────────────────────────────┐   ┌─────────────────────────────────┐
   │ Halbert State Machine           │   │ ToolSafetyFramework             │   │ PersonaMemoryStore (SQLite FTS5)│
-  │ - Conversational agent turn     │   │ - Admin role confirmed for ZFS  │   │ - Episodic sound & music log    │
-  │ - Proactive anomaly alert       │   │ - Safe tool execution           │   │ - User music preference profile │
+  │ - Conversational agent turn     │   │ - Admin role confirmed for      │   │ - Episodic sound & music log    │
+  │ - Proactive anomaly alert       │   │   locks/alarms (home variant)   │   │ - User music preference profile │
   └─────────────────────────────────┘   └─────────────────────────────────┘   └─────────────────────────────────┘
 ```
+
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** on `home` / `home-light` voice nodes the conversational agent turn's LLM is **not local** — ComputeRouter resolves `chat_model` / `specialist_model` to `peer://workstation:8000`, and when the peer is asleep the node answers with deterministic template thoughts (no LLM). Only the audio pipeline (VAD / ASR / speaker ID / AED), the state-machine logic, role-gated HA actions, and persona memory run on the node. Sysadmin commands heard on a `home` / `home-light` node (e.g. "reboot host zfs pool") are proxied to the workstation's sysadmin Halbert via the fleet cockpit / MCP — never executed as local privileged tool calls. Constrained (<4GB) Wyoming satellites remain audio-streaming clients only and never attempt local LLM inference (the 1B tier is dropped; the 4GB boundary itself is an open decision — D2 in the simplification handoff). The macOS desktop surface keeps the full local stack and the sysadmin model picker.
 
 ### 2.2 Subtractive Contract & Zero-PyTorch Guarantees
 Halbert mandates that `halbert_core` dependencies remain subtractive (`pyyaml>=6.0`, `requests>=2.31.0` as hard core requirements). All ML audio inference runs through **`sherpa-onnx`** (C++ static engine with lightweight Python bindings) or **`onnxruntime`**:
@@ -85,6 +88,8 @@ Halbert mandates that `halbert_core` dependencies remain subtractive (`pyyaml>=6
 * **ECAPA-TDNN ONNX (Speaker ID):** 192-dimensional embedding, ~25MB ONNX, $<10\text{ms}$ per utterance.
 * **YAMNet ONNX (Acoustic Events):** 521 AudioSet classes, 3.7M parameters (~14MB ONNX), $<3\text{ms}$ per 0.96s window.
 * **Total Audio Subsystem Footprint:** $<135\text{MB}$ total disk space, $<300\text{MB}$ runtime RAM, $<5\%$ continuous CPU load on an Intel N100 / Pi 5.
+
+**Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` (section 4.7):** the audio pipeline itself stays zero-PyTorch. Persona memory embeddings on `home` / `home-light` variants are the one retained non-audio ML workload — they are NOT SourcePrep and stay local — but they are served by haloysius's ONNX/Ollama `MemoryEmbedder` (e.g. Ollama `nomic-embed-text`), not by `sentence-transformers` in `halbert_core`. No torch dependency is added to `halbert_core`; the Zero-PyTorch guarantee above holds as stated.
 
 ### 2.3 SQLite Biometric & Safety Schemas
 
@@ -145,7 +150,7 @@ In both the Web Dashboard and desktop application, Halbert’s header features a
 2. **Wake-Word / Hotkey Activated (`Listening`):** The aura expands into a real-time 32-bar fluid frequency visualizer (`VoiceWaveformIndicator.tsx`).
 3. **Biometric Identification (`Recognized`):** Instantly displays the verified user badge:  
    `[ 👤 Eric (Admin) • 96% Match ]`
-4. **Agent Turn (`Thinking`):** A smooth indeterminate pulse as the LLM state machine plans tool executions.
+4. **Agent Turn (`Thinking`):** A smooth indeterminate pulse as the LLM state machine plans tool executions. **Revised 2026-08-30:** on `home` / `home-light` variants this state covers a compute-peer round-trip (`peer://workstation:8000`), not local planning — add a distinct visual state for peer-unreachable, where the node answers with deterministic template thoughts (no LLM).
 5. **Agent Speaking (`Speaking` / Duplex):** Synchronized speech waveform rendering with a subtle **"Tap or Speak to Interrupt"** prompt (barge-in ready).
 
 ```
@@ -161,6 +166,8 @@ In both the Web Dashboard and desktop application, Halbert’s header features a
 +-----------------------------------------------------------------------------+
 ```
 
+> (Desktop / Halbert Pro turn, sysadmin variant. A ZFS/sysadmin command heard on a `home` / `home-light` voice node is proxied to the workstation's Halbert via fleet / MCP, not executed locally — revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`.)
+
 ---
 
 ### UX Surface 2: The macOS Menu Bar & System Tray Companion (`VoiceCompanionPill.tsx`)
@@ -170,6 +177,7 @@ For Halbert Pro users, Halbert lives in the macOS Menu Bar (`NSStatusItem`).
 * **Global Hotkey:** `Cmd+Shift+Space` (or Hold-to-Talk).
 * **Floating Frosted HUD:** A lightweight, non-stealing floating pill appears centered at the top of the screen (similar to Siri / Apple Intelligence HUD), overlaying whichever IDE or terminal the sysadmin is working in.
 * **Instant Voice Turn:** Captures voice via Rust `cpal`, streams transcript tokens in real-time, displays tool executions (`tool_call: zpool status`), and reads back the summary via Piper TTS while streaming the result to clipboard or terminal.
+* **Note (revised 2026-08-30):** Apple Intelligence above is a visual reference and a local-only backend for the Mac's own turns — it is never exposed to voice satellites or compute peers. Peer compute on a Mac routes to Ollama; mDNS `compute_backends` advertises `ollama` / `vllm` only (`HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`, Finding 5).
 
 ```
                   ┌──────────────────────────────────────────────┐
@@ -210,6 +218,8 @@ A dedicated Settings interface allows household administrators to enroll voicepr
 │  Generated 192-dim acoustic centroid. Quality: Excellent (0.96 SNR).        │
 +-----------------------------------------------------------------------------+
 ```
+
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** on `home` / `home-light` nodes the voice-permission gates cover **HA actions only** (locks, alarms, area services, PIN-gated operations). The "Full System Access (ZFS, SSH, Deadbolts, Alarms)" profile above is a **sysadmin-variant** (desktop / workstation) permission profile — privileged sysadmin tool gating never runs on an HA node; sysadmin work targeting an HA node is done from the workstation's Halbert via fleet / MCP.
 
 ---
 
@@ -278,6 +288,8 @@ Non-speech acoustic events are automatically tagged and surfaced directly in the
 +-----------------------------------------------------------------------------+
 ```
 
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` (Finding 3):** the "Primary Audio Ingress Engine" (Local vs. Cloud) selection above is a **sysadmin / desktop-variant setting only**. `home` / `home-light` nodes get no backend or model selection UI — render the single "Compute Peer" field (hostname:port or Tailscale address) with a "Test Connection" button instead; the workstation's model picker governs. A cloud duplex path on an HA node would be a second, user-selected compute route that the simplification explicitly eliminates. Ingress channels, quiet hours, and privacy settings apply on all variants.
+
 ---
 
 ## 4. Part III: Implementation Checklist & Phased Delivery Plan
@@ -298,7 +310,7 @@ Non-speech acoustic events are automatically tagged and surfaced directly in the
 - [ ] Implement `halbert_core/audio/speech/speaker_id.py` using ECAPA-TDNN ONNX (192-dim vector).
 - [ ] Create `speaker_profiles` SQLite table in `PersonaMemoryStore`.
 - [ ] Build `VoiceEnrollmentModal.tsx` in frontend for 3-step voiceprint enrollment.
-- [ ] Wire verified `speaker_role` into `ToolSafetyFramework` to gate privileged sysadmin tools.
+- [ ] Wire verified `speaker_role` into `ToolSafetyFramework` — **revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** on `home` / `home-light` variants gate HA actions only (locks, alarms, area services); privileged sysadmin tool gating applies only on the sysadmin variant (desktop / workstation) — sysadmin work on an HA node is done from the workstation's Halbert via fleet / MCP.
 
 ### Phase 4: Acoustic Event Detection (AED) & Music Tagging
 - [ ] Implement `halbert_core/audio/acoustic/yamnet.py` using YAMNet ONNX (521 AudioSet classes).
@@ -306,7 +318,11 @@ Non-speech acoustic events are automatically tagged and surfaced directly in the
 - [ ] Wire Chromaprint / AcoustID audio fingerprinting for ambient song matching.
 - [ ] Surface acoustic anomaly cards in `TemporalChronicle.tsx`.
 
-### Phase 5: Cloud Omni Live Duplex (Gemini Live)
-- [ ] Implement WebRTC Bidi stream adapter for Gemini Multimodal Live API in `halbert_core/audio/live_bridge.py`.
-- [ ] Add Local vs. Cloud Live toggle in `AudioSettingsTab.tsx`.
-- [ ] Test combined visual screen capture + live microphone streaming to Gemini Live.
+### Phase 5: Cloud Omni Live Duplex (Gemini Live) — sysadmin / desktop variant only
+
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` (Finding 3):** this phase applies only to the sysadmin / desktop variant. `home` / `home-light` nodes get no cloud / Live voice path and no backend toggle — their only LLM route is the compute peer.
+
+- [ ] Implement WebRTC Bidi stream adapter for Gemini Multimodal Live API in `halbert_core/audio/live_bridge.py` (desktop / sysadmin variant only — not built for `home` / `home-light`).
+- [ ] Add Local vs. Cloud Live toggle in `AudioSettingsTab.tsx` (variant-gated: rendered only on the sysadmin / desktop variant; `home` / `home-light` render the Compute Peer field + Test Connection instead).
+- [ ] Test combined visual screen capture + live microphone streaming to Gemini Live (desktop / sysadmin variant only).
+- [ ] On `home` / `home-light` variants, resolve the conversational-turn LLM via ComputeRouter to `peer://workstation:8000` with template-thought fallback when the peer is asleep; surface peer status in the Acoustic Aura.

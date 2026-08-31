@@ -6,6 +6,8 @@
 **Status:** Awaiting design input before implementation
 **Branch:** `feat/multi-persona` (worktree: `Halbert/multi-persona`)
 
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** model-picker-related persona surfaces are **sysadmin-variant-only**. On `home`/`home-light` variants there is no model picker — the persona `model` override is inert and must not render; HA variants get the single Compute Peer setting instead, and the workstation's picker governs (Finding 3 / S3). Dated notes at §2 Q2, §2 Q5, and §4 Phase 3.
+
 ---
 
 ## 1. Current State
@@ -54,6 +56,8 @@ The user wants:
     default.yml      → main persona (current being.yml content)
     work.yml         → "Work Halbert" — different name, model, style
     home.yml         → "Home Halbert" — casual, different model
+                      (the per-persona model is meaningful only on sysadmin
+                      variants — on home/home-light it is inert; see §2 Q2)
 ```
 
 - Pros: Clean separation, easy to backup/export individual personas, no schema migration
@@ -100,7 +104,7 @@ Some fields in `BeingConfig` are clearly persona-scoped (name, voice, model, per
 - `name`, `voice`, `voice_presentation`, `proactivity`
 - `archetype_id`, `personality_profile`, `tone_descriptors`, `speech_patterns`, `directives`
 - `custom_personality_prompt`
-- `model`, `model_endpoint_id`
+- `model`, `model_endpoint_id` *(sysadmin variants only — inert on `home`/`home-light`, which have no model picker; see the 2026-08-30 note below)*
 - `purpose`, `quiet_hours`, `morning_report`, `category_overrides`
 - `senses.vision.*` (persona-level vision autonomy)
 - `scene_context`, `persona_id_override`
@@ -114,6 +118,8 @@ Some fields in `BeingConfig` are clearly persona-scoped (name, voice, model, per
 **Question for design:** Should `variant` and home fields be global, or should each persona declare its own variant? E.g., a "Home" persona and a "Sysadmin" persona on the same machine? This would mean the variant is per-persona, not per-daemon. That's a bigger architectural change — the daemon would need to reconfigure services on persona switch.
 
 **Recommendation:** Keep variant + home fields global for now. A persona defines *personality*, not *deployment mode*. If the user wants a home persona and a sysadmin persona, they'd run two instances (which the federation work already supports).
+
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** the per-persona `model` / `model_endpoint_id` override is only meaningful on variants that have a model picker (**sysadmin**). On `home`/`home-light` variants there is no model picker — `chat_model`/`specialist_model` resolve to the peer endpoint set via the single Compute Peer setting, and the workstation's picker governs — so the field is inert there and must not render in the persona UI (Finding 3 / S3). The variant-stays-global recommendation above is unchanged and aligns with the handoff.
 
 ### Q3: Persona Switching — Hot Reload vs. Restart
 
@@ -184,6 +190,8 @@ The existing `PersonaManager` has:
 - A "Delete" button on non-default personas (with confirmation)
 
 **Question for design:** Should persona switching be in Settings only, or also in the chat composer (like a quick-switch dropdown)? The model picker pill already has a tier quick-switch — a persona quick-switch could sit beside it. **settings only**
+
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** variant-gate the persona card's `Model: [Default ▼]` row and any picker-pill integration: sysadmin variants render the Model dropdown (and the picker pill exists); `home`/`home-light` variants render the Compute Peer field instead — no model picker surface exists on HA variants, so the Model row does not render there (Finding 3 / S3).
 
 ### Q6: Migration Path
 
@@ -266,7 +274,7 @@ class PersonaManifest:
    - Card click → `POST /api/personas/{id}/activate`
    - Edit forms below write to `PUT /api/personas/{id}` (or continue using `POST /settings/being` which writes to the active persona)
 
-2. **Persona card component (new):** Compact card showing name, archetype badge, model badge. Active state highlighted. Delete button (hover reveal).
+2. **Persona card component (new):** Compact card showing name, archetype badge, model badge. Active state highlighted. Delete button (hover reveal). The model badge renders on sysadmin variants only — `home`/`home-light` show no model badge (Finding 3 / S3; see the §2 Q5 note).
 
 ### Migration Logic
 
@@ -315,7 +323,7 @@ def migrate_to_multi_persona():
 - Form editing continues to work through existing `/settings/being` endpoint
 
 ### Phase 3: Polish
-- Persona name in chat composer (quick-switch dropdown beside model pill)
+- Persona name in chat composer (quick-switch dropdown beside model pill — variant-gated per the 2026-08-30 note in §2 Q5: the model pill exists only on sysadmin variants)
 - Persona-specific memory directories (wire `PersonaManager.get_memory_dir()`)
 - Audit logging for persona switches
 - Export/import persona files

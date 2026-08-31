@@ -2,6 +2,7 @@
 
 > **Document:** `.handoff/audio/01-CORRECTED-ARCHITECTURE.md`
 > **Status:** Verified against external sources + codebase
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** for `home` / `home-light` (voice/HA) nodes, the Cognition & Safety layer is a compute-client layer — the agent turn's LLM resolves via ComputeRouter to `peer://workstation:8000` with template-thought fallback; no local LLM, no `secure_model`, no SourcePrep, no model picker. All audio-ML corrections below are unaffected.
 
 ---
 
@@ -56,6 +57,8 @@ INGRESS ADAPTER LAYER (Multi-Source)
                                  |
                                  v
               COGNITION & SAFETY EXECUTION LAYER
+              (home/home-light: agent-turn LLM via
+               compute peer, NOT local)
   +-------------------+  +-------------------+  +-------------------+
   | Halbert State     |  | RoleGate          |  | SpeakerProfileStore|
   | Machine           |  | (wraps            |  | (SQLite,           |
@@ -82,6 +85,7 @@ Key corrections from original:
 - Safety: **RoleGate wrapper** (NOT modifying ToolSafetyFramework)
 - Anomalies route to **both** SystemEventMapper (cognition) AND DetectorRunner (findings/gate)
 - Music ID: **requires network** (AcoustID API)
+- **Variant scoping (added 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`):** on `home` / `home-light` voice nodes the "Agent turn" in the Cognition & Safety layer is a **compute-client turn** — ComputeRouter resolves `chat_model` / `specialist_model` to `peer://workstation:8000`, with deterministic template thoughts when the peer is asleep. Only audio inference, the state machine, RoleGate (gating HA actions: locks, alarms, areas), and the speaker/memory stores run on the node. Sysadmin commands heard on such a node are proxied to the workstation's sysadmin Halbert via fleet / MCP — never executed locally. No local LLM, no `secure_model`, no SourcePrep, no model picker on `home` / `home-light`; the sysadmin/desktop variant keeps the full stack and picker.
 
 ---
 
@@ -89,6 +93,8 @@ Key corrections from original:
 
 ### Zero-PyTorch Guarantee (CONFIRMED)
 sherpa-onnx uses ONNX Runtime only. Zero PyTorch/CUDA in the inference runtime. The pip wheel declares only `sherpa-onnx-core` as a hard dependency. GPU is available via ONNX Runtime CUDA Execution Provider (not PyTorch).
+
+**Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` (section 4.7):** persona memory embeddings on `home` / `home-light` variants — the one non-audio ML workload retained locally, and NOT SourcePrep — are served by haloysius's ONNX/Ollama `MemoryEmbedder` (e.g. Ollama `nomic-embed-text`), not by `sentence-transformers` in `halbert_core`. No torch dependency lands in `halbert_core`; this guarantee stands as written.
 
 ### Corrected Model Footprint Table
 

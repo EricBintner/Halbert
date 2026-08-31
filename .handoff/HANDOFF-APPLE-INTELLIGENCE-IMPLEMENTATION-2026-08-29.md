@@ -1,12 +1,13 @@
 # Apple Intelligence Integration: Implementation Plan
 
 **Date:** 2026-08-29
-**Status:** Plan scrutinized and approved — implementation in progress
-**Scope:** Build the mechanisms for Apple Intelligence to serve as the `secure_model` (and zero-setup `chat_model` on 16-24GB Macs) on qualifying Apple Silicon Macs, with Metal GPU detection gating availability.
+**Status:** Plan scrutinized and approved — implementation in progress. **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** that handoff's Finding 5 / S6 adds a scope boundary — Apple Intelligence is local-only; all mechanism work in this plan remains valid.
+**Scope:** Build the mechanisms for Apple Intelligence to serve as the `secure_model` (and zero-setup `chat_model` on 16-24GB Macs) on qualifying Apple Silicon Macs, with Metal GPU detection gating availability. Apple Intelligence is local-only — it serves the Mac's own slots exclusively. It is never exposed as a peer/fleet compute backend: peer compute requests arriving at a Mac route to Ollama (7B-14B), not `apple-foundation`, and mDNS `compute_backends` advertises `ollama`/`vllm` only (see `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`, Finding 5).
 
 **Reads with:**
 - [`documentation/design/APPLE-INTELLIGENCE-MACOS-ON-DEVICE-STRATEGY.md`](../documentation/design/APPLE-INTELLIGENCE-MACOS-ON-DEVICE-STRATEGY.md)
 - [`.handoff/HANDOFF-LOW-POWER-HARDWARE-TIERS-AND-EDGE-CASES-2026-08-29.md`](./HANDOFF-LOW-POWER-HARDWARE-TIERS-AND-EDGE-CASES-2026-08-29.md)
+- [`.handoff/HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`](./HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md) — Finding 5 / S6 (Apple Intelligence is local-only, never a peer compute backend) and Finding 1 / S1 (variant gating of `secure_model` auto-provisioning)
 
 ---
 
@@ -14,7 +15,7 @@
 
 Apple's `FoundationModels` framework is **Swift-only**. There is no Python binding, no Rust binding, and no C FFI. You cannot call `SystemLanguageModel` from Tauri's Rust core or from the Python backend.
 
-**The solution is Option A from the design doc: a Swift sidecar binary.** Tauri v2 bundles it via `externalBin`, launches it on app start, and kills it on exit. The sidecar runs a tiny localhost HTTP server on `http://127.0.0.1:11435` that implements the OpenAI-compatible `/v1/chat/completions` wire format, mapped to `LanguageModelSession`.
+**The solution is Option A from the design doc: a Swift sidecar binary.** Tauri v2 bundles it via `externalBin`, launches it on app start, and kills it on exit. The sidecar runs a tiny localhost HTTP server on `http://127.0.0.1:11435` that implements the OpenAI-compatible `/v1/chat/completions` wire format, mapped to `LanguageModelSession`. **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` (Finding 5):** the loopback binding is permanent by design, not an incidental implementation detail. Because the bridge speaks OpenAI-compatible HTTP, it would technically work as a peer-serving endpoint — loopback binding plus endpoint non-advertisement are the two guards that must hold forever. The bridge must never be bound to a LAN interface, registered with the federated compute endpoint (`compute_endpoint.py`), or advertised to peers. Loopback is not just `secure_model` enforcement; it is the peer-isolation boundary.
 
 This plugs into infrastructure that already exists:
 - `_call_openai_compatible()` in `client.py` already speaks the wire format
@@ -42,6 +43,8 @@ Apple Intelligence is auto-provisioned only when ALL of:
 
 **Metal gating rationale:** Metal is implied by Apple Silicon, but an explicit check is defensive — it catches VMs (UTM/Parallels on Apple Silicon hypervisor) that report `arm64` but have no Metal GPU, and it lets us display the GPU info in the UI.
 
+**Variant prerequisite (added 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`):** hardware eligibility alone is not sufficient — auto-provisioning also requires the active variant to run local model slots (`sysadmin`). On `home`/`home-light` variants the provisioning is skipped entirely (see Section 4).
+
 ---
 
 ## 3. Provider Design: `apple-foundation`
@@ -49,7 +52,7 @@ Apple Intelligence is auto-provisioned only when ALL of:
 A dedicated provider ID, not a reuse of `openai-compatible`:
 
 - **Distinct UI badge:** "Apple Intelligence (Built-in)" with a Cpu/ANE icon
-- **Explicit local-only enforcement:** `isLocal: true` in the picker, loopback URL in `secure_model`
+- **Explicit local-only enforcement (three layers, revised 2026-08-30):** (1) `isLocal: true` in the picker and loopback URL in `secure_model`; (2) the Swift bridge binds `127.0.0.1` only; (3) federation — the peer compute endpoint on a Mac routes peer requests to Ollama and never proxies to `apple-foundation`; mDNS `compute_backends` advertises `ollama`/`vllm` only; `PeerProvider.list_models()` exposes only Ollama models to peers (Finding 5)
 - **Provider-specific routing:** The tier router and client can special-case `apple-foundation` (e.g. no API key needed, tool-calling via `@Tool` protocol, streaming via `streamRespond`)
 - **Wire format:** Still OpenAI-compatible — the bridge implements `/v1/chat/completions`, so `_call_openai_compatible()` handles it with no new adapter
 
@@ -73,6 +76,8 @@ On first boot (no saved endpoints), when Apple Intelligence is available:
 3. **16-24GB Macs (single-model rule):** Also assign `chat_model` to the same endpoint + model — zero-setup conversation out of the box
 4. **32GB+ Macs:** Leave `chat_model` unset — the user should configure cloud or a larger local model
 5. Log: `"Apple Intelligence detected — configured as secure_model (and chat_model on <16-24GB>)"`
+
+**Variant gating (revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`):** steps 1-3 (endpoint registration and slot assignment) apply only on variants that run local model slots (`sysadmin`). If the active variant is `home` or `home-light`, skip the auto-provisioning entirely: Finding 1 / S1 removes `secure_model` from those variants (the slot stays for `sysadmin` only), and Findings 3 / 4 mean an HA node runs no local LLM at all — its `chat_model` and `specialist_model` resolve to the compute peer (`peer://workstation:8000`) and the workstation's picker governs. The provisioned endpoint is for this Mac's own Halbert only and is never exposed to peers (Finding 5).
 
 This runs alongside the existing `ensure_local_ollama_endpoint()` call in `GET /llm/config`. If both Apple Intelligence and Ollama are available, both endpoints are registered; the slot assignments follow the rules above.
 
@@ -143,26 +148,31 @@ APPLE_FOUNDATION_PROVIDER = "apple-foundation"
 
 **Add functions:**
 - `ensure_apple_foundation_endpoint() -> str` — like `ensure_ollama_endpoint()` but creates/returns the `apple-foundation` endpoint at `APPLE_FOUNDATION_URL` with name "Apple Intelligence (On-Device)".
-- `auto_provision_apple_intelligence(hardware: HardwareCapabilities) -> bool` — called on first boot when no endpoints are saved AND `hardware.apple_intelligence_available`:
-  1. `ensure_apple_foundation_endpoint()`
-  2. `set_slot("secure_model", APPLE_FOUNDATION_MODEL, ep_id)`
-  3. If `hardware.unified_memory_gb` in [16, 24]: also `set_slot("chat_model", APPLE_FOUNDATION_MODEL, ep_id)`
-  4. Log the provisioning
-  5. Return True
+- `auto_provision_apple_intelligence(hardware: HardwareCapabilities, variant: str) -> bool` — called on first boot when no endpoints are saved AND `hardware.apple_intelligence_available`:
+  1. If `variant` is `home` or `home-light`: return False without registering anything — those variants run no local LLM (Findings 1 / 3 / 4)
+  2. `ensure_apple_foundation_endpoint()`
+  3. `set_slot("secure_model", APPLE_FOUNDATION_MODEL, ep_id)` (`secure_model` is sysadmin-only per Finding 1 / S1; the early return in step 1 already excludes `home`/`home-light`)
+  4. If `hardware.unified_memory_gb` in [16, 24]: also `set_slot("chat_model", APPLE_FOUNDATION_MODEL, ep_id)`
+  5. Log the provisioning
+  6. Return True
+
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** the `variant` parameter above is new — Finding 1 / S1 removes `secure_model` from `home`/`home-light` variants, and code verification confirmed the current `auto_provision.py` assigns `secure_model` whenever the slot is empty with no variant check (that gating is work item W1). The step-1 early return also skips the `chat_model` assignment on `home`/`home-light`: per Findings 3 / 4 those variants' `chat_model`/`specialist_model` resolve to the compute peer and the workstation's picker governs — no local model is provisioned. GAP 6 below relocates this function to a new `model/auto_provision.py`; the `variant` parameter is added as part of that move. The provisioned endpoint serves this Mac's own Halbert only and is never advertised to peers (Finding 5).
 
 **`_is_local_url()`** already accepts `127.0.0.1` — no change needed for `secure_model` enforcement.
 
 #### 6.5 `halbert_core/halbert_core/model/config_wizard.py`
 **Update `run_auto()` and `run_interactive()`:**
 - Before the Ollama model lookup, check `hardware.apple_intelligence_available`
-- If True: call `auto_provision_apple_intelligence(hardware)` and log "Apple Intelligence (On-Device) detected — configured as secure model"
-- On 16-24GB Macs: `chat_model` is set to Apple Intelligence; skip Ollama model lookup for chat (still list installed Ollama models for specialist if the user wants one)
+- If True: call `auto_provision_apple_intelligence(hardware, variant)` (the active variant, per the 2026-08-30 revision above — on `home`/`home-light` it returns False and nothing is provisioned) and log "Apple Intelligence (On-Device) detected — configured as secure model"
+- On 16-24GB Macs (variants that run local slots, i.e. `sysadmin`): `chat_model` is set to Apple Intelligence; skip Ollama model lookup for chat (still list installed Ollama models for specialist if the user wants one). On `home`/`home-light` the `chat_model` is never set here — it resolves to the compute peer (Findings 3 / 4)
 - On 32GB+ Macs: `chat_model` left unset; proceed with Ollama model lookup as today
 - In `run_interactive()`: print Apple Intelligence info in the hardware summary
 
 **Update `_build_config()`:**
-- Add the Apple Intelligence endpoint to `saved_endpoints` when `hardware.apple_intelligence_available`
-- Set `secure_model` slot to the Apple Intelligence endpoint + model
+- Add the Apple Intelligence endpoint to `saved_endpoints` when `hardware.apple_intelligence_available` AND the active variant runs local model slots (skipped on `home`/`home-light`, which run no local LLM — 2026-08-30 revision, Findings 3 / 4)
+- Set `secure_model` slot to the Apple Intelligence endpoint + model — only when the active variant configures `secure_model` (not `home`/`home-light`, per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` Finding 1 / S1)
+
+> **Note (2026-08-30):** this Mac auto-provision path is hardware-gated (Apple Silicon Macs only) and is orthogonal to the S4 wizard change from the simplification handoff — on `SBC_LOW_POWER` devices the wizard prompts for a compute peer address and offers no local models (`HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` Finding 4). The wizard therefore has three divergent paths: Mac auto-provision (this section), SBC compute-peer (S4), and the default Ollama flow.
 
 #### 6.6 `halbert_core/halbert_core/dashboard/routes/llm.py`
 **Add:**
@@ -173,7 +183,7 @@ APPLE_FOUNDATION_PROVIDER = "apple-foundation"
 - Return shape: `{data: {ollama, lm_studio, apple_foundation}}`
 
 **Update `get_llm_config()` (the first-boot path):**
-- After `ensure_local_ollama_endpoint()`, call `auto_provision_apple_intelligence()` when no endpoints were saved and Apple Intelligence is eligible
+- Before `ensure_local_ollama_endpoint()` (per GAP 5 below — the Apple Intelligence provisioning is idempotent and runs first), call `auto_provision_apple_intelligence(hardware, variant)` when no endpoints were saved and Apple Intelligence is eligible; on `home`/`home-light` variants it returns False and nothing is provisioned (2026-08-30 revision, Findings 1 / 3 / 4)
 - This runs the hardware detection + bridge probe once on first boot
 
 ### Layer 2: Model-Picker Package (`packages/model-picker`)
@@ -295,6 +305,7 @@ async discoverLocal(): Promise<LocalDiscovery> {
   - `SystemLanguageModel.default.availability` guard — returns 503 when unavailable
   - `@Tool` schema bridging for Halbert's tool-calling format
   - Streaming via SSE (`stream: true` in the request body)
+- **Peer isolation (revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`, Finding 5):** the bridge binds `127.0.0.1` only and serves the local Halbert exclusively. It must never be registered with `federation/compute_endpoint.py`, advertised via mDNS `compute_backends`, or listed through `PeerProvider.list_models()` — Apple Intelligence is local-only (serving it as an inference endpoint for other machines risks violating Apple's developer terms, and the 3B personal model is a capability mismatch for peer workloads). Peer compute on a Mac routes to Ollama 7B-14B. Add a bridge test asserting the listener refuses non-loopback binds.
 
 #### 6.13 `halbert_core/halbert_core/dashboard/frontend/src-tauri/tauri.conf.json`
 **Update `externalBin`:**
@@ -327,10 +338,11 @@ async discoverLocal(): Promise<LocalDiscovery> {
   - Bridge connection refused + eligible → True, `bridge_running=False`
   - Bridge connection refused + not eligible → False
 - Test `ensure_apple_foundation_endpoint()` creates endpoint with correct provider/url/name
-- Test `auto_provision_apple_intelligence()`:
-  - 16GB Mac: assigns both `secure_model` and `chat_model`
-  - 24GB Mac: assigns both `secure_model` and `chat_model`
-  - 32GB Mac: assigns only `secure_model`, leaves `chat_model` unset
+- Test `auto_provision_apple_intelligence(hardware, variant)`:
+  - 16GB Mac, `sysadmin` variant: assigns both `secure_model` and `chat_model`
+  - 24GB Mac, `sysadmin` variant: assigns both `secure_model` and `chat_model`
+  - 32GB Mac, `sysadmin` variant: assigns only `secure_model`, leaves `chat_model` unset
+  - 16GB Mac, `home` / `home-light` variant (added 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`): assigns neither slot and registers nothing — `secure_model` is not configured on HA variants (Finding 1 / S1) and `chat_model` resolves to the compute peer, not a local model (Findings 3 / 4)
   - Not eligible: no provisioning, returns False
 - Test `_is_local_url("http://127.0.0.1:11435")` returns True
 - Test `normalise()` keeps `apple-foundation` provider enabled for `secure_model`
@@ -357,9 +369,10 @@ async discoverLocal(): Promise<LocalDiscovery> {
 - Mark Phase 1 (mechanism) and Phase 3 (auto-provisioning) as current implementation scope
 - Mark Phase 2 (Swift bridge) as deferred to separate session
 - Add the pre-existing bug fixes (secure_model transport, requiresLocal filter) to the roadmap
+- Add the peer-compute boundary: Apple Intelligence is local-only (Mac's own slots); peer compute endpoints on a Mac route to Ollama; mDNS `compute_backends` lists `ollama`/`vllm` only (per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` Finding 5)
 
 #### 6.19 `.handoff/HANDOFF-APPLE-INTELLIGENCE-IMPLEMENTATION-2026-08-29.md`
-- This document (update after implementation with status and verification results)
+- This document (update after implementation with status and verification results, AND incorporate the 2026-08-30 simplification feedback — the local-only note per Finding 5 / S6, the variant gating per Finding 1 / S1, and the picker scoping per Finding 3 / S3)
 
 ---
 
@@ -372,7 +385,7 @@ The work is ordered so each step is independently testable:
 | 1 | `platform.py` | Metal detection + eligibility check | Yes — mock platform functions |
 | 2 | `hardware_detector.py` | Wire eligibility into `HardwareCapabilities` | Yes — mock detection |
 | 3 | `client.py` | Add `apple-foundation` to provider sets | Yes — import check |
-| 4 | `llm_config.py` | Endpoint + auto-provisioning functions | Yes — unit tests with mocked hardware |
+| 4 | `llm_config.py` + `model/auto_provision.py` (per GAP 6) | Endpoint + auto-provisioning functions (variant-gated, 2026-08-30 revision) | Yes — unit tests with mocked hardware |
 | 5 | `config_wizard.py` | Apple Intelligence in wizard flow | Yes — mock hardware |
 | 6 | `llm.py` route | Discover probe + first-boot provisioning | Yes — route tests |
 | 7 | `types.ts` (model-picker) | New provider + LocalDiscovery | Yes — type tests |
@@ -380,9 +393,11 @@ The work is ordered so each step is independently testable:
 | 9 | `modelPickerTransport.ts` | Fix `secure_model` + `appleFoundation` | Yes — transport tests |
 | 10 | `ModelSettings.tsx` | Apple Intelligence UI + Metal display | Manual — visual |
 | 11 | Tests | All test files | Yes |
-| 12 | Docs | Design doc + this handoff | N/A |
+| 12 | Docs | Design doc + this handoff — including the Apple Intelligence local-only note (Finding 5 / S6) and the variant scoping of the picker UI (S3) | N/A |
 
 Steps 1-6 are Python backend (mechanism). Steps 7-10 are frontend (UI). Step 11-12 are verification and docs.
+
+> **Variant scoping of steps 7-10 (revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`, Finding 3 / S3):** the picker UI work applies to variants that render the model picker (`sysadmin` / workstation — which is where Macs sit, so the work remains valid). `home` / `home-light` variants do not render the model picker at all — they show a single "Compute Peer" setting, and the workstation's picker governs which models serve their requests. Those variants never see the `apple-foundation` provider UI.
 
 The Swift bridge (steps 6.12-6.13) is a separate session — it requires Xcode, a Swift SPM package, and Tauri sidecar lifecycle code. The mechanism built in steps 1-10 is correct and inert without it; the bridge is the "last mile" that makes the endpoint actually answer.
 
@@ -396,6 +411,7 @@ The Swift bridge (steps 6.12-6.13) is a separate session — it requires Xcode, 
 - **Does not add new model adapters** — `apple-foundation` routes through the existing OpenAI-compatible path
 - **Does not change `secure_model` enforcement** — `_is_local_url()` already accepts `127.0.0.1`
 - **Does not touch the tier router** — `from_legacy_config()` already resolves `secure_model` via `_resolve_slot()`
+- **Does not expose Apple Intelligence as a peer compute backend** (added 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`, Finding 5 / S6) — `apple-foundation` serves the Mac's own slots only; peer compute requests on a Mac route to Ollama; mDNS `compute_backends` lists `ollama`/`vllm` only; and `PeerProvider.list_models()` never includes `apple-foundation` models
 
 ---
 
@@ -414,6 +430,7 @@ After implementation:
    - Dashboard Settings → AI Models shows "Apple Intelligence" provider in the accordion
    - Secure (Local) dropdown includes "Apple Intelligence (On-Device)" endpoint
 7. **On non-Mac (CI):** `apple_intelligence_eligible()` → `False`, no auto-provisioning, no UI changes visible
+8. **Peer boundary (Finding 5, added 2026-08-30):** on a Mac running the federation scaffold, `PeerProvider.list_models()` against the Mac's compute endpoint returns only Ollama models (no `apple-foundation-3b`); the mDNS TXT record's `compute_backends` field contains `ollama` (and optionally `vllm`), never `apple_foundation`; and a request to the Mac's peer compute endpoint never routes to port 11435
 
 ---
 
@@ -430,6 +447,8 @@ After reverse-engineering every code path the plan touches, 6 gaps were found an
 - **File:** `dashboard/routes/llm.py` line 64
 - **Issue:** Even with GAP 1 fixed, the fallback SSRF check at line 122 only allows loopback on ports in `_ALLOWED_LOCAL_PORTS = {11434, 1234, 1235}`. Port 11435 (Apple Intelligence bridge) is not included.
 - **Fix:** Add `11435` to the set: `{11434, 1234, 1235, 11435}`.
+
+> **2026-08-30 note (per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`, Finding 5):** the GAP 1/2 allowances are for the Mac's own dashboard proxy route only. Do NOT replicate this allowance in `federation/compute_endpoint.py` — the peer compute endpoint never routes to `apple-foundation`, and port 11435 must never be reachable through it.
 
 ### GAP 3: `proxy_models()` doesn't handle `apple-foundation` in model listing (CRITICAL)
 - **File:** `dashboard/routes/llm.py` line 529

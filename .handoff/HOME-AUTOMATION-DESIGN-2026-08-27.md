@@ -3,11 +3,13 @@
 **Date:** 2026-08-27
 **Status:** Blue-sky research
 
+> **Revision 2026-08-30** — This document predates the federated peer architecture (`HANDOFF-FEDERATED-MULTI-NODE-COMPUTE-AND-FLEET-2026-08-29.md`) and the accepted simplification (`HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`). The local-Ollama and SourcePrep-on-the-HA-node assumptions below are superseded: home/home-light variants run **no local LLM, no SourcePrep, and no ChromaDB** — all LLM work is offloaded to the workstation's compute endpoint over Tailscale via a single "Compute Peer" setting (the workstation's model picker governs), with template thoughts when the peer is unreachable. Persona memory embeddings stay local (memory is per-node) and are served via haloysius's ONNX/Ollama `MemoryEmbedder`, not sentence-transformers in halbert_core. Superseded passages are revised or marked inline; valid content is left intact.
+
 ---
 
 ## 1. The Core Idea
 
-A Halbert instance that identifies as **the home** rather than the computer. It interfaces with Home Assistant, manages the house as its "body", and runs on the HA server (N150 + Optane 375GB). The host computer's own Halbert identity stays dormant on the same machine. Shared backend infrastructure (Ollama, SourcePrep, ChromaDB) serves whichever instance is active.
+A Halbert instance that identifies as **the home** rather than the computer. It interfaces with Home Assistant, manages the house as its "body", and runs on the HA server (N150 + Optane 375GB). The host computer's own Halbert identity stays dormant on the same machine. **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** the home variant runs no LLM, no SourcePrep, and no ChromaDB locally — all LLM work is offloaded to the workstation's compute endpoint over Tailscale, with template thoughts when the peer is unreachable. The original "shared backend infrastructure (Ollama, SourcePrep, ChromaDB) serves whichever instance is active" idea is superseded by the federated architecture: the HA node is a pure compute client, and sysadmin work on the HA device happens from the workstation's Halbert via the fleet cockpit.
 
 Networked devices (iPad, Raspberry Pi) connect over Tailscale.
 
@@ -17,9 +19,9 @@ Networked devices (iPad, Raspberry Pi) connect over Tailscale.
 
 | Component | Why |
 |-----------|-----|
-| Ollama | HTTP daemon :11434 — any client |
-| SourcePrep | HTTP daemon :8400 — `SourcePrepRetrievalBackend` takes `base_url` |
-| ChromaDB | Client/server mode |
+| Ollama | HTTP daemon :11434 — any client (**revised 2026-08-30:** workstation/compute-host side only; home/home-light nodes run no local Ollama) |
+| SourcePrep | HTTP daemon :8400 — `SourcePrepRetrievalBackend` takes `base_url` — **sysadmin variant only**; removed from home/home-light per the 2026-08-30 simplification |
+| ChromaDB | Client/server mode — **sysadmin variant only**; not present on home/home-light nodes |
 | HalbertAppSeam | It's a **class** — instantiable. Global registry is the only blocker |
 | Haloysius Protocols | All Protocol-based — no state |
 | BeingConfig | File-based — just need per-instance paths |
@@ -45,7 +47,7 @@ iPad/Pi is a dumb terminal. Home identity lives on N150. Dashboard served over T
 
 ### Pattern B: Remote Instance (Pi has own identity)
 
-Pi runs its own Halbert daemon with distinct identity, own memory, own being.yml. Points to N150's Ollama + SourcePrep over Tailscale. N150's host identity dormant.
+Pi runs its own Halbert daemon with distinct identity, own memory, own being.yml. **Revised 2026-08-30:** the Pi points to the workstation's compute peer endpoint over Tailscale (`chat_model`/`specialist_model` resolve to `peer://workstation:8000`) — there is no SourcePrep for home variants, and template thoughts serve when the peer is unreachable. N150's host identity dormant.
 
 ### Pattern C: Single-Process Multi-Instance (User's "spawn" idea)
 
@@ -127,9 +129,9 @@ archetype_id: caretaker
 
 ## 6. Tailscale Layer
 
-- **Backend sharing**: Pi → `http://n100.tailnet:11434` (Ollama), `http://n100.tailnet:8400` (SourcePrep)
+- **Compute peer**: home/satellite nodes → the workstation's compute endpoint (hostname:port or Tailscale address), configured via the single "Compute Peer" setting — the workstation's model picker governs which models serve. **Revised 2026-08-30:** no SourcePrep offload; `chat_model`/`specialist_model` resolve to `peer://workstation:8000`.
 - **Dashboard**: iPad → `http://n100.tailnet:8000`
-- **If Tailscale down**: Pi loses LLM → template thoughts fallback (Haloysius already does this). Cognition still runs. HA tools still work locally.
+- **If Tailscale down / peer asleep**: the node loses LLM → template thoughts fallback (Haloysius already does this). Cognition still runs. HA tools still work locally. **Revised 2026-08-30:** this fallback now applies to every home/home-light node, including the N150 itself — no local Ollama anywhere on the HA side.
 
 ---
 
@@ -138,13 +140,14 @@ archetype_id: caretaker
 | Component | RAM |
 |-----------|-----|
 | Ubuntu + HA | ~1GB |
-| Ollama 7B Q4 | ~5GB |
-| SourcePrep | ~200MB |
-| ChromaDB | ~300MB |
 | Halbert (1 instance) | ~200MB |
-| **Total** | **~7GB** |
+| Memory embeddings (haloysius ONNX/Ollama `MemoryEmbedder`) | ~200MB |
+| Template thoughts (peer-asleep fallback) | ~0 |
+| **Total** | **~1.5GB** |
 
-Optane 375GB is plenty. N150 with 16GB RAM is workable; 8GB needs a smaller model (3B/4B).
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** the Ollama, SourcePrep, and ChromaDB rows are removed — none of them run on the HA node (handoff §8: "No LLM runs on the HA node"). All LLM work is served by the workstation compute peer.
+
+Optane 375GB is plenty. N150 with 16GB RAM is workable. **Revised 2026-08-30:** the answer to constrained RAM is offloading, not a smaller local model — devices under 4GB are offload-only (peer → template thoughts, no local model fallback), and local inference (2B-3B minimum) is a fallback for 8GB+ hosts only, with offload preferred. The exact 4GB classification boundary is an open decision (handoff §6.2 / D2: code classifies `SBC_LOW_POWER` as strictly <4GB, with 4GB hosts falling in `ENTRY_8GB`).
 
 ---
 
@@ -168,14 +171,14 @@ The full Halbert stack has a lot of moving parts. Let's break down what's **requ
 
 | Component | Required for HA? | Weight | Notes |
 |-----------|-----------------|--------|-------|
-| **Ollama (LLM daemon)** | YES | ~5GB RAM (7B Q4) | The brain. Without it, template thoughts only. |
+| **Compute peer (workstation endpoint)** | YES | ~0 local RAM | All LLM work, offloaded via `peer://workstation:8000`. Without it, template thoughts only. **Revised 2026-08-30:** no local Ollama on the HA node — "the brain" lives on the workstation. |
 | **Halbert daemon (Python)** | YES | ~200MB | The agent loop, cognition, tools. |
 | **Haloysius (cognition)** | YES | included above | advance_turn, PersonaCognition, memory. |
-| **sentence-transformers** | YES | ~90MB model | Memory embeddings (all-MiniLM-L6-v2). Runs on CPU. |
+| **Memory embeddings** | YES | ~200MB | Persona memory retrieval — NOT SourcePrep, NOT RAG. **Revised 2026-08-30 (handoff §4.7):** served via haloysius's ONNX/Ollama `MemoryEmbedder` (e.g. `nomic-embed-text`), not sentence-transformers in halbert_core. Memory is per-node, not offloadable. |
 | **FastAPI dashboard** | YES | included above | How the user talks to it. |
 | **Home Assistant** | YES | ~1GB | The "body" — what Halbert controls. |
-| **SourcePrep daemon** | OPTIONAL | ~200MB | Awareness of house config tree. Skip for MVP. |
-| **ChromaDB** | OPTIONAL | ~300MB | RAG corpus. Not needed if no SourcePrep. |
+| **SourcePrep daemon** | NO | — | **Revised 2026-08-30 (Finding 2):** removed entirely from home/home-light — no `SOURCEPREP_URL`, no retrieval backend. Config awareness is sysadmin work, done from the workstation. |
+| **ChromaDB** | NO | — | **Revised 2026-08-30:** not present on home/home-light nodes; no RAG corpus. |
 | **RAG scrapers (46 files)** | NOT NEEDED | — | Linux/macOS doc scraping. Irrelevant for HA. |
 | **Config watcher/snapshot** | NOT NEEDED | — | `/etc` file monitoring. HA has its own config. |
 | **Proactive scanner (psutil)** | NOT NEEDED | — | CPU/disk monitoring. HA sensors replace this. |
@@ -189,22 +192,22 @@ The full Halbert stack has a lot of moving parts. Let's break down what's **requ
 ```
 N150 Server
   ├── Home Assistant           (~1GB RAM)
-  ├── Ollama 7B Q4             (~5GB RAM)
+  ├── Compute peer client      (~0 local RAM — peer://workstation:8000)
   ├── Halbert daemon           (~300MB RAM)
   │   ├── Haloysius cognition  (advance_turn, memory, thoughts)
   │   ├── HA integration       (event mapper + tools)
   │   ├── FastAPI dashboard    (chat UI + API)
-  │   └── sentence-transformers (memory embeddings, CPU)
+  │   └── Memory embeddings    (haloysius ONNX/Ollama embedder, CPU)
   └── Tailscale                (remote access)
 
-Total: ~6.5GB RAM, no SourcePrep, no ChromaDB, no RAG, no config watcher
+Total: ~1.5GB RAM, no local LLM, no SourcePrep, no ChromaDB, no RAG, no config watcher
 ```
 
 This is genuinely lean. The "home" Halbert doesn't need to index Linux man pages or watch `/etc/fstab`. Its world is HA entities.
 
 ### 9.3 What's Overkill for HA
 
-- **Entire `rag/` directory (46 files)**: Linux/macOS documentation scrapers. A home Halbert doesn't need Arch Wiki articles. If you want config awareness, SourcePrep indexing HA's YAML files is the right tool, not the RAG scrapers.
+- **Entire `rag/` directory (46 files)**: Linux/macOS documentation scrapers. A home Halbert doesn't need Arch Wiki articles. **Revised 2026-08-30:** nor does it do config awareness via SourcePrep — that is sysadmin work, done from the workstation's Halbert (full sysadmin SourcePrep corpus + fleet-cockpit MCP inspection of the N150), never from the HA node itself.
 - **`config/` subsystem (watcher, snapshot, drift, edge_extractor)**: Monitors `/etc` files. HA has its own config management. The home Halbert reads HA state, not filesystem configs.
 - **`discovery/` (43 files)**: Hardware discovery (CPU, disks, USB). A home Halbert discovers HA entities, not PCI devices.
 - **`somatic/`**: PTY/terminal. No shell access needed for HA control.
@@ -222,7 +225,7 @@ The home Halbert is mostly **the same cognition engine with different tools and 
 | `system_event_mapper.py` (psutil events) | `ha_event_mapper.py` (HA state changes) |
 | `state_trackers.py` (CPU/disk trackers) | `ha_state_trackers.py` (room temp, occupancy) |
 | Prompt: "I am the computer" | Prompt: "I am the home" |
-| `rag/` (Linux docs corpus) | (none, or SourcePrep on HA YAMLs) |
+| `rag/` (Linux docs corpus) | (none) |
 
 The cognition loop, memory system, thought generation, prompt stack, dashboard, agent state machine — all shared infrastructure. The **only** new code is the HA integration module (~6 files) and the home-themed archetypes/personas.
 
@@ -234,14 +237,16 @@ The cognition loop, memory system, thought generation, prompt stack, dashboard, 
 
 ```
 Desktop/N150 Server (always on)
-  ├── HA + Ollama + Halbert (home identity)
+  ├── HA + Halbert (home identity; LLM via compute peer)
   └── Tailscale for remote access
 
 iPad / Phone / Any browser
   └── Web UI (dashboard served by the daemon)
 ```
 
-**Minimum hardware**: Any always-on x86/ARM box with 8GB+ RAM. N150 is ideal. A Pi 5 (8GB) could even work with a 3B model.
+> **Revised 2026-08-30:** in the federated topology the N150 is an Ambient Sentinel — no local Ollama; the workstation is the Compute Host.
+
+**Minimum hardware**: Any always-on x86/ARM box with 8GB+ RAM. N150 is ideal. **Revised 2026-08-30:** a Pi 5 (8GB) could serve as a home-light node offloading to the compute peer — local inference (3B-class minimum) is a fallback on 8GB+ hosts only, with offload preferred.
 
 **What you get**: A home identity you can chat with from any device. It knows your house state, can control entities, has memory of past conversations and events.
 
@@ -253,15 +258,15 @@ iPad / Phone / Any browser
 
 ```
 Desktop/N150 (always on)
-  ├── HA + Ollama + Halbert (home identity)
+  ├── HA + Halbert (home identity; LLM via compute peer)
 
 Raspberry Pi (always on, in workshop)
   ├── Halbert daemon (workshop identity)
   ├── Own memory, own cognition
-  └── Points to N150's Ollama over Tailscale
+  └── Points to the workstation compute peer over Tailscale
 ```
 
-**Minimum hardware**: N150 (8GB+) + Pi 5 (4GB+). Pi runs Python + Haloysius + sentence-transformers but no LLM (remote Ollama).
+**Minimum hardware**: N150 (8GB+) + Pi 5 (4GB+). **Revised 2026-08-30:** the Pi runs Python + Haloysius + local memory embeddings (haloysius ONNX/Ollama embedder) but no LLM — it offloads to the workstation compute peer, with template thoughts when the peer is asleep. Both the N150 and the Pi offload all LLM work in the simplified architecture; devices under 4GB are offload-only (the 4GB classification boundary itself is an open decision, handoff D2).
 
 **What you get**: The workshop Pi is its own being — "I am the workshop." It has its own memory, its own concerns (3D printer temp, dust collection, air quality). If Tailscale drops, it still thinks (template thoughts) and can control local HA entities.
 
@@ -315,20 +320,20 @@ halbert-home/
   ├── ha_integration/   (HA client, tools, event mapper, state trackers)
   ├── dashboard/        (FastAPI + React chat UI)
   ├── being.yml         (home identity config)
-  └── requirements.txt  (haloysius, fastapi, uvicorn, aiohttp, sentence-transformers)
+  └── requirements.txt  (haloysius, fastapi, uvicorn, aiohttp, pyyaml)
 ```
 
 No RAG, no config watcher, no discovery engine, no PTY, no cron scheduler, no polkit, no 46 scrapers. Just the cognition core + HA integration + chat UI.
 
-**Dependencies**: `haloysius`, `fastapi`, `uvicorn`, `aiohttp`, `sentence-transformers`, `pyyaml`. That's it. ~300MB installed + ~90MB model.
+**Dependencies**: `haloysius`, `fastapi`, `uvicorn`, `aiohttp`, `pyyaml` — the haloysius subtractive contract. **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` §4.7 / S5:** persona memory embeddings are served by haloysius's ONNX/Ollama `MemoryEmbedder` (e.g. `nomic-embed-text` via local Ollama, or the ONNX embedder) — `sentence-transformers` is NOT added to halbert_core's `[light]` extra (it would drag in torch and wire a dependency into the wrong package; the on-path memory embedder is haloysius's). `haloysius[embeddings]` remains the optional local-transformer upgrade.
 
-**This could be a separate package** (`halbert-home`) that depends on `haloysius` but not on `halbert-core`. Or a install profile: `pip install halbert[home]` vs `pip install halbert[sysadmin]`.
+**This could be a separate package** (`halbert-home`) that depends on `haloysius` but not on `halbert-core`. Or a install profile: `pip install halbert[home]` vs `pip install halbert[sysadmin]`. (The simplification handoff contemplates a `[home]` extra = `[light]` + `[cognition]`.)
 
 **The light variant runs on:**
 - N150 (obviously)
-- Pi 5 8GB (comfortably, with remote Ollama)
-- Pi 5 4GB (tight but possible, sentence-transformers is the squeeze)
-- Any cloud VPS with 2GB+ RAM (with remote Ollama)
+- Pi 5 8GB (comfortably — offloading to the workstation compute peer; 3B-class local fallback permissible, offload preferred)
+- Pi 5 4GB (offload-only node; memory embeddings via the haloysius ONNX/Ollama embedder, not sentence-transformers — handoff §4.7; the 4GB classification boundary is an open decision, handoff D2)
+- Any cloud VPS with 2GB+ RAM (offloading to a compute peer)
 
 ---
 
@@ -495,22 +500,22 @@ This is rich enough to generate natural-language observations in cognition:
 N150 Server
   ├── Home Assistant           (~1GB)
   ├── Frigate                  (~2GB with Coral/GPU, ~1GB CPU-only)
-  ├── Ollama 7B Q4             (~5GB)  [or 3B for N150: ~2.5GB]
+  ├── Compute peer client      (~0 — peer://workstation:8000; no local LLM)
   ├── Halbert daemon           (~300MB)
   │   ├── Haloysius cognition
   │   ├── HA integration (event mapper + tools)
   │   ├── Frigate integration (MQTT → cognition)
   │   ├── Wyoming agent (voice conversation agent)
   │   ├── FastAPI dashboard
-  │   └── sentence-transformers
+  │   └── Memory embeddings (haloysius ONNX/Ollama embedder)
   ├── Wyoming STT (Whisper)    (~500MB)
   ├── Wyoming TTS (Piper)      (~200MB)
   └── Tailscale
 
-Total: ~9-10GB RAM with 7B, ~6.5GB with 3B
+Total: ~3-4GB local RAM — all LLM work served by the workstation compute peer
 ```
 
-The voice pipeline adds ~700MB (Whisper + Piper). Frigate adds ~1-2GB. This pushes the N150 toward 16GB territory, but a 3B model brings it back to ~6.5GB total.
+**Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` (Findings 3+4):** the 7B-vs-3B local-model tradeoff is removed — no local model tier runs on the HA node at all. The voice pipeline adds ~700MB (Whisper + Piper). Frigate adds ~1-2GB. With the workstation serving all compute, the N150 stays comfortably inside 16GB even with voice and Frigate.
 
 ### 12.7 What Nobody Else Has
 
@@ -654,16 +659,16 @@ These tools would be available to *any* HA conversation agent, not just Halbert'
 
 Research confirms the target audience and their hardware:
 
-| Setup | Hardware | HA Runs As | Ollama | Halbert Fits? |
+| Setup | Hardware | HA Runs As | LLM serving (revised 2026-08-30) | Halbert Fits? |
 |-------|----------|------------|--------|---------------|
-| **N150 Mini PC** | N150, 16GB RAM, 500GB SSD | HA OS in Proxmox VM or Docker | Same machine, 3B model | Yes — primary target |
-| **N150 + NAS** | N150 + TrueNAS/SnapRAID | HA in VM, NAS in another VM | Same machine | Yes — SourcePrep can index NAS configs |
-| **Proxmox Cluster** | 3x N150 mini PCs | HA OS VM with HA failover | Dedicated inference VM | Yes — Halbert in its own VM/CT |
-| **Pi 5 8GB** | Pi 5, 8GB RAM | HA OS on SD/SSD | Remote Ollama (Tailscale) | Yes — light variant |
+| **N150 Mini PC** | N150, 16GB RAM, 500GB SSD | HA OS in Proxmox VM or Docker | Offload to workstation peer (local fallback optional on 8GB+) | Yes — primary target |
+| **N150 + NAS** | N150 + TrueNAS/SnapRAID | HA in VM, NAS in another VM | Offload to workstation peer | Yes — NAS-config indexing, if any, happens on the workstation's sysadmin corpus |
+| **Proxmox Cluster** | 3x N150 mini PCs | HA OS VM with HA failover | Inference VM acts as the compute peer/host | Yes — Halbert in its own VM/CT |
+| **Pi 5 8GB** | Pi 5, 8GB RAM | HA OS on SD/SSD | Remote compute peer (workstation, Tailscale) | Yes — light variant |
 | **Synology NAS** | DS223j/DS923+ | HA in Docker container | Remote or NAS-side | Yes — daemon in same Docker network |
 | **Desktop PC** | Any gaming/work PC | HA in Docker | Same machine | Yes — but PC must be always-on |
 
-**Key insight:** The N150 mini PC is the sweet spot. 6W idle, 16GB RAM, Proxmox for snapshots. Power users are already running this exact setup in 2026. HA in a VM, Ollama in another VM or LXC, Halbert as a third service. Total power budget: ~15-20W.
+**Key insight:** The N150 mini PC is the sweet spot. 6W idle, 16GB RAM, Proxmox for snapshots. Power users are already running this exact setup in 2026. HA in a VM, Halbert as another service. **Revised 2026-08-30:** the home-variant design no longer places an Ollama VM/LXC on the N150 — LLM work is served by the workstation compute peer; where a power user already runs an Ollama VM, it can serve as the compute host. Total power budget: ~15-20W.
 
 The Proxmox angle is important: power users run **multiple VMs/LXCs** on one N150. Halbert doesn't need to be a HA add-on — it can be its own LXC container that talks to HA over the local network. This is actually cleaner than running inside HA's process.
 
@@ -707,18 +712,11 @@ The Proxmox angle is important: power users run **multiple VMs/LXCs** on one N15
 
 **Deliverable:** The home Halbert knows when lights turn on, doors open, temperature changes. It forms observations and can be asked "what happened last night?" and recall from memory. On first boot, it has 7-14 days of historical context.
 
-### Phase 3: SourcePrep for HA Configs
+### Phase 3: SourcePrep for HA Configs — REMOVED (2026-08-30)
 
-**Goal:** The home Halbert has deep knowledge of the house configuration. Moved up from Phase 6 — config awareness amplifies Phase 2's event awareness.
+**Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` Finding 2 / S2:** this phase is removed in its entirety. The HA node never instantiates `SourcePrepRetrievalBackend` and never configures `SOURCEPREP_URL` — no SourcePrep daemon, local or remote, no ChromaDB, no retrieval backend for home/home-light variants. Automation-config questions ("Why is the living room light automation triggering twice?") are answered from the workstation's Halbert, which has the full sysadmin SourcePrep corpus and can inspect the N150's configs via the fleet-cockpit / MCP path. Config awareness of the HA server is a workstation-side capability, not an HA-node feature. The `CompositeRetrievalBackend` idea is retired with it.
 
-- Register the HA config directory (`/config` in HA OS, or the mounted config path) as a SourcePrep project
-- Index `configuration.yaml`, `automations.yaml`, `scripts.yaml`, `scenes.yaml`, entity configs, integration configs
-- The home Halbert can reason about the house config tree: "Why is the living room light automation triggering twice?" → SourcePrep retrieves the automation YAML, Halbert analyzes it
-- No Halbert refactoring needed — SourcePrep is already a separate daemon, just add another project
-- `SourcePrepRetrievalBackend` already takes `project_id` and `base_url` params
-- **Limitation:** Single project only. Home instance uses `ha-config`; host instance uses `halbert-host`. A `CompositeRetrievalBackend` for multi-project search is a future enhancement.
-
-**Deliverable:** The home Halbert understands the house's configuration, not just its current state. It can answer questions about automations, suggest config improvements, and reason about entity relationships. Combined with Phase 2's event stream, it can detect automation conflicts ("Motion Timeout turned off the light 12 seconds after Movie Mode set it to 20%").
+Phase numbering below is left intact so later cross-references stay valid; no replacement phase is planned.
 
 ### Phase 4: Voice via Wyoming Agent
 
@@ -764,6 +762,8 @@ The Proxmox angle is important: power users run **multiple VMs/LXCs** on one N15
 
 **Goal:** Multiple Halbert identities on one machine (home + host).
 
+> **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** this direction is largely superseded — sysadmin work on the HA device happens from the workstation's Halbert (fleet cockpit / MCP path), so a dormant host-identity instance on the N150 is likely unnecessary. Revisit only if a concrete need survives the federated architecture. Also entangled with the open home/home-light merge question (handoff §11.1 / D4 — unresolved).
+
 - **Two-process approach (preferred):** Run two daemon processes on different ports with different env vars (`HALBERT_PERSONA_ID`, `HALBERT_DATA_DIR`, `HALBERT_SCENE_CONTEXT`). Zero refactoring beyond the Phase 1 `cognition_wiring.py` parameterization.
 - `InstanceManager` (only if needed later): manages multiple `HalbertInstance` objects in one process. Requires refactoring module-level singletons into per-instance factories.
 
@@ -773,64 +773,39 @@ The Proxmox angle is important: power users run **multiple VMs/LXCs** on one N15
 
 **Goal:** `pip install halbert[home]` installs only what's needed for HA.
 
-- Separate install profile or package
-- Dependencies: `haloysius`, `fastapi`, `uvicorn`, `aiohttp`, `pyyaml` (no sentence-transformers if using Ollama embeddings)
-- **Offload embeddings to Ollama** (`/api/embeddings` with `nomic-embed-text` or `all-minilm`) — removes PyTorch ~500MB from the process
-- No RAG scrapers, no config watcher, no discovery engine, no PTY
-- Runs on Pi 5 4GB with remote Ollama
+- Separate install profile or package (a `[home]` extra = `[light]` + `[cognition]` is the option the simplification handoff contemplates)
+- Dependencies: `haloysius`, `fastapi`, `uvicorn`, `aiohttp`, `pyyaml` — the haloysius subtractive contract
+- **Revised 2026-08-30 (handoff §4.7 / S5):** persona memory embeddings stay local (memory is per-node, per-identity) and are served via haloysius's ONNX/Ollama `MemoryEmbedder` (e.g. `nomic-embed-text` via local Ollama). `sentence-transformers` is NOT added to halbert_core's extras — it would drag in torch and wire a dependency into the wrong package; the on-path memory embedder is haloysius's, and `haloysius[embeddings]` is the optional local-transformer upgrade. The original "offload embeddings to Ollama" bullet is superseded in rationale: serving via Ollama is about which *local* embedder runs, never about moving memory off-node.
+- No RAG scrapers, no config watcher, no discovery engine, no PTY, no retrieval backend, no ChromaDB
+- Runs on Pi 5 4GB as an offload-only node (compute peer required; template thoughts when the peer is asleep; the 4GB classification boundary is an open decision — handoff D2)
 - Docker image: `halbert/halbert-home:latest`
-- Default model: **Qwen 3.5 4B** (Apache 2.0, BFCL tool calling 95.0, ~2.5GB Q4, best CPU-only pick in 2026). Light option: **SmolLM3 3B** (Apache 2.0, 1.9GB Q4, dual-mode reasoning). Future Frigate option: **Gemma 4 E4B** (multimodal text+image+audio, can analyze camera frames directly).
+- **Revised 2026-08-30 (Findings 3+4):** no local model configuration and no model picks for home variants — a single "Compute Peer" setting (hostname:port + Test Connection) replaces any default-model choice; the workstation's model picker governs which model serves HA requests. Vision on HA nodes is Frigate-consumed (Halbert subscribes to MQTT events); whether `vision_model` exists at all on HA variants is an open question (handoff §11.3).
 
 **Deliverable:** A lean package that runs on low-power hardware. The "full" Halbert and the "home" Halbert share the same codebase, just different entry points and dependency sets.
 
 ---
 
-## 15. SourcePrep for Home Automation — Why It's Not Overkill
+## 15. SourcePrep for Home Automation — Superseded (2026-08-30)
 
-The user's point about SourcePrep for power users is well-taken. Here's why:
-
-**Power users already have complex HA configs:**
-- `configuration.yaml` with includes (`!include`, `!secret`)
-- `automations.yaml` with dozens/hundreds of automations
-- `scripts.yaml`, `scenes.yaml`, `blueprints/`
-- Integration-specific configs (Zigbee2MQTT, Frigate, MQTT, Node-RED)
-- Custom components in `custom_components/`
-- HACS configurations
-
-**SourcePrep indexes this tree and gives the home Halbert:**
-1. **Config awareness** — "Your living room automation has a condition that checks `input_boolean.guest_mode` — is that intentional?"
-2. **Dependency tracing** — "This sensor is used by 3 automations and 2 dashboards. Changing it will affect all of them."
-3. **Change history** — "You changed the thermostat schedule last Tuesday. The bedroom has been colder at night since then."
-4. **Natural language config search** — "Show me all automations that touch the front door lock"
-
-**No Halbert refactoring needed for single-project usage.** SourcePrep is already a daemon. Just:
-1. Point SourcePrep at the HA config directory (mounted volume, or over network)
-2. Register it as a project: `sourceprep project add --name ha-config --path /config`
-3. Wire `SourcePrepRetrievalBackend` with the new project_id in the home instance's `wire_halbert_seam()` call
-
-The `SourcePrepRetrievalBackend` already accepts `project_id` and `base_url`. It's a config change, not a code change.
-
-**Limitation (verified post-review):** `SourcePrepRetrievalBackend` supports only **one project at a time**. The home instance can search `ha-config` OR `halbert-host`, but not both simultaneously. A future `CompositeRetrievalBackend` that queries multiple projects and merges results via reciprocal rank fusion would enable full homelab awareness. For now, the home instance uses `ha-config`; the host instance uses `halbert-host`. If a user runs both instances (two-process approach), each has its own retrieval scope.
-
-**For the NAS user:** A `CompositeRetrievalBackend` (future enhancement) would let the home Halbert index TrueNAS/SnapRAID configs, Docker compose files, and Proxmox VM configs alongside HA configs — full infrastructure awareness. This is the "power user" value proposition: the home Halbert understands your whole homelab, not just your lights.
+**Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` Finding 2:** this section's thesis is superseded for home/home-light variants — SourcePrep is removed from them entirely (no `SOURCEPREP_URL`, no retrieval backend, no ChromaDB, ever). The power-user capabilities it argued for (config awareness, dependency tracing, change history, natural-language config search) become workstation-side sysadmin capabilities: the workstation's SourcePrep corpus may index the N150's HA config via MCP remote inspection, but it is the workstation's Halbert that queries it — the HA node answers from live HA state and persona memory. The `sourceprep project add --name ha-config` wiring recipe, the single-project limitation discussion, and the `CompositeRetrievalBackend` idea are all retired.
 
 ---
 
 ## 16. Open Questions (Revised)
 
-1. **Identity boundary** — Does the home Halbert also manage the computer/NAS it runs on, or purely HA entities? (Answer emerging: power users want both — HA entities + infrastructure awareness via SourcePrep)
+1. **Identity boundary** — Does the home Halbert also manage the computer/NAS it runs on, or purely HA entities? (**Revised 2026-08-30:** answered by role separation — the home Halbert does HA entities + live state only; infrastructure/NAS/computer awareness is the workstation Halbert's job, via its sysadmin SourcePrep corpus and the fleet cockpit.)
 2. **HA governance** — Which HA actions need approval? (Unlock door = yes, turn on lamp = no)
 3. **Multi-instance now or later?** — Phase 7. Two-process approach may suffice indefinitely.
-4. **Light variant as separate package?** — Phase 8. Install profile vs separate package.
+4. **Light variant as separate package?** — Phase 8. Install profile vs separate package. (**Revised 2026-08-30 per S5:** the dependency set under discussion changed — `[light]` stays unchanged; memory embeddings run via haloysius's ONNX/Ollama `MemoryEmbedder`; the open packaging choice is whether to add a `[home]` extra = `[light]` + `[cognition]`. The embeddings-offload variant is rejected — memory is per-node.)
 5. **Android target** — PWA is the zero-effort path. Native app is future market.
 6. **Cloud option** — SaaS onboarding path. Lower priority than self-hosted.
-7. **Model size** — Qwen 3.5 4B (Apache 2.0, BFCL 95.0, ~2.5GB Q4) is the 2026 default for N150. SmolLM3 3B for Pi 5. Gemma 4 E4B for future Frigate multimodal.
-8. **SourcePrep for HA configs** — Phase 6. No refactoring, just add a project. High value for power users.
+7. **Model size** — (**Revised 2026-08-30:** resolved — none on HA nodes.) The compute peer serves all LLM work and the workstation's model picker governs; the 1B tier is dropped and devices under 4GB are offload-only. Open residuals: whether 8GB+ hosts keep an optional 3B-class local fallback (offload preferred), and the 4GB classification boundary (handoff D2). Named local-model picks for HA nodes are removed.
+8. **SourcePrep for HA configs** — (**Revised 2026-08-30:** superseded, Finding 2.) Not configured on HA nodes; the workstation's sysadmin corpus may index the N150's configs for remote sysadmin queries. The original phase reference is moot.
 9. **Two processes vs InstanceManager** — Two processes on different ports is the pragmatic answer. InstanceManager is elegant but unnecessary until there's a real concurrency requirement.
 10. **Voice priority** — Phase 4. Text-first is correct for MVP. Voice is the "talk to your house" magic that differentiates.
 11. **Frigate as first-class or optional?** — Phase 5. Optional plugin, not core. Not every user has cameras.
 12. **Proactive voice aggressiveness** — Security-critical via TTS, everything else via dashboard notification. User-configurable threshold.
-13. **HA custom integration vs standalone** — Path C (hybrid). Standalone daemon + thin HACS bridge. Phase 3.
-14. **Market positioning** — HA power users who already run Ollama, Frigate, Proxmox. They'll appreciate the cognition layer. Not for casual smart bulb users.
+13. **HA custom integration vs standalone** — Path C (hybrid). Standalone daemon + thin HACS bridge. Phase 6.
+14. **Market positioning** — HA power users who already run Ollama (on a workstation/compute host), Frigate, Proxmox. They'll appreciate the cognition layer. Not for casual smart bulb users. (**Revised 2026-08-30:** with the HA node as a pure compute client, the target user additionally needs a workstation/NAS-class compute peer — or accepts template-thoughts-only responses while it sleeps.)
 15. **HA WebSocket vs MQTT for events** — WebSocket for HA state changes (richer data, no broker needed). MQTT only for Frigate (Phase 5). Don't require an MQTT broker for the MVP.
 16. **Proxmox/LXC packaging** — Should we ship a Proxmox LXC template for Halbert? Power users run Proxmox. A one-script install into an LXC container would be compelling.
