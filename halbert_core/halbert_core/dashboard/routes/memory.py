@@ -11,13 +11,23 @@ The former /stats and /search endpoints sat on the file-backed MemoryRetrieval,
 which was removed 2026-08-26 (audit F1) -- it could never return anything that
 had been written. Machine state is now the TemporalStateLedger; identity and
 semantic memory are Haloysius memory_v2.
+
+Peer memory endpoints (P2b)
+---------------------------
+The ``/api/memory/add``, ``/search``, ``/get/{id}``, ``/delete/{id}`` routes
+expose the local ``PersonaMemoryStore`` over HTTP so that a paired peer node
+(the workstation) can read/write the canonical memory store on the HA server.
+All peer memory routes require peer bearer auth — no ``mcp_response()``
+redaction (this is internal entity communication, not external MCP traffic).
 """
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
+
+from ...federation.peer_middleware import require_peer_auth, PeerContext
 
 logger = logging.getLogger('halbert.dashboard.routes.memory')
 
@@ -186,3 +196,154 @@ async def delete_memory_entry(collection: str, entry_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Delete entry error: {e}")
         return {"status": "error", "error": str(e)}
+
+
+# -------------------------------------------------------------------------
+# Peer memory endpoints (P2b)
+#
+# Expose the local PersonaMemoryStore over HTTP so a paired peer (the
+# workstation) can read/write the canonical memory store on the HA server.
+# All routes require peer bearer auth. No mcp_response() redaction — this
+# is internal entity communication.
+# -------------------------------------------------------------------------
+
+
+def _get_persona_memory_store():
+    """Get the local PersonaMemoryStore for the current persona.
+
+    Lazy import to avoid pulling haloysius at module load time (subtractive
+    contract). Returns None if haloysius is not installed.
+    """
+    try:
+        from haloysius.memory_v2.store import PersonaMemoryStore
+        from ...integrations.cognition_wiring import _get_persona_id
+
+        persona_id = _get_persona_id()
+        return PersonaMemoryStore(persona_id)
+    except Exception as e:
+        logger.error(f"Could not create PersonaMemoryStore: {e}")
+        return None
+
+
+class PeerMemoryAddRequest(BaseModel):
+    """A PersonaMemory dict sent by a peer for smart_add."""
+    memory: Dict[str, Any] = Field(..., description="PersonaMemory.to_dict() payload")
+
+
+class PeerMemoryAddResponse(BaseModel):
+    """Result of smart_add: operation, reason, and assigned memory_id."""
+    operation: str
+    reason: str
+    memory_id: Optional[str] = None
+
+
+@router.post(
+    "/add",
+    response_model=PeerMemoryAddResponse,
+    dependencies=[Depends(require_peer_auth)],
+)
+async def peer_memory_add(request: PeerMemoryAddRequest) -> PeerMemoryAddResponse:
+    """Add a memory to the local PersonaMemoryStore (peer-writable).
+
+    Accepts a PersonaMemory dict (as produced by ``to_dict()``),
+    reconstructs it via ``from_dict()``, and calls ``smart_add()``.
+    Returns the operation type, reason, and assigned memory_id.
+
+    Requires peer bearer auth. No redaction — internal entity communication.
+    """
+    from haloysius.memory_v2.types import PersonaMemory
+
+    store = _get_persona_memory_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="PersonaMemoryStore unavailable")
+
+    try:
+        memory = PersonaMemory.from_dict(request.memory)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid memory payload: {e}")
+
+    operation, reason, memory_id = store.smart_add(memory)
+    return PeerMemoryAddResponse(
+        operation=operation.value,
+        reason=reason,
+        memory_id=memory_id,
+    )
+
+
+@router.get(
+    "/search",
+    dependencies=[Depends(require_peer_auth)],
+)
+async def peer_memory_search(
+    q: str = Query(..., description="Search query"),
+    k: int = Query(5, ge=1, le=50, description="Number of results"),
+    memory_type: Optional[str] = Query(None, description="Filter by memory type"),
+) -> Dict[str, Any]:
+    """Search the local PersonaMemoryStore (peer-readable).
+
+    Returns a list of memory dicts (as produced by ``to_dict()``).
+    Requires peer bearer auth.
+    """
+    store = _get_persona_memory_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="PersonaMemoryStore unavailable")
+
+    # Convert memory_type string to MemoryType enum if provided
+    mt_enum = None
+    if memory_type:
+        try:
+            from haloysius.memory_v2.types import MemoryType
+            mt_enum = MemoryType(memory_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid memory_type {memory_type!r}",
+            )
+
+    results = store.search(q, k=k, memory_type=mt_enum)
+    return {
+        "status": "ok",
+        "query": q,
+        "results": [m.to_dict() for m in results],
+        "count": len(results),
+    }
+
+
+@router.get(
+    "/get/{memory_id}",
+    dependencies=[Depends(require_peer_auth)],
+)
+async def peer_memory_get(memory_id: str) -> Dict[str, Any]:
+    """Get a single memory by ID from the local PersonaMemoryStore.
+
+    Returns 404 if not found. Requires peer bearer auth.
+    """
+    store = _get_persona_memory_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="PersonaMemoryStore unavailable")
+
+    memory = store.get(memory_id)
+    if memory is None:
+        raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
+
+    return {"status": "ok", "memory": memory.to_dict()}
+
+
+@router.delete(
+    "/{memory_id}",
+    dependencies=[Depends(require_peer_auth)],
+)
+async def peer_memory_delete(memory_id: str) -> Dict[str, Any]:
+    """Soft-delete a memory by ID from the local PersonaMemoryStore.
+
+    Returns 404 if not found. Requires peer bearer auth.
+    """
+    store = _get_persona_memory_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="PersonaMemoryStore unavailable")
+
+    deleted = store.delete(memory_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
+
+    return {"status": "ok", "deleted": memory_id}
