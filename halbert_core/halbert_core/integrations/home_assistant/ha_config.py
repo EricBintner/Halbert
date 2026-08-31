@@ -54,11 +54,8 @@ class HAConfig:
 
 def _config_path() -> Path:
     """Return the path to the HA config file."""
-    data_dir = os.environ.get(
-        "HALBERT_DATA_DIR",
-        os.path.expanduser("~/.local/share/halbert"),
-    )
-    return Path(data_dir) / "ha_config.json"
+    from ...utils.platform import get_data_dir
+    return get_data_dir() / "ha_config.json"
 
 
 def load_ha_config() -> HAConfig:
@@ -80,8 +77,40 @@ def load_ha_config() -> HAConfig:
 
 
 def save_ha_config(config: HAConfig) -> None:
-    """Save HA connection config to disk."""
+    """Save HA connection config to disk with restricted permissions.
+
+    The file contains the HA long-lived access token which grants full
+    house control (locks, alarm, garage) — write 0600 like Frigate
+    (REV-03 F5). Also chmod existing files on load.
+    """
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(config), indent=2))
+    data = json.dumps(asdict(config), indent=2)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, data.encode())
+    finally:
+        os.close(fd)
     logger.info(f"Saved HA config to {path}")
+
+
+def seed_ha_config_from_being(url: str, token: str) -> None:
+    """Seed HA config from being.yml without clobbering operator edits.
+
+    Only writes if ha_config.json does not exist, or fills in missing
+    url/token fields without touching verify_ssl/visible_domains that
+    the operator may have set in the dashboard (REV-03 F6).
+    """
+    path = _config_path()
+    if path.is_file():
+        existing = load_ha_config()
+        if existing.url and existing.token:
+            return  # already configured — don't clobber
+        # Fill in missing url/token only
+        existing.url = url
+        existing.token = token
+        save_ha_config(existing)
+        logger.info("HA config url/token filled from being.yml (existing file preserved)")
+    else:
+        save_ha_config(HAConfig(url=url, token=token))
+        logger.info("HA config seeded from being.yml (new file)")

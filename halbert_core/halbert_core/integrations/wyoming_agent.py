@@ -83,6 +83,7 @@ class HalbertWyomingAgent:
         self._agent_factory = agent_factory
         self._server: Optional[asyncio.AbstractServer] = None
         self._running = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def handle_transcript(
         self,
@@ -209,11 +210,14 @@ class HalbertWyomingAgent:
                 return ""
 
             client = HAClient(config)
-            areas = await client.get_areas()
-            area = next((a for a in areas if a.get("area_id") == area_id), None)
-            if area:
-                area_name = area.get("name", area_id)
-                return f"[Spatial context: The user is in the {area_name}.]"
+            try:
+                areas = await client.get_areas()
+                area = next((a for a in areas if a.get("area_id") == area_id), None)
+                if area:
+                    area_name = area.get("name", area_id)
+                    return f"[Spatial context: The user is in the {area_name}.]"
+            finally:
+                await client.close()  # REV-03 F12 — was leaked per voice turn
         except Exception as e:
             logger.debug(f"Could not resolve area context: {e}")
 
@@ -281,23 +285,33 @@ class HalbertWyomingAgent:
                     await writer.drain()
 
                 elif msg_type == "audio-chunk":
-                    # Ignore audio data — we only handle text transcripts
-                    pass
+                    # Drain the binary PCM payload so it doesn't corrupt the
+                    # next readline() (REV-03 F4). Wyoming frames are:
+                    #   {"type":"audio-chunk","payload_length":N}\n + N bytes
+                    payload_len = data.get("payload_length", 0)
+                    if payload_len > 0:
+                        await reader.readexactly(payload_len)
+                    # We only handle text transcripts — audio is silently drained
 
                 elif msg_type == "describe":
-                    # Wyoming discovery: describe our capabilities
-                    describe_msg = {
-                        "type": "describe",
+                    # Wyoming discovery: reply with an "info" event per the
+                    # protocol spec (REV-03 F3). Real HA/Wyoming clients send
+                    # "describe" and wait for "info" — replying with "describe"
+                    # causes them to drop the connection.
+                    info_msg = {
+                        "type": "info",
                         "data": {
                             "name": "halbert",
                             "description": "Halbert AI home assistant",
-                            "capabilities": {
-                                "conversation": True,
-                                "streaming": False,
+                            "versions": "1",
+                            "conversation": {
+                                "name": "halbert-conversation",
+                                "description": "Halbert conversation handler",
+                                "installed": True,
                             },
                         },
                     }
-                    writer.write((json.dumps(describe_msg) + "\n").encode("utf-8"))
+                    writer.write((json.dumps(info_msg) + "\n").encode("utf-8"))
                     await writer.drain()
 
                 else:
@@ -321,6 +335,7 @@ class HalbertWyomingAgent:
             logger.warning("Wyoming agent already running")
             return
 
+        self._loop = asyncio.get_running_loop()
         self._server = await asyncio.start_server(
             self._handle_client,
             host=self.config.host,
@@ -330,13 +345,36 @@ class HalbertWyomingAgent:
         logger.info(f"Wyoming agent listening on {self.config.host}:{self.config.port}")
 
     async def stop(self) -> None:
-        """Stop the Wyoming TCP server."""
-        if self._server:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
+        """Stop the Wyoming TCP server.
+
+        Safe to call from any event loop (REV-03 F10). The agent runs
+        on a dedicated loop in a daemon thread; uvicorn's shutdown runs
+        on a different loop. Uses call_soon_threadsafe when the loops
+        differ (same pattern as FrigateMQTTSubscriber).
+        """
         self._running = False
+        current_loop = None
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
+        if current_loop is self._loop:
+            # Same loop — close directly
+            if self._server:
+                self._server.close()
+                await self._server.wait_closed()
+                self._server = None
+        elif self._loop is not None and not self._loop.is_closed():
+            # Different loop — close thread-safely
+            self._loop.call_soon_threadsafe(self._close_safely)
         logger.info("Wyoming agent stopped")
+
+    def _close_safely(self) -> None:
+        """Close the server from its own loop (called via call_soon_threadsafe)."""
+        if self._server:
+            asyncio.ensure_future(self._server.aclose(), loop=self._loop)
+            self._server = None
 
     @property
     def is_running(self) -> bool:
@@ -381,40 +419,42 @@ async def proactive_speak(
             return False
 
         client = HAClient(ha_config)
-
-        # TASK-07: strip markdown before sending to TTS. HA's TTS reads
-        # raw text aloud — markdown syntax is not spoken language.
-        spoken_text = _strip_markdown_for_speech(text)
-        # Phase 2.5: apply pronunciation substitutions for domain terms
-        # so HA's TTS pronounces systemd, MQTT, NVMe, etc. correctly.
         try:
-            from .modality_wiring import apply_pronunciation
-            spoken_text = apply_pronunciation(spoken_text)
-        except Exception:
-            pass  # engine not installed — skip pronunciation
-        if not spoken_text.strip():
-            logger.warning("Proactive speak: text was empty after markdown stripping")
-            return False
-
-        # Check suppression booleans
-        for entity_id in [cfg.guest_mode_entity, cfg.sleep_mode_entity]:
+            # TASK-07: strip markdown before sending to TTS. HA's TTS reads
+            # raw text aloud — markdown syntax is not spoken language.
+            spoken_text = _strip_markdown_for_speech(text)
+            # Phase 2.5: apply pronunciation substitutions for domain terms
+            # so HA's TTS pronounces systemd, MQTT, NVMe, etc. correctly.
             try:
-                state = await client.get_entity_state(entity_id)
-                if state.get("state", "off") == "on":
-                    logger.info(f"Proactive speak suppressed ({entity_id} is on)")
-                    return False
+                from .modality_wiring import apply_pronunciation
+                spoken_text = apply_pronunciation(spoken_text)
             except Exception:
-                pass  # Entity doesn't exist — don't suppress
+                pass  # engine not installed — skip pronunciation
+            if not spoken_text.strip():
+                logger.warning("Proactive speak: text was empty after markdown stripping")
+                return False
 
-        # Build service call data
-        service_data: Dict[str, Any] = {"message": spoken_text}
-        if area_id:
-            # Target media players in the specified area
-            service_data["area_id"] = area_id
+            # Check suppression booleans
+            for entity_id in [cfg.guest_mode_entity, cfg.sleep_mode_entity]:
+                try:
+                    state = await client.get_entity_state(entity_id)
+                    if state.get("state", "off") == "on":
+                        logger.info(f"Proactive speak suppressed ({entity_id} is on)")
+                        return False
+                except Exception:
+                    pass  # Entity doesn't exist — don't suppress
 
-        await client.call_service("tts", "speak", service_data)
-        logger.info(f"Proactive speak sent to area {area_id}: {spoken_text[:80]}")
-        return True
+            # Build service call data
+            service_data: Dict[str, Any] = {"message": spoken_text}
+            if area_id:
+                # Target media players in the specified area
+                service_data["area_id"] = area_id
+
+            await client.call_service("tts", "speak", service_data)
+            logger.info(f"Proactive speak sent to area {area_id}: {spoken_text[:80]}")
+            return True
+        finally:
+            await client.close()  # REV-03 F12 — was leaked per proactive speak
 
     except Exception as e:
         logger.warning(f"Proactive speak failed: {e}")

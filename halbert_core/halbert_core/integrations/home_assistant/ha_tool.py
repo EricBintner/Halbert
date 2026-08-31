@@ -4,8 +4,10 @@
 
 Registers `ha_call_service` and `ha_get_entity_state` with the
 ToolExecutor so the LLM can control HA devices through chat.
-Phase 1 has no governance restrictions — the user is in the loop
-and sees every call in the conversation.
+
+All service calls pass through the AutonomyGate (REV-03 F2) — the
+same gate the MCP path uses — so the autonomy_level setting is
+enforced consistently across chat, MCP, and the HTTP API.
 """
 
 from __future__ import annotations
@@ -27,6 +29,23 @@ def _get_client() -> HAClient:
     if _client is None:
         _client = HAClient(load_ha_config())
     return _client
+
+
+def _get_autonomy_gate():
+    """Get the AutonomyGate from BeingConfig (same pattern as mcp/server.py)."""
+    try:
+        from .autonomy_gate import AutonomyGate
+        from .ha_governance import HAGovernancePolicy
+        from ...config.being_config import load_being_config
+        cfg = load_being_config()
+        return AutonomyGate(
+            autonomy_level=cfg.autonomy_level,
+            autonomy_overrides=cfg.autonomy_overrides,
+            governance=HAGovernancePolicy(),
+        )
+    except Exception as e:
+        logger.debug(f"Autonomy gate not available: {e}")
+        return None
 
 
 async def close_client() -> None:
@@ -92,9 +111,11 @@ HA_GET_ENTITY_STATE_SCHEMA = {
 # --- ToolExecutor-compatible handlers ---
 
 async def _ha_call_service_handler(args: Dict[str, Any]) -> str:
-    """ToolExecutor handler for ha_call_service."""
-    from .ha_governance import HAGovernancePolicy
+    """ToolExecutor handler for ha_call_service.
 
+    Passes through the AutonomyGate (REV-03 F2) so the autonomy_level
+    setting is enforced on the chat path, matching the MCP path.
+    """
     client = _get_client()
     if not client.config.is_configured():
         return "Home Assistant is not configured. Set the connection in the Home panel first."
@@ -104,16 +125,21 @@ async def _ha_call_service_handler(args: Dict[str, Any]) -> str:
     entity_id = args.get("entity_id", "")
     data = args.get("data") or {}
 
-    # Governance check
-    policy = HAGovernancePolicy()
-    decision = policy.classify(domain, entity_id, service)
-    if not decision["allowed"]:
-        return f"Blocked by governance policy: {decision['reason']}"
-    if decision["requires_confirmation"]:
+    # Autonomy gate check (REV-03 F2 — was governance-only, bypassing autonomy_level)
+    gate = _get_autonomy_gate()
+    if gate is None:
+        return "Autonomy gate not available — cannot execute HA commands safely."
+    decision = gate.evaluate(domain, entity_id, service)
+    if not decision.allowed:
+        return f"Blocked: {decision.reason}"
+    if decision.requires_proposal:
         return (
-            f"Confirmation required for {domain}.{service} on {entity_id}: "
-            f"{decision['reason']}. Please confirm this action."
+            f"This action ({domain}.{service} on {entity_id}) requires a "
+            f"proposal at the current autonomy level ({gate.autonomy_level}). "
+            f"Use the MCP approve_proposal workflow or raise autonomy to 'act'."
         )
+    if not decision.auto_execute:
+        return f"Not auto-executed: {decision.reason}"
 
     if entity_id:
         data["entity_id"] = entity_id
@@ -122,7 +148,10 @@ async def _ha_call_service_handler(args: Dict[str, Any]) -> str:
         result = await client.call_service(domain, service, data)
         target = f" on {entity_id}" if entity_id else ""
         n = len(result.get("entities", []))
-        return f"Called {domain}.{service}{target}. {n} entity/entities affected."
+        suffix = ""
+        if decision.cancel_window_seconds > 0:
+            suffix = f" (cancel window: {decision.cancel_window_seconds}s)"
+        return f"Called {domain}.{service}{target}. {n} entity/entities affected.{suffix}"
     except Exception as e:
         return f"Failed to call {domain}.{service}: {e}"
 

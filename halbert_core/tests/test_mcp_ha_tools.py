@@ -34,8 +34,8 @@ class TestMCPSchemas:
         assert "set_autonomy_level" in names
 
     def test_total_tool_count(self):
-        assert len(TOOL_SCHEMAS) == 17
-        assert len(TOOL_HANDLERS) == 17
+        assert len(TOOL_SCHEMAS) == 18
+        assert len(TOOL_HANDLERS) == 18
 
 
 class TestHAGetEntities:
@@ -52,6 +52,7 @@ class TestHAGetEntities:
             {"entity_id": "light.living_room", "state": "on", "attributes": {"friendly_name": "Living Room"}},
             {"entity_id": "light.bedroom", "state": "off", "attributes": {"friendly_name": "Bedroom"}},
         ])
+        mock_client.close = AsyncMock()
         with patch("halbert_core.mcp.server._get_ha_client", return_value=mock_client):
             result = _tool_ha_get_entities({})
             assert result["count"] == 2
@@ -63,6 +64,7 @@ class TestHAGetEntities:
             {"entity_id": "light.living_room", "state": "on", "attributes": {}},
             {"entity_id": "climate.thermostat", "state": "heat", "attributes": {}},
         ])
+        mock_client.close = AsyncMock()
         with patch("halbert_core.mcp.server._get_ha_client", return_value=mock_client):
             result = _tool_ha_get_entities({"domain": "light"})
             assert result["count"] == 1
@@ -103,6 +105,7 @@ class TestHACallService:
         )
         mock_client = MagicMock()
         mock_client.call_service = AsyncMock(return_value={})
+        mock_client.close = AsyncMock()
         with patch("halbert_core.mcp.server._get_autonomy_gate", return_value=mock_gate), \
              patch("halbert_core.mcp.server._get_ha_client", return_value=mock_client):
             result = _tool_ha_call_service({

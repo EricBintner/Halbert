@@ -237,9 +237,9 @@ class TestWyomingClientHandler:
             line = await asyncio.wait_for(reader.readline(), timeout=5.0)
             response = json.loads(line.decode("utf-8"))
 
-            assert response["type"] == "describe"
+            assert response["type"] == "info"  # REV-03 F3: spec-mandated info reply
             assert response["data"]["name"] == "halbert"
-            assert response["data"]["capabilities"]["conversation"] is True
+            assert "conversation" in response["data"]
 
             writer.close()
             await writer.wait_closed()
@@ -302,6 +302,7 @@ class TestProactiveSpeak:
             with patch("halbert_core.integrations.home_assistant.ha_client.HAClient") as mock_client_cls:
                 mock_client = MagicMock()
                 mock_client.get_entity_state = AsyncMock(return_value={"state": "on"})
+                mock_client.close = AsyncMock()
                 mock_client_cls.return_value = mock_client
 
                 result = await proactive_speak("alert", config=config)
@@ -319,6 +320,7 @@ class TestProactiveSpeak:
                 mock_client = MagicMock()
                 mock_client.get_entity_state = AsyncMock(return_value={"state": "off"})
                 mock_client.call_service = AsyncMock(return_value={"success": True})
+                mock_client.close = AsyncMock()
                 mock_client_cls.return_value = mock_client
 
                 result = await proactive_speak("Front door unlocked", area_id="living_room", config=config)
@@ -339,6 +341,7 @@ class TestProactiveSpeak:
                 mock_client = MagicMock()
                 mock_client.get_entity_state = AsyncMock(return_value={"state": "off"})
                 mock_client.call_service = AsyncMock(return_value={"success": True})
+                mock_client.close = AsyncMock()
                 mock_client_cls.return_value = mock_client
 
                 result = await proactive_speak("Alert", config=config)

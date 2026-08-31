@@ -139,16 +139,41 @@ async def get_entity(entity_id: str):
 
 @router.post("/home/service")
 async def call_service(req: ServiceCallRequest):
-    """Call a HA service."""
+    """Call a HA service.
+
+    Gated by the AutonomyGate (REV-03 F2) — the same gate used by the
+    chat and MCP paths. Without this, any HTTP client that can reach
+    the dashboard could call lock.unlock or alarm_control_panel.alarm_disarm
+    with no governance or autonomy check.
+    """
     client = _get_client()
     if not client.config.is_configured():
         raise HTTPException(status_code=400, detail="Home Assistant is not configured")
     try:
+        # Autonomy gate check (REV-03 F2)
+        from ...integrations.home_assistant.ha_tool import _get_autonomy_gate
+        gate = _get_autonomy_gate()
+        if gate is None:
+            raise HTTPException(status_code=503, detail="Autonomy gate not available")
+        decision = gate.evaluate(req.domain, req.entity_id, req.service)
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Blocked by autonomy gate: {decision.reason}",
+            )
+        if not decision.auto_execute:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Not auto-executed at autonomy level '{gate.autonomy_level}': {decision.reason}",
+            )
+
         service_data = req.data or {}
         if req.entity_id:
             service_data["entity_id"] = req.entity_id
         result = await client.call_service(req.domain, req.service, service_data)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
