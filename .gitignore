@@ -146,3 +146,6 @@ storybook-static/
 # Vendored fonts, synced from shared-tokens/fonts by scripts/sync_fonts.py
 **/public/fonts/
 packages/design-system/.storybook_home/
+
+# Claude Code worktrees
+.claude/worktrees/
