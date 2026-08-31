@@ -33,14 +33,14 @@ class TestPeerDiscovery:
             role="compute_provider",
             port=8000,
             capabilities=["gpu_llm", "sourceprep"],
-            compute_backends=["ollama", "apple_foundation"],
+            compute_backends=["ollama", "vllm"],
         )
         assert txt["node_id"] == "studio-mac"
         assert txt["node_name"] == "Studio Mac"
         assert txt["role"] == "compute_provider"
         assert txt["api_port"] == "8000"
         assert txt["capabilities"] == "gpu_llm,sourceprep"
-        assert txt["compute_backends"] == "ollama,apple_foundation"
+        assert txt["compute_backends"] == "ollama,vllm"
 
     def test_parse_txt_record(self):
         """parse_txt_record correctly parses TXT record fields."""
@@ -110,17 +110,24 @@ class TestPeerDiscovery:
         assert identity["role"] == "satellite"
 
     def test_compute_backends_field_in_txt_record(self):
-        """The TXT record includes compute_backends for Apple Intelligence (M13)."""
+        """The TXT record includes compute_backends; Apple Intelligence is never a peer backend (M13).
+
+        Per the Apple Intelligence local-only constraint, a Mac compute
+        host advertises ``ollama``/``vllm`` for peers — ``apple_foundation``
+        is never listed because Apple Intelligence serves only the Mac's
+        own slots, never peer offload.
+        """
         txt = build_txt_record(
             node_id="mac-studio",
             node_name="Mac Studio",
             role="compute_provider",
             port=8000,
-            capabilities=["gpu_llm", "apple_foundation"],
-            compute_backends=["ollama", "apple_foundation"],
+            capabilities=["gpu_llm", "vision"],
+            compute_backends=["ollama", "vllm"],
         )
         assert "compute_backends" in txt
-        assert "apple_foundation" in txt["compute_backends"]
+        assert "apple_foundation" not in txt["compute_backends"]
+        assert "ollama" in txt["compute_backends"]
 
     @pytest.mark.skip(reason="TODO(federation-9.7) — requires zeroconf (lazy import)")
     def test_beacon_start_without_zeroconf(self):

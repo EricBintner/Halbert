@@ -36,7 +36,7 @@ export interface DiscoveredPeer {
   port: number
   endpoint: string
   capabilities: string[]
-  compute_backends: string[]  // M13: ollama, apple_foundation, vllm, mlx
+  compute_backends: string[]  // M13: ollama, vllm (mlx host-local); apple_foundation is never advertised
 }
 
 /** A paired peer with credential stored in peers.json. */

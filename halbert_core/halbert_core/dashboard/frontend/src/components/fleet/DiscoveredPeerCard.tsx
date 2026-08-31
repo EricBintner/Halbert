@@ -9,7 +9,7 @@
  *
  * Shows:
  * - Node name and endpoint (font-mono)
- * - Compute backends as badges (ollama, apple_foundation, vllm, mlx)
+ * - Compute backends as badges (ollama, vllm — apple_foundation is never advertised)
  * - Capabilities as badges
  * - Pair button (triggers the pairing handshake)
  *

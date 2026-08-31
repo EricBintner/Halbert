@@ -42,7 +42,7 @@ Peer endpoints use the ``peer://`` scheme in models.yml::
         provider: peer
         metadata:
           peer_node_id: studio-mac
-          peer_capabilities: [gpu_llm, apple_foundation, vision]
+          peer_capabilities: [gpu_llm, vision]
 
 The ``peer://`` scheme is resolved to ``http://`` for the actual HTTP
 call.  The ``peer_node_id`` is used to look up the bearer token from

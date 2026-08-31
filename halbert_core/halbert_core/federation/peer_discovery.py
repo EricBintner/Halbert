@@ -32,19 +32,23 @@ LAN.  The TXT record includes::
     node_id=studio-mac
     node_name=Studio Mac
     role=compute_provider
-    capabilities=gpu_llm,sourceprep,apple_foundation,vision
+    capabilities=gpu_llm,sourceprep,vision
     api_port=8000
-    compute_backends=ollama,apple_foundation
+    compute_backends=ollama,vllm
 
 Satellites listen for ``_halbert._tcp`` and present discovered hosts in
 the PeerPairingModal for one-click pairing.
 
-Finding M13 — Apple Intelligence in the TXT record
----------------------------------------------------
+Finding M13 — Apple Intelligence is never a peer backend
+--------------------------------------------------------
 The ``compute_backends`` field distinguishes which inference backends
-the host offers.  A Mac Studio might advertise ``apple_foundation,ollama``
-while a Linux GPU rig advertises ``vllm,ollama``.  Satellites use this
-to route to the right backend (finding M13).
+the host offers for peer offload: ``ollama`` and ``vllm`` (optionally
+``mlx`` as a host-local backend).  Apple Intelligence is local-only —
+it serves the Mac's own slots and is never advertised, because Apple
+Intelligence is bound to the ANE and designed for on-device personal
+use, not for serving peer compute requests.  A Mac compute host that
+also runs Apple Intelligence still advertises ``ollama`` (with the 7B+
+peer-serving models) — never ``apple_foundation``.
 """
 from __future__ import annotations
 
@@ -79,7 +83,7 @@ class DiscoveredPeer:
     host: str                              # IP address or hostname
     port: int
     capabilities: List[str] = field(default_factory=list)
-    compute_backends: List[str] = field(default_factory=list)  # M13: ollama, apple_foundation, vllm, mlx
+    compute_backends: List[str] = field(default_factory=list)  # M13: ollama, vllm (mlx host-local); never apple_foundation
 
     @property
     def endpoint(self) -> str:
@@ -269,7 +273,8 @@ def get_node_identity() -> Dict[str, Any]:
     to build the TXT record fields.
 
     TODO(federation-9.7): Call HardwareDetector to populate
-    compute_backends (ollama, apple_foundation, mlx, vllm).
+    compute_backends (ollama, mlx, vllm).  Apple Intelligence is never
+    listed — it is local-only (the Mac's own slots), never a peer backend.
     """
     import os
     node_id = os.environ.get("HALBERT_PERSONA_ID", "halbert") + "-" + socket.gethostname()
@@ -279,7 +284,6 @@ def get_node_identity() -> Dict[str, Any]:
 
     # TODO(federation-9.7): Detect compute backends from hardware + running services
     # - Check if Ollama is running (curl localhost:11434/api/tags)
-    # - Check if apple-foundation bridge is running (HardwareDetector)
     # - Check if vLLM is running
     compute_backends: List[str] = []
 
@@ -289,8 +293,6 @@ def get_node_identity() -> Dict[str, Any]:
         capabilities.append("gpu_llm")
         # TODO(federation-9.7): Check if SourcePrep daemon is running
         # capabilities.append("sourceprep")
-        # TODO(federation-9.10): Check if apple_intelligence is available
-        # capabilities.append("apple_foundation")
 
     return {
         "node_id": node_id,

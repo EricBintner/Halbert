@@ -85,7 +85,7 @@ class PeerCredential:
     last_seen: Optional[str] = None        # ISO 8601, updated on each authenticated request
     revoked: bool = False                  # True = token rejected immediately
     endpoint: Optional[str] = None         # "http://192.168.1.50:8000" (for Desktop→Satellite MCP proxy)
-    capabilities: List[str] = field(default_factory=list)  # ["gpu_llm", "sourceprep", "apple_foundation", "vision"]
+    capabilities: List[str] = field(default_factory=list)  # ["gpu_llm", "sourceprep", "vision"]
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -208,7 +208,7 @@ class PeersConfig:
 
         Returns the matching PeerCredential if valid, None if not found
         or revoked.  This is the hot path — called on every authenticated
-        request via ``PeerAuthMiddleware``.
+        request via ``require_peer_auth`` (peer_middleware.py).
 
         TODO(federation-9.1): For large peer counts (25+), replace
         linear scan with a dict lookup keyed on token_hash.  For now,
