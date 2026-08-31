@@ -12,7 +12,6 @@ Covers:
   refused with 1013 when no coordinator (or no dashboard ingress) exists.
 """
 import asyncio
-import time
 from unittest.mock import patch
 
 import pytest
@@ -118,7 +117,9 @@ class TestAudioCapabilityProbe:
 # ---------------------------------------------------------------------------
 
 class _FakeAdapter(AudioIngressAdapter):
-    """Minimal ingress adapter recording start/stop calls."""
+    """Minimal ingress adapter honoring the base-class contract: start()
+    flips ``_running`` (gating ``chunks()``), stop() clears it — exactly
+    like the real adapters (WebRtcIngress et al.)."""
 
     def __init__(self, source_type="test", area_id=""):
         super().__init__(source_type=source_type, area_id=area_id)
@@ -127,9 +128,11 @@ class _FakeAdapter(AudioIngressAdapter):
 
     async def start(self) -> None:
         self.started = True
+        self._running = True
 
     async def stop(self) -> None:
         self.stopped = True
+        self._running = False
 
     async def chunks(self):
         yield  # pragma: no cover
@@ -138,6 +141,30 @@ class _FakeAdapter(AudioIngressAdapter):
 class _BrokenStartAdapter(_FakeAdapter):
     async def start(self) -> None:
         raise RuntimeError("no audio device")
+
+
+class _OneShotAdapter(_FakeAdapter):
+    """Yields exactly one chunk on first iteration, then idles.
+
+    The coordinator's ingest loop re-creates the ``chunks()`` generator each
+    pass, so delivery is gated on instance state — one chunk, ever.
+    """
+
+    def __init__(self):
+        super().__init__(source_type="dashboard", area_id="voice")
+        self._delivered = False
+
+    async def chunks(self):
+        while self._running:
+            if not self._delivered:
+                self._delivered = True
+                yield AudioChunk(
+                    pcm=b"\x01\x02\x03\x04",
+                    samples=2,
+                    source="dashboard",
+                    area_id="voice",
+                )
+            await asyncio.sleep(0.01)
 
 
 def _coordinator() -> AudioPipelineCoordinator:
@@ -190,6 +217,34 @@ class TestAddIngress:
         sources = coord.get_status()["ingress_sources"]
         assert any(s["source_type"] == "dashboard" for s in sources)
 
+    async def test_add_ingress_after_start_is_picked_up(self, monkeypatch):
+        """Locks add_ingress's contract: the running ingest loop picks up
+        adapters dynamically, so registration AFTER start() still feeds
+        chunks into the pipeline."""
+        # Hermetic: no sherpa-onnx engines in unit tests (start() would
+        # otherwise try to init VAD/ASR on machines that have them).
+        monkeypatch.setattr("halbert_core.audio.pipeline.is_audio_available", lambda: False)
+        coord = AudioPipelineCoordinator(config=AudioConfig(enabled=True))
+        await coord.start()
+        try:
+            adapter = _OneShotAdapter()
+            assert await coord.add_ingress(adapter) is True
+            assert adapter.is_running is True  # public: chunks() can spin
+
+            # Wait for the running ingest loop to pull the adapter's chunk
+            # into the pipeline's chunk queue (the ingestion seam between
+            # ingress adapters and the processing tracks).
+            for _ in range(500):  # up to ~5s
+                if coord._chunk_queue.qsize() > 0:
+                    break
+                await asyncio.sleep(0.01)
+            chunk = await asyncio.wait_for(coord._chunk_queue.get(), timeout=1.0)
+            assert chunk.pcm == b"\x01\x02\x03\x04"
+            assert chunk.source == "dashboard"
+            assert chunk.area_id == "voice"
+        finally:
+            await coord.stop()
+
 
 # ---------------------------------------------------------------------------
 # /api/audio/stream route
@@ -217,15 +272,21 @@ def client():
     return TestClient(app)
 
 
-def _wait_for(predicate, timeout=5.0):
-    """The WS handler runs on the TestClient portal thread; poll until the
-    frame has been processed (or fail on timeout)."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return predicate()
+def _receive_one_chunk(ingress, timeout=5.0):
+    """Pull one chunk from the ingress via its public chunks() iterator.
+
+    The WS handler runs on the TestClient portal thread; by the time the
+    session context exits the frame has been queued, so the iterator
+    returns it immediately (bounded by timeout regardless).
+    """
+    async def _next_chunk():
+        agen = ingress.chunks()
+        try:
+            return await asyncio.wait_for(agen.__anext__(), timeout=timeout)
+        finally:
+            await agen.aclose()
+
+    return asyncio.run(_next_chunk())
 
 
 class TestAudioStreamRoute:
@@ -246,7 +307,8 @@ class TestAudioStreamRoute:
 
     def test_binary_frames_enqueue_audio_chunks(self, client):
         """The real WebRtcIngress.handle_websocket path: a binary WS frame of
-        16kHz s16le mono PCM becomes an AudioChunk on the ingress queue."""
+        16kHz s16le mono PCM becomes an AudioChunk readable from the
+        ingress's public chunks() iterator."""
         ingress = WebRtcIngress(area_id="dashboard_voice")
         asyncio.run(ingress.start())  # set _running so the receive loop spins
         client.app.state.audio_coordinator = _StubCoordinator(ingress)
@@ -255,8 +317,7 @@ class TestAudioStreamRoute:
         with client.websocket_connect("/api/audio/stream") as ws:
             ws.send_bytes(pcm)
 
-        assert _wait_for(lambda: ingress._chunk_queue.qsize() == 1)
-        chunk = ingress._chunk_queue.get_nowait()
+        chunk = _receive_one_chunk(ingress)
         assert isinstance(chunk, AudioChunk)
         assert chunk.pcm == pcm
         assert chunk.samples == 3

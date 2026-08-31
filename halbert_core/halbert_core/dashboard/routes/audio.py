@@ -129,7 +129,10 @@ if FASTAPI_AVAILABLE:
             "enabled": cfg.enabled,
             "available": is_audio_available(),
             "sherpa_onnx_installed": is_audio_available(),
-            "state": "idle",  # TODO: live once app.state.audio_coordinator is wired (O2)
+            # No coordinator on app.state (O2 bootstrap skipped or failed):
+            # this branch is the static fallback only — live state comes from
+            # coordinator.get_status() above.
+            "state": "idle",
             "engines": {
                 "vad": is_audio_available(),
                 "asr": is_audio_available(),

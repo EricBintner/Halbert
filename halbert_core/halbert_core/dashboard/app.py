@@ -655,17 +655,37 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         if not _caps.has(CAP_AUDIO):
             logger.info("Audio pipeline skipped (no audio capability)")
         else:
+            coordinator = None
             try:
                 from ..audio.config import load_config as load_audio_config
                 from ..audio.pipeline import AudioPipelineCoordinator
                 from ..audio.ingress.webrtc_ingress import WebRtcIngress
                 coordinator = AudioPipelineCoordinator(config=load_audio_config())
-                await coordinator.add_ingress(WebRtcIngress(area_id="dashboard_voice"))
+                attached = await coordinator.add_ingress(
+                    WebRtcIngress(area_id="dashboard_voice")
+                )
+                if not attached:
+                    logger.warning(
+                        "Dashboard audio ingress failed to start — "
+                        "/api/audio/stream will answer 1013"
+                    )
                 await coordinator.start()
                 app.state.audio_coordinator = coordinator
-                logger.info("Audio pipeline coordinator started (dashboard ingress attached)")
+                logger.info(
+                    "Audio pipeline coordinator started "
+                    f"(dashboard ingress {'attached' if attached else 'NOT attached'})"
+                )
             except Exception as e:
                 logger.warning(f"Audio pipeline failed to start (non-fatal): {e}")
+                # Best-effort cleanup: start() can raise after the ingress was
+                # started or after loop tasks were created (and gains more raise
+                # points as it grows, e.g. O3) — stop whatever partially came up
+                # so no adapter or task is left orphaned spinning forever.
+                if coordinator is not None:
+                    try:
+                        await coordinator.stop()
+                    except Exception as stop_err:
+                        logger.debug(f"Coordinator cleanup after failed start: {stop_err}")
                 app.state.audio_coordinator = None
 
         # Phase 2: Start HA WebSocket event stream if configured
