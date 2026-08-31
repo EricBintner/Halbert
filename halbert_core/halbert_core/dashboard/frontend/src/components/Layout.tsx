@@ -23,16 +23,10 @@ import {
   Home as HomeIcon,
   Server,
   Archive,
-  CheckCircle,
   HardDrive,
-  Wifi,
-  Share2,
   Shield,
   Settings as SettingsIcon,
-  Cpu,
-  Container,
-  Code2,
-  Package,
+  Terminal,
   Loader2,
   ScanSearch,
 } from 'lucide-react'
@@ -50,43 +44,45 @@ import { apiUrl } from '@/lib/apiBase'
 type NavItem = { id: string; label: string; icon: typeof LayoutDashboard }
 type NavSection = { label: string; items: NavItem[] }
 
+/**
+ * The rail carries the primary domains (TASK-PACKET-02, Task 2.3):
+ *
+ *   Being & Ambient Home     the host canvas and the spatial home
+ *   Intelligence & Findings  what the scans surfaced — findings, not the
+ *                            Settings > Security trust gates
+ *   Host Controls            the sysadmin surface
+ *
+ * Settings is the fourth domain but never a rail item: the Settings page
+ * overtakes the shell and renders its own rail, so the top-bar gear is the
+ * single entry point.
+ *
+ * Pages that fall outside these domains — Apps, Network, Sharing, Containers,
+ * GPU, Development, Approvals — stay routed but leave the rail. They are
+ * slated for future sub-views (compute/homelab) and a top-bar approvals badge.
+ */
+const HOST_CONTROLS = 'Host Controls'
+
 const navSections: NavSection[] = [
   {
-    label: 'Overview',
+    label: 'Being & Ambient Home',
     items: [
       { id: '/', label: 'Dashboard', icon: LayoutDashboard },
       { id: '/home', label: 'Home', icon: HomeIcon },
     ],
   },
   {
-    label: 'System',
+    label: 'Intelligence & Findings',
+    items: [
+      { id: '/findings', label: 'Findings', icon: Shield },
+    ],
+  },
+  {
+    label: HOST_CONTROLS,
     items: [
       { id: '/services', label: 'Services', icon: Server },
       { id: '/storage', label: 'Storage', icon: HardDrive },
       { id: '/backups', label: 'Backups', icon: Archive },
-      { id: '/apps', label: 'Apps', icon: Package },
-      { id: '/security', label: 'Security', icon: Shield },
-    ],
-  },
-  {
-    label: 'Network',
-    items: [
-      { id: '/network', label: 'Network', icon: Wifi },
-      { id: '/sharing', label: 'Sharing', icon: Share2 },
-    ],
-  },
-  {
-    label: 'Development',
-    items: [
-      { id: '/containers', label: 'Containers', icon: Container },
-      { id: '/gpu', label: 'GPU', icon: Cpu },
-      { id: '/development', label: 'Development', icon: Code2 },
-    ],
-  },
-  {
-    label: 'Utility',
-    items: [
-      { id: '/approvals', label: 'Approvals', icon: CheckCircle },
+      { id: '/terminal', label: 'Terminal', icon: Terminal },
     ],
   },
 ]
@@ -167,19 +163,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
     fetchInfo()
   }, [])
 
-  // Filter nav sections based on instance features
-  const filteredSections = navSections.map((section) => ({
-    ...section,
-    items: section.items.filter((item) => {
-      if (!instanceInfo) return true
-      // Hide Home tab if instance doesn't have home feature
-      if (item.id === '/home' && !instanceInfo.features.home) return false
-      // Hide Development/GPU tabs if instance doesn't have development feature
-      if ((item.id === '/gpu' || item.id === '/development' || item.id === '/containers')
-          && !instanceInfo.features.development) return false
-      return true
-    }),
-  })).filter((section) => section.items.length > 0)
+  // Filter nav sections based on the connected instance. Home hides when the
+  // instance lacks the home feature. The whole Host Controls domain hides on a
+  // paired 'home' instance: its services, storage, backups, and terminal
+  // belong to a machine the user does not administer from here.
+  const filteredSections = navSections
+    .filter((section) => section.label !== HOST_CONTROLS || instanceInfo?.role !== 'home')
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => {
+        if (!instanceInfo) return true
+        // Hide Home tab if instance doesn't have home feature
+        if (item.id === '/home' && !instanceInfo.features.home) return false
+        return true
+      }),
+    }))
+    .filter((section) => section.items.length > 0)
 
   /** Settings is not a dashboard tab — it overtakes the shell. The gear in the
    * top bar is the only entry point, so the rail never shows a Settings item. */
