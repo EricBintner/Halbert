@@ -12,6 +12,7 @@ import { apiUrl } from '@/lib/apiBase';
 import { terminalSessionStore } from './useTerminalSessions';
 import type { TerminalBlock } from './useTerminalSessions';
 import { announce } from '@/lib/announce';
+import { useTokenBuffer } from './useTokenBuffer';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -333,52 +334,38 @@ export function applyTerminalEvent(event: StreamEvent): void {
 export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStreamReturn {
   const [session, setSession] = useState<AgentSession | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [response, setResponse] = useState('');
-  const [thinking, setThinking] = useState('');
-  const [provenance, setProvenance] = useState<ProvenanceRef[]>([]);
-  const [moduleInvocations, setModuleInvocations] = useState<ModuleInvocation[]>([]);
-  const [turnModel, setTurnModel] = useState<TurnModelInfo | null>(null);
-  
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
-
   // rAF buffering: LLMs emit 30-80 tokens/sec but the screen refreshes at
   // ~60 Hz. Writing each token to React state as it arrives causes one
   // re-render per token and O(n^2) string concatenation. Instead, chunks
-  // accumulate in refs and flush to state once per animation frame.
-  const responseBufferRef = useRef('');
-  const thinkingBufferRef = useRef('');
-  const rafRef = useRef<number | null>(null);
+  // accumulate in the buffer hook and flush to state once per animation
+  // frame — at most 60 commits a second regardless of generation speed.
+  const {
+    value: response,
+    push: appendResponse,
+    flush: flushResponse,
+    set: setResponse,
+    clear: clearResponse,
+  } = useTokenBuffer();
+  const {
+    value: thinking,
+    push: appendThinking,
+    flush: flushThinking,
+    clear: clearThinking,
+  } = useTokenBuffer();
+  const [provenance, setProvenance] = useState<ProvenanceRef[]>([]);
+  const [moduleInvocations, setModuleInvocations] = useState<ModuleInvocation[]>([]);
+  const [turnModel, setTurnModel] = useState<TurnModelInfo | null>(null);
 
-  const scheduleFlush = useCallback(() => {
-    if (rafRef.current !== null) return; // Already scheduled
-    rafRef.current = requestAnimationFrame(() => {
-      if (responseBufferRef.current) {
-        setResponse(r => r + responseBufferRef.current);
-        responseBufferRef.current = '';
-      }
-      if (thinkingBufferRef.current) {
-        setThinking(t => t + thinkingBufferRef.current);
-        thinkingBufferRef.current = '';
-      }
-      rafRef.current = null;
-    });
-  }, []);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
 
+  // The immediate flush every stream end goes through: committed text is
+  // never left waiting on a frame that may not come (a backgrounded tab
+  // throttles rAF to zero while the stream still completes).
   const flushNow = useCallback(() => {
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-    if (responseBufferRef.current) {
-      setResponse(r => r + responseBufferRef.current);
-      responseBufferRef.current = '';
-    }
-    if (thinkingBufferRef.current) {
-      setThinking(t => t + thinkingBufferRef.current);
-      thinkingBufferRef.current = '';
-    }
-  }, []);
+    flushResponse();
+    flushThinking();
+  }, [flushResponse, flushThinking]);
 
   // Cleanup on unmount or when isStreaming changes - cancel backend request
   // to prevent zombie processing.
@@ -401,17 +388,6 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       }
     };
   }, [isStreaming]);
-
-  // Cancel any pending rAF flush on unmount to avoid a state update
-  // after the component is gone.
-  useEffect(() => {
-    return () => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-    };
-  }, []);
 
   const initSession = useCallback((sessionId: string) => {
     setSession({
@@ -462,15 +438,27 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       announce('Waiting for your approval', { assertive: true });
     }
 
-    // Buffer streaming text outside the setSession updater. Updaters must
-    // stay pure (StrictMode runs them twice); appending inside would
-    // double every token. Same pattern as terminal events above.
+    // Streamed text parks in the rAF buffers — one commit per frame, not
+    // one per token — and the stream's end flushes whatever is left so no
+    // tail is lost waiting on a frame. Both outside the updater, same
+    // purity rule as the announcement above.
     if (event.type === 'response_chunk') {
-      responseBufferRef.current += event.content as string;
-      scheduleFlush();
+      appendResponse(event.content as string);
     } else if (event.type === 'thinking') {
-      thinkingBufferRef.current += event.content as string;
-      scheduleFlush();
+      appendThinking(event.content as string);
+    } else if (event.type === 'response_complete') {
+      flushNow();
+    }
+
+    // The state-change callback is how the surface announces progress
+    // (AgentChat maps the state to a sentence for the shell's live region),
+    // so it must fire exactly once per event — outside the updater, where
+    // StrictMode cannot double it.
+    if (event.type === 'state_change') {
+      options.onStateChange?.(
+        event.state as AgentState,
+        event.previous_state as AgentState | null,
+      );
     }
 
     setSession(prev => {
@@ -478,10 +466,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
 
       switch (event.type) {
         case 'state_change':
-          const newState = event.state as AgentState;
-          const prevState = event.previous_state as AgentState | null;
-          options.onStateChange?.(newState, prevState);
-          return { ...prev, state: newState };
+          return { ...prev, state: event.state as AgentState };
 
         case 'plan':
           return { 
@@ -570,8 +555,10 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           return { ...prev, pendingConfirmation: confirmation };
 
         case 'response_complete':
-          // Flush any buffered text before applying the final content.
-          flushNow();
+          // The buffered stream text was flushed before this updater ran
+          // (see above); the final committed content replaces it, and the
+          // buffer's `set` drops any draft left for a frame that will now
+          // never matter.
           // Tolerate provenance riding on the completion event as well as
           // the dedicated response_provenance event.
           if (Array.isArray(event.provenance)) {
@@ -858,22 +845,11 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     
     // Reset state
     setIsStreaming(true);
-    setResponse('');
+    clearResponse();
     setTurnModel(null);
-    setThinking('');
+    clearThinking();
     setProvenance([]);
     setModuleInvocations([]);
-
-    // Clear any buffered text and cancel a pending rAF from a previous
-    // turn. Without this, a cancel mid-stream leaves buffered tokens that
-    // would prepend to the next turn's response.
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-    responseBufferRef.current = '';
-    thinkingBufferRef.current = '';
-    
     // A session id names ONE TURN, never a conversation. Continuity is the
     // server's job: it resolves the subject thread itself and tells us which
     // one it chose (thread_started / turn_persisted), so a fresh id per send
@@ -1000,7 +976,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     
     // Store abort controller for cancel functionality
     eventSourceRef.current = { close: () => { stopTimeoutCheck(); controller.abort(); } } as EventSource;
-  }, [initSession, handleEvent, options, scheduleFlush, flushNow]);
+  }, [initSession, handleEvent, options, flushNow]);
 
   const confirmAction = useCallback((actionId: string, confirmed: boolean) => {
     if (!sessionIdRef.current) return;
@@ -1080,10 +1056,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     setIsStreaming(false);
 
     // Flush any buffered text so it lands in the response before the turn
-    // is folded, and clear the refs so nothing leaks into the next turn.
+    // is folded. The flush empties the buffers and cancels the pending
+    // frame, so nothing leaks into the next turn either.
     flushNow();
-    responseBufferRef.current = '';
-    thinkingBufferRef.current = '';
 
     if (sessionIdRef.current) {
       fetch(apiUrl(`/api/agent/cancel/${sessionIdRef.current}`), { method: 'POST' })
@@ -1099,13 +1074,13 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     // which stays for the dock's own use). reset() now only drops the live
     // turn: the session, its stream state and the model that answered it.
     setSession(null);
-    setResponse('');
+    clearResponse();
     setTurnModel(null);
-    setThinking('');
+    clearThinking();
     setProvenance([]);
     setModuleInvocations([]);
     sessionIdRef.current = null;
-  }, [cancel]);
+  }, [cancel, clearResponse, clearThinking]);
 
   const dismissContextItem = useCallback((id: string) => {
     setSession(prev => prev ? {
