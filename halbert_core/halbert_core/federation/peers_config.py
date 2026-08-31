@@ -75,17 +75,34 @@ class PeerCredential:
     The raw token is NEVER stored here — only its SHA-256 hash.
     The raw token exists only in the peer's own config and in memory
     during the pairing handshake.
+
+    Compute direction (P4d)
+    -----------------------
+    ``compute_direction`` explicitly states which way compute requests
+    flow from *this node's* perspective:
+
+    - ``"outbound"`` — this node sends compute requests to the peer.
+      This is the default and the canonical singular-entity direction:
+      the HA server (always-on mind) offloads to the workstation (GPU).
+
+    - ``"inbound"`` — this node receives compute requests from the peer.
+      The workstation's peers.json lists the HA server with this
+      direction.
+
+    Both directions are supported so that either node can be the compute
+    issuer.  The default is ``"outbound"`` (HA → workstation).
     """
 
     node_id: str                           # unique identifier (hostname or user-provided)
     node_name: str                         # human-readable display name
-    role: str                              # "compute_provider" | "satellite"
+    role: str                              # "compute_provider" | "satellite" (legacy, kept for compat)
     token_hash: str                        # "sha256:<hex>"
     paired_at: str                         # ISO 8601 timestamp
     last_seen: Optional[str] = None        # ISO 8601, updated on each authenticated request
     revoked: bool = False                  # True = token rejected immediately
     endpoint: Optional[str] = None         # "http://192.168.1.50:8000" (for Desktop→Satellite MCP proxy)
     capabilities: List[str] = field(default_factory=list)  # ["gpu_llm", "sourceprep", "vision"]
+    compute_direction: str = "outbound"    # "outbound" (local→peer) | "inbound" (peer→local)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -102,7 +119,16 @@ class PeerCredential:
             revoked=d.get("revoked", False),
             endpoint=d.get("endpoint"),
             capabilities=d.get("capabilities", []),
+            compute_direction=d.get("compute_direction", "outbound"),
         )
+
+    def is_compute_target(self) -> bool:
+        """True if this peer is a compute offload target (outbound direction)."""
+        return self.compute_direction == "outbound"
+
+    def is_compute_source(self) -> bool:
+        """True if this peer sends compute requests to us (inbound direction)."""
+        return self.compute_direction == "inbound"
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +229,18 @@ class PeersConfig:
             if include_revoked or not p.revoked
         ]
 
+    def list_compute_targets(self) -> List[PeerCredential]:
+        """List peers that this node can offload compute to (outbound direction).
+
+        P4d — In the singular-entity model, the HA server (always-on mind)
+        offloads compute to the workstation.  This returns peers with
+        ``compute_direction="outbound"`` that are not revoked.
+        """
+        return [
+            p for p in self._peers.values()
+            if not p.revoked and p.is_compute_target()
+        ]
+
     def verify_token(self, raw_token: str) -> Optional[PeerCredential]:
         """Verify a bearer token against all stored peer tokens.
 
@@ -234,11 +272,16 @@ class PeersConfig:
         raw_token: str,
         endpoint: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
+        compute_direction: str = "outbound",
     ) -> PeerCredential:
         """Pair a new peer. Generates a credential with hashed token.
 
         Raises ValueError if node_id already exists (use revoke_peer +
         add_peer to re-pair).
+
+        Args:
+            compute_direction: "outbound" (this node offloads to peer,
+                default) or "inbound" (peer offloads to this node).
         """
         with self._lock:
             if node_id in self._peers:
@@ -251,10 +294,14 @@ class PeersConfig:
                 paired_at=datetime.now(timezone.utc).isoformat(),
                 endpoint=endpoint,
                 capabilities=capabilities or [],
+                compute_direction=compute_direction,
             )
             self._peers[node_id] = cred
             self._save()
-            logger.info("Paired new peer: %s (%s) as %s", node_id, node_name, role)
+            logger.info(
+                "Paired new peer: %s (%s) as %s, direction=%s",
+                node_id, node_name, role, compute_direction,
+            )
             return cred
 
     def revoke_peer(self, node_id: str) -> bool:

@@ -87,6 +87,7 @@ class PairRequest(BaseModel):
     role: str = Field("satellite", description="Peer role: 'satellite' or 'compute_provider'")
     capabilities: List[str] = Field(default_factory=list, description="Capabilities the satellite offers")
     endpoint: Optional[str] = Field(None, description="Satellite's endpoint URL (for Desktop→Satellite MCP proxy)")
+    compute_direction: str = Field("outbound", description="Compute flow: 'outbound' (local→peer) or 'inbound' (peer→local)")
 
 
 class PairResponse(BaseModel):
@@ -119,6 +120,7 @@ class PeerInfo(BaseModel):
     revoked: bool = False
     endpoint: Optional[str] = None
     capabilities: List[str] = Field(default_factory=list)
+    compute_direction: str = "outbound"
 
 
 class ComputePeerLinkRequest(BaseModel):
@@ -176,6 +178,7 @@ async def request_pairing(req: PairRequest) -> PairResponse:
         "role": req.role,
         "capabilities": req.capabilities,
         "endpoint": req.endpoint,
+        "compute_direction": req.compute_direction,
     }
 
     logger.info("Pairing requested by %s (%s) — PIN generated", req.node_id, req.node_name)
@@ -221,6 +224,7 @@ async def verify_pairing(req: VerifyRequest) -> VerifyResponse:
             raw_token=raw_token,
             endpoint=pending.get("endpoint"),
             capabilities=pending.get("capabilities", []),
+            compute_direction=pending.get("compute_direction", "outbound"),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
@@ -256,6 +260,7 @@ async def list_peers(
             revoked=p.revoked,
             endpoint=p.endpoint,
             capabilities=p.capabilities,
+            compute_direction=p.compute_direction,
         )
         for p in config.list_peers(include_revoked=True)
     ]
