@@ -172,6 +172,9 @@ class TestTierRouting:
             return None
 
         monkeypatch.setattr(q_module, "_get_current_canon", mock_get_current_canon)
+        # Allowlist: the path must appear in the snapshot manifest.
+        monkeypatch.setattr(q_module, "_load_latest_snapshot",
+                            lambda: [{"path": str(config_file), "hash": "x"}])
 
         req = {
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -204,6 +207,9 @@ class TestEgressBoundary:
             return None
 
         monkeypatch.setattr(q_module, "_get_current_canon", mock_get_current_canon)
+        # Allowlist: the path must appear in the snapshot manifest.
+        monkeypatch.setattr(q_module, "_load_latest_snapshot",
+                            lambda: [{"path": str(config_file), "hash": "x"}])
 
         # Request with cloud_ok_acknowledged to get the raw value
         from halbert_core.config.being_config import BeingConfig, SecurityConfig
@@ -315,3 +321,62 @@ class TestUniversalEgressBoundary:
         content_text = resp["result"]["content"][0]["text"]
         assert "hunter2" not in content_text
         assert "<secret>" in content_text
+
+
+class TestPathAllowlist:
+    """Config-query tools may only read paths in the snapshot manifest."""
+
+    def _call(self, server, name, args):
+        req = {
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": name, "arguments": args},
+        }
+        resp = server.handle_request(req)
+        return json.loads(resp["result"]["content"][0]["text"])
+
+    def test_arbitrary_path_rejected(self, server, monkeypatch, tmp_path):
+        """A path not in the manifest is refused, even if the file exists."""
+        secret_file = tmp_path / "shadow"
+        secret_file.write_text("root:$6$...")
+
+        from halbert_core.config import queries as q_module
+        monkeypatch.setattr(q_module, "_load_latest_snapshot", lambda: [])
+
+        result = self._call(server, "get_config_value",
+                            {"path": str(secret_file), "key": "root"})
+        assert "not in snapshot manifest" in result.get("error", "")
+
+    def test_manifest_path_allowed(self, server, monkeypatch, tmp_path):
+        """A path that IS in the manifest passes the gate."""
+        config_file = tmp_path / "test.conf"
+        config_file.write_text("[Service]\nPort=2222\n")
+
+        from halbert_core.config import queries as q_module
+        from halbert_core.config.parser import parse as parse_config
+
+        monkeypatch.setattr(q_module, "_load_latest_snapshot",
+                            lambda: [{"path": str(config_file), "hash": "x"}])
+        monkeypatch.setattr(q_module, "_get_current_canon",
+                            lambda p: parse_config(str(config_file)) if str(config_file) in p else None)
+
+        result = self._call(server, "get_config_structure",
+                            {"path": str(config_file)})
+        assert "error" not in result or "not in snapshot" not in result.get("error", "")
+
+    def test_dotdot_traversal_blocked(self, server, monkeypatch, tmp_path):
+        """A path with ``..`` that resolves outside the manifest is caught."""
+        allowed = tmp_path / "allowed.conf"
+        allowed.write_text("[Service]\nPort=2222\n")
+        secret = tmp_path / "secret.conf"
+        secret.write_text("password=hunter2")
+
+        from halbert_core.config import queries as q_module
+        monkeypatch.setattr(q_module, "_load_latest_snapshot",
+                            lambda: [{"path": str(allowed), "hash": "x"}])
+
+        # Construct a traversal path that textually starts under allowed
+        # but resolves to the secret file.
+        traversal = str(allowed.parent / "allowed.conf" / ".." / "secret.conf")
+        result = self._call(server, "get_config_structure",
+                            {"path": traversal})
+        assert "not in snapshot manifest" in result.get("error", "")

@@ -48,6 +48,34 @@ def _hostname() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Path allowlist — config-query tools may only read files the host staged
+# ---------------------------------------------------------------------------
+
+def _is_allowed_config_path(path: str) -> bool:
+    """True when *path* appears in the latest snapshot manifest.
+
+    The snapshot manifest is the union of files the host explicitly staged
+    for config analysis.  Without this gate an MCP client could pass
+    ``/etc/shadow`` or ``~/.ssh/id_rsa`` to ``get_config_value`` and read
+    arbitrary filesystem paths through the config-query layer.
+    """
+    if not path:
+        return False
+    # Normalise: resolve symlinks and ``..`` so a path like
+    # ``/etc/hosts/../../shadow`` can't sneak past the manifest match.
+    real = os.path.realpath(path)
+    try:
+        from ..config.queries import _load_latest_snapshot
+    except Exception:
+        return False
+    for entry in _load_latest_snapshot():
+        ep = entry.get("path", "")
+        if ep and os.path.realpath(ep) == real:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Tool handlers
 # ---------------------------------------------------------------------------
 
@@ -198,6 +226,8 @@ def _tool_get_config_value(params: Dict[str, Any]) -> Dict[str, Any]:
     key = params.get("key", "")
     if not path or not key:
         return {"error": "path and key are required"}
+    if not _is_allowed_config_path(path):
+        return mcp_response({"path": path, "key": key, "error": "path not in snapshot manifest"})
 
     try:
         config = load_being_config()
@@ -224,6 +254,8 @@ def _tool_get_config_structure(params: Dict[str, Any]) -> Dict[str, Any]:
     path = params.get("path", "")
     if not path:
         return {"error": "path is required"}
+    if not _is_allowed_config_path(path):
+        return mcp_response({"path": path, "error": "path not in snapshot manifest"})
     try:
         result = get_config_structure(path)
         return mcp_response(result)
@@ -248,6 +280,8 @@ def _tool_get_config_dependencies(params: Dict[str, Any]) -> Dict[str, Any]:
     path = params.get("path", "")
     if not path:
         return {"error": "path is required"}
+    if not _is_allowed_config_path(path):
+        return mcp_response({"path": path, "error": "path not in snapshot manifest"})
     try:
         result = get_config_dependencies(path)
         return mcp_response(result)
