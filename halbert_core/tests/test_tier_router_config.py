@@ -85,3 +85,52 @@ def test_legacy_config_parses_populated_slots(tmp_path):
     assert r.config.models["guide-model"].model_id == "example-guide:8b"
     assert r.config.models["specialist-model"].endpoint == "http://localhost:11435"
     assert r.config.specialist.fallback == ["guide-model"]
+
+
+class _SlotReadSpy(dict):
+    """dict that records which keys were read through .get()."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.read_keys = set()
+
+    def get(self, key, default=None):
+        self.read_keys.add(key)
+        return super().get(key, default)
+
+
+def _llm_config_spy():
+    return _SlotReadSpy({
+        "chat_model": {"enabled": True, "endpoint_id": "e1", "model": "guide-a"},
+        "specialist_model": {"enabled": False, "endpoint_id": "", "model": ""},
+        "vision_model": {"enabled": False, "endpoint_id": "", "model": ""},
+        "secure_model": {"enabled": True, "endpoint_id": "e1", "model": "secure-a"},
+        "saved_endpoints": [
+            {"id": "e1", "provider": "ollama", "url": "http://localhost:11434"},
+        ],
+    })
+
+
+@pytest.mark.parametrize("ha", ["home", "home-light"])
+def test_home_variant_does_not_read_the_secure_slot(monkeypatch, ha):
+    """home/home-light never configure secure_model, so from_legacy_config
+    does not read the slot for them — even a stale value left behind by a
+    sysadmin-style config cannot reach the router."""
+    from halbert_core.integrations import cognition_wiring
+    from halbert_core.model import tier_router
+
+    monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: ha)
+    spy = _llm_config_spy()
+    cfg = tier_router.TierRouterConfig.from_legacy_config({"llm_config": spy})
+    assert "secure_model" not in spy.read_keys
+    assert cfg.models["guide-model"].model_id == "guide-a"
+
+
+def test_sysadmin_variant_reads_the_secure_slot(monkeypatch):
+    from halbert_core.integrations import cognition_wiring
+    from halbert_core.model import tier_router
+
+    monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: "sysadmin")
+    spy = _llm_config_spy()
+    tier_router.TierRouterConfig.from_legacy_config({"llm_config": spy})
+    assert "secure_model" in spy.read_keys

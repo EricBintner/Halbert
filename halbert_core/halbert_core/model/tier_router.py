@@ -34,6 +34,22 @@ from ..agents.error_recovery import get_recovery_manager
 logger = logging.getLogger('halbert.model.tier_router')
 
 
+def _is_home_variant() -> bool:
+    """True when the active instance runs a home automation variant.
+
+    secure_model is a sysadmin-instance slot: home/home-light variants
+    never configure it (an HA variant's LLM reaches the house through tool
+    calls that abstract credentials away), so the slot is not read for
+    them. The import is lazy so the model layer carries no module-level
+    dependency on the integrations package.
+    """
+    try:
+        from ..integrations.cognition_wiring import is_home_variant
+        return is_home_variant()
+    except Exception:
+        return False
+
+
 class ProviderType(str, Enum):
     """Supported provider types."""
     OLLAMA = "ollama"
@@ -133,7 +149,9 @@ class TierRouterConfig:
         chat = _resolve_slot('chat_model')
         spec = _resolve_slot('specialist_model')
         vision = _resolve_slot('vision_model')
-        secure = _resolve_slot('secure_model')
+        # secure_model is a sysadmin-instance slot: home automation
+        # variants never configure it, so the slot is not read for them.
+        secure = None if _is_home_variant() else _resolve_slot('secure_model')
 
         # Fall back to legacy keys when llm_config slots are empty
         if chat is None:

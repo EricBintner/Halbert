@@ -30,6 +30,22 @@ logger = logging.getLogger("halbert.model.auto_provision")
 _SINGLE_MODEL_MAX_GB = 24
 
 
+def _is_home_variant() -> bool:
+    """True when the active instance runs a home automation variant.
+
+    secure_model is a sysadmin-instance slot (see the module docstring in
+    ``integrations/cognition_wiring.py``): an HA variant's LLM reaches the
+    house through tool calls that abstract credentials away, so it never
+    provisions a dedicated secure model. The import is lazy so the model
+    layer carries no module-level dependency on the integrations package.
+    """
+    try:
+        from ..integrations.cognition_wiring import is_home_variant
+        return is_home_variant()
+    except Exception:
+        return False
+
+
 def auto_provision_apple_intelligence(hardware: HardwareCapabilities) -> bool:
     """Register the Apple Intelligence endpoint and assign empty slots.
 
@@ -37,6 +53,9 @@ def auto_provision_apple_intelligence(hardware: HardwareCapabilities) -> bool:
     Apple Intelligence. Does nothing when:
 
     - ``hardware.apple_intelligence_available`` is False
+    - the active variant is home/home-light (secure_model is a
+      sysadmin-instance slot, so Apple Intelligence is not provisioned
+      for home automation variants at all)
     - the ``apple-foundation`` endpoint is already registered (idempotent)
 
     Slot assignment rules:
@@ -48,6 +67,13 @@ def auto_provision_apple_intelligence(hardware: HardwareCapabilities) -> bool:
     Returns True when any provisioning action was taken.
     """
     if not hardware.apple_intelligence_available:
+        return False
+
+    if _is_home_variant():
+        logger.debug(
+            "Home automation variant — Apple Intelligence provisioning skipped "
+            "(secure_model is a sysadmin-instance slot)"
+        )
         return False
 
     cfg = _store.load_global(use_cache=False)

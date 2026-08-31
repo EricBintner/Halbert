@@ -24,6 +24,22 @@ from ..obs.logging import get_logger
 logger = get_logger("halbert")
 
 
+def _is_home_variant() -> bool:
+    """True when the active instance runs a home automation variant.
+
+    secure_model is a sysadmin-instance slot: an HA variant's LLM reaches
+    the house through tool calls that abstract credentials away, so the
+    wizard neither provisions nor writes the slot for home/home-light. The
+    import is lazy so the model layer carries no module-level dependency
+    on the integrations package.
+    """
+    try:
+        from ..integrations.cognition_wiring import is_home_variant
+        return is_home_variant()
+    except Exception:
+        return False
+
+
 class ConfigWizard:
     """
     Interactive configuration wizard for model setup.
@@ -101,10 +117,18 @@ class ConfigWizard:
         # Apple Intelligence: provision secure_model (and chat_model on
         # 16-24GB Macs) before looking at Ollama. On 16-24GB Macs the
         # single-model rule means chat_model is already set and the Ollama
-        # model lookup below is skipped.
+        # model lookup below is skipped. Home automation variants skip the
+        # provisioning: secure_model is a sysadmin-instance slot they never
+        # configure, so the store is left untouched for them.
         if hardware.apple_intelligence_available:
-            auto_provision_apple_intelligence(hardware)
-            logger.info("Apple Intelligence (On-Device) detected — configured as secure model")
+            if _is_home_variant():
+                logger.info(
+                    "Home automation variant — Apple Intelligence provisioning "
+                    "skipped (secure_model is a sysadmin-instance slot)"
+                )
+            else:
+                auto_provision_apple_intelligence(hardware)
+                logger.info("Apple Intelligence (On-Device) detected — configured as secure model")
 
         # Size budget
         budget = self.get_budget(hardware)
@@ -178,11 +202,19 @@ class ConfigWizard:
             print(f"  - {note}")
         print()
 
-        # Apple Intelligence provisioning
+        # Apple Intelligence provisioning. Home automation variants skip
+        # it: secure_model is a sysadmin-instance slot they never configure
+        # (chat_model still gets Apple Intelligence on 16-24GB Macs — that
+        # is the Mac's own on-device use, written by _build_config).
         if hardware.apple_intelligence_available:
-            auto_provision_apple_intelligence(hardware)
+            home_variant = _is_home_variant()
+            if not home_variant:
+                auto_provision_apple_intelligence(hardware)
             print("Apple Intelligence (On-Device) detected:")
-            print(f"  secure_model: Apple Intelligence (zero download, ANE-powered)")
+            if home_variant:
+                print("  secure_model: left empty (home automation variant — sysadmin instances only)")
+            else:
+                print(f"  secure_model: Apple Intelligence (zero download, ANE-powered)")
             mem = hardware.unified_memory_gb or 0
             if mem and mem <= 24:
                 print(f"  chat_model: Apple Intelligence (single local model rule for {mem}GB)")
@@ -265,11 +297,20 @@ class ConfigWizard:
         # in _build_config because save_config writes ALL slots via
         # deep-merge — an empty secure_model here would clobber what
         # auto_provision_apple_intelligence wrote to the store.
+        #
+        # Home automation variants never configure secure_model (their LLM
+        # reaches the house through tool calls that abstract credentials
+        # away), so the slot is written empty for them — and it must be
+        # written, not omitted: the deep-merge would otherwise keep a
+        # stale assignment from an earlier sysadmin-style run.
         ai_available = hardware.apple_intelligence_available
         ai_ep_id = "ep_apple_foundation" if ai_available else ""
         ai_model = llm_config.APPLE_FOUNDATION_MODEL if ai_available else ""
         mem = hardware.unified_memory_gb or 0
         ai_takes_chat = ai_available and mem and mem <= 24
+        secure_allowed = not _is_home_variant()
+        secure_model = ai_model if secure_allowed else ""
+        secure_ep_id = ai_ep_id if secure_allowed else ""
 
         # On 16-24GB Macs with Apple Intelligence, chat_model is set to
         # Apple Intelligence and the Ollama model is not used.
@@ -321,9 +362,9 @@ class ConfigWizard:
                     "model": "",
                 },
                 "secure_model": {
-                    "enabled": bool(ai_model),
-                    "endpoint_id": ai_ep_id,
-                    "model": ai_model,
+                    "enabled": bool(secure_model),
+                    "endpoint_id": secure_ep_id,
+                    "model": secure_model,
                 },
             },
 

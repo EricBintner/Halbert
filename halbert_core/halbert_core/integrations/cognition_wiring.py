@@ -97,6 +97,24 @@ def _get_variant() -> str:
     return os.environ.get("HALBERT_VARIANT", "sysadmin")
 
 
+# Home automation variants. ``secure_model`` is a sysadmin-instance slot:
+# an HA variant's LLM reaches the house through tool calls that abstract
+# credentials away (HA's API layer holds the tokens, never the prompt), so
+# home/home-light never configure, provision, or resolve a dedicated
+# secure model (handoff HOME-AUTOMATION-SIMPLIFICATION-2026-08-30, S1).
+HA_VARIANTS = ("home", "home-light")
+
+
+def is_home_variant() -> bool:
+    """True when the active variant is a home automation variant.
+
+    Resolution follows :func:`_get_variant` (being.yml > HALBERT_VARIANT
+    env > 'sysadmin'), so gating here agrees with the per-variant service
+    skips in dashboard/app.py rather than reading the env var directly.
+    """
+    return _get_variant() in HA_VARIANTS
+
+
 def _create_cognition():
     """Create a PersonaCognition instance configured for Halbert."""
     from haloysius.persona.cognition import PersonaCognition
