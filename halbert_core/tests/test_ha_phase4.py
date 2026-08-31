@@ -71,13 +71,12 @@ class TestHalbertWyomingAgent:
     @pytest.mark.asyncio
     async def test_handle_transcript_with_mock_agent(self):
         """Test that transcript events are processed and response text is collected."""
-        mock_event = MagicMock()
-        mock_event.type = "response_chunk"
-        mock_event.data = {"content": "The light is on."}
+        from halbert_core.agents.events import StreamEvent
 
-        mock_complete = MagicMock()
-        mock_complete.type = "response_complete"
-        mock_complete.data = {}
+        # Real StreamEvents: _process_agent_turn filters with
+        # isinstance(event, StreamEvent), which a MagicMock is not.
+        mock_event = StreamEvent(type="response_chunk", session_id="t", data={"content": "The light is on."})
+        mock_complete = StreamEvent(type="response_complete", session_id="t", data={})
 
         async def mock_process(*args, **kwargs):
             yield mock_event
@@ -93,13 +92,10 @@ class TestHalbertWyomingAgent:
     @pytest.mark.asyncio
     async def test_handle_transcript_with_area_context(self):
         """Test that area_id triggers spatial context resolution."""
-        mock_event = MagicMock()
-        mock_event.type = "response_chunk"
-        mock_event.data = {"content": "Done."}
+        from halbert_core.agents.events import StreamEvent
 
-        mock_complete = MagicMock()
-        mock_complete.type = "response_complete"
-        mock_complete.data = {}
+        mock_event = StreamEvent(type="response_chunk", session_id="t", data={"content": "Done."})
+        mock_complete = StreamEvent(type="response_complete", session_id="t", data={})
 
         async def mock_process(*args, **kwargs):
             yield mock_event
@@ -117,10 +113,15 @@ class TestHalbertWyomingAgent:
             mock_area.assert_called_once_with("kitchen")
 
     @pytest.mark.asyncio
-    async def test_handle_transcript_timeout(self):
+    async def test_handle_transcript_timeout(self, monkeypatch):
         """Test that agent timeout returns a graceful message."""
+        from halbert_core.integrations import wyoming_agent as wyoming_mod
+
+        # Shrink the turn ceiling so the test does not wait the real 30s.
+        monkeypatch.setattr(wyoming_mod, "TURN_TIMEOUT_S", 0.1)
+
         async def mock_process(*args, **kwargs):
-            await asyncio.sleep(60)  # Exceeds the 30s timeout
+            await asyncio.sleep(60)  # Exceeds the (patched) timeout
             yield MagicMock()
 
         mock_agent = MagicMock()

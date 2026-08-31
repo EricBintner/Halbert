@@ -129,8 +129,10 @@ def apply_pronunciation(text: str) -> str:
     """Apply pronunciation substitutions to text before TTS synthesis.
 
     Replaces domain terms with their phonetic spellings so Piper
-    pronounces them correctly. Returns the original text unchanged if
-    the engine is not installed.
+    pronounces them correctly. The lexicon is local (a packaged term
+    list) — it needs no engine — so substitution applies whenever a
+    lexicon loads; only a missing or broken lexicon returns the text
+    unchanged.
     """
     lexicon = get_pronunciation_lexicon()
     if lexicon is None:

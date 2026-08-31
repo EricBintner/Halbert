@@ -37,6 +37,10 @@ logger = logging.getLogger("halbert.integrations.wyoming")
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 10400
 
+# Ceiling on one voice turn. A module constant rather than a literal so the
+# timeout test does not have to actually wait 30 seconds.
+TURN_TIMEOUT_S = 30.0
+
 
 @dataclass
 class WyomingConfig:
@@ -148,17 +152,29 @@ class HalbertWyomingAgent:
         response_chunks: list[str] = []
 
         try:
-            async with asyncio.timeout(30.0):
+            # asyncio.timeout() is 3.11+; the project floor is 3.10, so the
+            # turn is bounded with wait_for instead.
+            async def _collect_turn() -> None:
                 async for event in agent.process(
                     query=full_query,
                     session_id=turn_session_id,
+                    # TASK-07: group voice turns by HA conversation, the same
+                    # way dashboard turns group by chat thread.
+                    thread_id=conversation_id or None,
+                    # TASK-07: the satellite protocol carries no verified
+                    # speaker — a voice turn must never inherit the
+                    # dashboard-chat "admin" default, or the RoleGate
+                    # tightening for unidentified speakers never applies.
+                    speaker_role="unknown",
                 ):
                     if isinstance(event, StreamEvent):
                         if event.type == "response_chunk":
                             response_chunks.append(event.data.get("content", ""))
                         elif event.type == "response_complete":
                             break
-        except TimeoutError:
+
+            await asyncio.wait_for(_collect_turn(), timeout=TURN_TIMEOUT_S)
+        except asyncio.TimeoutError:
             logger.warning("Agent turn timed out for Wyoming request")
             return "Sorry, that took too long to process."
         except Exception as e:
@@ -174,8 +190,8 @@ class HalbertWyomingAgent:
         knows which room the user is in.
         """
         try:
-            from .ha_config import load_ha_config
-            from .ha_client import HAClient
+            from .home_assistant.ha_config import load_ha_config
+            from .home_assistant.ha_client import HAClient
 
             config = load_ha_config()
             if not config.is_configured():
@@ -346,8 +362,8 @@ async def proactive_speak(
         return False
 
     try:
-        from .ha_config import load_ha_config
-        from .ha_client import HAClient
+        from .home_assistant.ha_config import load_ha_config
+        from .home_assistant.ha_client import HAClient
 
         ha_config = load_ha_config()
         if not ha_config.is_configured():

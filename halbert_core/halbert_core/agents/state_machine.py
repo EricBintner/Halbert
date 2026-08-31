@@ -379,6 +379,7 @@ class AgentStateMachine:
         temperature: Optional[float] = None,
         history_budget: Optional[int] = None,
         retrieval_scope: Optional[str] = None,
+        speaker_role: Optional[str] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Process a user query through the state machine.
@@ -412,6 +413,11 @@ class AgentStateMachine:
             retrieval_scope: Explicit SourcePrep scope id for retrieval this
                 turn. Used when no active skill provides one — e.g. the
                 "Analyze" button hardwires retrieval to the host scope.
+            speaker_role: Verified role of the speaker for this turn
+                (admin/member/guest/restricted/unknown). The RoleGate uses it
+                to tighten tool-risk classification. Voice ingress passes
+                "unknown" (the satellite protocol verifies no one); absent
+                means the dashboard-chat default "admin" applies.
 
         Yields:
             StreamEvent objects for each state change, tool call, etc.
@@ -472,6 +478,7 @@ class AgentStateMachine:
                 tier_override=tier_override,
                 history_budget=history_budget or _default_conversation_tokens(),
                 retrieval_scope=retrieval_scope,
+                speaker_role=speaker_role or "admin",
             )
 
             # Phase 3: Run intake pipeline before cognitive tick

@@ -426,10 +426,27 @@ class TestModalityWiring:
         assert modality_wiring._pronunciation_lexicon is None
 
     def test_apply_pronunciation_no_engine_returns_original(self):
+        from halbert_core.integrations import modality_wiring
+        # Force the no-lexicon state: with haloysius installed (the normal
+        # dev venv) the local lexicon loads and substitution DOES apply, so
+        # "no engine" has to be simulated, not assumed.
+        saved = modality_wiring._pronunciation_lexicon
+        modality_wiring._pronunciation_lexicon = None
+        try:
+            with patch.object(modality_wiring, "_engine_available", return_value=False):
+                result = modality_wiring.apply_pronunciation("restart the systemd service")
+                assert result == "restart the systemd service"
+        finally:
+            modality_wiring._pronunciation_lexicon = saved
+
+    @pytest.mark.skipif(not _engine_available(), reason="Haloysius engine not installed")
+    def test_apply_pronunciation_applies_lexicon_when_available(self):
         from halbert_core.integrations.modality_wiring import apply_pronunciation
         result = apply_pronunciation("restart the systemd service")
-        # Without the engine, text is returned unchanged
-        assert result == "restart the systemd service"
+        # The lexicon is local to Halbert and loads without any TTS engine —
+        # only the haloysius import is required.
+        assert result != "restart the systemd service"
+        assert "system" in result  # phonetic respelling of the domain term
 
     def test_pronunciation_mappings_contain_key_terms(self):
         from halbert_core.integrations.modality_wiring import (
@@ -677,7 +694,9 @@ class TestWyomingSessionId:
                 return evt
 
         class _FakeAgent:
-            async def process(self, query, session_id):
+            # **kwargs: the turn also passes thread_id and speaker_role
+            # (TASK-07); this test only pins the session_id.
+            async def process(self, query, session_id, **kwargs):
                 session_ids.append(session_id)
                 yield _FakeStreamEvent.response_complete(session_id)
 
