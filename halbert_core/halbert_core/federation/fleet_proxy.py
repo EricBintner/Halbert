@@ -154,11 +154,24 @@ def get_fleet_proxy(node_id: str) -> Optional[FleetProxy]:
     constructs a FleetProxy.  Returns None if the peer is not found or
     is revoked.
 
-    TODO(federation-9.9): Implement:
+    TODO(federation-9.4): the spec above is UNIMPLEMENTABLE as written.
+    PeersConfig deliberately persists only ``sha256:<hex>`` token hashes
+    (M14: the raw token is never persisted to disk), so the raw peer
+    token the C5 "Desktop as MCP client of satellite" flow needs cannot
+    be recovered from PeersConfig. Before federation-9.9 is implemented,
+    a token-custody design is required: peer pairing is bidirectional
+    (each side holds a raw token for the *other*), so the Desktop's
+    OUTBOUND satellite credentials need their own store — a separate
+    credentials file or an OS keychain/keyring reference — with
+    ``token_hash`` kept for inbound verification. They must NEVER be
+    stored as plaintext in peers.json; silently downgrading M14 is the
+    failure mode this note exists to prevent.
+
+    TODO(federation-9.9): Implement (after the custody design lands):
     1. Get PeersConfig singleton
     2. Look up peer by node_id
     3. If not found or revoked, return None
     4. Construct FleetProxy(satellite_endpoint, peer_token)
     5. Return the proxy
     """
-    raise NotImplementedError("get_fleet_proxy() — TODO(federation-9.9)")
+    raise NotImplementedError("get_fleet_proxy() — TODO(federation-9.4)")
