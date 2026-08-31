@@ -41,13 +41,16 @@ function confidencePercent(confidence: number): string | null {
 export function SpeakerBadge({ speaker }: SpeakerBadgeProps) {
   if (!speaker) return null
 
-  const isKnown = speaker.name !== '' && speaker.name !== 'Unknown'
+  // The backend sends an empty name for an unmatched voice; it never sends
+  // the literal "Unknown".
+  const isKnown = speaker.name !== ''
   const displayName = isKnown ? speaker.name : 'Unknown speaker'
   const showRole = isKnown && speaker.role !== '' && speaker.role !== 'unknown'
   const percent = confidencePercent(speaker.confidence)
 
   return (
     <div
+      role="status"
       aria-label={`Speaker: ${displayName}`}
       className="flex items-center gap-2 rounded-full border border-hairline bg-canvas-surface/50 px-3 py-1 text-sm text-ink-secondary"
     >

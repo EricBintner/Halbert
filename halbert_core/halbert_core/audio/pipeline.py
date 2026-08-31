@@ -548,7 +548,9 @@ class AudioPipelineCoordinator:
         """Status dict for the /api/audio/status endpoint.
 
         ``speaker`` is ``null`` until the first speech-track turn runs; after
-        that it mirrors the last turn's ``VoiceTurnObservation`` fields
+        that it mirrors the last *identified* turn's ``VoiceTurnObservation``
+        fields — turns that fail before speaker ID (no ASR engine, empty
+        transcript) keep the previous identification
         (name may be empty and role 'unknown' for an unrecognized speaker —
         represented faithfully here, never invented server-side). The
         observation's transcript text is deliberately NOT exposed: the
