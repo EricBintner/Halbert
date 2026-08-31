@@ -35,6 +35,10 @@ interface AIAnalysisPanelProps {
   buildContext?: () => string
   /** Optional custom research question for "Continue in chat" prefill */
   researchQuestion?: string
+  /** Optional override for the analysis prompt sent to the agent (defaults to a generic ${type} analysis) */
+  message?: string
+  /** Optional label for the analyze button (e.g. "Deep Scan") */
+  analyzeLabel?: string
 }
 
 export function AIAnalysisPanel({
@@ -43,6 +47,8 @@ export function AIAnalysisPanel({
   canAnalyze = true,
   buildContext,
   researchQuestion,
+  message,
+  analyzeLabel,
 }: AIAnalysisPanelProps) {
   const [analysisText, setAnalysisText] = useState('')
   const [thinkingText, setThinkingText] = useState('')
@@ -64,14 +70,14 @@ export function AIAnalysisPanel({
     setThinkingText('')
     setHasAnalysis(false)
 
-    const message = `Analyze my ${type} configuration on this system. Look at what's set up, identify any issues, risks, or misconfigurations, and suggest improvements. Be specific about what you find — reference actual config files and settings.`
+    const prompt = message ?? `Analyze my ${type} configuration on this system. Look at what's set up, identify any issues, risks, or misconfigurations, and suggest improvements. Be specific about what you find — reference actual config files and settings.`
 
     try {
       const response = await fetch(apiUrl('/api/agent/message'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message,
+          message: prompt,
           tier: 'specialist',
           scope: 'host',
           max_tokens: 8192,
@@ -130,7 +136,7 @@ export function AIAnalysisPanel({
         setAnalyzing(false)
       }
     }
-  }, [type])
+  }, [type, message])
 
   const defaultContext = () => {
     if (!analysisText) return `Analyzing ${type}...`
@@ -194,7 +200,7 @@ export function AIAnalysisPanel({
               ) : (
                 <>
                   {hasAnalysis ? <RefreshCw className="h-4 w-4 mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-                  {hasAnalysis ? 'Refresh' : 'Analyze'}
+                  {hasAnalysis ? 'Refresh' : analyzeLabel ?? 'Analyze'}
                 </>
               )}
             </Button>

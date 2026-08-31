@@ -26,22 +26,13 @@ import {
   Monitor,
   HelpCircle,
   Download,
-  Search,
-  Sparkles,
-  Terminal,
-  Copy,
-  Check,
-  Globe,
-  ArrowUpCircle,
-  ShieldCheck,
-  Package,
-  Clock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { apiUrl } from '@/lib/apiBase'
 import { SystemItemActions, PageHeader } from '@/components/domain'
 import { Select } from '@/components/ui/select'
 import { WhyBrain } from '@/components/ui/why-brain'
+import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 
 interface GPUInfo {
   vendor: string
@@ -72,94 +63,20 @@ interface GPUData {
   issues: string[]
 }
 
-interface GPUAnalysis {
-  analysis: string
-  health_score: number
-  current_status?: string
-  driver_assessment?: {
-    current_version?: string
-    latest_stable_version?: string | null
-    version_comparison?: 'newer_than_stable' | 'at_stable' | 'older_than_stable'
-    action_recommended?: 'none' | 'upgrade' | 'consider_lts_downgrade'
-    version_analysis?: string
-    change_risk?: 'safe' | 'moderate' | 'high'
-    // Legacy fields for backwards compatibility
-    upgrade_risk?: 'safe' | 'moderate' | 'high'
-    should_upgrade?: boolean
-    current_is_latest?: boolean
-    recommended_version?: string | null
-  }
-  cuda_assessment?: {
-    compatible: boolean
-    current_version?: string
-    latest_version?: string | null
-    version_analysis?: string
-    recommended_version?: string | null  // Legacy
-  }
-  recommendations?: Array<{
-    priority: 'high' | 'medium' | 'low'
-    action: string
-    command?: string
-    reason?: string
-  }>
-  known_compatible_combos?: Array<{
-    driver: string
-    cuda: string
-    note?: string
-  }>
-  warnings?: string[]
-  ml_compatibility?: Record<string, string>
-  web_sources?: Array<{
-    title: string
-    url: string
-    snippet: string
-  }>
-  raw_context?: {
-    gpu: GPUInfo
-    system: Record<string, unknown>
-  }
-}
-
 const vendorIcons: Record<string, string> = {
   nvidia: '🟢',
   amd: '🔴',
   intel: '🔵',
 }
 
+/** Diagnostic prompt for the shared AI analysis panel (specialist tier, host scope). */
+const GPU_DIAGNOSTIC_MESSAGE = `Analyze my GPU setup on this system for driver and CUDA compatibility. Use your GPU tools (gpu_info, gpu_system_context) to gather live details, retrieve the NVIDIA driver/CUDA compatibility guidance from your knowledge base, and use web search for current driver releases if needed. Assess whether the current driver version is optimal for this GPU and kernel, check compatibility between driver, CUDA, and any ML frameworks (PyTorch/TensorFlow), and only recommend an upgrade if a specific newer version provides clear benefits. Provide specific recommendations with commands and any warnings about the current setup.`
+
 export function GPU() {
   const [gpuData, setGpuData] = useState<GPUData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
-  
-  // Deep analysis state
-  const [analysis, setAnalysis] = useState<GPUAnalysis | null>(null)
-  const [analyzing, setAnalyzing] = useState(false)
-  const [copiedCommand, setCopiedCommand] = useState<string | null>(null)
-  const [analysisCache, setAnalysisCache] = useState<{
-    scanned_at: string | null
-    is_stale: boolean
-    age_days: number | null
-  }>({ scanned_at: null, is_stale: true, age_days: null })
-
-  const loadCachedAnalysis = async () => {
-    try {
-      const res = await fetch(apiUrl('/api/gpu/analysis-cache'))
-      if (res.ok) {
-        const data = await res.json()
-        if (data.cached && data.analysis) {
-          setAnalysis(data.analysis)
-          setAnalysisCache({
-            scanned_at: data.scanned_at,
-            is_stale: data.is_stale,
-            age_days: data.age_days,
-          })
-        }
-      }
-    } catch (err) {
-      console.error('Failed to load cached analysis:', err)
-    }
-  }
 
   const loadGPUData = async () => {
     try {
@@ -179,7 +96,6 @@ export function GPU() {
 
   useEffect(() => {
     loadGPUData()
-    loadCachedAnalysis()  // Load any cached analysis
     // Refresh every 5 seconds for live stats
     const interval = setInterval(loadGPUData, 5000)
     return () => clearInterval(interval)
@@ -506,399 +422,14 @@ export function GPU() {
         </Card>
       )}
 
-      {/* GPU Deep Analysis Panel */}
+      {/* GPU Deep Analysis — shared panel, agent specialist tier / host scope */}
       {gpuData.gpus.length > 0 && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <Sparkles className="h-5 w-5 text-info" />
-                  AI GPU Advisor
-                </CardTitle>
-                <CardDescription>
-                  Deep analysis with web grounding for driver recommendations
-                </CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                {analysis && (
-                  <Badge className={cn(
-                    analysis.health_score >= 80 && "bg-success",
-                    analysis.health_score >= 50 && analysis.health_score < 80 && "bg-warning",
-                    analysis.health_score < 50 && "bg-error",
-                  )}>
-                    Health: {analysis.health_score}%
-                  </Badge>
-                )}
-                <Button 
-                  onClick={async () => {
-                    setAnalyzing(true)
-                    try {
-                      const res = await fetch(apiUrl('/api/gpu/analyze'), { method: 'POST' })
-                      if (res.ok) {
-                        const data = await res.json()
-                        setAnalysis(data)
-                        // Reset cache metadata (fresh scan)
-                        setAnalysisCache({
-                          scanned_at: new Date().toISOString(),
-                          is_stale: false,
-                          age_days: 0,
-                        })
-                      }
-                    } catch (err) {
-                      console.error('Analysis failed:', err)
-                    } finally {
-                      setAnalyzing(false)
-                    }
-                  }}
-                  disabled={analyzing}
-                  size="sm"
-                  variant={analysisCache.is_stale && analysis ? "default" : "outline"}
-                >
-                  {analyzing ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Analyzing...
-                    </>
-                  ) : (
-                    <>
-                      <Search className="h-4 w-4 mr-2" />
-                      {analysisCache.is_stale && analysis ? "Refresh Scan" : "Deep Scan"}
-                    </>
-                  )}
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {!analysis ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>Click "Deep Scan" to analyze your GPU setup</p>
-                <p className="text-xs mt-1">Gathers system context, checks web for latest drivers</p>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {/* Stale Analysis Banner */}
-                {analysisCache.is_stale && (
-                  <div className="flex items-center gap-2 p-3 bg-warning/10 border border-warning/30 rounded-lg text-warning dark:text-warning">
-                    <Clock className="h-4 w-4 flex-shrink-0" />
-                    <span className="text-sm">
-                      This analysis is {analysisCache.age_days ? `${analysisCache.age_days} days` : 'over a week'} old. 
-                      Consider running a fresh scan for up-to-date recommendations.
-                    </span>
-                  </div>
-                )}
-                
-                {/* Analysis Summary */}
-                <div className="p-4 bg-muted/50 rounded-lg">
-                  <div className="flex items-start justify-between gap-4">
-                    <p className="text-sm">{analysis.analysis}</p>
-                    {analysisCache.scanned_at && (
-                      <span className="text-xs text-muted-foreground whitespace-nowrap">
-                        Scanned {new Date(analysisCache.scanned_at).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Driver & CUDA Assessment */}
-                {(analysis.driver_assessment || analysis.cuda_assessment) && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {analysis.driver_assessment && (
-                      <div className="p-4 border rounded-lg space-y-3">
-                        <div className="flex items-center gap-2">
-                          <ArrowUpCircle className="h-4 w-4 text-info" />
-                          <span className="font-medium text-sm">Driver Assessment</span>
-                        </div>
-                        <div className="space-y-2 text-sm">
-                          {/* Current vs Latest */}
-                          <div className="grid grid-cols-2 gap-2">
-                            <div>
-                              <span className="text-xs text-muted-foreground block">Current</span>
-                              <span className="font-mono text-xs">
-                                {analysis.driver_assessment.current_version || 'Unknown'}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-xs text-muted-foreground block">Latest Stable</span>
-                              <span className="font-mono text-xs">
-                                {analysis.driver_assessment.latest_stable_version || 
-                                 analysis.driver_assessment.recommended_version || 'Unknown'}
-                              </span>
-                            </div>
-                          </div>
-                          
-                          {/* Version Status */}
-                          <div className="flex items-center justify-between pt-1 border-t">
-                            <span className="text-muted-foreground">Status:</span>
-                            <Badge variant={
-                              analysis.driver_assessment.version_comparison === 'newer_than_stable' ? "default" :
-                              analysis.driver_assessment.version_comparison === 'at_stable' ? "default" :
-                              analysis.driver_assessment.action_recommended === 'none' ? "default" : "secondary"
-                            } className={cn(
-                              analysis.driver_assessment.version_comparison === 'newer_than_stable' && "bg-info/20 text-info border-info/30"
-                            )}>
-                              {analysis.driver_assessment.version_comparison === 'newer_than_stable' 
-                                ? "Ahead of stable (dev/beta)" 
-                                : analysis.driver_assessment.version_comparison === 'at_stable'
-                                ? "At latest stable"
-                                : analysis.driver_assessment.action_recommended === 'upgrade'
-                                ? "Upgrade available"
-                                : "OK"}
-                            </Badge>
-                          </div>
-                          
-                          {/* Action Recommendation */}
-                          {analysis.driver_assessment.action_recommended && analysis.driver_assessment.action_recommended !== 'none' && (
-                            <div className="flex items-center justify-between">
-                              <span className="text-muted-foreground">Action:</span>
-                              <Badge variant="outline" className={cn(
-                                analysis.driver_assessment.action_recommended === 'upgrade' && "text-warning",
-                                analysis.driver_assessment.action_recommended === 'consider_lts_downgrade' && "text-info",
-                              )}>
-                                {analysis.driver_assessment.action_recommended === 'upgrade' 
-                                  ? "Consider upgrading" 
-                                  : "LTS available (optional)"}
-                              </Badge>
-                            </div>
-                          )}
-                          
-                          {/* Version Analysis */}
-                          {analysis.driver_assessment.version_analysis && (
-                            <p className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
-                              {analysis.driver_assessment.version_analysis}
-                            </p>
-                          )}
-                          
-                          {/* Risk if changing */}
-                          {(analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk) && (
-                            <div className="flex items-center justify-between">
-                              <span className="text-muted-foreground">Change risk:</span>
-                              <Badge variant="outline" className={cn(
-                                (analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk) === 'safe' && "text-success",
-                                (analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk) === 'moderate' && "text-warning",
-                                (analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk) === 'high' && "text-error",
-                              )}>
-                                {analysis.driver_assessment.change_risk || analysis.driver_assessment.upgrade_risk}
-                              </Badge>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    {analysis.cuda_assessment && (
-                      <div className="p-4 border rounded-lg space-y-3">
-                        <div className="flex items-center gap-2">
-                          <Package className="h-4 w-4 text-success" />
-                          <span className="font-medium text-sm">CUDA Assessment</span>
-                        </div>
-                        <div className="space-y-2 text-sm">
-                          {/* Current vs Latest */}
-                          <div className="grid grid-cols-2 gap-2">
-                            <div>
-                              <span className="text-xs text-muted-foreground block">Current</span>
-                              <span className="font-mono text-xs">
-                                {analysis.cuda_assessment.current_version || 'Unknown'}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-xs text-muted-foreground block">Latest</span>
-                              <span className="font-mono text-xs">
-                                {analysis.cuda_assessment.latest_version || 
-                                 analysis.cuda_assessment.recommended_version || 'Unknown'}
-                              </span>
-                            </div>
-                          </div>
-                          
-                          {/* Compatibility */}
-                          <div className="flex items-center justify-between pt-1 border-t">
-                            <span className="text-muted-foreground">Compatible:</span>
-                            <Badge variant={analysis.cuda_assessment.compatible ? "default" : "destructive"}>
-                              {analysis.cuda_assessment.compatible ? "Yes" : "No"}
-                            </Badge>
-                          </div>
-                          
-                          {/* Version Analysis */}
-                          {analysis.cuda_assessment.version_analysis && (
-                            <p className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
-                              {analysis.cuda_assessment.version_analysis}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* ML Framework Compatibility */}
-                {analysis.ml_compatibility && Object.keys(analysis.ml_compatibility).length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                      <ShieldCheck className="h-4 w-4" />
-                      ML Framework Compatibility
-                    </h4>
-                    <div className="flex flex-wrap gap-2">
-                      {Object.entries(analysis.ml_compatibility).map(([framework, status]) => (
-                        <Badge 
-                          key={framework} 
-                          variant="outline"
-                          className={cn(
-                            status === 'compatible' && "border-success text-success",
-                            status === 'needs_update' && "border-warning text-warning",
-                            status === 'not_installed' && "border-gray-400 text-gray-500",
-                          )}
-                        >
-                          {framework}: {status}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Warnings */}
-                {analysis.warnings && analysis.warnings.length > 0 && (
-                  <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
-                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2 text-warning">
-                      <AlertTriangle className="h-4 w-4" />
-                      Warnings
-                    </h4>
-                    <ul className="text-sm space-y-1">
-                      {analysis.warnings.map((warning, i) => (
-                        <li key={i}>• {warning}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Known Compatible Combinations - subtle reference info */}
-                {analysis.known_compatible_combos && analysis.known_compatible_combos.length > 0 && (
-                  <div className="text-xs text-muted-foreground border-t pt-4">
-                    <p className="mb-2 flex items-center gap-1">
-                      <HelpCircle className="h-3 w-3" />
-                      Known compatible driver/CUDA combinations for reference:
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {analysis.known_compatible_combos.map((combo, i) => (
-                        <span key={i} className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                          {combo.driver} + CUDA {combo.cuda}
-                          {combo.note && <span className="text-muted-foreground/70 ml-1">({combo.note})</span>}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Recommendations */}
-                {analysis.recommendations && analysis.recommendations.length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 text-success" />
-                      Recommendations
-                    </h4>
-                    <div className="space-y-3">
-                      {analysis.recommendations.map((rec, i) => (
-                        <div key={i} className="p-3 border rounded-lg">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-1">
-                                <Badge variant="outline" className={cn(
-                                  rec.priority === 'high' && "border-error text-error",
-                                  rec.priority === 'medium' && "border-warning text-warning",
-                                  rec.priority === 'low' && "border-info text-info",
-                                )}>
-                                  {rec.priority}
-                                </Badge>
-                                <span className="text-sm font-medium">{rec.action}</span>
-                              </div>
-                              {rec.reason && (
-                                <p className="text-xs text-muted-foreground">{rec.reason}</p>
-                              )}
-                            </div>
-                          </div>
-                          {rec.command && (
-                            <div className="mt-2 flex items-center gap-2">
-                              <code className="flex-1 text-xs bg-muted px-2 py-1 rounded font-mono overflow-x-auto">
-                                {rec.command}
-                              </code>
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                title="Send to chat for execution"
-                                onClick={() => {
-                                  window.dispatchEvent(new CustomEvent('halbert:send-to-chat', {
-                                    detail: { 
-                                      command: rec.command,
-                                      context: `GPU Driver recommendation: ${rec.action}`
-                                    }
-                                  }))
-                                }}
-                              >
-                                <Terminal className="h-4 w-4" />
-                              </Button>
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                title="Copy to clipboard"
-                                onClick={() => {
-                                  navigator.clipboard.writeText(rec.command!)
-                                  setCopiedCommand(rec.command!)
-                                  setTimeout(() => setCopiedCommand(null), 2000)
-                                }}
-                              >
-                                {copiedCommand === rec.command ? (
-                                  <Check className="h-4 w-4 text-success" />
-                                ) : (
-                                  <Copy className="h-4 w-4" />
-                                )}
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Web Sources */}
-                {analysis.web_sources && analysis.web_sources.length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2 text-muted-foreground">
-                      <Globe className="h-4 w-4" />
-                      Sources Used
-                    </h4>
-                    <div className="space-y-1">
-                      {analysis.web_sources.map((source, i) => (
-                        <a 
-                          key={i}
-                          href={source.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block text-xs text-info hover:underline truncate"
-                        >
-                          {source.title}
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* System Context (collapsed) */}
-                {analysis.raw_context?.system && (
-                  <details className="text-xs">
-                    <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                      <Terminal className="h-3 w-3 inline mr-1" />
-                      View System Context
-                    </summary>
-                    <pre className="mt-2 p-2 bg-muted rounded text-xs overflow-auto max-h-40">
-                      {JSON.stringify(analysis.raw_context.system, null, 2)}
-                    </pre>
-                  </details>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <AIAnalysisPanel
+          type="GPU"
+          title="GPU"
+          analyzeLabel="Deep Scan"
+          message={GPU_DIAGNOSTIC_MESSAGE}
+        />
       )}
     </div>
   )
