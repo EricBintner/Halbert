@@ -2715,15 +2715,28 @@ class AgentStateMachine:
         # them from ``context``, and _receipt_block still feeds the
         # no-builder path below.
         if self.prompts:
+            # Phase 2.5: pass the resolved modality so the prompt builder
+            # can request plain text for voice turns (no markdown waste).
+            response_modality = "text"
+            if modality_ctx is not None:
+                try:
+                    resolved_mod = getattr(modality_ctx, "recommended_modality", None)
+                    if resolved_mod is not None:
+                        response_modality = resolved_mod.value.lower()
+                except Exception:
+                    pass
             prompt = self.prompts.build_response_prompt(
                 query=self.ctx.user_query,
                 context=self.ctx.retrieved_context,
                 observations=self.ctx.observations,
                 tools_supported=getattr(self.llm, "tools_supported", None),
+                response_modality=response_modality,
             )
             logger.info("Using AgentPromptBuilder for response prompt")
         else:
-            prompt = self._build_simple_response_prompt()
+            prompt = self._build_simple_response_prompt(
+                response_modality=response_modality,
+            )
             logger.info("Using simple response prompt (no prompt builder)")
 
         # DEBUG: Log the prompt to verify markdown instructions are included
@@ -3196,7 +3209,7 @@ class AgentStateMachine:
             "and cite sources when available."
         )
 
-    def _build_simple_response_prompt(self) -> str:
+    def _build_simple_response_prompt(self, response_modality: str = "text") -> str:
         """Build a simple response prompt when no prompt builder available."""
         # Receipts are rendered in their own block, so continuity cannot spend
         # the five retrieval slots (see _retrieval_documents).
@@ -3210,6 +3223,21 @@ class AgentStateMachine:
 
         obs_text = "\n".join([f"- {obs}" for obs in self.ctx.observations])
 
+        # Phase 2.5: modality-conditional formatting (same logic as
+        # AgentPromptBuilder.build_response_prompt).
+        if response_modality == "voice":
+            formatting_line = (
+                "- Respond in plain text suitable for speech: short "
+                "sentences, no markdown syntax, no code blocks"
+            )
+            response_style = "plain text, spoken naturally"
+        else:
+            formatting_line = (
+                "- Use **markdown formatting**: headers (##), bullet "
+                "points (-), **bold**, `code`, code blocks (```bash)"
+            )
+            response_style = "markdown formatting"
+
         return f"""{self._fallback_identity()}
 
 Answer this question: {self.ctx.user_query}
@@ -3222,8 +3250,8 @@ What I've done:
 
 Instructions:
 - Provide a helpful, accurate response
-- Use **markdown formatting**: headers (##), bullet points (-), **bold**, `code`, code blocks (```bash)
+{formatting_line}
 - Cite sources when possible
 - Be concise but complete
 
-Your response (use markdown formatting):"""
+Your response ({response_style}):"""

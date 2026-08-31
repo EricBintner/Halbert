@@ -39,8 +39,16 @@ def _format_extras(
     tone_descriptors: list,
     speech_patterns: list,
     directives: list,
+    include_voice_presentation: bool = True,
+    being_cfg: Any = None,
 ) -> str:
-    """Format tone, speech patterns, and directives into prompt lines."""
+    """Format tone, speech patterns, and directives into prompt lines.
+
+    Phase 2.5: ``VOICE PRESENTATION`` is only included for text turns.
+    For voice turns, the engine's ``ModalityAwarePromptBuilder`` handles
+    voice identity via ``PersonaVoiceProfile`` — injecting it into the
+    text prompt is redundant and can confuse the model.
+    """
     lines = []
     if tone_descriptors:
         lines.append("TONE: " + ", ".join(tone_descriptors))
@@ -52,10 +60,16 @@ def _format_extras(
         lines.append("DIRECTIVES:")
         for directive in directives:
             lines.append(f"- {directive}")
+    # Voice presentation guidance — only for text turns. The engine's
+    # PersonaVoiceProfile handles voice identity for voice turns.
+    if include_voice_presentation and being_cfg is not None:
+        vp = getattr(being_cfg, "voice_presentation", "not_defined") or "not_defined"
+        if vp in ("male", "female"):
+            lines.append(f"VOICE PRESENTATION: {vp}")
     return "\n".join(lines) if lines else ""
 
 
-def generate_personality_section(being_cfg: Any) -> str:
+def generate_personality_section(being_cfg: Any, response_modality: str = "text") -> str:
     """Generate a personality prompt section from BeingConfig.
 
     Pipeline (first match wins):
@@ -64,9 +78,16 @@ def generate_personality_section(being_cfg: Any) -> str:
     3. personality_profile has non-default values -> generate + extras
     4. Else -> empty string (no personality layer)
 
+    Phase 2.5: ``response_modality`` controls whether voice-presentation
+    guidance is included. For voice turns, the engine's
+    ``ModalityAwarePromptBuilder`` handles voice identity via
+    ``PersonaVoiceProfile``, so the text prompt doesn't need it.
+
     Args:
         being_cfg: A BeingConfig instance (or duck-typed object with the
             same attributes).
+        response_modality: "text" or "voice" — controls whether
+            voice-presentation guidance is included in the prompt.
 
     Returns:
         Prompt section string, or "" if no personality is configured.
@@ -79,12 +100,10 @@ def generate_personality_section(being_cfg: Any) -> str:
     tone = getattr(being_cfg, "tone_descriptors", []) or []
     speech = getattr(being_cfg, "speech_patterns", []) or []
     directives = getattr(being_cfg, "directives", []) or []
-    extras = _format_extras(tone, speech, directives)
-
-    # Voice presentation guidance (Phase 3)
-    vp = getattr(being_cfg, "voice_presentation", "not_defined") or "not_defined"
-    if vp in ("male", "female"):
-        extras = (extras + "\n" if extras else "") + f"VOICE PRESENTATION: {vp}"
+    # Phase 2.5: skip VOICE PRESENTATION for voice turns — the engine
+    # handles voice identity via PersonaVoiceProfile.
+    include_vp = response_modality != "voice"
+    extras = _format_extras(tone, speech, directives, include_vp, being_cfg)
 
     # 2. Archetype
     archetype_id = getattr(being_cfg, "archetype_id", None)

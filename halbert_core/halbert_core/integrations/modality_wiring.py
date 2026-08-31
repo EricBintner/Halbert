@@ -39,6 +39,107 @@ _modality_prompt_builder: Any = None
 _speech_demuxer: Any = None
 _quiet_hours_policy: Any = None
 _temporal_orchestrator: Any = None
+_pronunciation_lexicon: Any = None
+
+
+# ---------------------------------------------------------------------------
+# Pronunciation lexicon (spec section 5.14)
+# ---------------------------------------------------------------------------
+
+# Halbert domain terms that Piper/sherpa-onnx mispronounce. These are
+# technical terms, service names, and config paths common in sysadmin /
+# smart-home contexts. The phonetic spelling guides the TTS engine to
+# the correct pronunciation without requiring IPA support.
+_HALBERT_PRONUNCIATION_MAPPINGS = {
+    # Service names
+    "systemd": "system-D",
+    "journald": "journal-D",
+    "dockerd": "docker-D",
+    "NetworkManager": "Network Manager",
+    "bluetoothd": "bluetooth-D",
+    "wpa_supplicant": "W-P-A supplicant",
+    "rsyslog": "R-syslog",
+    "cron": "cron",
+    "crond": "cron-D",
+    # Smart-home / IoT
+    "zigbee2mqtt": "zigbee to M-Q-T-T",
+    "z2m": "Z-two-M",
+    "homeassistant": "Home Assistant",
+    "esphome": "E-S-P home",
+    "wyoming": "wyoming",
+    "piper": "piper",
+    "sherpa": "sherpa",
+    "onnx": "O-N-N-X",
+    # Config / paths
+    "fstab": "F-stab",
+    "sshd_config": "S-S-H-D config",
+    "sysctl": "sys-control",
+    "iptables": "I-P tables",
+    "nftables": "N-F tables",
+    # Protocols
+    "mqtt": "M-Q-T-T",
+    "websocket": "web socket",
+    "mDNS": "M-D-N-S",
+    "avahi": "ah-vah-hee",
+    "LLDP": "L-L-D-P",
+    # Hardware
+    "NVMe": "N-V-Me",
+    "SATA": "S-A-T-A",
+    "pcie": "P-C-I-Express",
+    "Ryzen": "Rye-zen",
+    "Epyc": "E-pick",
+    # Halbert-specific
+    "halbert": "halbert",
+    "haloysius": "huh-loy-shus",
+    "Tauri": "Tauri",
+    "ChromaDB": "Chroma D-B",
+    "ollama": "oh-lama",
+    "llama": "lama",
+    "mlx": "M-L-X",
+}
+
+
+def get_pronunciation_lexicon() -> Any:
+    """Get or create the singleton PronunciationLexicon for Halbert.
+
+    Populated with sysadmin / smart-home domain terms that Piper TTS
+    mispronounces. Returns None if the engine is not installed.
+    """
+    global _pronunciation_lexicon
+    if _pronunciation_lexicon is not None:
+        return _pronunciation_lexicon
+    if not _engine_available():
+        return None
+    try:
+        from haloysius.modality.pronunciation import PronunciationLexicon
+        lexicon = PronunciationLexicon(domain="halbert")
+        lexicon.load_from_dict(_HALBERT_PRONUNCIATION_MAPPINGS)
+        _pronunciation_lexicon = lexicon
+        logger.info(
+            f"PronunciationLexicon created for Halbert "
+            f"({len(_HALBERT_PRONUNCIATION_MAPPINGS)} terms)"
+        )
+        return _pronunciation_lexicon
+    except Exception as e:
+        logger.warning(f"Could not create PronunciationLexicon: {e}")
+        return None
+
+
+def apply_pronunciation(text: str) -> str:
+    """Apply pronunciation substitutions to text before TTS synthesis.
+
+    Replaces domain terms with their phonetic spellings so Piper
+    pronounces them correctly. Returns the original text unchanged if
+    the engine is not installed.
+    """
+    lexicon = get_pronunciation_lexicon()
+    if lexicon is None:
+        return text
+    try:
+        return lexicon.apply(text)
+    except Exception as e:
+        logger.debug(f"Pronunciation substitution failed: {e}")
+        return text
 
 
 def _engine_available() -> bool:
@@ -371,8 +472,9 @@ def should_speak_proactively(event_type: str, quiet_hours: bool = False) -> bool
 
 def shutdown() -> None:
     """Clear module-level singletons."""
-    global _modality_prompt_builder, _speech_demuxer, _quiet_hours_policy, _temporal_orchestrator
+    global _modality_prompt_builder, _speech_demuxer, _quiet_hours_policy, _temporal_orchestrator, _pronunciation_lexicon
     _modality_prompt_builder = None
     _speech_demuxer = None
     _quiet_hours_policy = None
     _temporal_orchestrator = None
+    _pronunciation_lexicon = None

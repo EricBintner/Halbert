@@ -422,6 +422,171 @@ class TestModalityWiring:
         assert modality_wiring._modality_prompt_builder is None
         assert modality_wiring._speech_demuxer is None
         assert modality_wiring._quiet_hours_policy is None
+        assert modality_wiring._pronunciation_lexicon is None
+
+    def test_apply_pronunciation_no_engine_returns_original(self):
+        from halbert_core.integrations.modality_wiring import apply_pronunciation
+        result = apply_pronunciation("restart the systemd service")
+        # Without the engine, text is returned unchanged
+        assert result == "restart the systemd service"
+
+    def test_pronunciation_mappings_contain_key_terms(self):
+        from halbert_core.integrations.modality_wiring import (
+            _HALBERT_PRONUNCIATION_MAPPINGS,
+        )
+        # Verify key domain terms are present
+        assert "systemd" in _HALBERT_PRONUNCIATION_MAPPINGS
+        assert "mqtt" in _HALBERT_PRONUNCIATION_MAPPINGS
+        assert "NVMe" in _HALBERT_PRONUNCIATION_MAPPINGS
+        assert "haloysius" in _HALBERT_PRONUNCIATION_MAPPINGS
+        # Verify phonetic spellings are not empty
+        for term, phonetic in _HALBERT_PRONUNCIATION_MAPPINGS.items():
+            assert phonetic, f"Empty phonetic for {term}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.5: Modality-conditional prompt formatting
+# ---------------------------------------------------------------------------
+
+
+class TestModalityConditionalPrompt:
+
+    def test_build_response_prompt_text_includes_markdown(self):
+        from halbert_core.prompts.agent_prompts import AgentPromptBuilder
+        builder = AgentPromptBuilder()
+        prompt = builder.build_response_prompt(
+            query="test query",
+            context=[],
+            observations=[],
+            response_modality="text",
+        )
+        assert "markdown formatting" in prompt
+        assert "headers" in prompt
+
+    def test_build_response_prompt_voice_excludes_markdown(self):
+        from halbert_core.prompts.agent_prompts import AgentPromptBuilder
+        builder = AgentPromptBuilder()
+        prompt = builder.build_response_prompt(
+            query="test query",
+            context=[],
+            observations=[],
+            response_modality="voice",
+        )
+        # The formatting instruction should say "plain text" not "markdown"
+        assert "plain text" in prompt.lower()
+        assert "spoken naturally" in prompt.lower()
+        # The formatting line should not ask for markdown syntax
+        assert "use **markdown" not in prompt.lower()
+
+    def test_build_response_prompt_default_is_text(self):
+        from halbert_core.prompts.agent_prompts import AgentPromptBuilder
+        builder = AgentPromptBuilder()
+        prompt = builder.build_response_prompt(
+            query="test query",
+            context=[],
+            observations=[],
+        )
+        assert "markdown formatting" in prompt
+
+
+class TestPersonalityPromptModality:
+
+    def test_generate_personality_section_includes_voice_presentation_for_text(self):
+        from halbert_core.persona.personality_prompt import generate_personality_section
+
+        class _FakeConfig:
+            custom_personality_prompt = ""
+            tone_descriptors = ["calm"]
+            speech_patterns = ["concise"]
+            directives = []
+            voice_presentation = "male"
+            archetype_id = None
+            personality_profile = {}
+
+        result = generate_personality_section(_FakeConfig(), response_modality="text")
+        assert "VOICE PRESENTATION: male" in result
+
+    def test_generate_personality_section_excludes_voice_presentation_for_voice(self):
+        from halbert_core.persona.personality_prompt import generate_personality_section
+
+        class _FakeConfig:
+            custom_personality_prompt = ""
+            tone_descriptors = ["calm"]
+            speech_patterns = ["concise"]
+            directives = []
+            voice_presentation = "male"
+            archetype_id = None
+            personality_profile = {}
+
+        result = generate_personality_section(_FakeConfig(), response_modality="voice")
+        assert "VOICE PRESENTATION" not in result
+        # TONE and SPEECH PATTERNS should still be present
+        assert "TONE: calm" in result
+        assert "SPEECH PATTERNS" in result
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.5: ProactiveGate engine delegation
+# ---------------------------------------------------------------------------
+
+
+class TestProactiveGateEngineDelegation:
+
+    def test_gate_constructs_without_engine(self):
+        from halbert_core.proactive.gate import ProactiveGate
+
+        class _FakeConfig:
+            proactivity = "balanced"
+            quiet_hours = None
+            category_overrides = {}
+
+        gate = ProactiveGate(being_config=_FakeConfig())
+        assert gate is not None
+
+    def test_gate_allows_critical_during_quiet_hours(self):
+        from halbert_core.proactive.gate import ProactiveGate
+        from halbert_core.proactive.events import ProactiveEvent
+
+        class _FakeConfig:
+            proactivity = "balanced"
+            quiet_hours = {"start": "22:00", "end": "07:00"}
+            category_overrides = {}
+
+        gate = ProactiveGate(being_config=_FakeConfig())
+        event = ProactiveEvent(
+            id="test-1",
+            type="system",
+            category="system",
+            severity="critical",
+            title="Test",
+            body="Test body",
+        )
+        should_notify, reason = gate.should_notify(event)
+        assert should_notify is True
+
+    def test_gate_suppresses_non_critical_in_quiet_hours(self):
+        from halbert_core.proactive.gate import ProactiveGate
+        from halbert_core.proactive.events import ProactiveEvent
+
+        class _FakeConfig:
+            proactivity = "balanced"
+            quiet_hours = {"start": "22:00", "end": "07:00"}
+            category_overrides = {}
+
+        gate = ProactiveGate(being_config=_FakeConfig())
+        event = ProactiveEvent(
+            id="test-2",
+            type="system",
+            category="system",
+            severity="warning",
+            title="Test",
+            body="Test body",
+        )
+        # Patch _in_quiet_hours to return True
+        gate._in_quiet_hours = lambda: True
+        should_notify, reason = gate.should_notify(event)
+        assert should_notify is False
+        assert "quiet hours" in reason
 
 
 # ---------------------------------------------------------------------------
