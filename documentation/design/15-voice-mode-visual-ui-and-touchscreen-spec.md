@@ -4,7 +4,8 @@
 > **Status:** Architecture, Visual UI & SVG Animation Specification  
 > **Date:** 2026-08-31  
 > **Target Framework:** React 18.2 / 19, SVG Path Deformation / Web Audio API, Tailwind CSS, Tauri v2 / Kiosk Mode, Linux (`halbert_core`)  
-> **Reads With:** `documentation/design/11-response-modality-handoff.md`, `documentation/design/the-being.md`, `documentation/design/DESIGN-SYSTEM-SPEC.md`, `audio-research/01-CORRECTED-ARCHITECTURE.md`, `audio-research/03-UX-SURFACES.md`
+> **Reads With:** `documentation/design/11-response-modality-handoff.md`, `documentation/design/14-system-prompts-and-modality-gap-analysis.md`, `documentation/design/the-being.md`, `documentation/design/DESIGN-SYSTEM-SPEC.md`, `audio-research/01-CORRECTED-ARCHITECTURE.md`, `audio-research/03-UX-SURFACES.md`
+> **Consumes:** Modality-voice engine SSE events (`modality_resolved`, `speech_segment`) from Phase 2.5 work in `integrations/modality_wiring.py` and `hooks/useAgentStream.ts`
 
 ---
 
@@ -33,7 +34,9 @@ In a dedicated appliance setup — such as an **Intel N150 Home Assistant server
 ## 2. Core Visual Aesthetic: The Audio-Reactive Halbert Mark
 
 ### 2.1 The Geometry of the Mark
-The official Halbert brand mark (`/Volumes/4TB-BAD/Halbert/assets/brand/halbert-mark-medium.svg` and `packages/design-system/src/primitives/HalbertMark.tsx`) is inherently acoustic. It is constructed from concentric, nested U-shaped resonator paths radiating outward from a central vertical stem:
+The official Halbert brand mark (`/Volumes/4TB-BAD/Halbert/assets/brand/halbert-mark-medium.svg` and `packages/design-system/src/primitives/HalbertMark.tsx`) is inherently acoustic. It is constructed from concentric, nested U-shaped resonator paths radiating outward from a central vertical stem.
+
+**Voice Mode uses `density='display'`** (10 concentric paths), which is what `HalbertMark` renders at sizes > 64px via `density='auto'`. A 512px central resonator therefore renders all 10 tines. The `medium` variant (6 paths, used at 32–64px) is a subset suitable for the 48px header emblem when Voice Mode scales the mark down during keyboard overlay. The frequency table below covers the full 10-ring `display` density.
 
 ```
                           X = 512 (Center Line)
@@ -63,12 +66,16 @@ Rather than applying generic uniform scaling or CSS pulses, the mark acts as a *
 
 | Tine Identifier | Geometric Coordinates / Radius | Acoustic Frequency Register | Vocal Characteristic Mapped |
 |---|---|---|---|
-| **Center Stem (Ring 0)** | `M 512 80 V 512` (Vertical line) | **High Treble / Sibilance** (2,500 Hz – 8,000 Hz) | Consonant attacks, sibilance (`s`, `t`, `sh`), upper overtones |
-| **Inner Tine (Ring 1)** | Radius $R = 86.4\text{px}$ (`X: 425.6` to `598.4`) | **Upper Mids** (1,200 Hz – 2,500 Hz) | Nasal clarity, vowel formant $F_2$, articulation |
-| **Mid-Inner Tine (Ring 2)** | Radius $R = 172.8\text{px}$ (`X: 339.2` to `684.8`) | **Vocal Core / Formant** (600 Hz – 1,200 Hz) | Core vowel formant $F_1$, melodic speech cadence |
-| **Mid-Outer Tine (Ring 3)** | Radius $R = 259.2\text{px}$ (`X: 252.8` to `771.2`) | **Warmth / Chest Formant** (250 Hz – 600 Hz) | Body of the voice, tonal warmth |
-| **Outer Tine (Ring 4)** | Radius $R = 345.6\text{px}$ (`X: 166.4` to `857.6`) | **Vocal Fundamental** (120 Hz – 250 Hz) | Speaker pitch fundamental ($F_0$ for male/female voices) |
-| **Outermost Arc (Ring 5)** | Radius $R = 432.0\text{px}$ (`X: 80.0` to `944.0`) | **Sub-Bass / Room Acoustic** (40 Hz – 120 Hz) | Chest rumble, low room acoustics, ambient energy |
+| **Center Stem (Ring 0)** | `M 512 80 V 512` (Vertical line) | **Brilliance / Air** (4,000 Hz – 8,000 Hz) | Sibilance airiness (`s`, `t`, `sh`), upper overtones, fricative energy |
+| **Ring 1** | Radius $R = 48.0\text{px}$ (`X: 464.0` to `560.0`) | **Sibilance** (2,500 Hz – 4,000 Hz) | Consonant attacks, sharp sibilants, articulation clarity |
+| **Ring 2** | Radius $R = 96.0\text{px}$ (`X: 416.0` to `608.0`) | **Upper Mids** (1,500 Hz – 2,500 Hz) | Nasal clarity, vowel formant $F_2$, presence band |
+| **Ring 3** | Radius $R = 144.0\text{px}$ (`X: 368.0` to `656.0`) | **Vowel Clarity** (1,000 Hz – 1,500 Hz) | Articulation, consonant definition, intelligibility |
+| **Ring 4** | Radius $R = 192.0\text{px}$ (`X: 320.0` to `704.0`) | **Vocal Core / Formant** (700 Hz – 1,000 Hz) | Vowel formant $F_1$ upper, melodic speech cadence |
+| **Ring 5** | Radius $R = 240.0\text{px}$ (`X: 272.0` to `752.0`) | **Vowel Body** (500 Hz – 700 Hz) | Core vowel formant $F_1$, fullness of vowels |
+| **Ring 6** | Radius $R = 288.0\text{px}$ (`X: 224.0` to `800.0`) | **Warmth** (350 Hz – 500 Hz) | Body of the voice, tonal warmth, chest resonance upper |
+| **Ring 7** | Radius $R = 336.0\text{px}$ (`X: 176.0` to `848.0`) | **Chest Formant** (200 Hz – 350 Hz) | Vocal warmth, male chest resonance, tonal density |
+| **Ring 8** | Radius $R = 384.0\text{px}$ (`X: 128.0` to `896.0`) | **Vocal Fundamental** (100 Hz – 200 Hz) | Speaker pitch fundamental ($F_0$ for male/female voices) |
+| **Outermost Arc (Ring 9)** | Radius $R = 432.0\text{px}$ (`X: 80.0` to `944.0`) | **Sub-Bass / Room Acoustic** (40 Hz – 100 Hz) | Chest rumble, low room acoustics, ambient energy |
 
 ---
 
@@ -85,7 +92,7 @@ To achieve an organic, physical vibration without tearing SVG geometry, each pat
                                                                             ▼
 ┌───────────────────────┐       ┌───────────────────────┐       ┌────────────────────────┐
 │ Rendered Screen       │ <---- │ Dynamic SVG Path      │ <---- │ Standing Wave &        │
-│ (60/120 FPS Canvas)   │       │ String Interpolation  │       │ Radial Flex Equations  │
+│ (60 FPS SVG)          │       │ String Interpolation  │       │ Radial Flex Equations  │
 └───────────────────────┘       └───────────────────────┘       └────────────────────────┘
 ```
 
@@ -118,26 +125,69 @@ $$m \frac{d^2 x}{dt^2} + c \frac{dx}{dt} + k_s (x - x_{\text{target}}) = 0$$
 - **Damping ($c$):** `18.5` (smooth, organic decay without robotic square-wave transitions)
 - **Mass ($m$):** `1.0`
 
+**Integrator:** Semi-implicit (symplectic) Euler with a **fixed 8 ms internal timestep** ($\Delta t_{\text{fixed}} = 0.008\text{s}$), sub-stepped from the variable requestAnimationFrame delta. At 60fps the natural $\omega\sqrt{k_s/m} \approx 11.8\text{ rad/s}$, giving $\omega \cdot \Delta t \approx 0.094$ — well within the stability region. The fixed substep ensures stability when the display frame rate dips to 30fps on N150-class hardware ($\omega \cdot \Delta t_{\text{fixed}} \approx 0.094$ regardless of render rate). The render loop interpolates between the two most recent physics states for smooth visual output.
+
+**Render path:** SVG `d`-attribute string interpolation at 60fps. On N150-class hardware, 10 deforming paths with string rebuild per frame is performant at 60fps. If profiling reveals frame drops, a Canvas2D fallback (redraw bezier curves as Canvas `bezierCurveTo` calls instead of SVG string rebuilds) can be implemented as a future optimization without changing the physics layer.
+
+### 3.4 FFT Bin → Tine Mapping
+The Web Audio `AnalyserNode` produces 64 frequency bins linearly spaced from 0 Hz to Nyquist ($f_s / 2$). At 16 kHz sample rate, Nyquist = 8,000 Hz, so each bin spans $8000 / 64 = 125\text{ Hz}$. Voice frequency registers are approximately logarithmic, so bins must be grouped into per-tine energy bands using logarithmic band edges:
+
+$$k_{\text{tine}} = \text{argmin}_j \left| f_{\text{center},j} - f_{\text{edge}} \right| \quad \text{where} \quad f_{\text{center},j} = j \cdot \frac{f_s}{2 \cdot N_{\text{fft}}}$$
+
+The mapping function groups bins into 10 bands using the frequency register boundaries from §2.2:
+
+```typescript
+// Bin edges (inclusive lower, exclusive upper) for 10 tines at 16kHz / 64-bin FFT
+const TINE_BIN_RANGES: Array<[number, number]> = [
+  [32, 64],   // Ring 0: 4000-8000 Hz (brilliance/air)
+  [20, 32],   // Ring 1: 2500-4000 Hz (sibilance)
+  [12, 20],   // Ring 2: 1500-2500 Hz (upper mids)
+  [8, 12],    // Ring 3: 1000-1500 Hz (vowel clarity)
+  [6, 8],     // Ring 4: 700-1000 Hz (vocal core)
+  [4, 6],     // Ring 5: 500-700 Hz (vowel body)
+  [3, 4],     // Ring 6: 350-500 Hz (warmth)
+  [2, 3],     // Ring 7: 200-350 Hz (chest formant)
+  [1, 2],     // Ring 8: 100-200 Hz (fundamental)
+  [0, 1],     // Ring 9: 0-100 Hz (sub-bass)
+];
+
+// Per-tine normalized energy: E_k = mean(bin_amplitude[j]) for j in TINE_BIN_RANGES[k]
+function tineEnergy(freqData: Uint8Array, k: number): number {
+  const [lo, hi] = TINE_BIN_RANGES[k];
+  let sum = 0;
+  for (let j = lo; j < hi; j++) sum += freqData[j];
+  return (sum / (hi - lo)) / 255;  // normalize to [0, 1]
+}
+```
+
+Note: bins 0–1 capture DC and near-DC energy which is mostly ambient room noise. Ring 9's energy should be low-passed more aggressively (additional 0.3× attenuation) to prevent sub-bass rumble from dominating the outer arc.
+
 ---
 
 ## 4. Voice Mode State Machine & Interaction Lifecycle
 
-Voice Mode transitions through five distinct operational states:
+Voice Mode transitions through seven distinct operational states, aligned with the existing `AcousticAuraIndicator` state vocabulary (`idle | listening | recognized | thinking | speaking | error`):
 
 ```mermaid
 stateDiagram-v2
     [*] --> Standby: Idle (Screen Blanked / Low Luma)
-    
+
     Standby --> Listening: Wake Word ("Halbert") / Screen Tap
+    Listening --> Recognized: Speaker Biometric Match (CAM++)
     Listening --> Thinking: Voice Activity Ceases (VAD End of Speech)
+    Recognized --> Thinking: Confirmed Identity, Continue Turn
     Thinking --> Speaking: LLM Response / Tool Result Ready
     Speaking --> Listening: Continuous Multi-turn / Barge-in Detected
     Speaking --> Standby: Turn Complete + Inactivity Timeout (30s)
-    
+    Listening --> Error: Mic Failure / Ingress Disconnect
+    Thinking --> Error: LLM Timeout / Tool Exception
+    Error --> Standby: Auto-retry Exhausted or User Dismissal
+
     Listening --> ChatTransition: Tap Keyboard / Swipe Up
     Thinking --> ChatTransition: Tap Screen / Complex Output
     Speaking --> ChatTransition: "Show me details"
     ChatTransition --> HostCanvas: Full Dual-Column Engaged Mode
+    HostCanvas --> Listening: Voice Resume / /voice Route Re-entry
 ```
 
 ### 4.1 State Breakdown
@@ -146,9 +196,11 @@ stateDiagram-v2
 |---|---|---|---|
 | **1. Standby / Dormant** | Ultra-dim (10% opacity) slow sinusoidal breathing (3.5s cycle) or pure `#000000` blackout. | Low-power wake word listener active (Sherpa-onnx / openWakeWord). | Screen backlight at 0%–10% or software blanked. |
 | **2. Listening** | Mark elevates to full luminosity (`#D34E24` Olivetti Vermilion). Reactive wave vibration tracks user's voice in real time. | Mic ingress active (16kHz PCM stream). VAD segmenting speech frames. | Full brightness (100%), 60fps path deformation. |
-| **3. Thinking** | Concentric tines rhythmically contract inward, emitting a soft radial chromatic aura. | LLM inference, CRAG graph evaluation, or tool execution. | Full brightness, subtle pulsing glow. |
-| **4. Speaking** | Full harmonic path resonance synchronized to Piper neural TTS output. Subtitle stream renders live words. | Neural TTS audio output playing through speakers. Barge-in VAD active. | Full brightness, frequency-mapped tine vibration. |
-| **5. Interrupted (Barge-in)** | Sharp radial ripple / instant dampening back to Listening posture. | Immediate playback audio cutoff. New user utterance captured. | Instant zero-latency visual reset. |
+| **3. Recognized** | Biometric badge fades in at top-left (`Eric • Admin 98%`). Mark holds listening vibration but gains a subtle green confirmatory pulse ring. | Speaker ID match confirmed (CAM++ 256-dim). Role gate applies permissions for upcoming turn. | Full brightness, brief confirmatory pulse. |
+| **4. Thinking** | Concentric tines rhythmically contract inward, emitting a soft radial chromatic aura. | LLM inference, CRAG graph evaluation, or tool execution. | Full brightness, subtle pulsing glow. |
+| **5. Speaking** | Full harmonic path resonance synchronized to Piper neural TTS output. Subtitle stream renders live words. | Neural TTS audio output playing through speakers. Barge-in VAD active. | Full brightness, frequency-mapped tine vibration. |
+| **6. Interrupted (Barge-in)** | Sharp radial ripple / instant dampening back to Listening posture. | Immediate playback audio cutoff. New user utterance captured. | Instant zero-latency visual reset. |
+| **7. Error** | Mark flashes vermilion-to-red gradient, then dims to a muted state with a small alert glyph. | Audio ingress/egress halted. Error logged. Auto-retry with backoff (3 attempts). | Full brightness during flash, then dims to standby-level. |
 
 ---
 
@@ -182,7 +234,7 @@ In a homelab/smart home deployment, the user often runs Halbert on an **Intel N1
 │                                                                        │
 │   "Turned off 3 lights in the kitchen and set thermostat to 71°F"     │
 │                                                                        │
-│   [ 🎙️ Tap to Speak ]      [ ⌨️ Type / Expand ]      [ 🛑 Cancel ]     │
+│   [ <Mic> Tap to Speak ]    [ <Keyboard> Type / Expand ] [ <X> Cancel ]│
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -209,7 +261,7 @@ When active, the Voice Mode layout maximizes physical visibility and touch acces
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│ [● Eric (Admin) 98%]     Living Room Satellite      [⚙️] [🔇 Mute]     │
+│ [● Eric (Admin) 98%]     Living Room Satellite   [<Settings>] [<VolumeX> Mute]│
 ├────────────────────────────────────────────────────────────────────────┤
 │                                                                        │
 │                                                                        │
@@ -226,7 +278,7 @@ When active, the Voice Mode layout maximizes physical visibility and touch acces
 │  [ whisper prosody: calm ]                                             │
 │                                                                        │
 ├────────────────────────────────────────────────────────────────────────┤
-│  [ 🎙️ Tap to Speak ]     [ ⌨️ Open Keyboard ]     [ ↗️ Host Canvas ]   │
+│  [<Mic> Tap to Speak]    [<Keyboard> Open Keyboard] [<ArrowUpRight> Host Canvas]│
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -236,26 +288,32 @@ When active, the Voice Mode layout maximizes physical visibility and touch acces
    - If Idle $\rightarrow$ **Initiates Push-to-Talk**.
    - If Listening $\rightarrow$ **Forces immediate turn submission (manual VAD end-of-speech)**.
 2. **On-Screen Touch Keyboard Overlay:**
-   - Tapping `[ ⌨️ Open Keyboard ]` or swiping up smoothly glides a touch-friendly virtual keyboard into view from the bottom edge.
+   - Tapping `[ <Keyboard> Open Keyboard ]` or swiping up smoothly glides a touch-friendly virtual keyboard into view from the bottom edge.
    - The Halbert Mark scales down to a 48px header emblem.
    - Includes quick-intent suggestion chips: `"System Vitals"`, `"Check Storage"`, `"Lock Doors"`, `"Run Health Scan"`.
 3. **Seamless Transition to Host Canvas (`HostShell.tsx`):**
-   - Tapping `[ ↗️ Host Canvas ]` or swiping right seamlessly transitions the screen from Voice Mode to the full two-column Host Canvas.
+   - Tapping `[ <ArrowUpRight> Host Canvas ]` or swiping right seamlessly transitions the screen from Voice Mode to the full two-column Host Canvas.
    - The voice conversation history is preserved intact in the `AgentChat.tsx` conversation spine.
 
 ---
 
 ## 7. Comparison: Voice Mode vs. Existing Audio Tooling
 
-Halbert's audio capabilities have evolved rapidly across recent engineering batches. Voice Mode serves as the unifying presentation canvas:
+Halbert's audio capabilities have evolved rapidly across recent engineering batches. Voice Mode serves as the unifying presentation canvas — it is a full-screen kiosk realization of **UX Surface 1** (Ambient Acoustic Aura & Waveform) from `audio-research/03-UX-SURFACES.md`, expanding the 16px header indicator into a 512px central resonator. The modality-voice engine (Phase 2.5, merged to main) already provides the SSE event contract that Voice Mode consumes:
 
 | Feature / Subsystem | Existing Component | Role in Voice Mode Screen |
 |---|---|---|
-| **Header Status Aura** | `AcousticAuraIndicator.tsx` | Provides minimal 16px pulse in desktop mode; in Voice Mode, expanded to full 512px central resonator. |
-| **Speech Delivery Pill** | `VoiceCompanionPill.tsx` | Compact pill below chat bubbles; in Voice Mode, transformed into the live floating subtitle ribbon. |
-| **Biometric Recognition** | `SpeakerProfilesCard.tsx` (CAM++ 256-dim) | Identifies speaker identity in background $\rightarrow$ displays top-left biometric badge with confidence score. |
+| **Header Status Aura** | `AcousticAuraIndicator.tsx` | Provides minimal 16px pulse in desktop mode; in Voice Mode, expanded to full 512px central resonator. Polls `/api/audio/status` every 2s for coarse state. |
+| **Speech Delivery Pill** | `VoiceCompanionPill.tsx` | Compact pill below chat bubbles; in Voice Mode, transformed into the live floating subtitle ribbon. Already consumes `SpeechSegmentEvent[]` from `useAgentStream`. |
+| **Modality Resolution** | `useAgentStream.ts` SSE handler | Emits `modality_resolved` event with `ResponseModality` ('voice' / 'text' / 'mixed' / 'deferred'). Voice Mode uses this to drive state transitions (Listening $\rightarrow$ Thinking $\rightarrow$ Speaking). |
+| **Speech Segments** | `useAgentStream.ts` SSE handler | Emits `speech_segment` events with typed `SpeechSegmentEvent` (text, prosody, role). Voice Mode subtitle ribbon consumes this stream directly — same interface as `VoiceCompanionPill`. |
+| **Quiet Hours & Life-Safety** | `modality_wiring.py` | Already implements quiet hours (22:00–07:00) and life-safety bypass (B2 smoke/gas/CO detection). Voice Mode standby policy (§5.2 Tier 3) defers to this engine rather than reimplementing. |
+| **Biometric Recognition** | `SpeakerProfilesCard.tsx` (CAM++ 256-dim) | Identifies speaker identity in background $\rightarrow$ displays top-left biometric badge with confidence score. Triggers the `recognized` state (§4.1). |
 | **Acoustic Anomalies** | `AcousticAnomalyModule.tsx` (CED-tiny) | Proactive event card $\rightarrow$ triggers Voice Mode screen wake with urgent amber pulse when glass break / smoke alarm is heard. |
 | **Audio Configuration** | `AudioSettings.tsx` | Manages Wyoming satellites, Piper voices, and quiet hours $\rightarrow$ directly governs Voice Mode audio engines. |
+| **Pronunciation Lexicon** | `PronunciationLexicon` in `modality_wiring.py` | 40+ Halbert domain terms (systemd, MQTT, NVMe, etc.) with phonetic mappings. Affects TTS phoneme timing and spectral content, which feeds back into the frequency-to-tine resonance mapping (§2.2). |
+
+**Transport clarification:** `/api/audio/status` is a **polling** endpoint (GET, 2s interval in `AcousticAuraIndicator`). The real-time event stream is **`/api/being/events`** (SSE), which carries `modality_resolved`, `speech_segment`, `response_chunk`, and proactive event types. Voice Mode should use SSE for all real-time state transitions and reserve polling for initial state hydration on mount.
 
 ---
 
@@ -263,20 +321,29 @@ Halbert's audio capabilities have evolved rapidly across recent engineering batc
 
 ### Phase 1: SVG Path Deformation Prototype
 - Build `AudioReactiveHalbertMark.tsx` component in `@halbert/design-system`.
-- Implement Web Audio API `AnalyserNode` frequency extraction (64 FFT bins).
+- Implement Web Audio API `AnalyserNode` frequency extraction (64 FFT bins, 16kHz sample rate).
+- Implement FFT bin → tine energy mapping per §3.4 (`TINE_BIN_RANGES`).
 - Create parametric Bézier curve generator with Hann window boundary pinning.
-- Add Storybook stories with synthetic audio oscillators for visual testing.
+- Implement semi-implicit Euler integrator with fixed 8ms substep (§3.3).
+- **SSR/Storybook guards:** `AudioContext` and `AnalyserNode` are browser-only. The component must lazy-init the audio context on first user interaction (not on mount), guard with `typeof window !== 'undefined''`, and render a static (non-animated) fallback in Storybook/SSR contexts. The `@halbert/design-system` package has dual React 18/19 peer-deps and is consumed by Storybook — no Web Audio types should leak into the public props interface.
+- Add Storybook stories with synthetic `OscillatorNode` test tones for visual testing (no microphone required).
 
 ### Phase 2: Voice Mode Screen (`VoiceMode.tsx`)
 - Implement full-screen view in `halbert_core/dashboard/frontend/src/pages/VoiceMode.tsx`.
-- Connect to SSE audio events (`/api/being/events` and `/api/audio/status`).
-- Integrate live streaming STT transcription subtitle ribbon.
+- **Consume existing SSE stream** from `/api/being/events` — do not create a new event source. The modality-voice engine (Phase 2.5, merged to main) already emits:
+  - `modality_resolved` events with `ResponseModality` type — use for state machine transitions (§4).
+  - `speech_segment` events with `SpeechSegmentEvent` type — feed directly to the subtitle ribbon (same interface as `VoiceCompanionPill`).
+  - `response_chunk` events — use for live STT transcription display.
+- **Initial state hydration:** Poll `/api/audio/status` once on mount to get current pipeline state, then switch to SSE for all subsequent updates.
+- Integrate live streaming STT transcription subtitle ribbon using `SpeechSegmentEvent[]` from `useAgentStream`.
 - Add touch gestures (tap to interrupt, swipe up for virtual keyboard).
+- Reference `PronunciationLexicon` from `modality_wiring.py` for domain term display in subtitle ribbon (e.g., show "NVMe" not "N-V-M-E").
 
 ### Phase 3: Shell & Appliance Integration
 - Add Voice Mode route (`/voice`) and integrate with `ShellModeContext.tsx`.
 - Implement software blanking / auto-sleep timer with instant touch/wake-word wakeup.
-- Wire seamless bidirectional transition between Voice Mode and `HostShell` canvas.
+- Defer quiet-hours standby policy to `modality_wiring.py`'s `should_speak_proactively()` — do not reimplement quiet-hours logic.
+- Wire seamless bidirectional transition between Voice Mode and `HostShell` canvas (state diagram return edge: `HostCanvas → Listening`).
 - Validate on touch hardware (N150 mini PC + 10" HDMI capacitive touchscreen).
 
 ---
