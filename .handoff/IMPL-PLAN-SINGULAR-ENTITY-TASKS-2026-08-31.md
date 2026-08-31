@@ -3,7 +3,50 @@
 **Date:** 2026-08-31
 **Parent handoff:** `HANDOFF-SINGULAR-ENTITY-MULTI-BODY-2026-08-31.md`
 **Worktree:** `feat/singular-entity` at `~/.config/superpowers/worktrees/Halbert/singular-entity`
-**Status:** P1 complete. P2-P7 ready for task assignment.
+**Status:** COMPLETE — all Fable/Opus/GLM tasks implemented and green
+(2026-08-31 wrap-up).
+
+## Completion record
+
+Full-suite verification at the final HEAD: backend 71 failures,
+byte-for-byte the known pre-existing environmental set on base
+`ffe74bdd` (zero regressions, +416 passing tests vs base); frontend 469
+passed, tsc+vite build clean; haloysius memory_v2 93 passed.
+
+| Task | Where | Notes |
+|---|---|---|
+| P2a/F1 PeerMemoryBackend | Haloysius repo `fd5e962` | Drop-in PersonaMemoryStore proxy; duplicate detection runs on the canonical host; no client-side embeddings. |
+| P2b/G1 memory API routes | `8f1243eb` | + remediation `27fcfb95`. |
+| P2c/G2 memory wiring | `e30f9f4b` | `_create_memory_store` picks PeerMemoryBackend when canonical_memory_url + peer_token set; local fallback. |
+| P2d/G3 peer memory tests | `e30f9f4b` | Cross-repo loop vs real routes + real store; caught the get-route envelope bug pre-ship. |
+| P3a/O1 PeerConversationStore | `330f641b` | Single dispatch endpoint wire contract; RedactionFailed propagates; allowlist parity tests. |
+| P3b/G4 conversation routes | `3bbcc4d4` | Answers the P3a contract. |
+| P3c/G5 ThreadManager injection | `5f9737a3` | Falls back to local when peer_token missing. |
+| P3d/O2 shared-thread tests | `330f641b` | Cross-node visibility, 5-body concurrency, two-process WAL, bounded begin_turn race. |
+| P4a/G6 connectivity probe | `908169b4` | Pre-session. |
+| P4b/O3 compute chain reorder | `e04ad14e` + `27fcfb95` | Cloud primary for ALL turn types; no-AI terminal tier. |
+| P4c/G7 degraded marker | `28df5910` | "[no thinking power]" marker. |
+| P4d/G8 direction fields | `99cc5df5` | Pre-session. |
+| P4e/G9 fallback tests | `9fca4f22` + `27fcfb95` | test_connectivity, test_compute_fallback, test_wake_on_lan. |
+| P5a/F2 PeerToolProxy | pre-session | With P5d/F4 security tests at `ffe74bdd`; executor routing fixed by `27fcfb95` remediation. |
+| P5b/F3 state-machine routing | `ffe74bdd` + `27fcfb95` | TestExecutorPeerFallback suite green. |
+| P5c/O4 capability tracking | `e04ad14e` | KNOWN_PEER_CAPABILITIES, lookups, set_capabilities. |
+| P5d/F4 tool-proxy security tests | `ffe74bdd` | 24 tests. |
+| P6a/G10 WoL sender | `20c27231` | Pre-session. |
+| P6b/O5 router WoL tier | `e04ad14e` | WAKE_ELIGIBLE_TURN_TYPES gating. |
+| P6c/G11 WoL fields | `c7e047b8` | Pre-session. |
+| P6d/G11 WoL tests | `27fcfb95` | test_wake_on_lan, test_wol_config. |
+| P7a/O6 devices API | `922122b2` | Routes + entity mode + capability discovery. |
+| P7b-d/G12 Devices page + pairing | `de74e18a`, `5ab70760` | All five binding review decisions; 18 component tests. |
+| F5 variant-as-hint | `330f641b` + review `09ec6eb7` | Reviewed: probes are presence checks now (3 defects fixed); test fallout repaired in `4f8c171b`; see HANDOFF-F5-REVIEW-2026-08-31.md. |
+
+Open items (future work, none blocking): server-side atomic get-or-open
+for the cross-node begin_turn race (P3d note); CAP_LOCAL_LLM has no
+consumer yet (natural home: ComputeRouter's local tier); no capability
+re-probe path in a running process; frontend capabilities endpoint;
+ManualPairingForm's pre-existing TODO(federation-9.1) gap (out of G12
+scope by review decision); `test_cognition_tick_once` is order-sensitive
+(fails solo, passes in the full suite — pre-existing on base).
 
 ---
 
