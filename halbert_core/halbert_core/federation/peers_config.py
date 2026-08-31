@@ -427,6 +427,25 @@ class PeersConfig:
             logger.warning("Revoked peer: %s (%s)", node_id, peer.node_name)
             return True
 
+    def delete_peer(self, node_id: str) -> bool:
+        """Remove a peer's record entirely (G12 review Q5: "Permanently
+        Forget").
+
+        Unlike ``revoke_peer`` — which retains the record for audit and
+        keeps the node_id occupied (a re-pair must revoke-then-add) — this
+        erases the record, so a fresh pairing of the same machine starts
+        clean.  The caller has already confirmed: this is the destructive
+        path behind an explicit "Permanently Forget" action.
+
+        Returns True if the peer was found and removed, False if not found.
+        """
+        with self._lock:
+            if self._peers.pop(node_id, None) is None:
+                return False
+            self._save()
+            logger.warning("Deleted peer record: %s", node_id)
+            return True
+
     def set_wol(
         self,
         node_id: str,

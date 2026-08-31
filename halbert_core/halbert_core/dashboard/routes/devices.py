@@ -371,12 +371,67 @@ async def toggle_device_wol(node_id: str, req: WolToggleRequest) -> Dict[str, An
         )
     return {"status": "ok", "node_id": node_id, "wol_enabled": req.enabled}
 
+class PeerTokenRequest(BaseModel):
+    """The bearer token this node presents to its canonical host (Q4).
+
+    Written to ``being.yml: peer_token`` — the credential
+    PeerMemoryBackend (P2a) and PeerConversationStore (P3a) authenticate
+    with. Normally captured automatically after a pairing handshake with
+    the canonical host; this endpoint is the manual path (rotation,
+    out-of-band headless setup) behind the Devices page's Advanced
+    disclosure. An empty token clears it.
+    """
+    token: str = Field("", max_length=512)
+
+
+@router.put("/devices/peer-token")
+async def set_peer_token(req: PeerTokenRequest) -> Dict[str, Any]:
+    """Persist (or clear) the peer token for the canonical host.
+
+    Validation: a token without a canonical host is a configuration
+    mistake waiting to happen (singular mode needs both) — rejected with
+    400 unless the node is independent (clearing is always allowed).
+    """
+    from ...config.being_config import update_being_config
+    from ...integrations.cognition_wiring import _get_canonical_memory_url
+
+    token = req.token.strip()
+    if token and not _get_canonical_memory_url():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No canonical host configured — set singular entity mode "
+                   "(with a base URL) before storing a peer token.",
+        )
+
+    def mutate(cfg) -> None:
+        cfg.peer_token = token
+
+    try:
+        async with _being_config_lock:
+            update_being_config(mutate)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    logger.info("Peer token %s", "stored" if token else "cleared")
+    return {"status": "ok", "peer_token_set": bool(token)}
+
 
 @router.delete("/devices/{node_id}")
-async def remove_device(node_id: str) -> Dict[str, Any]:
+async def remove_device(node_id: str, forget: bool = False) -> Dict[str, Any]:
     """Remove a device — thin alias of ``DELETE /api/peers/{node_id}``:
-    surgical token revocation, record retained for audit."""
+    surgical token revocation, record retained for audit.
+
+    ``forget=true`` (G12 review Q5: "Permanently Forget") erases the
+    record entirely instead — a fresh pairing of the same machine starts
+    clean, with no ghost record left to collide with.
+    """
     config, _ = _device_or_404(node_id)
+    if forget:
+        if not config.delete_peer(node_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Device {node_id} not found",
+            )
+        return {"status": "forgotten", "node_id": node_id}
     if not config.revoke_peer(node_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Device {node_id} not found"

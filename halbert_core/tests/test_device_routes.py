@@ -257,3 +257,58 @@ class TestDeviceLifecycle:
         assert c.delete("/api/devices/ghost").status_code == 404
         assert c.put("/api/devices/ghost/wol",
                      json={"enabled": True}).status_code == 404
+
+class TestPeerToken:
+    def test_token_stored_when_canonical_host_set(self, client):
+        c, _, _ = client
+        c.put("/api/devices/entity-mode",
+              json={"mode": "singular", "base_url": "http://n150.lan:8001"})
+        r = c.put("/api/devices/peer-token", json={"token": "hbt_abc123"})
+        assert r.status_code == 200, r.text
+        assert r.json()["peer_token_set"] is True
+        # Written through the locked composite; a fresh load sees it.
+        state = c.get("/api/devices").json()
+        assert state["entity_mode"] == "singular"
+
+    def test_token_rejected_without_canonical_host(self, client):
+        """A token with no canonical host is a config mistake waiting to
+        happen — singular mode needs both."""
+        c, _, _ = client
+        r = c.put("/api/devices/peer-token", json={"token": "hbt_abc123"})
+        assert r.status_code == 400
+
+    def test_clearing_is_always_allowed(self, client):
+        c, _, _ = client
+        assert c.put("/api/devices/peer-token",
+                     json={"token": ""}).status_code == 200
+
+
+class TestForgetDevice:
+    def test_forget_erases_the_record(self, client):
+        c, peers, _ = client
+        _pair(peers, "desk")
+        r = c.delete("/api/devices/desk?forget=true")
+        assert r.status_code == 200
+        assert r.json()["status"] == "forgotten"
+        assert peers.get_peer("desk") is None  # gone, not revoked
+
+    def test_plain_remove_revokes_but_retains(self, client):
+        c, peers, _ = client
+        _pair(peers, "desk")
+        r = c.delete("/api/devices/desk")
+        assert r.json()["status"] == "removed"
+        assert peers.get_peer("desk").revoked is True
+        assert peers.get_peer("desk") is not None
+
+    def test_repair_after_forget_starts_clean(self, client):
+        """Q5's rationale: no ghost record colliding with a re-pair."""
+        c, peers, _ = client
+        _pair(peers, "desk")
+        c.delete("/api/devices/desk?forget=true")
+        # add_peer raises on an existing node_id — after forget it must not.
+        peers.add_peer("desk", "Mac Studio", "compute_provider", raw_token="t2")
+        assert peers.get_peer("desk").revoked is False
+
+    def test_forget_missing_device_is_404(self, client):
+        c, _, _ = client
+        assert c.delete("/api/devices/ghost?forget=true").status_code == 404
