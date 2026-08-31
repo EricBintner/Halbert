@@ -1,0 +1,38 @@
+[Unit]
+Description=Halbert Voice Mode Kiosk (Chromium)
+After=graphical-session.target halbert.service
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+Environment=HALBERT_PORT=8000
+Environment=DISPLAY=:0
+
+# Disable screen blanking and DPMS — the display power daemon (P2) takes
+# over DPMS management once it is running.
+ExecStartPre=/usr/bin/xset s off
+ExecStartPre=/usr/bin/xset -dpms
+
+# Launch Chromium in kiosk mode pointing at the Voice Mode route.
+# Flags:
+#   --kiosk              Full-screen kiosk, no browser chrome
+#   --app=URL            App mode (no URL bar, no tabs)
+#   --incognito          No persistent cookies/cache between restarts
+#   --noerrdialogs       Suppress network error dialogs
+#   --disable-infobars   Suppress "Chrome is being controlled by automated software" bar
+#   --check-for-update-interval=31536000  Effectively disable update checks (1 year)
+#   --autoplay-policy=no-user-gesture-required  Allow TTS audio playback without user interaction
+ExecStart=/usr/bin/chromium-browser \
+  --kiosk \
+  --app=http://localhost:${HALBERT_PORT}/voice \
+  --incognito \
+  --noerrdialogs \
+  --disable-infobars \
+  --check-for-update-interval=31536000 \
+  --autoplay-policy=no-user-gesture-required
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

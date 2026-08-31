@@ -81,6 +81,8 @@ if FASTAPI_AVAILABLE:
         speaker_id_threshold: Optional[float] = None
         tts_enabled: Optional[bool] = None
         tts_voice_model: Optional[str] = None
+        privacy_delete_raw_after_transcription: Optional[bool] = None
+        privacy_ignore_tv_media: Optional[bool] = None
 
     @router.post("/config")
     async def update_audio_config(update: AudioConfigUpdate):
@@ -104,6 +106,10 @@ if FASTAPI_AVAILABLE:
             cfg.tts.enabled = update.tts_enabled
         if update.tts_voice_model is not None:
             cfg.tts.voice_model = update.tts_voice_model
+        if update.privacy_delete_raw_after_transcription is not None:
+            cfg.privacy.delete_raw_after_transcription = update.privacy_delete_raw_after_transcription
+        if update.privacy_ignore_tv_media is not None:
+            cfg.privacy.ignore_tv_media = update.privacy_ignore_tv_media
         save_config(cfg)
         return {"status": "ok"}
 

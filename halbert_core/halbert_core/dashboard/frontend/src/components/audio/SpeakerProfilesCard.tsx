@@ -2,12 +2,12 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 // Speaker profiles card — lists enrolled voiceprints with role management.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { apiUrl } from '@/lib/apiBase'
-import { User, Plus, Trash2, Mic, Loader2 } from 'lucide-react'
+import { User, Plus, Trash2, Mic, Loader2, AlertCircle } from 'lucide-react'
 
 interface Speaker {
   speaker_id: string
@@ -37,14 +37,26 @@ export function SpeakerProfilesCard({ onEnroll }: { onEnroll?: () => void }) {
   const [speakers, setSpeakers] = useState<Speaker[]>([])
   const [loading, setLoading] = useState(true)
   const [testing, setTesting] = useState<string | null>(null)
-  const [testResult, setTestResult] = useState<{ [id: string]: { matched: boolean; score: number } }>({})
+  const [testResult, setTestResult] = useState<{
+    [id: string]: { matched: boolean; score: number; threshold: number }
+  }>({})
+  const [testError, setTestError] = useState<string | null>(null)
+  const [sherpaInstalled, setSherpaInstalled] = useState<boolean | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
 
   const loadSpeakers = useCallback(async () => {
     try {
-      const resp = await fetch(apiUrl('/api/audio/speakers'))
-      if (resp.ok) {
-        const data = await resp.json()
+      const [speakerResp, statusResp] = await Promise.all([
+        fetch(apiUrl('/api/audio/speakers')),
+        fetch(apiUrl('/api/audio/status')),
+      ])
+      if (speakerResp.ok) {
+        const data = await speakerResp.json()
         setSpeakers(data.speakers || [])
+      }
+      if (statusResp.ok) {
+        const status = await statusResp.json()
+        setSherpaInstalled(status.sherpa_onnx_installed ?? false)
       }
     } catch (err) {
       console.error('Failed to load speakers:', err)
@@ -69,13 +81,69 @@ export function SpeakerProfilesCard({ onEnroll }: { onEnroll?: () => void }) {
 
   const testSpeaker = async (id: string) => {
     setTesting(id)
-    // In a real implementation, this would capture audio from the mic
-    // and send it to /api/audio/speakers/{id}/test
-    // For now, just show a placeholder
-    setTimeout(() => {
-      setTestResult({ ...testResult, [id]: { matched: true, score: 0.92 } })
+    setTestError(null)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      })
+      const recorder = new MediaRecorder(stream)
+      const chunks: Blob[] = []
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data)
+      }
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop())
+        const blob = new Blob(chunks, { type: 'audio/webm' })
+        const reader = new FileReader()
+        reader.onloadend = async () => {
+          const base64 = (reader.result as string).split(',')[1]
+          try {
+            const resp = await fetch(apiUrl(`/api/audio/speakers/${id}/test`), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ audio_base64: base64 }),
+            })
+            if (resp.status === 503) {
+              setTestError('Speaker verification unavailable (sherpa-onnx not installed)')
+              setTesting(null)
+              return
+            }
+            if (resp.ok) {
+              const data = await resp.json()
+              setTestResult({
+                ...testResult,
+                [id]: {
+                  matched: data.matched,
+                  score: data.score,
+                  threshold: data.threshold,
+                },
+              })
+            } else {
+              const err = await resp.json().catch(() => ({}))
+              setTestError(err.detail || 'Verification failed')
+            }
+          } catch (err) {
+            setTestError('Network error: ' + String(err))
+          }
+          setTesting(null)
+        }
+        reader.readAsDataURL(blob)
+      }
+      mediaRecorderRef.current = recorder
+      recorder.start()
+      // Capture 2 seconds of audio
+      setTimeout(() => {
+        if (recorder.state === 'recording') recorder.stop()
+      }, 2000)
+    } catch (err) {
+      setTestError('Microphone access denied. Please allow microphone access.')
       setTesting(null)
-    }, 1000)
+    }
   }
 
   if (loading) {
@@ -130,7 +198,9 @@ export function SpeakerProfilesCard({ onEnroll }: { onEnroll?: () => void }) {
                   {testResult[speaker.speaker_id] && (
                     <p className="text-xs">
                       Match: {testResult[speaker.speaker_id].matched ? 'Yes' : 'No'}
-                      ({(testResult[speaker.speaker_id].score * 100).toFixed(0)}%)
+                      {' '}({(testResult[speaker.speaker_id].score * 100).toFixed(0)}%)
+                      {' — threshold '}
+                      {(testResult[speaker.speaker_id].threshold * 100).toFixed(0)}%
                     </p>
                   )}
                 </div>
@@ -140,6 +210,9 @@ export function SpeakerProfilesCard({ onEnroll }: { onEnroll?: () => void }) {
                     variant="outline"
                     onClick={() => testSpeaker(speaker.speaker_id)}
                     disabled={testing === speaker.speaker_id}
+                    title={sherpaInstalled === false
+                      ? 'sherpa-onnx not installed — speaker verification unavailable'
+                      : 'Capture 2s of audio and verify against this voiceprint'}
                   >
                     {testing === speaker.speaker_id ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
@@ -164,6 +237,13 @@ export function SpeakerProfilesCard({ onEnroll }: { onEnroll?: () => void }) {
           <Plus className="h-4 w-4 mr-2" />
           Enroll New Household Voice
         </Button>
+
+        {testError && (
+          <div className="flex items-center gap-2 text-sm text-destructive">
+            <AlertCircle className="h-4 w-4" />
+            {testError}
+          </div>
+        )}
       </CardContent>
     </Card>
   )

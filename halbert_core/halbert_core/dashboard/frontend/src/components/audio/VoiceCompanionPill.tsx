@@ -8,9 +8,11 @@
 //
 // SVG animation only (no emoji per project rules).
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Volume2, VolumeX, Waves } from 'lucide-react'
 import type { SpeechSegmentEvent } from '@/hooks/useAgentStream'
+
+const SEGMENT_ADVANCE_MS = 3500
 
 interface VoiceCompanionPillProps {
   segments: SpeechSegmentEvent[]
@@ -19,18 +21,30 @@ interface VoiceCompanionPillProps {
 
 export function VoiceCompanionPill({ segments, isActive }: VoiceCompanionPillProps) {
   const [currentIdx, setCurrentIdx] = useState(0)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    if (!isActive || segments.length === 0) {
+    if (timerRef.current) {
+      clearInterval(timerRef.current)
+      timerRef.current = null
+    }
+
+    if (!isActive || segments.length <= 1) {
       setCurrentIdx(0)
       return
     }
-    // Advance through segments — in a full implementation this would be
-    // synced to TTS playback progress. For now, cycle on an interval.
-    if (currentIdx >= segments.length) {
-      setCurrentIdx(0)
+
+    timerRef.current = setInterval(() => {
+      setCurrentIdx((idx) => (idx + 1) % segments.length)
+    }, SEGMENT_ADVANCE_MS)
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
     }
-  }, [isActive, segments.length, currentIdx])
+  }, [isActive, segments.length])
 
   if (!isActive || segments.length === 0) {
     return null
@@ -43,16 +57,16 @@ export function VoiceCompanionPill({ segments, isActive }: VoiceCompanionPillPro
   const volume = segment.prosody.volume
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-500/5 px-3 py-1.5 text-sm">
+    <div className="flex items-center gap-2 rounded-lg border border-vermilion/30 bg-vermilion/5 px-3 py-1.5 text-sm">
       {/* Volume icon — whisper shows muted, normal shows active */}
       {isWhisper || volume < 0.3 ? (
-        <VolumeX className="h-4 w-4 text-orange-500/60" />
+        <VolumeX className="h-4 w-4 text-vermilion/60" />
       ) : (
-        <Volume2 className="h-4 w-4 text-orange-500" />
+        <Volume2 className="h-4 w-4 text-vermilion" />
       )}
 
       {/* Waveform animation */}
-      <Waves className="h-4 w-4 text-orange-500 animate-pulse" />
+      <Waves className="h-4 w-4 text-vermilion animate-pulse" />
 
       {/* Truncated spoken text */}
       <span className="flex-1 truncate text-muted-foreground">
@@ -68,7 +82,7 @@ export function VoiceCompanionPill({ segments, isActive }: VoiceCompanionPillPro
 
       {/* Whisper badge */}
       {isWhisper && (
-        <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-xs text-purple-400">
+        <span className="rounded bg-info/20 px-1.5 py-0.5 text-xs text-info">
           whisper
         </span>
       )}
