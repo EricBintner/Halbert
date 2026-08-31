@@ -822,19 +822,27 @@ def resolve_endpoint_by_id(endpoint_id: str) -> Optional[Tuple[str, str, str]]:
     return None
 
 
-def ensure_endpoint(url: str, provider: str = "ollama", name: str = "") -> str:
+def ensure_endpoint(url: str, provider: str = "ollama", name: str = "", api_key: str = "") -> str:
     """Id of the saved endpoint at (``provider``, ``url``); creates it if absent.
 
     A caller that needs an endpoint id must get it from here rather than
     inventing one: a slot whose ``endpoint_id`` names no saved endpoint is
     disabled by :func:`normalise` on the next read.
+
+    ``api_key`` sets the credential when creating the endpoint, and
+    refreshes a stored one that differs (a re-paired peer token). An
+    empty ``api_key`` never clears a stored key — a caller that merely
+    wants the id must not be able to erase a secret by omission.
     """
     cfg = load_global(use_cache=False)  # becomes a write payload
     u = (url or "").rstrip("/")
     for ep in cfg["saved_endpoints"]:
         if ep["provider"] == provider and ep["url"] == u:
+            if api_key and ep.get("api_key", "") != api_key:
+                ep["api_key"] = api_key
+                save(cfg)
             return ep["id"]
-    ep = {"id": _new_id(), "name": name or u, "provider": provider, "url": u, "api_key": ""}
+    ep = {"id": _new_id(), "name": name or u, "provider": provider, "url": u, "api_key": api_key}
     cfg["saved_endpoints"].append(ep)
     save(cfg)
     return ep["id"]

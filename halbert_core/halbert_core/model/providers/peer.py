@@ -50,14 +50,30 @@ call.  The ``peer_node_id`` is used to look up the bearer token from
 
 Health checking
 ---------------
-``health_check()`` calls ``GET /api/compute/v1/health`` on the peer
-with a 1.5s timeout (per Pillar 3).  This is used by ``TierRouter``'s
-``_model_health`` tracking and by ``ComputeRouter``'s fallback logic.
+``health_check()`` probes ``GET /api/compute/v1/models`` on the peer with
+a 1.5s timeout — authenticated, read-only, and costs no GPU time.  (The
+dedicated ``/api/compute/v1/health`` route from Pillar 3 is not built on
+the workstation side yet — TODO(federation-9.3) — so the models route is
+the lightweight probe.)  The result feeds ``TierRouter``'s
+``_model_health`` tracking and ``ComputeRouter``'s fallback logic.
+
+Model selection
+---------------
+An HA node has no model picker (handoff
+HOME-AUTOMATION-SIMPLIFICATION-2026-08-30 §5.2/5.3): both slots point at
+the same peer endpoint and the *workstation's* model configuration
+governs which model serves the request.  ``PEER_GOVERNED_MODEL`` is the
+model tag a slot sends for that contract — the compute host resolves it
+to its own configured model rather than a specific tag
+(TODO(federation-9.3) on the workstation side).
 """
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
+
+import requests
 
 from .base import (
     ModelProvider,
@@ -84,6 +100,24 @@ PEER_ELIGIBLE_SLOTS = frozenset({"chat_model", "specialist_model", "vision_model
 # 1. llm_config.py _is_local_url() rejects peer:// for secure_model
 # 2. PeerProvider.can_serve_slot() returns False for secure_model
 SECURE_SLOT = "secure_model"
+
+# The compute contract on the paired node (federation/compute_endpoint.py):
+# OpenAI's wire format served under /api/compute/v1 rather than /v1.
+COMPUTE_MODELS_PATH = "/api/compute/v1/models"
+COMPUTE_CHAT_PATH = "/api/compute/v1/chat/completions"
+
+# Health probe budget (Pillar 3: lightweight, no GPU time).
+HEALTH_TIMEOUT_S = 1.5
+
+# Model listing budget. Not the health probe — a slow WAN link to a
+# Tailscale peer is allowed to take longer than 1.5s to answer once.
+LIST_TIMEOUT_S = 10.0
+
+# Model tag a peer slot sends when the workstation governs model choice
+# (see the module docstring, "Model selection"). An HA node's chat_model
+# and specialist_model both carry this tag against the same peer://
+# endpoint — "the same endpoint, the same model list" (handoff §5.2).
+PEER_GOVERNED_MODEL = "auto"
 
 
 def can_serve_slot(slot_name: str, peer_capabilities: Optional[List[str]] = None) -> bool:
@@ -170,12 +204,47 @@ class PeerProvider(ModelProvider):
         """List models available on the peer.
 
         Calls ``GET /api/compute/v1/models`` on the peer.  The peer
-        returns an OpenAI-compatible model list.
+        returns an OpenAI-compatible model list; each entry's ``id`` is
+        the tag a slot sends back in the ``model`` field.
 
-        TODO(federation-9.3): Implement using requests.get.
-        Returns models that the peer's compute broker can serve.
+        Returns exactly what the peer advertises — the workstation's
+        models route is still a stub that lists nothing
+        (compute_endpoint.py, TODO(federation-9.3)), so until that side
+        is built this yields an empty list.  No models are invented
+        locally to fill the gap.
         """
-        raise NotImplementedError("PeerProvider.list_models() — TODO(federation-9.3)")
+        try:
+            response = requests.get(
+                f"{self._endpoint}{COMPUTE_MODELS_PATH}",
+                headers=self._headers,
+                timeout=LIST_TIMEOUT_S,
+            )
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise GenerationError(
+                f"Peer model listing failed for {self._endpoint}: {e}"
+            ) from e
+
+        models: List[ModelConfig] = []
+        for entry in response.json().get("data") or []:
+            if not isinstance(entry, dict):
+                continue
+            model_id = str(entry.get("id") or "").strip()
+            if not model_id:
+                continue
+            models.append(ModelConfig(
+                model_id=model_id,
+                provider="peer",
+                capabilities=[ModelCapability.CHAT],
+                # The peer owns the GPU; these are not this node's numbers.
+                memory_mb=0,
+                context_length=int(entry.get("context_length") or 0),
+                metadata={
+                    "peer_node_id": self._peer_node_id,
+                    "owned_by": entry.get("owned_by"),
+                },
+            ))
+        return models
 
     def load_model(self, model_id: str, **kwargs) -> bool:
         """No-op for peer provider — models are loaded on the peer, not locally.
@@ -207,30 +276,89 @@ class PeerProvider(ModelProvider):
 
         The peer applies ``mcp_response()`` redaction on the response
         (C4), so secrets are already stripped before they reach us.
-
-        TODO(federation-9.3): Implement using requests.post:
-        1. Build OpenAI-compatible request body
-        2. POST to {endpoint}/api/compute/v1/chat/completions
-        3. Parse response
-        4. Build ModelResponse
-        5. Handle errors (401 = token revoked, 503 = broker full, timeout)
         """
-        raise NotImplementedError("PeerProvider.generate() — TODO(federation-9.3)")
+        start = time.time()
+        payload: Dict[str, Any] = {
+            "model": model_id,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        tools = kwargs.get("tools")
+        if tools:
+            payload["tools"] = tools
+
+        try:
+            response = requests.post(
+                f"{self._endpoint}{COMPUTE_CHAT_PATH}",
+                json=payload,
+                headers=self._headers,
+                timeout=self._timeout,
+            )
+        except requests.RequestException as e:
+            raise GenerationError(
+                f"Peer compute request to {self._endpoint} failed: {e}"
+            ) from e
+
+        if response.status_code in (401, 403):
+            raise GenerationError(
+                f"Peer {self._peer_node_id or self._endpoint} rejected the "
+                f"bearer token (HTTP {response.status_code}) — revoked or "
+                "re-paired on the workstation?",
+                status_code=response.status_code,
+            )
+        if response.status_code == 503:
+            raise GenerationError(
+                "Peer compute broker is full (HTTP 503) — the workstation "
+                "is saturated; retry or fall back",
+                status_code=503,
+            )
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as e:
+            raise GenerationError(
+                f"Peer compute request failed: {e}", status_code=response.status_code,
+            ) from e
+
+        data = response.json()
+        choices = data.get("choices") or []
+        message = (choices[0].get("message") if choices else {}) or {}
+        usage = data.get("usage") or {}
+        return ModelResponse(
+            text=str(message.get("content") or "").strip(),
+            model_id=model_id,
+            provider="peer",
+            tokens_used=int(usage.get("total_tokens") or 0),
+            latency_ms=(time.time() - start) * 1000.0,
+            metadata={
+                "peer_node_id": self._peer_node_id,
+                "tool_calls": message.get("tool_calls") or [],
+            },
+        )
 
     def is_loaded(self, model_id: str) -> bool:
         """Check if a model is available on the peer.
 
-        TODO(federation-9.3): Check if the model is in the peer's model
-        list (cached from last list_models() call).
+        The peer owns model loading (via its compute broker), so
+        "loaded" here means "named in the peer's model list". The
+        workstation's list is still empty (TODO(federation-9.3)), so
+        this is False for every tag until that side is built — except
+        ``PEER_GOVERNED_MODEL``, which the workstation resolves itself.
         """
-        raise NotImplementedError("PeerProvider.is_loaded() — TODO(federation-9.3)")
+        if model_id == PEER_GOVERNED_MODEL:
+            return True
+        try:
+            return model_id in {m.model_id for m in self.list_models()}
+        except Exception:
+            return False
 
     def get_model_info(self, model_id: str) -> ModelConfig:
-        """Get model info from the peer's model list.
-
-        TODO(federation-9.3): Look up in cached model list.
-        """
-        raise NotImplementedError("PeerProvider.get_model_info() — TODO(federation-9.3)")
+        """Get model info from the peer's model list."""
+        for model in self.list_models():
+            if model.model_id == model_id:
+                return model
+        raise ModelNotFoundError(f"Model not available on peer {self._peer_node_id or self._endpoint}: {model_id}")
 
     # ------------------------------------------------------------------
     # Health checking (used by TierRouter._model_health)
@@ -239,12 +367,21 @@ class PeerProvider(ModelProvider):
     def health_check(self) -> bool:
         """Check if the peer is online and accepting compute requests.
 
-        Calls ``GET /api/compute/v1/health`` with a 1.5s timeout.
-        This is a lightweight probe — no GPU time, no model loading.
-
-        TODO(federation-9.3): Implement using requests.get with timeout=1.5.
+        Probes ``GET /api/compute/v1/models`` with a 1.5s timeout —
+        authenticated, read-only, and costs no GPU time. (The dedicated
+        ``/api/compute/v1/health`` route from Pillar 3 is not built on
+        the workstation side yet — TODO(federation-9.3) — so the models
+        route is the probe.)
         """
-        raise NotImplementedError("PeerProvider.health_check() — TODO(federation-9.3)")
+        try:
+            response = requests.get(
+                f"{self._endpoint}{COMPUTE_MODELS_PATH}",
+                headers=self._headers,
+                timeout=HEALTH_TIMEOUT_S,
+            )
+            return response.status_code == 200
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # Slot eligibility (M11)

@@ -69,8 +69,11 @@ OPENAI_COMPATIBLE_PROVIDERS = frozenset({"openai", "openai-compatible", "lm-stud
 
 # Providers that can carry a chat turn. Anything saved under another provider
 # is listable and testable but rejected by call_llm_chat.
+# peer: a paired Halbert node's compute endpoint (peer:// in models.yml).
+# It speaks OpenAI's wire format but under /api/compute/v1 rather than /v1,
+# so it gets its own adapter (_call_peer) instead of joining the set above.
 CHAT_CAPABLE_PROVIDERS = frozenset(
-    {"ollama", "llamacpp", "mlx", "anthropic"} | OPENAI_COMPATIBLE_PROVIDERS
+    {"ollama", "llamacpp", "mlx", "anthropic", "peer"} | OPENAI_COMPATIBLE_PROVIDERS
 )
 
 # Providers that contend for the local GPU and therefore need the advisory
@@ -477,6 +480,64 @@ def _api_url(endpoint: str, suffix: str) -> str:
     if base.endswith("/v1") and suffix.startswith("/v1/"):
         suffix = suffix[3:]
     return f"{base}{suffix}"
+
+
+def _call_peer(
+    endpoint: str,
+    model: str,
+    messages: list,
+    stream: bool,
+    timeout: int,
+    options: dict,
+    tools: Optional[list],
+    api_key: str,
+) -> dict:
+    """Peer compute endpoint — OpenAI's wire format under /api/compute/v1.
+
+    The ``peer://`` scheme is the saved form in models.yml; the HTTP call
+    goes to the same host over http. Auth is the peer bearer token issued
+    at pairing, stored as the endpoint's api_key (routes/peers.py
+    ``/api/peers/compute-peer``), so the usual api_key_for() lookup in
+    call_llm_chat recovers it from a bare URL like every other provider.
+    """
+    if stream:
+        # The workstation has no SSE path yet — redaction across chunk
+        # boundaries is unsolved there (federation/compute_endpoint.py,
+        # TODO(federation-9.4)). Fail loudly rather than returning a
+        # non-streaming body to a caller expecting chunks.
+        raise NotImplementedError(
+            "peer compute streaming is not supported yet — TODO(federation-9.4)"
+        )
+
+    base = endpoint.replace("peer://", "http://", 1).rstrip("/")
+    url = f"{base}/api/compute/v1/chat/completions"
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "temperature": options.get("temperature", 0.7),
+        "max_tokens": options.get("num_predict", options.get("max_tokens", 2048)),
+    }
+    if tools:
+        payload["tools"] = tools
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    logger.info(
+        f"Calling peer compute endpoint: {url} model={model} "
+        f"(auth: {'yes' if api_key else 'no'})"
+    )
+    response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    message = data.get("choices", [{}])[0].get("message", {}) or {}
+    return {
+        "content": (message.get("content") or "").strip(),
+        "tool_calls": _normalise_tool_calls(message.get("tool_calls")),
+        "raw": data,
+    }
 
 
 def _call_openai_compatible(
@@ -1204,6 +1265,10 @@ def _do_llm_call(
     behaviour every local runtime has relied on. Providers with no adapter at
     all are rejected earlier, in :func:`call_llm_chat`.
     """
+    if provider == "peer":
+        return _call_peer(
+            endpoint, model, messages, stream, timeout, options, tools, api_key
+        )
     if provider in OPENAI_COMPATIBLE_PROVIDERS:
         return _call_openai_compatible(
             endpoint, model, messages, stream, timeout, options, tools, api_key

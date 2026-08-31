@@ -56,6 +56,7 @@ class ProviderType(str, Enum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     OPENROUTER = "openrouter"
+    PEER = "peer"
 
 
 @dataclass
@@ -373,6 +374,21 @@ class TierRouter:
             elif model.provider == ProviderType.OPENAI or model.provider == "openai":
                 # TODO: Implement OpenAI provider
                 raise NotImplementedError("OpenAI provider not yet implemented")
+
+            elif model.provider == ProviderType.PEER or model.provider == "peer":
+                # A paired node's compute endpoint (peer:// in models.yml).
+                # The bearer token is the endpoint's saved api_key — the
+                # pairing flow (dashboard/routes/peers.py) stores it there,
+                # so the lookup every other provider's key goes through
+                # recovers it here too.
+                from . import llm_config as llm_store
+                from .providers.peer import PeerProvider
+                endpoint = model.endpoint or "http://localhost:8000"
+                self._providers[provider_key] = PeerProvider(
+                    endpoint=endpoint,
+                    peer_token=llm_store.api_key_for(endpoint),
+                    peer_node_id=model.name,
+                )
             else:
                 raise ValueError(f"Unknown provider: {model.provider}")
         

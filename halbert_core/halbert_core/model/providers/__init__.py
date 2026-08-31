@@ -4,7 +4,7 @@
 Model providers package (Phase 5 M1, Phase 38).
 
 Provides abstraction layer for different model backends.
-Supports: Ollama (local), Anthropic (API), OpenAI (API)
+Supports: Ollama (local), Anthropic (API), OpenAI (API), Peer (paired node)
 """
 
 from .base import (
@@ -14,6 +14,7 @@ from .base import (
 from .ollama import OllamaProvider
 from .llamacpp import LlamaCppProvider
 from .mlx import MLXProvider
+from .peer import PeerProvider
 
 # Phase 38: API providers (optional dependencies)
 try:
@@ -30,6 +31,7 @@ __all__ = [
     "OllamaProvider",
     "LlamaCppProvider",
     "MLXProvider",
+    "PeerProvider",
     "AnthropicProvider",
     "ANTHROPIC_AVAILABLE",
 ]
