@@ -69,8 +69,16 @@ from halbert_core.config.roles import (
 )
 
 
-def test_wave_one_roles_are_registered():
-    assert set(ROLES) == {"network_admin", "service_admin", "storage_admin", "credentials_admin"}
+def test_design_roles_are_registered():
+    """The full design taxonomy: wave 1 (network, service, storage) plus
+    credentials_admin, plus waves 2-3 (security, shell, package, boot,
+    sharing). kernel_admin/users_admin/etc. stay deferred by design and
+    must NOT appear here."""
+    assert set(ROLES) == {
+        "network_admin", "service_admin", "storage_admin", "credentials_admin",
+        "security_admin", "shell_admin", "package_admin", "boot_admin",
+        "sharing_admin",
+    }
 
 
 def test_every_role_has_a_manifest_that_exists():
@@ -78,9 +86,17 @@ def test_every_role_has_a_manifest_that_exists():
         assert os.path.isfile(manifest_path_for(name)), f"{name} manifest missing"
 
 
+def test_every_role_manifest_parses_and_has_content():
+    for name in ROLES:
+        man = Manifest.from_file(manifest_path_for(name))
+        assert man.include, f"{name} manifest has no include patterns"
+
+
 def test_staging_subdir_is_derived_from_role_name():
     assert staging_subdir_for("network_admin") == "network"
     assert staging_subdir_for("storage_admin") == "storage"
+    assert staging_subdir_for("security_admin") == "security"
+    assert staging_subdir_for("sharing_admin") == "sharing"
 
 
 def test_storage_is_file_backed_on_macos_too():
@@ -102,11 +118,50 @@ def test_network_is_file_backed_on_both_platforms():
 
 
 def test_every_wave_one_role_is_file_backed_on_both_platforms():
-    """No wave-one role leaves an empty scope on either platform."""
-    for system in ("Linux", "Darwin"):
-        assert set(roles_for_platform(system)) == set(ROLES), (
-            f"a role is gated out on {system}, which would stage an empty scope"
-        )
+    """Wave-1 roles plus credentials are file-backed everywhere; no wave-one
+    role leaves an empty scope on either platform."""
+    for name in ("network_admin", "service_admin", "storage_admin", "credentials_admin"):
+        for system in ("Linux", "Darwin"):
+            assert ROLES[name].file_backed_on(system) is True, (
+                f"{name} gated out on {system} would stage an empty scope"
+            )
+
+
+def test_every_role_is_file_backed_somewhere():
+    """A role gated out of every platform would register a permanently
+    empty scope — under scope_mode="hard" that excludes everything."""
+    for name, role in ROLES.items():
+        assert any(role.file_backed_on(s) for s in ("Linux", "Darwin")), name
+
+
+def test_linux_sees_every_role():
+    assert set(roles_for_platform("Linux")) == set(ROLES)
+
+
+def test_platform_asymmetry_is_not_tidied_away():
+    """The two platforms genuinely do not have the same roles (design doc,
+    "do not tidy this away"). Homebrew is command-only on macOS — there is
+    no package-manager config file to harvest — and macOS has no
+    bootloader-config files (com.apple.Boot.plist holds one empty Kernel
+    Flags key). Staging either on Darwin would create an empty scope."""
+    assert ROLES["package_admin"].file_backed_on("Linux") is True
+    assert ROLES["package_admin"].file_backed_on("Darwin") is False
+    assert ROLES["boot_admin"].file_backed_on("Linux") is True
+    assert ROLES["boot_admin"].file_backed_on("Darwin") is False
+    assert set(roles_for_platform("Darwin")) == set(ROLES) - {
+        "package_admin", "boot_admin"
+    }
+
+
+def test_security_shell_and_sharing_are_file_backed_on_both_platforms():
+    """Wave-2/3 cross-platform roles, verified on a stock macOS host:
+    /etc/pam.d (~25 files), /etc/sudoers, /etc/paths, /etc/zshrc,
+    /etc/nfs.conf and com.apple.smb.server.plist all exist. A role that
+    matches even one real file must be file-backed, or the scope ships
+    empty under scope_mode="hard"."""
+    for name in ("security_admin", "shell_admin", "sharing_admin"):
+        assert ROLES[name].file_backed_on("Linux") is True
+        assert ROLES[name].file_backed_on("Darwin") is True
 
 
 def test_roles_for_platform_still_drops_a_docs_only_role(monkeypatch):
@@ -328,3 +383,171 @@ def test_the_sourceprep_template_is_package_data_too():
         for pkg, patterns in globs.items()
         for pattern in patterns
     ), f"{rel} is not covered by any package-data glob"
+
+
+# --- Waves 2-3: the rest of the design taxonomy ---------------------------
+#
+# Design: ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md, "Waves 2 and 3
+# -- path sketches" and the membership table. Manifest entries are asserted
+# verbatim so the registry, the manifests and the template cannot drift
+# apart the way the wave-1 alias claims did (see the dangling-alias test).
+
+
+def _manifest(role: str) -> Manifest:
+    return Manifest.from_file(manifest_path_for(role))
+
+
+def test_every_alias_target_exists():
+    """network_admin claimed security_admin and storage_admin claimed
+    sharing_admin while neither role existed -- the claims were dangling
+    until waves 2-3 shipped. No alias may regress to pointing at nothing."""
+    for name, role in ROLES.items():
+        for alias in role.aliases_from:
+            assert alias in ROLES, (
+                f"{name} aliases {alias}, which is not registered"
+            )
+
+
+def test_grub_aliases_into_security_and_storage():
+    """/etc/default/grub is primary to boot_admin but carries one hardening
+    line and one storage line (rd.luks.*, resume=), so it is aliased into
+    both -- the worst collision on Linux, one line per role."""
+    assert "boot_admin" in ROLES["security_admin"].aliases_from
+    assert "boot_admin" in ROLES["storage_admin"].aliases_from
+
+
+def test_fstab_aliases_into_boot():
+    """/etc/fstab and /etc/crypttab are primary to storage_admin and
+    consulted at boot, so they are aliased into boot_admin."""
+    assert "storage_admin" in ROLES["boot_admin"].aliases_from
+
+
+def test_auto_upgrade_aliases_into_security():
+    """Auto-upgrade configuration is primary to package_admin but answers
+    "is this machine getting security patches", so it is aliased into
+    security_admin."""
+    assert "package_admin" in ROLES["security_admin"].aliases_from
+
+
+def test_firewall_is_primary_to_security_not_network():
+    """Design rev. 2 moved firewall rule files from network_admin to
+    security_admin (they answer "is this machine hardened", not "how does
+    this machine connect"), aliased back into network via the existing
+    aliases_from claim."""
+    security = _manifest("security_admin").include
+    network = _manifest("network_admin").include
+    for pattern in ("/etc/nftables.conf", "/etc/ufw/*", "/etc/firewalld/**/*.xml"):
+        assert pattern in security, f"{pattern} must be primary to security_admin"
+        assert pattern not in network, f"{pattern} must not be globbed into network_admin"
+
+
+def test_security_hard_excludes_the_secret_backends():
+    man = _manifest("security_admin")
+    for pattern in ("/etc/shadow", "/etc/gshadow", "/etc/sssd/sssd.conf"):
+        assert pattern in man.exclude
+
+
+def test_security_covers_sudo_ssh_pam_and_kernel_aliases():
+    """sudo/ssh/PAM are security's own; sysctl.d, modprobe.d and
+    nsswitch.conf are kernel_admin/users_admin files held by
+    security_admin until those roles ship (their promotion triggers),
+    aliased into network_admin."""
+    include = _manifest("security_admin").include
+    for pattern in (
+        "/etc/sudoers", "/etc/sudoers.d/*", "/etc/ssh/sshd_config",
+        "/etc/pam.d/*", "/etc/sysctl.d/*", "/etc/modprobe.d/*",
+        "/etc/nsswitch.conf",
+    ):
+        assert pattern in include
+
+
+def test_shell_admin_covers_login_environment_on_both_platforms():
+    """Linux: profile/environment/skel and the per-user rc files where the
+    real value is; macOS: /etc/paths and friends (all plain text, small,
+    high signal). Manifest.from_file expands ~, so per-user patterns are
+    compared in their expanded form."""
+    include = _manifest("shell_admin").include
+    for pattern in (
+        "/etc/profile", "/etc/profile.d/*.sh", "/etc/environment",
+        "/etc/skel/*", "~/.bashrc", "~/.zshrc", "~/.profile",
+        "/etc/paths", "/etc/paths.d/*", "/etc/zshrc", "/etc/manpaths",
+    ):
+        assert os.path.expanduser(pattern) in include
+
+
+def test_shell_admin_excludes_the_binary_timezone_blob():
+    """/etc/localtime is a symlink into the binary zoneinfo database -- the
+    same text-index corruption zpool.cache demonstrated. /etc/timezone
+    (Debian) carries the intent as text."""
+    man = _manifest("shell_admin")
+    assert "/etc/localtime" not in man.include
+    assert "/etc/localtime" in man.exclude
+
+
+def test_package_admin_covers_the_linux_repo_families():
+    man = _manifest("package_admin")
+    for pattern in (
+        "/etc/apt/sources.list", "/etc/apt/sources.list.d/*",
+        "/etc/pacman.conf", "/etc/zypp/**", "/etc/yum.repos.d/*.repo",
+        "/etc/flatpak/remotes.d/*",
+    ):
+        assert pattern in man.include
+
+
+def test_package_admin_excludes_apt_credentials():
+    """/etc/apt/auth.conf.d/** holds repo credentials -- excluded outright
+    rather than trusted to keyword redaction."""
+    assert "/etc/apt/auth.conf.d/**" in _manifest("package_admin").exclude
+
+
+def test_boot_admin_covers_grub_systemd_boot_and_initramfs():
+    """Divergent grub paths (Debian/Arch /boot/grub vs RHEL/SUSE
+    /boot/grub2 vs EFI), systemd-boot, and the three-way initramfs split."""
+    include = _manifest("boot_admin").include
+    for pattern in (
+        "/etc/default/grub", "/boot/grub/grub.cfg", "/boot/grub2/grub.cfg",
+        "/boot/loader/loader.conf", "/boot/loader/entries/*.conf",
+        "/etc/kernel/cmdline", "/etc/mkinitcpio.conf", "/etc/dracut.conf",
+        "/etc/initramfs-tools/**",
+    ):
+        assert pattern in include
+
+
+def test_sharing_admin_covers_samba_nfs_avahi_and_darwin_smb():
+    """Linux is rich (samba/NFS/avahi/rsyncd/vsftpd); macOS is thin but
+    real: com.apple.smb.server.plist and /etc/nfs.conf both exist on a
+    stock host, which is what keeps the role file-backed on Darwin."""
+    include = _manifest("sharing_admin").include
+    for pattern in (
+        "/etc/samba/smb.conf", "/etc/exports", "/etc/nfs.conf",
+        "/etc/avahi/avahi-daemon.conf", "/etc/rsyncd.conf",
+        "/Library/Preferences/SystemConfiguration/com.apple.smb.server.plist",
+    ):
+        assert pattern in include
+
+
+def test_mechanism_directories_are_never_assigned_by_glob():
+    """Design corollary: /etc/default and /etc/sysconfig are role-agnostic
+    containers -- grub, tlp, snapper, nfs and locale all live in
+    /etc/default, so a glob over the container itself poisons every scope.
+    Files must be named one by one; a subsystem-specific subdir with its
+    own file-pattern glob is fine (network_admin's
+    /etc/sysconfig/network-scripts/ifcfg-* is the design's own RHEL
+    entry). Only a wildcard over the container's direct children fails."""
+    for name in ROLES:
+        for pattern in _manifest(name).include:
+            for mechanism in ("/etc/default/", "/etc/sysconfig/"):
+                if pattern.startswith(mechanism):
+                    remainder = pattern[len(mechanism):]
+                    assert not remainder.startswith("*"), (
+                        f"{name} globs the mechanism dir {mechanism} ({pattern})"
+                    )
+
+
+def test_template_declares_the_wave_two_three_role_scopes():
+    scopes = {s["id"]: s for s in _load_template()["scopes"]}
+    for name in ("security_admin", "shell_admin", "package_admin",
+                 "boot_admin", "sharing_admin"):
+        assert name in scopes, f"{name} scope missing from template"
+        assert scopes[name]["paths"] == [f"host/{staging_subdir_for(name)}"]
+        assert scopes[name]["pipeline_profile"] == "system_config"

@@ -1,0 +1,90 @@
+# security_admin — sshd, sudo, PAM, MAC, firewall, hardening sysctls, audit.
+#
+# Owns the files that answer "is this machine hardened". Firewall rule
+# files are primary HERE, revised from rev. 1 of the design which put them
+# in network_admin: they answer "is this machine hardened", not "how does
+# this machine connect". They are aliased into network_admin via the
+# registry's aliases_from claim, so a network question still finds them.
+#
+# Files held in trust for deferred roles (promotion triggers in the design
+# doc, "Deferred"): kernel_admin would take sysctl.d and modprobe.d;
+# users_admin would take nsswitch.conf, pam.d and passwd. Until they ship,
+# those files are primary here — with /etc/nsswitch.conf, sysctl.d and
+# modprobe.d aliased into network_admin, where their effects are observed.
+#
+# /etc/sysctl.d/* and /etc/modprobe.d/* are directory globs over
+# role-owned dirs (not mechanism containers), so the "never assign a
+# mechanism directory by glob" corollary does not apply — everything in
+# them is kernel policy, which is what this scope holds until kernel_admin.
+#
+# macOS is moderate, not absent: /etc/pam.d (~25 files, all ASCII),
+# /etc/sudoers, /etc/ssh/ssh_config, /etc/ftpusers. sshd_config exists
+# only with Remote Login enabled — harmless when absent, same stance as
+# /etc/synthetic.conf in storage.yml. com.apple.alf.plist no longer exists
+# on macOS 26.x (firewall state is socketfilterfw only, command output).
+#
+# Design: .handoff/ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md
+
+include:
+  # --- sudo (both platforms) --------------------------------------------
+  - /etc/sudoers
+  - /etc/sudoers.d/*
+
+  # --- sshd / ssh (sshd_config primary here, alias network_admin) -------
+  - /etc/ssh/sshd_config
+  - /etc/ssh/sshd_config.d/*
+  - /etc/ssh/ssh_config
+
+  # --- PAM + account lookups (users_admin's files until it ships) -------
+  - /etc/pam.d/*
+  - /etc/nsswitch.conf
+  - /etc/passwd
+  - /etc/login.defs
+
+  # --- kernel hardening (kernel_admin's files until it ships) ------------
+  - /etc/sysctl.conf
+  - /etc/sysctl.d/*
+  - /etc/modprobe.d/*
+  - /etc/crypto-policies/config
+
+  # --- Linux: firewall, four ways ----------------------------------------
+  # All primary to security_admin (rev. 2), aliased into network_admin.
+  - /etc/nftables.conf
+  - /etc/iptables/rules.v4
+  - /etc/iptables/rules.v6
+  - /etc/sysconfig/iptables
+  - /etc/firewalld/**/*.xml
+  - /etc/ufw/*
+
+  # --- Linux: MAC split (RHEL vs Debian/SUSE vs neither on Arch) ---------
+  - /etc/selinux/**
+  - /etc/apparmor.d/**
+
+  # --- Linux: login hardening + audit -------------------------------------
+  - /etc/security/limits.conf
+  - /etc/security/limits.d/*
+  - /etc/security/pwquality.conf
+  - /etc/security/faillock.conf
+  - /etc/security/access.conf
+  - /etc/audit/auditd.conf
+  - /etc/audit/rules.d/*.rules
+  - /etc/fail2ban/**
+
+  # --- macOS ---------------------------------------------------------------
+  - /etc/ftpusers
+
+exclude:
+  # Hard-excluded by design. shadow/gshadow are bare-credential files with
+  # no key names for keyword redaction to match on, and sssd.conf holds
+  # bind credentials for the directory — same rule as /etc/restic/* in
+  # storage.yml: excluded outright, never trusted to redaction.
+  - /etc/shadow
+  - /etc/shadow-*
+  - /etc/gshadow
+  - /etc/gshadow-*
+  - /etc/sssd/sssd.conf
+
+  # fail2ban's per-jail state lives in /var/lib/fail2ban (a SQLite db,
+  # binary) — not included, listed here only to record the decision.
+  # jail config is /etc/fail2ban/jail.d/*.conf, already covered above.
+  - /var/lib/fail2ban/**

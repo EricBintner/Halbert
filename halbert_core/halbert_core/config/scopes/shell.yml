@@ -1,0 +1,69 @@
+# shell_admin — login environment, PATH, shell rc, locale/time.
+#
+# Owns the files that answer "what is my environment when I log in". The
+# per-user files are where the value is: HOMEBREW_* and other tool settings
+# live in shell rc files, which is also why package_admin has no macOS
+# entry (design: Homebrew is command-only; its configuration IS this
+# scope's content on macOS).
+#
+# /etc/skel/* is a flat directory of per-user defaults (.bashrc, .profile,
+# .zshrc) — a directory glob over a role-owned dir, not a mechanism
+# container.
+#
+# Locale/time folds in here: it is part of the environment the user logs
+# into, not a separate scheduling or boot concern.
+#
+# /etc/localtime is EXCLUDED — see the exclude block. It is the one entry
+# from the design's path sketch that must not ship as text.
+#
+# Design: .handoff/ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md
+
+include:
+  # --- Linux: system-wide shell environment -------------------------------
+  - /etc/profile
+  - /etc/profile.d/*.sh
+  - /etc/environment
+  - /etc/shells
+  - /etc/inputrc
+  - /etc/skel/*
+  # Debian/Arch name vs RHEL/SUSE name — one of the two exists.
+  - /etc/bash.bashrc
+  - /etc/bashrc
+  - /etc/zsh/*
+  - /etc/fish/config.fish
+
+  # --- Linux: locale/time (part of the login environment) ----------------
+  - /etc/locale.conf
+  - /etc/default/locale
+  - /etc/timezone
+  - /etc/vconsole.conf
+  - /etc/systemd/timesyncd.conf
+  # RHEL/Arch vs Debian/SUSE.
+  - /etc/chrony.conf
+  - /etc/chrony/chrony.conf
+
+  # --- per-user (both platforms — the real value) -------------------------
+  - ~/.bashrc
+  - ~/.zshrc
+  - ~/.profile
+  # SSH client config is login-environment config; keys are not harvested.
+  - ~/.ssh/config
+  - ~/.gitconfig
+  - ~/.tmux.conf
+
+  # --- macOS: /etc-level (all plain text, small, high signal) ------------
+  - /etc/paths
+  - /etc/paths.d/*
+  - /etc/zshrc
+  - /etc/zprofile
+  - /etc/manpaths
+  - /etc/manpaths.d/*
+
+exclude:
+  # /etc/localtime is a symlink into the binary zoneinfo database. The
+  # parser has no branch for it (extension-less, not a plist), so it is
+  # read with errors="replace" and hashed as replacement-character soup —
+  # the exact corruption zpool.cache demonstrated (see test_config_roles).
+  # /etc/timezone above carries the intent as text on the platform that
+  # has it.
+  - /etc/localtime

@@ -95,7 +95,10 @@ ROLES: Dict[str, RoleScope] = {
         # Gating Darwin out left the scope empty, and under scope_mode="hard"
         # an empty mask excludes everything rather than narrowing.
         file_backed_platforms=("Linux", "Darwin"),
-        aliases_from=("sharing_admin",),
+        # exports/nfs.conf answer "what does this machine serve", not "what
+        # does it mount" (sharing primary); /etc/default/grub carries one
+        # storage line (resume=, rd.luks.*) with boot primary.
+        aliases_from=("sharing_admin", "boot_admin"),
     ),
     "credentials_admin": RoleScope(
         name="credentials_admin",
@@ -105,6 +108,60 @@ ROLES: Dict[str, RoleScope] = {
         # is the one that makes the trust boundary real: without it, the
         # agent reads ~/.aws/credentials via a file-read tool and the secret
         # enters context raw, bypassing tier routing entirely.
+        file_backed_platforms=("Linux", "Darwin"),
+    ),
+    "security_admin": RoleScope(
+        name="security_admin",
+        manifest="security.yml",
+        # Rich on Linux (firewall four ways, MAC, sudo, PAM, audit), moderate
+        # on macOS — /etc/pam.d (~25 files), sshd_config, sudoers, ftpusers
+        # are all real harvestable files. Firewall rule files are primary
+        # HERE (design rev. 2): they answer "is this machine hardened", not
+        # "how does this machine connect", and are aliased into network.
+        # kernel_admin's files (sysctl.d, modprobe.d) and users_admin's
+        # (nsswitch.conf, passwd) are held here until those roles' promotion
+        # triggers fire.
+        file_backed_platforms=("Linux", "Darwin"),
+        # /etc/default/grub carries one hardening line; auto-upgrade policy
+        # answers "is this machine getting security patches".
+        aliases_from=("package_admin", "boot_admin"),
+    ),
+    "shell_admin": RoleScope(
+        name="shell_admin",
+        manifest="shell.yml",
+        # Login environment, PATH, shell rc, locale/time. Per-user files are
+        # where the value is; both platforms have the /etc-level ones
+        # (macOS: /etc/paths, /etc/zshrc, /etc/manpaths — plain text, small,
+        # high signal).
+        file_backed_platforms=("Linux", "Darwin"),
+    ),
+    "package_admin": RoleScope(
+        name="package_admin",
+        manifest="package.yml",
+        # Linux-only, and the asymmetry is genuine (design: "do not tidy
+        # this away"): Homebrew is effectively command-only on macOS — no
+        # Brewfile exists, Library/Taps is empty on modern Homebrew, and
+        # HOMEBREW_* settings live in shell rc files already covered by
+        # shell_admin. Staging nothing would create an empty scope.
+        file_backed_platforms=("Linux",),
+    ),
+    "boot_admin": RoleScope(
+        name="boot_admin",
+        manifest="boot.yml",
+        # Linux-only: macOS com.apple.Boot.plist holds one empty Kernel
+        # Flags key — there is no bootloader-config surface to harvest.
+        file_backed_platforms=("Linux",),
+        # fstab/crypttab (storage primary) are consulted at boot.
+        aliases_from=("storage_admin",),
+    ),
+    "sharing_admin": RoleScope(
+        name="sharing_admin",
+        manifest="sharing.yml",
+        # Linux is rich (samba/NFS/avahi/rsyncd/vsftpd). macOS is thin but
+        # REAL, which is what keeps it file-backed on Darwin:
+        # com.apple.smb.server.plist and /etc/nfs.conf both exist on a stock
+        # host (verified) — gating Darwin out would stage nothing and leave
+        # an empty scope under scope_mode="hard".
         file_backed_platforms=("Linux", "Darwin"),
     ),
 }

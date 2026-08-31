@@ -182,6 +182,8 @@ def test_template_loads_and_has_contract_surface():
     assert names == ["host",
                      "network_admin", "service_admin", "storage_admin",
                      "credentials_admin",
+                     "security_admin", "shell_admin",
+                     "package_admin", "boot_admin", "sharing_admin",
                      "knowledge-linux", "knowledge-macos",
                      "knowledge-bsd", "knowledge-common"]
     profiles = {s["id"]: s["pipeline_profile"] for s in t["scopes"]}
@@ -282,17 +284,19 @@ def test_apply_creates_scopes_with_profiles_and_paths(setup):
     s.apply(stage_host=False, edges=SAMPLE_EDGES)
 
     creates = transport.calls_to("POST", "/scopes")
-    assert len(creates) == 9
+    assert len(creates) == 14
     names = {c["display_name"] for c in creates}
     assert names == {"host",
                      "network_admin", "service_admin", "storage_admin",
                      "credentials_admin",
+                     "security_admin", "shell_admin",
+                     "package_admin", "boot_admin", "sharing_admin",
                      "knowledge-linux", "knowledge-macos",
                      "knowledge-bsd", "knowledge-common"}
     host_create = next(c for c in creates if c["display_name"] == "host")
     assert host_create.get("pipeline_profile") == "system_config"
     adds = transport.calls_to("POST", "/add")
-    assert len(adds) == 9  # one add-paths call per created scope
+    assert len(adds) == 14  # one add-paths call per created scope
 
 
 def test_apply_second_run_is_noop_for_scopes(setup):

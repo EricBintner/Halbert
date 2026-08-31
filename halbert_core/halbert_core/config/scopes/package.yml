@@ -1,0 +1,51 @@
+# package_admin — repos, mirrors, pins, auto-update policy.
+#
+# Owns the files that answer "where does software come from on this
+# machine and how does it stay current". Auto-upgrade configuration is
+# primary here but aliased into security_admin ("is this machine getting
+# patches").
+#
+# Linux-only, and deliberately so (design: "do not tidy this away"):
+# Homebrew on macOS is effectively command-only — there is no Brewfile
+# (that is *generated* output of `brew bundle dump`), Library/Taps is empty
+# on modern JSON-API-backed Homebrew, HOMEBREW_* settings live in shell rc
+# files (shell_admin's content), and /opt/homebrew/etc holds
+# formula-installed configs belonging to other roles, not Homebrew
+# configuration. Staging nothing would create an empty scope under
+# scope_mode="hard".
+#
+# Design: .handoff/ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md
+
+include:
+  # --- apt ----------------------------------------------------------------
+  - /etc/apt/sources.list
+  - /etc/apt/sources.list.d/*
+  - /etc/apt/apt.conf.d/*
+  - /etc/apt/preferences.d/*
+  # Auto-upgrade policy — primary here, aliased into security_admin.
+  - /etc/apt/apt.conf.d/20auto-upgrades
+
+  # --- pacman (Arch) --------------------------------------------------------
+  - /etc/pacman.conf
+  # mirrorlist, hooks/*.hook and anything else under the pacman config dir.
+  - /etc/pacman.d/**
+  - /etc/makepkg.conf
+
+  # --- dnf / yum (RHEL) -----------------------------------------------------
+  # dnf4 reads /etc/dnf/dnf.conf; dnf5 reads /etc/dnf.conf. One exists.
+  - /etc/dnf.conf
+  - /etc/dnf/dnf.conf
+  - /etc/yum.repos.d/*.repo
+
+  # --- zypper (SUSE) ----------------------------------------------------------
+  - /etc/zypp/**
+
+  # --- flatpak remotes ---------------------------------------------------------
+  - /etc/flatpak/remotes.d/*
+
+exclude:
+  # Repo credentials — same bare-credential rule as /etc/restic/* in
+  # storage.yml: an auth.conf entry has no key name for keyword redaction
+  # to match on, so the files are excluded outright rather than trusted
+  # to redaction.
+  - /etc/apt/auth.conf.d/**

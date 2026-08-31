@@ -1,0 +1,52 @@
+# sharing_admin — samba/NFS/avahi/rsyncd exports.
+#
+# Owns the files that answer "what does this machine serve to others".
+# /etc/exports and nfs.conf are primary here, aliased into storage_admin
+# (a storage question about a served mount still needs them); the alias
+# claim lives in the registry's aliases_from on storage_admin.
+#
+# Linux is rich. macOS is thin but REAL, which is what keeps this role
+# file-backed on Darwin: com.apple.smb.server.plist and /etc/nfs.conf both
+# exist on a stock host (verified). An earlier reading called macOS
+# docs-only; gating it out would stage nothing and leave an empty scope
+# under scope_mode="hard".
+#
+# Note on com.apple.smb.server.plist: it carries the machine's NetBIOS
+# name and an LKDC Kerberos realm hash — macOS-specific redaction rules
+# (design, "macOS redation, additionally") are what make it safe to
+# harvest, and it goes through the plist branch of config/parser.py, so
+# it is greppable text rather than an opaque binary blob.
+#
+# Design: .handoff/ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md
+
+include:
+  # --- samba ---------------------------------------------------------------
+  - /etc/samba/smb.conf
+  - /var/lib/samba/usershares/*
+
+  # --- NFS server ----------------------------------------------------------
+  - /etc/exports
+  - /etc/exports.d/*
+  - /etc/nfs.conf
+  - /etc/nfs.conf.d/*
+  - /etc/idmapd.conf
+
+  # --- avahi (mDNS) ------------------------------------------------------------
+  - /etc/avahi/avahi-daemon.conf
+  - /etc/avahi/services/*.service
+
+  # --- rsync / ftp --------------------------------------------------------------
+  - /etc/rsyncd.conf
+  # Debian vs RHEL layout — one of the two exists.
+  - /etc/vsftpd.conf
+  - /etc/vsftpd/vsftpd.conf
+
+  # --- macOS (thin) ----------------------------------------------------------
+  - /Library/Preferences/SystemConfiguration/com.apple.smb.server.plist
+
+exclude:
+  # Samba's secrets/passdb backends hold machine-account and user password
+  # material — bare-credential files (no key names to redact on), same
+  # rule as /etc/restic/* in storage.yml. usershares/ above is the only
+  # /var/lib/samba content that is user-authored share intent.
+  - /var/lib/samba/private/**

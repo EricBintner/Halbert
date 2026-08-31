@@ -48,9 +48,12 @@ scopes:
   - id: host
     paths: ["host"]
     pipeline_profile: system_config
-  # Role axis (wave 1). Additive to the flat `host` scope above — these are
-  # narrower siblings, not replacements. Each points at the subdirectory
-  # stage_role_tree() writes.
+  # Role axis (waves 1-3). Additive to the flat `host` scope above — these
+  # are narrower siblings, not replacements. Each points at the subdirectory
+  # stage_role_tree() writes, for every role in config/roles.py that is
+  # file-backed on the running platform (roles_for_platform gates staging;
+  # package_admin and boot_admin stage nothing on macOS and their scopes
+  # stay empty there until a Linux run).
   - id: network_admin
     paths: ["host/network"]
     pipeline_profile: system_config
@@ -62,6 +65,21 @@ scopes:
     pipeline_profile: system_config
   - id: credentials_admin
     paths: ["host/credentials"]
+    pipeline_profile: system_config
+  - id: security_admin
+    paths: ["host/security"]
+    pipeline_profile: system_config
+  - id: shell_admin
+    paths: ["host/shell"]
+    pipeline_profile: system_config
+  - id: package_admin
+    paths: ["host/package"]
+    pipeline_profile: system_config
+  - id: boot_admin
+    paths: ["host/boot"]
+    pipeline_profile: system_config
+  - id: sharing_admin
+    paths: ["host/sharing"]
     pipeline_profile: system_config
   - id: knowledge-linux
     paths: ["knowledge/linux"]

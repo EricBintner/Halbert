@@ -403,6 +403,55 @@ SCOPED_QUERIES = [
     {"id": "r08_iso_service_no_docs", "query": "startup daemon",
      "scope": "service_admin", "expected_terms": [],
      "forbidden_path_prefix": "knowledge/"},
+    # ── role scopes (waves 2-3) ──
+    # Authored from the wave-2/3 manifests (config/scopes/{security,shell,
+    # package,boot,sharing}.yml); NOT yet run against a built index — the
+    # r01-r08 caveat applies equally here, plus: package_admin and
+    # boot_admin stage nothing on macOS (roles_for_platform gates them to
+    # Linux), so r14-r19 pass only on a Linux-built corpus.
+    # "root" is sudoers CONTENT ("root ALL=(ALL:ALL) ALL") and never in a
+    # staged path; "session"/"pam_" likewise appear only in pam.d file
+    # bodies, not their paths.
+    {"id": "r09_security_sudoers", "query": "sudo command authorization rules",
+     "scope": "security_admin", "expected_terms": ["root"],
+     "forbidden_path_prefix": "host/network/"},
+    {"id": "r10_security_pam", "query": "pluggable authentication module stack",
+     "scope": "security_admin", "expected_terms": ["session"],
+     "forbidden_path_prefix": "host/service/"},
+    {"id": "r11_security_no_docs", "query": "hardened ssh login policy",
+     "scope": "security_admin", "expected_terms": [],
+     "forbidden_path_prefix": "knowledge/"},
+    # "export" is shell rc CONTENT (export PATH=...) and never in a path;
+    # "paths.d" entries themselves are bare paths, hence the /etc/zshrc-
+    # satisfied "system" term (zshrc body sources /etc/zshrc_* files).
+    {"id": "r12_shell_rc", "query": "shell rc file environment variables",
+     "scope": "shell_admin", "expected_terms": ["export"],
+     "forbidden_path_prefix": "host/network/"},
+    {"id": "r13_shell_no_docs", "query": "login PATH environment",
+     "scope": "shell_admin", "expected_terms": [],
+     "forbidden_path_prefix": "knowledge/"},
+    {"id": "r14_package_repos", "query": "package repository mirror list",
+     "scope": "package_admin", "expected_terms": ["server"],
+     "forbidden_path_prefix": "host/network/"},
+    {"id": "r15_package_no_docs", "query": "automatic package upgrades policy",
+     "scope": "package_admin", "expected_terms": [],
+     "forbidden_path_prefix": "knowledge/"},
+    # grub.cfg is generated shell-like text: "linux" lines carry the kernel
+    # path — CONTENT, not path (host/boot/boot/grub/grub.cfg).
+    {"id": "r16_boot_kernel_cmdline", "query": "kernel command line boot entry",
+     "scope": "boot_admin", "expected_terms": ["linux"],
+     "forbidden_path_prefix": "host/storage/"},
+    {"id": "r17_boot_no_docs", "query": "initramfs generation configuration",
+     "scope": "boot_admin", "expected_terms": [],
+     "forbidden_path_prefix": "knowledge/"},
+    # smb.conf section headers ("[share]") are CONTENT; "valid users" is a
+    # real smb.conf directive.
+    {"id": "r18_sharing_exports", "query": "samba share definition",
+     "scope": "sharing_admin", "expected_terms": ["valid"],
+     "forbidden_path_prefix": "host/storage/"},
+    {"id": "r19_sharing_no_docs", "query": "nfs export mount options",
+     "scope": "sharing_admin", "expected_terms": [],
+     "forbidden_path_prefix": "knowledge/"},
     # ── cross-platform negative probes: wrong-platform query under hard scope ──
     # Pass = 0 chunks or all chunks in-scope (no leakage)
     {"id": "s21_neg_homebrew_linux", "query": "homebrew brew install cask", "scope": "knowledge_linux",

@@ -1,0 +1,47 @@
+# boot_admin — bootloader, initramfs, kernel cmdline.
+#
+# Owns the files that answer "how does this machine boot".
+#
+# Linux-only: macOS com.apple.Boot.plist holds one empty Kernel Flags key —
+# there is no bootloader-config surface to harvest, and staging nothing
+# would create an empty scope under scope_mode="hard".
+#
+# /etc/default/grub is primary here and aliased into security_admin and
+# storage_admin (one line each: hardening cmdline args; resume=/rd.luks.*).
+# fstab/crypttab are primary to storage_admin and aliased INTO this scope —
+# they are consulted at boot. See the membership table in the design.
+#
+# Generated grub config diverges three ways (Debian/Arch, RHEL/SUSE, EFI);
+# the initramfs splits three ways too (mkinitcpio/dracut/initramfs-tools).
+# All variants are included; only one exists on any given host.
+#
+# Design: .handoff/ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md
+
+include:
+  # --- grub: editable intent -------------------------------------------
+  - /etc/default/grub
+  - /etc/grub.d/*
+
+  # --- grub: generated config, three ways --------------------------------
+  # Debian/Arch vs RHEL/SUSE (+grubenv) vs EFI per-distro directory.
+  - /boot/grub/grub.cfg
+  - /boot/grub2/grub.cfg
+  - /boot/grub2/grubenv
+  - /boot/efi/EFI/*/grub.cfg
+
+  # --- systemd-boot -----------------------------------------------------------
+  - /boot/loader/loader.conf
+  - /boot/loader/entries/*.conf
+
+  # --- kernel cmdline (systemd-boot UKI workflow) ---------------------------
+  - /etc/kernel/cmdline
+
+  # --- initramfs, three ways ------------------------------------------------
+  # Arch (mkinitcpio) vs RHEL/SUSE (dracut) vs Debian (initramfs-tools).
+  - /etc/mkinitcpio.conf
+  - /etc/mkinitcpio.d/*.preset
+  - /etc/dracut.conf
+  - /etc/dracut.conf.d/*
+  - /etc/initramfs-tools/**
+
+exclude: []
