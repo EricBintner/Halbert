@@ -779,8 +779,50 @@ def resolve_from(file_cfg: Dict[str, Any], slot: str) -> Optional[ResolvedModel]
 
 
 def resolve(slot: str, session_id: Optional[str] = None) -> Optional[ResolvedModel]:
-    """(model, url, provider, api_key) for an enabled slot, else None."""
-    return resolve_from(load_file(session_id), slot)
+    """(model, url, provider, api_key) for an enabled slot, else None.
+
+    An unconfigured ``chat_model`` is filled from the ``HALBERT_MODEL`` env
+    var when one is set (see :func:`_env_chat_model_override`) — the
+    per-instance deployment dial for a sysadmin box whose operator pinned a
+    model without writing models.yml. Every other slot, and any slot the file
+    configures, is unaffected.
+    """
+    resolved = resolve_from(load_file(session_id), slot)
+    if resolved is not None or slot != "chat_model":
+        return resolved
+    return _env_chat_model_override()
+
+
+def _env_chat_model_override() -> Optional[ResolvedModel]:
+    """``HALBERT_MODEL`` as the chat model when models.yml configures none.
+
+    The override only fills an EMPTY chat slot: a models.yml assignment wins,
+    so a UI configuration is never silently replaced by a stale environment
+    variable. It is also deliberately absent on the home variants — their
+    chat/specialist slots resolve to the compute peer (U6/S3) and there is no
+    local model for the variable to name. Variant resolution reuses
+    ``cognition_wiring._get_variant()`` (being.yml > env > sysadmin) so the
+    backend gating and this override agree on which instance they are on;
+    the import is lazy because integrations has no place in model's import
+    time, and any failure there simply disables the override rather than
+    breaking model resolution.
+    """
+    model = os.environ.get("HALBERT_MODEL", "").strip()
+    if not model:
+        return None
+    try:
+        from ..integrations.cognition_wiring import _get_variant
+
+        if _get_variant() in ("home", "home-light"):
+            return None
+    except Exception:
+        return None
+    return ResolvedModel(
+        model=model,
+        url=DEFAULT_OLLAMA_URL,
+        provider="ollama",
+        api_key=api_key_for(DEFAULT_OLLAMA_URL),
+    )
 
 
 def _endpoints_matching(url: str) -> List[Dict[str, Any]]:
