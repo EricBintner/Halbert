@@ -81,13 +81,17 @@ def _get_scene_context() -> str:
 def _get_variant() -> str:
     """Get the instance variant.
 
-    Priority: BeingConfig.variant > HALBERT_VARIANT env > 'sysadmin'.
+    Priority: variant set in being.yml > HALBERT_VARIANT env > 'sysadmin'.
+
+    Only an explicit being.yml ``variant:`` key wins — load_being_config
+    fills in the 'sysadmin' default when the file or key is absent, which
+    would otherwise mask the env var (explicit_variant distinguishes them).
     """
     try:
-        from ..config.being_config import load_being_config
-        cfg = load_being_config()
-        if cfg.variant:
-            return cfg.variant
+        from ..config.being_config import explicit_variant
+        variant = explicit_variant()
+        if variant:
+            return variant
     except Exception:
         pass
     return os.environ.get("HALBERT_VARIANT", "sysadmin")

@@ -30,7 +30,11 @@ async def get_instance_info() -> Dict[str, Any]:
 
     # Determine role from persona_id
     role = "host" if persona_id == "halbert" else "home"
-    variant = os.environ.get("HALBERT_VARIANT", "sysadmin")
+    # Same resolution as backend service gating (app.py startup): a
+    # being.yml-set variant must reach the frontend too, or nav gating
+    # disagrees with what services actually launched.
+    from ...integrations.cognition_wiring import _get_variant
+    variant = _get_variant()
 
     # Feature flags — which tabs/pages should be visible
     features = {

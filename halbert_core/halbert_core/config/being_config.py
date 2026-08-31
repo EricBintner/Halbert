@@ -481,6 +481,42 @@ def load_being_config(path: Optional[str] = None) -> BeingConfig:
     return config
 
 
+def explicit_variant() -> Optional[str]:
+    """Return the variant explicitly set in being.yml, or None.
+
+    ``load_being_config`` fills in the 'sysadmin' dataclass default when
+    the file or the ``variant:`` key is absent, which hides whether the
+    user actually chose a variant. This reads the raw file so resolution
+    chains (see ``cognition_wiring._get_variant``: being.yml > env >
+    'sysadmin') can fall through to their env default instead.
+
+    Raises ValueError on an unreadable file or an invalid variant, so
+    callers' except-fallbacks apply — same contract as load_being_config.
+    """
+    config_path = _default_path()
+    if not config_path.exists():
+        return None
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in {config_path}: {e}")
+    except OSError as e:
+        raise ValueError(f"Cannot read {config_path}: {e}")
+
+    if not isinstance(data, dict):
+        return None
+    variant = data.get("variant")
+    if not variant:
+        return None
+    if variant not in VALID_VARIANTS:
+        raise ValueError(
+            f"Invalid variant '{variant}'. Must be one of: {VALID_VARIANTS}"
+        )
+    return str(variant)
+
+
 def save_being_config(config: BeingConfig, path: Optional[str] = None) -> None:
     """Save being config to YAML file.
 

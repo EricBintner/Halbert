@@ -127,24 +127,105 @@ class TestInstanceInfoEndpoint:
             result = __import__("asyncio").run(get_instance_info())
         assert result["features"]["home"] is True
 
-    def test_instance_info_variant(self):
+    def test_instance_info_variant(self, tmp_path):
         from halbert_core.dashboard.routes.instance import get_instance_info
         env = {
             "HALBERT_PERSONA_ID": "home",
+            "HALBERT_CONFIG_DIR": str(tmp_path),
             "HALBERT_VARIANT": "home",
         }
         with patch.dict(os.environ, env, clear=False):
             result = __import__("asyncio").run(get_instance_info())
         assert result["variant"] == "home"
 
-    def test_instance_info_default_variant(self):
+    def test_instance_info_default_variant(self, tmp_path):
         from halbert_core.dashboard.routes.instance import get_instance_info
-        env = {"HALBERT_PERSONA_ID": "halbert"}
+        env = {"HALBERT_PERSONA_ID": "halbert", "HALBERT_CONFIG_DIR": str(tmp_path)}
         with patch.dict(os.environ, env, clear=False):
             if "HALBERT_VARIANT" in os.environ:
                 del os.environ["HALBERT_VARIANT"]
             result = __import__("asyncio").run(get_instance_info())
         assert result["variant"] == "sysadmin"
+
+
+class TestVariantResolution:
+    """Variant precedence must match backend service gating (app.py uses
+    cognition_wiring._get_variant): being.yml > HALBERT_VARIANT env > 'sysadmin'.
+
+    A being.yml-set variant gates backend services, so /api/instance/info
+    must report the same resolution or the frontend nav disagrees with
+    the backend.
+    """
+
+    def _write_being_yml(self, tmp_path, text):
+        """Write a being.yml into a temp config dir; returns the dir path."""
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir(exist_ok=True)
+        (cfg_dir / "being.yml").write_text(text, encoding="utf-8")
+        return str(cfg_dir)
+
+    def test_get_variant_being_config_wins_over_env(self, tmp_path):
+        from halbert_core.integrations.cognition_wiring import _get_variant
+        cfg_dir = self._write_being_yml(tmp_path, "variant: home\n")
+        env = {"HALBERT_CONFIG_DIR": cfg_dir, "HALBERT_VARIANT": "home-light"}
+        with patch.dict(os.environ, env, clear=False):
+            assert _get_variant() == "home"
+
+    def test_get_variant_being_config_sysadmin_beats_env(self, tmp_path):
+        """An explicit sysadmin in being.yml must not be overridden by env."""
+        from halbert_core.integrations.cognition_wiring import _get_variant
+        cfg_dir = self._write_being_yml(tmp_path, "variant: sysadmin\n")
+        env = {"HALBERT_CONFIG_DIR": cfg_dir, "HALBERT_VARIANT": "home"}
+        with patch.dict(os.environ, env, clear=False):
+            assert _get_variant() == "sysadmin"
+
+    def test_get_variant_env_when_no_being_config(self, tmp_path):
+        from halbert_core.integrations.cognition_wiring import _get_variant
+        env = {"HALBERT_CONFIG_DIR": str(tmp_path), "HALBERT_VARIANT": "home-light"}
+        with patch.dict(os.environ, env, clear=False):
+            assert _get_variant() == "home-light"
+
+    def test_get_variant_invalid_being_config_falls_to_env(self, tmp_path):
+        """An invalid variant in being.yml must not crash gating — the
+        resolution falls through to the env default."""
+        from halbert_core.integrations.cognition_wiring import _get_variant
+        cfg_dir = self._write_being_yml(tmp_path, "variant: bogus\n")
+        env = {"HALBERT_CONFIG_DIR": cfg_dir, "HALBERT_VARIANT": "home"}
+        with patch.dict(os.environ, env, clear=False):
+            assert _get_variant() == "home"
+
+    def test_get_variant_defaults_to_sysadmin(self, tmp_path):
+        from halbert_core.integrations.cognition_wiring import _get_variant
+        env = {"HALBERT_CONFIG_DIR": str(tmp_path)}
+        with patch.dict(os.environ, env, clear=False):
+            if "HALBERT_VARIANT" in os.environ:
+                del os.environ["HALBERT_VARIANT"]
+            assert _get_variant() == "sysadmin"
+
+    def test_instance_info_variant_being_config_wins_over_env(self, tmp_path):
+        """/api/instance/info must report the being.yml variant even when
+        HALBERT_VARIANT says otherwise (the old env-only read)."""
+        from halbert_core.dashboard.routes.instance import get_instance_info
+        cfg_dir = self._write_being_yml(tmp_path, "variant: home\n")
+        env = {
+            "HALBERT_PERSONA_ID": "home",
+            "HALBERT_CONFIG_DIR": cfg_dir,
+            "HALBERT_VARIANT": "home-light",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            result = __import__("asyncio").run(get_instance_info())
+        assert result["variant"] == "home"
+
+    def test_instance_info_variant_env_when_no_being_config(self, tmp_path):
+        from halbert_core.dashboard.routes.instance import get_instance_info
+        env = {
+            "HALBERT_PERSONA_ID": "home",
+            "HALBERT_CONFIG_DIR": str(tmp_path),
+            "HALBERT_VARIANT": "home-light",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            result = __import__("asyncio").run(get_instance_info())
+        assert result["variant"] == "home-light"
 
 
 class TestCognitionWiringDataSync:
