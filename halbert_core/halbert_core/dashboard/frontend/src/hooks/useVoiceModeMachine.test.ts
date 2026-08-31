@@ -413,7 +413,7 @@ describe('useVoiceModeMachine — 30s standby timer', () => {
     expect(result.current.state).toBe('standby')
   })
 
-  it('clears the timer on unmount (no state update after unmount)', () => {
+  it('clears the timer on unmount (no pending timer survives the cleanup)', () => {
     const { result, unmount } = renderHook(() => useVoiceModeMachine())
 
     act(() => {
@@ -422,9 +422,31 @@ describe('useVoiceModeMachine — 30s standby timer', () => {
       result.current.dispatch({ type: 'speech_segment', segment: SEGMENT })
       result.current.dispatch({ type: 'turn_complete' })
     })
+    // The settle armed exactly one pending standby timer.
+    expect(vi.getTimerCount()).toBe(1)
 
     unmount()
-    // Must not throw / schedule work after unmount.
+    // Deleting the useEffect cleanup leaves the fake timer alive; React 18
+    // no longer warns on setState-after-unmount, so the surviving callback
+    // is the only observable difference.
+    expect(vi.getTimerCount()).toBe(0)
+    act(() => {
+      vi.advanceTimersByTime(STANDBY_TIMEOUT_MS + 1_000)
+    })
+    expect(result.current.state).toBe('listening')
+  })
+
+  it('does not arm the timer on a plain wake (standby PTT press keeps listening alive)', () => {
+    const { result } = renderHook(() => useVoiceModeMachine())
+
+    act(() => {
+      result.current.dispatch({ type: 'wake' })
+    })
+    expect(result.current.state).toBe('listening')
+    // The 30s clock belongs to settled turns / errors, not a fresh PTT
+    // session — arming here would dim a live mic the user just opened.
+    expect(vi.getTimerCount()).toBe(0)
+
     act(() => {
       vi.advanceTimersByTime(STANDBY_TIMEOUT_MS + 1_000)
     })
