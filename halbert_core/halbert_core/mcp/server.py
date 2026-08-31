@@ -945,7 +945,15 @@ class MCPServer:
             logger.error("Request handling error: %s\n%s", e, traceback.format_exc())
             if is_notification:
                 return None
-            return self._error(req_id, -32603, f"Internal error: {e}")
+            # The error message is redacted because this catch-all is the one
+            # dispatch path that bypasses mcp_response(): a handler crashing
+            # mid-secret-handling (ValueError(f"bad key: {value}")) would
+            # otherwise carry the secret straight past the egress boundary in
+            # the JSON-RPC error text. Handler-returned {"error": ...} values
+            # are safe — the choke point wraps those.
+            from ..ingestion.redaction import redact_text
+
+            return self._error(req_id, -32603, redact_text(f"Internal error: {e}"))
 
     def _success(self, req_id: Any, result: Any) -> Dict[str, Any]:
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
