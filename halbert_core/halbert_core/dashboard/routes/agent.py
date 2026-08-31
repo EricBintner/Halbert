@@ -239,6 +239,17 @@ def get_agent():
             register_frigate_tools(tool_executor)
         except Exception as e:
             logger.warning(f"Could not register Frigate tools (non-fatal): {e}")
+
+        # GPU tools — detection uses lspci/nvidia-smi, Linux-only. On other
+        # platforms the tools would only ever answer "unsupported", so the
+        # model is not offered them.
+        import platform as _platform
+        if _platform.system() == "Linux":
+            try:
+                from ...tools.gpu_tools import register_gpu_tools
+                register_gpu_tools(tool_executor)
+            except Exception as e:
+                logger.warning(f"Could not register GPU tools (non-fatal): {e}")
         _agent_instance = AgentStateMachine(
             llm_client=llm_client,
             tool_executor=tool_executor,
