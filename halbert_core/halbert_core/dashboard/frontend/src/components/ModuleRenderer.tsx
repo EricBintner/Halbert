@@ -21,12 +21,18 @@ const ConfigDiffModule = lazy(() => import('./modules/ConfigDiffModule'))
 const VitalsModule = lazy(() => import('./modules/VitalsModule'))
 const DriveHealthModule = lazy(() => import('./modules/DriveHealthModule'))
 const EvidenceModule = lazy(() => import('./modules/EvidenceModule'))
+// O5: the acoustic anomaly card — summoned with { data: AcousticAnomalyData }
+// (the structured payload an acoustic finding's ProactiveEvent carries).
+const AcousticAnomalyModule = lazy(() =>
+  import('./audio/AcousticAnomalyModule').then((m) => ({ default: m.AcousticAnomalyModule }))
+)
 
 const MODULE_REGISTRY: Record<string, React.LazyExoticComponent<React.ComponentType<any>>> = {
   'config-diff': ConfigDiffModule,
   'vitals': VitalsModule,
   'drive-health': DriveHealthModule,
   'evidence': EvidenceModule,
+  'acoustic-anomaly': AcousticAnomalyModule,
 }
 
 interface ModuleRendererProps {

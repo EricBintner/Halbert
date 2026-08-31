@@ -16,6 +16,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { apiUrl } from '@/lib/apiBase';
+import type { AcousticAnomalyData } from '@/components/audio';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -23,7 +24,11 @@ import { apiUrl } from '@/lib/apiBase';
 
 export interface BeingEvent {
   id: string;
-  type: 'finding' | 'morning_report' | 'approval_request' | 'system_anomaly';
+  // 'acoustic' is accepted alongside the four wire types: today the backend
+  // publishes acoustic anomalies as type 'finding' + category 'acoustic'
+  // (DetectorRunner._EVENT_CATEGORY) — discriminate with isAcousticEvent();
+  // the union member keeps a future direct-acoustic publisher type-safe.
+  type: 'finding' | 'acoustic' | 'morning_report' | 'approval_request' | 'system_anomaly';
   severity: 'info' | 'warning' | 'critical';
   title: string;
   body: string;
@@ -31,6 +36,18 @@ export interface BeingEvent {
   proposal_id?: string;
   created_at: string;
   category?: string;
+  /** Structured payload (O5): present on acoustic findings — the exact
+   * AcousticAnomalyData contract the AcousticAnomalyModule renders. */
+  data?: AcousticAnomalyData | null;
+}
+
+/**
+ * True when the event is an acoustic anomaly finding, whatever discriminates
+ * it on the wire: the category DetectorRunner assigns today, or a direct
+ * 'acoustic' event type from a future publisher.
+ */
+export function isAcousticEvent(event: BeingEvent): boolean {
+  return event.type === 'acoustic' || event.category === 'acoustic';
 }
 
 interface UseBeingEventsResult {

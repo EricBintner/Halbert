@@ -38,6 +38,11 @@ class ProactiveEvent:
     # Category used by ProactiveGate's per-category overrides
     # (general | config | storage | security | ...)
     category: str = "general"
+    # Structured payload for type-specific frontend rendering (O5). None for
+    # plain finding/report events; the acoustic anomaly detector fills it with
+    # the frontend module contract (sound_class, confidence, area_id,
+    # decibel_level, anomaly_severity, source, timestamp ISO-8601).
+    data: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return asdict(self)

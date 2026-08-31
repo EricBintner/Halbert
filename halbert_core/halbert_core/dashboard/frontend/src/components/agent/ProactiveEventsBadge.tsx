@@ -15,7 +15,8 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { Bell, X, Clock, AlertTriangle, AlertCircle, Info, CheckCircle, Loader2 } from 'lucide-react'
-import { useBeingEvents, type BeingEvent } from '../../hooks/useBeingEvents'
+import { useBeingEvents, isAcousticEvent, type BeingEvent } from '../../hooks/useBeingEvents'
+import { AcousticAnomalyModule, type AcousticAnomalyData } from '../audio'
 
 const SEVERITY_ICONS = {
   critical: AlertCircle,
@@ -140,42 +141,58 @@ function EventRow({
   const Icon = SEVERITY_ICONS[event.severity] || Info
   const colorClass = SEVERITY_COLORS[event.severity] || SEVERITY_COLORS.info
 
+  // Acoustic anomalies (O5) render their dedicated module card — it shows
+  // the structured payload (sound class, dB, severity tier) the generic row
+  // cannot. Snooze/dismiss stay: the module's own buttons are decorative,
+  // these two are the real finding actions.
+  const acousticData: AcousticAnomalyData | null =
+    isAcousticEvent(event) && event.data
+      ? { ...event.data, finding_id: event.finding_id }
+      : null
+
+  const actionButtons = pending ? (
+    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+      <Loader2 className="h-3 w-3 animate-spin" />
+      Working...
+    </span>
+  ) : (
+    <>
+      <button
+        onClick={onSnooze}
+        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <Clock className="h-3 w-3" />
+        Snooze 7d
+      </button>
+      <button
+        onClick={onDismiss}
+        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <X className="h-3 w-3" />
+        Dismiss
+      </button>
+    </>
+  )
+
   return (
     <div className="border-b border-border px-4 py-3 hover:bg-muted/50">
-      <div className="flex items-start gap-2">
-        <div className={`rounded border px-1.5 py-0.5 ${colorClass}`}>
-          <Icon className="h-3.5 w-3.5" />
+      {acousticData ? (
+        <div className="space-y-2">
+          <AcousticAnomalyModule data={acousticData} />
+          <div className="flex items-center gap-3">{actionButtons}</div>
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-foreground truncate">{event.title}</div>
-          <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{event.body}</div>
-          <div className="flex items-center gap-3 mt-2">
-            {pending ? (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Working...
-              </span>
-            ) : (
-              <>
-                <button
-                  onClick={onSnooze}
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <Clock className="h-3 w-3" />
-                  Snooze 7d
-                </button>
-                <button
-                  onClick={onDismiss}
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <X className="h-3 w-3" />
-                  Dismiss
-                </button>
-              </>
-            )}
+      ) : (
+        <div className="flex items-start gap-2">
+          <div className={`rounded border px-1.5 py-0.5 ${colorClass}`}>
+            <Icon className="h-3.5 w-3.5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-foreground truncate">{event.title}</div>
+            <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{event.body}</div>
+            <div className="flex items-center gap-3 mt-2">{actionButtons}</div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

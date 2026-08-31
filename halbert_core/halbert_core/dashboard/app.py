@@ -688,6 +688,20 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                         logger.debug(f"Coordinator cleanup after failed start: {stop_err}")
                 app.state.audio_coordinator = None
 
+        # Voice mode (O5): acoustic anomalies ride the findings chain. The
+        # bridge sets the coordinator's on_acoustic_event callback; a tagged
+        # anomaly then flows AcousticAnomalyDetector -> DetectorRunner ->
+        # ProactiveEventBus -> /api/being/events. Strictly optional — the
+        # DetectorRunner is built lazily on the first event, and a broken
+        # findings stack degrades to a warning-once drop, never a boot
+        # failure.
+        if app.state.audio_coordinator is not None:
+            try:
+                from ..proactive.acoustic_bridge import attach_acoustic_bridge
+                attach_acoustic_bridge(app.state.audio_coordinator)
+            except Exception as e:
+                logger.warning(f"Acoustic anomaly bridge attach failed (non-fatal): {e}")
+
         # Voice mode (O3): TTS egress hub — the dashboard's mouth. A dumb
         # relay from the agent state machine to /api/audio/tts subscribers,
         # deliberately NOT gated on the audio capability: it forwards
