@@ -3,11 +3,13 @@
 """Tests for Phase 4b — HTTP/SSE transport + bearer auth."""
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -250,3 +252,136 @@ class TestRequestSizeLimit:
             # Both are acceptable — the server rejected the request
             if isinstance(e, urllib.error.HTTPError):
                 assert e.code == 413
+
+
+def _raw_post(url: str, headers: dict, timeout: int = 5) -> http.client.HTTPResponse:
+    """POST with hand-rolled headers (Content-Length: -1 etc.) that
+    urllib refuses to send. Returns the response; the caller reads it."""
+    p = urllib.parse.urlparse(url)
+    conn = http.client.HTTPConnection(p.hostname, p.port, timeout=timeout)
+    conn.putrequest("POST", "/")
+    for name, value in headers.items():
+        conn.putheader(name, value)
+    conn.endheaders()
+    resp = conn.getresponse()
+    resp.read()
+    conn.close()
+    return resp
+
+
+class TestContentLengthHardening:
+    """REV-02 F2 / REV-01 F6 — Content-Length is validated before reading.
+
+    A negative value reaches rfile.read(-1) = read-until-EOF and pins a
+    handler thread indefinitely; a non-integer raises unhandled.
+    """
+
+    def test_negative_content_length_rejected_413(self, http_server_factory):
+        url, _ = http_server_factory(token="")
+        resp = _raw_post(url, {
+            "Content-Type": "application/json",
+            "Content-Length": "-1",
+        })
+        assert resp.status == 413
+
+    def test_non_integer_content_length_rejected_400(self, http_server_factory):
+        url, _ = http_server_factory(token="")
+        resp = _raw_post(url, {
+            "Content-Type": "application/json",
+            "Content-Length": "abc",
+        })
+        assert resp.status == 400
+
+
+class TestRateLimitBeforeAuth:
+    """REV-02 F3 — rate limiting runs before bearer auth.
+
+    The 401 path (including token guessing) must consume rate-limit
+    allowance; otherwise the unauthenticated surface is unthrottled.
+    """
+
+    def test_unauthenticated_flood_is_rate_limited(self):
+        token = generate_bearer_token()
+        mcp = MCPServer(instance_name="test")
+        handler = _make_http_handler(mcp, token, rate_limit=3)
+        httpd = HTTPServer(("127.0.0.1", 0), handler)
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{port}"
+        try:
+            statuses = []
+            for _ in range(4):
+                status, _ = _post(
+                    url, {"jsonrpc": "2.0", "id": 1, "method": "ping"},
+                    token="wrong-token-that-is-long-enough-1234567890")
+                statuses.append(status)
+            # First three: auth fails (401) but the bucket fills; the
+            # fourth is throttled before auth is even consulted.
+            assert statuses == [401, 401, 401, 429]
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=2)
+
+
+class TestNonASCIIBearerToken:
+    """REV-02 F5 — a non-ASCII Authorization header fails closed (401).
+
+    hmac.compare_digest raises TypeError on non-ASCII str; BaseHTTPRequestHandler
+    decodes headers latin-1, so raw non-ASCII bytes survive into the token.
+    The request thread must not crash.
+    """
+
+    def test_non_ascii_token_returns_401_not_crash(self, http_server_factory):
+        token = generate_bearer_token()
+        url, _ = http_server_factory(token=token)
+        resp = _raw_post(url, {
+            "Content-Type": "application/json",
+            "Content-Length": "0",
+            # "tëst" carries U+00EB — latin-1 encodable, non-ASCII.
+            "Authorization": "Bearer tëst-tëst-tëst-tëst-tëst",
+        })
+        assert resp.status == 401
+
+
+class TestSSESlotRelease:
+    """REV-02 F4 — the SSE slot is released on every path.
+
+    The old code wrote response headers outside the try/finally that
+    released the slot, so a client that RST during the header write
+    (BrokenPipeError before end of headers) leaked one of the 10 slots
+    per race.
+    """
+
+    def _make_handler_obj(self, handler_cls):
+        """A handler instance with just enough state for do_GET's early
+        path (no real socket machinery — the write calls are patched)."""
+        obj = object.__new__(handler_cls)
+        obj.path = "/sse"
+        obj.client_address = ("127.0.0.1", 0)
+        obj.headers = {}
+        return obj
+
+    def test_header_write_failure_releases_slot(self, monkeypatch):
+        mcp = MCPServer(instance_name="test")
+        handler_cls = _make_http_handler(mcp, "", rate_limit=100)
+        tracker = handler_cls._sse_connections
+
+        def _raise(*args, **kwargs):
+            raise BrokenPipeError("client reset during header write")
+
+        monkeypatch.setattr(handler_cls, "send_response", _raise)
+        monkeypatch.setattr(handler_cls, "send_header", _raise)
+        monkeypatch.setattr(handler_cls, "end_headers", _raise)
+        monkeypatch.setattr(handler_cls, "_send_sse", _raise)
+
+        # More races than the 10-slot cap: with the leak, the 11th call
+        # would return a 503 path and the cap would be gone forever.
+        for _ in range(12):
+            obj = self._make_handler_obj(handler_cls)
+            obj.do_GET()  # must not raise
+
+        assert tracker._current == 0
+        # A fresh SSE connection can still acquire a slot.
+        assert tracker.acquire() is True
+        tracker.release()

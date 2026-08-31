@@ -1132,7 +1132,13 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
         # prefix is missing, so the branch timing does not leak which
         # header format was used.
         token = auth[7:] if auth.startswith("Bearer ") else ""
-        return hmac.compare_digest(token, self._bearer_token)
+        # compare in bytes: on non-ASCII str (which BaseHTTPRequestHandler
+        # hands us — it decodes headers latin-1, so raw non-ASCII bytes
+        # survive as non-ASCII str) compare_digest raises TypeError and
+        # crashes the request thread. Bytes compare fine and stay
+        # constant-time; a non-ASCII token simply fails closed with 401.
+        return hmac.compare_digest(
+            token.encode("utf-8"), self._bearer_token.encode("utf-8"))
 
     def _check_rate_limit(self) -> bool:
         """Check if the client IP is within the rate limit."""
@@ -1178,15 +1184,30 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Handle JSON-RPC requests via POST."""
-        if not self._check_auth():
-            self._send_json(401, {"error": "Unauthorized"})
-            return
-
+        # Rate limit BEFORE auth: the 401 path is the cheapest surface to
+        # flood (token guessing included) and must consume allowance too,
+        # or the "max 60 requests per minute" promise simply does not
+        # apply to unauthenticated clients.
         if not self._check_rate_limit():
             self._send_json(429, {"error": "Rate limit exceeded"})
             return
 
-        content_length = int(self.headers.get("Content-Length", 0))
+        if not self._check_auth():
+            self._send_json(401, {"error": "Unauthorized"})
+            return
+
+        # Content-Length is parsed and bounds-checked BEFORE the body is
+        # read: a negative value reaches rfile.read(-1) = read-until-EOF
+        # and pins a handler thread until the client disconnects, and a
+        # non-integer raised unhandled (per-request traceback to stderr).
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self._send_json(400, {"error": "Invalid Content-Length"})
+            return
+        if content_length < 0:
+            self._send_json(413, {"error": "Invalid Content-Length"})
+            return
         if content_length > self._MAX_REQUEST_SIZE:
             self._send_json(413, {"error": "Request body too large"})
             return
@@ -1209,12 +1230,13 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         """SSE streaming endpoint at /sse."""
-        if not self._check_auth():
-            self._send_json(401, {"error": "Unauthorized"})
-            return
-
+        # Rate limit BEFORE auth — see do_POST.
         if not self._check_rate_limit():
             self._send_json(429, {"error": "Rate limit exceeded"})
+            return
+
+        if not self._check_auth():
+            self._send_json(401, {"error": "Unauthorized"})
             return
 
         parsed = urlparse(self.path)
@@ -1228,23 +1250,29 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
                 self._send_json(503, {"error": "Too many SSE connections"})
                 return
 
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self._send_cors_headers()
-        self.end_headers()
-
-        # Send an initial endpoint event so clients know where to POST
-        self._send_sse(json.dumps({
-            "jsonrpc": "2.0",
-            "method": "endpoint",
-            "params": {"uri": "/"},
-        }))
-
-        # Keep the connection open; in a full implementation this would
-        # stream server-initiated notifications. For now it's a heartbeat.
+        # The slot is held from acquire() to the end of the handler on
+        # EVERY path: a client that RST the connection makes the header
+        # write below raise BrokenPipeError, and if that happened before
+        # the try block the finally would never run — one leaked slot per
+        # race, and ten races permanently 503 the SSE endpoint. Header
+        # write, initial event, and heartbeat are all inside the guard.
         try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self._send_cors_headers()
+            self.end_headers()
+
+            # Send an initial endpoint event so clients know where to POST
+            self._send_sse(json.dumps({
+                "jsonrpc": "2.0",
+                "method": "endpoint",
+                "params": {"uri": "/"},
+            }))
+
+            # Keep the connection open; in a full implementation this would
+            # stream server-initiated notifications. For now it's a heartbeat.
             while True:
                 import time
                 time.sleep(15)
