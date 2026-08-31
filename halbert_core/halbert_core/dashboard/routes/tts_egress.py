@@ -107,14 +107,21 @@ class TtsEgressHub:
 
         ``bytes`` goes out as a binary PCM frame; ``dict`` is JSON-encoded
         into a text frame (begin/end/cancelled). A send that fails means the
-        socket is gone — the subscriber is dropped, never retried.
+        socket is gone — the subscriber is dropped, never retried. The dict
+        is encoded once, before the loop, so a non-serializable payload
+        raises to the publisher instead of being mistaken for a room full of
+        dead sockets and silently dropping every subscriber.
         """
+        if isinstance(data, bytes):
+            payload: "bytes | str" = data
+        else:
+            payload = json.dumps(data)
         for websocket in list(self._subscribers.get(session_id, [])):
             try:
                 if isinstance(data, bytes):
-                    await websocket.send_bytes(data)
+                    await websocket.send_bytes(payload)
                 else:
-                    await websocket.send_text(json.dumps(data))
+                    await websocket.send_text(payload)
             except Exception:
                 logger.debug(
                     f"TTS egress: dropping dead subscriber of {session_id}"

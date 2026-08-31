@@ -584,6 +584,20 @@ class AudioPipelineCoordinator:
         self._active_barge_in_token = token
         return token
 
+    def release_barge_in_token(self, token) -> None:
+        """Clear the active barge-in token if it is still ``token``.
+
+        The TTS egress hook (O3) calls this when its turn ends so the slot
+        does not go stale (a stale active token would silently eat the next
+        ``trigger_barge_in()``). No-op when the active token has moved on.
+        NOTE: ``speak()`` below also fills ``_active_barge_in_token`` — one
+        active token, one turn; these two writers must stay mutually
+        exclusive (true today: nothing calls ``speak()`` yet; whoever wires
+        VAD to it must preserve it).
+        """
+        if self._active_barge_in_token is token:
+            self._active_barge_in_token = None
+
     async def trigger_barge_in(self, area_id: str = "") -> Optional[Any]:
         """Trigger barge-in: cancel current TTS playback.
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import List, Optional, Tuple
 
 import pytest
@@ -378,21 +379,31 @@ class _ChunkedTTS:
 
 
 class _RecordingHub:
-    """TtsEgressHub stand-in with the surface the hook touches."""
+    """TtsEgressHub stand-in with the surface the hook touches.
 
-    def __init__(self, *subscribed_sessions):
+    ``fire_token_on_end`` simulates a barge-in landing in the window between
+    one segment's end frame and the next segment's synthesis: the session's
+    registered token (the hook's own) fires as the end frame goes out.
+    """
+
+    def __init__(self, *subscribed_sessions, fire_token_on_end=False):
         self._subscribed = set(subscribed_sessions)
         self.published = []
         self.registered_tokens = {}
         self.token_registrations = []  # every (session, token) ever registered
         self.cleared_sessions = []
         self.pipeline = None
+        self._fire_token_on_end = fire_token_on_end
 
     def has_subscribers(self, session_id):
         return session_id in self._subscribed
 
     async def publish(self, session_id, data):
         self.published.append((session_id, data))
+        if self._fire_token_on_end and data == {"type": "end"}:
+            token = self.registered_tokens.get(session_id)
+            if token is not None:
+                token.trigger()
 
     def register_cancel_token(self, session_id, token):
         self.token_registrations.append((session_id, token))
@@ -559,9 +570,42 @@ class TestStateMachineTtsEgressHook:
             (SESSION, {"type": "cancelled"}),
         ]
 
+    async def test_barge_in_between_segments_publishes_cancelled(self, monkeypatch):
+        """A token firing in the window between segment 1's end and segment
+        2's first chunk must still reach the browser: without the turn-level
+        check, segment 2 never ``began`` and the browser would play the
+        already-scheduled clip to completion. The remaining segment is also
+        never synthesized — no wasted sherpa-onnx pass."""
+        payload = _FakePayload(
+            _FakeSegment("First segment"),
+            _FakeSegment("Second segment"),
+        )
+        _voice_turn_patches(monkeypatch, payload)
+        hub = _RecordingHub(SESSION, fire_token_on_end=True)
+        _patch_hub(monkeypatch, hub)
+        tts = _ChunkedTTS()
+        agent = _build_agent()
+        agent._egress_tts = tts
+
+        [e async for e in agent.process("hello", session_id=SESSION)]
+
+        assert hub.published == [
+            (SESSION, {"type": "begin", "sample_rate": 22050, "format": "s16le"}),
+            (SESSION, b"\x01\x02"),
+            (SESSION, b"\x03\x04"),
+            (SESSION, {"type": "end"}),
+            # Segment 2 was never synthesized; the cancelled frame for it
+            # comes from the turn-level check after the loop.
+            (SESSION, {"type": "cancelled"}),
+        ]
+        # No generation pass was spent on the barged-in segment.
+        assert [c[0] for c in tts.calls] == ["First segment"]
+
     async def test_pipeline_token_is_used_when_the_pipeline_runs(self, monkeypatch):
         """The hook mints its barge-in token from the coordinator when the
-        pipeline is up, so VAD barge-in cancels browser playback too."""
+        pipeline is up, so VAD barge-in cancels browser playback too — and
+        releases the coordinator's slot when the turn ends so it cannot go
+        stale and eat the next VAD barge-in."""
         payload = _FakePayload(_FakeSegment("Hello there"))
         _voice_turn_patches(monkeypatch, payload)
         hub = _RecordingHub(SESSION)
@@ -569,11 +613,15 @@ class TestStateMachineTtsEgressHook:
         class _FakePipeline:
             def __init__(self):
                 self.tokens = []
+                self.released = []
 
             def create_barge_in_token(self):
                 token = _FakeToken()
                 self.tokens.append(token)
                 return token
+
+            def release_barge_in_token(self, token):
+                self.released.append(token)
 
         pipeline = _FakePipeline()
         hub.pipeline = pipeline
@@ -591,6 +639,8 @@ class TestStateMachineTtsEgressHook:
         # (cleared again when the turn ends, hence the history check).
         assert hub.token_registrations == [(SESSION, pipeline.tokens[0])]
         assert SESSION not in hub.registered_tokens
+        # The coordinator's active-token slot was handed back.
+        assert pipeline.released == [pipeline.tokens[0]]
 
     async def test_hook_is_silent_without_a_tts(self, monkeypatch):
         """No voice backend / no Piper model: the hook steps aside and the
@@ -633,3 +683,59 @@ class TestStateMachineTtsEgressHook:
         assert hub.published == []
         assert any(e.type == "response_complete" for e in events)
         assert any(e.type == "speech_segment" for e in events)
+
+    async def test_hook_failure_warns_once_then_stays_quiet(
+        self, monkeypatch, caplog
+    ):
+        """The first egress failure is a wiring problem an operator should
+        see; every later one is the deployment's steady state — warning
+        once, debug after (the machine is the process singleton)."""
+        payload = _FakePayload(_FakeSegment("Hello there"))
+        _voice_turn_patches(monkeypatch, payload)
+        hub = _RecordingHub(SESSION)
+        _patch_hub(monkeypatch, hub)
+
+        class _BrokenTTS:
+            _speed = 1.0
+            _sample_rate = 22050
+
+            async def synthesize(self, text, cancel_token=None):
+                raise RuntimeError("sherpa-onnx exploded")
+                yield b""  # pragma: no cover
+
+        agent = _build_agent()
+        agent._egress_tts = _BrokenTTS()
+
+        with caplog.at_level(
+            logging.WARNING, logger="halbert.agents.state_machine"
+        ):
+            [e async for e in agent.process("hello", session_id=SESSION)]
+            [e async for e in agent.process("again", session_id=SESSION)]
+
+        warnings = [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING and "TTS egress" in r.message
+        ]
+        assert len(warnings) == 1
+
+
+class TestCoordinatorTokenRelease:
+    """``release_barge_in_token`` — the hook's hand-back of the
+    coordinator's active-token slot (no stale tokens eating the next VAD
+    barge-in)."""
+
+    def test_release_clears_only_the_matching_token(self):
+        from halbert_core.audio.config import AudioConfig
+        from halbert_core.audio.pipeline import AudioPipelineCoordinator
+
+        coord = AudioPipelineCoordinator(config=AudioConfig(enabled=True))
+        token = coord.create_barge_in_token()
+        assert coord._active_barge_in_token is token
+
+        # A newer token occupies the slot: releasing the old one is a no-op.
+        newer = coord.create_barge_in_token()
+        coord.release_barge_in_token(token)
+        assert coord._active_barge_in_token is newer
+
+        coord.release_barge_in_token(newer)
+        assert coord._active_barge_in_token is None

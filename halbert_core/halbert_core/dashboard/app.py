@@ -701,7 +701,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         # coordinator-owned barge-in tokens through this reference (so VAD
         # barge-in cancels browser playback too); without it the hook falls
         # back to a standalone token.
-        get_tts_egress_hub().set_pipeline(app.state.audio_coordinator)
+        app.state.tts_egress.set_pipeline(app.state.audio_coordinator)
 
         # Phase 2: Start HA WebSocket event stream if configured
         # Capability-based: start if HA connection is configured.
@@ -872,6 +872,12 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 logger.info("Audio pipeline coordinator stopped")
             except Exception as e:
                 logger.warning(f"Failed to stop audio pipeline coordinator: {e}")
+
+        # Voice mode (O3): drop the hub's pipeline reference on shutdown so
+        # it can never mint barge-in tokens against a stopped coordinator.
+        tts_hub = getattr(app.state, "tts_egress", None)
+        if tts_hub is not None:
+            tts_hub.set_pipeline(None)
 
         # Close Frigate tools singleton client
         try:

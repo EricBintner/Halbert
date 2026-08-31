@@ -295,6 +295,9 @@ class AgentStateMachine:
         # backend, cached once resolved so every egress turn shares one model
         # load. None until a turn needs it (and stays None without a seam).
         self._egress_tts: Any = None
+        # O3: egress failure sites already warned about (warning-once) — the
+        # machine is a process singleton, so this is once per site per run.
+        self._egress_warned: set = set()
 
         # One turn at a time (spec §12): held for the whole of process() and
         # confirm_action(), including their cleanup, so a second /message
@@ -2995,7 +2998,10 @@ class AgentStateMachine:
                             try:
                                 await self._speak_to_tts_egress(spoken_segments)
                             except Exception as e:
-                                logger.debug(f"TTS egress skipped (non-fatal): {e}")
+                                self._egress_log_once(
+                                    "hook",
+                                    f"TTS egress skipped (non-fatal): {e}",
+                                )
         except Exception as e:
             logger.debug(f"Modality demux/delivery skipped (non-fatal): {e}")
 
@@ -3073,7 +3079,8 @@ class AgentStateMachine:
         """
         try:
             from ..dashboard.routes.tts_egress import get_tts_egress_hub
-        except Exception:
+        except Exception as e:
+            self._egress_log_once("hub_import", f"TTS egress hub unavailable: {e}")
             return
         hub = get_tts_egress_hub()
         session_id = self.ctx.session_id
@@ -3081,6 +3088,13 @@ class AgentStateMachine:
             return
         tts = self._voice_tts_for_egress()
         if tts is None:
+            # A subscriber is waiting but there is no engine to speak with —
+            # the one case worth a warning (once); after that it is the
+            # deployment's steady state, not news.
+            self._egress_log_once(
+                "tts_unavailable",
+                "TTS egress: browser subscribed but no PiperTTS is available",
+            )
             return
 
         # Barge-in token: coordinator-owned when the pipeline runs, so VAD
@@ -3098,8 +3112,14 @@ class AgentStateMachine:
             token = BargeInHandler().create_token()
 
         hub.register_cancel_token(session_id, token)
+        any_began = False
+        sent_cancelled = False
         try:
             for text, rate in segments:
+                # Barge-in between segments: stop before spending a full
+                # sherpa-onnx generation pass on a segment nobody will hear.
+                if token is not None and token.is_set():
+                    break
                 if not text.strip():
                     continue
                 original_speed = tts._speed
@@ -3122,13 +3142,53 @@ class AgentStateMachine:
                 finally:
                     tts._speed = original_speed
                 if began:
+                    any_began = True
                     cancelled = token is not None and token.is_set()
+                    if cancelled:
+                        sent_cancelled = True
                     await hub.publish(
                         session_id,
                         {"type": "cancelled" if cancelled else "end"},
                     )
+            # Barge-in in the window between one segment's end and the next
+            # segment's first chunk: the loop broke before that segment's
+            # ``began`` ever turned True, so nothing was published for it —
+            # tell the browser anyway, or it plays the clip it already
+            # scheduled to the end instead of stopping.
+            if (
+                not sent_cancelled
+                and any_began
+                and token is not None
+                and token.is_set()
+            ):
+                await hub.publish(session_id, {"type": "cancelled"})
         finally:
             hub.clear_cancel_token(session_id)
+            # Give the coordinator its slot back so it does not go stale
+            # after the turn (a stale active token would eat the next VAD
+            # barge-in). No-op when the active token has moved on. NOTE for
+            # whoever wires VAD to the pipeline's own speak(): speak() also
+            # fills _active_barge_in_token — one active token, one turn;
+            # these two writers must stay mutually exclusive.
+            if pipeline is not None and token is not None:
+                try:
+                    pipeline.release_barge_in_token(token)
+                except Exception:
+                    pass
+
+    def _egress_log_once(self, site: str, message: str) -> None:
+        """Warn once per egress failure site, then drop to debug.
+
+        Voice egress is strictly optional, so a failure must never spam every
+        voice turn — but the first occurrence is a real wiring/model problem
+        an operator should see in the logs.
+        """
+        if site in self._egress_warned:
+            logger.debug(message)
+            return
+        self._egress_warned.add(site)
+        logger.warning(message)
+
     async def _handle_error(self) -> AsyncIterator[StreamEvent]:
         """
         ERROR state: Handle and recover from errors.
