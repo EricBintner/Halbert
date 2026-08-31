@@ -65,13 +65,13 @@ class TestExplicitVariant:
         assert explicit_variant() is None
 
 
-class TestHomeLightVariant:
+class TestHomeVariant:
     """home is a valid variant for thin clients (N100/Pi)."""
 
-    def test_home_light_in_valid_variants(self):
+    def test_home_in_valid_variants(self):
         assert "home" in VALID_VARIANTS
 
-    def test_home_light_variant_validates(self):
+    def test_home_variant_validates(self):
         cfg = BeingConfig(variant="home")
         cfg.validate()
 
@@ -79,9 +79,6 @@ class TestHomeLightVariant:
         cfg = BeingConfig(variant="sysadmin")
         cfg.validate()
 
-    def test_home_still_valid(self):
-        cfg = BeingConfig(variant="home")
-        cfg.validate()
 
     def test_invalid_variant_rejected(self):
         cfg = BeingConfig(variant="bogus")
