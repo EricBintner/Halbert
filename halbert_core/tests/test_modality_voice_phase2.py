@@ -109,8 +109,9 @@ class TestHalbertVoiceBackend:
         backend = HalbertVoiceBackend(tts=_FakeTTS())
 
         if not _engine_available():
-            with pytest.raises(ImportError):
-                asyncio.run(backend.synthesize("", MagicMock()))
+            # Subtractive contract: returns None when engine not installed
+            result = asyncio.run(backend.synthesize("", MagicMock()))
+            assert result is None
             return
         result = asyncio.run(backend.synthesize("", MagicMock()))
         assert result.success is True
@@ -126,8 +127,8 @@ class TestHalbertVoiceBackend:
         prosody.whisper = False
 
         if not _engine_available():
-            with pytest.raises(ImportError):
-                asyncio.run(backend.synthesize("hello world", prosody))
+            result = asyncio.run(backend.synthesize("hello world", prosody))
+            assert result is None
             return
         result = asyncio.run(backend.synthesize("hello world", prosody))
         assert result.success is True
@@ -144,8 +145,8 @@ class TestHalbertVoiceBackend:
         prosody.whisper = True
 
         if not _engine_available():
-            with pytest.raises(ImportError):
-                asyncio.run(backend.synthesize("quiet message", prosody))
+            result = asyncio.run(backend.synthesize("quiet message", prosody))
+            assert result is None
             return
         result = asyncio.run(backend.synthesize("quiet message", prosody))
         assert result.success is True

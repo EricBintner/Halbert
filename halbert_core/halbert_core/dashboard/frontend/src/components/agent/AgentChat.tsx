@@ -40,6 +40,7 @@ import { ConfidenceIndicator } from './ConfidenceIndicator';
 import { ChatModelPill } from '../llm/ChatModelPill';
 import { ModelStatusCard } from '../llm/ModelStatusCard';
 import { TurnModelNotice } from '../llm/TurnModelNotice';
+import { ModalityHandoffBadge, VoiceCompanionPill } from '../audio';
 import { useModelPicker, matchModels, providerDescriptor } from '@halbert/model-picker';
 import { HALBERT_MODEL_ROLES, CHAT_ROLE_ID, modelPickerTransport } from '@/lib/halbertModelRoles';
 import { parseModelCommand, formatModelStatus, type ModelStatusLines } from '@/lib/slashCommands';
@@ -1014,6 +1015,15 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
                       it — a spec change, not a merge decision.) */}
                   {turnModel && <TurnModelNotice turn={turnModel} />}
 
+                  {session?.modality && <ModalityHandoffBadge modality={session.modality} />}
+
+                  {session?.speechSegments && session.speechSegments.length > 0 && (
+                    <VoiceCompanionPill
+                      segments={session.speechSegments}
+                      isActive={isStreaming}
+                    />
+                  )}
+
                   {thinking && <ThinkingPanel thinking={thinking} isStreaming={isStreaming} />}
 
                   {session.confidence > 0 && (
@@ -1043,6 +1053,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
           <div className="flex justify-start">
             <div className="max-w-[85%] space-y-3">
               {turnModel && <TurnModelNotice turn={turnModel} />}
+              {session?.modality && <ModalityHandoffBadge modality={session.modality} />}
               {provenance.length > 0 && (
                 <WhyChip provenance={provenance} onExpand={handleProvenanceExpand} />
               )}

@@ -83,7 +83,10 @@ class HalbertVoiceBackend:
         Barge-in: if a ``BargeInToken`` is set (via ``cancel()`` or
         ``set_barge_in_token()``), synthesis aborts when the token fires.
         """
-        from haloysius.modality.types import SpeechResult
+        try:
+            from haloysius.modality.types import SpeechResult
+        except ImportError:
+            return None  # type: ignore  — engine not installed
 
         if not text.strip():
             return SpeechResult(success=True, audio_bytes=b"", duration_seconds=0.0)

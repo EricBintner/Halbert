@@ -90,11 +90,14 @@ class HalbertVoiceAuthGate:
         When the speaker-id model is not installed, returns unverified
         'unknown' (graceful degradation, spec 5.9).
         """
-        from haloysius.modality.types import SpeakerIdentity
-        from haloysius.seam import (
-            DEFAULT_VOICE_AUTH_THRESHOLDS,
-            classify_speaker_role,
-        )
+        try:
+            from haloysius.modality.types import SpeakerIdentity
+            from haloysius.seam import (
+                DEFAULT_VOICE_AUTH_THRESHOLDS,
+                classify_speaker_role,
+            )
+        except ImportError:
+            return None  # type: ignore  — engine not installed
 
         thresholds = self._thresholds or DEFAULT_VOICE_AUTH_THRESHOLDS
 
@@ -183,7 +186,10 @@ class HalbertVoiceAuthGate:
           action (PIN prompt).
         - ``deny()`` when the action's risk exceeds the role's cap.
         """
-        from haloysius.seam import ActionDecision
+        try:
+            from haloysius.seam import ActionDecision
+        except ImportError:
+            return None  # type: ignore  — engine not installed
 
         gate = self._get_role_gate()
         if gate is None:

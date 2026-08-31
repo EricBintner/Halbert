@@ -358,6 +358,13 @@ async def proactive_speak(
         # TASK-07: strip markdown before sending to TTS. HA's TTS reads
         # raw text aloud — markdown syntax is not spoken language.
         spoken_text = _strip_markdown_for_speech(text)
+        # Phase 2.5: apply pronunciation substitutions for domain terms
+        # so HA's TTS pronounces systemd, MQTT, NVMe, etc. correctly.
+        try:
+            from .modality_wiring import apply_pronunciation
+            spoken_text = apply_pronunciation(spoken_text)
+        except Exception:
+            pass  # engine not installed — skip pronunciation
         if not spoken_text.strip():
             logger.warning("Proactive speak: text was empty after markdown stripping")
             return False

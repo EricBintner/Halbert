@@ -52,7 +52,7 @@ export function VoiceCompanionPill({ segments, isActive }: VoiceCompanionPillPro
       )}
 
       {/* Waveform animation */}
-      < Waves className="h-4 w-4 text-orange-500 animate-pulse" />
+      <Waves className="h-4 w-4 text-orange-500 animate-pulse" />
 
       {/* Truncated spoken text */}
       <span className="flex-1 truncate text-muted-foreground">

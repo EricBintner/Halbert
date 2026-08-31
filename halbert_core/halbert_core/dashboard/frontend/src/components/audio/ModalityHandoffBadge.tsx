@@ -17,7 +17,7 @@ interface ModalityHandoffBadgeProps {
 }
 
 export function ModalityHandoffBadge({ modality }: ModalityHandoffBadgeProps) {
-  if (!modality || modality.modality === 'text') {
+  if (!modality || modality.modality === 'text' || modality.modality === 'deferred') {
     return null
   }
 
