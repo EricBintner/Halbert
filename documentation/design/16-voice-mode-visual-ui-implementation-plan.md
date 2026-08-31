@@ -1447,25 +1447,34 @@ Tests: (a) no `app.state.audio_coordinator` → payload identical to today (regr
 
 ### Task O2 [OPUS]: Coordinator bootstrap + WebRtcIngress registration
 
-**Files:** Modify `halbert_core/halbert_core/dashboard/app.py` (startup at :373, shutdown at :738), `halbert_core/halbert_core/dashboard/routes/websocket.py`. Test: `halbert_core/tests/test_audio_stream_ws.py` (add).
+**Files:** Modify `halbert_core/halbert_core/capabilities.py` (registry), `halbert_core/halbert_core/dashboard/app.py` (startup — the `@app.on_event("startup")` handler now gates services through `get_capability_registry()`, search for `_caps.probe()`; shutdown handler mirrors), `halbert_core/halbert_core/dashboard/routes/websocket.py`. Test: `halbert_core/tests/test_audio_stream_ws.py` (add).
 
-1. In the `@app.on_event("startup")` handler (after the existing `ws_manager` creation), bootstrap the pipeline when enabled:
+> **Post-merge revision (2026-08-31):** the singular-entity merge replaced variant gating (`_is_home_variant()`) with the capability registry (`capabilities.py`, F5 review rule: *probes are presence checks, not gates*). Voice/pipeline startup must follow that pattern, which is also the right topology answer for the N150 appliance (a "home" node and a sysadmin node can both run audio).
+
+1. Register an audio capability in `capabilities.py`:
 
 ```python
-from ..audio.config import load_config as load_audio_config
-
-audio_cfg = load_audio_config()
-coordinator = None
-if audio_cfg.enabled:
-    from ..audio.pipeline import AudioPipelineCoordinator
-    from ..audio.ingress.webrtc_ingress import WebRtcIngress
-    coordinator = AudioPipelineCoordinator(config=audio_cfg)
-    coordinator._ingress_adapters.append(WebRtcIngress(area_id="dashboard_voice"))
-    await coordinator.start()
-app.state.audio_coordinator = coordinator
+CAP_AUDIO = "audio"
 ```
 
-(Add the matching `await coordinator.stop()` to the shutdown handler. If accessing `_ingress_adapters` feels too private, the cleaner form is an `add_ingress(adapter)` setter on the coordinator — add it in this task with a unit test.)
+Add it to `ALL_CAPABILITIES` and to both variant presets with default `True`. Its probe is a presence check: config enabled AND sherpa-onnx importable (`is_audio_available()` from `audio/pipeline.py`) — never a variant check; `being.yml capabilities: audio: false` remains the operator override.
+
+2. In the startup handler, alongside the existing capability-gated services:
+
+```python
+if _caps.has(CAP_AUDIO):
+    from ..audio.config import load_config as load_audio_config
+    from ..audio.pipeline import AudioPipelineCoordinator
+    from ..audio.ingress.webrtc_ingress import WebRtcIngress
+    coordinator = AudioPipelineCoordinator(config=load_audio_config())
+    coordinator._ingress_adapters.append(WebRtcIngress(area_id="dashboard_voice"))
+    await coordinator.start()
+    app.state.audio_coordinator = coordinator
+else:
+    app.state.audio_coordinator = None
+```
+
+(Add the matching `await coordinator.stop()` to the shutdown handler, guarded on non-None. If accessing `_ingress_adapters` feels too private, the cleaner form is an `add_ingress(adapter)` setter on the coordinator — add it in this task with a unit test.)
 
 2. Register the WebSocket in `routes/websocket.py`:
 

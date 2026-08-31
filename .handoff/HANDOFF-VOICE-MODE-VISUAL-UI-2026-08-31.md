@@ -37,6 +37,7 @@ The audio-reactive mark engine in `packages/design-system/src/voice/`:
 
 ## Gotchas for the successor session
 
+- **Rebased onto main@15560fdb (singular-entity merge, 2026-08-31):** variant gating is gone — `_is_home_variant()` was replaced by the capability registry in `halbert_core/halbert_core/capabilities.py`; F5 rule: probes are presence checks, not gates. O2 now registers `CAP_AUDIO` and gates the coordinator through `_caps.has(...)` like every other service. Zero file overlap with this branch; suite still 53/53.
 - **Worktree venv trap:** editable `halbert_core` installs resolve to the MAIN tree from this worktree. Use the meta-path-stripping wrapper + `arch -arm64` for backend pytest, or you test the wrong code (see project memory `halbert-worktree-venv-gotchas`).
 - **41 pre-existing backend test failures on main** — compare against that baseline, never assume your task broke the suite.
 - **`response_chunk` is LLM output text, not STT** — doc 15 Phase 2 mislabels it; live STT subtitles need the O2/O4 observation channel.
