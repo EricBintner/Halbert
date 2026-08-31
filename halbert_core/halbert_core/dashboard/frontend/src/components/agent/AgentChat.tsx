@@ -14,7 +14,7 @@
  * - Model loading status
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   Send,
   StopCircle,
@@ -29,6 +29,7 @@ import {
 import { useAgentStream, type AgentSession } from '../../hooks/useAgentStream';
 import { useTimeline, type UseTimelineReturn } from '../../hooks/useTimeline';
 import { useHostIdentity } from '../../hooks/useHostIdentity';
+import { useInstanceVariant } from '../../hooks/useInstanceVariant';
 import { StateBadge } from './StateBadge';
 import { PlanChecklist } from './PlanChecklist';
 import { ToolExecutionCard } from './ToolExecutionCard';
@@ -41,7 +42,7 @@ import { ChatModelPill } from '../llm/ChatModelPill';
 import { ModelStatusCard } from '../llm/ModelStatusCard';
 import { TurnModelNotice } from '../llm/TurnModelNotice';
 import { useModelPicker, matchModels, providerDescriptor } from '@halbert/model-picker';
-import { HALBERT_MODEL_ROLES, CHAT_ROLE_ID, modelPickerTransport } from '@/lib/halbertModelRoles';
+import { CHAT_ROLE_ID, halbertRolesForVariant, modelPickerTransport } from '@/lib/halbertModelRoles';
 import { parseModelCommand, formatModelStatus, type ModelStatusLines } from '@/lib/slashCommands';
 import { ScanBlock } from './ScanBlock';
 import { ContextBar, type ContextItem, type ContextType } from './ContextBar';
@@ -178,9 +179,19 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   // One picker for the whole composer: the pill shows it and `/model` drives
   // it. Two would let the command and the control disagree about what is
   // pinned. The pin lives here and is never persisted.
+  // The roles are filtered to this instance's variant before the picker sees
+  // them — a home instance offers no secure slot, and the picker package
+  // cannot know that without breaking its no-role-names rule. An unknown
+  // variant keeps the full set, so a failed info route never empties the
+  // composer's model control.
+  const variant = useInstanceVariant();
+  const variantRoles = useMemo(
+    () => halbertRolesForVariant(variant),
+    [variant],
+  );
   const picker = useModelPicker({
     transport: modelPickerTransport,
-    roles: HALBERT_MODEL_ROLES,
+    roles: variantRoles,
   });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState<string | undefined>(undefined);

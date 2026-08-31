@@ -47,6 +47,10 @@ beforeEach(() => {
   fetchMock = vi.fn(async (url: string) => {
     const u = String(url)
     if (u.includes('/api/identity')) return jsonResponse(IDENTITY)
+    // The composer filters its role list by this variant, so routing it as a
+    // home instance runs every test below against the filtered list — the
+    // configuration a home node actually ships.
+    if (u.includes('/api/instance/info')) return jsonResponse({ variant: 'home' })
     if (u.includes('/llm/config')) {
       return jsonResponse({ data: {
         llm_config: {

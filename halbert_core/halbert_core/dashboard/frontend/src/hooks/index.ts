@@ -32,3 +32,4 @@ export {
   type SpawnOptions,
   type UseTerminalSessions,
 } from './useTerminalSessions'
+export { useInstanceVariant } from './useInstanceVariant'

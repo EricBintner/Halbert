@@ -9,6 +9,9 @@
  *
  *  - the three Halbert roles, with the vision slot's "Auto: inherit from the
  *    chat model" copy when it is unassigned (D-4/UI-SPEC Q3)
+ *  - the variant filter this file applies to the role list before the drawer
+ *    sees it: the secure slot exists only on the sysadmin variant, and a
+ *    home/home-light instance must not be offered it (U6/S1)
  *  - the LEG-MOD-02 cloud disclosure gate carried over from the deleted
  *    EndpointManager: a cloud-provider endpoint must not be saved until the
  *    user accepts, a local one needs no gate at all
@@ -39,8 +42,17 @@ function jsonResponse(body: unknown, status = 200) {
   } as Response
 }
 
-/** Routes the handful of endpoints ModelSettings/the picker touch on mount. */
-function makeRouter(llmConfig: ReturnType<typeof emptyLlmConfig>) {
+/**
+ * Routes the handful of endpoints ModelSettings/the picker touch on mount.
+ *
+ * `instanceInfo` is what GET /api/instance/info answers; `null` leaves the
+ * route unrouted (the router throws), which is how the component behaves
+ * when the variant cannot be resolved at all.
+ */
+function makeRouter(
+  llmConfig: ReturnType<typeof emptyLlmConfig>,
+  instanceInfo: { variant: string } | null = { variant: 'sysadmin' },
+) {
   return vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/llm/config' && (!init || init.method === undefined)) {
       return jsonResponse({ data: { llm_config: llmConfig, chat_capable_providers: ['ollama', 'anthropic', 'openai'] } })
@@ -49,6 +61,9 @@ function makeRouter(llmConfig: ReturnType<typeof emptyLlmConfig>) {
       const body = JSON.parse(String(init.body))
       Object.assign(llmConfig, body.llm_config)
       return jsonResponse({ data: { llm_config: llmConfig, chat_capable_providers: ['ollama', 'anthropic', 'openai'] } })
+    }
+    if (url === '/api/instance/info' && instanceInfo) {
+      return jsonResponse(instanceInfo)
     }
     if (url === '/api/llm/discover') {
       return jsonResponse({ data: { ollama: { running: false, url: 'http://localhost:11434', models: [] }, lm_studio: { running: false, url: 'http://localhost:1234', models: [] } } })
@@ -109,6 +124,48 @@ describe('ModelSettings', () => {
     expect(await screen.findByText('Chat (Guide)')).toBeInTheDocument()
     expect(screen.getByText('Specialist')).toBeInTheDocument()
     expect(screen.getByText('Vision')).toBeInTheDocument()
+  })
+
+  it('offers the secure role on the sysadmin variant', async () => {
+    render(<ModelSettings />)
+    expect(await screen.findByText('Secure (Local)')).toBeInTheDocument()
+  })
+
+  it('hides the secure role on the home variant', async () => {
+    fetchMock = makeRouter(emptyLlmConfig(), { variant: 'home' })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ModelSettings />)
+    expect(await screen.findByText('Chat (Guide)')).toBeInTheDocument()
+    expect(screen.getByText('Specialist')).toBeInTheDocument()
+    expect(screen.getByText('Vision')).toBeInTheDocument()
+    // The role list starts unfiltered and narrows once the variant resolves,
+    // so absence has to be waited for, not assumed after first paint.
+    await waitFor(() =>
+      expect(screen.queryByText('Secure (Local)')).not.toBeInTheDocument(),
+    )
+  })
+
+  it('hides the secure role on the home-light variant', async () => {
+    fetchMock = makeRouter(emptyLlmConfig(), { variant: 'home-light' })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ModelSettings />)
+    expect(await screen.findByText('Chat (Guide)')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByText('Secure (Local)')).not.toBeInTheDocument(),
+    )
+  })
+
+  it('keeps the secure role when the variant cannot be resolved', async () => {
+    // The info route is unrouted, so the router throws and the variant stays
+    // unknown — the picker must keep its full role set rather than shrink.
+    fetchMock = makeRouter(emptyLlmConfig(), null)
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ModelSettings />)
+    expect(await screen.findByText('Chat (Guide)')).toBeInTheDocument()
+    expect(screen.getByText('Secure (Local)')).toBeInTheDocument()
   })
 
   it('shows the auto-inherit copy for an unassigned vision slot, never a model name', async () => {
