@@ -28,13 +28,14 @@ async def get_instance_info() -> Dict[str, Any]:
     scene_context = os.environ.get("HALBERT_SCENE_CONTEXT", "")
     port = int(os.environ.get("HALBERT_PORT", "8000"))
 
-    # Determine role from persona_id
-    role = "host" if persona_id == "halbert" else "home"
-    # Same resolution as backend service gating (app.py startup): a
-    # being.yml-set variant must reach the frontend too, or nav gating
-    # disagrees with what services actually launched.
+    # Determine role from the variant, not persona_id (REV-03 F8).
+    # A home node with variant:home but no persona_id override gets
+    # persona_id == "halbert" → was role "host" → Home tab hidden in
+    # its own UI. Variant is the authoritative signal for what services
+    # actually launched (app.py keys on it), so the frontend must too.
     from ...integrations.cognition_wiring import _get_variant
     variant = _get_variant()
+    role = "home" if variant == "home" else "host"
 
     # Feature flags — which tabs/pages should be visible
     features = {

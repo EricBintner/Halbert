@@ -651,11 +651,10 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         if _is_home:
             try:
                 from ..config.being_config import load_being_config
-                from ..integrations.home_assistant.ha_config import save_ha_config, HAConfig
+                from ..integrations.home_assistant.ha_config import seed_ha_config_from_being
                 being_cfg = load_being_config()
                 if being_cfg.ha_url and being_cfg.ha_token:
-                    save_ha_config(HAConfig(url=being_cfg.ha_url, token=being_cfg.ha_token))
-                    logger.info("HA config seeded from being.yml (home variant)")
+                    seed_ha_config_from_being(being_cfg.ha_url, being_cfg.ha_token)
             except Exception as e:
                 logger.warning(f"Failed to seed HA config from being.yml: {e}")
         try:
@@ -827,5 +826,5 @@ if __name__ == "__main__":
     import os
     import uvicorn
     port = int(os.environ.get("HALBERT_PORT", "8000"))
-    host = os.environ.get("HALBERT_HOST", "0.0.0.0")
+    host = os.environ.get("HALBERT_HOST", "127.0.0.1")
     uvicorn.run(app, host=host, port=port)

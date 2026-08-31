@@ -419,7 +419,14 @@ def _tool_ha_get_entities(params: Dict[str, Any]) -> Dict[str, Any]:
         client = _get_ha_client()
         if client is None:
             return mcp_response({"error": "Home Assistant not configured", "entities": []})
-        states = asyncio.run(client.get_states())
+
+        async def _get_and_close():
+            try:
+                return await client.get_states()
+            finally:
+                await client.close()  # REV-03 F12
+
+        states = asyncio.run(_get_and_close())
         if domain:
             states = [s for s in states if s.get("entity_id", "").startswith(f"{domain}.")]
         # Strip attributes that might contain sensitive data
@@ -446,7 +453,14 @@ def _tool_ha_get_entity_state(params: Dict[str, Any]) -> Dict[str, Any]:
         client = _get_ha_client()
         if client is None:
             return mcp_response({"error": "Home Assistant not configured"})
-        state = asyncio.run(client.get_entity_state(entity_id))
+
+        async def _get_and_close():
+            try:
+                return await client.get_entity_state(entity_id)
+            finally:
+                await client.close()  # REV-03 F12
+
+        state = asyncio.run(_get_and_close())
         return mcp_response({
             "entity_id": entity_id,
             "state": state.get("state", ""),
@@ -503,7 +517,14 @@ def _tool_ha_call_service(params: Dict[str, Any]) -> Dict[str, Any]:
 
         if entity_id:
             data.setdefault("entity_id", entity_id)
-        result = asyncio.run(client.call_service(domain, service, data))
+
+        async def _exec_and_close():
+            try:
+                return await client.call_service(domain, service, data)
+            finally:
+                await client.close()  # REV-03 F12 — was leaked per MCP tool call
+
+        result = asyncio.run(_exec_and_close())
         return mcp_response({
             "executed": True,
             "result": result,

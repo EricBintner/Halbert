@@ -91,11 +91,8 @@ class FrigateConfig:
 
 def _config_path() -> Path:
     """Return the path to the Frigate config file."""
-    data_dir = os.environ.get(
-        "HALBERT_DATA_DIR",
-        os.path.expanduser("~/.local/share/halbert"),
-    )
-    return Path(data_dir) / "frigate_config.json"
+    from ...utils.platform import get_data_dir
+    return get_data_dir() / "frigate_config.json"
 
 
 def load_frigate_config() -> FrigateConfig:
