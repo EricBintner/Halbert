@@ -36,7 +36,6 @@ Design:
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -119,19 +118,19 @@ def _probe_ha_connection() -> bool:
 
 
 def _probe_config_watcher() -> bool:
-    """Does a config-registry.yml exist (something to watch)?"""
+    """Does a config-registry.yml exist (something to watch)?
+
+    Presence only — the variant preset already defaults this off for
+    home, and a home-variant node that *does* carry a config tree (the
+    Mac Studio with both sysadmin and home duties, the exact case F5
+    exists for) gets the capability from the file, not the label.
+    """
     try:
-        from .config.being_config import load_being_config
-        cfg = load_being_config()
-        if cfg.variant == "home":
-            # Home variant doesn't have a local config tree by default,
-            # but can be overridden via being.yml capabilities section.
-            return False
-        # Check for config-registry.yml in common locations
         from pathlib import Path
+
+        from .utils.platform import get_config_dir
         candidates = [
-            Path(os.environ.get("HALBERT_CONFIG_DIR", "")) / "config-registry.yml",
-            Path.home() / ".config" / "halbert" / "config-registry.yml",
+            get_config_dir() / "config-registry.yml",
             Path("/etc/halbert/config-registry.yml"),
         ]
         return any(p.exists() for p in candidates)
@@ -140,16 +139,18 @@ def _probe_config_watcher() -> bool:
 
 
 def _probe_sourceprep() -> bool:
-    """Is SourcePrep available (index exists or module importable)?"""
+    """Is the SourcePrep module importable (an index can be built/used)?
+
+    Presence only — no variant early-return (see _probe_config_watcher).
+    Importability is a deliberately coarse proxy for "index available":
+    it answers "this body can run SourcePrep", which is what the
+    sourceprep-gated adapters need before they try. Import side effects
+    are SourcePrep's own lazy-import discipline to keep cheap.
+    """
     try:
-        from .config.being_config import load_being_config
-        cfg = load_being_config()
-        if cfg.variant == "home":
-            return False
-        # Check if SourcePrep is importable and has an index
         import importlib
+
         sp = importlib.import_module("sourceprep")
-        # If SourcePrep is importable, assume the index can be built/used
         return sp is not None
     except ImportError:
         return False
@@ -158,19 +159,26 @@ def _probe_sourceprep() -> bool:
 
 
 def _probe_local_llm() -> bool:
-    """Is a local LLM endpoint configured (Ollama/LMStudio URL)?
+    """Is a loopback LLM endpoint configured (this node's own model)?
 
     Checks the chat_model, specialist_model, and secure_model slots for
-    a URL pointing at localhost or a LAN address.
+    a URL on a loopback/unspecified address, via ``llm_config._is_local_url``
+    — the same properly-parsed check that enforces secure_model's
+    local-only rule, so the two probes can never disagree about what
+    "local" means (and ``http://[::1]:11434`` counts while
+    ``https://api.localhost.gg`` — a public tunnel whose hostname merely
+    contains "localhost" — does not).
+
+    Deliberately NOT LAN-inclusive: a model on another machine's Ollama
+    is the peer tier of the compute chain, not this node's local tier,
+    and a ``peer://`` endpoint is the workstation's governed surface.
     """
     try:
-        from .model.llm_config import resolve
+        from .model.llm_config import _is_local_url, resolve
         for slot in ("chat_model", "specialist_model", "secure_model"):
             model = resolve(slot)
-            if model and model.url:
-                url = str(model.url)
-                if "localhost" in url or "127.0.0.1" in url or "0.0.0.0" in url:
-                    return True
+            if model and model.url and _is_local_url(str(model.url)):
+                return True
         return False
     except Exception:
         return False

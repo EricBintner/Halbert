@@ -389,3 +389,99 @@ class TestProbeImplementations:
         from halbert_core.capabilities import _probe_secure_model
         with patch("halbert_core.model.llm_config.resolve", return_value=None):
             assert _probe_secure_model() is False
+
+
+# ---------------------------------------------------------------------------
+# F5 review (2026-08-31) — probes are presence checks, not variant gates
+# ---------------------------------------------------------------------------
+
+class TestProbePresenceSemantics:
+    """F5's thesis: capabilities emerge from what's actually present, not
+    from a label. The probes must not re-introduce the variant gate one
+    level down — a home-variant Mac Studio with the artifacts present is
+    the exact node F5 exists for."""
+
+    def test_config_watcher_probe_ignores_variant(self, monkeypatch, tmp_path):
+        """A home-variant node WITH a config-registry.yml gets the
+        capability from the file, not the label."""
+        from halbert_core.capabilities import _probe_config_watcher
+        monkeypatch.setattr(
+            "halbert_core.utils.platform.get_config_dir", lambda: tmp_path)
+        (tmp_path / "config-registry.yml").write_text("configs: []\n")
+        assert _probe_config_watcher() is True
+
+    def test_config_watcher_probe_false_without_file(self, monkeypatch, tmp_path):
+        from halbert_core.capabilities import _probe_config_watcher
+        monkeypatch.setattr(
+            "halbert_core.utils.platform.get_config_dir", lambda: tmp_path)
+        # /etc/halbert must not exist on a dev machine for this to hold;
+        # the config-dir candidate is the one under test.
+        assert _probe_config_watcher() is False or (
+            tmp_path / "config-registry.yml").exists()
+
+    def test_config_watcher_probe_is_not_cwd_relative(self, monkeypatch, tmp_path):
+        """A config-registry.yml sitting in the process CWD (e.g. the repo
+        root during tests) must not flip the capability when the config
+        dir has none — the probe reads the config dir, not the CWD."""
+        import os
+
+        from halbert_core.capabilities import _probe_config_watcher
+        monkeypatch.setattr(
+            "halbert_core.utils.platform.get_config_dir", lambda: tmp_path / "cfg")
+        (tmp_path / "cfg").mkdir()
+        cwd_file = tmp_path / "config-registry.yml"
+        cwd_file.write_text("configs: []\n")
+        monkeypatch.chdir(tmp_path)
+        assert os.path.exists("config-registry.yml")
+        assert _probe_config_watcher() is False
+
+    def test_sourceprep_probe_ignores_variant(self, monkeypatch):
+        """A home-variant node with SourcePrep importable gets the
+        capability from the module, not the label."""
+        import sys
+
+        from halbert_core.capabilities import _probe_sourceprep
+        monkeypatch.setitem(sys.modules, "sourceprep", object())
+        assert _probe_sourceprep() is True
+
+    def test_sourceprep_probe_false_when_not_importable(self, monkeypatch):
+        import sys
+
+        from halbert_core.capabilities import _probe_sourceprep
+        # sys.modules[name] = None makes import_module raise ImportError.
+        monkeypatch.setitem(sys.modules, "sourceprep", None)
+        assert _probe_sourceprep() is False
+
+
+class TestLocalLlmProbeLocalUrl:
+    """_probe_local_llm must use llm_config's properly-parsed local check —
+    the same one secure_model enforcement uses — not substring matching."""
+
+    def _resolve(self, url):
+        from halbert_core.model.llm_config import ResolvedModel
+        if url is None:
+            return None
+        return ResolvedModel(
+            model="test", url=url, provider="ollama", api_key="")
+
+    def test_ipv6_loopback_counts(self):
+        from halbert_core.capabilities import _probe_local_llm
+        with patch("halbert_core.model.llm_config.resolve",
+                   return_value=self._resolve("http://[::1]:11434")):
+            assert _probe_local_llm() is True
+
+    def test_substring_localhost_tunnels_do_not_count(self):
+        """https://api.localhost.gg is a public tunnel whose hostname merely
+        contains 'localhost' — substring matching called it local."""
+        from halbert_core.capabilities import _probe_local_llm
+        with patch("halbert_core.model.llm_config.resolve",
+                   return_value=self._resolve("https://api.localhost.gg/v1")):
+            assert _probe_local_llm() is False
+
+    def test_lan_endpoint_does_not_count(self):
+        """Another machine's Ollama is the peer tier, not this node's local
+        tier — the probe is deliberately loopback-only."""
+        from halbert_core.capabilities import _probe_local_llm
+        with patch("halbert_core.model.llm_config.resolve",
+                   return_value=self._resolve("http://192.168.1.10:11434")):
+            assert _probe_local_llm() is False
