@@ -16,10 +16,13 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import platform
 import threading
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 import yaml
 
@@ -415,27 +418,158 @@ _volatile_relock_done: set = set()
 _volatile_relock_lock = threading.Lock()
 
 
-def load_being_config(path: Optional[str] = None) -> BeingConfig:
-    """Load being config from YAML file.
+# ── Cross-process advisory lock (REV-01 F4) ─────────────────────
+#
+# The dashboard and the MCP server are separate processes that both do
+# load-modify-save on being.yml. The dashboard's in-process lock
+# serializes only its own threads; a concurrent MCP save could persist a
+# stale object and silently revert a UI relock. Every load-modify-save
+# cycle therefore takes an advisory fcntl.flock on a lock file beside
+# being.yml: LOCK_SH for pure loads (readers don't block each other),
+# LOCK_EX for writes and the whole load-modify-save cycle. On Windows
+# there is no fcntl — fall back to the pre-lock (lock-free) behavior,
+# matching the platform split of model/client.py's llm_advisory_lock.
+#
+# Fail-open: the lock is advisory. If it can't be acquired within the
+# timeout, callers proceed as before (with a warning) rather than break
+# config access entirely.
 
-    Returns defaults if the file doesn't exist.
-    Raises ValueError if the file contains invalid values.
+_BEING_LOCK_TIMEOUT_S = 10.0
+
+# Per-lock-path in-process state: an RLock serializes threads within this
+# process, and a depth count makes the lock re-entrant for the holding
+# thread (flock is per open-file-description, so a naive re-acquire on a
+# fresh fd would block the process against itself). Only the OUTERMOST
+# with-block touches the flock.
+_being_lock_thread_locks: Dict[str, threading.RLock] = {}
+_being_lock_depth: Dict[str, int] = {}
+_being_lock_registry_guard = threading.Lock()
+
+
+def _config_lock_path(config_path: Path) -> str:
+    """Path of the advisory lock file beside being.yml.
+
+    being.yml may be a symlink to personas/<id>.yml in multi-persona
+    mode; resolve so every reader/writer of the same underlying file
+    agrees on one lock file.
+    """
+    try:
+        resolved = config_path.resolve()
+    except OSError:
+        resolved = config_path
+    return str(resolved) + ".lock"
+
+
+@contextmanager
+def being_config_lock(
+    path: Optional[str] = None,
+    exclusive: bool = True,
+    timeout_s: float = _BEING_LOCK_TIMEOUT_S,
+) -> Iterator[bool]:
+    """Hold the cross-process advisory lock for being.yml.
+
+    Usage:
+        with being_config_lock(path) as acquired:
+            if not acquired:
+                logger.warning("being.yml lock timed out — proceeding anyway")
+            # ... load-modify-save (use the _unlocked internals / update_being_config)
+
+    Yields True when the lock is held, False on timeout (fail-open). On
+    Windows yields True without any locking (the pre-lock behavior).
+    Nested acquisition from the holding thread is a no-op — the outermost
+    with-block owns the flock.
     """
     config_path = Path(path) if path else _default_path()
+    lock_file = _config_lock_path(config_path)
+    key = str(lock_file)
 
-    # Consume this process's first-load check for this path BEFORE the
-    # exists() early-return: on a fresh install being.yml is created by the
-    # unlock POST itself, and the guard must already be spent by then or
-    # the next load relocks the unlock it just wrote.
+    with _being_lock_registry_guard:
+        tlock = _being_lock_thread_locks.setdefault(key, threading.RLock())
+    tlock.acquire()
+    try:
+        with _being_lock_registry_guard:
+            _being_lock_depth[key] = _being_lock_depth.get(key, 0) + 1
+            outermost = _being_lock_depth[key] == 1
+
+        if not outermost:
+            # Re-entrant: the outer with-block in this thread already
+            # holds the flock.
+            yield True
+            return
+
+        if platform.system() == "Windows":
+            # Windows doesn't have fcntl — fall back to the pre-lock
+            # behavior (in-process serialization only).
+            yield True
+            return
+
+        import fcntl
+
+        try:
+            lock_file_parent = os.path.dirname(lock_file)
+            if lock_file_parent:
+                os.makedirs(lock_file_parent, exist_ok=True)
+            fd = os.open(lock_file, os.O_CREAT | os.O_WRONLY, 0o600)
+            acquired = False
+            try:
+                mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                deadline = time.monotonic() + timeout_s
+                while True:
+                    try:
+                        fcntl.flock(fd, mode | fcntl.LOCK_NB)
+                        acquired = True
+                        break
+                    except (BlockingIOError, OSError):
+                        if time.monotonic() >= deadline:
+                            break
+                        time.sleep(0.05)
+                if not acquired:
+                    logger.warning(
+                        "being.yml lock timed out after %.1fs — proceeding (fail-open)",
+                        timeout_s,
+                    )
+                yield acquired
+            finally:
+                if acquired:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        except OSError as e:
+            # Can't even open the lock file (read-only dir, etc.) —
+            # advisory means advisory: proceed as before.
+            logger.warning(f"being.yml lock unavailable ({e}) — proceeding (fail-open)")
+            yield False
+    finally:
+        with _being_lock_registry_guard:
+            _being_lock_depth[key] -= 1
+            if _being_lock_depth[key] <= 0:
+                _being_lock_depth.pop(key, None)
+        tlock.release()
+
+
+def _consume_volatile_relock_guard(config_path: Path) -> bool:
+    """Consume this process's first-load check for this path.
+
+    Returns True if this is the first load of this path in this process.
+    Must run BEFORE any exists() early-return: on a fresh install
+    being.yml is created by the unlock POST itself, and the guard must
+    already be spent by then or the next load relocks the unlock it just
+    wrote.
+    """
     config_key = str(config_path)
     with _volatile_relock_lock:
         first_load_this_process = config_key not in _volatile_relock_done
         _volatile_relock_done.add(config_key)
+        return first_load_this_process
 
-    if not config_path.exists():
-        logger.info(f"No being config at {config_path}, using defaults")
-        return BeingConfig()
 
+def _read_being_config(config_path: Path) -> BeingConfig:
+    """Read and parse being.yml. No locking, no relock side effects."""
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
@@ -443,14 +577,19 @@ def load_being_config(path: Optional[str] = None) -> BeingConfig:
         raise ValueError(f"Invalid YAML in {config_path}: {e}")
     except OSError as e:
         raise ValueError(f"Cannot read {config_path}: {e}")
+    return BeingConfig.from_dict(data)
 
-    config = BeingConfig.from_dict(data)
 
+def _apply_runtime_relocks(config: BeingConfig, first_load_this_process: bool) -> bool:
+    """Apply the volatile-unlock and expiry relocks in place.
+
+    Returns True if any relock was applied (caller should persist).
+    """
+    relocked = False
     # Volatile unlock: reset to local_only on the FIRST load in each
     # process (i.e. on process restart). The volatile_unlock flag is
     # persisted so the next process can see it and relock; later loads in
     # the same process must not relock — see _volatile_relock_done above.
-    relocked = False
     if config.security.volatile_unlock and first_load_this_process:
         logger.info("Volatile unlock detected on load — relocking secrets to local_only")
         config.security.secret_tier = "local_only"
@@ -467,18 +606,117 @@ def load_being_config(path: Optional[str] = None) -> BeingConfig:
             config.security.secret_tier = "local_only"
             config.security.secret_tier_expiry = None
             relocked = True
+    return relocked
+
+
+def _persist_relock(config: BeingConfig, config_path: Path) -> None:
+    """Persist a relocked config, warning (not raising) on failure."""
+    try:
+        _save_being_config_unlocked(config, config_path)
+    except Exception as e:
+        logger.warning(f"Failed to persist relocked config: {e}")
+
+
+def _load_being_config_unlocked(
+    config_path: Path,
+    first_load_this_process: bool,
+) -> BeingConfig:
+    """Load (and consume relocks) without taking the advisory lock.
+
+    Only for use inside a held being_config_lock — or from
+    load_being_config, which locks around the call.
+    """
+    if not config_path.exists():
+        logger.info(f"No being config at {config_path}, using defaults")
+        return BeingConfig()
+
+    config = _read_being_config(config_path)
+
+    if _apply_runtime_relocks(config, first_load_this_process):
+        # Persist the relocked state so the YAML doesn't keep stale TTL fields
+        _persist_relock(config, config_path)
 
     config.validate()
-
-    # Persist the relocked state so the YAML doesn't keep stale TTL fields
-    if relocked:
-        try:
-            save_being_config(config, path)
-        except Exception as e:
-            logger.warning(f"Failed to persist relocked config: {e}")
-
     logger.info(f"Loaded being config from {config_path} (voice={config.voice})")
     return config
+
+
+def load_being_config(path: Optional[str] = None) -> BeingConfig:
+    """Load being config from YAML file.
+
+    Returns defaults if the file doesn't exist.
+    Raises ValueError if the file contains invalid values.
+
+    Takes a SHARED advisory lock for the read (concurrent readers don't
+    block each other). Loads can also *write* — volatile-unlock and
+    expiry relocks are persisted — so when a relock fires, the lock is
+    escalated to EXCLUSIVE and the config is re-read from disk before
+    saving, never clobbering a concurrent writer.
+    """
+    config_path = Path(path) if path else _default_path()
+    first_load_this_process = _consume_volatile_relock_guard(config_path)
+
+    # Fast path: shared lock. Concurrent readers proceed in parallel.
+    with being_config_lock(config_path, exclusive=False) as acquired:
+        if not acquired:
+            logger.warning("being.yml lock not held for load — reading anyway (fail-open)")
+
+        if not config_path.exists():
+            logger.info(f"No being config at {config_path}, using defaults")
+            return BeingConfig()
+
+        config = _read_being_config(config_path)
+        if not _apply_runtime_relocks(config, first_load_this_process):
+            config.validate()
+            logger.info(f"Loaded being config from {config_path} (voice={config.voice})")
+            return config
+
+    # A relock must be persisted — escalate shared → exclusive and redo
+    # against a FRESH read, so a change written between our shared read
+    # and this save is never clobbered by a stale object.
+    with being_config_lock(config_path, exclusive=True) as acquired:
+        if not acquired:
+            logger.warning("being.yml lock not held for relock persist — saving anyway (fail-open)")
+        if not config_path.exists():
+            return BeingConfig()
+        config = _read_being_config(config_path)
+        if _apply_runtime_relocks(config, first_load_this_process):
+            _persist_relock(config, config_path)
+        config.validate()
+        logger.info(f"Loaded being config from {config_path} (voice={config.voice})")
+        return config
+
+
+def update_being_config(
+    mutator: Callable[[BeingConfig], None],
+    path: Optional[str] = None,
+) -> BeingConfig:
+    """Atomically load-modify-save being config under the exclusive lock.
+
+    This is the safe composite for every caller that MODIFIES the config
+    (dashboard settings, MCP set_autonomy_level): the advisory lock is
+    held across the whole load-modify-save cycle, so a stale object can
+    never revert a change another process persisted mid-cycle (REV-01
+    F4). Use this instead of a bare load_being_config + save_being_config
+    pair.
+
+    ``mutator`` receives the freshly loaded config and mutates it in
+    place; it may raise to abort (nothing is persisted then). The result
+    is validated before saving and returned.
+    """
+    config_path = Path(path) if path else _default_path()
+    first_load_this_process = _consume_volatile_relock_guard(config_path)
+
+    with being_config_lock(config_path, exclusive=True) as acquired:
+        if not acquired:
+            logger.warning("being.yml lock not held for update — proceeding (fail-open)")
+        config = _load_being_config_unlocked(config_path, first_load_this_process)
+
+        mutator(config)
+
+        config.validate()
+        _save_being_config_unlocked(config, config_path)
+        return config
 
 
 def explicit_variant() -> Optional[str]:
@@ -517,14 +755,9 @@ def explicit_variant() -> Optional[str]:
     return str(variant)
 
 
-def save_being_config(config: BeingConfig, path: Optional[str] = None) -> None:
-    """Save being config to YAML file.
-
-    Validates before saving. Creates parent directories if needed.
-    """
-    config.validate()
-
-    config_path = Path(path) if path else _default_path()
+def _save_being_config_unlocked(config: BeingConfig, config_path: Path) -> None:
+    """Write being.yml. No locking — only for use inside being_config_lock
+    or from save_being_config, which locks around the call."""
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     data = config.to_dict()
@@ -565,3 +798,20 @@ def save_being_config(config: BeingConfig, path: Optional[str] = None) -> None:
         logger.info(f"Saved being config to {config_path}")
     except OSError as e:
         raise ValueError(f"Cannot write {config_path}: {e}")
+
+
+def save_being_config(config: BeingConfig, path: Optional[str] = None) -> None:
+    """Save being config to YAML file.
+
+    Validates before saving. Creates parent directories if needed.
+    Holds the EXCLUSIVE advisory lock for the write, so a concurrent
+    load-modify-save in another process (dashboard vs. MCP server) can
+    never interleave with this save.
+    """
+    config.validate()
+
+    config_path = Path(path) if path else _default_path()
+    with being_config_lock(config_path, exclusive=True) as acquired:
+        if not acquired:
+            logger.warning("being.yml lock not held for save — writing anyway (fail-open)")
+        _save_being_config_unlocked(config, config_path)

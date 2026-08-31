@@ -6,9 +6,16 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import threading
+import time
 
 import pytest
 import yaml
+
+try:
+    import fcntl
+except ImportError:  # Windows — the flock tests are skipped there
+    fcntl = None
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -17,6 +24,8 @@ from halbert_core.config.being_config import (
     SecurityConfig,
     load_being_config,
     save_being_config,
+    being_config_lock,
+    update_being_config,
     VALID_OPERATIONAL_TIERS,
     VALID_SECRET_TIERS,
 )
@@ -207,3 +216,202 @@ class TestVolatileUnlock:
 
         loaded = load_being_config(path)
         assert loaded.security.secret_tier == "local_only"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="flock cross-process tests need fcntl")
+class TestCrossProcessLock:
+    """REV-01 F4: an advisory flock serializes cross-process writes to being.yml.
+
+    The dashboard and the MCP server are separate processes that both do
+    load-modify-save on being.yml. Without a cross-process lock, an MCP
+    ``set_autonomy_level`` save can persist a stale object and silently
+    revert a UI relock. Each test here holds the flock from outside —
+    exactly as another process would — and verifies the lock is real.
+
+    The lock file lives beside being.yml (``<being.yml>.lock``), matching
+    the platform split of ``model/client.py``'s ``llm_advisory_lock``
+    (fcntl.flock on POSIX, lock-free fallback on Windows).
+    """
+
+    LOCK_WAIT_S = 0.4       # how long to let the background thread block
+    JOIN_WAIT_S = 5.0       # generous join timeout
+
+    @staticmethod
+    def _lock_file(path):
+        return path + ".lock"
+
+    def _hold_external_lock(self, path):
+        """Acquire the config's flock as an unrelated process would."""
+        fd = os.open(self._lock_file(path), os.O_CREAT | os.O_WRONLY, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
+
+    @staticmethod
+    def _release_external_lock(fd):
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+    def _write_yaml(self, path, data):
+        with open(path, "w") as f:
+            yaml.dump(data, f)
+
+    def test_save_creates_lock_file_beside_config(self, tmp_path):
+        path = str(tmp_path / "being.yml")
+        save_being_config(BeingConfig(), path)
+        assert os.path.exists(self._lock_file(path))
+
+    def test_load_blocks_until_external_lock_released(self, tmp_path):
+        """A load must not read while another process holds the lock."""
+        path = str(tmp_path / "being.yml")
+        save_being_config(BeingConfig(voice="first_person"), path)
+
+        fd = self._hold_external_lock(path)
+        done = threading.Event()
+        result = {}
+        try:
+            t = threading.Thread(
+                target=lambda: result.__setitem__("cfg", load_being_config(path)) or done.set()
+            )
+            t.start()
+            time.sleep(self.LOCK_WAIT_S)
+            assert not done.is_set(), "load should block behind the external lock"
+
+            # While blocked, the external process changes the file
+            self._write_yaml(path, {"voice": "hybrid"})
+            self._release_external_lock(fd)
+            done.wait(self.JOIN_WAIT_S)
+            t.join(self.JOIN_WAIT_S)
+        finally:
+            if not done.is_set():
+                self._release_external_lock(fd)
+        assert done.is_set()
+        # The load saw the freshly written file, not a pre-lock snapshot
+        assert result["cfg"].voice == "hybrid"
+
+    def test_save_blocks_until_external_lock_released(self, tmp_path):
+        path = str(tmp_path / "being.yml")
+        save_being_config(BeingConfig(voice="first_person"), path)
+
+        fd = self._hold_external_lock(path)
+        done = threading.Event()
+        try:
+            t = threading.Thread(
+                target=lambda: save_being_config(BeingConfig(voice="hybrid"), path) or done.set()
+            )
+            t.start()
+            time.sleep(self.LOCK_WAIT_S)
+            assert not done.is_set(), "save should block behind the external lock"
+            self._release_external_lock(fd)
+            done.wait(self.JOIN_WAIT_S)
+            t.join(self.JOIN_WAIT_S)
+        finally:
+            if not done.is_set():
+                self._release_external_lock(fd)
+        assert done.is_set()
+        with open(path) as f:
+            assert yaml.safe_load(f)["voice"] == "hybrid"
+
+    def test_update_being_config_does_not_revert_a_concurrent_relock(self, tmp_path):
+        """The F4 scenario, end to end.
+
+        An MCP-style load-modify-save (update_being_config) starts while
+        the config is unlocked; the dashboard relocks it from another
+        process mid-cycle. The update must load under the lock — so it
+        builds on the relocked state — and its save must not restore the
+        unlock.
+        """
+        path = str(tmp_path / "being.yml")
+        unlocked = BeingConfig()
+        unlocked.security.secret_tier = "cloud_ok_acknowledged"
+        save_being_config(unlocked, path)
+
+        fd = self._hold_external_lock(path)
+        done = threading.Event()
+        result = {}
+
+        def mcp_set_autonomy_level():
+            result["cfg"] = update_being_config(
+                lambda c: setattr(c, "autonomy_level", "act"), path
+            )
+            done.set()
+
+        try:
+            t = threading.Thread(target=mcp_set_autonomy_level)
+            t.start()
+            time.sleep(self.LOCK_WAIT_S)
+            assert not done.is_set(), "update should block behind the external lock"
+
+            # The dashboard (another process) relocks while it holds the lock
+            with open(path) as f:
+                raw = yaml.safe_load(f)
+            raw["security"]["secret_tier"] = "local_only"
+            self._write_yaml(path, raw)
+            self._release_external_lock(fd)
+            done.wait(self.JOIN_WAIT_S)
+            t.join(self.JOIN_WAIT_S)
+        finally:
+            if not done.is_set():
+                self._release_external_lock(fd)
+        assert done.is_set()
+
+        assert result["cfg"].autonomy_level == "act"
+        assert result["cfg"].security.secret_tier == "local_only"
+        # Both changes survive on disk: the relock was not reverted
+        with open(path) as f:
+            final = yaml.safe_load(f)
+        assert final["security"]["secret_tier"] == "local_only"
+        assert final["autonomy_level"] == "act"
+
+    def test_update_being_config_persists_and_returns(self, tmp_path):
+        path = str(tmp_path / "being.yml")
+        save_being_config(BeingConfig(autonomy_level="observe"), path)
+
+        cfg = update_being_config(
+            lambda c: setattr(c, "autonomy_level", "act"), path
+        )
+        assert cfg.autonomy_level == "act"
+        assert load_being_config(path).autonomy_level == "act"
+
+    def test_update_being_config_rejects_invalid_result(self, tmp_path):
+        """A mutator that would persist an invalid config leaves the file alone."""
+        path = str(tmp_path / "being.yml")
+        save_being_config(BeingConfig(voice="first_person"), path)
+
+        with pytest.raises(ValueError, match="Invalid voice"):
+            update_being_config(lambda c: setattr(c, "voice", "bogus"), path)
+
+        assert load_being_config(path).voice == "first_person"
+
+    def test_lock_is_reentrant_within_the_holding_thread(self, tmp_path):
+        """save/load called inside being_config_lock must not deadlock."""
+        import fcntl
+
+        path = str(tmp_path / "being.yml")
+        save_being_config(BeingConfig(), path)
+
+        with being_config_lock(path) as acquired:
+            assert acquired is True
+            save_being_config(BeingConfig(voice="hybrid"), path)  # nested → no-op lock
+        assert load_being_config(path).voice == "hybrid"
+
+    def test_lock_timeout_fails_open(self, tmp_path):
+        """The lock is advisory: on timeout callers proceed (like llm_advisory_lock)."""
+        path = str(tmp_path / "being.yml")
+        save_being_config(BeingConfig(), path)
+
+        fd = self._hold_external_lock(path)
+        try:
+            with being_config_lock(path, timeout_s=0.2) as acquired:
+                assert acquired is False
+        finally:
+            self._release_external_lock(fd)
+
+    def test_windows_falls_back_to_lock_free(self, tmp_path, monkeypatch):
+        """No fcntl on Windows — same behavior as before the lock existed."""
+        import halbert_core.config.being_config as bc
+        monkeypatch.setattr(bc.platform, "system", lambda: "Windows")
+
+        path = str(tmp_path / "being.yml")
+        save_being_config(BeingConfig(voice="hybrid"), path)
+        assert load_being_config(path).voice == "hybrid"
+        assert not os.path.exists(self._lock_file(path))
