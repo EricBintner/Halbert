@@ -2676,7 +2676,32 @@ class AgentStateMachine:
         RESPONDING state: Generate final response.
         """
         logger.info(f"RESPONDING: confidence={self.ctx.confidence:.2f}")
-        
+
+        # Phase 2 modality wiring: resolve the turn's delivery modality
+        # (TEXT/VOICE) from the channel capability + cognitive state, and
+        # defang modality control tags from the user input (spec 5.11).
+        # When the engine is not installed, this is a no-op (text-only).
+        modality_ctx = None
+        try:
+            from ..integrations.modality_wiring import (
+                build_modality_context,
+                defang_user_input,
+                resolve_turn_modality,
+                should_speak,
+            )
+            modality_ctx = build_modality_context(
+                user_query=self.ctx.user_query,
+                speaker_role=self.ctx.speaker_role,
+            )
+            if modality_ctx is not None:
+                modality_ctx = resolve_turn_modality(modality_ctx)
+                # Defang the user query in conversation history (spec 5.11).
+                # The original query is preserved in ctx.user_query; the
+                # defanged version is applied to the messages array below.
+                self._defanged_query = defang_user_input(self.ctx.user_query)
+        except Exception as e:
+            logger.debug(f"Modality wiring skipped (non-fatal): {e}")
+
         # Build response prompt. Neither ``history`` nor ``continuity`` is
         # passed any more:
         #   * the prior turns are the messages array (_build_messages), and
@@ -2842,6 +2867,78 @@ class AgentStateMachine:
                 self.ctx.session_id, inv["module"], inv.get("props", {})
             )
             logger.info(f"Module invoked: {inv['module']}")
+
+        # Phase 2 modality wiring: demux the response into a MultiStreamPayload
+        # and emit modality + speech SSE events for the frontend. When the
+        # engine is not installed or the modality is TEXT, this is a no-op
+        # (the display_text is the clean_response, no speech segments).
+        try:
+            if modality_ctx is not None:
+                from ..integrations.modality_wiring import (
+                    demux_response,
+                    get_display_text,
+                    get_speech_text,
+                    should_speak,
+                )
+                payload = demux_response(
+                    clean_response,
+                    modality_ctx,
+                    session_id=self.ctx.session_id,
+                    thread_id=self.ctx.thread_id or "",
+                )
+                if payload is not None:
+                    # Emit modality decision event for the frontend.
+                    modality_value = getattr(
+                        getattr(modality_ctx, "recommended_modality", None),
+                        "value", "text",
+                    )
+                    yield StreamEvent(
+                        type="modality_resolved",
+                        data={
+                            "session_id": self.ctx.session_id,
+                            "modality": modality_value,
+                            "speech_text": get_speech_text(payload),
+                            "display_text": get_display_text(payload),
+                        },
+                    )
+                    # If voice modality, emit speech segments for the audio
+                    # pipeline. The frontend's useAgentStream hook routes
+                    # these to the audio playback component.
+                    if should_speak(modality_ctx):
+                        for seg in getattr(payload, "segments", []):
+                            if not getattr(seg, "is_spoken", False):
+                                continue
+                            yield StreamEvent(
+                                type="speech_segment",
+                                data={
+                                    "session_id": self.ctx.session_id,
+                                    "text": seg.text,
+                                    "role": getattr(
+                                        getattr(seg, "role", None),
+                                        "value", "persona",
+                                    ),
+                                    "prosody": {
+                                        "rate": getattr(
+                                            getattr(seg, "prosody", None),
+                                            "rate", 1.0,
+                                        ),
+                                        "volume": getattr(
+                                            getattr(seg, "prosody", None),
+                                            "volume", 1.0,
+                                        ),
+                                        "whisper": getattr(
+                                            getattr(seg, "prosody", None),
+                                            "whisper", False,
+                                        ),
+                                    },
+                                },
+                            )
+                        logger.info(
+                            f"Emitted {len([s for s in getattr(payload, 'segments', []) if getattr(s, 'is_spoken', False)])} "
+                            f"speech segments for voice delivery"
+                        )
+        except Exception as e:
+            logger.debug(f"Modality demux/delivery skipped (non-fatal): {e}")
 
         # Final committed text is the stripped response — see the stripping
         # note above. Streaming may have already shown the raw tail, so

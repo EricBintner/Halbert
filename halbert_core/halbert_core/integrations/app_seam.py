@@ -31,7 +31,14 @@ import os
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:  # Protocol names are annotation-only (PEP 563 via __future__ annotations)
-    from haloysius.seam import GovernancePolicy, ModelBackend, RetrievalBackend
+    from haloysius.seam import (
+        ChannelCapability,
+        GovernancePolicy,
+        ModelBackend,
+        RetrievalBackend,
+        VoiceAuthGate,
+        VoiceBackend,
+    )
 
 from .sourceprep_retrieval_backend import SourcePrepRetrievalBackend
 from .sourceprep_client import SourcePrepClient
@@ -341,11 +348,19 @@ class HalbertAppSeam:
     - ModelBackend: TierRouter/Ollama LLM via HalbertModelBackend
     - RetrievalBackend: SourcePrep semantic search via SourcePrepRetrievalBackend
     - GovernancePolicy: Permissive policy via HalbertGovernancePolicy
+    - VoiceBackend: PiperTTS via HalbertVoiceBackend (Phase 2 modality wiring)
+    - ChannelCapability: Tauri/Wyoming state via HalbertChannelCapability
+    - VoiceAuthGate: CAM++ + RoleGate via HalbertVoiceAuthGate
 
     Haloysius defines the AppSeam Protocol but has no internal call sites for
     it; consumers of ``get_app_seam()`` are Halbert-side (cognition_wiring
     passes the model backend to ThoughtGenerator). RetrievalBackend.search()
     is consumed by context/adapters.SourcePrepAdapter, not via this registry.
+
+    The three voice accessors (Phase 2) are constructed lazily on first
+    access so the seam stays importable without the audio-inference extra.
+    A text-only deployment leaves them None — the engine degrades to
+    text-only delivery (subtractive contract).
     """
 
     def __init__(
@@ -353,10 +368,16 @@ class HalbertAppSeam:
         retrieval_backend: Optional[RetrievalBackend] = None,
         model_backend: Optional[ModelBackend] = None,
         governance: Optional[GovernancePolicy] = None,
+        voice_backend: Optional[VoiceBackend] = None,
+        channel_capability: Optional[ChannelCapability] = None,
+        voice_auth_gate: Optional[VoiceAuthGate] = None,
     ):
         self._retrieval = retrieval_backend
         self._model = model_backend
         self._governance = governance
+        self._voice_backend = voice_backend
+        self._channel_capability = channel_capability
+        self._voice_auth_gate = voice_auth_gate
 
     def get_model_backend(self) -> Optional[ModelBackend]:
         return self._model
@@ -367,6 +388,58 @@ class HalbertAppSeam:
     def get_governance(self) -> Optional[GovernancePolicy]:
         return self._governance
 
+    def get_voice_backend(self) -> Optional[VoiceBackend]:
+        """Return the voice backend, lazy-constructing if not set.
+
+        Constructs a ``HalbertVoiceBackend`` wrapping ``PiperTTS`` on first
+        access. Returns None if the audio-inference extra is not installed
+        (the engine degrades to text-only delivery).
+        """
+        if self._voice_backend is not None:
+            return self._voice_backend
+        try:
+            from .voice_backend import HalbertVoiceBackend
+            self._voice_backend = HalbertVoiceBackend()
+            return self._voice_backend
+        except Exception as e:
+            logger.debug(f"Voice backend not available: {e}")
+            return None
+
+    def get_channel_capability(self) -> Optional[ChannelCapability]:
+        """Return the channel capability, lazy-constructing if not set.
+
+        Constructs a ``HalbertChannelCapability`` reporting Tauri desktop /
+        Wyoming satellite state on first access.
+        """
+        if self._channel_capability is not None:
+            return self._channel_capability
+        try:
+            from .channel_capability import HalbertChannelCapability
+            self._channel_capability = HalbertChannelCapability()
+            return self._channel_capability
+        except Exception as e:
+            logger.debug(f"Channel capability not available: {e}")
+            return None
+
+    def get_voice_auth_gate(self) -> Optional[VoiceAuthGate]:
+        """Return the voice auth gate, lazy-constructing if not set.
+
+        Constructs a ``HalbertVoiceAuthGate`` wrapping CAM++ +
+        RoleGate on first access. Returns None if the audio-inference extra
+        is not installed (the engine treats unverified speakers with the
+        most restrictive policy; when the gate is absent, ``speaker=None``
+        opts out of biometric tightening — decision 51).
+        """
+        if self._voice_auth_gate is not None:
+            return self._voice_auth_gate
+        try:
+            from .voice_auth_gate import HalbertVoiceAuthGate
+            self._voice_auth_gate = HalbertVoiceAuthGate()
+            return self._voice_auth_gate
+        except Exception as e:
+            logger.debug(f"Voice auth gate not available: {e}")
+            return None
+
 
 def wire_halbert_seam(
     sourceprep_project_id: Optional[str] = None,
@@ -375,6 +448,9 @@ def wire_halbert_seam(
     model: Optional[str] = None,
     skip_retrieval: bool = False,
     skip_model: bool = False,
+    voice_backend: Optional[Any] = None,
+    channel_capability: Optional[Any] = None,
+    voice_auth_gate: Optional[Any] = None,
 ) -> HalbertAppSeam:
     """Build a HalbertAppSeam and register it with haloysius.seam.
 
@@ -394,6 +470,12 @@ def wire_halbert_seam(
         skip_retrieval: If True, don't wire the retrieval backend (for
             testing or when SourcePrep isn't running).
         skip_model: If True, don't wire the model backend.
+        voice_backend: Optional pre-constructed VoiceBackend. If None, the
+            seam lazy-constructs a HalbertVoiceBackend on first access.
+        channel_capability: Optional pre-constructed ChannelCapability.
+            If None, the seam lazy-constructs on first access.
+        voice_auth_gate: Optional pre-constructed VoiceAuthGate. If None,
+            the seam lazy-constructs on first access.
 
     Returns:
         The HalbertAppSeam instance (also registered globally via
@@ -433,6 +515,9 @@ def wire_halbert_seam(
         retrieval_backend=retrieval_backend,
         model_backend=model_backend,
         governance=governance,
+        voice_backend=voice_backend,
+        channel_capability=channel_capability,
+        voice_auth_gate=voice_auth_gate,
     )
 
     from haloysius.seam import register_app_seam  # lazy: haloysius is optional at import time

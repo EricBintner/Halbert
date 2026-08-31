@@ -139,6 +139,10 @@ export interface AgentSession {
    * card to Finished.
    */
   tasks?: { block_id: string; owner: string; completed: boolean }[];
+  /** Phase 2: the engine's modality decision for this turn. */
+  modality?: ModalityInfo | null;
+  /** Phase 2: speech segments emitted for voice delivery this turn. */
+  speechSegments?: SpeechSegmentEvent[];
 }
 
 export interface StreamEvent {
@@ -233,6 +237,28 @@ export interface ProvenanceRef {
 export interface ModuleInvocation {
   module: string;
   props: Record<string, any>;
+}
+
+// Phase 2 modality wiring: the engine's modality decision + speech segments.
+export type ResponseModality = 'text' | 'voice' | 'mixed' | 'deferred';
+
+export interface ModalityInfo {
+  /** The engine's recommended delivery modality for this turn. */
+  modality: ResponseModality;
+  /** Markdown-stripped text to speak (redacted in multi-occupant mode). */
+  speechText: string;
+  /** Full markdown to render on screen (always lossless). */
+  displayText: string;
+}
+
+export interface SpeechSegmentEvent {
+  text: string;
+  role: string; // 'persona' | 'narrator' | 'cameo' | 'thought' | 'silent'
+  prosody: {
+    rate: number;
+    volume: number;
+    whisper: boolean;
+  };
 }
 
 // A store failure is logged once per page load; the turn still answers and
@@ -411,6 +437,8 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       recalled: null,
       turnId: null,
       tasks: [],
+      modality: null,
+      speechSegments: [],
     });
     sessionIdRef.current = sessionId;
   }, []);
@@ -781,6 +809,41 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
             console.warn('[AGENT] thread store error (turn still answered):', event.message);
           }
           return prev;
+        }
+
+        // Phase 2 modality wiring: the engine's modality decision for
+        // this turn. The frontend uses this to show a modality badge and
+        // route speech segments to the audio playback component.
+        case 'modality_resolved': {
+          const modality = (event.modality as ResponseModality) ?? 'text';
+          const speechText = (event.speech_text as string) ?? '';
+          const displayText = (event.display_text as string) ?? '';
+          return {
+            ...prev,
+            modality: { modality, speechText, displayText },
+          };
+        }
+
+        // Phase 2: a speech segment emitted for voice delivery. The
+        // frontend's audio component plays these in order; the text
+        // channel renders displayText from modality_resolved instead.
+        case 'speech_segment': {
+          const prosodyData = event.prosody as
+            | { rate?: number; volume?: number; whisper?: boolean }
+            | undefined;
+          const seg: SpeechSegmentEvent = {
+            text: (event.text as string) ?? '',
+            role: (event.role as string) ?? 'persona',
+            prosody: {
+              rate: prosodyData?.rate ?? 1.0,
+              volume: prosodyData?.volume ?? 1.0,
+              whisper: prosodyData?.whisper ?? false,
+            },
+          };
+          return {
+            ...prev,
+            speechSegments: [...(prev.speechSegments ?? []), seg],
+          };
         }
 
         default:

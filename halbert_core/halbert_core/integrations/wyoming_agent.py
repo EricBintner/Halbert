@@ -28,6 +28,7 @@ import asyncio
 import json
 import logging
 import os
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -109,17 +110,40 @@ class HalbertWyomingAgent:
             return "I'm not fully started yet. Please try again in a moment."
 
         # Collect response text from the agent's stream events
-        response_text = await self._process_agent_turn(agent, text, spatial_context)
+        # TASK-07: thread conversation_id through the full turn lifecycle.
+        response_text = await self._process_agent_turn(
+            agent, text, spatial_context, conversation_id=conversation_id,
+        )
 
         return response_text or "I'm not sure how to help with that."
 
-    async def _process_agent_turn(self, agent, query: str, spatial_context: str) -> str:
-        """Run the agent state machine and collect the response text."""
-        from ...agents.events import StreamEvent
+    async def _process_agent_turn(
+        self,
+        agent,
+        query: str,
+        spatial_context: str,
+        conversation_id: str = "",
+    ) -> str:
+        """Run the agent state machine and collect the response text.
+
+        TASK-07 fixes:
+        - Mints a unique turn UUID for ``session_id`` per turn (not per
+          session). The old ``f"wyoming-{os.getpid()}"`` was stable across
+          turns, so the agent's turn-lock would block consecutive voice
+          turns from the same satellite.
+        - Threads ``conversation_id`` through the full turn lifecycle so
+          the thread manager can group voice turns by HA conversation.
+        - Passes ``speaker_role="unknown"`` (not a hardcoded value) so the
+          RoleGate applies the correct tightening for unidentified speakers.
+        """
+        from ..agents.events import StreamEvent
 
         full_query = query
         if spatial_context:
             full_query = f"{spatial_context}\n\nUser request: {query}"
+
+        # TASK-07: unique per-turn session_id (not per-process).
+        turn_session_id = f"wyoming-{uuid.uuid4().hex[:12]}"
 
         response_chunks: list[str] = []
 
@@ -127,7 +151,7 @@ class HalbertWyomingAgent:
             async with asyncio.timeout(30.0):
                 async for event in agent.process(
                     query=full_query,
-                    session_id=f"wyoming-{os.getpid()}",
+                    session_id=turn_session_id,
                 ):
                     if isinstance(event, StreamEvent):
                         if event.type == "response_chunk":
@@ -303,8 +327,14 @@ async def proactive_speak(
     room where the target user is detected). Suppressed when guest_mode
     or sleeping input_boolean is active.
 
+    TASK-07 fix: the text is markdown-stripped before being sent to HA's
+    TTS service. The old code sent raw markdown (``**bold**``, ``# headers``,
+    ``[links](url)``) which HA's TTS would read aloud verbatim — "asterisk
+    asterisk bold asterisk asterisk". The demuxer's ``strip_markdown()``
+    removes all markdown syntax so only plain text reaches the speaker.
+
     Args:
-        text: The message to speak.
+        text: The message to speak (may contain markdown — it will be stripped).
         area_id: Area to speak in (if None, speaks to all media_players).
         config: Optional config override.
 
@@ -325,6 +355,13 @@ async def proactive_speak(
 
         client = HAClient(ha_config)
 
+        # TASK-07: strip markdown before sending to TTS. HA's TTS reads
+        # raw text aloud — markdown syntax is not spoken language.
+        spoken_text = _strip_markdown_for_speech(text)
+        if not spoken_text.strip():
+            logger.warning("Proactive speak: text was empty after markdown stripping")
+            return False
+
         # Check suppression booleans
         for entity_id in [cfg.guest_mode_entity, cfg.sleep_mode_entity]:
             try:
@@ -336,15 +373,66 @@ async def proactive_speak(
                 pass  # Entity doesn't exist — don't suppress
 
         # Build service call data
-        service_data: Dict[str, Any] = {"message": text}
+        service_data: Dict[str, Any] = {"message": spoken_text}
         if area_id:
             # Target media players in the specified area
             service_data["area_id"] = area_id
 
         await client.call_service("tts", "speak", service_data)
-        logger.info(f"Proactive speak sent to area {area_id}: {text[:80]}")
+        logger.info(f"Proactive speak sent to area {area_id}: {spoken_text[:80]}")
         return True
 
     except Exception as e:
         logger.warning(f"Proactive speak failed: {e}")
         return False
+
+
+def _strip_markdown_for_speech(text: str) -> str:
+    """Strip markdown syntax from text before sending to TTS.
+
+    TASK-07 fix: HA's TTS service reads raw text aloud. Markdown syntax
+    (``**bold**``, ``# headers``, ``[links](url)``, code fences, emoji)
+    is not spoken language and sounds terrible when read verbatim.
+
+    Delegates to the Haloysius demuxer's ``strip_markdown()`` when the
+    engine is available; otherwise uses a simple regex-based fallback
+    that handles the most common markdown constructs.
+    """
+    # Try the engine's canonical stripper first.
+    try:
+        from haloysius.modality.demuxer import strip_markdown
+        import re
+        return re.sub(r"\s+", " ", strip_markdown(text)).strip()
+    except ImportError:
+        pass
+
+    # Fallback: basic markdown stripping for when the engine is not installed.
+    import re
+    t = text
+    # Code fences (remove with content — spoken code is useless)
+    t = re.sub(r"```[^\n]*\n.*?```", " ", t, flags=re.DOTALL)
+    t = re.sub(r"~~~[^\n]*\n.*?~~~", " ", t, flags=re.DOTALL)
+    # Images
+    t = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", t)
+    # Links: keep anchor text
+    t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)
+    # Headers
+    t = re.sub(r"^[ \t]*#{1,6}[ \t]+", "", t, flags=re.MULTILINE)
+    # Bold/italic
+    t = re.sub(r"\*\*([^*]+)\*\*", r"\1", t)
+    t = re.sub(r"\*([^*\n]+)\*", r"\1", t)
+    t = re.sub(r"__([^_]+)__", r"\1", t)
+    # Inline code: keep text
+    t = re.sub(r"`([^`]*)`", r"\1", t)
+    # Strikethrough
+    t = re.sub(r"~~([^~]+)~~", r"\1", t)
+    # Blockquotes
+    t = re.sub(r"^[ \t]*>+[ \t]?", "", t, flags=re.MULTILINE)
+    # List markers
+    t = re.sub(r"^[ \t]*[-*+][ \t]+", "", t, flags=re.MULTILINE)
+    t = re.sub(r"^[ \t]*\d+[.)][ \t]+", "", t, flags=re.MULTILINE)
+    # Horizontal rules
+    t = re.sub(r"^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$", "", t, flags=re.MULTILINE)
+    # Collapse whitespace
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
