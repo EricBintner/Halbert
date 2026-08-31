@@ -1,6 +1,6 @@
 # Review Packet 08: UI/UX Redesign, Settings Megafile Decomposition & Daylight Design System
 
-**Review Level:** **Fable Level Review**  
+**Review Level:** **GLM-5.3 (reassigned 2026-08-30 — see MASTER-REVIEW-INDEX § 2 for effort tier and batch)**  
 **Domain:** Frontend Architecture, Design System Tokens, Component Decomposition, Information Architecture, and Marketing Web Suite  
 **Target Date:** 2026-08-29  
 **Status:** Ready for Frontend Architectural & Visual Review  
@@ -18,7 +18,7 @@ The comprehensive plan (`.handoff/HALBERT-UI-REDESIGN-PLAN.md`) defines:
 - Decomposing `Settings.tsx` into 6 isolated, lazy-loaded tab components.
 - Reconciling redundant pages (e.g. merging `Security.tsx` system findings into Intelligence & Findings).
 
-The reviewing model (**Fable**) must review the decomposition blueprint, evaluate React component state isolation, audit Tailwind/token styling, and verify responsiveness and accessibility (ARIA).
+The reviewing model (**GLM-5.3**) must review the decomposition blueprint, evaluate React component state isolation, audit Tailwind/token styling, and verify responsiveness and accessibility (ARIA).
 
 ---
 

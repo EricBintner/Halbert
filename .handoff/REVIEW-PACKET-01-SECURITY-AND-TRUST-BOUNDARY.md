@@ -1,6 +1,6 @@
 # Review Packet 01: Security Architecture, Trust Boundaries & Sensitivity Classification
 
-**Review Level:** **Fable Level Review**  
+**Review Level:** **GLM-5.3 (reassigned 2026-08-30 — see MASTER-REVIEW-INDEX § 2 for effort tier and batch)**  
 **Domain:** Security Architecture, Secret Redaction, Sensitivity Classification, MCP Gateways, and Cryptographic/Policy Boundaries  
 **Target Date:** 2026-08-29  
 **Status:** Ready for Deep Security & Architectural Review  
@@ -13,7 +13,7 @@ Over the past week (2026-08-22 to 2026-08-29), Halbert underwent a massive secur
 
 A critical milestone during this period was the **Tier 2 Recalibration**: converting policy-based credential checks into strict **architectural guarantees** (secrets never leave the local tool sandbox during `describe_secret`). In parallel, a full visual redesign of the **Security Settings Tab** was executed per the Daylight Mid-Century Modern design system, complete with live telemetry, volatile TTL unlocking, and high-friction phrase confirmation.
 
-The reviewing model (**Fable**) must evaluate the airtightness of these trust boundaries, verify that no leakage pathways exist across context assembly or tool calls, check the correctness of regex and entropy filters, and identify any remaining incomplete work.
+The reviewing model (**GLM-5.3**) must evaluate the airtightness of these trust boundaries, verify that no leakage pathways exist across context assembly or tool calls, check the correctness of regex and entropy filters, and identify any remaining incomplete work.
 
 ---
 
@@ -73,7 +73,7 @@ The reviewing model (**Fable**) must evaluate the airtightness of these trust bo
 
 ## 5. Incomplete Work & Open Items
 
-1. **CLI Script Migration:** `config/credential_validation.py` and `config/compromise_detection.py` were decoupled from `describe_secret` (Tier 2 recalibration), but still sit in `config/`. They need to be packaged as standalone human-run CLI commands (`halbert-check-credential`, `halbert-check-breach`) in `pyproject.toml` console scripts.
+1. ~~**CLI Script Migration**~~ **DONE (verified 2026-08-30):** the modules now live in `halbert_core/halbert_core/cli/` (`check_credential.py`, `check_breach.py`) and are registered as `halbert-check-credential`/`halbert-check-breach` console scripts in `halbert_core/pyproject.toml:118-122`. Only `scripts/rebuild_sourceprep_unredacted.py` from TASK-03 remains in this domain.
 2. **Unredacted SourcePrep Indexing (Operational Gate):** Run `register_host_project(redact=False)` to stage raw files, populate canon DB, and trigger an unredacted SourcePrep index rebuild while verifying that both egress gates (MCP tool boundary and secure model routing) protect raw keys.
 3. **Live Scanner Egress Testing:** Run automated integration tests with mock API keys across all macOS discovery scanners (`system_profile.py`, `keychain_scanner.py`, etc.) to prove zero raw credential egress.
 

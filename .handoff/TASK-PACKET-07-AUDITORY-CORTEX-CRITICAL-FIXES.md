@@ -1,9 +1,9 @@
 # Task Packet 07: Auditory Cortex Critical Fixes & Modality Prompt Defanging
 
-**Target Model:** **Fable Level**  
+**Target Model:** **GLM-5.3 medium** (reassigned 2026-08-30; Batch U2 — runs with REV-09/REV-03 as one ultracode workflow; the four fixes fan out cleanly)  
 **Domain:** Voice AI Safety, Wyoming Protocol Integration, Text-to-Speech Preprocessing, and Prompt Delimiter Defanging  
 **Target Date:** 2026-08-30  
-**Status:** Ready for Implementation  
+**Status (verified 2026-08-30):** all four gaps confirmed still open in code — `wyoming_agent.py:130` still uses `session_id=f"wyoming-{os.getpid()}"` and calls `agent.process()` without `speaker_role`; `audio/speech/text_preprocessor.py` does not exist; `BargeInHandler` (in `audio/speech/barge_in.py`) is not wired into `audio/pipeline.py`; `_CONTINUITY_TAG_RE` in `agent_prompts.py:197` defangs only `<continuity>` tags, not `<speech>`.  
 **Governing Documents:**
 - [`documentation/design/13-adversarial-review-modality-handoff.md`](file:///Volumes/4TB-BAD/Halbert/documentation/design/13-adversarial-review-modality-handoff.md)
 - [`.handoff/audio/01-CORRECTED-ARCHITECTURE.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/audio/01-CORRECTED-ARCHITECTURE.md)

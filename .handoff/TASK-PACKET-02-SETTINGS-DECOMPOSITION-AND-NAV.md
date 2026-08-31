@@ -1,9 +1,10 @@
 # Task Packet 02: Settings Megafile Decomposition & Navigation Consolidation
 
-**Target Model:** **Fable Level**  
+**Target Model:** **GLM-5.3 medium** (reassigned 2026-08-30; Batch U3 — runs together with TASK-08/REV-08/REV-11 as one ultracode workflow; tab extraction parallelizes cleanly across fan-out agents)  
 **Domain:** Frontend Architecture, React Component Decomposition, Information Architecture, and Daylight Design System Alignment  
 **Target Date:** 2026-08-29  
 **Status:** Ready for Implementation  
+**Verified 2026-08-30:** `Settings.tsx` is currently **3,283 lines** (not 3,105/3,273 as stated below); `pages/Security.tsx` still exists (278 lines); `Layout.tsx` nav is 5 sections (~14 items).  
 **Governing Documents:**
 - [`.handoff/HALBERT-UI-REDESIGN-PLAN.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/HALBERT-UI-REDESIGN-PLAN.md)
 - [`.handoff/HALBERT-UI-REDESIGN-INVESTIGATION-REQUEST.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/HALBERT-UI-REDESIGN-INVESTIGATION-REQUEST.md)

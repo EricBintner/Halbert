@@ -1,10 +1,10 @@
 # Task Packet 09: Security Review 01 Integration & Dispatch Egress Hardening
 
-**Target Model:** **Fable Level**  
+**Target Model:** **GLM-5.3 high** (reassigned 2026-08-30; Batch U1 — runs with TASK-03 Task 3.2 and REV-01/REV-02 reviews)  
 **Domain:** Security Architecture, MCP Egress Interception, Transport Hardening, and Server-Side Phrase Verification  
 **Target Date:** 2026-08-30  
-**Status:** Ready for Merge & Regression Verification  
-**Branch:** `feat/security-review-01`
+**Status (verified 2026-08-30):** **Task 9.1 (merge) is DONE** — `feat/security-review-01` was merged into `main` at `297ceb67`. Only Task 9.2 verification remains. Note: `test_tier2_guarantee.py`, `test_redactor.py`, and `test_security_roles.py` referenced below **do not exist in `halbert_core/tests/`** — writing/locating the right security tests is part of this batch.  
+**Branch:** `feat/security-review-01` (merged)
 
 ---
 
@@ -21,11 +21,7 @@ The `feat/security-review-01` branch contains 5 vital security fixes developed o
 
 ## 2. Detailed Task Breakdown & Implementation Steps
 
-### Task 9.1: Merge `feat/security-review-01` into `main`
-- Merge the branch cleanly:
-  ```bash
-  git merge feat/security-review-01
-  ```
+### Task 9.1: ~~Merge `feat/security-review-01` into `main`~~ — DONE (merged at `297ceb67`, 2026-08-30)
 
 ### Task 9.2: Verify Dispatch Egress Gate & Phrase Enforcement
 - **File:** [`halbert_core/halbert_core/mcp/server.py`](file:///Volumes/4TB-BAD/Halbert/halbert_core/halbert_core/mcp/server.py)

@@ -1,10 +1,10 @@
 # Task Packet 10: Apple Intelligence Foundation Integration & Onboarding
 
-**Target Model:** **Fable Level**  
+**Target Model:** **GLM-5.3 medium** (reassigned 2026-08-30; Batch U4)  
 **Domain:** Apple Silicon Local Inference, Metal Detection, Auto-Provisioning, and Model Picker Integration  
 **Target Date:** 2026-08-30  
-**Status:** Ready for Merge & Platform Verification  
-**Branch:** `feat/apple-intelligence`
+**Status (verified 2026-08-30):** **Task 10.1 (merge) is DONE** — `feat/apple-intelligence` is on `main` (merge `11ded488`). Only Task 10.2 platform verification remains. Tests `test_apple_intelligence_platform.py` and `test_auto_provision.py` exist.  
+**Branch:** `feat/apple-intelligence` (merged)
 
 ---
 
@@ -21,11 +21,7 @@ Key deliverables:
 
 ## 2. Detailed Task Breakdown & Implementation Steps
 
-### Task 10.1: Merge `feat/apple-intelligence` into `main`
-- Merge the branch:
-  ```bash
-  git merge feat/apple-intelligence
-  ```
+### Task 10.1: ~~Merge `feat/apple-intelligence` into `main`~~ — DONE (merge `11ded488`, verified on `main` 2026-08-30)
 
 ### Task 10.2: Platform Verification & Endpoint Caching
 - **File:** [`halbert_core/halbert_core/dashboard/routes/llm.py`](file:///Volumes/4TB-BAD/Halbert/halbert_core/halbert_core/dashboard/routes/llm.py)

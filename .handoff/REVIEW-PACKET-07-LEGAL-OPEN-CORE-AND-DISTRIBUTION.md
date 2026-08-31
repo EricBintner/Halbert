@@ -1,6 +1,6 @@
 # Review Packet 07: Product Strategy, Legal/Licensing Architecture & Open-Core Commercialization
 
-**Review Level:** **Opus Level Review**  
+**Review Level:** **GLM-5.3 high (drafts) + founder sign-off (reassigned 2026-08-30)**  
 **Domain:** Open-Core Business Strategy, GPLv3 + App Store §7 Exception, Corpus Licensing, Distribution Channels, and Founder Decision Matrix  
 **Target Date:** 2026-08-29  
 **Status:** Ready for Strategic Legal & Product Synthesis Review  
@@ -19,7 +19,7 @@ Key strategic documents and architectures created:
 2. **Corpus Licensing Architecture:** Legal categorization and attribution audit across documentation, RAG data sources, scrapers, and third-party dependencies.
 3. **Founder Decision Matrix (`FOUNDER-TODO.md`):** Executive decision tree covering Developer Certificate of Origin (DCO) formalization, pricing, and infrastructure provisioning.
 
-The reviewing model (**Opus**) must perform a high-level strategic review of this legal framework, verify GPLv3 §7 compliance against Apple Developer Agreement terms, ensure DCO terms protect project copyright integrity, and validate the pricing and release roadmap.
+The reviewing model (**GLM-5.3**, drafting; founder signs off) must perform a high-level strategic review of this legal framework, verify GPLv3 §7 compliance against Apple Developer Agreement terms, ensure DCO terms protect project copyright integrity, and validate the pricing and release roadmap.
 
 ---
 

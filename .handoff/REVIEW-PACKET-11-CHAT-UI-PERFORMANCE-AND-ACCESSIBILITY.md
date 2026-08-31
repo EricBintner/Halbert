@@ -1,6 +1,6 @@
 # Review Packet 11: Chat UI Performance, Streaming State & Accessibility Audit
 
-**Review Level:** **Fable Level Review**  
+**Review Level:** **GLM-5.3 (reassigned 2026-08-30 — see MASTER-REVIEW-INDEX § 2 for effort tier and batch)**  
 **Domain:** Frontend Chat Architecture, Virtualized Streaming, RequestAnimationFrame Buffering, ARIA Accessibility, and State Machine Resilience  
 **Target Date:** 2026-08-30  
 **Status:** Ready for Deep Frontend Audit & Sprint Planning  
@@ -27,7 +27,7 @@ Key audit findings:
 3. **11 Accessibility (a11y) Violations:** Missing ARIA live-region announcements, lack of keyboard focus traps in modal sheets, non-semantic message roles.
 4. **Streaming State Gaps:** Incomplete markdown AST rendering during high-speed token bursts causing HTML layout thrashing.
 
-The reviewing model (**Fable**) must review the recommended 4-sprint execution plan, verify the `requestAnimationFrame` token buffering architecture, and scrutinize the proposed typed message parts refactor.
+The reviewing model (**GLM-5.3**) must review the recommended 4-sprint execution plan, verify the `requestAnimationFrame` token buffering architecture, and scrutinize the proposed typed message parts refactor.
 
 ---
 

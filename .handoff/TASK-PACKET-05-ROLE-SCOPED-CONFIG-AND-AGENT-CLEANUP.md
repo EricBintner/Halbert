@@ -1,9 +1,9 @@
 # Task Packet 05: Agent Context Plumbing & Role-Scoped Config Harvesting
 
-**Target Model:** **Fable Level**  
-**Domain:** Agent Context Assembly, Request DTO Plumbing, Role-Scoped File Harvesting, and SourcePrep Scopes  
+**Target Model:** **GLM-5.3 medium** (reassigned 2026-08-30; Batch U4)  
+**Domain:** Role-Scoped File Harvesting and SourcePrep Scopes  
 **Target Date:** 2026-08-29  
-**Status:** Ready for Implementation  
+**Status (verified 2026-08-30):** **Task 5.1 is OBSOLETE — do not implement.** The founder decision on 2026-08-30 was to *remove* the `context` field from `SendMessageRequest` (done; see `MASTER-TODO.md` § 3). This packet now covers **Task 5.2 (role harvester) and Task 5.3 (scoped registration) only**. `config/role_harvester.py` does not exist yet; `test_role_harvester.py` must be created.  
 **Governing Documents:**
 - [`.handoff/ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md)
 - [`.handoff/PLAN-ROLE-SCOPED-CONFIG-HARVESTING-2026-08-26.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/PLAN-ROLE-SCOPED-CONFIG-HARVESTING-2026-08-26.md)
@@ -21,7 +21,8 @@ This packet addresses two core backend items:
 
 ## 2. Detailed Task Breakdown & Implementation Steps
 
-### Task 5.1: Wire `SendMessageRequest.context` into `ConversationContext`
+### Task 5.1: ~~Wire `SendMessageRequest.context` into `ConversationContext`~~ — OBSOLETE (2026-08-30)
+> **Erratum:** the `context` field was **removed** from `SendMessageRequest` by founder decision on 2026-08-30 (checked off in `MASTER-TODO.md` § 3). This task contradicts that decision and must not be implemented.
 - **File:** [`halbert_core/halbert_core/dashboard/routes/agent.py`](file:///Volumes/4TB-BAD/Halbert/halbert_core/halbert_core/dashboard/routes/agent.py)
   1. In `send_message()` and `process()` methods:
      - Check if `request.context` is populated.

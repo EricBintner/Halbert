@@ -1,6 +1,6 @@
 # Review Packet 09: Auditory Cortex & Multimodal Audio AI Pipeline
 
-**Review Level:** **Fable Level Review**  
+**Review Level:** **GLM-5.3 (reassigned 2026-08-30 — see MASTER-REVIEW-INDEX § 2 for effort tier and batch)**  
 **Domain:** Local Audio Inference, Sherpa-ONNX Engine, Streaming Zipformer ASR, Silero VAD, Piper TTS, CAM++ Speaker ID, RoleGate Safety, and Wyoming Audio Ingress  
 **Target Date:** 2026-08-30  
 **Status:** Ready for Deep Subsystem Scrutiny & Safety Audit  
@@ -18,7 +18,7 @@ Key systems built:
 4. **Acoustic Anomaly Detector:** CED-tiny/Zipformer audio tagger and proactive acoustic anomaly finding generator.
 5. **Frontend Audio UI:** `AudioSettings.tsx`, `SpeakerProfilesCard.tsx`, `VoiceEnrollmentModal.tsx`, `AcousticAnomalyModule.tsx`, and `AcousticAuraIndicator.tsx`.
 
-The reviewing model (**Fable**) must scrutinize the audio state machine, verify memory bounds on ring buffers, audit the RoleGate invariant against privilege escalation, and review the adversarial findings in `documentation/design/13-adversarial-review-modality-handoff.md`.
+The reviewing model (**GLM-5.3**) must scrutinize the audio state machine, verify memory bounds on ring buffers, audit the RoleGate invariant against privilege escalation, and review the adversarial findings in `documentation/design/13-adversarial-review-modality-handoff.md`.
 
 ---
 

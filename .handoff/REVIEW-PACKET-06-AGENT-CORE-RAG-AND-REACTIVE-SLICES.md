@@ -1,6 +1,6 @@
 # Review Packet 06: Core Agent Evolution, Intake Pipeline, Reactive Slices & SourcePrep RAG Integration
 
-**Review Level:** **Fable Level Review**  
+**Review Level:** **GLM-5.3 (reassigned 2026-08-30 — see MASTER-REVIEW-INDEX § 2 for effort tier and batch)**  
 **Domain:** Agent Execution Loop, Intake Complexity Classifier, Compression Cascade, Scoped Knowledge Retrieval, Proactive Event Bus, and Findings Engine  
 **Target Date:** 2026-08-29  
 **Status:** Ready for Deep Core Engine & RAG Retrieval Review  
@@ -17,7 +17,7 @@ Between 2026-08-22 and 2026-08-25, Halbert underwent a complete re-architecting 
 5. **Reactive Slice & Proactive Event Bus:** Built end-to-end proactive daemon infrastructure: event bus, SSE push transport, scheduled morning reports, module registry, and `WhyChip` provenance citations.
 6. **Findings Store & Blast-Radius Engine:** Created an automated system diagnostic pipeline: drop-in conflict detection, fstab phantom checks, precedence resolution, edge extraction, and safe `approve-apply-rollback` proposal lifecycle.
 
-The reviewing model (**Fable**) must review the safety and robustness of the agent execution lifecycle, verify prompt assembly and token budgets under the compression cascade, audit scoped retrieval filters, and scrutinize the findings proposal rollback mechanisms.
+The reviewing model (**GLM-5.3**) must review the safety and robustness of the agent execution lifecycle, verify prompt assembly and token budgets under the compression cascade, audit scoped retrieval filters, and scrutinize the findings proposal rollback mechanisms.
 
 ---
 

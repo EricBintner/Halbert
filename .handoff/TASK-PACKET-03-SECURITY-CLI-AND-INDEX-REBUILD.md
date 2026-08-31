@@ -1,9 +1,9 @@
 # Task Packet 03: Security CLI Tools Migration & Operational Index Rebuild
 
-**Target Model:** **Fable Level**  
+**Target Model:** **GLM-5.3 medium** (reassigned 2026-08-30; Batch U1 — runs with TASK-09 verification and REV-01/REV-02 security reviews)  
 **Domain:** Security Tooling Packaging, CLI Console Scripts, and Operational SourcePrep Indexing  
 **Target Date:** 2026-08-29  
-**Status:** Ready for Implementation  
+**Status (verified 2026-08-30):** **Task 3.1 is DONE** — `halbert_core/halbert_core/cli/` exists with `check_credential.py`/`check_breach.py`, and `halbert_core/pyproject.toml:118-122` registers `halbert-check-credential`/`halbert-check-breach`. **Only Task 3.2 (rebuild script) remains.** Note: `test_cli_security.py` does not exist yet — create it as part of the batch.  
 **Governing Documents:**
 - [`.handoff/TIER2-RECALIBRATION-2026-08-29.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/TIER2-RECALIBRATION-2026-08-29.md)
 - [`.handoff/SECURITY-REVIEW-REQUEST-2026-08-29.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/SECURITY-REVIEW-REQUEST-2026-08-29.md)
@@ -23,7 +23,7 @@ This task packet directs:
 
 ## 2. Detailed Task Breakdown & Implementation Steps
 
-### Task 3.1: Package CLI Tools & Entrypoints
+### Task 3.1: ~~Package CLI Tools & Entrypoints~~ — DONE (2026-08-30)
 1. Create directory `halbert_core/halbert_core/cli/` (with `__init__.py`).
 2. Move and refactor:
    - `halbert_core/halbert_core/config/credential_validation.py` → `halbert_core/halbert_core/cli/check_credential.py`

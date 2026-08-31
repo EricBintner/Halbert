@@ -1,6 +1,6 @@
 # Review Packet 04: Sovereign Host Vision & Continuous Terminal / Somatic Nervous System
 
-**Review Level:** **Fable Level Review**  
+**Review Level:** **GLM-5.3 (reassigned 2026-08-30 — see MASTER-REVIEW-INDEX § 2 for effort tier and batch)**  
 **Domain:** Operating System Primitives, Headless PTY Terminals, Somatic Context Blocks, Agent State Machines, and Cross-Session Continuity  
 **Target Date:** 2026-08-29  
 **Status:** Ready for Deep Systems & Concurrency Review  
@@ -17,7 +17,7 @@ Between 2026-08-24 and 2026-08-28, a major architectural leap was realized:
 3. **Block-Typed Conversation History (A1) & State Machine (A2a):** Migration from raw text strings to structured `MessageBlock` objects and formalizing the `ConversationStatus` lifecycle.
 4. **Cross-Session Continuity (R2–R9):** Implementation of date-stamped receipts, open loops tracking, state-at-close persistence, domain-scoped recall, and memory consolidation fences.
 
-The reviewing model (**Fable**) must review the async PTY lifecycle, inspect potential file-descriptor leaks, audit state-machine transitions under error conditions, and verify memory consolidation bounds.
+The reviewing model (**GLM-5.3**) must review the async PTY lifecycle, inspect potential file-descriptor leaks, audit state-machine transitions under error conditions, and verify memory consolidation bounds.
 
 ---
 

@@ -1,6 +1,6 @@
 # Review Packet 03: Sentient Home Architecture (Home Assistant, Wyoming Voice, Frigate Vision & Multi-Instance)
 
-**Review Level:** **Fable Level Review**  
+**Review Level:** **GLM-5.3 (reassigned 2026-08-30 — see MASTER-REVIEW-INDEX § 2 for effort tier and batch)**  
 **Domain:** Ambient Home Cognition, Home Assistant HACS Bridge, Wyoming Voice Protocol, Frigate NVR Computer Vision, and Multi-Instance Isolation  
 **Target Date:** 2026-08-29  
 **Status:** Ready for Deep Subsystem Scrutiny & Phase 7→8 Transition Review  
@@ -18,7 +18,7 @@ Key architectural systems implemented:
 4. **Frigate NVR & Local Computer Vision:** Asynchronous camera snapshot ingestion, local CV inference (`VisualWatcher`), proactive visual event bus, and 7-day disk-cached episodic visual memory.
 5. **Home Assistant Bridge & HACS Custom Integration (Phase 3 & 6):** Bidirectional WebSocket bridge, Assist API tools, and SourcePrep HA configuration graph indexing.
 
-The reviewing model (**Fable**) must scrutinize the Phase 7→8 transition, audit the model routing logic, verify the Wyoming async event loop, and review the spatial reasoning architecture.
+The reviewing model (**GLM-5.3**) must scrutinize the Phase 7→8 transition, audit the model routing logic, verify the Wyoming async event loop, and review the spatial reasoning architecture.
 
 ---
 

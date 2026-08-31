@@ -1,6 +1,6 @@
 # Review Packet 05: Unified Model Picker, LLM Router & GPU Concurrency
 
-**Review Level:** **Fable Level Review**  
+**Review Level:** **GLM-5.3 (reassigned 2026-08-30 — see MASTER-REVIEW-INDEX § 2 for effort tier and batch)**  
 **Domain:** LLM Router Vendoring, Multi-Provider Endpoint Management, Advisory GPU Locking, and Dynamic Token Management  
 **Target Date:** 2026-08-29  
 **Status:** Ready for Multi-Provider Routing & Hardware Contention Review  
@@ -17,7 +17,7 @@ Key milestones delivered:
 3. **GPU Contention & Advisory Locking:** Implemented cross-process advisory file locking (`ModelLockManager`) to prevent concurrent model loading from exhausting shared VRAM on local GPUs.
 4. **Daemon Detection Deferral:** Built frontend hooks (`useSourcePrepDaemon.ts`, `useLLMConfig.ts`) that smoothly gracefully degrade when the external SourcePrep daemon is offline.
 
-The reviewing model (**Fable**) must verify that model routing fallbacks operate reliably, examine GPU lock release edge-cases on unexpected process termination, and audit tool-calling payload translations across diverse LLM backends.
+The reviewing model (**GLM-5.3**) must verify that model routing fallbacks operate reliably, examine GPU lock release edge-cases on unexpected process termination, and audit tool-calling payload translations across diverse LLM backends.
 
 ---
 

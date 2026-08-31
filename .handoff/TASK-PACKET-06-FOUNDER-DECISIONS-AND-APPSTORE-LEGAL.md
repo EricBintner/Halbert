@@ -1,9 +1,10 @@
 # Task Packet 06: Executive Decisions, Legal DCO & App Store Distribution
 
-**Target Model:** **Opus Level**  
+**Target Model:** **GLM-5.3 high** for drafting (reassigned 2026-08-30; Batch U5) — **but FDR-DEC-01…04 are founder decisions; no model closes them.** AI drafts the text, the founder approves and commits.
 **Domain:** Open-Core Commercial Strategy, GPLv3 + App Store §7 Exception, DCO Policy, and Packaging Architecture  
 **Target Date:** 2026-08-29  
 **Status:** Ready for Executive Decision Formulation & Legal Drafting  
+**Erratum (verified 2026-08-30):** Task 6.3's file path `src-tauri/tauri.conf.json` (repo root) **does not exist** — the actual Tauri config is `halbert_core/halbert_core/dashboard/frontend/src-tauri/tauri.conf.json`.  
 **Governing Documents:**
 - [`FOUNDER-TODO.md`](file:///Volumes/4TB-BAD/Halbert/FOUNDER-TODO.md)
 - [`documentation/legal/OPEN-CORE-AND-DISTRIBUTION-STRATEGY.md`](file:///Volumes/4TB-BAD/Halbert/documentation/legal/OPEN-CORE-AND-DISTRIBUTION-STRATEGY.md)

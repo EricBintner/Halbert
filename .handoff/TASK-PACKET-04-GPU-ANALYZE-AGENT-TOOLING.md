@@ -1,9 +1,10 @@
 # Task Packet 04: GPU Deep-Scan Refactor & Agent Specialist Tooling
 
-**Target Model:** **Fable Level**  
+**Target Model:** **GLM-5.3 medium** (reassigned 2026-08-30; Batch U4 — runs with TASK-01 env override, TASK-05 harvester, TASK-10 verification, REV-05/REV-06 reviews)  
 **Domain:** System Tooling, Agent Specialist Routing, Hardware Context Gathering, and Knowledge Indexing  
 **Target Date:** 2026-08-29  
 **Status:** Ready for Implementation  
+**Verified 2026-08-30:** confirmed still open — raw Ollama `/api/chat` call lives at `dashboard/routes/gpu.py:693`, `POST /api/gpu/analyze` at `gpu.py:588`. `test_gpu_tools.py`/`test_gpu_routes.py` do not exist yet.  
 **Governing Documents:**
 - [`.handoff/MASTER-TODO.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/MASTER-TODO.md) § "GPU Page — Roll into Analyze tooling"
 
