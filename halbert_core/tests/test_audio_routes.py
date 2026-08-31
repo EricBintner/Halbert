@@ -66,7 +66,7 @@ class _StubCoordinator:
         return self._status
 
 
-def test_no_coordinator_returns_static_payload(client, audio_env):
+def test_no_coordinator_status_returns_static_payload(client, audio_env):
     """Regression lock: without app.state.audio_coordinator the payload is
     byte-identical to today's static response."""
     app = client.app
@@ -95,7 +95,7 @@ def test_coordinator_status_returned_verbatim(client, monkeypatch, audio_env):
     assert stub.calls == 1
 
 
-def test_raising_coordinator_falls_back_to_static_payload(client, audio_env):
+def test_raising_coordinator_status_falls_back_to_static_payload(client, audio_env):
     stub = _StubCoordinator(raises=RuntimeError("pipeline blew up"))
     client.app.state.audio_coordinator = stub
 
