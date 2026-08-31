@@ -1218,9 +1218,13 @@ def redact_structured_values(text: str, *, prose: bool = False) -> str:
     return "\n".join(line + eol for line, eol in zip(lines, endings))
 
 
-def redact_text(text: str, *, prose: bool = False) -> str:
+def redact_text(text: str, *, prose: bool = False, _depth: int = 0) -> str:
     """Redact `text`. Pass `prose=True` for a log message; see
-    `redact_structured_values`. Config staging leaves it False."""
+    `redact_structured_values`. Config staging leaves it False.
+
+    ``_depth`` is internal: the base64 pass re-enters this pipeline on
+    decoded content, and the parameter bounds that recursion.
+    """
     # Must run first: TOKEN_RE would otherwise eat the `|` off `password: |`
     # and orphan the block body.
     text = redact_structured_values(text, prose=prose)
@@ -1245,7 +1249,7 @@ def redact_text(text: str, *, prose: bool = False) -> str:
     text = _redact_nested_json(text)
     # Base64-encoded secret detection: a value like cGFzc3dvcmQ9aHVudGVyMg==
     # (base64 of password=hunter2) — decode and check for secret patterns.
-    text = _redact_base64_secrets(text)
+    text = _redact_base64_secrets(text, _depth=_depth)
     # Known-prefix and high-entropy backstop (Task 8): catches bare
     # context-free secrets that the format-aware passes above declined.
     # Runs last so it only fires on what nothing else caught.
@@ -1266,14 +1270,90 @@ import json as _json
 
 _NESTED_JSON_RE = re.compile(r'\{[^{}]*"[A-Za-z_][A-Za-z0-9_]*"\s*:\s*"[^"]*"[^{}]*\}')
 
+#: Whole-value JSON documents larger than this are left to the flat-regex
+#: pass — parsing megabytes of prose-looking text on every call is a DoS
+#: surface, and a secret-bearing config value is never that large.
+_NESTED_JSON_WHOLE_MAX = 1024 * 1024
+
+#: Recursion cap for nested objects/arrays inside a JSON value.
+_NESTED_JSON_MAX_DEPTH = 8
+
+
+def _redact_json_leaves(obj: Any, depth: int = 0) -> "tuple[Any, bool]":
+    """Replace every leaf under a secret key name with ``<secret>``.
+
+    Recurses into nested dicts/lists (the flat regex cannot reach them:
+    ``{"auths": {"registry": {"auth": "..."}}}``). Any non-None, non-bool
+    leaf is redacted — an int PIN under a "password" key is still a secret;
+    bools and None are structural (``PasswordAuthentication no``).
+    Returns ``(new_obj, changed)``; never mutates the input.
+    """
+    if depth > _NESTED_JSON_MAX_DEPTH:
+        return obj, False
+    if isinstance(obj, dict):
+        changed = False
+        out = {}
+        for k, v in obj.items():
+            if _is_secret_key(str(k)):
+                # A secret key whose value is a container: redact the whole
+                # container — the leaves inside are the secret.
+                if isinstance(v, (dict, list)):
+                    if v:
+                        out[k] = "<secret>"
+                        changed = True
+                    else:
+                        out[k] = v
+                    continue
+                if v is not None and not isinstance(v, bool) and v != "":
+                    out[k] = "<secret>"
+                    changed = True
+                    continue
+                out[k] = v
+                continue
+            if isinstance(v, (dict, list)):
+                new_v, sub_changed = _redact_json_leaves(v, depth + 1)
+                if sub_changed:
+                    out[k] = new_v
+                    changed = True
+                    continue
+            out[k] = v
+        return out, changed
+    if isinstance(obj, list):
+        changed = False
+        out_list = []
+        for item in obj:
+            if isinstance(item, (dict, list)):
+                new_item, sub_changed = _redact_json_leaves(item, depth + 1)
+                out_list.append(new_item)
+                changed = changed or sub_changed
+            else:
+                out_list.append(item)
+        return out_list, changed
+    return obj, False
+
 
 def _redact_nested_json(text: str) -> str:
     """Redact secrets inside JSON strings embedded in text.
 
-    Finds JSON-like substrings (``{"key":"value",...}``), parses them,
-    and replaces any value whose key is a secret key name with
-    ``<secret>``. Non-secret keys are preserved.
+    Two shapes:
+    - The whole value is a JSON document (``~/.docker/config.json`` style,
+      nesting included) — parse and walk it with ``_redact_json_leaves``.
+    - A flat JSON object embedded in prose (``{"token":"ghp_xxx"}``) — the
+      regex pass. Non-secret keys are preserved either way.
     """
+    stripped = text.strip()
+    if (stripped.startswith("{") and stripped.endswith("}")
+            and 0 < len(stripped) <= _NESTED_JSON_WHOLE_MAX):
+        try:
+            data = _json.loads(stripped)
+        except (_json.JSONDecodeError, ValueError):
+            pass
+        else:
+            if isinstance(data, dict):
+                redacted, changed = _redact_json_leaves(data)
+                if changed:
+                    return _json.dumps(redacted)
+                return text
 
     def _check(match: "re.Match[str]") -> str:
         json_str = match.group(0)
@@ -1283,14 +1363,10 @@ def _redact_nested_json(text: str) -> str:
             return json_str
         if not isinstance(data, dict):
             return json_str
-        changed = False
-        for k, v in data.items():
-            if _is_secret_key(str(k)) and isinstance(v, str) and v:
-                data[k] = "<secret>"
-                changed = True
+        redacted, changed = _redact_json_leaves(data)
         if not changed:
             return json_str
-        return _json.dumps(data)
+        return _json.dumps(redacted)
 
     return _NESTED_JSON_RE.sub(_check, text)
 
@@ -1307,27 +1383,44 @@ import base64 as _b64
 
 _BASE64_SECRET_RE = re.compile(r"\b[A-Za-z0-9+/]{20,}={0,2}")
 
+#: A base64 token longer than this is image/config data, not a credential —
+#: and decoding megabytes per regex match is a DoS surface. Real encoded
+#: secrets (keys, tokens, password=... pairs) are far smaller.
+_B64_MAX_TOKEN_CHARS = 8192
 
-def _redact_base64_secrets(text: str) -> str:
+#: This pass re-enters redact_text() on decoded content; a base64-of-base64
+#: chain would otherwise recurse once per nesting level (each ~4/3 larger),
+#: a crafted-input CPU bomb. Two levels is enough: at the cap the rest of
+#: the pipeline (known-prefix, high-entropy) still runs on the decoded text.
+_B64_MAX_DEPTH = 2
+
+
+def _redact_base64_secrets(text: str, *, _depth: int = 0) -> str:
     """Redact base64-encoded strings that contain secrets when decoded.
 
     Finds base64-like substrings, decodes them, and checks if the decoded
     content contains a key=value secret pattern. Only redacts if the
     decoded content has a secret pattern — avoids over-redacting
     legitimate base64 content like image data or encoded configs.
+
+    Bounded: tokens over ``_B64_MAX_TOKEN_CHARS`` are not decoded, and the
+    recursive re-entry stops at ``_B64_MAX_DEPTH``.
     """
+    if _depth >= _B64_MAX_DEPTH:
+        return text
 
     def _check(match: "re.Match[str]") -> str:
         b64_str = match.group(0)
-        # Must be valid base64 length (multiple of 4 with padding)
-        if len(b64_str) % 4 != 0:
+        # Must be valid base64 length (multiple of 4 with padding), and
+        # small enough to be a credential rather than a data blob.
+        if len(b64_str) % 4 != 0 or len(b64_str) > _B64_MAX_TOKEN_CHARS:
             return b64_str
         try:
             decoded = _b64.b64decode(b64_str, validate=True).decode("utf-8")
         except Exception:
             return b64_str
         # Check if decoded content has a secret pattern
-        if _is_secret_key(decoded) or redact_text(decoded) != decoded:
+        if _is_secret_key(decoded) or redact_text(decoded, _depth=_depth + 1) != decoded:
             return "<base64_secret>"
         return b64_str
 
