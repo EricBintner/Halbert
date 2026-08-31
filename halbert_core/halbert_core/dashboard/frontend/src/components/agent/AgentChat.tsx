@@ -26,7 +26,7 @@ import {
   Camera,
   ArrowDown,
 } from 'lucide-react';
-import { useAgentStream, type AgentSession } from '../../hooks/useAgentStream';
+import { useAgentStream, type AgentSession, type AgentState } from '../../hooks/useAgentStream';
 import { useTimeline, type UseTimelineReturn } from '../../hooks/useTimeline';
 import { useHostIdentity } from '../../hooks/useHostIdentity';
 import { useInstanceVariant } from '../../hooks/useInstanceVariant';
@@ -109,6 +109,30 @@ interface AgentChatProps {
   /** Opens Settings -> AI Models from the quick-switch footer. */
   onOpenModelSettings?: () => void;
 }
+
+/**
+ * What each agent state is called when it is announced, for a screen reader
+ * following a turn it cannot watch. States happen at most a handful of times
+ * per turn — never per token — so the whole map is one short sentence each.
+ *
+ * Two states deliberately have no sentence here, because something else
+ * already says them exactly once: `awaiting_confirmation` is said
+ * assertively by the hook (design §11 reserves the assertive region for
+ * blocked-on-approval), and `error` is the agentError banner, which the
+ * effect below announces. Repeating either here would double it.
+ */
+const STATE_ANNOUNCEMENTS: Partial<Record<AgentState, string>> = {
+  planning: 'Planning response',
+  searching: 'Searching knowledge base',
+  reading: 'Reading files',
+  executing: 'Executing tool',
+  observing: 'Observing results',
+  reflecting: 'Reflecting on results',
+  responding: 'Responding',
+};
+
+/** DOM id of the mention popup, so the composer can point at it. */
+const MENTION_LISTBOX_ID = 'mention-listbox';
 
 // -----------------------------------------------------------------------------
 // Provenance ref → module parsing (Phase 8 / T8a.3)
@@ -277,6 +301,8 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   const [mentionables, setMentionables] = useState<Mentionable[]>([]);
   const [showMentions, setShowMentions] = useState(false);
   const [mentionFilter, setMentionFilter] = useState('');
+  // The option the arrow keys (and Enter) act on while the popup is open.
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
 
   // Phase 59: Vision/image support
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
@@ -306,6 +332,11 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   } = useAgentStream({
     onStateChange: (state, prev) => {
       console.log('State:', prev, '->', state);
+      // Progress a screen reader can follow. The feed is not a live region,
+      // so without this the agent's work happens in silence for anyone not
+      // watching the screen.
+      const said = STATE_ANNOUNCEMENTS[state];
+      if (said) announce(said);
     },
     onToolStart: (tool, args) => {
       console.log('Tool start:', tool, args);
@@ -323,6 +354,32 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
       announce(agentError, { assertive: true });
     }
   }, [agentError]);
+
+  // Whether the turn that just stopped streaming was stopped by the admin:
+  // the Stop button says "Stopped" itself, so the end-of-turn sentence below
+  // must not talk over it. A ref rather than cancelledRef because the fold
+  // effect resets that one as part of finishing the turn.
+  const stoppedRef = useRef(false);
+  const wasStreamingRef = useRef(false);
+  useEffect(() => {
+    const ended = wasStreamingRef.current && !isStreaming;
+    wasStreamingRef.current = isStreaming;
+    if (!ended) return;
+    if (stoppedRef.current) {
+      stoppedRef.current = false;
+      return;
+    }
+    // Everything with a sentence of its own stays out of this one's way:
+    // the error banner (above), and a turn parked on an approval or an
+    // undecided proposal, which has not finished — it is waiting.
+    if (agentError) return;
+    if (session?.pendingConfirmation || session?.state === 'awaiting_confirmation') return;
+    if (session?.diffProposals.some((diff) => diff.status === 'pending')) return;
+    // A queued question is about to be sent; it says so next, and two
+    // sentences in one breath would eat each other.
+    if (messageQueue.length > 0) return;
+    announce('Reply finished');
+  }, [isStreaming, agentError, session, messageQueue.length]);
 
   // Load mentionables on mount
   useEffect(() => {
@@ -614,11 +671,15 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     if (lastAtIndex !== -1 && lastAtIndex === value.length - 1) {
       setShowMentions(true);
       setMentionFilter('');
+      setActiveMentionIndex(0);
     } else if (lastAtIndex !== -1) {
       const afterAt = value.slice(lastAtIndex + 1);
       if (!afterAt.includes(' ')) {
         setShowMentions(true);
         setMentionFilter(afterAt.toLowerCase());
+        // A fresh filter is a fresh list: the highlight restarts at the
+        // top rather than pointing past the end of a shrunken list.
+        setActiveMentionIndex(0);
       } else {
         setShowMentions(false);
       }
@@ -829,6 +890,10 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     if (isStreaming && input.trim()) {
       setMessageQueue(prev => [...prev, input.trim()]);
       setInput('');
+      // The composer swallowed the sentence; the queue chip is the only
+      // other trace of it, and a feed is not a live region. Without this,
+      // Enter while the agent is busy appears to do nothing at all.
+      announce('Message queued');
       return;
     }
 
@@ -855,6 +920,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     // this one into the transcript as "cancelled".
     foldLiveTurn();
     cancelledRef.current = false;
+    stoppedRef.current = false;
     setLiveUser(userMsg);
     setAgentError(null);
     setAttachedImages([]);
@@ -872,9 +938,34 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
       imageData.length > 0 ? imageData : undefined,
     );
     setInput('');
+    // The sentence vanishing from the composer is the only visual trace of
+    // the send until the agent starts working, which can take seconds. A
+    // screen reader hears nothing at all in that window without this.
+    announce('Message sent');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // The mention popup is a listbox this composer owns (see the markup at
+    // MENTION_LISTBOX_ID): the arrow keys walk it, Enter takes the active
+    // option. Before this, Enter with the popup open did nothing at all —
+    // the options were decoration a keyboard could see and not reach.
+    if (showMentions && filteredMentionables.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActiveMentionIndex(i => Math.min(i + 1, filteredMentionables.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActiveMentionIndex(i => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        insertMention(filteredMentionables[activeMentionIndex]);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !showMentions) {
       e.preventDefault();
       handleSend();
@@ -931,6 +1022,10 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
+        // aria-busy, not a live region: it tells assistive tech the content
+        // is still filling in (the feed inside carries its own feed
+        // semantics), without making every streamed token a spoken event.
+        aria-busy={isStreaming}
         className="flex-1 overflow-y-auto px-4 py-4 space-y-4 relative"
       >
         {/* Empty state: the host introduces itself — only when there is
@@ -1169,13 +1264,28 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
         </div>
       )}
 
-      {/* Mention Autocomplete */}
+      {/* Mention Autocomplete — a real listbox (see handleKeyDown): the
+          composer points at it with aria-controls and names the active
+          option with aria-activedescendant, so the arrow keys are the
+          standard combobox interaction, not a mouse-only popup. */}
       {showMentions && filteredMentionables.length > 0 && (
-        <div className="mx-4 mb-1 bg-muted border border-border rounded-md shadow-lg max-h-48 overflow-y-auto">
-          {filteredMentionables.map((m) => (
+        <div
+          id={MENTION_LISTBOX_ID}
+          role="listbox"
+          aria-label="Mentions"
+          className="mx-4 mb-1 bg-muted border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
+        >
+          {filteredMentionables.map((m, idx) => (
             <button
               key={m.id}
-              className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2 text-xs"
+              id={`mention-option-${m.id}`}
+              type="button"
+              role="option"
+              aria-selected={idx === activeMentionIndex}
+              className={cn(
+                "w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2 text-xs",
+                idx === activeMentionIndex && "bg-muted",
+              )}
               onClick={() => insertMention(m)}
             >
               {m.type === 'terminal' ? (
@@ -1210,10 +1320,12 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
                   className="h-12 w-12 object-cover rounded border border-border"
                 />
                 <button
+                  type="button"
+                  aria-label={`Remove image ${img.name}`}
                   onClick={() => removeAttachedImage(img.id)}
                   className="absolute -top-1 -right-1 h-4 w-4 bg-error text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                 >
-                  <XIcon className="h-2.5 w-2.5" />
+                  <XIcon className="h-2.5 w-2.5" aria-hidden="true" />
                 </button>
               </div>
             ))}
@@ -1235,10 +1347,12 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
               <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 bg-warning/10 border border-warning/20 rounded text-xs">
                 <span className="text-muted-foreground truncate">Queued: {msg}</span>
                 <button
+                  type="button"
+                  aria-label={`Remove queued message: ${msg}`}
                   onClick={() => setMessageQueue(prev => prev.filter((_, i) => i !== idx))}
                   className="text-muted-foreground hover:text-foreground shrink-0"
                 >
-                  <XIcon className="h-3 w-3" />
+                  <XIcon className="h-3 w-3" aria-hidden="true" />
                 </button>
               </div>
             ))}
@@ -1251,6 +1365,16 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
               ref={inputRef}
               value={input}
               aria-label="Message Halbert"
+              // Combobox semantics for the mention listbox (see the popup
+              // markup and handleKeyDown): expanded/pointing/active, so the
+              // screen reader follows the arrows instead of guessing.
+              aria-expanded={showMentions}
+              aria-controls={showMentions ? MENTION_LISTBOX_ID : undefined}
+              aria-activedescendant={
+                showMentions && filteredMentionables.length > 0
+                  ? `mention-option-${filteredMentionables[Math.min(activeMentionIndex, filteredMentionables.length - 1)].id}`
+                  : undefined
+              }
               onChange={(e) => {
                 handleInputChange(e);
                 autoResizeTextarea();
@@ -1276,18 +1400,28 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
             <button
               type="button"
               aria-label="Stop"
-              onClick={() => { cancelledRef.current = true; cancel(); }}
+              onClick={() => {
+                cancelledRef.current = true;
+                // Said here rather than in the stream-end effect, which
+                // would have to guess why streaming stopped; the hand on
+                // the button is the only place that knows.
+                stoppedRef.current = true;
+                cancel();
+                announce('Stopped');
+              }}
               className="p-2 bg-error hover:bg-error rounded-lg transition-colors flex-shrink-0"
             >
               <StopCircle className="h-5 w-5 text-white" aria-hidden="true" />
             </button>
           ) : (
             <button
+              type="button"
+              aria-label="Send"
               onClick={handleSend}
               disabled={!input.trim() && attachedImages.length === 0}
               className="p-2 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex-shrink-0"
             >
-              <Send className="h-5 w-5 text-white" />
+              <Send className="h-5 w-5 text-white" aria-hidden="true" />
             </button>
           )}
         </div>
