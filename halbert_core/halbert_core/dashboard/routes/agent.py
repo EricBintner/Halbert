@@ -138,8 +138,15 @@ def get_agent():
         # Create agent context assembler (R9: no ChromaDB memory on agent path)
         context_assembler = create_agent_context_assembler()
 
-        # SEARCHING state retrieval: SourcePrep (RAGServiceAdapter is deprecated on the chat path)
-        rag_service = SourcePrepAdapter()
+        # SEARCHING state retrieval: SourcePrep (RAGServiceAdapter is
+        # deprecated on the chat path).
+        # S2: home variants run without SourcePrep — the HA agent answers
+        # from live HA state and conversational context. rag_service stays
+        # None; the SEARCHING state guards every rag call with
+        # `if self.rag:`, so it simply gathers from the remaining sources.
+        rag_service = None
+        if not _is_home_variant():
+            rag_service = SourcePrepAdapter()
         # R9: ChromaDB-backed memory fenced off the agent path.
         # memory_service is deliberately None — recall is Halbert-owned (receipts/FTS5).
         memory_service = None
@@ -398,7 +405,9 @@ def _is_home_variant() -> bool:
     secure_model is a sysadmin-instance slot (see
     ``integrations/cognition_wiring.is_home_variant``): home automation
     variants never configure it, so the dedicated secure branch is skipped
-    for them and the local-guide / fail-closed chain decides instead.
+    for them and the local-guide / fail-closed chain decides instead (S1).
+    HA variants also run without SourcePrep retrieval, so the
+    SEARCHING-state rag_service stays None for them (S2).
     """
     try:
         from ...integrations.cognition_wiring import is_home_variant

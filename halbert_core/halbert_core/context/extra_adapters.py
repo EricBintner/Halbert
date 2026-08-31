@@ -554,10 +554,13 @@ def create_extended_context_assembler():
         SourcePrepAdapter,
         DiscoveryServiceAdapter,
         MemoryServiceAdapter,
+        retrieval_adapter_for_variant,
     )
 
     token_counter = TokenCounter()
-    retrieval_adapter = SourcePrepAdapter()
+    # S2: home variants get no retrieval source at all — see
+    # retrieval_adapter_for_variant() in adapters.py.
+    retrieval_adapter = retrieval_adapter_for_variant()
     discovery_adapter = DiscoveryServiceAdapter()
     memory_adapter = MemoryServiceAdapter()
     identity_adapter = SystemIdentityAdapter()

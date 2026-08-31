@@ -418,6 +418,24 @@ class SourcePrepAdapter:
         return documents
 
 
+def retrieval_adapter_for_variant() -> Optional[SourcePrepAdapter]:
+    """SourcePrepAdapter for sysadmin instances; None for home variants.
+
+    Home automation variants run without SourcePrep entirely — the HA agent
+    answers from live HA state and conversational context, never a
+    documentation index (handoff HOME-AUTOMATION-SIMPLIFICATION-2026-08-30,
+    S2). The ContextAssembler tolerates a missing retrieval source; only
+    this gate decides whether the retrieval backend is constructed at all.
+    """
+    try:
+        from ..integrations.cognition_wiring import is_home_variant
+        if is_home_variant():
+            return None
+    except Exception:  # pragma: no cover - gating must never block assembly
+        pass
+    return SourcePrepAdapter()
+
+
 def create_wired_context_assembler():
     """
     Create a ContextAssembler wired up with real services.
@@ -432,7 +450,7 @@ def create_wired_context_assembler():
     from .tokens import TokenCounter
 
     token_counter = TokenCounter()
-    retrieval_adapter = SourcePrepAdapter()
+    retrieval_adapter = retrieval_adapter_for_variant()
     discovery_adapter = DiscoveryServiceAdapter()
     memory_adapter = MemoryServiceAdapter()
 
@@ -450,12 +468,15 @@ def create_agent_context_assembler():
     R9 fence: the agent path must not reach ChromaDB-backed
     HybridMemorySystem. This assembler wires SourcePrep and discovery
     but leaves memory_service=None, so the ContextAssembler skips it.
+
+    S2: home variants get no retrieval source at all — see
+    retrieval_adapter_for_variant().
     """
     from .assembler import ContextAssembler
     from .tokens import TokenCounter
 
     token_counter = TokenCounter()
-    retrieval_adapter = SourcePrepAdapter()
+    retrieval_adapter = retrieval_adapter_for_variant()
     discovery_adapter = DiscoveryServiceAdapter()
 
     return ContextAssembler(

@@ -17,9 +17,6 @@ Environment=HALBERT_DATA_DIR=/var/lib/halbert-home
 Environment=HALBERT_CONFIG_DIR=/etc/halbert-home
 Environment=HALBERT_LOG_DIR=/var/log/halbert-home
 
-# SourcePrep project (HA config awareness)
-Environment=SOURCEPREP_PROJECT_ID=ha-config
-
 # Ports
 Environment=HALBERT_PORT=8001
 Environment=HALBERT_HOST=0.0.0.0

@@ -616,12 +616,15 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                         create_sourceprep_reindex_callback,
                         create_detector_trigger_callback,
                     )
+                    change_callbacks = [create_detector_trigger_callback()]
+                    # S2: the SourcePrep re-index callback is a sysadmin-instance
+                    # feature — home variants run without SourcePrep, so their
+                    # watcher only drives detector triggers.
+                    if _variant not in ("home", "home-light"):
+                        change_callbacks.insert(0, create_sourceprep_reindex_callback())
                     watcher = ConfigWatcher(
                         manifest_path=str(manifest),
-                        change_callbacks=[
-                            create_sourceprep_reindex_callback(),
-                            create_detector_trigger_callback(),
-                        ],
+                        change_callbacks=change_callbacks,
                     )
                     watcher.start()
                     _config_watcher = watcher
