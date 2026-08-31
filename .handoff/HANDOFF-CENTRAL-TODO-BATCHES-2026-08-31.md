@@ -58,9 +58,11 @@ REV-10 (`08c9f615`), REV-11 (`375e8171`). REV-07 is founder-gated (U5).
 
 ---
 
-## 3. In flight at handoff time
+## 3. Rust voice workstream (landed)
 
-- **Rust AEC + NSPanel** (last agent): `audio_capture.rs`, `floating_panel.rs`, `hud_hotkey.rs` written; AEC feature must be gated OFF by default so `cargo check` passes without the bundled-WebRTC C++ build. The agent was told to commit what's verified and report the WebRTC compile as a documented follow-up if it's still building. Check `git log main..HEAD -- src-tauri` for its commits.
+- **AEC capture pipeline** (`e10ea62f`): `audio_capture.rs` — cpal → 16 kHz mono → WebRTC AEC3 (`webrtc-audio-processing 2.1.1` bundled) → loopback TCP (127.0.0.1:18400) for the Python pipeline; TTS far-end reference via second listener + `feed_tts_reference`. Behind optional `voice-capture`/`aec` Cargo features (default build has no audio backends; commands degrade gracefully). Full `cargo build --features aec` verified arm64 (Rosetta toolchain fixed by the committed `build_aec_arm64.sh`); 24/24 unit tests.
+- **NSPanel + CGEventTap HUD** (`057990e9`): `floating_panel.rs` + `hud_hotkey.rs` — non-activating always-on-top pill window (opt-in `voice-hud` label/capability), Esc/Space event tap with focus never stolen, macOS-only cfg gating, Linux stubs compile. `objc2-app-kit` used directly (`tauri-nspanel` does not exist on crates.io).
+- **Follow-ups:** on-hardware runtime testing not attempted (compile-verified only); the Python consumer of the loopback socket (T2.2) and the frontend `voice-hud` route are unbuilt; `macos-private-api` enabled for the transparent pill (App Store caveat in code).
 
 ---
 
