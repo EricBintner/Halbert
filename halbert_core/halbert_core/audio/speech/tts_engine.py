@@ -123,6 +123,11 @@ class PiperTTS:
             return samples, audio.sample_rate
 
         samples, sr = await loop.run_in_executor(None, _generate)
+        # Record the model's real rate (commonly 22050, not SAMPLE_RATE —
+        # that constant is the mic/ASR rate). HalbertVoiceBackend and the
+        # dashboard's TTS egress (O3) both read ``_sample_rate`` to label
+        # the PCM they forward; a wrong rate resamples by playback error.
+        self._sample_rate = sr
 
         # Yield in ~30ms chunks (480 samples at 16kHz, or proportional)
         chunk_size = int(sr * 0.03)

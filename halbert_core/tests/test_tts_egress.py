@@ -321,3 +321,315 @@ class TestTtsEgressRoute:
             ws.send_bytes(b"\x00\x00")
             client.get("/__publish_json/s1")
             assert json.loads(ws.receive_text()) == {"type": "end"}
+
+
+# ---------------------------------------------------------------------------
+# State machine speak-path hook
+# ---------------------------------------------------------------------------
+
+class _Mod:
+    """ResponseModality stand-in: only ``value`` is read on this path."""
+
+    value = "voice"
+
+
+class _FakeCtx:
+    recommended_modality = _Mod()
+
+
+class _FakeSegment:
+    def __init__(self, text, is_spoken=True, rate=1.0):
+        self.text = text
+        self.is_spoken = is_spoken
+        self.role = None
+        self.prosody = type("P", (), {"rate": rate, "volume": 1.0, "whisper": False})()
+
+
+class _FakePayload:
+    speech_text = "spoken words"
+    display_text = "spoken words"
+
+    def __init__(self, *segments):
+        self.segments = list(segments)
+
+
+class _ChunkedTTS:
+    """PiperTTS stand-in: records calls, yields deterministic PCM chunks.
+
+    ``cancel_after`` simulates VAD barge-in: the token fires after that many
+    chunks and the generator stops (exactly how the real engine aborts).
+    """
+
+    def __init__(self, chunks=(b"\x01\x02", b"\x03\x04"), cancel_after=None):
+        self._speed = 1.0
+        self._sample_rate = 22050
+        self._chunks = tuple(chunks)
+        self._cancel_after = cancel_after
+        self.calls = []  # (text, speed, cancel_token)
+
+    async def synthesize(self, text, cancel_token=None):
+        self.calls.append((text, self._speed, cancel_token))
+        for i, chunk in enumerate(self._chunks):
+            if self._cancel_after is not None and i >= self._cancel_after:
+                if cancel_token is not None:
+                    cancel_token.trigger()
+                return
+            yield chunk
+
+
+class _RecordingHub:
+    """TtsEgressHub stand-in with the surface the hook touches."""
+
+    def __init__(self, *subscribed_sessions):
+        self._subscribed = set(subscribed_sessions)
+        self.published = []
+        self.registered_tokens = {}
+        self.token_registrations = []  # every (session, token) ever registered
+        self.cleared_sessions = []
+        self.pipeline = None
+
+    def has_subscribers(self, session_id):
+        return session_id in self._subscribed
+
+    async def publish(self, session_id, data):
+        self.published.append((session_id, data))
+
+    def register_cancel_token(self, session_id, token):
+        self.token_registrations.append((session_id, token))
+        self.registered_tokens[session_id] = token
+
+    def clear_cancel_token(self, session_id):
+        self.cleared_sessions.append(session_id)
+        self.registered_tokens.pop(session_id, None)
+
+
+class _StreamingLLM:
+    """Minimal streaming client — the RESPONDING path only needs these."""
+
+    async def stream(self, messages, on_model_selected=None, **kwargs):
+        for word in ("The", "answer", "is", "42."):
+            yield word + " "
+
+    async def chat(self, messages, tools=None, on_model_selected=None, **kwargs):
+        return type("R", (), {"content": "The answer is 42.", "tool_calls": None})()
+
+
+class _EmptyService:
+    async def search(self, query, limit=5):
+        return []
+
+    async def recall(self, query, limit=5):
+        return []
+
+    async def store_interaction(self, **kw):
+        return None
+
+
+def _build_agent():
+    from halbert_core.agents.state_machine import AgentStateMachine
+    from halbert_core.tools import ToolSafetyFramework, ToolExecutor
+    from halbert_core.context import ContextAssembler, TokenCounter
+    from halbert_core.prompts import AgentPromptBuilder
+
+    return AgentStateMachine(
+        llm_client=_StreamingLLM(),
+        tool_executor=ToolExecutor(safety=ToolSafetyFramework()),
+        context_assembler=ContextAssembler(
+            rag_service=_EmptyService(),
+            memory_service=_EmptyService(),
+            discovery_service=_EmptyService(),
+            token_counter=TokenCounter(),
+        ),
+        prompt_builder=AgentPromptBuilder(),
+        max_loops=3,
+    )
+
+
+def _voice_turn_patches(monkeypatch, payload, pronounce=lambda t: t):
+    """Force the RESPONDING modality path into voice mode with a fake
+    demuxed payload, without needing the Haloysius resolver machinery."""
+    from halbert_core.integrations import modality_wiring as mw
+
+    ctx = _FakeCtx()
+    monkeypatch.setattr(mw, "build_modality_context", lambda *a, **k: ctx)
+    monkeypatch.setattr(mw, "resolve_turn_modality", lambda c: c)
+    monkeypatch.setattr(mw, "defang_user_input", lambda t: t)
+    monkeypatch.setattr(mw, "should_speak", lambda c: True)
+    monkeypatch.setattr(mw, "apply_pronunciation", pronounce)
+    monkeypatch.setattr(mw, "demux_response", lambda *a, **k: payload)
+    monkeypatch.setattr(mw, "get_speech_text", lambda p: p.speech_text)
+    monkeypatch.setattr(mw, "get_display_text", lambda p: p.display_text)
+    return ctx
+
+
+def _patch_hub(monkeypatch, hub):
+    from halbert_core.dashboard.routes import tts_egress
+    monkeypatch.setattr(tts_egress, "get_tts_egress_hub", lambda: hub)
+
+
+SESSION = "sess-tts"
+
+
+class TestStateMachineTtsEgressHook:
+
+    async def test_no_subscriber_means_no_synthesis(self, monkeypatch):
+        """The hub gate: a voice turn with no browser listening synthesizes
+        nothing — the hook must not so much as touch Piper."""
+        payload = _FakePayload(_FakeSegment("Hello there"))
+        _voice_turn_patches(monkeypatch, payload)
+        hub = _RecordingHub()  # nobody subscribed
+        _patch_hub(monkeypatch, hub)
+        tts = _ChunkedTTS()
+        agent = _build_agent()
+        agent._egress_tts = tts
+
+        events = [e async for e in agent.process("hello", session_id=SESSION)]
+
+        assert tts.calls == []
+        assert hub.published == []
+        assert [e.type for e in events if e.type == "speech_segment"]
+
+    async def test_spoken_segments_stream_begin_pcm_end(self, monkeypatch):
+        """With a subscriber, each spoken segment is synthesized with the
+        post-pronunciation text and published as begin -> PCM chunks -> end,
+        in order, while the speech_segment SSE events still go out."""
+        payload = _FakePayload(
+            _FakeSegment("Hello there", rate=1.0),
+            _FakeSegment("(never spoken)", is_spoken=False),
+            _FakeSegment("Second segment", rate=1.5),
+        )
+        _voice_turn_patches(
+            monkeypatch, payload, pronounce=lambda t: t + " (said)"
+        )
+        hub = _RecordingHub(SESSION)
+        _patch_hub(monkeypatch, hub)
+        tts = _ChunkedTTS()
+        agent = _build_agent()
+        agent._egress_tts = tts
+
+        events = [e async for e in agent.process("hello", session_id=SESSION)]
+
+        begin = {"type": "begin", "sample_rate": 22050, "format": "s16le"}
+        # Two spoken segments -> two full begin/chunks/end cycles.
+        assert hub.published == [
+            (SESSION, begin),
+            (SESSION, b"\x01\x02"),
+            (SESSION, b"\x03\x04"),
+            (SESSION, {"type": "end"}),
+            (SESSION, begin),
+            (SESSION, b"\x01\x02"),
+            (SESSION, b"\x03\x04"),
+            (SESSION, {"type": "end"}),
+        ]
+        # Synthesis used the post-pronunciation segment text (what the
+        # ribbon shows), with each segment's rate as Piper speed.
+        assert [c[0] for c in tts.calls] == [
+            "Hello there (said)",
+            "Second segment (said)",
+        ]
+        assert [c[1] for c in tts.calls] == [1.0, 1.5]
+        # The SSE speech segments still reached the stream (2, not 3).
+        seg_events = [e for e in events if e.type == "speech_segment"]
+        assert len(seg_events) == 2
+        assert seg_events[0].data["text"] == "Hello there (said)"
+        # Speed override restored after each segment.
+        assert tts._speed == 1.0
+        # The turn still completes normally.
+        assert any(e.type == "response_complete" for e in events)
+        # The barge-in token was registered for the session and cleared.
+        assert SESSION in hub.cleared_sessions
+        assert SESSION not in hub.registered_tokens
+
+    async def test_barge_in_between_chunks_publishes_cancelled(self, monkeypatch):
+        """A token fired mid-stream (VAD barge-in) stops synthesis and ends
+        the segment with {"type": "cancelled"} instead of end."""
+        payload = _FakePayload(_FakeSegment("Hello there"))
+        _voice_turn_patches(monkeypatch, payload)
+        hub = _RecordingHub(SESSION)
+        _patch_hub(monkeypatch, hub)
+        tts = _ChunkedTTS(cancel_after=1)  # fire after the first chunk
+        agent = _build_agent()
+        agent._egress_tts = tts
+
+        [e async for e in agent.process("hello", session_id=SESSION)]
+
+        assert hub.published == [
+            (SESSION, {"type": "begin", "sample_rate": 22050, "format": "s16le"}),
+            (SESSION, b"\x01\x02"),
+            (SESSION, {"type": "cancelled"}),
+        ]
+
+    async def test_pipeline_token_is_used_when_the_pipeline_runs(self, monkeypatch):
+        """The hook mints its barge-in token from the coordinator when the
+        pipeline is up, so VAD barge-in cancels browser playback too."""
+        payload = _FakePayload(_FakeSegment("Hello there"))
+        _voice_turn_patches(monkeypatch, payload)
+        hub = _RecordingHub(SESSION)
+
+        class _FakePipeline:
+            def __init__(self):
+                self.tokens = []
+
+            def create_barge_in_token(self):
+                token = _FakeToken()
+                self.tokens.append(token)
+                return token
+
+        pipeline = _FakePipeline()
+        hub.pipeline = pipeline
+        _patch_hub(monkeypatch, hub)
+        tts = _ChunkedTTS()
+        agent = _build_agent()
+        agent._egress_tts = tts
+
+        [e async for e in agent.process("hello", session_id=SESSION)]
+
+        assert len(pipeline.tokens) == 1
+        # The token handed to PiperTTS is the coordinator's.
+        assert tts.calls[0][2] is pipeline.tokens[0]
+        # ...and it was registered with the hub for cancel control frames
+        # (cleared again when the turn ends, hence the history check).
+        assert hub.token_registrations == [(SESSION, pipeline.tokens[0])]
+        assert SESSION not in hub.registered_tokens
+
+    async def test_hook_is_silent_without_a_tts(self, monkeypatch):
+        """No voice backend / no Piper model: the hook steps aside and the
+        turn still completes — voice egress is strictly optional."""
+        payload = _FakePayload(_FakeSegment("Hello there"))
+        _voice_turn_patches(monkeypatch, payload)
+        hub = _RecordingHub(SESSION)
+        _patch_hub(monkeypatch, hub)
+        import haloysius.seam as seam_mod
+        monkeypatch.setattr(seam_mod, "get_app_seam", lambda: None)
+        agent = _build_agent()
+        # _egress_tts left unset and the seam has nothing -> stays silent
+
+        events = [e async for e in agent.process("hello", session_id=SESSION)]
+
+        assert hub.published == []
+        assert any(e.type == "response_complete" for e in events)
+
+    async def test_tts_failure_is_non_fatal(self, monkeypatch):
+        """A synthesize that raises must not break the turn — the events
+        above the hook have already been yielded to the user."""
+        payload = _FakePayload(_FakeSegment("Hello there"))
+        _voice_turn_patches(monkeypatch, payload)
+        hub = _RecordingHub(SESSION)
+        _patch_hub(monkeypatch, hub)
+
+        class _BrokenTTS:
+            _speed = 1.0
+            _sample_rate = 22050
+
+            async def synthesize(self, text, cancel_token=None):
+                raise RuntimeError("sherpa-onnx exploded")
+                yield b""  # pragma: no cover
+
+        agent = _build_agent()
+        agent._egress_tts = _BrokenTTS()
+
+        events = [e async for e in agent.process("hello", session_id=SESSION)]
+
+        assert hub.published == []
+        assert any(e.type == "response_complete" for e in events)
+        assert any(e.type == "speech_segment" for e in events)
