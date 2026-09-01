@@ -93,6 +93,7 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 | [experimental/OS-NATIVE-MCP-WARP-AND-SOURCEPREP-INTEGRATION.md](experimental/OS-NATIVE-MCP-WARP-AND-SOURCEPREP-INTEGRATION.md) | **OS-Native MCP Server, Warp-CLI Integration & Native SourcePrep Architecture** |
 | [experimental/BLUE-SKY-SENTIENT-SYSTEMS-AND-COGNITIVE-OS.md](experimental/BLUE-SKY-SENTIENT-SYSTEMS-AND-COGNITIVE-OS.md) | **Blue-Sky Architecture: Sentient Computing, Cognitive OS & The Neural Fabric** |
 | [experimental/SECOND-PASS-FEASIBILITY-AND-PRAGMATIC-BLUE-SKY.md](experimental/SECOND-PASS-FEASIBILITY-AND-PRAGMATIC-BLUE-SKY.md) | **Second-Pass Feasibility, Cross-Platform Architecture & Pragmatic Blue-Sky Audit** |
+| [experimental/THIRD-PASS-SCRUTINY-LIMITATIONS-AND-EDGE-CASES.md](experimental/THIRD-PASS-SCRUTINY-LIMITATIONS-AND-EDGE-CASES.md) | **Third-Pass Architectural Scrutiny: Limitations, Failure Modes & Edge Cases** |
 
 ---
 

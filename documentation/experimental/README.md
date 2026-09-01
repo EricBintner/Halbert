@@ -47,6 +47,10 @@ This folder houses forward-looking technical proposals, architectural thought-ex
 - [**Second-Pass Blue-Sky Feasibility, Cross-Platform Realities & Pragmatic Architecture**](file:///Volumes/4TB-BAD/Halbert/documentation/experimental/SECOND-PASS-FEASIBILITY-AND-PRAGMATIC-BLUE-SKY.md)
   Rigorous feasibility and sanity audit of the 5 Blue-Sky pillars. Grounds them into practical cross-platform architectures (macOS, Windows, Linux, and the existing desktop app): user-owned encrypted cloud backups (iCloud/Google Drive), safe state directories instead of dangerous kernel FUSE mounts, cross-platform fast sentries (EndpointSecurity/ETW), and nightly memory consolidation today.
 
+- [**Third-Pass Architectural Scrutiny: Limitations, Failure Modes & Edge Cases**](file:///Volumes/4TB-BAD/Halbert/documentation/experimental/THIRD-PASS-SCRUTINY-LIMITATIONS-AND-EDGE-CASES.md)
+  Fable-level technical scrutiny and failure mode analysis for the 5 refined pillars. Uncovers battery drains in laptop bags, silent cloud API cost runaway, named pipe deadlocks, Apple EndpointSecurity entitlement roadblocks, VRAM thrashing with creative apps, and multi-device sync conflict resolution.
+
+
 
 
 
