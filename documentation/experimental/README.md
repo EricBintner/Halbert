@@ -41,6 +41,10 @@ This folder houses forward-looking technical proposals, architectural thought-ex
 - [**OS-Native MCP, Warp-CLI Integration & Native SourcePrep Architecture**](file:///Volumes/4TB-BAD/Halbert/documentation/experimental/OS-NATIVE-MCP-WARP-AND-SOURCEPREP-INTEGRATION.md)
   Blueprint for exposing the operating system as an MCP server (`os://`). Shows how tools like Warp-CLI, Claude Code, and Cursor gain kernel-level telemetry, atomic Btrfs rollbacks, and offline sysadmin RAG, and why embedding SourcePrep as a native OS graph primitive transforms configuration management.
 
+- [**Blue-Sky Architecture: Sentient Computing, Cognitive OS & The Neural Fabric**](file:///Volumes/4TB-BAD/Halbert/documentation/experimental/BLUE-SKY-SENTIENT-SYSTEMS-AND-COGNITIVE-OS.md)
+  Explores the 2027–2030 horizon of AI-native operating systems: somatosensory physiology and autonomous nocturnal REM sleep/maintenance, synthetic intent virtual filesystems (`/halbert` VFS), sub-millisecond kernel eBPF reflex arcs, heterogeneous multi-tier neural fabric routing, and zero-knowledge holographic identity reincarnation.
+
+
 
 
 

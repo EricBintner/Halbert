@@ -91,6 +91,7 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 | [experimental/COMPETITIVE-ANALYSIS-AI-OS-LANDSCAPE.md](experimental/COMPETITIVE-ANALYSIS-AI-OS-LANDSCAPE.md) | **Competitive Analysis: AI Operating System Landscape & Strategic Opportunities** |
 | [experimental/SINGULAR-ENTITY-HOME-ASSISTANT-AND-HALBERTOS-ECOSYSTEM.md](experimental/SINGULAR-ENTITY-HOME-ASSISTANT-AND-HALBERTOS-ECOSYSTEM.md) | **Singular Entity, Home Assistant & HalbertOS: Cross-Platform Node Architecture** |
 | [experimental/OS-NATIVE-MCP-WARP-AND-SOURCEPREP-INTEGRATION.md](experimental/OS-NATIVE-MCP-WARP-AND-SOURCEPREP-INTEGRATION.md) | **OS-Native MCP Server, Warp-CLI Integration & Native SourcePrep Architecture** |
+| [experimental/BLUE-SKY-SENTIENT-SYSTEMS-AND-COGNITIVE-OS.md](experimental/BLUE-SKY-SENTIENT-SYSTEMS-AND-COGNITIVE-OS.md) | **Blue-Sky Architecture: Sentient Computing, Cognitive OS & The Neural Fabric** |
 
 ---
 
