@@ -28,6 +28,14 @@
  * not activity, so it deliberately does NOT reset the clock — the dim lands
  * exactly when the machine decays.
  *
+ * The tier is announced through `onTierChange` so the page can STOP
+ * RENDERING the mark at `black`: under the opaque veil it is invisible, but
+ * its rAF physics loop would otherwise composite at 60fps all night on the
+ * fanless N150. Unmounting is the cancel-by-construction (the mark's own
+ * cleanup stops its loop) and it remounts with an instant static first
+ * paint on wake — deliberately no `paused` prop is added to the
+ * design-system component.
+ *
  * P2 contract (plan doc 16 §6 Task P2 — screen power daemon, greenfield):
  * at every tier transition this controller fire-and-forgets
  *
@@ -80,6 +88,12 @@ export interface StandbyControllerProps {
   /** The voice machine state (O6). Anything but `standby` is a live session:
    * the tier pins full and every transition into a live state resets idle. */
   machineState: VoiceModeState
+  /** Notified on every tier change (including the mount-time 'full'). The
+   * page uses this to STOP RENDERING the mark at `black`: under the opaque
+   * veil it is invisible, but its rAF loop would still composite at 60fps
+   * all night — unmounting it cancels the loop by construction (its own
+   * cleanup) and it remounts with an instant static first paint on wake. */
+  onTierChange?: (tier: StandbyTier) => void
 }
 
 /**
@@ -89,7 +103,7 @@ export interface StandbyControllerProps {
  * (restore fades back up over 1s — instant enough for a kiosk, gentle
  * enough for a dark room).
  */
-export function StandbyController({ machineState }: StandbyControllerProps) {
+export function StandbyController({ machineState, onTierChange }: StandbyControllerProps) {
   const [tier, setTier] = useState<StandbyTier>('full')
   const [clock, setClock] = useState(() => formatRoomClock(new Date()))
 
@@ -115,6 +129,10 @@ export function StandbyController({ machineState }: StandbyControllerProps) {
 
   // Presence detection: window-level listeners (the kiosk surface is the
   // whole screen) plus the 1s evaluation tick that walks the tier ladder.
+  // `visibilitychange` is a presence event too: an occluded/minimized Tauri
+  // window throttles the 1s tick AND restoring the window fires no pointer
+  // or key event in-page — without this the screen can come back already
+  // blacked out, needing a tap to wake.
   useEffect(() => {
     const onActivity = (): void => {
       lastActivityRef.current = Date.now()
@@ -123,9 +141,14 @@ export function StandbyController({ machineState }: StandbyControllerProps) {
     for (const type of ACTIVITY_EVENTS) {
       window.addEventListener(type, onActivity, { passive: true })
     }
+    const onVisibility = (): void => {
+      if (!document.hidden) onActivity()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
     const ticker = setInterval(() => evaluateRef.current(), IDLE_TICK_MS)
     return () => {
       clearInterval(ticker)
+      document.removeEventListener('visibilitychange', onVisibility)
       for (const type of ACTIVITY_EVENTS) {
         window.removeEventListener(type, onActivity)
       }
@@ -150,6 +173,16 @@ export function StandbyController({ machineState }: StandbyControllerProps) {
     setClock(formatRoomClock(new Date()))
     const ticker = setInterval(() => setClock(formatRoomClock(new Date())), CLOCK_TICK_MS)
     return () => clearInterval(ticker)
+  }, [tier])
+
+  // Tier changes are announced to the page (which stops rendering the mark
+  // under the blackout veil — unmounting cancels the mark's rAF loop by
+  // construction). Runs on mount too ('full'), which is a harmless no-op
+  // for the page's own state mirror.
+  const onTierChangeRef = useRef(onTierChange)
+  onTierChangeRef.current = onTierChange
+  useEffect(() => {
+    onTierChangeRef.current?.(tier)
   }, [tier])
 
   // -------------------------------------------------------------------------
@@ -193,6 +226,8 @@ export function StandbyController({ machineState }: StandbyControllerProps) {
       {tier === 'dim' && (
         <time
           data-testid="standby-clock"
+          // Decorative: the wall time is ambient, not content to announce.
+          aria-hidden="true"
           className="text-8xl font-light tabular-nums tracking-tight text-canvas/50"
         >
           {clock}

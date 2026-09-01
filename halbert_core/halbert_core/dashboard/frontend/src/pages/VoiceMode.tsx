@@ -62,6 +62,7 @@ import { acousticWakeEvent } from '@/hooks/voiceModeEvents'
 import { SpeakerBadge } from '@/components/voice/SpeakerBadge'
 import type { SpeakerStatus } from '@/components/voice/SpeakerBadge'
 import { StandbyController } from '@/components/voice/StandbyController'
+import type { StandbyTier } from '@/components/voice/StandbyController'
 import { OnScreenKeyboard } from '@/components/voice/OnScreenKeyboard'
 import { SubtitleRibbon } from '@/components/voice/SubtitleRibbon'
 import { TouchBar } from '@/components/voice/TouchBar'
@@ -101,6 +102,14 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
   const { state, dispatch, visualState } = useVoiceModeMachine()
   const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [muted, setMuted] = useState(false)
+  /** The standby tier (P1), mirrored from the controller so the page can
+   * stop RENDERING the mark at the blackout tier: under the opaque veil it
+   * is invisible, and unmounting it cancels its rAF physics loop by
+   * construction — 60fps of compositing for nothing, all night, on a
+   * fanless N150. The machine, the uplink and the TTS client all live
+   * OUTSIDE the mark, so this unmount touches no session state, and the
+   * mark remounts with an instant static first paint on restore. */
+  const [standbyTier, setStandbyTier] = useState<StandbyTier>('full')
   const [speaker, setSpeaker] = useState<SpeakerStatus | null>(null)
   /** The uplink's analyser tap — null whenever capture is not running. */
   const [micTap, setMicTap] = useState<AudioNode | null>(null)
@@ -418,12 +427,16 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
           aria-label={markTapLabel(state)}
           className="flex items-center justify-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
         >
-          <AudioReactiveHalbertMark
-            size={512}
-            tone="accent"
-            state={visualState}
-            source={markSource}
-          />
+          {/* Unmounted at the blackout tier: invisible under the opaque
+           * veil, and its rAF loop must not run all night beneath it. */}
+          {standbyTier !== 'black' && (
+            <AudioReactiveHalbertMark
+              size={512}
+              tone="accent"
+              state={visualState}
+              source={markSource}
+            />
+          )}
         </button>
       </main>
 
@@ -453,8 +466,10 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
        * the idle mark (which keeps breathing) under a room clock, tier 2
        * blacks the screen out; any input or machine wake restores. The
        * controller is visual-only; it reports idle duration to the P2
-       * display daemon and never dispatches machine events. */}
-      <StandbyController machineState={state} />
+       * display daemon and never dispatches machine events. The page
+       * mirrors the tier only to unmount the mark under the opaque veil —
+       * its rAF loop would otherwise run at 60fps against pure black. */}
+      <StandbyController machineState={state} onTierChange={setStandbyTier} />
     </div>
   )
 }

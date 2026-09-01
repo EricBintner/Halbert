@@ -4,8 +4,10 @@
  * StandbyController (P1): the in-app half of spec doc 15 §5.2's multi-tier
  * standby policy. Fake-timer transitions pin the tier ladder (full → tier 1
  * ultra-dim + room clock at 30s idle → tier 2 software blackout at 10min),
- * the restore paths (pointer / touch / keydown / machine wake), the idle
- * reset on machine events, and the fire-and-forget idle report P2 consumes.
+ * the restore paths (pointer / touch / keydown / machine wake / window
+ * visibility), the idle reset on machine events, the fire-and-forget idle
+ * report P2 consumes, and the onTierChange announcement the page uses to
+ * unmount the mark under the blackout veil.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -19,8 +21,13 @@ const fetchMock = vi.fn(
     ({ ok: true }) as Response,
 )
 
-function mount(machineState: VoiceModeState = 'standby') {
-  const make = (s: VoiceModeState) => <StandbyController machineState={s} />
+function mount(
+  machineState: VoiceModeState = 'standby',
+  props: { onTierChange?: (tier: StandbyTier) => void } = {},
+) {
+  const make = (s: VoiceModeState) => (
+    <StandbyController machineState={s} {...props} />
+  )
   const view = render(make(machineState))
   return {
     view,
@@ -29,6 +36,15 @@ function mount(machineState: VoiceModeState = 'standby') {
     rerender: (s: VoiceModeState) => view.rerender(make(s)),
   }
 }
+
+/** jsdom pins `hidden` as a prototype accessor; shadow it per test. */
+function setHidden(hidden: boolean): void {
+  Object.defineProperty(document, 'hidden', { configurable: true, value: hidden })
+}
+
+afterEach(() => {
+  setHidden(false)
+})
 
 function advance(ms: number): void {
   act(() => {
@@ -92,6 +108,9 @@ describe('StandbyController tiers', () => {
     expect(veil.className).toContain('cursor-none')
     expect(veil.className).toContain('bg-black')
     expect(veil.className).toContain('opacity-100')
+    // Inverse of the tier-1 inertness: blackout INTERCEPTS taps so the
+    // first touch after a blackout wakes the screen and nothing beneath it.
+    expect(veil.className).not.toContain('pointer-events-none')
     expect(h.clock()).toBeNull()
   })
 
@@ -175,10 +194,69 @@ describe('StandbyController restore paths', () => {
     // The turn ends (turn_complete lands the machine in listening — a
     // transition, so the idle clock restarts there) and the machine then
     // decays to standby after its own 30s; the dim follows immediately.
+    // The turn ends (turn_complete lands the machine in listening — a
+    // transition, so the idle clock restarts there) and the machine then
+    // decays to standby after its own 30s; the dim follows immediately.
     h.rerender('listening')
     h.rerender('standby')
     advance(30_000)
     expect(tierOf(h.veil())).toBe('dim')
+  })
+})
+
+describe('StandbyController window visibility', () => {
+  it('hiding the window does not wake the screen; unhiding it does', () => {
+    // An occluded/minimized Tauri window throttles the 1s tick AND fires no
+    // pointer or key event when it comes back — restoring visibility must
+    // count as presence or the screen returns already blacked out.
+    const h = mount()
+    advance(600_000)
+    expect(tierOf(h.veil())).toBe('black')
+
+    setHidden(true)
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(tierOf(h.veil())).toBe('black') // occlusion is not presence
+
+    setHidden(false)
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(tierOf(h.veil())).toBe('full')
+  })
+
+  it('the idle clock keeps walking the ladder while the window is hidden', () => {
+    // A throttled interval still fires eventually: an occluded window goes
+    // to black, and the wake happens on visibility restore (previous test).
+    const h = mount()
+    setHidden(true)
+    advance(600_000)
+    expect(tierOf(h.veil())).toBe('black')
+  })
+})
+
+describe('StandbyController tier announcement', () => {
+  it('announces every tier change through onTierChange (the page unmounts the mark at black)', () => {
+    const onTierChange = vi.fn()
+    mount('standby', { onTierChange })
+    expect(onTierChange.mock.calls.map((c) => c[0])).toEqual(['full'])
+
+    advance(30_000)
+    expect(onTierChange.mock.calls.map((c) => c[0])).toEqual(['full', 'dim'])
+
+    advance(570_000)
+    expect(onTierChange.mock.calls.map((c) => c[0])).toEqual(['full', 'dim', 'black'])
+
+    act(() => {
+      window.dispatchEvent(new Event('pointermove'))
+    })
+    expect(onTierChange.mock.calls.map((c) => c[0])).toEqual([
+      'full',
+      'dim',
+      'black',
+      'full',
+    ])
   })
 })
 
