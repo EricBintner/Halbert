@@ -44,11 +44,12 @@
  * where `idle_seconds` is the age of the last interaction / machine event at
  * the moment of the transition: 30 entering tier 1, 600 entering tier 2, and
  * 0 on any wake (the "screen is awake again" report). P2's daemon maps this
- * onto tier 3 — backlight to 0% via /sys/class/backlight or DPMS sleep past
- * 15 idle minutes or during quiet hours — and uses the 0 report to raise the
- * panel before TTS begins. The endpoint does not exist until P2 lands, so
- * the POST is failure-silent (404 and network errors swallowed); P2 should
- * treat an unknown-shape body as a no-op, not an error.
+ * by threshold (>=600 hardware blank, >=30 hardware dim, 0 wake) onto the
+ * backing panel — backlight via /sys/class/backlight, DPMS where X11 — and
+ * uses the 0 report to raise the panel before TTS begins. Quiet hours are
+ * NOT part of this contract: the engine owns them for proactive speech. The
+ * POST is failure-silent (404 and network errors swallowed); P2 treats an
+ * unknown-shape body as a no-op, not an error.
  *
  * Quiet hours are deliberately NOT computed here: the engine's
  * `should_speak_proactively` gates proactive speech server-side, and the
