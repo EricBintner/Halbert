@@ -9,9 +9,9 @@
  *      The modal calls POST /api/peers/pair → gets a PIN → the user
  *      confirms → POST /api/peers/verify → gets a bearer token.
  *
- * C2 — This modal is opened from the InstanceSwitch dropdown's "Pair"
+ * C2 — This modal is opened from the PresencePill dropdown's "Link"
  *      button and from the NodeFleetCockpit's empty state. It does NOT
- *      replace InstanceSwitch — it's a child dialog that feeds paired
+ *      replace PresencePill — it's a child dialog that feeds paired
  *      peers back into the switcher.
  *
  * H9 — mDNS discovery is LAN-only. Discovered peers appear in the list
@@ -165,7 +165,7 @@ function ManualPairingForm({ onClose, onPaired: _onPaired }: { onClose: () => vo
       // the PIN entry step.
       //
       // For the Instance Switcher's existing "Add Instance" flow (which
-      // just stores the endpoint without pairing), see InstanceSwitch.tsx.
+      // just stores the endpoint without pairing), see PresencePill.tsx.
       // This form is for the full pairing flow with token exchange.
       throw new Error('Manual pairing flow — TODO(federation-9.1)')
     } catch (err) {

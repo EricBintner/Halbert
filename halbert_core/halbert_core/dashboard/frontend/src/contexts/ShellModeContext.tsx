@@ -130,9 +130,11 @@ export function ShellModeProvider({ children }: { children: ReactNode }) {
       if (prev === 'voice') return prev;
       const cv = centerVisibleFor(prev);
       const rv = rightVisibleFor(prev);
-      // If center is visible, hide it (go to right-only / engaged).
-      // If center is hidden, show it (go to both, or browsing if right is also hidden).
-      const next: PanelMode = cv ? (rv ? 'engaged' : 'engaged') : (rv ? 'both' : 'browsing');
+      // If center is visible, hide it → right-only (engaged). If right is
+      // also hidden, show right anyway — never leave both panels hidden.
+      // If center is hidden, show it → both (if right is visible) or
+      // browsing (center-only).
+      const next: PanelMode = cv ? 'engaged' : (rv ? 'both' : 'browsing');
       try {
         localStorage.setItem(STORAGE_KEY, next);
       } catch {
@@ -147,9 +149,11 @@ export function ShellModeProvider({ children }: { children: ReactNode }) {
       if (prev === 'voice') return prev;
       const cv = centerVisibleFor(prev);
       const rv = rightVisibleFor(prev);
-      // If right is visible, hide it (go to center-only / browsing).
-      // If right is hidden, show it (go to both, or engaged if center is also hidden).
-      const next: PanelMode = rv ? (cv ? 'browsing' : 'browsing') : (cv ? 'both' : 'engaged');
+      // If right is visible, hide it → center-only (browsing). If center
+      // is also hidden, show center anyway — never leave both hidden.
+      // If right is hidden, show it → both (if center is visible) or
+      // engaged (right-only).
+      const next: PanelMode = rv ? 'browsing' : (cv ? 'both' : 'engaged');
       try {
         localStorage.setItem(STORAGE_KEY, next);
       } catch {

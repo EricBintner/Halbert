@@ -63,8 +63,9 @@ describe('HostShell', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /open model settings/ }))
 
-    // Browsing mode, because the settings page does not exist in engaged mode;
-    // the tab hint so the page can open on the models tab rather than the first.
+    // 'both' mode so the settings page renders in the center panel with
+    // the conversation still visible on the right; the tab hint so the
+    // page opens on the models tab rather than the first.
     await waitFor(() =>
       expect(screen.getByTestId('probe')).toHaveTextContent('both /settings?tab=ai'),
     )

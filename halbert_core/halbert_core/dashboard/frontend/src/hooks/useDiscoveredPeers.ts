@@ -7,7 +7,7 @@
  *
  * C2 — Extends the Instance Switcher (Phase 7), does not replace it.
  *      This hook feeds discovered peers into the existing InstanceSwitch
- *      dropdown (shell/InstanceSwitch.tsx). Discovered peers appear
+ *      dropdown (shell/PresencePill.tsx). Discovered peers appear
  *      alongside manually-paired instances, with an "mDNS" badge to
  *      distinguish them from "Manual" entries.
  *

@@ -556,26 +556,36 @@ export function Layout({ children }: { children: React.ReactNode }) {
             />
 
             {/* Center panel — the active page / Settings. Hidden when the
-             * user focuses on the conversation (Host Focus state). */}
+             * user focuses on the conversation (Host Focus state). Settings
+             * needs the full center panel width (it has its own sub-rail),
+             * so it skips the padded max-width wrapper. */}
             {centerVisible && (
               <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                <main className="flex-1 p-6 md:p-8 overflow-auto relative z-0">
-                  <div className="max-w-6xl mx-auto w-full">
+                {isSettingsRoute ? (
+                  <div className="flex-1 overflow-hidden">
                     {configEditor ?? children}
                   </div>
-                </main>
+                ) : (
+                  <main className="flex-1 p-6 md:p-8 overflow-auto relative z-0">
+                    <div className="max-w-6xl mx-auto w-full">
+                      {configEditor ?? children}
+                    </div>
+                  </main>
+                )}
               </div>
             )}
 
             {/* Right panel — the conversation (HostShell). Hidden when the
              * user focuses on the dashboard (Dashboard Focus state). When
-             * center is hidden, this takes the full remaining width. */}
+             * center is hidden, this takes the full remaining width and
+             * HostShell shows its context stage. When center is visible
+             * (side-by-side), HostShell is compact (conversation only). */}
             {rightVisible && (
               <div className={cn(
                 'flex flex-col min-w-0 overflow-hidden',
                 centerVisible ? 'w-[40%] max-w-[640px] min-w-[320px] border-l border-border' : 'flex-1',
               )}>
-                <HostShell />
+                <HostShell compact={centerVisible} />
               </div>
             )}
 

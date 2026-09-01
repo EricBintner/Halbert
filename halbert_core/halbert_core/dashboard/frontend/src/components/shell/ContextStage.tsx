@@ -10,7 +10,7 @@
  * system is up, which is exactly what an unconditional `return null` hid.
  *
  * Plan B (B19): below the md breakpoint, renders as a Sheet (bottom sheet)
- * opened from the aggregate StatusLight on the ModeSwitch tab. "Go back to
+ * opened from the aggregate StatusLight on the PanelToggle. "Go back to
  * this" opens the sheet, scrolls the timeline, expands the task card.
  */
 

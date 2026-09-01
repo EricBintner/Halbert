@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * HostShell — the engaged surface: you and the machine, side by side.
+ * HostShell — the conversation surface: you and the machine, side by side.
  *
- * Left: the continuous conversation spine (AgentChat promoted from a sidecar
- * panel to the primary canvas). Right: the context stage — live vitals and the
- * terminal accordion dock.
+ * Left: the continuous conversation spine (AgentChat). Right: the context
+ * stage — live vitals and the terminal accordion dock.
  *
- * The engine for all of this (async PTYs, the WebSocket bridge, somatic
- * blocks, the terminal store) already existed; what was missing was a shell
- * that mounted it. This is that shell.
+ * In the 3-panel shell, HostShell renders in the right panel. When the
+ * center panel is also visible (side-by-side mode), the right panel is
+ * narrow — pass `compact` to hide the context stage and give the
+ * conversation the full panel width. When the center is hidden (Host
+ * Focus), the right panel takes the full remaining width and the context
+ * stage is shown.
+ *
+ * The engine for all of this (async PTYs, the WebSocket bridge, the
+ * terminal store) already existed; what was missing was a shell that
+ * mounted it. This is that shell.
  */
 
 import { useCallback, useRef } from 'react';
@@ -20,13 +26,18 @@ import { ContextStage } from './ContextStage';
 import { LiveRegion } from './LiveRegion';
 
 /**
- * Where the model picker's "All models and endpoints…" link goes. The models
- * tab of the settings page, which lives in browsing mode — so this is a mode
- * change and a navigation, and the shell is the only component that owns both.
+ * Where the model picker's "All models and endpoints…" link goes. The
+ * settings page renders in the center panel, so this is a mode change
+ * (ensure center is visible) and a navigation.
  */
 const MODEL_SETTINGS_ROUTE = '/settings?tab=ai';
 
-export function HostShell() {
+interface HostShellProps {
+  /** When true, hide the context stage — the panel is too narrow. */
+  compact?: boolean;
+}
+
+export function HostShell({ compact = false }: HostShellProps = {}) {
   const conversationRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { setMode } = useShellMode();
@@ -43,9 +54,9 @@ export function HostShell() {
   }, []);
 
   /**
-   * Leave the engaged surface for the full model configuration. Navigating
-   * without the mode change lands on a route that engaged mode does not
-   * render, which looks to the user like the link did nothing.
+   * Open the full model configuration in the center panel. Navigating
+   * without the mode change lands on a route that the right panel does
+   * not render, which looks to the user like the link did nothing.
    */
   const openModelSettings = useCallback(() => {
     setMode('both');
@@ -74,7 +85,7 @@ export function HostShell() {
       {/* Conversation spine */}
       <div
         ref={conversationRef}
-        className="flex-1 min-w-0 flex flex-col bg-background border-r border-border"
+        className="flex-1 min-w-0 flex flex-col bg-background"
         aria-label="Conversation"
       >
         <AgentChat
@@ -84,10 +95,17 @@ export function HostShell() {
         />
       </div>
 
-      {/* Context stage — half the surface on a wide window, never a strip */}
-      <aside className="hidden md:flex w-1/2 max-w-[640px] min-w-[320px] shrink-0" aria-label="Context stage">
-        <ContextStage className="w-full" onJumpToTerminal={jumpToTerminal} />
-      </aside>
+      {/* Context stage — hidden in compact mode (side-by-side) where the
+          panel is too narrow. In full mode (Host Focus), it takes half the
+          surface on a wide window, never a strip. */}
+      {!compact && (
+        <aside
+          className="hidden md:flex w-1/2 max-w-[640px] min-w-[320px] shrink-0 border-l border-border"
+          aria-label="Context stage"
+        >
+          <ContextStage className="w-full" onJumpToTerminal={jumpToTerminal} />
+        </aside>
+      )}
     </div>
   );
 }

@@ -7,7 +7,7 @@
  *
  * C2 — This is the "Fleet Cockpit" from Pillar 4 of the handoff, but it
  *      is NOT a new "Node Switcher." The node switching UI is the
- *      existing InstanceSwitch.tsx (Phase 7). This component is the
+ *      existing PresencePill.tsx (Phase 7). This component is the
  *      fleet *monitoring* view — a grid of satellite status cards
  *      showing CPU, RAM, temperature, uptime, and active services.
  *
