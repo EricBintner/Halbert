@@ -118,6 +118,13 @@ class AudioPipelineCoordinator:
         self._barge_in_handler = None
         self._active_barge_in_token = None
 
+        # Last speaker-ID turn observation (O4). Surfaced via get_status()
+        # so /api/audio/status can tell the frontend who was talking. Only
+        # the speech track writes it — that is the one path that performs
+        # identification; Wyoming satellite transcripts carry no speaker ID
+        # and must not clobber a real one.
+        self._last_speaker_observation: Optional[VoiceTurnObservation] = None
+
     @property
     def state(self) -> AudioState:
         return self._state
@@ -187,6 +194,41 @@ class AudioPipelineCoordinator:
         self._ingress_adapters.clear()
 
         logger.info("Audio pipeline stopped")
+
+    # ------------------------------------------------------------------
+    # Ingress registration (public surface for the dashboard bootstrap)
+    # ------------------------------------------------------------------
+
+    async def add_ingress(self, adapter) -> bool:
+        """Register and start an external ingress adapter.
+
+        Used by the dashboard bootstrap (O2) to attach the WebRTC/browser
+        ingress — the one adapter that has no config-file section of its
+        own. Starts the adapter (mirroring ``_init_ingress``) so its
+        ``chunks()`` iterator spins, then appends it to the adapter list;
+        the ``_ingress_to_buffer_loop`` picks up adapters dynamically, so
+        this is safe before or after ``start()``.
+
+        Returns True if the adapter was registered, False if its ``start()``
+        raised (the failure is logged and isolated — one broken ingress
+        never takes the pipeline or the dashboard down).
+        """
+        try:
+            await adapter.start()
+        except Exception as e:
+            logger.error(f"Ingress start failed ({adapter.source_type}): {e}")
+            return False
+        self._ingress_adapters.append(adapter)
+        logger.info(f"Ingress registered: {adapter.source_type} (area={adapter.area_id})")
+        return True
+
+    def get_ingress(self, source_type: str):
+        """Return the first registered ingress adapter with the given
+        ``source_type``, or None if none matches."""
+        return next(
+            (a for a in self._ingress_adapters if a.source_type == source_type),
+            None,
+        )
 
     async def _init_engines(self) -> None:
         """Initialize speech and acoustic engines (lazy)."""
@@ -394,6 +436,10 @@ class AudioPipelineCoordinator:
             audio_duration_ms=len(pcm) // 32,  # 16kHz * 2 bytes = 32 bytes/ms
         )
 
+        # O4: remember the turn even when no one was recognized — the badge
+        # must go back to "unidentified" rather than keep a stale match.
+        self._last_speaker_observation = observation
+
         if self.on_voice_turn:
             try:
                 await self.on_voice_turn(observation)
@@ -499,12 +545,32 @@ class AudioPipelineCoordinator:
                 logger.error(f"State change callback error: {e}")
 
     def get_status(self) -> dict:
-        """Status dict for the /api/audio/status endpoint."""
+        """Status dict for the /api/audio/status endpoint.
+
+        ``speaker`` is ``null`` until the first speech-track turn runs; after
+        that it mirrors the last *identified* turn's ``VoiceTurnObservation``
+        fields — turns that fail before speaker ID (no ASR engine, empty
+        transcript) keep the previous identification
+        (name may be empty and role 'unknown' for an unrecognized speaker —
+        represented faithfully here, never invented server-side). The
+        observation's transcript text is deliberately NOT exposed: the
+        status frame answers who was talking, not what was said.
+        """
+        last = self._last_speaker_observation
         return {
             "enabled": self._config.enabled,
             "running": self._running,
             "available": is_audio_available(),
             "state": self._state.value,
+            "speaker": (
+                {
+                    "name": last.speaker_name,
+                    "role": last.speaker_role,
+                    "confidence": last.speaker_confidence,
+                }
+                if last is not None
+                else None
+            ),
             "ingress_sources": [
                 a.status for a in self._ingress_adapters
             ],
@@ -548,6 +614,20 @@ class AudioPipelineCoordinator:
         token = handler.create_token()
         self._active_barge_in_token = token
         return token
+
+    def release_barge_in_token(self, token) -> None:
+        """Clear the active barge-in token if it is still ``token``.
+
+        The TTS egress hook (O3) calls this when its turn ends so the slot
+        does not go stale (a stale active token would silently eat the next
+        ``trigger_barge_in()``). No-op when the active token has moved on.
+        NOTE: ``speak()`` below also fills ``_active_barge_in_token`` — one
+        active token, one turn; these two writers must stay mutually
+        exclusive (true today: nothing calls ``speak()`` yet; whoever wires
+        VAD to it must preserve it).
+        """
+        if self._active_barge_in_token is token:
+            self._active_barge_in_token = None
 
     async def trigger_barge_in(self, area_id: str = "") -> Optional[Any]:
         """Trigger barge-in: cancel current TTS playback.

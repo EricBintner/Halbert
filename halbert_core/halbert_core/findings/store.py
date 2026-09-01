@@ -67,6 +67,12 @@ class Finding:
     # Link to proposal if one exists
     proposal_id: Optional[str] = None
 
+    # Transient structured payload for the finding's proactive event (O5).
+    # NOT persisted — there is no DB column; _finding_to_row strips it. It
+    # only lives on the in-memory Finding the detector handed to the
+    # DetectorRunner, which copies it onto the ProactiveEvent it publishes.
+    data: Optional[Dict[str, Any]] = None
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
@@ -156,6 +162,8 @@ def _row_to_finding(row: sqlite3.Row) -> Finding:
 
 def _finding_to_row(f: Finding) -> Dict[str, Any]:
     d = f.to_dict()
+    # Transient, non-persistent fields (see Finding.data) — no DB column.
+    d.pop("data", None)
     d["why_trust"] = json.dumps(f.why_trust)
     d["affected_paths"] = json.dumps(f.affected_paths)
     d["affected_services"] = json.dumps(f.affected_services)

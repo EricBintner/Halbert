@@ -204,6 +204,15 @@ class HalbertVoiceBackend:
     # Internal
     # ------------------------------------------------------------------
 
+    def get_tts(self) -> Any:
+        """The underlying PiperTTS instance (lazily constructed).
+
+        Public so other consumers share the backend's model instead of
+        loading their own — the dashboard's TTS egress streamer (O3) uses
+        it to stream the same Piper PCM the engine would speak.
+        """
+        return self._get_tts()
+
     def _get_tts(self) -> Any:
         """Return the PiperTTS instance, lazy-constructing if needed."""
         if self._tts is None:

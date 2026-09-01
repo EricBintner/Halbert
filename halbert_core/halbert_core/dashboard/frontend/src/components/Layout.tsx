@@ -10,9 +10,13 @@
  *   browsing  the system administration hub — the full navigation rail, every
  *             dashboard page, and the side panel, unchanged.
  *
- * A global top bar carries the mode switch (Cmd/Ctrl+B), the background-work
- * indicators and debug, so nothing that used to live in the sidebar footer
- * disappears when the sidebar does.
+ * A global top bar carries the voice entry, the mode switch (Cmd/Ctrl+B), the
+ * background-work indicators and debug, so nothing that used to live in the
+ * sidebar footer disappears when the sidebar does.
+ *
+ * One route overtakes the whole shell, not just the content area: /voice
+ * (O8) is a full-bleed surface with its own dark canvas and its own header,
+ * so neither the rail nor the shell top bar renders over it.
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -29,6 +33,7 @@ import {
   Terminal,
   Loader2,
   ScanSearch,
+  AudioLines,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfigEditor } from './ConfigEditor'
@@ -123,7 +128,7 @@ function ProgressPill({ icon, label, percent, detail, tone }: ProgressPillProps)
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
-  const { isEngaged, setMode } = useShellMode()
+  const { isEngaged, isVoice, setMode, enterVoice, exitVoice } = useShellMode()
 
   // Global config editor state (triggered from chat "Edit Config" button)
   const [editingConfigPath, setEditingConfigPath] = useState<string | null>(null)
@@ -184,10 +189,30 @@ export function Layout({ children }: { children: React.ReactNode }) {
    * top bar is the only entry point, so the rail never shows a Settings item. */
   const isSettingsRoute = location.pathname === '/settings'
 
+  /** Voice (O8) is a mode reached through a route: the /voice deep link and
+   * the top-bar button beside the mode switch are the only ways in. The route
+   * drives the mode, so the shell follows the URL in both directions. */
+  const isVoiceRoute = location.pathname === '/voice'
+
+  // Route <-> mode synchronization. Entering /voice parks the current
+  // surface; leaving the route (the screen's Host Canvas edge sets the base
+  // surface explicitly before navigating) restores it.
+  useEffect(() => {
+    if (isVoiceRoute && !isVoice) {
+      enterVoice()
+    } else if (!isVoiceRoute && isVoice) {
+      exitVoice()
+    }
+  }, [isVoiceRoute, isVoice, enterVoice, exitVoice])
+
   const openSettings = useCallback(() => {
     setMode('browsing')
     navigate('/settings')
   }, [navigate, setMode])
+
+  const openVoice = useCallback(() => {
+    navigate('/voice')
+  }, [navigate])
 
   const handleNavSelect = useCallback((id: string) => {
     navigate(id)
@@ -378,62 +403,86 @@ export function Layout({ children }: { children: React.ReactNode }) {
   ) : null
 
   return (
-    <div className="h-screen bg-background flex flex-col overflow-hidden">
-      {/* Global top bar — present in both modes */}
-      <header className="flex items-center gap-3 px-4 h-12 border-b border-border bg-background shrink-0">
-        <div className="flex items-center gap-2 shrink-0">
-          <HalbertMark size={20} density="medium" tone="accent" />
-          <span className="text-sm font-semibold hidden sm:inline text-foreground">Halbert</span>
-        </div>
+    <div className="h-screen bg-background flex flex-col overflow-hidden" data-testid="app-shell">
+      {/* Global top bar — present in both modes, and on every route except
+       * /voice (O8): that screen owns the window, dark canvas and its own
+       * header included. */}
+      {!isVoiceRoute && (
+        <header className="flex items-center gap-3 px-4 h-12 border-b border-border bg-background shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <HalbertMark size={20} density="medium" tone="accent" />
+            <span className="text-sm font-semibold hidden sm:inline text-foreground">Halbert</span>
+          </div>
 
-        <ModeSwitch />
+          <ModeSwitch />
 
-        <InstanceSwitch />
+          {/* Voice entry — a mode, not a nav tab: the deep link and this
+           * button beside the mode switch are the only doors in. The route
+           * effect parks whichever surface is on screen. */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={openVoice}
+            title="Voice Mode"
+            aria-label="Enter voice mode"
+          >
+            <AudioLines className="h-4 w-4" />
+          </Button>
 
-        <AcousticAuraIndicator />
+          <InstanceSwitch />
 
-        <div className="flex-1" />
+          <AcousticAuraIndicator />
 
-        {scanning && (
-          <ProgressPill
-            icon={<ScanSearch className="h-3 w-3 animate-pulse" />}
-            label="Scanning"
-            percent={scanProgress.percent}
-            detail={scanProgress.currentPhase}
-            tone="emerald"
-          />
-        )}
-        {indexing && (
-          <ProgressPill
-            icon={<Loader2 className="h-3 w-3 animate-spin" />}
-            label="Indexing"
-            percent={indexProgress.percent}
-            detail={indexProgress.currentSource}
-            tone="blue"
-          />
-        )}
+          <div className="flex-1" />
 
-        <span className="text-[11px] text-muted-foreground font-mono hidden md:inline">v0.1.1</span>
+          {scanning && (
+            <ProgressPill
+              icon={<ScanSearch className="h-3 w-3 animate-pulse" />}
+              label="Scanning"
+              percent={scanProgress.percent}
+              detail={scanProgress.currentPhase}
+              tone="emerald"
+            />
+          )}
+          {indexing && (
+            <ProgressPill
+              icon={<Loader2 className="h-3 w-3 animate-spin" />}
+              label="Indexing"
+              percent={indexProgress.percent}
+              detail={indexProgress.currentSource}
+              tone="blue"
+            />
+          )}
 
-        {/* Settings entry — top-right corner, always present in both modes.
-         * Not a dashboard tab: it overtakes the shell, so the gear is the
-         * only way in. About, Legal Notices, and Developer Tools all live
-         * inside the Settings page now. */}
-        <Button
-          variant={isSettingsRoute ? 'default' : 'ghost'}
-          size="icon"
-          className="h-7 w-7"
-          onClick={openSettings}
-          title="Settings"
-          aria-label="Open settings"
-        >
-          <SettingsIcon className="h-4 w-4" />
-        </Button>
-      </header>
+          <span className="text-[11px] text-muted-foreground font-mono hidden md:inline">v0.1.1</span>
+
+          {/* Settings entry — top-right corner, always present in both modes.
+           * Not a dashboard tab: it overtakes the shell, so the gear is the
+           * only way in. About, Legal Notices, and Developer Tools all live
+           * inside the Settings page now. */}
+          <Button
+            variant={isSettingsRoute ? 'default' : 'ghost'}
+            size="icon"
+            className="h-7 w-7"
+            onClick={openSettings}
+            title="Settings"
+            aria-label="Open settings"
+          >
+            <SettingsIcon className="h-4 w-4" />
+          </Button>
+        </header>
+      )}
 
       {/* Mode content */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        {isEngaged ? (
+        {isVoiceRoute ? (
+          /* Voice (O8) is full-bleed — no rail, no padded main, no shell
+           * chrome of any kind. The screen brings its own h-screen dark
+           * canvas (the sanctioned palette divergence, plan §2 Decision 5),
+           * so it renders bare: it IS the shell while it is up. */
+          children
+        ) : isEngaged ? (
           configEditor ? (
             <div className="h-full overflow-auto p-8">{configEditor}</div>
           ) : (

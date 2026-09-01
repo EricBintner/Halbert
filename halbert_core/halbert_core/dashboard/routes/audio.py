@@ -14,7 +14,7 @@ import logging
 from typing import Optional
 
 try:
-    from fastapi import APIRouter, HTTPException
+    from fastapi import APIRouter, HTTPException, Request
     from pydantic import BaseModel
     FASTAPI_AVAILABLE = True
 except ImportError:
@@ -81,6 +81,8 @@ if FASTAPI_AVAILABLE:
         speaker_id_threshold: Optional[float] = None
         tts_enabled: Optional[bool] = None
         tts_voice_model: Optional[str] = None
+        privacy_delete_raw_after_transcription: Optional[bool] = None
+        privacy_ignore_tv_media: Optional[bool] = None
 
     @router.post("/config")
     async def update_audio_config(update: AudioConfigUpdate):
@@ -104,20 +106,33 @@ if FASTAPI_AVAILABLE:
             cfg.tts.enabled = update.tts_enabled
         if update.tts_voice_model is not None:
             cfg.tts.voice_model = update.tts_voice_model
+        if update.privacy_delete_raw_after_transcription is not None:
+            cfg.privacy.delete_raw_after_transcription = update.privacy_delete_raw_after_transcription
+        if update.privacy_ignore_tv_media is not None:
+            cfg.privacy.ignore_tv_media = update.privacy_ignore_tv_media
         save_config(cfg)
         return {"status": "ok"}
 
     # ── Status endpoint ─────────────────────────────────────────────
 
     @router.get("/status")
-    async def get_audio_status():
-        """Audio subsystem status."""
+    async def get_audio_status(request: Request):
+        """Audio subsystem status — live when the pipeline coordinator is up."""
+        coordinator = getattr(request.app.state, "audio_coordinator", None)
+        if coordinator is not None:
+            try:
+                return coordinator.get_status()
+            except Exception as e:
+                logger.warning(f"coordinator status failed, using static fallback: {e}")
         cfg = load_config()
         return {
             "enabled": cfg.enabled,
             "available": is_audio_available(),
             "sherpa_onnx_installed": is_audio_available(),
-            "state": "idle",  # TODO: read from pipeline coordinator
+            # No coordinator on app.state (O2 bootstrap skipped or failed):
+            # this branch is the static fallback only — live state comes from
+            # coordinator.get_status() above.
+            "state": "idle",
             "engines": {
                 "vad": is_audio_available(),
                 "asr": is_audio_available(),

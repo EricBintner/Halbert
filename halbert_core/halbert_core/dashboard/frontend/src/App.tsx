@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-import { useState, useEffect, useRef } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { Dashboard } from './pages/Dashboard'
 import { Terminal } from './pages/Terminal'
@@ -18,12 +18,35 @@ import { Apps } from './pages/Apps'
 import { Approvals } from './pages/Approvals'
 import { Settings } from './pages/Settings'
 import { Home } from './pages/Home'
+import { VoiceMode } from './pages/VoiceMode'
 import { Onboarding } from './components/Onboarding'
 import { DebugProvider } from './contexts/DebugContext'
 import { ScanProvider } from './contexts/ScanContext'
 import { PageContextProvider } from './contexts/PageContext'
-import { ShellModeProvider } from './contexts/ShellModeContext'
+import { ShellModeProvider, useShellMode } from './contexts/ShellModeContext'
 import { apiUrl } from '@/lib/apiBase'
+
+/**
+ * The /voice route element (O8). Voice Mode is a route of the same SPA
+ * (plan §2 Decision 5), and the screen's Host Canvas edge is wired here:
+ * leave Voice Mode for the engaged surface, home route. The route<->mode
+ * synchronization itself lives in Layout, which watches the URL.
+ *
+ * Conversation continuity, a documented v1 limitation: an in-flight turn
+ * does not survive the Voice<->Canvas switch (useAgentStream state is
+ * hook-local and dies on unmount); completed turns re-hydrate from
+ * useTimeline. Nothing else is lifted — history preservation is the v1
+ * contract (plan §8 risk 3).
+ */
+function VoiceModeRoute() {
+  const navigate = useNavigate()
+  const { setMode } = useShellMode()
+  const exitToCanvas = useCallback(() => {
+    setMode('engaged')
+    navigate('/')
+  }, [navigate, setMode])
+  return <VoiceMode onExitToCanvas={exitToCanvas} />
+}
 
 function App() {
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -107,6 +130,11 @@ function App() {
                     <Route path="/approvals" element={<Approvals />} />
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/home" element={<Home />} />
+                    {/* Voice Mode (O8) — a third shell mode at its own
+                     * route: full-bleed, mode-driving, with the Host Canvas
+                     * return edge. Not a nav tab; entry is the top-bar
+                     * button beside the mode switch or this deep link. */}
+                    <Route path="/voice" element={<VoiceModeRoute />} />
                   </Routes>
                 </Layout>
               </ShellModeProvider>

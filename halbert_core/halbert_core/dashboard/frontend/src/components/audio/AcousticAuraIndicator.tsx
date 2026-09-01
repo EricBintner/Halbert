@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react'
 import { apiUrl } from '@/lib/apiBase'
 import { AudioLines } from 'lucide-react'
+import type { SpeakerStatus } from '@/components/voice/SpeakerBadge'
 
 type AudioState = 'idle' | 'listening' | 'recognized' | 'thinking' | 'speaking' | 'error'
 
@@ -16,6 +17,9 @@ interface AudioStatus {
   enabled: boolean
   available: boolean
   state: string
+  // Last identified speaker (O4) — null until a speech turn has run;
+  // absent on the static fallback payload (no coordinator).
+  speaker?: SpeakerStatus | null
 }
 
 const STATE_COLORS: Record<AudioState, string> = {

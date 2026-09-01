@@ -426,7 +426,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         # the ingestion capability. The variant preset sets defaults
         # (home = no ingestion), but being.yml capabilities: section can
         # override — a Mac Studio with HA configured can do both.
-        from ..capabilities import get_capability_registry, CAP_INGESTION, CAP_DISCOVERY, CAP_SCHEDULER, CAP_CONFIG_WATCHER, CAP_SOURCEPREP, CAP_TERMINAL, CAP_HA_CONNECTION
+        from ..capabilities import get_capability_registry, CAP_INGESTION, CAP_DISCOVERY, CAP_SCHEDULER, CAP_CONFIG_WATCHER, CAP_SOURCEPREP, CAP_TERMINAL, CAP_HA_CONNECTION, CAP_AUDIO
         _caps = get_capability_registry()
         _caps.probe()
         if not _caps.has(CAP_INGESTION):
@@ -644,6 +644,79 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             except Exception as e:
                 logger.warning(f"Failed to start terminal session reaper: {e}")
 
+        # Voice mode (O2): audio pipeline coordinator — the dashboard's ears.
+        # Capability-gated presence check (config enabled + sherpa-onnx, probed
+        # in capabilities.py — never a variant check). being.yml
+        # ``capabilities: {audio: false}`` is the operator override. Audio is
+        # optional: a coordinator that fails to start leaves the coordinator
+        # slot None and the dashboard keeps booting (/api/audio/stream then
+        # answers 1013 "try again later").
+        app.state.audio_coordinator = None
+        if not _caps.has(CAP_AUDIO):
+            logger.info("Audio pipeline skipped (no audio capability)")
+        else:
+            coordinator = None
+            try:
+                from ..audio.config import load_config as load_audio_config
+                from ..audio.pipeline import AudioPipelineCoordinator
+                from ..audio.ingress.webrtc_ingress import WebRtcIngress
+                coordinator = AudioPipelineCoordinator(config=load_audio_config())
+                attached = await coordinator.add_ingress(
+                    WebRtcIngress(area_id="dashboard_voice")
+                )
+                if not attached:
+                    logger.warning(
+                        "Dashboard audio ingress failed to start — "
+                        "/api/audio/stream will answer 1013"
+                    )
+                await coordinator.start()
+                app.state.audio_coordinator = coordinator
+                logger.info(
+                    "Audio pipeline coordinator started "
+                    f"(dashboard ingress {'attached' if attached else 'NOT attached'})"
+                )
+            except Exception as e:
+                logger.warning(f"Audio pipeline failed to start (non-fatal): {e}")
+                # Best-effort cleanup: start() can raise after the ingress was
+                # started or after loop tasks were created (and gains more raise
+                # points as it grows, e.g. O3) — stop whatever partially came up
+                # so no adapter or task is left orphaned spinning forever.
+                if coordinator is not None:
+                    try:
+                        await coordinator.stop()
+                    except Exception as stop_err:
+                        logger.debug(f"Coordinator cleanup after failed start: {stop_err}")
+                app.state.audio_coordinator = None
+
+        # Voice mode (O5): acoustic anomalies ride the findings chain. The
+        # bridge sets the coordinator's on_acoustic_event callback; a tagged
+        # anomaly then flows AcousticAnomalyDetector -> DetectorRunner ->
+        # ProactiveEventBus -> /api/being/events. Strictly optional — the
+        # DetectorRunner is built lazily on the first event, and a broken
+        # findings stack degrades to a warning-once drop, never a boot
+        # failure.
+        if app.state.audio_coordinator is not None:
+            try:
+                from ..proactive.acoustic_bridge import attach_acoustic_bridge
+                attach_acoustic_bridge(app.state.audio_coordinator)
+            except Exception as e:
+                logger.warning(f"Acoustic anomaly bridge attach failed (non-fatal): {e}")
+
+        # Voice mode (O3): TTS egress hub — the dashboard's mouth. A dumb
+        # relay from the agent state machine to /api/audio/tts subscribers,
+        # deliberately NOT gated on the audio capability: it forwards
+        # nothing until a browser subscribes, and only the synthesis (in the
+        # state machine hook) needs the audio stack. Aliased onto app.state
+        # per the plan; the state machine reaches it through the module
+        # singleton (the get_event_bus pattern) because it holds no app ref.
+        from .routes.tts_egress import get_tts_egress_hub
+        app.state.tts_egress = get_tts_egress_hub()
+        # When the pipeline runs, the state machine's TTS hook mints
+        # coordinator-owned barge-in tokens through this reference (so VAD
+        # barge-in cancels browser playback too); without it the hook falls
+        # back to a standalone token.
+        app.state.tts_egress.set_pipeline(app.state.audio_coordinator)
+
         # Phase 2: Start HA WebSocket event stream if configured
         # Capability-based: start if HA connection is configured.
         if _caps.has(CAP_HA_CONNECTION):
@@ -802,6 +875,23 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 logger.info("Wyoming voice agent stopped")
         except Exception as e:
             logger.warning(f"Failed to stop Wyoming voice agent: {e}")
+
+        # Voice mode (O2): stop the audio pipeline coordinator (also closes
+        # any open /api/audio/stream WebSocket via the ingress stop()).
+        audio_coordinator = getattr(app.state, "audio_coordinator", None)
+        if audio_coordinator is not None:
+            try:
+                await audio_coordinator.stop()
+                app.state.audio_coordinator = None
+                logger.info("Audio pipeline coordinator stopped")
+            except Exception as e:
+                logger.warning(f"Failed to stop audio pipeline coordinator: {e}")
+
+        # Voice mode (O3): drop the hub's pipeline reference on shutdown so
+        # it can never mint barge-in tokens against a stopped coordinator.
+        tts_hub = getattr(app.state, "tts_egress", None)
+        if tts_hub is not None:
+            tts_hub.set_pipeline(None)
 
         # Close Frigate tools singleton client
         try:

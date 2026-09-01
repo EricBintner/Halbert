@@ -82,6 +82,11 @@ class DetectorRunner:
             PermissionsHygieneDetector(),
             self.acoustic_detector,
         ]
+        # Detector classes that already logged a failure warning (O5: the
+        # acoustic bridge can invoke _run_detector per sound event, so a
+        # persistently failing detector — e.g. a locked DB — must not warn
+        # every few seconds; repeats drop to debug).
+        self._detector_warned: set = set()
 
     async def run_all(self) -> List[ProactiveEvent]:
         """Run all detectors and publish events for new findings.
@@ -91,80 +96,114 @@ class DetectorRunner:
         published_events: List[ProactiveEvent] = []
 
         for detector in self.detectors:
-            try:
-                findings = detector.detect()
-                for finding in findings:
-                    # Dedup by detector+title (single targeted query)
-                    existing = self._find_existing(finding)
-                    if existing is not None:
-                        if self._is_suppressed(existing):
-                            continue  # Still known/active — don't re-add
-                        # Snooze expired (or resolved and re-detected):
-                        # re-surface the existing row instead of duplicating.
-                        self.findings.update_status(
-                            existing.id,
-                            FindingStatus.OPEN.value,
-                            snoozed_until="",
-                        )
-                        finding_id = existing.id
-                        logger.info(
-                            f"Finding {finding_id} re-surfaced "
-                            f"(was {existing.status})"
-                        )
-                    else:
-                        # Store the finding
-                        finding_id = self.findings.add(finding)
-
-                    # Create a proactive event
-                    event = ProactiveEvent.create(
-                        type="finding",
-                        severity=finding.severity,
-                        title=finding.title,
-                        body=finding.description,
-                        finding_id=finding_id,
-                        category=_EVENT_CATEGORY.get(finding.detector, "general"),
-                    )
-
-                    # Check the gate
-                    should_notify, reason = self.gate.should_notify(event)
-                    if should_notify:
-                        bus = get_event_bus()
-                        await bus.publish(event)
-                        published_events.append(event)
-                    else:
-                        logger.info(
-                            f"Finding {finding_id} suppressed by gate: {reason}"
-                        )
-
-                    # F3: evaluate living reflexes against this finding.
-                    # Reflex events inherit the gate decision — a reflex derived
-                    # from a suppressed finding must not leak past quiet hours,
-                    # the proactivity dial, or safe mode.
-                    if self.reflex_matcher is not None:
-                        for reflex in self.reflex_matcher.match(
-                            title=finding.title,
-                            body=finding.description,
-                            severity=finding.severity,
-                            category=finding.detector,
-                        ):
-                            reflex_event = self._reflex_event(reflex, finding, finding_id)
-                            try:
-                                notify, reason = self.gate.should_notify(reflex_event)
-                                if not notify:
-                                    logger.info(
-                                        f"Reflex '{reflex.name}' suppressed by gate: {reason}"
-                                    )
-                                    continue
-                                await get_event_bus().publish(reflex_event)
-                                published_events.append(reflex_event)
-                            except Exception as e:
-                                logger.warning(f"reflex publish failed: {e}")
-            except Exception as e:
-                logger.warning(f"Detector {detector.__class__.__name__} failed: {e}")
+            published_events.extend(await self._run_detector(detector))
 
         logger.info(
             f"Detector sweep complete: {len(published_events)} events published"
         )
+        return published_events
+
+    async def run_acoustic(self) -> List[ProactiveEvent]:
+        """Drain ONLY the acoustic anomaly detector and publish its findings.
+
+        Used by the audio-pipeline acoustic bridge (O5): a tagged anomaly must
+        reach the SSE stream immediately, not at the next scheduled sweep —
+        but a per-sound-event run must never trigger the filesystem detectors
+        (drop-in conflicts, fstab, permissions), which are sweep-scheduled by
+        design. Shares the dedup / gate / reflex path with ``run_all``.
+        """
+        return await self._run_detector(self.acoustic_detector)
+
+    async def _run_detector(self, detector) -> List[ProactiveEvent]:
+        """Detect, dedup, store, gate, and publish one detector's findings.
+
+        A detector failure is isolated to a log line — one broken detector
+        never takes down the sweep (or, via run_acoustic, the audio pipeline).
+        """
+        published_events: List[ProactiveEvent] = []
+
+        try:
+            findings = detector.detect()
+            for finding in findings:
+                # Dedup by detector+title (single targeted query)
+                existing = self._find_existing(finding)
+                if existing is not None:
+                    if self._is_suppressed(existing):
+                        continue  # Still known/active — don't re-add
+                    # Snooze expired (or resolved and re-detected):
+                    # re-surface the existing row instead of duplicating.
+                    self.findings.update_status(
+                        existing.id,
+                        FindingStatus.OPEN.value,
+                        snoozed_until="",
+                    )
+                    finding_id = existing.id
+                    logger.info(
+                        f"Finding {finding_id} re-surfaced "
+                        f"(was {existing.status})"
+                    )
+                else:
+                    # Store the finding
+                    finding_id = self.findings.add(finding)
+
+                # Create a proactive event (``data`` carries the detector's
+                # structured payload when it built one — e.g. the acoustic
+                # module contract — else None).
+                event = ProactiveEvent.create(
+                    type="finding",
+                    severity=finding.severity,
+                    title=finding.title,
+                    body=finding.description,
+                    finding_id=finding_id,
+                    category=_EVENT_CATEGORY.get(finding.detector, "general"),
+                    data=finding.data,
+                )
+
+                # Check the gate
+                should_notify, reason = self.gate.should_notify(event)
+                if should_notify:
+                    bus = get_event_bus()
+                    await bus.publish(event)
+                    published_events.append(event)
+                else:
+                    logger.info(
+                        f"Finding {finding_id} suppressed by gate: {reason}"
+                    )
+
+                # F3: evaluate living reflexes against this finding.
+                # Reflex events inherit the gate decision — a reflex derived
+                # from a suppressed finding must not leak past quiet hours,
+                # the proactivity dial, or safe mode.
+                if self.reflex_matcher is not None:
+                    for reflex in self.reflex_matcher.match(
+                        title=finding.title,
+                        body=finding.description,
+                        severity=finding.severity,
+                        category=finding.detector,
+                    ):
+                        reflex_event = self._reflex_event(reflex, finding, finding_id)
+                        try:
+                            notify, reason = self.gate.should_notify(reflex_event)
+                            if not notify:
+                                logger.info(
+                                    f"Reflex '{reflex.name}' suppressed by gate: {reason}"
+                                )
+                                continue
+                            await get_event_bus().publish(reflex_event)
+                            published_events.append(reflex_event)
+                        except Exception as e:
+                            logger.warning(f"reflex publish failed: {e}")
+        except Exception as e:
+            # Warning-once per detector class: the acoustic bridge (O5) can
+            # call this per sound event, so a persistent failure must not
+            # warn every few seconds.
+            name = detector.__class__.__name__
+            if name in self._detector_warned:
+                logger.debug(f"Detector {name} failed (repeat): {e}")
+            else:
+                self._detector_warned.add(name)
+                logger.warning(f"Detector {name} failed: {e}")
+
         return published_events
 
     def _reflex_event(

@@ -191,18 +191,26 @@ export function createNodeAnalyserSource(
   opts: MediaStreamAnalyserOptions = {},
 ): AudioEnergySource {
   let inner: AudioEnergySource | null = null
+  let analyser: AnalyserNode | null = null
   return {
     start() {
-      const analyser = node.context.createAnalyser()
-      analyser.fftSize = opts.fftSize ?? 128
-      analyser.smoothingTimeConstant = 0
-      analyser.minDecibels = opts.minDecibels ?? -85
-      analyser.maxDecibels = opts.maxDecibels ?? -25
-      node.connect(analyser)
-      inner = createAnalyserEnergySource(analyser, node.context.sampleRate)
+      const created = node.context.createAnalyser()
+      created.fftSize = opts.fftSize ?? 128
+      created.smoothingTimeConstant = 0
+      created.minDecibels = opts.minDecibels ?? -85
+      created.maxDecibels = opts.maxDecibels ?? -25
+      node.connect(created)
+      analyser = created
+      inner = createAnalyserEnergySource(created, node.context.sampleRate)
     },
     stop() {
       inner = null
+      // The mark effect re-runs start() on every state change; without the
+      // disconnect each restart would leave a permanently-connected
+      // analyser on a long-lived node (the mic tap / TTS out), accumulating
+      // unbounded over a kiosk session.
+      analyser?.disconnect()
+      analyser = null
     },
     readEnergies(out: Float32Array, t: number): number {
       return inner ? inner.readEnergies(out, t) : 0

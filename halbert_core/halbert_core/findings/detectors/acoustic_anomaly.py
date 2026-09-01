@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from ..store import Finding
@@ -169,6 +170,21 @@ class AcousticAnomalyDetector:
             f"timestamp:{ts:.3f}",
         ]
 
+        # Structured payload for the frontend AcousticAnomalyModule (O5).
+        # Key names are that module's AcousticAnomalyData contract, verbatim;
+        # timestamp is UTC-aware ISO-8601 (the store's convention, and
+        # ``new Date()`` parses the +00:00 offset correctly).
+        # The DetectorRunner copies this onto the published ProactiveEvent.
+        payload = {
+            "sound_class": sound_class,
+            "confidence": confidence,
+            "area_id": area_id,
+            "decibel_level": db,
+            "anomaly_severity": severity_num,
+            "source": source,
+            "timestamp": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
+        }
+
         return Finding(
             id=finding_id,
             detector="acoustic_anomaly",
@@ -183,4 +199,5 @@ class AcousticAnomalyDetector:
             why_trust=why_trust,
             affected_paths=[],
             affected_services=[],
+            data=payload,
         )

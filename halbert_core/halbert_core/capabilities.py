@@ -24,6 +24,7 @@ Capabilities:
   ha_connection     — Home Assistant is configured (ha_url + ha_token)
   local_llm         — a local Ollama/LMStudio endpoint is configured
   secure_model      — a secure (local-only) model endpoint is configured
+  audio             — the voice pipeline can run (config enabled + sherpa-onnx)
 
 Design:
 - Probes are cheap (config checks, file existence, not network probes).
@@ -54,6 +55,7 @@ CAP_DISCOVERY = "discovery"
 CAP_HA_CONNECTION = "ha_connection"
 CAP_LOCAL_LLM = "local_llm"
 CAP_SECURE_MODEL = "secure_model"
+CAP_AUDIO = "audio"
 
 ALL_CAPABILITIES: Set[str] = {
     CAP_TERMINAL,
@@ -65,6 +67,7 @@ ALL_CAPABILITIES: Set[str] = {
     CAP_HA_CONNECTION,
     CAP_LOCAL_LLM,
     CAP_SECURE_MODEL,
+    CAP_AUDIO,
 }
 
 # ---------------------------------------------------------------------------
@@ -81,6 +84,7 @@ _PRESET_SYSADMIN: Dict[str, bool] = {
     CAP_HA_CONNECTION: False,  # only if ha_url is configured
     CAP_LOCAL_LLM: False,      # only if a local endpoint is configured
     CAP_SECURE_MODEL: False,   # only if a secure endpoint is configured
+    CAP_AUDIO: True,           # any node can be the voice terminal (probe gates)
 }
 
 _PRESET_HOME: Dict[str, bool] = {
@@ -93,6 +97,7 @@ _PRESET_HOME: Dict[str, bool] = {
     CAP_HA_CONNECTION: True,   # home variant expects HA to be configured
     CAP_LOCAL_LLM: False,
     CAP_SECURE_MODEL: False,
+    CAP_AUDIO: True,           # any node can be the voice terminal (probe gates)
 }
 
 
@@ -199,6 +204,24 @@ def _probe_secure_model() -> bool:
         return False
 
 
+def _probe_audio() -> bool:
+    """Can the voice pipeline run (audio_config enabled + sherpa-onnx)?
+
+    Presence only — never a variant check. A ``home`` appliance and a
+    sysadmin workstation can both be the voice terminal; what matters is
+    that the operator enabled audio (``audio_config.yml enabled: true``)
+    and the inference runtime is importable. ``being.yml
+    capabilities: {audio: false}`` remains the operator override that
+    wins over this probe.
+    """
+    try:
+        from .audio.config import load_config
+        from .audio.is_available import is_audio_available
+        return bool(load_config().enabled and is_audio_available())
+    except Exception:
+        return False
+
+
 # Capabilities that have active probes (test for actual presence).
 # Others use the variant preset default (which can be overridden in being.yml).
 _PROBES = {
@@ -207,6 +230,7 @@ _PROBES = {
     CAP_SOURCEPREP: _probe_sourceprep,
     CAP_LOCAL_LLM: _probe_local_llm,
     CAP_SECURE_MODEL: _probe_secure_model,
+    CAP_AUDIO: _probe_audio,
 }
 
 

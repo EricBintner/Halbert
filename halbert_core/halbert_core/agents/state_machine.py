@@ -291,6 +291,14 @@ class AgentStateMachine:
         # Cancellation tracking for session interruption
         self.cancelled: Dict[str, bool] = {}
 
+        # Voice mode (O3): the PiperTTS instance behind the Haloysius voice
+        # backend, cached once resolved so every egress turn shares one model
+        # load. None until a turn needs it (and stays None without a seam).
+        self._egress_tts: Any = None
+        # O3: egress failure sites already warned about (warning-once) — the
+        # machine is a process singleton, so this is once per site per run.
+        self._egress_warned: set = set()
+
         # One turn at a time (spec §12): held for the whole of process() and
         # confirm_action(), including their cleanup, so a second /message
         # during a turn waits here instead of the route force-resetting the
@@ -2937,14 +2945,27 @@ class AgentStateMachine:
                     # pipeline. The frontend's useAgentStream hook routes
                     # these to the audio playback component.
                     if should_speak(modality_ctx):
+                        # O3: collect the spoken segments (post-pronunciation
+                        # text + rate) as they are emitted so the TTS egress
+                        # hook below can synthesize the same audio the ribbon
+                        # is showing.
+                        spoken_segments: List[tuple] = []
                         for seg in getattr(payload, "segments", []):
                             if not getattr(seg, "is_spoken", False):
                                 continue
+                            seg_text = apply_pronunciation(seg.text)
+                            seg_rate = float(
+                                getattr(
+                                    getattr(seg, "prosody", None),
+                                    "rate", 1.0,
+                                ) or 1.0
+                            )
+                            spoken_segments.append((seg_text, seg_rate))
                             yield StreamEvent(
                                 type="speech_segment",
                                 session_id=self.ctx.session_id,
                                 data={
-                                    "text": apply_pronunciation(seg.text),
+                                    "text": seg_text,
                                     "role": getattr(
                                         getattr(seg, "role", None),
                                         "value", "persona",
@@ -2966,9 +2987,21 @@ class AgentStateMachine:
                                 },
                             )
                         logger.info(
-                            f"Emitted {len([s for s in getattr(payload, 'segments', []) if getattr(s, 'is_spoken', False)])} "
+                            f"Emitted {len(spoken_segments)} "
                             f"speech segments for voice delivery"
                         )
+                        # Voice mode (O3): stream the same spoken segments to
+                        # any browser subscribed to this session's audio on
+                        # /api/audio/tts. Strictly optional — the turn is
+                        # already complete for everyone else.
+                        if spoken_segments:
+                            try:
+                                await self._speak_to_tts_egress(spoken_segments)
+                            except Exception as e:
+                                self._egress_log_once(
+                                    "hook",
+                                    f"TTS egress skipped (non-fatal): {e}",
+                                )
         except Exception as e:
             logger.debug(f"Modality demux/delivery skipped (non-fatal): {e}")
 
@@ -2984,7 +3017,178 @@ class AgentStateMachine:
         if not self.ctx.conversation_status.is_terminal():
             yield self._set_conversation_status(ConversationStatus.SUCCESS)
         yield await self._transition(AgentState.IDLE)
-    
+
+    # ------------------------------------------------------------------
+    # Voice mode (O3): TTS egress to browser subscribers
+    # ------------------------------------------------------------------
+
+    def _voice_tts_for_egress(self) -> Any:
+        """The PiperTTS instance behind the Haloysius voice backend.
+
+        Reached through the app seam (the same backend the engine's own
+        synthesis uses), so one model loads per process instead of one per
+        consumer; cached on the machine. Returns None when the seam has no
+        voice backend (engine absent, audio-inference extra missing) — the
+        egress hook then stays silent.
+        """
+        if self._egress_tts is not None:
+            return self._egress_tts
+        try:
+            from haloysius.seam import get_app_seam
+            seam = get_app_seam()
+            backend = seam.get_voice_backend() if seam is not None else None
+            if backend is not None:
+                self._egress_tts = backend.get_tts()
+        except Exception:
+            self._egress_tts = None
+        return self._egress_tts
+
+    async def _speak_to_tts_egress(self, segments: List[tuple]) -> None:
+        """Synthesize and stream spoken segments to browser TTS subscribers.
+
+        The hub (dashboard ``routes/tts_egress.py``, the get_event_bus-style
+        module singleton — this machine holds no FastAPI app reference) is
+        the only gate: no subscriber for this turn's session means no
+        synthesis at all. Per segment, publish:
+
+            {"type": "begin", "sample_rate": <model rate>, "format": "s16le"}
+            <binary PCM chunks>
+            {"type": "end"} or {"type": "cancelled"}
+
+        The sample rate is the Piper model's real rate (commonly 22050, not
+        the module's 16k constant) — ``PiperTTS.synthesize`` records it on
+        the instance, which ``HalbertVoiceBackend`` already reads.
+
+        Barge-in: the token comes from the audio pipeline coordinator when
+        it is running (VAD barge-in then cancels browser playback too);
+        otherwise a standalone BargeInToken, still checked between chunks
+        and triggerable through the hub (the /api/audio/tts cancel control
+        frame). A token fired before the first chunk publishes nothing —
+        the browser cancels its own playback on interrupt.
+
+        Prosody: ``rate`` maps to Piper speed exactly as
+        ``HalbertVoiceBackend.synthesize`` does (the same ``_speed``
+        override, restored in ``finally`` — it carries the same
+        shared-instance caveat). ``volume``/``whisper`` are the browser's
+        GainNode business; the speech_segment event already carried them.
+
+        PiperTTS generates a whole clip before yielding its first chunk
+        (sherpa-onnx is batch), so awaiting this inline costs one synthesis
+        pass, not the clip's duration — and the speech_segment SSE events
+        above have already reached the browser by then.
+        """
+        try:
+            from ..dashboard.routes.tts_egress import get_tts_egress_hub
+        except Exception as e:
+            self._egress_log_once("hub_import", f"TTS egress hub unavailable: {e}")
+            return
+        hub = get_tts_egress_hub()
+        session_id = self.ctx.session_id
+        if not hub.has_subscribers(session_id):
+            return
+        tts = self._voice_tts_for_egress()
+        if tts is None:
+            # A subscriber is waiting but there is no engine to speak with —
+            # the one case worth a warning (once); after that it is the
+            # deployment's steady state, not news.
+            self._egress_log_once(
+                "tts_unavailable",
+                "TTS egress: browser subscribed but no PiperTTS is available",
+            )
+            return
+
+        # Barge-in token: coordinator-owned when the pipeline runs, so VAD
+        # barge-in (coordinator.trigger_barge_in) cancels this synthesis
+        # too; standalone otherwise.
+        token = None
+        pipeline = getattr(hub, "pipeline", None)
+        if pipeline is not None:
+            try:
+                token = pipeline.create_barge_in_token()
+            except Exception:
+                token = None
+        if token is None:
+            from ..audio.speech.barge_in import BargeInHandler
+            token = BargeInHandler().create_token()
+
+        hub.register_cancel_token(session_id, token)
+        any_began = False
+        sent_cancelled = False
+        try:
+            for text, rate in segments:
+                # Barge-in between segments: stop before spending a full
+                # sherpa-onnx generation pass on a segment nobody will hear.
+                if token is not None and token.is_set():
+                    break
+                if not text.strip():
+                    continue
+                original_speed = tts._speed
+                tts._speed = rate
+                began = False
+                try:
+                    async for chunk in tts.synthesize(text, cancel_token=token):
+                        if token is not None and token.is_set():
+                            break
+                        if not began:
+                            began = True
+                            await hub.publish(session_id, {
+                                "type": "begin",
+                                "sample_rate": getattr(
+                                    tts, "_sample_rate", None
+                                ) or 16000,
+                                "format": "s16le",
+                            })
+                        await hub.publish(session_id, chunk)
+                finally:
+                    tts._speed = original_speed
+                if began:
+                    any_began = True
+                    cancelled = token is not None and token.is_set()
+                    if cancelled:
+                        sent_cancelled = True
+                    await hub.publish(
+                        session_id,
+                        {"type": "cancelled" if cancelled else "end"},
+                    )
+            # Barge-in in the window between one segment's end and the next
+            # segment's first chunk: the loop broke before that segment's
+            # ``began`` ever turned True, so nothing was published for it —
+            # tell the browser anyway, or it plays the clip it already
+            # scheduled to the end instead of stopping.
+            if (
+                not sent_cancelled
+                and any_began
+                and token is not None
+                and token.is_set()
+            ):
+                await hub.publish(session_id, {"type": "cancelled"})
+        finally:
+            hub.clear_cancel_token(session_id)
+            # Give the coordinator its slot back so it does not go stale
+            # after the turn (a stale active token would eat the next VAD
+            # barge-in). No-op when the active token has moved on. NOTE for
+            # whoever wires VAD to the pipeline's own speak(): speak() also
+            # fills _active_barge_in_token — one active token, one turn;
+            # these two writers must stay mutually exclusive.
+            if pipeline is not None and token is not None:
+                try:
+                    pipeline.release_barge_in_token(token)
+                except Exception:
+                    pass
+
+    def _egress_log_once(self, site: str, message: str) -> None:
+        """Warn once per egress failure site, then drop to debug.
+
+        Voice egress is strictly optional, so a failure must never spam every
+        voice turn — but the first occurrence is a real wiring/model problem
+        an operator should see in the logs.
+        """
+        if site in self._egress_warned:
+            logger.debug(message)
+            return
+        self._egress_warned.add(site)
+        logger.warning(message)
+
     async def _handle_error(self) -> AsyncIterator[StreamEvent]:
         """
         ERROR state: Handle and recover from errors.

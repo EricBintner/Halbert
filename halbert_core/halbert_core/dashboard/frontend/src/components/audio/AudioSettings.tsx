@@ -9,7 +9,8 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { apiUrl } from '@/lib/apiBase'
-import { AudioLines, Mic, Volume2, Shield, AlertTriangle, Music, Loader2 } from 'lucide-react'
+import type { SpeakerStatus } from '@/components/voice/SpeakerBadge'
+import { AudioLines, Mic, Volume2, Shield, AlertTriangle, Music, Loader2, Moon } from 'lucide-react'
 
 interface AudioConfig {
   enabled: boolean
@@ -30,6 +31,9 @@ interface AudioStatus {
   available: boolean
   sherpa_onnx_installed: boolean
   state: string
+  /** Last identified speaker (O4) — null until a speech turn has run;
+   * absent on the static fallback payload (no coordinator). */
+  speaker?: SpeakerStatus | null
   engines: {
     vad: boolean
     asr: boolean
@@ -44,6 +48,7 @@ export function AudioSettings() {
   const [status, setStatus] = useState<AudioStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [quietHours, setQuietHours] = useState<{ start: string; end: string } | null>(null)
 
   const loadConfig = useCallback(async () => {
     try {
@@ -63,9 +68,22 @@ export function AudioSettings() {
     }
   }, [])
 
+  const loadQuietHours = useCallback(async () => {
+    try {
+      const resp = await fetch(apiUrl('/api/being'))
+      if (resp.ok) {
+        const data = await resp.json()
+        const cfg = data.config || data
+        setQuietHours(cfg.quiet_hours ?? null)
+      }
+    } catch (err) {
+      console.error('Failed to load being config:', err)
+    }
+  }, [])
+
   useEffect(() => {
-    Promise.all([loadConfig(), loadStatus()]).finally(() => setLoading(false))
-  }, [loadConfig, loadStatus])
+    Promise.all([loadConfig(), loadStatus(), loadQuietHours()]).finally(() => setLoading(false))
+  }, [loadConfig, loadStatus, loadQuietHours])
 
   const updateConfig = async (patch: Partial<AudioConfig> & Record<string, any>) => {
     setSaving(true)
@@ -79,6 +97,22 @@ export function AudioSettings() {
       await loadStatus()
     } catch (err) {
       console.error('Failed to update audio config:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const updateQuietHours = async (value: { start: string; end: string } | null) => {
+    setSaving(true)
+    try {
+      await fetch(apiUrl('/api/being'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quiet_hours: value }),
+      })
+      await loadQuietHours()
+    } catch (err) {
+      console.error('Failed to update quiet hours:', err)
     } finally {
       setSaving(false)
     }
@@ -348,12 +382,83 @@ export function AudioSettings() {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <Label htmlFor="delete-raw">Delete raw audio after transcription</Label>
-            <Switch id="delete-raw" checked={config.privacy.delete_raw_after_transcription} onCheckedChange={() => {}} />
+            <Switch
+              id="delete-raw"
+              checked={config.privacy.delete_raw_after_transcription}
+              onCheckedChange={(v) => updateConfig({ privacy_delete_raw_after_transcription: v })}
+              disabled={saving}
+            />
           </div>
           <div className="flex items-center justify-between">
             <Label htmlFor="ignore-tv">Ignore background TV/media speech</Label>
-            <Switch id="ignore-tv" checked={config.privacy.ignore_tv_media} onCheckedChange={() => {}} />
+            <Switch
+              id="ignore-tv"
+              checked={config.privacy.ignore_tv_media}
+              onCheckedChange={(v) => updateConfig({ privacy_ignore_tv_media: v })}
+              disabled={saving}
+            />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Quiet hours */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Moon className="h-5 w-5" />
+            Quiet Hours
+          </CardTitle>
+          <CardDescription>
+            Suppress proactive speech and alerts during quiet hours. The
+            modality-voice engine enforces this for voice delivery; the
+            proactive gate uses it for alert suppression. Life-safety events
+            (smoke, gas, CO) always bypass quiet hours.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="quiet-enabled">Enable quiet hours</Label>
+            <Switch
+              id="quiet-enabled"
+              checked={quietHours !== null}
+              onCheckedChange={(v) => {
+                if (v) {
+                  updateQuietHours({ start: '22:00', end: '07:00' })
+                } else {
+                  updateQuietHours(null)
+                }
+              }}
+              disabled={saving}
+            />
+          </div>
+          {quietHours && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="quiet-start">Start time</Label>
+                <Input
+                  id="quiet-start"
+                  type="time"
+                  value={quietHours.start}
+                  onChange={(e) => setQuietHours({ ...quietHours, start: e.target.value })}
+                  onBlur={() => quietHours && updateQuietHours(quietHours)}
+                  disabled={saving}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="quiet-end">End time</Label>
+                <Input
+                  id="quiet-end"
+                  type="time"
+                  value={quietHours.end}
+                  onChange={(e) => setQuietHours({ ...quietHours, end: e.target.value })}
+                  onBlur={() => quietHours && updateQuietHours(quietHours)}
+                  disabled={saving}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

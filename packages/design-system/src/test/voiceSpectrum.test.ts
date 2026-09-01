@@ -9,6 +9,7 @@ import {
   SyntheticEnergySource,
   IdleBreathingSource,
   createAnalyserEnergySource,
+  createNodeAnalyserSource,
 } from '../voice/spectrum'
 
 describe('FFT bin mapping', () => {
@@ -74,5 +75,64 @@ describe('energy sources', () => {
     expect(src.readEnergies(out, 0)).toBe(10)
     expect(out[0]).toBeCloseTo(1, 5) // brilliance ring lights up
     expect(out[4]).toBeCloseTo(0, 5) // vocal core stays dark
+  })
+
+  it('createNodeAnalyserSource disconnects its analyser on stop (no accumulation)', () => {
+    // The mark effect re-runs start() on every state change; each restart
+    // must not leave another permanently-connected analyser on a
+    // long-lived node (the Voice Mode mic tap / TTS out live for hours).
+    const analysers: Array<{
+      connected: unknown[]
+      disconnected: boolean
+      frequencyBinCount: number
+      getByteFrequencyData: (out: Uint8Array) => void
+    }> = []
+    const tap = {
+      context: {
+        sampleRate: 48000,
+        createAnalyser() {
+          const analyser = {
+            fftSize: 0,
+            smoothingTimeConstant: 0,
+            minDecibels: 0,
+            maxDecibels: 0,
+            frequencyBinCount: 64,
+            connected: [] as unknown[],
+            disconnected: false,
+            getByteFrequencyData(out: Uint8Array) {
+              out.fill(128)
+            },
+            disconnect() {
+              analyser.disconnected = true
+            },
+          }
+          analysers.push(analyser)
+          return analyser
+        },
+      },
+      connect(dest: unknown) {
+        analysers[analysers.length - 1].connected.push(dest)
+      },
+    }
+    const src = createNodeAnalyserSource(tap as unknown as AudioNode)
+
+    src.start()
+    src.stop()
+    src.start() // the mark effect's restart cycle
+
+    expect(analysers).toHaveLength(2) // one per start, not one per lifetime
+    expect(analysers[0].disconnected).toBe(true) // the retired one is gone
+    expect(analysers[1].disconnected).toBe(false)
+    expect(analysers[1].connected).toHaveLength(1)
+
+    // The live analyser still flows energy.
+    const out = new Float32Array(10)
+    expect(src.readEnergies(out, 0)).toBe(10)
+    expect(out.every((v) => v > 0)).toBe(true)
+
+    // stop() is idempotent.
+    src.stop()
+    src.stop()
+    expect(analysers[1].disconnected).toBe(true)
   })
 })

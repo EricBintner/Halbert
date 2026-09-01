@@ -15,9 +15,9 @@ export interface HalbertMarkProps extends React.SVGAttributes<SVGSVGElement> {
 
   /**
    * Optical sizing density tier:
-   * - 'display': 10 concentric paths (100%), for >=96px
-   * - 'medium': 6 concentric paths (60%), for 32px-96px
-   * - 'small': 3 concentric paths (30%), for 16px-24px (micro/favicon)
+   * - 'display': 10 concentric paths (100%), for >64px
+   * - 'medium': 6 concentric paths (60%), for >24px-64px
+   * - 'small': 3 concentric paths (30%), for <=24px (micro/favicon)
    * - 'compact': 4 concentric paths (40%), intermediate for 24px-32px
    * - 'auto': selects automatically based on numeric size (<=24 -> small, <=64 -> medium, >64 -> display)
    * @default 'auto'
