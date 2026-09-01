@@ -47,7 +47,7 @@ function renderProbe({ stored }: { stored?: ShellModeStored } = {}) {
   )
 }
 
-type ShellModeStored = 'engaged' | 'browsing'
+type ShellModeStored = 'engaged' | 'browsing' | 'both'
 
 describe('ShellModeContext voice mode', () => {
   beforeEach(() => {
@@ -59,11 +59,11 @@ describe('ShellModeContext voice mode', () => {
     localStorage.clear()
   })
 
-  it('defaults to engaged and does not report voice', () => {
+  it('defaults to both (side-by-side) and does not report voice', () => {
     renderProbe()
 
-    expect(screen.getByTestId('mode')).toHaveTextContent('engaged')
-    expect(screen.getByTestId('is-engaged')).toHaveTextContent('true')
+    expect(screen.getByTestId('mode')).toHaveTextContent('both')
+    expect(screen.getByTestId('is-engaged')).toHaveTextContent('false')
     expect(screen.getByTestId('is-voice')).toHaveTextContent('false')
   })
 
@@ -85,7 +85,7 @@ describe('ShellModeContext voice mode', () => {
     expect(screen.getByTestId('mode')).toHaveTextContent('browsing')
   })
 
-  it('entering voice from engaged restores engaged on leave', () => {
+  it('entering voice from both restores both on leave', () => {
     renderProbe()
 
     act(() => {
@@ -94,7 +94,7 @@ describe('ShellModeContext voice mode', () => {
     act(() => {
       screen.getByText('exit-voice').click()
     })
-    expect(screen.getByTestId('mode')).toHaveTextContent('engaged')
+    expect(screen.getByTestId('mode')).toHaveTextContent('both')
   })
 
   it('entering voice on a fresh load restores the stored base mode', () => {
@@ -168,9 +168,16 @@ describe('ShellModeContext voice mode', () => {
     expect(screen.getByTestId('mode')).toHaveTextContent('voice')
   })
 
-  it('still flips between the two base surfaces when not in voice', () => {
+  it('still flips between the two focus states when not in voice', () => {
     renderProbe()
 
+    // Default is 'both'. toggleMode flips to 'engaged' (right-only focus).
+    act(() => {
+      screen.getByText('toggle').click()
+    })
+    expect(screen.getByTestId('mode')).toHaveTextContent('engaged')
+
+    // Toggle again flips to 'browsing' (center-only focus).
     act(() => {
       screen.getByText('toggle').click()
     })

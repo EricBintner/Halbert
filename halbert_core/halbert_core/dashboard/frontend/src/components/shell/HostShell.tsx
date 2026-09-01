@@ -48,7 +48,7 @@ export function HostShell() {
    * render, which looks to the user like the link did nothing.
    */
   const openModelSettings = useCallback(() => {
-    setMode('browsing');
+    setMode('both');
     navigate(MODEL_SETTINGS_ROUTE);
   }, [navigate, setMode]);
 

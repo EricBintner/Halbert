@@ -45,7 +45,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { ConfigEditor } from './ConfigEditor'
 import { HalbertMark, NavRail, type NavRailSection } from '@halbert/design-system'
-import { ModeSwitch } from './shell/ModeSwitch'
+import { PanelToggle } from './shell/PanelToggle'
 import { PresencePill, type InstanceInfo } from './shell/PresencePill'
 import { AcousticAuraIndicator, VoiceHudSummonButton } from '@/components/audio'
 import { HostShell } from './shell/HostShell'
@@ -149,7 +149,7 @@ function ProgressPill({ icon, label, percent, detail, tone }: ProgressPillProps)
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
-  const { isEngaged, isVoice, setMode, enterVoice, exitVoice } = useShellMode()
+  const { isVoice, setMode, enterVoice, exitVoice, centerVisible, rightVisible } = useShellMode()
 
   // Global config editor state (triggered from chat "Edit Config" button)
   const [editingConfigPath, setEditingConfigPath] = useState<string | null>(null)
@@ -236,7 +236,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [isVoiceRoute, isVoice, enterVoice, exitVoice])
 
   const openSettings = useCallback(() => {
-    setMode('browsing')
+    // Settings renders in the center panel. Keep the conversation visible
+    // (right panel) so the user can ask Halbert for help while configuring.
+    setMode('both')
     navigate('/settings')
   }, [navigate, setMode])
 
@@ -245,8 +247,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [navigate])
 
   const handleNavSelect = useCallback((id: string) => {
+    // Clicking a nav item when center is hidden auto-shows the center
+    // panel (Section 9.6). Navigation implies a target, and the target
+    // is the center panel.
+    if (!centerVisible) {
+      setMode(rightVisible ? 'both' : 'browsing')
+    }
     navigate(id)
-  }, [navigate])
+  }, [navigate, centerVisible, rightVisible, setMode])
 
   // Listen for open-config-editor events from chat
   /**
@@ -261,7 +269,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
    * drains it once it mounts.
    */
   useEffect(() => {
-    const toEngaged = () => setMode('engaged')
+    const toEngaged = () => setMode('both')
 
     const onOpenChat = (event: Event) => {
       const detail = (event as CustomEvent).detail ?? {}
@@ -444,7 +452,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <span className="text-sm font-semibold hidden sm:inline text-foreground">Halbert</span>
           </div>
 
-          <ModeSwitch />
+          <PanelToggle />
 
           {/* Voice entry — a mode, not a nav tab: the deep link and this
            * button beside the mode switch are the only doors in. The route
@@ -510,7 +518,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </header>
       )}
 
-      {/* Mode content */}
+      {/* Mode content — the 3-panel shell.
+       *
+       * Voice routes (/voice, /voice-hud) are full-bleed and render bare.
+       * Everything else is: left NavRail + center page panel + right
+       * conversation panel, with center and right independently togglable
+       * via the PanelToggle in the top bar (Cmd+D, Cmd+J).
+       *
+       * When center is hidden, the right panel (HostShell) takes the full
+       * width — the "Host Focus" state. When right is hidden, the center
+       * page takes the full width — "Dashboard Focus". When both are
+       * visible — "Side-by-Side Co-pilot" (the default).
+       *
+       * Clicking a nav item when center is hidden auto-shows the center
+       * panel (handleNavSelect below). */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {isVoiceHudRoute ? (
           /* The floating voice HUD (P4) is a 480x72 borderless transparent
@@ -519,43 +540,52 @@ export function Layout({ children }: { children: React.ReactNode }) {
            * Like the /voice exception, the page renders bare. */
           children
         ) : isVoiceRoute ? (
-          /* Voice (O8) is full-bleed — no rail, no padded main, no shell
+          /* Voice is full-bleed — no rail, no padded main, no shell
            * chrome of any kind. The screen brings its own h-screen dark
-           * canvas (the sanctioned palette divergence, plan §2 Decision 5),
-           * so it renders bare: it IS the shell while it is up. */
+           * canvas, so it renders bare: it IS the shell while it is up. */
           children
-        ) : isEngaged ? (
-          configEditor ? (
-            <div className="h-full overflow-auto p-8">{configEditor}</div>
-          ) : (
-            <HostShell />
-          )
-        ) : isSettingsRoute ? (
-          /* Settings overtakes the dashboard: no dashboard rail, no padded
-           * main wrapper. The Settings page renders its own NavRail (in the
-           * same position) plus its content, filling the whole surface. */
-          <div className="h-full w-full overflow-hidden">
-            {children}
-          </div>
         ) : (
           <div className="flex h-full overflow-hidden">
-            {/* Navigation rail — shared NavRail component, identical
-             * typography to the settings rail by construction. */}
+            {/* Navigation rail — always present (not togglable in this phase).
+             * Shared NavRail component, identical typography to the settings
+             * rail by construction. */}
             <NavRail
               sections={filteredSections as NavRailSection[]}
               activeId={location.pathname}
               onSelect={handleNavSelect}
             />
 
-            {/* Page content */}
-            <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-              <main className="flex-1 p-6 md:p-8 overflow-auto relative z-0">
-                <div className="max-w-6xl mx-auto w-full">
-                  {configEditor ?? children}
-                </div>
-              </main>
-            </div>
+            {/* Center panel — the active page / Settings. Hidden when the
+             * user focuses on the conversation (Host Focus state). */}
+            {centerVisible && (
+              <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+                <main className="flex-1 p-6 md:p-8 overflow-auto relative z-0">
+                  <div className="max-w-6xl mx-auto w-full">
+                    {configEditor ?? children}
+                  </div>
+                </main>
+              </div>
+            )}
 
+            {/* Right panel — the conversation (HostShell). Hidden when the
+             * user focuses on the dashboard (Dashboard Focus state). When
+             * center is hidden, this takes the full remaining width. */}
+            {rightVisible && (
+              <div className={cn(
+                'flex flex-col min-w-0 overflow-hidden',
+                centerVisible ? 'w-[40%] max-w-[640px] min-w-[320px] border-l border-border' : 'flex-1',
+              )}>
+                <HostShell />
+              </div>
+            )}
+
+            {/* Edge case: both panels hidden. Show the rail with an empty
+             * state so the user can click a nav item to re-open the center. */}
+            {!centerVisible && !rightVisible && (
+              <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+                Press Cmd+D for dashboard or Cmd+J for conversation
+              </div>
+            )}
           </div>
         )}
       </div>

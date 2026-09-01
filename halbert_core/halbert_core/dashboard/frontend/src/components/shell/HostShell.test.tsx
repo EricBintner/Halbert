@@ -66,13 +66,13 @@ describe('HostShell', () => {
     // Browsing mode, because the settings page does not exist in engaged mode;
     // the tab hint so the page can open on the models tab rather than the first.
     await waitFor(() =>
-      expect(screen.getByTestId('probe')).toHaveTextContent('browsing /settings?tab=ai'),
+      expect(screen.getByTestId('probe')).toHaveTextContent('both /settings?tab=ai'),
     )
   })
 
-  it('is still on the engaged surface until that link is used', () => {
+  it('is still on the both (side-by-side) surface until that link is used', () => {
     mount()
-    expect(screen.getByTestId('probe')).toHaveTextContent('engaged /')
+    expect(screen.getByTestId('probe')).toHaveTextContent('both /')
   })
 
   it('mounts one polite region and one assertive region for the whole shell', () => {
