@@ -38,3 +38,8 @@ async-trait = "0.1"
 # PyO3 (for halbert-ffi only)
 pyo3 = { version = "0.22", features = ["extension-module"] }
 pyo3-asyncio = { version = "0.22", features = ["tokio-runtime"] }
+# MQTT client (no use-rustls to avoid zeroize 1.9 requiring edition2024 on Rust 1.84)
+rumqttc = "0.25"
+# Concurrent data structures
+dashmap = "6"
+parking_lot = "0.12"

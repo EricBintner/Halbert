@@ -138,7 +138,245 @@ pub trait DeviceStateCache: Send + Sync {
     fn clear(&self);
 }
 
-// Stub implementations (to be filled in R1.1/R1.2) ---------------------------
+// ---------------------------------------------------------------------------
+// Implementations
+// ---------------------------------------------------------------------------
+
+use rumqttc::{AsyncClient, MqttOptions, QoS as RumqttQos};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::sync::mpsc;
+
+/// Convert our Qos enum to rumqttc's QoS enum.
+fn to_rumqtt_qos(qos: Qos) -> RumqttQos {
+    match qos {
+        Qos::AtMostOnce => RumqttQos::AtMostOnce,
+        Qos::AtLeastOnce => RumqttQos::AtLeastOnce,
+        Qos::ExactlyOnce => RumqttQos::ExactlyOnce,
+    }
+}
+
+/// Convert rumqttc's QoS enum to ours.
+fn from_rumqtt_qos(qos: RumqttQos) -> Qos {
+    match qos {
+        RumqttQos::AtMostOnce => Qos::AtMostOnce,
+        RumqttQos::AtLeastOnce => Qos::AtLeastOnce,
+        RumqttQos::ExactlyOnce => Qos::ExactlyOnce,
+    }
+}
+
+/// MQTT client implementation backed by `rumqttc`.
+///
+/// Uses an internal channel to bridge rumqttc's event loop into our
+/// `recv()` interface. Auto-reconnect is handled by rumqttc's built-in
+/// connection management.
+pub struct RumqttClient {
+    /// The rumqttc async client handle.
+    client: Mutex<Option<AsyncClient>>,
+    /// Channel receiver for incoming messages from the event loop.
+    rx: Mutex<mpsc::Receiver<MqttMessage>>,
+    /// Channel sender for incoming messages (cloned into the event loop task).
+    tx: mpsc::Sender<MqttMessage>,
+    /// Connection state.
+    connected: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl RumqttClient {
+    /// Create a new client. Does not connect — call `connect()` to establish
+    /// a connection to the broker.
+    pub fn new() -> Self {
+        let (tx, rx) = mpsc::channel(256);
+        Self {
+            client: Mutex::new(None),
+            rx: Mutex::new(rx),
+            tx,
+            connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+}
+
+impl Default for RumqttClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl MqttClient for RumqttClient {
+    async fn connect(&self, config: &MqttConfig) -> Result<(), MqttError> {
+        let mut opts = MqttOptions::new(
+            &config.client_id,
+            &config.broker,
+            config.port,
+        );
+        opts.set_keep_alive(std::time::Duration::from_secs(
+            config.keep_alive_secs as u64,
+        ));
+
+        if let (Some(user), Some(pass)) = (&config.username, &config.password) {
+            opts.set_credentials(user, pass);
+        }
+
+        if let Some(lwt) = &config.last_will {
+            opts.set_last_will(
+                rumqttc::LastWill {
+                    topic: lwt.topic.clone(),
+                    message: lwt.payload.clone().into(),
+                    qos: to_rumqtt_qos(lwt.qos),
+                    retain: lwt.retain,
+                },
+            );
+        }
+
+        // rumqttc 0.25: auto-reconnect is configured via MqttOptions, not EventLoop.
+        // The event loop will retry connections automatically when the broker drops.
+        let (client, mut event_loop) = AsyncClient::new(opts, 10);
+
+        // Spawn a task to poll the event loop and forward Publish events
+        // to our channel. This bridges rumqttc's poll-based API into our
+        // channel-based recv() interface.
+        let tx = self.tx.clone();
+        let connected = self.connected.clone();
+        tokio::spawn(async move {
+            loop {
+                match event_loop.poll().await {
+                    Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(p))) => {
+                        let payload = String::from_utf8_lossy(&p.payload).to_string();
+                        let msg = MqttMessage {
+                            topic: p.topic,
+                            payload,
+                            qos: from_rumqtt_qos(p.qos),
+                            retained: p.retain,
+                        };
+                        if tx.send(msg).await.is_err() {
+                            // Receiver dropped — client was dropped. Stop polling.
+                            connected.store(false, std::sync::atomic::Ordering::Relaxed);
+                            break;
+                        }
+                    }
+                    Ok(_) => {
+                        // Other events (ConnAck, SubAck, etc.) — update connected state.
+                        connected.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        tracing::warn!("MQTT event loop error: {} (auto-reconnecting)", e);
+                        // rumqttc with set_auto_reconnect(true) will retry.
+                        // We keep polling; the next Ok event will reset connected.
+                        connected.store(false, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
+        });
+
+        *self.client.lock().await = Some(client);
+        Ok(())
+    }
+
+    async fn subscribe(&self, topic: &str, qos: Qos) -> Result<(), MqttError> {
+        let guard = self.client.lock().await;
+        let client = guard.as_ref().ok_or(MqttError::NotConnected)?;
+        client
+            .subscribe(topic, to_rumqtt_qos(qos))
+            .await
+            .map_err(|e| MqttError::Subscribe(e.to_string()))
+    }
+
+    async fn unsubscribe(&self, topic: &str) -> Result<(), MqttError> {
+        let guard = self.client.lock().await;
+        let client = guard.as_ref().ok_or(MqttError::NotConnected)?;
+        client
+            .unsubscribe(topic)
+            .await
+            .map_err(|e| MqttError::Subscribe(e.to_string()))
+    }
+
+    async fn publish(
+        &self,
+        topic: &str,
+        payload: &str,
+        qos: Qos,
+        retain: bool,
+    ) -> Result<(), MqttError> {
+        let guard = self.client.lock().await;
+        let client = guard.as_ref().ok_or(MqttError::NotConnected)?;
+        client
+            .publish(topic, to_rumqtt_qos(qos), retain, payload)
+            .await
+            .map_err(|e| MqttError::Publish(e.to_string()))
+    }
+
+    async fn recv(&self) -> Result<MqttMessage, MqttError> {
+        let mut rx = self.rx.lock().await;
+        rx.recv()
+            .await
+            .ok_or(MqttError::NotConnected)
+    }
+
+    async fn is_connected(&self) -> bool {
+        self.connected
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    async fn disconnect(&self) -> Result<(), MqttError> {
+        let mut guard = self.client.lock().await;
+        if let Some(client) = guard.take() {
+            // rumqttc AsyncClient doesn't have an explicit disconnect method,
+            // but dropping the client cancels the connection.
+            drop(client);
+        }
+        self.connected
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+/// In-memory device state cache backed by `DashMap`.
+///
+/// Thread-safe, lock-free reads. Used by the Python device registry to
+/// query the last-known state of MQTT topics without re-subscribing.
+pub struct InMemoryDeviceStateCache {
+    states: dashmap::DashMap<String, String>,
+}
+
+impl InMemoryDeviceStateCache {
+    pub fn new() -> Self {
+        Self {
+            states: dashmap::DashMap::new(),
+        }
+    }
+}
+
+impl Default for InMemoryDeviceStateCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DeviceStateCache for InMemoryDeviceStateCache {
+    fn get_state(&self, topic: &str) -> Option<String> {
+        self.states.get(topic).map(|v| v.clone())
+    }
+
+    fn update_state(&self, topic: &str, payload: &str) {
+        self.states.insert(topic.to_string(), payload.to_string());
+    }
+
+    fn remove_state(&self, topic: &str) {
+        self.states.remove(topic);
+    }
+
+    fn list_topics(&self) -> Vec<String> {
+        self.states.iter().map(|kv| kv.key().clone()).collect()
+    }
+
+    fn clear(&self) {
+        self.states.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -173,5 +411,45 @@ mod tests {
         let back: MqttMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(back.topic, msg.topic);
         assert_eq!(back.payload, msg.payload);
+    }
+
+    #[test]
+    fn device_state_cache_basic() {
+        let cache = InMemoryDeviceStateCache::new();
+        assert!(cache.get_state("sensor/temp").is_none());
+
+        cache.update_state("sensor/temp", "22.5");
+        assert_eq!(cache.get_state("sensor/temp").unwrap(), "22.5");
+
+        cache.update_state("sensor/humidity", "45");
+        assert_eq!(cache.list_topics().len(), 2);
+
+        cache.remove_state("sensor/temp");
+        assert!(cache.get_state("sensor/temp").is_none());
+        assert_eq!(cache.list_topics().len(), 1);
+
+        cache.clear();
+        assert!(cache.list_topics().is_empty());
+    }
+
+    #[test]
+    fn qos_conversion_roundtrip() {
+        assert_eq!(to_rumqtt_qos(Qos::AtMostOnce), RumqttQos::AtMostOnce);
+        assert_eq!(to_rumqtt_qos(Qos::AtLeastOnce), RumqttQos::AtLeastOnce);
+        assert_eq!(to_rumqtt_qos(Qos::ExactlyOnce), RumqttQos::ExactlyOnce);
+
+        assert_eq!(from_rumqtt_qos(RumqttQos::AtMostOnce), Qos::AtMostOnce);
+        assert_eq!(from_rumqtt_qos(RumqttQos::AtLeastOnce), Qos::AtLeastOnce);
+        assert_eq!(from_rumqtt_qos(RumqttQos::ExactlyOnce), Qos::ExactlyOnce);
+    }
+
+    #[test]
+    fn rumqtt_client_creation() {
+        let client = RumqttClient::new();
+        // Should not be connected before connect() is called.
+        // (is_connected is async, so we check the atomic directly)
+        assert!(!client
+            .connected
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 }
