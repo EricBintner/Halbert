@@ -257,6 +257,16 @@ class StateContext:
     # uses this to tighten (never loosen) the base safety classification.
     speaker_role: str = "admin"
 
+    # Phase 2 modality wiring: the user query with <speech>/<text>/
+    # <modality_context> control tags stripped (spec 5.11), resolved in
+    # RESPONDING and consumed by _build_messages. It lives here, on the
+    # per-turn context, and NOT on the state machine: one machine instance
+    # serves every concurrent session, so a defanged query stored on it
+    # outlived its turn and was read by the NEXT turn's PLANNING — which then
+    # planned against the previous question (REV-06 F1). Same reasoning as
+    # model_override/tier_override above.
+    defanged_query: Optional[str] = None
+
     def add_observation(self, observation: str):
         """Add an observation from tool execution."""
         self.observations.append(observation)
