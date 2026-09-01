@@ -1619,6 +1619,15 @@ Fix `HalbertMark.tsx` JSDoc density thresholds (says ≥96px, code says >64px) a
 
 ## 8. Acceptance & Risk
 
+> **Revision v2 (2026-08-31, founder tuning pass, branch `feat/voice-mode-mark-v2`):**
+> 1. **Voice Mode uses the 6-tine `medium` density** — spine + 5 lanes (86.4-unit pitch, 48-unit stroke), the second-largest optical tier. The component defaults to it; all geometry/spectrum/physics tables are now per-density (`Record<VoiceDensity, …>`), and the code blocks in §4 remain the *display*-density reference.
+> 2. **Speaking uses plucked-string physics** — `PLUCK_SPRING` (k=120, c=3.5, ζ≈0.16, deliberately underdamped) plus velocity injection on spectral onsets (`injectVelocity`, onset delta > 0.04 → v += 3·Δ). Tines ring with sign-alternating decay; the standing-wave shape renders it as a vibrating string. Listening/idle keep the well-damped SPRING_DEFAULTS glide.
+> 3. **Frequency direction locked and test-pinned:** low registers drive outer/lower lanes, high registers the center spine — both densities.
+> 4. **Thinking keeps the shrink spring and adds "snake-ate-a-ball" bulges** (`TravelingBulge` in geometry.ts): a gaussian bump traveling the tine's full arc length in the outward-normal direction, Hann-windowed so endpoints stay pinned; staggered spawns on random tines, 2–3 concurrent, quiet energy baseline while thinking.
+> Post-v2 verification: 68/68 design-system tests, `tsc` clean, Storybook builds.
+>
+> **Parallel-session note (2026-08-31):** a concurrent session executed most of the backlog in this same worktree — O1–O6, O9, G1–G4, P3 (backend audio plumbing, voice-mode state machine, settings/fixes, kiosk service). Verified green after integration: 556/556 frontend tests, 80 voice/audio backend tests (via `wt_pytest.py`), 68/68 design-system. **Remaining:** O7–O8 (the `VoiceMode.tsx` screen + `/voice` route/shell integration), P1 standby tiers, P2 display-power daemon, P4 Tauri window decision, P5 hardware validation.
+
 **Phase 1 acceptance (this session):** ✅ `npm run test` in `packages/design-system` → 53 passing; `npm run typecheck` clean; `build-storybook` builds; Voice stories animate from synthetic sources without a mic; static first-paint markup byte-identical to the standalone mark geometry; energy-source lifecycle starts/stops with mount; all junction-pinning invariants test-enforced.
 
 **Known risks & deferrals:**
