@@ -261,10 +261,15 @@ class ProposalGenerator:
         try:
             for change in proposal.changes:
                 try:
-                    outcome = self._apply_change(change)
+                    outcome = self._apply_change(change, applied)
                 except Exception:
                     # The failing config-file change may be partially
                     # applied — add its path to the rollback set too.
+                    # chmod is excluded because it does not need this: it
+                    # records its own undo inside _apply_chmod, the instant
+                    # the mode changes, and this record's shape (restore
+                    # from WriteConfig's backup) could not undo a mode
+                    # change anyway.
                     if (
                         not change.get("requires_manual_review")
                         and change.get("action") != "chmod"
@@ -281,7 +286,10 @@ class ProposalGenerator:
                 if outcome["status"] == "manual_review":
                     result["skipped"].append(outcome)
                     continue
-                applied.append(outcome["rollback"])
+                # Appliers that record their own undo omit "rollback".
+                rollback = outcome.get("rollback")
+                if rollback is not None:
+                    applied.append(rollback)
                 result["applied"].append(outcome)
         except Exception as e:
             # Roll back everything applied so far (reverse order)
@@ -463,8 +471,15 @@ class ProposalGenerator:
     # ------------------------------------------------------------------
     # Execution
 
-    def _apply_change(self, change: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply a single change. Returns an outcome dict; raises on failure."""
+    def _apply_change(self, change: Dict[str, Any],
+                      applied: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Apply a single change. Returns an outcome dict; raises on failure.
+
+        ``applied`` is the caller's undo log. An applier whose side effect
+        lands before its own function returns appends to it directly, so the
+        undo exists for as long as the effect does; such an applier omits
+        "rollback" from its outcome.
+        """
         action = change.get("action", "")
         path = change.get("path", "")
         if not path:
@@ -481,7 +496,7 @@ class ProposalGenerator:
             }
 
         if action == "chmod":
-            return self._apply_chmod(change)
+            return self._apply_chmod(change, applied)
 
         return self._apply_config_change(change)
 
@@ -509,7 +524,8 @@ class ProposalGenerator:
             "rollback": {"kind": "write_config", "path": path},
         }
 
-    def _apply_chmod(self, change: Dict[str, Any]) -> Dict[str, Any]:
+    def _apply_chmod(self, change: Dict[str, Any],
+                     applied: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Apply a chmod change with drift detection, old-mode recording,
         and audit logging."""
         from ..obs.audit import write_audit
@@ -559,6 +575,12 @@ class ProposalGenerator:
         old_mode = current_mode
         if not already_ok:
             os.chmod(path, mode_int)
+            # Record the undo before anything else can fail. Everything below
+            # — the audit write in particular — runs after the mode on disk
+            # has already changed, and a proposal that reports ROLLED_BACK
+            # while leaving a mode changed is the one outcome the caller is
+            # promised cannot happen (R06-F4).
+            applied.append({"kind": "chmod", "path": path, "old_mode": old_mode})
 
         write_audit(
             tool="chmod",
@@ -572,13 +594,13 @@ class ProposalGenerator:
             ),
             path=path,
         )
+        # No "rollback" key: the undo was logged above, at the side effect.
         return {
             "status": "applied",
             "path": path,
             "action": "chmod",
             "mode": mode_str,
             "old_mode": oct(old_mode),
-            "rollback": {"kind": "chmod", "path": path, "old_mode": old_mode},
         }
 
     def _rollback_change(self, rollback: Dict[str, Any]) -> None:
@@ -587,15 +609,28 @@ class ProposalGenerator:
             os.chmod(rollback["path"], rollback["old_mode"])
             from ..obs.audit import write_audit
 
-            write_audit(
-                tool="chmod",
-                mode="apply",
-                request_id=str(uuid.uuid4()),
-                ok=True,
-                summary=f"rollback chmod on {rollback['path']} "
-                f"(restored {oct(rollback['old_mode'])})",
-                path=rollback["path"],
-            )
+            # The restore has already happened. On the way IN an audit
+            # failure should fail the change closed — a permission change
+            # with no trail is not a change worth keeping. On the way BACK
+            # the opposite holds: letting the audit sink decide whether a
+            # completed undo counts as done would report the machine as
+            # still modified when it is not, and drop the undo from
+            # result["rolled_back"] entirely. So: loud, but not fatal.
+            try:
+                write_audit(
+                    tool="chmod",
+                    mode="apply",
+                    request_id=str(uuid.uuid4()),
+                    ok=True,
+                    summary=f"rollback chmod on {rollback['path']} "
+                    f"(restored {oct(rollback['old_mode'])})",
+                    path=rollback["path"],
+                )
+            except Exception as audit_err:
+                logger.error(
+                    f"Rollback of {rollback['path']} succeeded but could not "
+                    f"be audited: {audit_err}"
+                )
         else:
             # Config-file change: restore from WriteConfig's backup
             req = ToolRequest(

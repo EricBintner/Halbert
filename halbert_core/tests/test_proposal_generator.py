@@ -322,3 +322,67 @@ class TestHandleApprovalDecision:
         # First change rolled back: original 0o644 restored
         assert (os.stat(k1).st_mode & 0o777) == 0o644
         assert result["rolled_back"]
+
+    def test_a_failure_after_the_chmod_still_restores_the_mode(
+        self, generator, pstore, tmpdir
+    ):
+        """R06-F4. The undo record must exist from the moment the side effect
+        does. The audit write sits after os.chmod inside _apply_chmod, so a
+        failing audit used to leave the mode changed on disk while the
+        proposal reported ROLLED_BACK — the one state the caller is promised
+        cannot happen."""
+        key = _ssh_key(tmpdir, "id_rsa", mode=0o644)
+
+        fid = _make_finding(generator.findings, affected_paths=[key])
+        pid = generator.generate_for_finding(fid)
+        req_id = pstore.get(pid).approval_request_id
+
+        with mock.patch(
+            "halbert_core.obs.audit.write_audit",
+            side_effect=RuntimeError("audit sink unavailable"),
+        ):
+            result = handle_approval_decision(req_id, True, generator=generator)
+
+        assert result["status"] == ProposalStatus.ROLLED_BACK.value
+        assert (os.stat(key).st_mode & 0o777) == 0o644, (
+            "chmod took effect but was not rolled back"
+        )
+        assert any(rb["kind"] == "chmod" for rb in result["rolled_back"]), (
+            result["rolled_back"]
+        )
+
+    def test_a_rollback_that_cannot_be_audited_is_still_a_rollback(
+        self, generator, pstore, tmpdir
+    ):
+        """The mirror of the above. On the way back, an audit sink failure
+        must not report a completed undo as failed — that would tell the
+        operator the machine is still modified when it is not."""
+        k1 = _ssh_key(tmpdir, "id_rsa", mode=0o644)
+        k2 = os.path.join(tmpdir, ".ssh", "id_gone")
+        with open(k2, "w") as f:
+            f.write("key\n")
+        os.chmod(k2, 0o644)
+
+        fid = _make_finding(generator.findings, affected_paths=[k1, k2])
+        pid = generator.generate_for_finding(fid)
+        req_id = pstore.get(pid).approval_request_id
+
+        os.unlink(k2)  # the second chmod fails, triggering rollback of the first
+
+        calls = {"n": 0}
+
+        def _audit(*args, **kwargs):
+            # Let the apply-side audit through; fail only the rollback's.
+            calls["n"] += 1
+            if "rollback" in kwargs.get("summary", ""):
+                raise RuntimeError("audit sink unavailable")
+            return ""
+
+        with mock.patch("halbert_core.obs.audit.write_audit", side_effect=_audit):
+            result = handle_approval_decision(req_id, True, generator=generator)
+
+        assert result["status"] == ProposalStatus.ROLLED_BACK.value
+        assert (os.stat(k1).st_mode & 0o777) == 0o644
+        assert any(rb["kind"] == "chmod" for rb in result["rolled_back"]), (
+            "a completed undo was dropped because it could not be audited"
+        )
