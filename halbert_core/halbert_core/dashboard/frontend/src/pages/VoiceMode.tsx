@@ -240,7 +240,14 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
 
   const ensureUplink = useCallback(async () => {
     const existing = uplinkRef.current
-    if (existing && existing.state === 'running') return
+    // 'starting' guards the double-open race: a PTT gesture dispatches
+    // wake, React flushes standby->listening, and the re-arm effect below
+    // fires while the gesture's own getUserMedia is still pending — without
+    // this arm the effect would kill that uplink and open a second mic
+    // (device churn, two permission prompts, a clobbered tap).
+    if (existing && (existing.state === 'running' || existing.state === 'starting')) {
+      return
+    }
     existing?.stop() // a stopped/failed uplink is rebuilt, not reused
     const uplink = new PcmUplink({
       onError: (message) => dispatch({ type: 'error', message }),

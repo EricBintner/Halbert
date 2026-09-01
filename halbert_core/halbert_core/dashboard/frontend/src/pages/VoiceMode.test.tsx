@@ -46,6 +46,10 @@ const h = vi.hoisted(() => {
     tts: [] as Array<{ url: string; out: unknown; connect: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }>,
     uplinks: [] as Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; state: string; getAnalyserTap: () => unknown }>,
     uplinkOptions: [] as Array<{ onError?: (message: string) => void }>,
+    /** When true, the next PcmUplink.start() stays 'starting' until the
+     * test resolves it (a pending getUserMedia). */
+    deferStart: false,
+    startResolvers: [] as Array<() => void>,
   }
 })
 
@@ -89,18 +93,28 @@ vi.mock('@/lib/ttsPlayback', () => ({
 
 vi.mock('@/lib/pcmCapture', () => ({
   PcmUplink: class {
-    started = false
-    start = vi.fn(async () => {
-      this.started = true
+    phase: 'idle' | 'starting' | 'running' = 'idle'
+    start = vi.fn(() => {
+      this.phase = 'starting'
+      if (h.deferStart) {
+        return new Promise<void>((resolve) => {
+          h.startResolvers.push(() => {
+            this.phase = 'running'
+            resolve()
+          })
+        })
+      }
+      this.phase = 'running'
+      return Promise.resolve()
     })
     stop = vi.fn(() => {
-      this.started = false
+      this.phase = 'idle'
     })
     get state() {
-      return this.started ? 'running' : 'stopped'
+      return this.phase
     }
     getAnalyserTap() {
-      return this.started ? MIC_TAP : null
+      return this.phase === 'running' ? MIC_TAP : null
     }
     constructor(opts: unknown) {
       h.uplinks.push(this)
@@ -184,6 +198,8 @@ beforeEach(() => {
   h.tts = []
   h.uplinks = []
   h.uplinkOptions = []
+  h.deferStart = false
+  h.startResolvers = []
   vi.stubGlobal('fetch', fetchMock)
   fetchMock.mockClear()
   fetchMock.mockResolvedValue({ ok: false, status: 503, json: async () => ({}) })
@@ -661,6 +677,36 @@ describe('lifecycle', () => {
     expect(h.machine!.dispatch).toHaveBeenCalledWith({ type: 'wake' })
     expect(h.uplinks).toHaveLength(0)
     void m
+  })
+
+  it('a PTT gesture and the re-arm effect never open the mic twice', async () => {
+    // Real trace: PTT tap -> dispatch(wake) -> ensureUplink creates the
+    // uplink (getUserMedia pending) -> the handler yields -> React flushes
+    // standby->listening -> the re-arm effect fires while the uplink is
+    // still 'starting'. It must join that in-flight start, not kill it and
+    // open a second mic (device churn, two permission prompts, a tap
+    // clobbered by the loser's resolution).
+    h.deferStart = true
+    const user = userEvent.setup()
+    const m = mount()
+    await user.click(screen.getByRole('button', { name: 'Tap the mark to speak' }))
+    expect(h.uplinks).toHaveLength(1)
+    expect(h.uplinks[0].start).toHaveBeenCalledTimes(1)
+    expect(h.uplinks[0].state).toBe('starting')
+
+    setMachine('listening', 'listening')
+    m.rerender() // the re-arm effect fires mid-start
+    expect(h.uplinks).toHaveLength(1)
+    expect(h.uplinks[0].stop).not.toHaveBeenCalled()
+    expect(h.uplinks[0].start).toHaveBeenCalledTimes(1)
+
+    // The one getUserMedia resolves: the tap feeds the mark.
+    await act(async () => {
+      h.startResolvers[0]()
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(mountMarkSource()).toEqual({ kind: 'node', node: MIC_TAP }))
+    expect(h.uplinks).toHaveLength(1)
   })
 
   it('mic failure routes into the machine error state', async () => {
