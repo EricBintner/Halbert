@@ -81,6 +81,19 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 
 ---
 
+## Experimental & Long-Term Research
+
+| Document | Description |
+|----------|-------------|
+| [experimental/README.md](experimental/README.md) | Experimental track overview |
+| [experimental/HALBERT-OS-DISTRO-AND-UNIVERSAL-RUST-ARCHITECTURE.md](experimental/HALBERT-OS-DISTRO-AND-UNIVERSAL-RUST-ARCHITECTURE.md) | **HalbertOS AI-native Linux distro & Universal Rust Codebase strategy** |
+| [experimental/UNIVERSAL-CROSS-PLATFORM-AND-MIGRATION-ROADMAP.md](experimental/UNIVERSAL-CROSS-PLATFORM-AND-MIGRATION-ROADMAP.md) | **Cross-Platform Architecture (Swift/macOS & Windows) and Phased Rust Migration Roadmap** |
+| [experimental/COMPETITIVE-ANALYSIS-AI-OS-LANDSCAPE.md](experimental/COMPETITIVE-ANALYSIS-AI-OS-LANDSCAPE.md) | **Competitive Analysis: AI Operating System Landscape & Strategic Opportunities** |
+| [experimental/SINGULAR-ENTITY-HOME-ASSISTANT-AND-HALBERTOS-ECOSYSTEM.md](experimental/SINGULAR-ENTITY-HOME-ASSISTANT-AND-HALBERTOS-ECOSYSTEM.md) | **Singular Entity, Home Assistant & HalbertOS: Cross-Platform Node Architecture** |
+| [experimental/OS-NATIVE-MCP-WARP-AND-SOURCEPREP-INTEGRATION.md](experimental/OS-NATIVE-MCP-WARP-AND-SOURCEPREP-INTEGRATION.md) | **OS-Native MCP Server, Warp-CLI Integration & Native SourcePrep Architecture** |
+
+---
+
 ## Contributing
 
 | Document | Description |
