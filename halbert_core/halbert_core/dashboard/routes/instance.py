@@ -52,6 +52,14 @@ async def get_instance_info() -> Dict[str, Any]:
     elif role == "home":
         display_name = os.environ.get("HALBERT_DISPLAY_NAME", "Home")
 
+    # Body name and entity mode (from being.yml via cognition_wiring).
+    # body_name labels which physical body the entity is speaking from
+    # (e.g. "desk", "home"). singular is true when canonical_memory_url
+    # is set — the node proxies memory/threads to the canonical host.
+    from ...integrations.cognition_wiring import _get_body_name, is_singular_entity_mode
+    body_name = _get_body_name()
+    singular = is_singular_entity_mode()
+
     return {
         "persona_id": persona_id,
         "scene_context": scene_context,
@@ -62,4 +70,6 @@ async def get_instance_info() -> Dict[str, Any]:
         "features": features,
         "data_dir": os.environ.get("HALBERT_DATA_DIR") or os.environ.get("Halbert_DATA_DIR", ""),
         "config_dir": os.environ.get("HALBERT_CONFIG_DIR") or os.environ.get("Halbert_CONFIG_DIR", ""),
+        "body_name": body_name,
+        "singular": singular,
     }

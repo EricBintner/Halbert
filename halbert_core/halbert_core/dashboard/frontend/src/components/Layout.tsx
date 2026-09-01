@@ -46,7 +46,7 @@ import { Button } from '@/components/ui/button'
 import { ConfigEditor } from './ConfigEditor'
 import { HalbertMark, NavRail, type NavRailSection } from '@halbert/design-system'
 import { ModeSwitch } from './shell/ModeSwitch'
-import { InstanceSwitch, type InstanceInfo } from './shell/InstanceSwitch'
+import { PresencePill, type InstanceInfo } from './shell/PresencePill'
 import { AcousticAuraIndicator, VoiceHudSummonButton } from '@/components/audio'
 import { HostShell } from './shell/HostShell'
 import { useShellMode } from '@/contexts/ShellModeContext'
@@ -466,7 +466,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
            * window to summon). */}
           <VoiceHudSummonButton />
 
-          <InstanceSwitch />
+          <PresencePill />
 
           <AcousticAuraIndicator />
 
