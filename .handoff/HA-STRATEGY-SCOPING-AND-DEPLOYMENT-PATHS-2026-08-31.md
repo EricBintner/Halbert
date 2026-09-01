@@ -1,7 +1,7 @@
 # HA Strategy, HalbertOS Scope & Deployment Paths — Synthesis & Scoping
 
 **Date:** 2026-08-31
-**Status:** Founder decision document
+**Status:** Founder decision document — **amended 2026-09-01** (sanity-review findings F2/F6/F13 and recommendation RB applied per founder directive; full detail in `REVIEW-REQUEST-RUST-NATIVE-CORE-2026-08-31.md` §3 and the Rust-native-core plan's amendment table)
 **Builds on:**
 - `REVIEW-REQUEST-HA-STRATEGY-AND-HALBERTOS-2026-08-31.md` (original analysis)
 - `REVIEW-RESULTS-HA-STRATEGY-AND-HALBERTOS-2026-08-31.md` (external review, approved with refinements)
@@ -27,7 +27,9 @@ Two options the original analysis missed, plus key refinements:
 ### Option E: Halbert as an HA Add-on (inside HAOS)
 
 Halbert runs as a Docker container managed by HA's Supervisor, installable
-from the HACS add-on store.
+from a published Supervisor add-on repository (a GitHub repo with
+`repository.yaml` — note: HACS lists custom integrations and frontend cards,
+**not** add-ons).
 
 **Verdict: Distribution funnel, not product architecture.** Good for
 adoption (zero-friction install for ~500k HAOS users), but the HAOS
@@ -76,8 +78,9 @@ Halbert's access to the host kernel.
    automations. Layer 1 (HA as peer) handles these. Layer 2 doesn't need to.
 
 5. **HA community as distribution channel** — 500k+ r/homeassistant
-   subscribers. HACS integration gives free discovery. Don't burn this
-   channel by going "HA-optional" in marketing.
+   subscribers. A Supervisor add-on repository (plus an optional HACS-listed
+   companion integration for dashboard cards) gives free discovery. Don't burn
+   this channel by going "HA-optional" in marketing.
 
 ---
 
@@ -94,8 +97,9 @@ most of it is north-star, not near-term. Here is the scoped breakdown:
 | **`halbertd` daemon** | Systemd/launchd service installable via apt/pacman/brew | The OS-level features (eBPF, MCP server, Btrfs hooks) without the OS. This IS the near-term "HalbertOS." |
 | **MQTT device bus** | `crates/halbert-mqtt` + Python device registry | Makes HA optional for core local devices. Reuses Frigate MQTT infra. ~2 weeks. |
 | **Zigbee2MQTT integration** | Auto-discover Z2M on network, subscribe to topics | Covers ~80% of smart home devices. Trivial on top of MQTT. |
+| **Agent container image** | Root `Dockerfile` + CI build/publish to `ghcr.io/ericbintner/halbert-core` (plan tasks R0.9/R0.10) | **Zero Rust dependency — starts day one.** Every container path below presupposes this image; before the 2026-08-31 sanity review, no task anywhere built it. |
 | **Sidecar deployment docs** | docker-compose template for Halbert + HA + Z2M + Mosquitto | The "one box" path. No house of cards. |
-| **HA Add-on (Option E)** | HACS add-on package | Distribution funnel for HAOS users. Limited but zero-friction. |
+| **HA Add-on (Option E)** | Supervisor add-on repository package | Distribution funnel for HAOS users. Limited but zero-friction. |
 | **OS-native MCP server** | Expose `os://` MCP tools to Warp/Claude/Cursor | Most near-term-actionable idea in the experimental folder. MCP server already exists. |
 
 ### Medium-term (build after near-term proves out)
@@ -206,7 +210,8 @@ MQTT device registry. The HA integration already works.
 └─────────────────────────────────────────┘
 ```
 
-- Halbert packaged as an HA Add-on, installable from HACS store.
+- Halbert packaged as an HA Add-on, installable from a Supervisor add-on
+  repository.
 - HAOS handles infrastructure (networking, storage, updates).
 - Halbert is a tenant — no host kernel access, no eBPF, no Btrfs.
 - Connects to HA via localhost WebSocket (same as Path 1, just local).
@@ -215,12 +220,19 @@ MQTT device registry. The HA integration already works.
 **Who this is for:** HAOS users who want to try Halbert without a second
 device. Zero-friction adoption.
 
-**Strategic role:** Funnel, not destination. Users discover Halbert via
-HACS, try the voice/automation features, then graduate to Path 1 or 2 for
-the full experience (sysadmin, OS-level safety, native device bus).
+**Strategic role:** Funnel, not destination. Users discover Halbert via the
+Supervisor add-on repository (and an optional HACS-listed companion
+integration), try the voice/automation features, then graduate to Path 1 or 2
+for the full experience (sysadmin, OS-level safety, native device bus).
 
-**What needs to be built:** HA Add-on package (Dockerfile + config.yaml +
-HA Supervisor integration). The agent code already runs in Docker.
+**What needs to be built:** HA Add-on package — a thin `Dockerfile` wrapper
+(`FROM ghcr.io/ericbintner/halbert-core:latest`) plus Supervisor-format
+`config.yaml` and `run.sh`. The agent container image is supplied by the
+R0.9/R0.10 Docker track in the Rust-native-core plan (pure-Python packaging,
+no Rust dependency). **Correction (2026-09-01):** the earlier draft of this
+section claimed "the agent code already runs in Docker" — that was false; no
+Dockerfile existed anywhere in the repo before the R0.9/R0.10 track was added
+by the sanity review.
 
 ### Path 4: HalbertOS appliance (north-star, not near-term)
 
@@ -350,62 +362,117 @@ years out, and require a dedicated OS engineering team.
 
 ## 7. The Docker Compose Template (Path 2 Concrete)
 
-This is what the "one box" deployment looks like in practice:
+**Revised 2026-09-01 (sanity-review F6).** The original draft put every
+service on `network_mode: host` — which silently exposed Mosquitto
+unauthenticated on the whole LAN, defeated container isolation, and breaks
+under Docker Desktop. The hardened template below is the one task R6.1 lands
+at `deploy/sidecar/docker-compose.yml` (full rationale, README outline, and
+failure modes in the plan doc's §9.1).
+
+This is what the "one box" deployment looks like in practice — **Linux hosts
+only** (host networking behaves differently/absent under Docker Desktop):
 
 ```yaml
-# docker-compose.yml — Halbert sidecar deployment
-version: "3.8"
+# deploy/sidecar/docker-compose.yml — Halbert sidecar deployment (Linux only)
+# Compose v2 — no top-level `version:` key (obsolete).
 
 services:
   halbert:
-    image: halbert/halbert-core:latest
-    network_mode: host  # for localhost WS to HA
+    image: ghcr.io/ericbintner/halbert-core:latest   # built by R0.9, published by R0.10
+    networks:
+      - halbert-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach host-networked HA
     volumes:
       - halbert-data:/data
-      - /var/run/halbert.sock:/var/run/halbert.sock  # halbertd MCP
+      # OPTIONAL — only when halbertd (R5) is installed on the host.
+      # Without this mount the agent runs the pure-Python path (graceful
+      # degradation): no eBPF telemetry, no snapshots, no sandbox.
+      # NOTE: halbertd must be running BEFORE this container starts, or
+      # Docker creates an empty directory at the mount point instead of
+      # binding the socket file.
+      # - /var/run/halbert.sock:/var/run/halbert.sock
     environment:
-      - HALBERT_HA_URL=ws://localhost:8123/api/websocket
-      - HALBERT_MQTT_HOST=localhost:1883
-    depends_on:
-      - homeassistant
-      - mosquitto
-
-  homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:stable
-    network_mode: host
-    volumes:
-      - ha-config:/config
-      - /etc/localtime:/etc/localtime:ro
-
-  zigbee2mqtt:
-    image: koenkk/zigbee2mqtt:latest
-    network_mode: host
-    volumes:
-      - z2m-data:/app/data
-      - /run/udev:/run/udev:ro
-    devices:
-      - /dev/ttyUSB0:/dev/ttyUSB0  # Zigbee coordinator
+      - HALBERT_HA_URL=ws://host.docker.internal:8123/api/websocket
+      - HALBERT_MQTT_HOST=mosquitto:1883
+      # MQTT credentials generated per deploy/sidecar/README.md (R6.2);
+      # consumed by the R1.6 agent tool wiring.
     depends_on:
       - mosquitto
 
   mosquitto:
     image: eclipse-mosquitto:2
-    network_mode: host
+    networks:
+      - halbert-net
+    ports:
+      # Loopback ONLY — the LAN never sees 1883. Required so the
+      # host-networked HA container can reach the broker at 127.0.0.1:1883,
+      # and so host-side tooling (mosquitto_sub) can still debug.
+      - "127.0.0.1:1883:1883"
     volumes:
-      - mosquitto-config:/mosquitto/config
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/passwords:/mosquitto/config/passwords:ro
       - mosquitto-data:/mosquitto/data
+
+  zigbee2mqtt:
+    image: koenkk/zigbee2mqtt:latest
+    networks:
+      - halbert-net
+    ports:
+      - "127.0.0.1:8080:8080"   # Z2M frontend, loopback only (onboarding UX)
+    volumes:
+      - z2m-data:/app/data
+      - /run/udev:/run/udev:ro
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0   # Zigbee coordinator — passthrough kept
+    depends_on:
+      - mosquitto
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    network_mode: host   # REQUIRED — Zeroconf/mDNS discovery does not
+                         # traverse a bridge network's NAT
+    volumes:
+      - ha-config:/config
+      - /etc/localtime:/etc/localtime:ro
+
+networks:
+  halbert-net:
+    driver: bridge
 
 volumes:
   halbert-data:
-  ha-config:
   z2m-data:
-  mosquitto-config:
   mosquitto-data:
+  ha-config:
+```
+
+`deploy/sidecar/mosquitto/mosquitto.conf` — authentication is **required**;
+the template refuses to teach anonymous broker access:
+
+```
+listener 1883 0.0.0.0
+allow_anonymous false
+password_file /mosquitto/config/passwords
+```
+
+Password generation (before first `up`; walked through in the R6.2 README):
+
+```bash
+cd deploy/sidecar && mkdir -p mosquitto
+docker run --rm -v "$PWD/mosquitto:/mosquitto/config" eclipse-mosquitto:2 \
+  mosquitto_passwd -c /mosquitto/config/passwords halbert
+docker run --rm -v "$PWD/mosquitto:/mosquitto/config" eclipse-mosquitto:2 \
+  mosquitto_passwd /mosquitto/config/passwords zigbee2mqtt
+chmod 600 mosquitto/passwords
+# matching server/user/password goes into Z2M's configuration.yaml
 ```
 
 `halbertd` runs on the host as a systemd service, not in Docker, because it
 needs kernel access (eBPF, Btrfs, Landlock). The Halbert agent container
-connects to it via the Unix socket.
+connects to it via the Unix socket — and the mount is optional: without
+`halbertd` the compose stack runs degraded (pure-Python agent), which is
+exactly the configuration the R0.10 image dogfoods from week 1.
 
 **Key properties:**
 - HA is a peer container. If it breaks, Halbert still has MQTT.
@@ -430,6 +497,15 @@ connects to it via the Unix socket.
 | D7 | Defer Windows, Wayland compositor, custom kernel, PID 1, initramfs sentinel, dm-verity to north-star | Confirmed (founder) |
 | D8 | Apply all 14 P0-P2 doc corrections to experimental docs | Confirmed (founder) |
 
+**Amendments 2026-09-01** (not new decisions — corrections from the
+Rust-native-core sanity review, applied per founder directive): deployment
+templates now reference the published image `ghcr.io/ericbintner/halbert-core`
+(built by plan tasks R0.9/R0.10); the §7 compose template is hardened (bridge
+network, authenticated loopback-only Mosquitto, HA alone on host networking);
+HACS wording corrected to Supervisor add-on repositories; the Path 3 "agent
+already runs in Docker" claim struck as false. Full detail:
+`REVIEW-REQUEST-RUST-NATIVE-CORE-2026-08-31.md`.
+
 ---
 
 ## 9. What Gets Built (Scoped Roadmap)
@@ -440,9 +516,24 @@ connects to it via the Unix socket.
 2. **`halbertd` daemon** — systemd/launchd package, MCP server, eBPF/Btrfs hooks
 3. **MQTT device bus** — `crates/halbert-mqtt` + Python device registry + Z2M auto-discovery
 4. **Sidecar docker-compose template** — documented Path 2 deployment
-5. **HA Add-on package** — HACS-distributable Path 3
-6. **OS-native MCP server** — `os://` tools for Warp/Claude/Cursor
+5. **HA Add-on package** — Supervisor add-on repository for Path 3 (thin
+   wrapper over the published agent image, plan R6.3)
+6. **OS-native MCP server** — `os://` resources + `halbert.*` tools for
+   Warp/Claude/Cursor. One external MCP surface only: the existing Python
+   `halbert-mcp-serve` server; the daemon's Unix socket is internal IPC
+   (review F9/RC)
 7. **Doc corrections** — fix the 14 factual/scope errors from the review
+
+**Added by the 2026-08-31 sanity review** (see
+`REVIEW-REQUEST-RUST-NATIVE-CORE-2026-08-31.md`):
+
+- **Agent container image** (plan tasks R0.9/R0.10) — root `Dockerfile` + CI
+  build/publish to `ghcr.io/ericbintner/halbert-core`. Prerequisite for items
+  4 and 5; zero Rust dependency; starts in parallel with R0 scaffolding; the
+  stack is dogfooded in containers from week 1.
+- **Cross-cutting packaging note** — `halbert_rs` ships as the optional pip
+  extra `halbert-core[rust]`; the default install stays pure-Python (Haloysius
+  subtractive contract), and the agent degrades gracefully when it's absent.
 
 ### Next (medium-term)
 

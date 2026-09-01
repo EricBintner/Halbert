@@ -1516,7 +1516,9 @@ class AgentStateMachine:
         # (strips <speech>/<text>/<modality_context> control tags from
         # untrusted user input per spec 5.11). Falls back to the raw
         # query when the engine is not installed or defanging was skipped.
-        query = getattr(self, "_defanged_query", None) or self.ctx.user_query
+        # It is read off the per-turn context, never off self — see the
+        # field's comment in states.py.
+        query = self.ctx.defanged_query or self.ctx.user_query
         messages.append({
             "role": "user",
             "content": f"{tail}\n\n{query}" if tail else query,
@@ -2696,9 +2698,11 @@ class AgentStateMachine:
         """
         logger.info(f"RESPONDING: confidence={self.ctx.confidence:.2f}")
 
-        # Reset per-turn modality state so a previous turn's defanged
-        # query can't leak into this one.
-        self._defanged_query = None
+        # Clear any value a re-entry into RESPONDING left behind (a resumed
+        # turn runs this handler again on the same context). Cross-turn
+        # leakage is already impossible: the field lives on the per-turn
+        # StateContext, which is rebuilt by process().
+        self.ctx.defanged_query = None
 
         # Phase 2 modality wiring: resolve the turn's delivery modality
         # (TEXT/VOICE) from the channel capability + cognitive state, and
@@ -2721,9 +2725,26 @@ class AgentStateMachine:
                 # Defang the user query in conversation history (spec 5.11).
                 # The original query is preserved in ctx.user_query; the
                 # defanged version is applied to the messages array below.
-                self._defanged_query = defang_user_input(self.ctx.user_query)
+                self.ctx.defanged_query = defang_user_input(self.ctx.user_query)
         except Exception as e:
             logger.debug(f"Modality wiring skipped (non-fatal): {e}")
+
+        # Phase 2.5: resolve the delivery modality for the response prompt.
+        # Both arms below consume it — the builder arm passes it to
+        # build_response_prompt, the no-builder arm to
+        # _build_simple_response_prompt — so it is resolved before the branch.
+        # It used to live inside the ``if self.prompts:`` arm, which left the
+        # name unbound on every turn taken by a state machine constructed
+        # without a prompt builder (Wyoming voice turns, and any embedder that
+        # is not the dashboard's get_agent()).
+        response_modality = "text"
+        if modality_ctx is not None:
+            try:
+                resolved_mod = getattr(modality_ctx, "recommended_modality", None)
+                if resolved_mod is not None:
+                    response_modality = resolved_mod.value.lower()
+            except Exception:
+                pass
 
         # Build response prompt. Neither ``history`` nor ``continuity`` is
         # passed any more:
@@ -2738,16 +2759,6 @@ class AgentStateMachine:
         # them from ``context``, and _receipt_block still feeds the
         # no-builder path below.
         if self.prompts:
-            # Phase 2.5: pass the resolved modality so the prompt builder
-            # can request plain text for voice turns (no markdown waste).
-            response_modality = "text"
-            if modality_ctx is not None:
-                try:
-                    resolved_mod = getattr(modality_ctx, "recommended_modality", None)
-                    if resolved_mod is not None:
-                        response_modality = resolved_mod.value.lower()
-                except Exception:
-                    pass
             prompt = self.prompts.build_response_prompt(
                 query=self.ctx.user_query,
                 context=self.ctx.retrieved_context,

@@ -165,23 +165,25 @@ Direction accepted per [`HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`](
 
 ---
 
-### Rust Native Core & HalbertOS (Long-Term Project — added 2026-08-31)
+### Rust Native Core & HalbertOS (Long-Term Project — added 2026-08-31, augmented 2026-08-31, edits landed 2026-09-01)
 
-Separate living TODO with 56 tasks across 7 phases (R0-R7). Synced with the HA strategy scoping decisions (D1-D8) and the experimental docs corrections. Full plan with model tier + effort level per task:
+Separate living TODO with **72 tasks across 8 phases (R0–R7)** — 56 in the R1–R6 build phases. Synced with the HA strategy scoping decisions (D1-D8), the experimental docs corrections, and the sanity review's findings F1-F13 + recommendations RA-RE (applied 2026-08-31). Full plan with model tier + effort level per task:
 [`RUST-NATIVE-CORE-TODO-AND-IMPLEMENTATION-PLAN-2026-08-31.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/RUST-NATIVE-CORE-TODO-AND-IMPLEMENTATION-PLAN-2026-08-31.md)
 
 **Phase summary:**
-- **R0 — Foundation** (crates/ workspace + scaffolding): 8 tasks, Sonnet med, ~2 days
-- **R1 — Native Device Bus** (halbert-mqtt + Python registry): 9 tasks, Sonnet xhigh + GLM-5.3 high, ~2 weeks
-- **R2 — Kernel Telemetry** (eBPF probes): 10 tasks, Opus xhigh + Fable review, ~3 weeks
-- **R3 — Atomic Safety** (Btrfs snapshots + Landlock): 9 tasks, Opus xhigh + Fable review, ~2 weeks
-- **R4 — PyO3 Bridge** (halbert-ffi): 7 tasks, Sonnet xhigh, ~1 week
-- **R5 — halbertd Daemon** (systemd + MCP + wires all crates): 14 tasks, Opus xhigh + Fable review, ~3 weeks
-- **R6 — Deployment Paths** (sidecar + HA Add-on + OS-MCP): 7 tasks, Sonnet high, ~1 week
+- **R0 — Foundation + Docker track** (crates/ workspace + scaffolding + R0.9 Dockerfile + R0.10 CI image build/publish): 10 tasks, Sonnet med/high, ~3 days
+- **R1 — Native Device Bus** (halbert-mqtt + Python registry): 9 tasks + FFI wave R4a, Sonnet xhigh + GLM-5.3 high, ~2.5 weeks
+- **R2 — Kernel Telemetry** (eBPF probes): 10 tasks + FFI wave R4b, Opus xhigh + Fable review, ~3 weeks
+- **R3 — Atomic Safety** (Btrfs snapshots + Landlock): 9 tasks + FFI wave R4c, Opus xhigh + Fable review, ~2 weeks
+- **R4 — PyO3 Bridge** (halbert-ffi — now **three waves**: R4a after R1, R4b after R2, R4c after R3): 7 tasks, Sonnet xhigh, absorbed into the three legs
+- **R5 — halbertd Daemon** (systemd/launchd + internal socket IPC + one external MCP surface): 14 tasks, Opus xhigh + Fable review, ~3 weeks
+- **R6 — Deployment Paths** (sidecar compose on the published registry image + HA Add-on wrapper + OS-MCP): 7 tasks, Sonnet high, ~1 week
 - **R7 — Turnkey Appliance** (north-star, gated): 6 tasks, Opus xhigh, ~4 weeks
 
-**Recommended start:** R0 (scaffolding) can begin now in parallel with U-batches. R1 (MQTT bus) is the highest product-value first build — makes HA optional. R2 (eBPF) can run in parallel on a Linux VM.
+**Recommended start:** R0 (scaffolding **and** the Docker track) can begin now in parallel with U-batches — the agent container image has zero Rust dependency and dogfoods from week 1. Next: R1 + wave R4a (highest product value — makes HA optional, and is now verifiable on its own timeline). R2 + R4b and R3 + R4c run in parallel on the Linux+Btrfs reference VM. Critical path: roughly 7 weeks fully parallel vs ~12 sequential.
+
+**Review applied 2026-08-31:** [`REVIEW-REQUEST-RUST-NATIVE-CORE-2026-08-31.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/REVIEW-REQUEST-RUST-NATIVE-CORE-2026-08-31.md) — sanity review's 13 findings (F1-F13) and 5 recommendations (RA-RE) accepted per founder directive; all 11 proposed edits landed in the plan, the scoping doc, and this index. The two HIGH findings: **F1** (R1 was not verifiable before R4 due to monolithic FFI gating — fixed by restructuring R4 into per-crate waves R4a/R4b/R4c) and **F2** (no task built the container image the deployment paths depend on — fixed by adding the R0.9/R0.10 Docker track). External confirmation review is now optional second opinion, not a gate.
 
 **Architectural principle:** Rewrite stable system API interfaces (eBPF, Btrfs, Landlock, MQTT) in Rust. Keep application logic (scanners, state machine, prompts, device registry) in Python. Rust crates are thin native layers; Python is the brain that calls them.
 
-**Explicitly deferred (D7):** Custom kernel, Wayland compositor, PID 1, initramfs sentinel, dm-verity, native Matter controller, BLE, Windows platform, APFS snapshot SPIs.
+**Explicitly deferred (D7):** Custom kernel, Wayland compositor, PID 1, initramfs sentinel, dm-verity, native Matter controller, BLE, Windows platform, APFS snapshot SPIs; Z-Wave JS native client (trivial, ~3 days — re-enters L0 planning once R1 proves the native-device pattern; plan §11/§16.4a).
