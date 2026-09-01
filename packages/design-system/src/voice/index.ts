@@ -22,15 +22,17 @@ export {
   TINE_BIN_RANGES_16K_64,
   SUB_BASS_ATTENUATION,
 } from './spectrum'
-export { ResonatorBank, SPRING_DEFAULTS, FIXED_TIMESTEP } from './springs'
+export { ResonatorBank, SPRING_DEFAULTS, PLUCK_SPRING, FIXED_TIMESTEP } from './springs'
 export {
   MARK,
-  TINE_COUNT,
+  laneCount,
+  tineCount,
   TINE_AMPLITUDES,
   TINE_MODES,
   TINE_DRIFT,
   laneRadius,
   laneTop,
   tinePathD,
-  STATIC_TINE_PATHS,
+  staticTinePaths,
 } from './geometry'
+export type { TinePathOptions, TravelingBulge, VoiceDensity } from './geometry'

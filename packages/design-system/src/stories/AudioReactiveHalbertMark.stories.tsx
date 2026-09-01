@@ -14,14 +14,26 @@ const meta: Meta<typeof AudioReactiveHalbertMark> = {
   title: 'Voice/AudioReactiveHalbertMark',
   component: AudioReactiveHalbertMark,
   parameters: { layout: 'centered', backgrounds: { default: 'dark' } },
+  argTypes: {
+    density: {
+      control: 'select',
+      options: ['medium', 'display'],
+      description: 'Tine density — Voice Mode defaults to medium (6 tines)',
+    },
+    state: {
+      control: 'select',
+      options: ['idle', 'listening', 'recognized', 'thinking', 'speaking', 'error'],
+    },
+  },
 }
 export default meta
 type Story = StoryObj<typeof AudioReactiveHalbertMark>
 
-/** Vowel-ish formant sweep: energy walks from chest (outer) to air (inner). */
+/** Vowel-ish formant sweep: energy walks from chest (outer) to air (inner).
+ * Tuned for the 6-tine medium mark (center sweeps tines 0.5-4.5). */
 const formantSweep = new SyntheticEnergySource((t, out) => {
-  for (let k = 0; k < 10; k++) {
-    const center = 4.5 + 4 * Math.sin(t * 0.9)
+  for (let k = 0; k < out.length; k++) {
+    const center = 2.5 + 2 * Math.sin(t * 0.9)
     out[k] = Math.exp(-((k - center) ** 2) / 3) * (0.55 + 0.45 * Math.sin(t * 6 + k))
   }
 })

@@ -3,48 +3,55 @@
 /**
  * FFT bin -> tine energy mapping and the AudioEnergySource abstraction.
  *
- * Spec §3.4 groups linear FFT bins into the 10 vocal registers of §2.2.
- * Browser AudioContexts typically run at 44.1/48kHz regardless of the 16kHz
- * capture rate, so bin edges are COMPUTED from the context sample rate and
- * bin count (spec formula: nearest bin center to each band edge). At the
- * reference 16kHz/64-bin configuration this reproduces the spec table
- * bit-for-bit (test-enforced).
+ * Vocal registers map low -> outer/lower tines and high -> center/upper
+ * tines: the spine is brilliance/air (4-8 kHz) and the outermost arc is
+ * sub-bass (40-100 Hz), in both densities:
+ *
+ *   medium (6 tines, Voice Mode default):
+ *     spine  4000-8000 | 86.4: 1500-4000 | 172.8: 700-1500
+ *     259.2: 350-700   | 345.6: 100-350  | 432:   40-100
+ *   display (10 tines): the full spec §2.2 table.
+ *
+ * Spec §3.4 groups linear FFT bins into these registers. Browser
+ * AudioContexts typically run at 44.1/48kHz regardless of the 16kHz capture
+ * rate, so bin edges are COMPUTED from the context sample rate and bin
+ * count (nearest-bin-center rule). At the reference 16kHz/64-bin grid this
+ * reproduces the reference tables bit-for-bit (test-enforced).
  *
  * The AudioReactiveHalbertMark component only knows AudioEnergySource —
  * Web Audio types never appear in its props (SSR/Storybook-safe).
  */
 
-import { TINE_COUNT } from './geometry'
+import { tineCount, type VoiceDensity } from './geometry'
 
-/** Vocal register band edges in Hz, inner (tine 0) to outer (tine 9). */
-export const TINE_BAND_HZ: ReadonlyArray<readonly [number, number]> = [
-  [4000, 8000], // brilliance / air
-  [2500, 4000], // sibilance
-  [1500, 2500], // upper mids
-  [1000, 1500], // vowel clarity
-  [700, 1000], // vocal core
-  [500, 700], // vowel body
-  [350, 500], // warmth
-  [200, 350], // chest formant
-  [100, 200], // vocal fundamental
-  [40, 100], // sub-bass / room
-]
+/** Vocal register band edges in Hz per density, inner tine to outer. */
+export const TINE_BAND_HZ: Record<VoiceDensity, ReadonlyArray<readonly [number, number]>> = {
+  medium: [
+    [4000, 8000], // spine: brilliance / air
+    [1500, 4000], // sibilance + upper mids
+    [700, 1500],  // vowel clarity + vocal core
+    [350, 700],   // vowel body + warmth
+    [100, 350],   // chest formant + fundamental
+    [40, 100],    // outermost arc: sub-bass / room
+  ],
+  display: [
+    [4000, 8000], [2500, 4000], [1500, 2500], [1000, 1500], [700, 1000],
+    [500, 700], [350, 500], [200, 350], [100, 200], [40, 100],
+  ],
+}
 
-/** The spec §3.4 reference table (16kHz sample rate, 64 FFT bins). */
-export const TINE_BIN_RANGES_16K_64: ReadonlyArray<readonly [number, number]> = [
-  [32, 64],
-  [20, 32],
-  [12, 20],
-  [8, 12],
-  [6, 8],
-  [4, 6],
-  [3, 4],
-  [2, 3],
-  [1, 2],
-  [0, 1],
-]
+/** Reference bin tables (16kHz sample rate, 64 FFT bins). */
+export const TINE_BIN_RANGES_16K_64: Record<VoiceDensity, ReadonlyArray<readonly [number, number]>> = {
+  medium: [
+    [32, 64], [12, 32], [6, 12], [3, 6], [1, 3], [0, 1],
+  ],
+  display: [
+    [32, 64], [20, 32], [12, 20], [8, 12], [6, 8],
+    [4, 6], [3, 4], [2, 3], [1, 2], [0, 1],
+  ],
+}
 
-/** Bins 0-1 are mostly DC and room rumble; keep the outer arc calm (§3.4). */
+/** Bin 0 is mostly DC and room rumble; keep the outermost arc calm (§3.4). */
 export const SUB_BASS_ATTENUATION = 0.3
 
 /**
@@ -55,27 +62,29 @@ export const SUB_BASS_ATTENUATION = 0.3
 export function binRangesFor(
   sampleRate: number,
   binCount: number,
+  density: VoiceDensity = 'medium',
 ): Array<[number, number]> {
   const hzPerBin = sampleRate / 2 / binCount
-  return TINE_BAND_HZ.map(([lo, hi]) => {
+  return TINE_BAND_HZ[density].map(([lo, hi]) => {
     const a = Math.min(binCount - 1, Math.max(0, Math.round(lo / hzPerBin)))
     const b = Math.min(binCount, Math.max(a + 1, Math.round(hi / hzPerBin)))
     return [a, b] as [number, number]
   })
 }
 
-/** Mean-normalized per-tine energies for one byte-frequency frame. */
+/** Mean-normalized per-tine energies for one byte-frequency frame. The last
+ * band (sub-bass) is attenuated; output length follows the ranges. */
 export function tineEnergies(
   freqData: Uint8Array,
-  ranges: ReadonlyArray<readonly [number, number]> = TINE_BIN_RANGES_16K_64,
-  out: Float32Array = new Float32Array(TINE_COUNT),
+  ranges: ReadonlyArray<readonly [number, number]> = TINE_BIN_RANGES_16K_64.medium,
+  out: Float32Array = new Float32Array(ranges.length),
 ): Float32Array {
-  for (let k = 0; k < TINE_COUNT; k++) {
+  for (let k = 0; k < ranges.length; k++) {
     const [lo, hi] = ranges[k]
     let sum = 0
     for (let j = lo; j < hi && j < freqData.length; j++) sum += freqData[j]
     let e = hi > lo ? sum / (hi - lo) / 255 : 0
-    if (k === TINE_COUNT - 1) e *= SUB_BASS_ATTENUATION
+    if (k === ranges.length - 1) e *= SUB_BASS_ATTENUATION
     out[k] = e
   }
   return out
@@ -87,7 +96,7 @@ export interface AudioEnergySource {
   start(): void | Promise<void>
   /** Release resources. Idempotent. */
   stop(): void
-  /** Fill `out` with per-tine energies in [0, 1]; returns tine count. */
+  /** Fill `out` with per-tine energies in [0, 1]; returns entries written. */
   readEnergies(out: Float32Array, tSeconds: number): number
 }
 
@@ -101,7 +110,7 @@ export class SyntheticEnergySource implements AudioEnergySource {
   readEnergies(out: Float32Array, tSeconds: number): number {
     out.fill(0)
     this.script(tSeconds, out)
-    return TINE_COUNT
+    return out.length
   }
 }
 
@@ -111,10 +120,10 @@ export class IdleBreathingSource implements AudioEnergySource {
   stop(): void {}
   readEnergies(out: Float32Array, tSeconds: number): number {
     const w = (2 * Math.PI * tSeconds) / 3.5
-    for (let k = 0; k < TINE_COUNT; k++) {
+    for (let k = 0; k < out.length; k++) {
       out[k] = Math.max(0, 0.05 + 0.045 * Math.sin(w + k * 0.55))
     }
-    return TINE_COUNT
+    return out.length
   }
 }
 
@@ -128,26 +137,30 @@ export interface ByteFrequencyNode {
 export function createAnalyserEnergySource(
   analyser: ByteFrequencyNode,
   sampleRate: number,
+  density: VoiceDensity = 'medium',
 ): AudioEnergySource {
   const binCount = analyser.frequencyBinCount
-  const ranges = binRangesFor(sampleRate, binCount)
+  const ranges = binRangesFor(sampleRate, binCount, density)
   const bytes = new Uint8Array(binCount)
+  const count = tineCount(density)
   return {
     start() {},
     stop() {},
     readEnergies(out: Float32Array): number {
       analyser.getByteFrequencyData(bytes)
       tineEnergies(bytes, ranges, out)
-      return TINE_COUNT
+      return count
     },
   }
 }
 
 export interface MediaStreamAnalyserOptions {
-  /** fftSize 128 -> 64 bins (128-sample frames are plenty for 10 bands). */
+  /** fftSize 128 -> 64 bins (128-sample frames are plenty for 6 bands). */
   fftSize?: number
   minDecibels?: number // default -85 (voice floor)
   maxDecibels?: number // default -25
+  /** Tine density of the mark being driven. @default 'medium' */
+  density?: VoiceDensity
 }
 
 /**
@@ -172,7 +185,7 @@ export function createMediaStreamAnalyserSource(
       analyser.minDecibels = opts.minDecibels ?? -85
       analyser.maxDecibels = opts.maxDecibels ?? -25
       source.connect(analyser) // analyser is a terminal node — no audible tap
-      inner = createAnalyserEnergySource(analyser, context.sampleRate)
+      inner = createAnalyserEnergySource(analyser, context.sampleRate, opts.density ?? 'medium')
     },
     stop() {
       inner = null
@@ -201,7 +214,7 @@ export function createNodeAnalyserSource(
       created.maxDecibels = opts.maxDecibels ?? -25
       node.connect(created)
       analyser = created
-      inner = createAnalyserEnergySource(created, node.context.sampleRate)
+      inner = createAnalyserEnergySource(created, node.context.sampleRate, opts.density ?? 'medium')
     },
     stop() {
       inner = null
