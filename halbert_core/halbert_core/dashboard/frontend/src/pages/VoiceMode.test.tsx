@@ -25,13 +25,18 @@ import type { SpeechSegmentEvent, ModalityInfo } from '@/hooks/useAgentStream'
 // Module-boundary stubs
 // ---------------------------------------------------------------------------
 
-const MIC_STREAM = { '0': 'mic-stream' }
+/** Sentinel for the uplink's analyser tap (a node in its own context). */
+const MIC_TAP = { node: 'mic-tap' }
 
 const h = vi.hoisted(() => {
   return {
     machine: null as null | { state: string; dispatch: ReturnType<typeof vi.fn>; visualState: string },
     agent: null as null | {
-      session: { speechSegments?: SpeechSegmentEvent[]; modality?: ModalityInfo | null } | null
+      session: {
+        sessionId?: string
+        speechSegments?: SpeechSegmentEvent[]
+        modality?: ModalityInfo | null
+      } | null
       isStreaming: boolean
       sendMessage: ReturnType<typeof vi.fn>
     },
@@ -39,7 +44,7 @@ const h = vi.hoisted(() => {
     beingEvents: [] as Array<Record<string, unknown>>,
     identity: null as null | { display_name: string },
     tts: [] as Array<{ url: string; out: unknown; connect: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }>,
-    uplinks: [] as Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; state: string; getStream: () => unknown }>,
+    uplinks: [] as Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; state: string; getAnalyserTap: () => unknown }>,
     uplinkOptions: [] as Array<{ onError?: (message: string) => void }>,
   }
 })
@@ -94,8 +99,8 @@ vi.mock('@/lib/pcmCapture', () => ({
     get state() {
       return this.started ? 'running' : 'stopped'
     }
-    getStream() {
-      return this.started ? MIC_STREAM : null
+    getAnalyserTap() {
+      return this.started ? MIC_TAP : null
     }
     constructor(opts: unknown) {
       h.uplinks.push(this)
@@ -109,8 +114,8 @@ vi.mock('@halbert/design-system', async (importOriginal) => {
   return {
     ...actual,
     AudioReactiveHalbertMark: vi.fn(() => null),
-    createMediaStreamAnalyserSource: vi.fn((stream: unknown) => ({ kind: 'mic', stream })),
-    createNodeAnalyserSource: vi.fn((node: unknown) => ({ kind: 'tts', node })),
+    createMediaStreamAnalyserSource: vi.fn(),
+    createNodeAnalyserSource: vi.fn((node: unknown) => ({ kind: 'node', node })),
   }
 })
 
@@ -168,11 +173,8 @@ beforeEach(() => {
   // setup.ts's restoreAllMocks can reset vi.fn implementations between
   // tests; re-establish the design-system stubs every time.
   vi.mocked(AudioReactiveHalbertMark).mockImplementation(() => null)
-  vi.mocked(createMediaStreamAnalyserSource).mockImplementation(
-    ((stream: unknown) => ({ kind: 'mic', stream })) as unknown as () => AudioEnergySource,
-  )
   vi.mocked(createNodeAnalyserSource).mockImplementation(
-    ((node: unknown) => ({ kind: 'tts', node })) as unknown as () => AudioEnergySource,
+    ((node: unknown) => ({ kind: 'node', node })) as unknown as () => AudioEnergySource,
   )
   setMachine('standby', 'idle')
   setAgent()
@@ -251,7 +253,7 @@ describe('mark source switching', () => {
     expect(mountMarkSource()).toBe(null)
   })
 
-  it('listening visualizes the mic stream the uplink captures', async () => {
+  it('listening visualizes the uplink analyser tap — ONE capture context', async () => {
     const user = userEvent.setup()
     const m = mount()
     await user.click(screen.getByRole('button', { name: 'Tap the mark to speak' }))
@@ -260,8 +262,11 @@ describe('mark source switching', () => {
     setMachine('listening', 'listening')
     m.rerender()
 
-    expect(createMediaStreamAnalyserSource).toHaveBeenCalledWith(MIC_STREAM)
-    expect(mountMarkSource()).toEqual({ kind: 'mic', stream: MIC_STREAM })
+    // The mark reads the uplink's own context through its tap; a second
+    // context consuming the MediaStream is the WebKitGTK fragility class.
+    expect(createNodeAnalyserSource).toHaveBeenCalledWith(MIC_TAP)
+    expect(createMediaStreamAnalyserSource).not.toHaveBeenCalled()
+    expect(mountMarkSource()).toEqual({ kind: 'node', node: MIC_TAP })
   })
 
   it('speaking visualizes the TTS playback tap', async () => {
@@ -274,7 +279,7 @@ describe('mark source switching', () => {
     m.rerender()
 
     expect(createNodeAnalyserSource).toHaveBeenCalledWith(h.tts[0].out)
-    expect(mountMarkSource()).toEqual({ kind: 'tts', node: h.tts[0].out })
+    expect(mountMarkSource()).toEqual({ kind: 'node', node: h.tts[0].out })
   })
 
   it('thinking and standby fall back to idle breathing', async () => {
@@ -298,7 +303,7 @@ describe('mark source switching', () => {
 
     setMachine('interrupted', 'listening')
     m.rerender()
-    expect(mountMarkSource()).toEqual({ kind: 'mic', stream: MIC_STREAM })
+    expect(mountMarkSource()).toEqual({ kind: 'node', node: MIC_TAP })
   })
 })
 
@@ -430,9 +435,9 @@ describe('turn submission', () => {
 
   it('dispatches a speech_segment per NEW segment only', () => {
     const m = mount()
-    h.agent!.session = { speechSegments: [SEGMENT] }
+    h.agent!.session = { sessionId: 'turn-1', speechSegments: [SEGMENT] }
     m.rerender()
-    h.agent!.session = { speechSegments: [SEGMENT, { ...SEGMENT, text: 'Second.' }] }
+    h.agent!.session = { sessionId: 'turn-1', speechSegments: [SEGMENT, { ...SEGMENT, text: 'Second.' }] }
     m.rerender()
     expect(h.machine!.dispatch).toHaveBeenCalledWith({ type: 'speech_segment', segment: SEGMENT })
     expect(h.machine!.dispatch).toHaveBeenCalledWith({
@@ -443,15 +448,15 @@ describe('turn submission', () => {
     const before = h.machine!.dispatch.mock.calls.length
     m.rerender()
     expect(h.machine!.dispatch.mock.calls.length).toBe(before)
-    // A new turn resets the count: its first segment dispatches once.
-    h.agent!.session = { speechSegments: [] }
-    m.rerender()
-    h.agent!.session = { speechSegments: [{ ...SEGMENT, text: 'Next turn.' }] }
+    // A new turn (fresh session id) resets the count: its first segment
+    // dispatches once — without relying on the session starting empty.
+    h.agent!.session = { sessionId: 'turn-2', speechSegments: [{ ...SEGMENT, text: 'Next turn.' }] }
     m.rerender()
     expect(h.machine!.dispatch).toHaveBeenCalledWith({
       type: 'speech_segment',
       segment: { ...SEGMENT, text: 'Next turn.' },
     })
+    expect(dispatchedTypes().filter((t) => t === 'speech_segment')).toHaveLength(3)
   })
 
   it('dispatches modality_resolved once per turn decision', () => {
@@ -576,12 +581,16 @@ describe('being events and speaker recognition', () => {
       confidence: 0.9,
     })
 
-    // The next poll repeats the same observation: no duplicate dispatch.
+    // The next poll repeats the same observation: no duplicate dispatch,
+    // and no re-render — the dedup key gates setSpeaker itself, so an idle
+    // 2s poll does not repaint the page.
+    const renders = vi.mocked(AudioReactiveHalbertMark).mock.calls.length
     await act(async () => {
       await vi.advanceTimersByTimeAsync(STATUS_POLL_MS)
     })
     const recognized = dispatchedTypes().filter((t) => t === 'speaker_recognized')
     expect(recognized).toHaveLength(1)
+    expect(vi.mocked(AudioReactiveHalbertMark).mock.calls.length).toBe(renders)
     void m
   })
 })
@@ -609,9 +618,39 @@ describe('lifecycle', () => {
     await user.click(screen.getByRole('button', { name: 'Unmute microphone' }))
     expect(h.uplinks).toHaveLength(2)
     expect(h.uplinks[1].start).toHaveBeenCalledTimes(1)
+    expect(mountMarkSource()).toEqual({ kind: 'node', node: MIC_TAP })
+  })
+
+  it('unmute during a turn re-arms capture when the turn completes', async () => {
+    // Mute while the agent speaks, unmute before the turn ends: the
+    // machine lands in listening via turn_complete with a dead mic — the
+    // posture-entry effect must rebuild capture.
+    const user = userEvent.setup()
+    setMachine('speaking', 'speaking')
+    const m = mount()
+    await user.click(screen.getByRole('button', { name: 'Mute microphone' }))
+    expect(h.uplinks).toHaveLength(0) // never started: speaking mutes clean
+
+    await user.click(screen.getByRole('button', { name: 'Unmute microphone' }))
+    expect(h.uplinks).toHaveLength(0) // still speaking: no mic opened yet
+
+    // The turn completes -> listening; capture re-arms.
     setMachine('listening', 'listening')
     m.rerender()
-    expect(mountMarkSource()).toEqual({ kind: 'mic', stream: MIC_STREAM })
+    expect(h.uplinks).toHaveLength(1)
+    expect(h.uplinks[0].start).toHaveBeenCalledTimes(1)
+    // start() is async; the tap lands a microtask later.
+    await waitFor(() => expect(mountMarkSource()).toEqual({ kind: 'node', node: MIC_TAP }))
+  })
+
+  it('unmuting at standby opens no surprise mic', async () => {
+    const user = userEvent.setup()
+    const m = mount()
+    await user.click(screen.getByRole('button', { name: 'Mute microphone' }))
+    await user.click(screen.getByRole('button', { name: 'Unmute microphone' }))
+    setMachine('standby', 'idle')
+    m.rerender()
+    expect(h.uplinks).toHaveLength(0)
   })
 
   it('a push-to-talk tap while muted wakes the visual but not the mic', async () => {

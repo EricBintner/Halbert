@@ -16,6 +16,7 @@ import {
   PCM_CAPTURE_WORKLET_SOURCE,
   TARGET_SAMPLE_RATE,
   FRAME_SAMPLES,
+  MAX_QUEUED_FRAMES,
   floatToS16le,
   workletSupported,
 } from './pcmCapture'
@@ -249,6 +250,22 @@ describe('Downsampler16k', () => {
     d.push(new Float32Array([0, 4]))
     expect(frames.map((f) => Array.from(f))).toEqual([[0, 2, 4, 2, 0, 2, 4, 2]])
   })
+
+  it('drops input instead of looping on a non-positive input rate', () => {
+    const frames: Float32Array[] = []
+    const d = new Downsampler16k(0, (f) => frames.push(f), 2)
+    expect(() => d.push(new Float32Array([1, 2, 3]))).not.toThrow()
+    expect(frames).toHaveLength(0)
+  })
+
+  it('never constructs a non-positive frame size', () => {
+    const frames: Float32Array[] = []
+    const d = new Downsampler16k(16_000, (f) => frames.push(f), 0)
+    d.push(new Float32Array([7, 8]))
+    // A 0-frame request is nonsense; the guard falls back to 1-sample
+    // frames rather than never emitting (or throwing on the constructor).
+    expect(frames.map((f) => Array.from(f))).toEqual([[7], [8]])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -290,6 +307,22 @@ describe('PcmUplink', () => {
     expect(ws.url).toBe('ws://localhost:3000/api/audio/stream')
     expect(uplink.state).toBe('running')
     expect(uplink.getStream()).toBe(mediaStream)
+  })
+
+  it('exposes the analyser tap from its OWN context (no second context)', async () => {
+    // The mark must visualize through this tap — one AudioContext, one
+    // rendering thread — instead of building a second context around the
+    // same MediaStream (the WebKitGTK fragility class).
+    const uplink = new PcmUplink()
+    expect(uplink.getAnalyserTap()).toBe(null) // before start()
+
+    await uplink.start()
+    const ctx = StubAudioContext.instances[0]
+    expect(uplink.getAnalyserTap()).toBe(ctx.streamSources[0]) // the source node
+    expect(ctx.streamSources[0].stream).toBe(mediaStream)
+
+    uplink.stop()
+    expect(uplink.getAnalyserTap()).toBe(null) // after stop()
   })
 
   it('uses the AudioWorklet path when available (Blob URL module)', async () => {
@@ -335,6 +368,28 @@ describe('PcmUplink', () => {
     expect(ws.sent).toHaveLength(2)
     expect(new DataView(ws.sent[0]).getInt16(0, true)).toBe(8192)
     expect(new DataView(ws.sent[1]).getInt16(0, true)).toBe(-8192)
+  })
+
+  it('caps the handshake buffer drop-oldest (the server cannot help here)', async () => {
+    const uplink = new PcmUplink({ frameSamples: 1 })
+    await uplink.start()
+    const ws = StubWebSocket.instances[0]
+    const port = StubAudioWorkletNode.instances[0].port
+
+    // MAX + 3 frames banked while still CONNECTING.
+    const total = MAX_QUEUED_FRAMES + 3
+    for (let i = 0; i < total; i++) {
+      port.onmessage?.({ data: new Float32Array([i / 1024]) })
+    }
+    ws.open()
+
+    expect(ws.sent).toHaveLength(MAX_QUEUED_FRAMES)
+    const toInt16 = (i: number) => Math.round((i / 1024) * 32768)
+    // The oldest 3 were dropped; the newest frame survived.
+    expect(new DataView(ws.sent[0]).getInt16(0, true)).toBe(toInt16(3))
+    expect(new DataView(ws.sent[MAX_QUEUED_FRAMES - 1]).getInt16(0, true)).toBe(
+      toInt16(total - 1),
+    )
   })
 
   it('falls back to ScriptProcessorNode when AudioWorklet is unavailable', async () => {

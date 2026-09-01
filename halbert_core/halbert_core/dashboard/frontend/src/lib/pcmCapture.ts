@@ -5,14 +5,18 @@
  *
  * Plan doc 16 Decision 1 — the browser is the voice-mode audio terminal:
  *
- *   getUserMedia(16kHz, AEC) ─┬─▶ (mark's own analyser, via getStream())
- *                            └─▶ AudioWorklet ─▶ WS /api/audio/stream
- *                                                 ─▶ WebRtcIngress ─▶ VAD/ASR
+ *   getUserMedia(16kHz, AEC) ─▶ source node ─┬─▶ AudioWorklet ─▶ WS /api/audio/stream
+ *                                           │                     ─▶ WebRtcIngress ─▶ VAD/ASR
+ *                                           └─▶ getAnalyserTap() ─▶ createNodeAnalyserSource
+ *                                                 (the mark's visualizer)
  *
- * One capture graph serves both consumers: `getStream()` exposes the same
- * MediaStream the uplink captures from, so `createMediaStreamAnalyserSource`
- * visualizes exactly what is being sent (Decision 1: capture and
- * visualization share one graph).
+ * ONE capture graph, ONE AudioContext serves both consumers:
+ * `getAnalyserTap()` exposes the source node of the uplink's own context,
+ * so the mark's energy source is built with the existing
+ * `createNodeAnalyserSource(tap)` — no second context rendering the same
+ * MediaStream (the cross-context consumption class that breaks on
+ * WebKitGTK). `getStream()` still exposes the raw MediaStream for callers
+ * that need the stream itself.
  *
  * Frames are 16kHz s16le mono — the wire contract of /api/audio/stream —
  * produced by resampling whatever rate the AudioContext actually runs at
@@ -31,6 +35,14 @@ export const TARGET_SAMPLE_RATE = 16_000
 
 /** 100ms of 16kHz audio per WebSocket frame (3200 bytes). */
 export const FRAME_SAMPLES = 1600
+
+/**
+ * Cap on frames buffered while the WS handshake completes (drop-oldest).
+ * The server-side ingress drops-oldest under load, but that cannot help a
+ * queue growing on the client — 100 frames is 10 seconds of audio, far
+ * past anything a healthy handshake should bank.
+ */
+export const MAX_QUEUED_FRAMES = 100
 
 /** The AudioWorklet processor name registered by PCM_CAPTURE_WORKLET_SOURCE. */
 export const PCM_CAPTURE_PROCESSOR_NAME = 'halbert-pcm-capture'
@@ -79,12 +91,15 @@ export class Downsampler16k {
     private readonly onFrame: (frame: Float32Array) => void,
     frameSamples: number = FRAME_SAMPLES,
   ) {
-    this.frame = new Float32Array(frameSamples)
+    // A non-positive frame size would never emit (fill can never reach it).
+    this.frame = new Float32Array(frameSamples > 0 ? frameSamples : 1)
     this.ratio = inputRate / TARGET_SAMPLE_RATE
   }
 
   push(input: Float32Array): void {
-    if (input.length === 0) return
+    // A non-positive rate would never advance the read position — an
+    // infinite loop — so a nonsense rate drops its input instead.
+    if (input.length === 0 || !(this.ratio > 0)) return
     const lastIdx = input.length - 1
     let pos = this.carry
     while (pos <= lastIdx) {
@@ -234,11 +249,21 @@ export class PcmUplink {
     return this.status
   }
 
-  /** The capture stream — feed this to the mark's analyser source so the
-   * visualization is the exact audio being uplinked (Decision 1). Null
-   * before start() completes and after stop(). */
+  /** The capture stream, for callers that need the MediaStream itself.
+   * Null before start() completes and after stop(). The mark's visualizer
+   * should NOT use this (a second context consuming one stream — the
+   * WebKitGTK fragility class); use `getAnalyserTap()` instead. */
   getStream(): MediaStream | null {
     return this.stream
+  }
+
+  /** A node carrying the live mic signal in the uplink's OWN AudioContext —
+   * the source node itself. Feed it to the design system's
+   * `createNodeAnalyserSource(tap)` so the mark visualizes exactly what is
+   * being uplinked on the same rendering thread (Decision 1: one capture
+   * graph, one context). Null before start() completes and after stop(). */
+  getAnalyserTap(): AudioNode | null {
+    return this.sourceNode
   }
 
   async start(): Promise<void> {
@@ -295,7 +320,8 @@ export class PcmUplink {
           processorOptions: { frameSamples: this.opts.frameSamples ?? FRAME_SAMPLES },
         })
         node.port.onmessage = (ev: MessageEvent) => {
-          this.sendFrame(new Float32Array(ev.data as Float32Array))
+          // Structured clone already delivered a fresh array; no copy needed.
+          this.sendFrame(ev.data as Float32Array)
         }
         this.tapNode = node
       } else {
@@ -345,8 +371,12 @@ export class PcmUplink {
       ws.send(bytes)
     } else if (ws.readyState === WebSocket.CONNECTING) {
       // The handshake wins the race sometimes; frames queue in order and
-      // flush on open (the ingress drops-oldest under load anyway).
+      // flush on open — bounded drop-oldest, because the server-side
+      // drop-oldest cannot reach a queue growing on this side.
       this.frameQueue.push(bytes)
+      if (this.frameQueue.length > MAX_QUEUED_FRAMES) {
+        this.frameQueue.shift()
+      }
     }
     // CLOSING/CLOSED: the transport is gone; frames are dropped.
   }

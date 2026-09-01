@@ -12,8 +12,10 @@
  *   - O3 `TtsPlaybackClient` plays the turn's Piper PCM; its `out` gain is
  *     the mark's speaking source.
  *   - O7 `PcmUplink` (lib/pcmCapture) captures the mic to /api/audio/stream;
- *     its MediaStream is the mark's listening source (Decision 1: one
- *     capture graph feeds both the uplink and the visualization).
+ *     its analyser tap — the source node of the uplink's OWN AudioContext —
+ *     is the mark's listening source via `createNodeAnalyserSource(tap)`
+ *     (Decision 1: one capture graph, one context, feeds both the uplink
+ *     and the visualization; no second context consuming the stream).
  *   - O9 `OnScreenKeyboard` and the (future) STT observation channel share
  *     ONE submission path, `submitTurn` — a fresh session id per turn,
  *     exactly what useAgentStream mints per send and what the TTS egress
@@ -46,7 +48,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AudioReactiveHalbertMark,
-  createMediaStreamAnalyserSource,
   createNodeAnalyserSource,
 } from '@halbert/design-system'
 import type { AudioEnergySource } from '@halbert/design-system'
@@ -100,7 +101,8 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
   const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [muted, setMuted] = useState(false)
   const [speaker, setSpeaker] = useState<SpeakerStatus | null>(null)
-  const [micStream, setMicStream] = useState<MediaStream | null>(null)
+  /** The uplink's analyser tap — null whenever capture is not running. */
+  const [micTap, setMicTap] = useState<AudioNode | null>(null)
   const [ttsOut, setTtsOut] = useState<GainNode | null>(null)
 
   // Refs mirror the latest values for stable event handlers (the machine's
@@ -139,15 +141,23 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
   }, [agent.isStreaming, dispatch])
 
   // New speech segments (voice delivery) -> speaking. Only segments the
-  // effect has not seen dispatch; a new turn's session resets the count.
+  // effect has not seen dispatch; the count resets when the TURN changes
+  // (session.sessionId — a fresh id per send), not on every session-state
+  // event, which produces a new session object each time.
   const speechSegments = agent.session?.speechSegments ?? EMPTY_SEGMENTS
+  const lastSessionIdRef = useRef<string | null>(null)
   const dispatchedSegmentsRef = useRef(0)
   useEffect(() => {
+    const sessionId = agent.session?.sessionId ?? null
+    if (sessionId !== lastSessionIdRef.current) {
+      lastSessionIdRef.current = sessionId
+      dispatchedSegmentsRef.current = 0
+    }
     for (let i = dispatchedSegmentsRef.current; i < speechSegments.length; i++) {
       dispatch({ type: 'speech_segment', segment: speechSegments[i] })
     }
     dispatchedSegmentsRef.current = speechSegments.length
-  }, [speechSegments, dispatch])
+  }, [agent.session, speechSegments, dispatch])
 
   // The modality decision is informational (O6: it changes no state alone;
   // speaking needs the first segment), but the machine event exists so the
@@ -185,6 +195,9 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
 
   // Poll /api/audio/status for the last identified speaker (the same
   // pattern as AcousticAuraIndicator; SSE carries the realtime stream).
+  // The dedup key gates setSpeaker itself: an unchanged observation (the
+  // steady state of a 2s poll) must not re-render the page.
+  const lastSpeakerKeyRef = useRef<string | null>(null)
   useEffect(() => {
     let mounted = true
     const poll = async () => {
@@ -192,7 +205,11 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
         const resp = await fetch(apiUrl('/api/audio/status'))
         if (!resp.ok) return
         const parsed = (await resp.json()) as { speaker?: SpeakerStatus | null }
-        if (mounted) setSpeaker(parsed.speaker ?? null)
+        const next = parsed.speaker ?? null
+        const key = next ? `${next.name}|${next.role}|${next.confidence}` : null
+        if (key === lastSpeakerKeyRef.current) return
+        lastSpeakerKeyRef.current = key
+        if (mounted) setSpeaker(next)
       } catch {
         // The badge is non-critical; a failed poll is not an error state.
       }
@@ -205,18 +222,10 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
     }
   }, [])
 
-  // A NEW identification (name|role|confidence) dispatches
-  // speaker_recognized — the 2s poll repeats the same observation and must
-  // not re-fire it.
-  const lastSpeakerKeyRef = useRef<string | null>(null)
+  // A NEW identification (speaker state only changes when the key did)
+  // dispatches speaker_recognized — once per observation.
   useEffect(() => {
-    if (!speaker) {
-      lastSpeakerKeyRef.current = null
-      return
-    }
-    const key = `${speaker.name}|${speaker.role}|${speaker.confidence}`
-    if (key === lastSpeakerKeyRef.current) return
-    lastSpeakerKeyRef.current = key
+    if (!speaker) return
     dispatch({
       type: 'speaker_recognized',
       name: speaker.name,
@@ -238,9 +247,9 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
     })
     uplinkRef.current = uplink
     await uplink.start()
-    if (uplink.state === 'running') {
-      setMicStream(uplink.getStream())
-    }
+    // Clear the tap on failure too — a stale node from a dead context must
+    // not keep feeding the mark.
+    setMicTap(uplink.state === 'running' ? uplink.getAnalyserTap() : null)
   }, [dispatch])
 
   const beginPushToTalk = useCallback(async () => {
@@ -249,21 +258,29 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
     await ensureUplink()
   }, [dispatch, ensureUplink])
 
+  // Any entry into a mic posture while unmuted re-arms capture. The machine
+  // reaches listening not only by push-to-talk but by `turn_complete`
+  // landing (mute during a turn, unmute before it ends) and by future
+  // standby transitions (P1) — the gesture paths cannot cover those.
+  useEffect(() => {
+    if (muted) return
+    const s = state
+    if (s === 'listening' || s === 'recognized' || s === 'interrupted') {
+      void ensureUplink()
+    }
+  }, [muted, state, ensureUplink])
+
   const toggleMute = useCallback(() => {
     if (mutedRef.current) {
+      // The re-arm effect above restores capture if (and only if) the
+      // machine is in a mic posture — unmuting at standby opens no mic.
       setMuted(false)
-      // Restore capture only when the machine is actually in a mic
-      // posture; unmuting at standby must not open a surprise mic.
-      const s = stateRef.current
-      if (s === 'listening' || s === 'recognized' || s === 'interrupted') {
-        void ensureUplink()
-      }
     } else {
       setMuted(true)
       uplinkRef.current?.stop()
-      setMicStream(null)
+      setMicTap(null)
     }
-  }, [ensureUplink])
+  }, [])
 
   // -------------------------------------------------------------------------
   // Turn submission — one path for keyboard and (future) STT
@@ -327,9 +344,13 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
   // Mark energy sources (Decision 1)
   // -------------------------------------------------------------------------
 
+  // Both live sources are nodes in their OWN graphs' contexts — the mic tap
+  // from the uplink's capture context, the out gain from the playback
+  // context — so the mark never builds a second context around a stream
+  // someone else already owns.
   const micSource = useMemo<AudioEnergySource | null>(
-    () => (micStream ? createMediaStreamAnalyserSource(micStream) : null),
-    [micStream],
+    () => (micTap ? createNodeAnalyserSource(micTap) : null),
+    [micTap],
   )
   const speakingSource = useMemo<AudioEnergySource | null>(
     () => (ttsOut ? createNodeAnalyserSource(ttsOut) : null),
