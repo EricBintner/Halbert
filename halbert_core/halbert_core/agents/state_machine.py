@@ -3105,7 +3105,10 @@ class AgentStateMachine:
         # machine is), so a debug line is all a miss earns.
         try:
             from ..system import display_power
-            display_power.wake()
+            # Off the loop thread: wake may spawn xset, and a hung X server
+            # must never stall every SSE stream (and the very ``begin``
+            # frame this precedes) behind a blocking subprocess.
+            await asyncio.to_thread(display_power.wake)
         except Exception:
             logger.debug("wake-before-speak unavailable", exc_info=True)
 

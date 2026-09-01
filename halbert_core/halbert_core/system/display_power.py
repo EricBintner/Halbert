@@ -153,7 +153,9 @@ class DisplayPowerController:
         self._environ: Mapping[str, str] = environ if environ is not None else os.environ
         self._which = which if which is not None else shutil.which
         self._run = run if run is not None else _default_run
-        # First writable sysfs device, discovered once and cached.
+        # First readable / writable sysfs devices, each discovered once and
+        # cached. They differ on read-only deployments (see _readable_device).
+        self._readable: Optional[Tuple[str, Path, int]] = None
         self._device: Optional[Tuple[str, Path, int]] = None
         self._device_scanned = False
         # 0 = full, 1 = dimmed, 2 = blacked out (the frontend's tiers).
@@ -164,9 +166,30 @@ class DisplayPowerController:
         self._blanked = False
 
     # -- backlight ------------------------------------------------------
+    #
+    # Deliberately unlocked: tier/blank state is mutated from the
+    # threadpooled POST route and the loop-thread wake hook. The
+    # interleavings are benign (the state is recoverable display
+    # brightness, and a lost race costs one redundant write or a no-op) —
+    # do not "fix" this with a lock, and do not build load-bearing
+    # accounting on it.
+
+    def _readable_device(self) -> Optional[Tuple[str, Path, int]]:
+        """The first well-formed backlight device, writable or not — status
+        must report what the screen is at even when control is denied (the
+        P3 kiosk runs as a systemd --user unit: brightness readable,
+        root-owned, not writable)."""
+        if self._readable is None:
+            for name, dev, _brightness, max_brightness in iter_backlight_interfaces(
+                self._base
+            ):
+                self._readable = (name, dev, max_brightness)
+                break
+        return self._readable
 
     def _writable_device(self) -> Optional[Tuple[str, Path, int]]:
-        """The first backlight device whose brightness file is writable."""
+        """The first backlight device whose brightness file is writable —
+        the only one control may act on."""
         if not self._device_scanned:
             self._device_scanned = True
             for name, dev, _brightness, max_brightness in iter_backlight_interfaces(
@@ -178,7 +201,7 @@ class DisplayPowerController:
         return self._device
 
     def _read_percent(self) -> Optional[int]:
-        device = self._writable_device()
+        device = self._readable_device()
         if device is None:
             return None
         _name, dev, max_brightness = device
@@ -232,12 +255,20 @@ class DisplayPowerController:
 
     def available(self) -> Dict[str, Any]:
         """What this machine's screen power can actually control."""
-        device = self._writable_device()
-        return {
-            "backlight": device is not None,
-            "backlight_device": device[0] if device else None,
-            "dpms": self._dpms_available(),
-        }
+        try:
+            device = self._writable_device()
+            return {
+                "backlight": device is not None,
+                "backlight_device": device[0] if device else None,
+                "dpms": self._dpms_available(),
+            }
+        except Exception as exc:
+            logger.debug("availability probe failed (best-effort): %s", exc)
+            return {
+                "backlight": False,
+                "backlight_device": None,
+                "dpms": False,
+            }
 
     def status(self) -> Dict[str, Any]:
         try:
@@ -347,13 +378,6 @@ def get_display_power() -> DisplayPowerController:
             if _controller is None:
                 _controller = DisplayPowerController()
     return _controller
-
-
-def reset_display_power() -> None:
-    """Drop the singleton (tests; nothing else should need this)."""
-    global _controller
-    with _controller_lock:
-        _controller = None
 
 
 def wake() -> None:

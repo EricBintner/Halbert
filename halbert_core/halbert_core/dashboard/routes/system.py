@@ -388,6 +388,12 @@ async def get_host_identity() -> Dict[str, Any]:
 #                                    by threshold, never equality)
 #   {"backlight": 0..100, "blanked": bool}   direct control (admin/API)
 #
+# Precedence: the idle_seconds KEY wins when present — including when its
+# value is unusable ("bogus", null), in which case the whole body is a
+# no-op and any other fields in it are ignored. P1's traffic never mixes
+# shapes; a mixed body is a client bug, and guessing which half it meant
+# would be worse than doing nothing.
+#
 # Unknown-shape bodies and non-numeric values are HTTP no-ops: 200 with
 # the current state, never a 500.
 # -----------------------------------------------------------------------------

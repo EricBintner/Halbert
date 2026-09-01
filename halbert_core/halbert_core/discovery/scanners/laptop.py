@@ -373,8 +373,8 @@ class LaptopScanner(BaseScanner):
                         "percent": percent,
                         "is_backlight": True,
                     },
-                        chat_context=f"Display backlight ({name}) at {percent}%. "
-                                  f"Adjust with 'brightnessctl' or keyboard keys.",
+                    chat_context=f"Display backlight ({name}) at {percent}%. "
+                                f"Adjust with 'brightnessctl' or keyboard keys.",
                     ))
             except Exception:
                 continue

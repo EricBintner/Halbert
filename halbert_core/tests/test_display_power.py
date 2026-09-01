@@ -45,13 +45,19 @@ def _fake_sysfs(
     name: str = "acpi_video0",
     brightness: int = 70,
     max_brightness: int = 100,
+    writable: bool = True,
 ) -> Path:
-    """A fake /sys/class/backlight with one readable device."""
+    """A fake /sys/class/backlight with one well-formed device."""
     base = tmp_path / "backlight"
     dev = base / name
     dev.mkdir(parents=True, exist_ok=True)
-    (dev / "brightness").write_text(str(brightness))
+    brightness_file = dev / "brightness"
+    brightness_file.write_text(str(brightness))
     (dev / "max_brightness").write_text(str(max_brightness))
+    if not writable:
+        # The P3 kiosk runs as a systemd --user unit: brightness readable,
+        # root-owned, not writable.
+        brightness_file.chmod(0o444)
     return base
 
 
@@ -250,6 +256,32 @@ class TestDisplayPowerController:
         controller.set_backlight(50)  # must not raise
         assert controller.status()["backlight"] is None
 
+    def test_readable_but_not_writable_reports_but_cannot_control(self, tmp_path):
+        # The P3 kiosk: root-owned sysfs under a systemd --user unit —
+        # the level is readable, control is denied. Status must still
+        # report the real level; every control path is a no-op.
+        base = _fake_sysfs(tmp_path, brightness=70, writable=False)
+        controller, runner = _controller(tmp_path, base=base)
+
+        status = controller.status()
+        assert status["backlight"] == 70
+        assert status["available"] == {
+            "backlight": False,
+            "backlight_device": None,
+            "dpms": True,
+        }
+
+        controller.set_backlight(40)
+        assert controller.status()["backlight"] == 70  # unchanged
+
+        controller.report_idle(30)  # dim attempt: still a no-op on writes
+        assert controller.status()["backlight"] == 70
+        controller.report_idle(0)  # wake: nothing to restore, must not raise
+
+        # DPMS remains fully controllable either way.
+        controller.set_blanked(True)
+        assert runner.commands == [["xset", "dpms", "force", "off"]]
+
 
 # ---------------------------------------------------------------------------
 # P1 idle-report mapping — thresholds, never equality
@@ -421,6 +453,17 @@ class TestDisplayRoutes:
         r = client.post("/api/system/display", json={"idle_seconds": True})
         assert r.status_code == 200, r.text
         assert r.json()["backlight"] == 70
+
+    def test_post_idle_key_wins_over_other_fields(self, client, display_env):
+        # Documented precedence: the idle_seconds KEY present means idle
+        # report — and an unusable idle value makes the whole body a
+        # no-op, even with a valid direct-control field riding along.
+        r = client.post(
+            "/api/system/display",
+            json={"idle_seconds": "bogus", "backlight": 50},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["backlight"] == 70  # the backlight field was ignored
 
     def test_post_direct_backlight(self, client, display_env):
         r = client.post("/api/system/display", json={"backlight": 42})
