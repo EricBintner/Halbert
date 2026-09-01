@@ -43,7 +43,13 @@ Instead, we adopt a **two-track evolution strategy**:
 Halbert already has strong roots on macOS (as seen in [`src-tauri`](file:///Volumes/4TB-BAD/Halbert/halbert_core/halbert_core/dashboard/frontend/src-tauri) with `floating_panel.rs`, `hud_hotkey.rs`, and `audio_capture.rs`).
 
 #### Deep macOS Integration Primitives
-* **APFS Snapshot Transactions:** macOS supports instantaneous copy-on-write snapshots on APFS formatted drives via `fs_snapshot_create()` and `fs_snapshot_revert()`. Rust can invoke these private/public POSIX APIs directly to give macOS the same zero-risk rollback safety as Btrfs on Linux.
+* **APFS Snapshot Transactions:** macOS supports instantaneous copy-on-write snapshots on APFS formatted drives via `fs_snapshot_create()` and `fs_snapshot_revert()`. Rust can invoke these to give macOS the same zero-risk rollback safety as Btrfs on Linux.
+  > **Caveat:** `fs_snapshot_create`/`fs_snapshot_revert` are private SPIs, not
+  > public APIs. Using them in a shipping, notarized app risks breakage across
+  > macOS versions and App Review friction. This requires research and possibly
+  > alternative approaches (e.g., `tmutil`, `apfs` CLI, or file-level
+  > copy-on-write via `clonefile(2)`). Marked as research-only until a stable
+  > path is found.
 * **Apple Silicon Hardware Telemetry:** Accessing real-time GPU/Neural Engine wattage and memory bandwidth via `IOKit` and `AppleSilicon` sysctls.
 * **Swift / SwiftUI Interop:**
   * Using **`uniffi-rs`** (Mozilla’s multi-language FFI generator) or **`swift-bridge`**, our Rust core compiles into a standard `.xcframework` or Swift Package.
@@ -53,6 +59,12 @@ Halbert already has strong roots on macOS (as seen in [`src-tauri`](file:///Volu
 ---
 
 ### 2.2 Windows 11 & Windows Server Ecosystem
+
+> **Deferred (2026-08-31):** Windows support is explicitly deferred behind
+> Linux + macOS. ETW + VSS + ConPTY + DirectML + Job Objects is a second full
+> platform engineering effort. The matrix below describes the target
+> architecture; no engineering time is allocated until `halbertd` and the Rust
+> crates are proven on Linux + macOS.
 
 Windows has distinct architectural paradigms from Unix, but Rust has first-class Tier-1 Windows support via Microsoft’s official **`windows-rs`** crate.
 
@@ -101,6 +113,13 @@ The higher-level agent loop (whether running in Python, Rust, or Swift) simply c
 ---
 
 ## 4. Pragmatic Phased Migration Roadmap
+
+> **Note (2026-08-31):** The timelines below are **aspirational targets**,
+> not committed dates. For a small team already juggling modality/voice,
+> security reviews, HA integration, marketing, and sister apps, these
+> milestones are aggressive. The Rust crates themselves are plausible; the
+> integration milestones may slip. Windows (Milestone 4 Windows items) is
+> explicitly deferred per §2.2.
 
 ```
                                     MIGRATION TIMELINE

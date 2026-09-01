@@ -88,7 +88,7 @@ HalbertOS integrates agentic intelligence across five distinct rings of the Linu
 
 ### Ring 1: Storage & Filesystem (Atomic CoW Transactions)
 * **Subvolume Shadowing:** The base root filesystem is immutable (using `systemd-repart` and read-only dm-verity or Btrfs subvolumes).
-* **Instant Rollback:** Every multi-step plan executes within an atomic snapshot generation. If post-execution verification or health probes fail, the filesystem rolls back in under 5ms, ensuring zero unrecoverable states.
+* **Instant Rollback:** Every multi-step plan executes within an atomic snapshot generation. If post-execution verification or health probes fail, the filesystem rolls back (target: sub-second for subvolume reverts; note that root filesystem rollback typically requires a reboot or unmount — snapshot *creation* is near-instant, but full rollback is not a 5ms in-place operation). This is an aspirational target, not a measured result.
 
 ### Ring 2: Init, Systemd & Sentinel Recovery
 * **`halbertd` System Daemon:** Runs as a privileged systemd unit on the D-Bus system bus (`org.halbert.SystemdBroker`), exposing safe, policy-checked APIs for process, network, and storage manipulation.
@@ -170,7 +170,7 @@ The exact same `crates/` compile into standalone binaries:
 | **Hybrid RAG & Vector Index** | Python (SQLite/LanceDB) | **Retain** | Documentation indexing, BM25 + dense vector search. |
 | **Dashboard UI & Design Tokens**| React 18/19 + TS | **Retain** | Shared webview UI across Tauri and Wayland compositor HUD. |
 | **Model Picker & Provider Hub** | TypeScript / Rust | **Retain & Extend** | Manages local (llama.cpp/vLLM) and cloud API endpoints. |
-| **Audio Capture & Echo Cancel** | Rust (`cpal`/`webrtc`) | **Retain** | Already native in `src-tauri`! |
+| **Audio Capture & Echo Cancel** | Rust (`cpal`/`webrtc`) | **Retain (stubbed)** | `audio_capture.rs` exists in `src-tauri` but AEC is behind an optional feature flag and is incomplete. See auditory cortex handoff for remaining work. |
 | **System Scanners & Probes** | Python ➔ Rust | **Migrate to Rust** | Move from `/proc` text parsing to eBPF + native syscalls. |
 | **Execution Engine & Sandbox** | Python ➔ Rust | **Migrate to Rust** | Move from standard `sudo` subprocesses to Landlock / Btrfs CoW. |
 | **PTY / Shell Interceptor** | New (Rust) | **Build Native** | Zero-latency command parser and terminal streaming HUD. |
@@ -190,6 +190,26 @@ To prototype HalbertOS without maintaining millions of lines of upstream package
    * `/var`: Btrfs subvolumes for user data, logs, and transactional snapshots.
    * `/opt/halbert/rag`: Read-only SquashFS / `systemd-sysext` layer containing offline sysadmin documentation vectors (ArchWiki, man pages, Debian/RHEL docs).
 4. **Local AI Runtime:** Embedded `llama.cpp` server bound to local GPU/NPU with dedicated early-boot memory reservation.
+
+> **Maturity caveat (2026-08-31):** HalbertOS as a full distro (mkosi + custom
+> kernel + Wayland compositor + `halbertd` as PID 1 + initramfs sentinel +
+> dm-verity) is a **multi-year north-star**, not a near-term deliverable. What
+> is near-term actionable:
+>
+> - **The Rust crates** (`halbert-telemetry`, `halbert-snapshots`,
+>   `halbert-sandbox`) — deliver value to the existing app on standard distros.
+> - **`halbertd` as a package** — installable via `apt`/`pacman`/`brew`,
+>   providing eBPF telemetry, MCP server, and Btrfs snapshot hooks on
+>   standard Linux/macOS without a custom OS.
+> - **A turnkey appliance image** — only once the daemon is proven, as a
+>   pre-configured standard distro (Arch/Fedora + `halbertd` + Btrfs defaults).
+>   This is the "HalbertOS" brand, but it's really just "standard distro +
+>   halbertd pre-installed," not a custom kernel.
+>
+> The Wayland compositor, custom initramfs sentinel, PID 1 replacement, and
+> dm-verity /usr partition are explicitly deferred north-star items. See
+> [`.handoff/HA-STRATEGY-SCOPING-AND-DEPLOYMENT-PATHS-2026-08-31.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/HA-STRATEGY-SCOPING-AND-DEPLOYMENT-PATHS-2026-08-31.md)
+> for the full scoping decisions.
 
 ---
 

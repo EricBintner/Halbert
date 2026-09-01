@@ -51,7 +51,7 @@ By having **Halbert (and HalbertOS)** expose a native **Model Context Protocol (
 │                                      │                                                      │
 │  ┌───────────────────────────────────▼───────────────────────────────────────────────────┐  │
 │  │ NATIVE OS EXECUTION & TELEMETRY BROKER (halbertd / halbert-sys)                       │  │
-│  │ • 14,000+ Sysadmin Offline RAG Documents (ArchWiki, systemd, Debian, RHEL)            │  │
+│  │ • 24,600+ Sysadmin Offline RAG Documents (ArchWiki, systemd, Debian, RHEL)            │  │
 │  │ • Btrfs / APFS / VSS Atomic Snapshot & Sub-Second Rollback Engine                     │  │
 │  │ • Landlock & eBPF-LSM Temporal Kernel Sandboxing                                      │  │
 │  │ • Zero-overhead eBPF Kernel Event Ring Buffers                                        │  │

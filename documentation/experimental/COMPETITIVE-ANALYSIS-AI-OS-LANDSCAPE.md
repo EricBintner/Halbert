@@ -15,7 +15,7 @@ However, an audit of the landscape reveals that most "AI OS" projects suffer fro
 2. **Infrastructure Workstation Bundles:** Pre-packaging CUDA, PyTorch, and Ollama into a bootable image (e.g. RHEL AI, Ubuntu AI) without giving the OS any ability to understand or heal itself.
 3. **Unsafe Autonomous Code Loops:** Executing un-sandboxed shell scripts via raw LLM generation (e.g. Open Interpreter 01 OS) with zero atomic rollback safety.
 
-Halbert occupies a distinct, unoccupied sweet spot: **The Sovereign Self-Healing Host Custodian**—combining deep sysadmin domain intelligence (14,000+ indexed docs), kernel-level eBPF observability, and guaranteed atomic copy-on-write transaction safety.
+Halbert occupies a distinct, unoccupied sweet spot: **The Sovereign Self-Healing Host Custodian**—combining deep sysadmin domain intelligence (24,600+ indexed docs), kernel-level eBPF observability, and guaranteed atomic copy-on-write transaction safety.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -58,7 +58,7 @@ Halbert occupies a distinct, unoccupied sweet spot: **The Sovereign Self-Healing
 | :--- | :--- | :--- | :--- |
 | **Deepin 23/25 (UOS AI)** | Desktop assistant integrated into DDE (Deepin Desktop). | Four-layer stack: Model layer, DTK API, UOS AI assistant, Grand Search (OCR). | **Shallow System Awareness:** Focuses on office productivity, email summarization, and file searching. Cannot troubleshoot broken DKMS drivers, audit systemd units, or parse network telemetry. |
 | **Windows 11 Copilot+ (Recall / Click-to-Do)** | OS-level multimodal screen indexing & app control. | NPU-accelerated OCR semantic index over raw screen captures + WinUI overlays. | **Privacy Backlash & Cloud Tethering:** Screen recording raised major security concerns. Closed-source, consumer-focused, zero developer/server diagnostic capabilities. |
-| **Apple Intelligence (macOS Sequoia/Tahoe)** | On-device personal context & App Intents. | Apple Silicon Neural Engine, Private Cloud Compute, App Intents API, Siri semantic index. | **Walled Garden & Sandboxed:** Strictly confined by Apple Sandbox. Prohibits deep system administration, dotfile management, or headless server control. |
+| **Apple Intelligence (macOS Tahoe)** | On-device personal context & App Intents. | Apple Silicon Neural Engine, Private Cloud Compute, App Intents API, Siri semantic index. | **Walled Garden & Sandboxed:** Strictly confined by Apple Sandbox. Prohibits deep system administration, dotfile management, or headless server control. |
 
 ---
 
@@ -136,7 +136,7 @@ Halbert occupies a distinct, unoccupied sweet spot: **The Sovereign Self-Healing
     • Competitors: Parse dirty stderr text output with fragile regex.
     • Halbert: Direct kernel ring-buffer event stream (syscalls, OOM, socket drops).
 
- 4. DEEP DOMAIN INTELLIGENCE (14,000+ Sysadmin Docs & CRAG)
+ 4. DEEP DOMAIN INTELLIGENCE (24,600+ Sysadmin Docs & CRAG)
     • Competitors: Generic generalist models that hallucinate system flags.
     • Halbert: Dedicated hybrid RAG graph across ArchWiki, systemd, Debian/RHEL docs, 
       with Corrective RAG (CRAG) factual gating.
@@ -158,4 +158,4 @@ Halbert occupies a distinct, unoccupied sweet spot: **The Sovereign Self-Healing
    Author an architectural whitepaper on *Kernel-Sandboxed Agentic Execution with Copy-on-Write Filesystem Rollbacks (Landlock + Btrfs/APFS)*. This sets the standard for how AI agents must safely interact with operating systems.
 
 3. **Incorporate eBPF & Btrfs into Early Benchmarks:**  
-   Benchmark Halbert against standard agent environments (e.g. OSWorld, InterCode) showing a **0% unrecoverable failure rate** due to atomic snapshot rollbacks.
+   Benchmark Halbert against standard agent environments (e.g. OSWorld, InterCode) with a **target of zero unrecoverable failures** due to atomic snapshot rollbacks. (Note: this is a future benchmark target, not a current measured result.)
