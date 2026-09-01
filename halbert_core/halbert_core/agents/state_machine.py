@@ -2194,12 +2194,25 @@ class AgentStateMachine:
         else:
             search_query = self.ctx.user_query
         
+        # Narrow the search the same way PLANNING's context assembly does.
+        # Routing sends every non-greeting first loop with no tool call
+        # through SEARCHING, so an unscoped call here was the whole retrieval
+        # for turns that had explicitly asked for a scope — the "Analyze"
+        # button's retrieval_scope, or an active skill's role/scope — and it
+        # searched everything instead (R06-F3).
+        from ..context.assembler import resolve_retrieval_scope, scope_kwargs_for
+        from ..context.assembler import ContextAssembler as _CA
+
+        composed = _CA._composed_skills(None, self.ctx.intake)
+        scope, role = resolve_retrieval_scope(composed, self.ctx.retrieval_scope)
+
         # Execute searches in parallel
         tasks = []
-        
+
         if self.rag:
-            tasks.append(("rag", self.rag.search(search_query, limit=5)))
-        
+            kwargs = scope_kwargs_for(self.rag.search, scope, role)
+            tasks.append(("rag", self.rag.search(search_query, limit=5, **kwargs)))
+
         if self.memory:
             tasks.append(("memory", self.memory.recall(search_query, limit=3)))
         

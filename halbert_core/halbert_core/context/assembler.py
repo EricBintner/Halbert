@@ -9,6 +9,7 @@ Based on research5.md Part 13.
 
 from __future__ import annotations
 import asyncio
+import inspect
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, Tuple, TYPE_CHECKING
@@ -49,6 +50,57 @@ def _conversation_line(msg: Dict) -> str:
         content = content[:1000] + "..."
 
     return f"**{role}**: {content}"
+
+
+def resolve_retrieval_scope(composed: Any,
+                           fallback_scope: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+    """Work out the (scope, role) a retrieval call should be narrowed to.
+
+    An active skill's own scope/role wins. ``fallback_scope`` applies only
+    when no skill said anything — that is how the "Analyze" button hardwires
+    retrieval to a silo's KB scope without defining a full skill.
+    """
+    role = getattr(composed, "role", None) if composed else None
+    scope = getattr(composed, "scope", None) if composed else None
+    if not scope and not role:
+        scope = fallback_scope
+    return scope, role
+
+
+def scope_kwargs_for(search_fn: Any, scope: Optional[str],
+                     role: Optional[str]) -> Dict[str, Any]:
+    """The scope keywords ``search_fn`` will actually accept.
+
+    Not every retrieval source is scope-aware (the RAG and Chroma adapters
+    are not), so a source that cannot narrow is called plainly rather than
+    losing retrieval for the turn.
+
+    This asks the signature rather than calling and catching TypeError. The
+    difference is load-bearing: a TypeError raised *inside* a scope-aware
+    adapter would be indistinguishable from "this adapter takes no scope",
+    and the retry would then run the query unscoped — silently widening the
+    very boundary the scope exists to narrow (R06-F8).
+    """
+    if not scope and not role:
+        return {}
+    try:
+        params = inspect.signature(search_fn).parameters
+    except (TypeError, ValueError):
+        # Builtins and some C-implemented callables have no introspectable
+        # signature. Narrowing is not worth guessing at, so don't.
+        return {}
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        accepted = {"scope", "role"}
+    else:
+        accepted = {"scope", "role"} & set(params)
+    kwargs: Dict[str, Any] = {}
+    if scope and "scope" in accepted:
+        kwargs["scope"] = scope
+    if role and "role" in accepted:
+        kwargs["role"] = role
+    if (scope or role) and not kwargs:
+        logger.debug("retrieval source takes no scope; querying unscoped")
+    return kwargs
 
 
 @dataclass
@@ -584,24 +636,12 @@ class ContextAssembler:
                                 fallback_scope: Optional[str] = None) -> List[Dict]:
         """Call the retrieval source, scoping it when a skill said how.
 
-        Not every retrieval source accepts a scope — the RAG and Chroma
-        adapters do not — so a source that rejects the keywords is called
-        again without them rather than losing retrieval for the turn.
-
-        ``fallback_scope`` is used only when no active skill provided a scope
-        — e.g. the "Analyze" button hardwires retrieval to the host scope
-        without defining a full skill.
+        See ``resolve_retrieval_scope`` and ``scope_kwargs_for`` for how the
+        scope is chosen and how a source that cannot narrow is handled.
         """
-        role = getattr(composed, "role", None) if composed else None
-        scope = getattr(composed, "scope", None) if composed else None
-        if not scope and not role:
-            scope = fallback_scope
-        if role or scope:
-            try:
-                return await self.retrieval.search(query, limit=5, scope=scope, role=role)
-            except TypeError:
-                logger.debug("retrieval source takes no scope; querying unscoped")
-        return await self.retrieval.search(query, limit=5)
+        scope, role = resolve_retrieval_scope(composed, fallback_scope)
+        kwargs = scope_kwargs_for(self.retrieval.search, scope, role)
+        return await self.retrieval.search(query, limit=5, **kwargs)
 
     @staticmethod
     def _composed_skills(active_skills: Any, intake: Any) -> Any:
