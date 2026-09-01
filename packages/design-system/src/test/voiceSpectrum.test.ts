@@ -2,6 +2,7 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { describe, it, expect } from 'vitest'
 import {
+  TINE_BAND_HZ,
   TINE_BIN_RANGES_16K_64,
   SUB_BASS_ATTENUATION,
   binRangesFor,
@@ -14,44 +15,72 @@ import {
 
 describe('FFT bin mapping', () => {
   it('reproduces the spec table exactly at 16kHz / 64 bins', () => {
-    expect(binRangesFor(16000, 64)).toEqual(TINE_BIN_RANGES_16K_64)
+    expect(binRangesFor(16000, 64, 'display')).toEqual(TINE_BIN_RANGES_16K_64.display)
+    expect(binRangesFor(16000, 64, 'medium')).toEqual(TINE_BIN_RANGES_16K_64.medium)
   })
 
   it('rescales for a 48kHz context', () => {
-    const ranges = binRangesFor(48000, 192) // 125 Hz per bin — same Hz bands
-    expect(ranges).toEqual(TINE_BIN_RANGES_16K_64) // -> same bin indices
-    const coarse = binRangesFor(48000, 64) // 375 Hz per bin
+    expect(binRangesFor(48000, 192, 'medium')).toEqual(TINE_BIN_RANGES_16K_64.medium)
+    const coarse = binRangesFor(48000, 64, 'display') // 375 Hz per bin
     expect(coarse[0]).toEqual([11, 21]) // 4000/375=10.7->11, 8000/375=21.3->21
     expect(coarse[9]).toEqual([0, 1]) // 40..100 Hz clamps to 1 bin
   })
 
+  it('keeps the low->outer / high->center ordering for both densities', () => {
+    for (const bands of [TINE_BAND_HZ.medium, TINE_BAND_HZ.display]) {
+      for (let k = 1; k < bands.length; k++) {
+        // every tine's band sits strictly below the tine inside it
+        expect(bands[k][1]).toBeLessThanOrEqual(bands[k - 1][0] + 1e-9)
+      }
+      expect(bands[0][1]).toBe(8000) // spine = brilliance
+      expect(bands[bands.length - 1][0]).toBe(40) // outermost = sub-bass
+    }
+  })
+
   it('normalizes mean band energy to [0, 1] with sub-bass attenuation', () => {
-    const full = new Uint8Array(64).fill(255)
-    const out = tineEnergies(full)
+    const out = tineEnergies(new Uint8Array(64).fill(255))
+    expect(out).toHaveLength(6) // medium default
     expect(out[0]).toBeCloseTo(1, 5)
-    expect(out[8]).toBeCloseTo(1, 5)
-    expect(out[9]).toBeCloseTo(SUB_BASS_ATTENUATION, 5)
-    const silent = tineEnergies(new Uint8Array(64))
-    expect(Array.from(silent)).toEqual(new Array(10).fill(0))
+    expect(out[4]).toBeCloseTo(1, 5)
+    expect(out[5]).toBeCloseTo(SUB_BASS_ATTENUATION, 5)
+    const displayOut = tineEnergies(
+      new Uint8Array(64).fill(255),
+      TINE_BIN_RANGES_16K_64.display,
+    )
+    expect(displayOut).toHaveLength(10)
+    expect(displayOut[9]).toBeCloseTo(SUB_BASS_ATTENUATION, 5)
+    expect(Array.from(tineEnergies(new Uint8Array(64)))).toEqual(new Array(6).fill(0))
+  })
+
+  it('maps outer-lane bands and spine bins to the right tines', () => {
+    // 16kHz reference grid, medium density: tine 4 (chest/fundamental
+    // 100-350 Hz) = bins [1,3); tine 0 (spine, brilliance 4-8kHz) = [32,64)
+    const outerLane = tineEnergies(new Uint8Array(64).fill(255, 1, 3))
+    expect(outerLane[4]).toBeCloseTo(1, 5)
+    expect(outerLane[0]).toBe(0)
+    const spine = tineEnergies(new Uint8Array(64).fill(255, 32, 64))
+    expect(spine[0]).toBeCloseTo(1, 5)
+    expect(spine[4]).toBe(0)
   })
 })
 
 describe('energy sources', () => {
   it('SyntheticEnergySource replays a script deterministically', () => {
     const src = new SyntheticEnergySource((t, out) => {
-      out[5] = t
+      out[3] = t
     })
-    const out = new Float32Array(10)
+    const out = new Float32Array(6)
     src.readEnergies(out, 0.25)
-    expect(out[5]).toBeCloseTo(0.25, 5)
+    expect(out[3]).toBeCloseTo(0.25, 5)
     expect(out[0]).toBe(0)
   })
 
-  it('IdleBreathingSource stays in the breathing envelope', () => {
+  it('IdleBreathingSource fills the caller buffer and stays in envelope', () => {
     const src = new IdleBreathingSource()
-    const out = new Float32Array(10)
+    const out = new Float32Array(6)
     for (const t of [0, 0.7, 1.4, 2.1, 2.8, 3.5, 100]) {
-      src.readEnergies(out, t)
+      const n = src.readEnergies(out, t)
+      expect(n).toBe(6)
       for (const v of out) {
         expect(v).toBeGreaterThanOrEqual(0)
         expect(v).toBeLessThanOrEqual(0.12)
@@ -60,8 +89,7 @@ describe('energy sources', () => {
   })
 
   it('createAnalyserEnergySource maps byte spectra through computed ranges', () => {
-    // structural mock: 64 bins at 48kHz -> 375 Hz/bin; brilliance band is
-    // bins [11, 21) — fill all of them so the mean hits 1.0
+    // 64 bins at 48kHz -> 375 Hz/bin; medium brilliance band is bins [11, 21]
     const bins = new Uint8Array(64)
     bins.fill(255, 11, 21)
     const fakeAnalyser = {
@@ -71,10 +99,10 @@ describe('energy sources', () => {
       },
     }
     const src = createAnalyserEnergySource(fakeAnalyser, 48000)
-    const out = new Float32Array(10)
-    expect(src.readEnergies(out, 0)).toBe(10)
-    expect(out[0]).toBeCloseTo(1, 5) // brilliance ring lights up
-    expect(out[4]).toBeCloseTo(0, 5) // vocal core stays dark
+    const out = new Float32Array(6)
+    expect(src.readEnergies(out, 0)).toBe(6)
+    expect(out[0]).toBeCloseTo(1, 5)
+    expect(out[3]).toBeCloseTo(0, 5) // vowel body stays dark
   })
 
   it('createNodeAnalyserSource disconnects its analyser on stop (no accumulation)', () => {
