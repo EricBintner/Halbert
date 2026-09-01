@@ -80,7 +80,12 @@ export function VoiceHud() {
   const showPill = isActive && segments.length > 0
 
   return (
-    <div className="h-screen w-full bg-transparent" data-testid="voice-hud-surface">
+    <div
+      className="h-screen w-full bg-transparent"
+      data-testid="voice-hud-surface"
+      aria-live="polite"
+      aria-atomic="false"
+    >
       <div className="flex h-full items-center justify-center px-1">
         {showPill ? (
           <>

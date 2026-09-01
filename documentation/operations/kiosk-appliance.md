@@ -124,6 +124,32 @@ concern — see implementation plan Task P4 for the build-or-retire decision.
 - The Voice Mode standby controller (P1) implements software dimming in-app;
   hardware DPMS is P2's domain
 
+### Backlight dimming does not work (P2)
+
+- P2's backlight path writes to `/sys/class/backlight/*/brightness`. Without
+  a udev rule granting write access, the kiosk user (non-root) cannot write
+  to these sysfs files and the backlight silently no-ops
+  (`available.backlight: false` in `GET /api/system/display`).
+- Fix: create a udev rule that grants the kiosk user write access to the
+  backlight brightness file:
+
+```bash
+# Find the backlight device name
+ls /sys/class/backlight/
+# e.g. intel_backlight
+
+# Create a udev rule (replace <device> and <kiosk_user>)
+echo 'SUBSYSTEM=="backlight", KERNEL=="<device>", RUN+="/usr/bin/chmod 0666 /sys/class/backlight/%k/brightness"' \
+  | sudo tee /etc/udev/rules.d/90-backlight.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+- After this rule is in place, restart Halbert and verify
+  `available.backlight: true` in the display status endpoint.
+- DPMS control via `xset` does not require this rule — only the backlight
+  dim path does.
+
 ### Chromium shows "can't reach page"
 
 - Verify the backend is running: `curl http://localhost:<port>/api/health`

@@ -111,6 +111,13 @@
     /* One source: the token tier, not a second hardcoded stack. */
     font-family: var(--hb-font-sans);
   }
+  /* The floating voice HUD (P4) loads the SPA in a 480x72 borderless
+   * transparent Tauri webview. The base body background would paint an
+   * opaque bar behind the pill, defeating transparent(true) in the Rust
+   * panel. VoiceHud.tsx adds this class on mount and removes it on unmount. */
+  body.voice-hud-surface {
+    @apply bg-transparent;
+  }
   
   /* Custom select styling for dark/light mode */
   select {
