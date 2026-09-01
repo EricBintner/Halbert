@@ -612,6 +612,38 @@ describe('being events and speaker recognition', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Standby blackout (P1): the mark does not render under the opaque veil
+// ---------------------------------------------------------------------------
+
+describe('standby blackout', () => {
+  it('stops rendering the mark at the blackout tier and remounts it on restore', () => {
+    vi.useFakeTimers()
+    const m = mount()
+    const rendersBefore = vi.mocked(AudioReactiveHalbertMark).mock.calls.length
+
+    // 10 minutes of idle: the controller blacks out and the page unmounts
+    // the mark — invisible under the opaque veil, but its rAF physics loop
+    // would otherwise composite at 60fps all night on the fanless N150.
+    // Unmounting is the cancel-by-construction: the mark's own cleanup
+    // stops its loop, and no machine/client state lives inside it.
+    act(() => {
+      vi.advanceTimersByTime(600_000)
+    })
+    expect(screen.getByTestId('standby-veil').className).toContain('cursor-none')
+    expect(vi.mocked(AudioReactiveHalbertMark).mock.calls.length).toBe(rendersBefore)
+
+    // Any presence restores: the mark remounts (static first paint).
+    act(() => {
+      window.dispatchEvent(new Event('pointermove'))
+    })
+    expect(vi.mocked(AudioReactiveHalbertMark).mock.calls.length).toBeGreaterThan(
+      rendersBefore,
+    )
+    void m
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
 

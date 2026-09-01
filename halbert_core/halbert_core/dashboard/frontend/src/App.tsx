@@ -19,6 +19,7 @@ import { Approvals } from './pages/Approvals'
 import { Settings } from './pages/Settings'
 import { Home } from './pages/Home'
 import { VoiceMode } from './pages/VoiceMode'
+import { VoiceHud } from './pages/VoiceHud'
 import { Onboarding } from './components/Onboarding'
 import { DebugProvider } from './contexts/DebugContext'
 import { ScanProvider } from './contexts/ScanContext'
@@ -94,8 +95,11 @@ function App() {
     window.location.reload()
   }
 
-  // Show nothing while checking onboarding status
-  if (checkingOnboarding) {
+  // Show nothing while checking onboarding status — except on the floating
+  // voice HUD route (P4): that window is a transient 480x72 transparent
+  // overlay, and the opaque loading panel would flash behind its pill.
+  const isVoiceHudRoute = window.location.pathname === '/voice-hud'
+  if (checkingOnboarding && !isVoiceHudRoute) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-muted-foreground">Loading...</div>
@@ -135,6 +139,12 @@ function App() {
                      * return edge. Not a nav tab; entry is the top-bar
                      * button beside the mode switch or this deep link. */}
                     <Route path="/voice" element={<VoiceModeRoute />} />
+                    {/* Floating voice HUD (P4) — the desktop companion pill,
+                     * loaded by the Rust show_voice_hud command into its own
+                     * borderless 480x72 overlay webview. Not a shell mode;
+                     * the onboarding gate above skips it so the transparent
+                     * window never flashes an opaque loading panel. */}
+                    <Route path="/voice-hud" element={<VoiceHud />} />
                   </Routes>
                 </Layout>
               </ShellModeProvider>

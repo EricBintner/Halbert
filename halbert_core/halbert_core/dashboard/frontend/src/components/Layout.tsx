@@ -40,7 +40,7 @@ import { ConfigEditor } from './ConfigEditor'
 import { HalbertMark, NavRail, type NavRailSection } from '@halbert/design-system'
 import { ModeSwitch } from './shell/ModeSwitch'
 import { InstanceSwitch, type InstanceInfo } from './shell/InstanceSwitch'
-import { AcousticAuraIndicator } from '@/components/audio'
+import { AcousticAuraIndicator, VoiceHudSummonButton } from '@/components/audio'
 import { HostShell } from './shell/HostShell'
 import { useShellMode } from '@/contexts/ShellModeContext'
 import { askHost, runOnHost, configWithHost } from '@/lib/hostConversation'
@@ -193,6 +193,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
    * the top-bar button beside the mode switch are the only ways in. The route
    * drives the mode, so the shell follows the URL in both directions. */
   const isVoiceRoute = location.pathname === '/voice'
+
+  /** The floating voice HUD (P4) loads the SPA at /voice-hud inside its own
+   * 480x72 transparent overlay window — full-bleed for the same reasons as
+   * /voice, but it is NOT a shell mode: it never parks or restores the base
+   * surface and the route lives only in the overlay's webview. */
+  const isVoiceHudRoute = location.pathname === '/voice-hud'
 
   // Route <-> mode synchronization. Entering /voice parks the current
   // surface; leaving the route (the screen's Host Canvas edge sets the base
@@ -430,6 +436,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <AudioLines className="h-4 w-4" />
           </Button>
 
+          {/* Floating voice HUD (P4) — summons the borderless desktop
+           * companion pill over whatever the user is working in. Renders
+           * nothing outside the Tauri shell (plain browsers have no
+           * window to summon). */}
+          <VoiceHudSummonButton />
+
           <InstanceSwitch />
 
           <AcousticAuraIndicator />
@@ -476,7 +488,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Mode content */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        {isVoiceRoute ? (
+        {isVoiceHudRoute ? (
+          /* The floating voice HUD (P4) is a 480x72 borderless transparent
+           * Tauri overlay — any shell chrome (top bar, rail, padding) would
+           * paint an opaque bar behind the pill and eat the whole window.
+           * Like the /voice exception, the page renders bare. */
+          children
+        ) : isVoiceRoute ? (
           /* Voice (O8) is full-bleed — no rail, no padded main, no shell
            * chrome of any kind. The screen brings its own h-screen dark
            * canvas (the sanctioned palette divergence, plan §2 Decision 5),

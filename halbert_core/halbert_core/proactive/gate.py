@@ -129,6 +129,18 @@ class ProactiveGate:
         Without this bypass a severity-2 anomaly maps to Finding severity
         "warning" and is silently dropped during quiet hours — precisely the
         window in which it must wake the screen.
+
+        Caveat: the wake guarantee is NOT unconditional. This bypass covers
+        step 2 (quiet hours) only. A severity-2 acoustic anomaly still has
+        Finding severity "warning", so it is suppressed by:
+
+          - Step 1: a "quiet" proactivity dial (requires severity >= "critical")
+          - Step 3: safe mode (suppresses non-critical events)
+
+        Long-term fix (suggested by review): publish severity-2 acoustic
+        findings with severity "critical" to collapse all three gate steps.
+        Until then, do not assume severity-2 wakes are guaranteed when the
+        dial is "quiet" or safe mode is active.
         """
         if (getattr(event, "category", None) or "") != "acoustic":
             return False

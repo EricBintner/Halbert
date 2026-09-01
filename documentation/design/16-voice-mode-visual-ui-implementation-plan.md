@@ -1407,6 +1407,17 @@ git commit -m "feat(design-system): Storybook stories for the audio-reactive mar
 
 ## 5. Phase 2 [OPUS, handoff] — Voice Mode Screen & Audio Plumbing
 
+> **Build status: ✅ ALL PHASE-2 AND PHASE-3 [OPUS] TASKS COMPLETE** (2026-09-01, branch
+> `feat/voice-mode-visual-ui`, worktree `.claude/worktrees/voice-mode-opus`). O1 `7ec4d173`,
+> O2 `d967cc8b`+`bac739bd`, O3 `b70c7296`+`c841b35b`+`045aa4ee`+`c818191c`+`2bfea6c6`,
+> O4 `9f001d00`+`38e67a39`, O5 `98a434f9`+`2033ad79`, O6 `fc6a11c8`+`43f51916`, O7 `65b74ac1`+
+> `ac2576b1`+`5bee80c7`, O8 `ce7ce03b`, P1 `08a6691b`+`81495230`, P2 `07d53549`+`48868145`,
+> P4 `78d21a7e` (option (a): route built, window kept, `audio_capture.rs` untouched).
+> Every task passed two-stage review (spec compliance + code quality) except P4 (API
+> rate-limit ended the session mid-review; implementation is 698-test green + `tsc` clean,
+> but it has not had an external review pass — see the results handoff). As-built reality
+> corrections and follow-ups live in `.handoff/HANDOFF-VOICE-MODE-OPUS-RESULTS-2026-09-01.md`.
+
 Ordering matters: backend tasks O1–O5 are independent of each other and all precede O7's full behavior, but O6/O7/O8 can develop against the SSE contract alone (subtitle ribbon + state transitions) before TTS audio lands in O3. Every task lists its own test command; the Python suite runs in the repo venv (`arch -arm64` prefix on this machine — see memory note and `.claude/worktrees` wrapper caveat: from a worktree, the editable `halbert_core` install resolves to the MAIN tree unless the meta-path-stripping wrapper is used).
 
 ### Task O1 [OPUS]: Live `/api/audio/status`

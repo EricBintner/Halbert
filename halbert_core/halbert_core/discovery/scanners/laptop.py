@@ -32,6 +32,7 @@ from ..schema import (
     DiscoveryAction,
     make_discovery_id,
 )
+from ...system.display_power import iter_backlight_interfaces
 
 
 class LaptopScanner(BaseScanner):
@@ -339,49 +340,43 @@ class LaptopScanner(BaseScanner):
         return discoveries
     
     def _scan_backlight(self) -> List[Discovery]:
-        """Scan backlight control."""
+        """Scan backlight control.
+
+        The sysfs walk lives in ``system/display_power.py``
+        (``iter_backlight_interfaces``) so the read-only scanner here and
+        the write-side screen power daemon describe the same devices with
+        the same rules — one discovery path, not two copies of the same
+        directory logic.
+        """
         discoveries = []
-        
-        backlight_path = Path("/sys/class/backlight")
-        if not backlight_path.exists():
-            return discoveries
-        
-        for bl in backlight_path.iterdir():
-            if not bl.is_dir():
-                continue
-            
-            brightness_file = bl / "brightness"
-            max_file = bl / "max_brightness"
-            
-            if brightness_file.exists() and max_file.exists():
-                try:
-                    brightness = int(brightness_file.read_text().strip())
-                    max_brightness = int(max_file.read_text().strip())
-                    percent = int(brightness / max_brightness * 100)
-                    
-                    discovery_id = make_discovery_id(DiscoveryType.POWER, f"backlight-{bl.name}")
-                    
-                    discoveries.append(Discovery(
-                        id=discovery_id,
-                        type=DiscoveryType.POWER,
-                        name=f"backlight-{bl.name}",
-                        title=f"Backlight: {bl.name}",
-                        description=f"Brightness: {percent}%",
-                        icon="sun",
-                        severity=DiscoverySeverity.SUCCESS,
-                        status=f"{percent}%",
-                        source=str(bl),
-                        data={
-                            "interface": bl.name,
-                            "brightness": brightness,
-                            "max_brightness": max_brightness,
-                            "percent": percent,
-                            "is_backlight": True,
-                        },
-                        chat_context=f"Display backlight ({bl.name}) at {percent}%. "
-                                    f"Adjust with 'brightnessctl' or keyboard keys.",
+
+        for name, bl, brightness, max_brightness in iter_backlight_interfaces():
+            try:
+                percent = int(brightness / max_brightness * 100)
+
+                discovery_id = make_discovery_id(DiscoveryType.POWER, f"backlight-{name}")
+
+                discoveries.append(Discovery(
+                    id=discovery_id,
+                    type=DiscoveryType.POWER,
+                    name=f"backlight-{name}",
+                    title=f"Backlight: {name}",
+                    description=f"Brightness: {percent}%",
+                    icon="sun",
+                    severity=DiscoverySeverity.SUCCESS,
+                    status=f"{percent}%",
+                    source=str(bl),
+                    data={
+                        "interface": name,
+                        "brightness": brightness,
+                        "max_brightness": max_brightness,
+                        "percent": percent,
+                        "is_backlight": True,
+                    },
+                    chat_context=f"Display backlight ({name}) at {percent}%. "
+                                f"Adjust with 'brightnessctl' or keyboard keys.",
                     ))
-                except:
-                    pass
-        
+            except Exception:
+                continue
+
         return discoveries

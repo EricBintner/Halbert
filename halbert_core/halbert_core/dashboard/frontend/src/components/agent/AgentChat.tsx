@@ -42,6 +42,10 @@ import { ChatModelPill } from '../llm/ChatModelPill';
 import { ModelStatusCard } from '../llm/ModelStatusCard';
 import { TurnModelNotice } from '../llm/TurnModelNotice';
 import { ModalityHandoffBadge, VoiceCompanionPill } from '../audio';
+// P4: mirror this conversation's live speech to the floating voice HUD
+// window (separate webview/JS context) — publishes exactly what the
+// in-conversation pill below renders, so both surfaces agree.
+import { useHudSpeechPublisher } from '../../hooks/useHudSpeechPublisher';
 import { useModelPicker, matchModels, providerDescriptor } from '@halbert/model-picker';
 import { CHAT_ROLE_ID, halbertRolesForVariant, modelPickerTransport } from '@/lib/halbertModelRoles';
 import { parseModelCommand, formatModelStatus, type ModelStatusLines } from '@/lib/slashCommands';
@@ -346,6 +350,11 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
       setAgentError(err);
     },
   });
+
+  // P4: mirror this conversation's live speech to the floating voice HUD.
+  // Mounted here (the pill's data source) so the relay publishes exactly
+  // what the in-conversation VoiceCompanionPill renders.
+  useHudSpeechPublisher(session?.speechSegments ?? [], isStreaming);
 
   // Announce agent errors assertively so screen-reader users know a retry
   // button is available. The banner is visual-only without this.

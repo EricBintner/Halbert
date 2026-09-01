@@ -719,6 +719,105 @@ class TestStateMachineTtsEgressHook:
         assert len(warnings) == 1
 
 
+class TestWakeBeforeSpeak:
+    """P2: a voice turn that starts from standby raises the panel before
+    the browser hears the first ``begin`` frame — talking at a black screen
+    is exactly the failure the standby tiers exist to prevent. The call is
+    best-effort: unavailable display hardware (every macOS dev machine)
+    and even a raising wake must not break the turn."""
+
+    @staticmethod
+    def _patch_wake(monkeypatch, order=None, calls=None, raises=False):
+        from halbert_core.system import display_power as dp
+
+        def _wake():
+            if calls is not None:
+                calls.append("wake")
+            if order is not None:
+                order.append("wake")
+            if raises:
+                raise RuntimeError("no backlight on this bench")
+
+        monkeypatch.setattr(dp, "wake", _wake)
+
+    async def test_subscribed_turn_wakes_before_the_first_begin(self, monkeypatch):
+        order = []
+        self._patch_wake(monkeypatch, order=order)
+        payload = _FakePayload(_FakeSegment("Hello there"))
+        _voice_turn_patches(monkeypatch, payload)
+        hub = _RecordingHub(SESSION)
+        original_publish = hub.publish
+
+        async def publish(session_id, data):
+            if isinstance(data, dict) and data.get("type") == "begin":
+                order.append("begin")
+            await original_publish(session_id, data)
+
+        hub.publish = publish
+        _patch_hub(monkeypatch, hub)
+        agent = _build_agent()
+        agent._egress_tts = _ChunkedTTS()
+
+        [e async for e in agent.process("hello", session_id=SESSION)]
+
+        assert order == ["wake", "begin"]
+
+    async def test_wake_is_once_per_turn_not_per_segment(self, monkeypatch):
+        calls = []
+        self._patch_wake(monkeypatch, calls=calls)
+        payload = _FakePayload(
+            _FakeSegment("First segment"), _FakeSegment("Second segment")
+        )
+        _voice_turn_patches(monkeypatch, payload)
+        hub = _RecordingHub(SESSION)
+        _patch_hub(monkeypatch, hub)
+        agent = _build_agent()
+        agent._egress_tts = _ChunkedTTS()
+
+        [e async for e in agent.process("hello", session_id=SESSION)]
+
+        begins = [
+            d for _s, d in hub.published
+            if isinstance(d, dict) and d.get("type") == "begin"
+        ]
+        assert len(begins) == 2  # two segments began...
+        assert calls == ["wake"]  # ...but the panel was raised once
+
+    async def test_unsubscribed_turn_does_not_wake(self, monkeypatch):
+        calls = []
+        self._patch_wake(monkeypatch, calls=calls)
+        payload = _FakePayload(_FakeSegment("Hello there"))
+        _voice_turn_patches(monkeypatch, payload)
+        hub = _RecordingHub()  # nobody subscribed
+        _patch_hub(monkeypatch, hub)
+        tts = _ChunkedTTS()
+        agent = _build_agent()
+        agent._egress_tts = tts
+
+        [e async for e in agent.process("hello", session_id=SESSION)]
+
+        assert calls == []
+        assert tts.calls == []
+
+    async def test_a_raising_wake_does_not_break_the_turn(self, monkeypatch):
+        self._patch_wake(monkeypatch, raises=True)
+        payload = _FakePayload(_FakeSegment("Hello there"))
+        _voice_turn_patches(monkeypatch, payload)
+        hub = _RecordingHub(SESSION)
+        _patch_hub(monkeypatch, hub)
+        agent = _build_agent()
+        agent._egress_tts = _ChunkedTTS()
+
+        events = [e async for e in agent.process("hello", session_id=SESSION)]
+
+        begins = [
+            d for _s, d in hub.published
+            if isinstance(d, dict) and d.get("type") == "begin"
+        ]
+        assert begins
+        assert any(e.type == "response_complete" for e in events)
+
+
 class TestCoordinatorTokenRelease:
     """``release_barge_in_token`` — the hook's hand-back of the
     coordinator's active-token slot (no stale tokens eating the next VAD

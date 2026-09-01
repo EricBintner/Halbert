@@ -3097,6 +3097,21 @@ class AgentStateMachine:
             )
             return
 
+        # Wake-before-speak (P2): a turn that starts from standby must not
+        # talk at a black screen — raise the panel before the first
+        # ``begin`` frame reaches the browser. The display module is
+        # best-effort by contract (never raises, no-ops without hardware),
+        # and neither is it news when it is unavailable (every macOS dev
+        # machine is), so a debug line is all a miss earns.
+        try:
+            from ..system import display_power
+            # Off the loop thread: wake may spawn xset, and a hung X server
+            # must never stall every SSE stream (and the very ``begin``
+            # frame this precedes) behind a blocking subprocess.
+            await asyncio.to_thread(display_power.wake)
+        except Exception:
+            logger.debug("wake-before-speak unavailable", exc_info=True)
+
         # Barge-in token: coordinator-owned when the pipeline runs, so VAD
         # barge-in (coordinator.trigger_barge_in) cancels this synthesis
         # too; standalone otherwise.
