@@ -150,10 +150,7 @@ describe('voiceModeReducer — exhaustive transition matrix', () => {
       for (const type of EVENT_TYPES) {
         const expected = TRANSITIONS[state][type] ?? state // unspecified = no-op
         const next = voiceModeReducer(state, eventFor(type))
-        if (next !== expected) {
-          throw new Error(`transition ${state} --${type}--> ${next}, expected ${expected}`)
-        }
-        expect(next).toBe(expected)
+        expect(next, `transition ${state} --${type}--> ${next}`).toBe(expected)
       }
     }
   })
@@ -177,15 +174,6 @@ describe('voiceModeReducer — exhaustive transition matrix', () => {
       expect(
         voiceModeReducer(state, { type: 'acoustic_wake', soundClass: 'smoke_alarm', severity: 2, urgency: 'urgent' }),
       ).toBe('listening')
-    }
-  })
-
-  it('is reductive and total: unknown event shapes stay in the same state (defensive)', () => {
-    // Every declared event type must be accepted in every state without throwing.
-    for (const state of ALL_STATES) {
-      for (const type of EVENT_TYPES) {
-        expect(typeof voiceModeReducer(state, eventFor(type))).toBe('string')
-      }
     }
   })
 })
@@ -445,6 +433,27 @@ describe('useVoiceModeMachine — 30s standby timer', () => {
     expect(result.current.state).toBe('listening')
     // The 30s clock belongs to settled turns / errors, not a fresh PTT
     // session — arming here would dim a live mic the user just opened.
+    expect(vi.getTimerCount()).toBe(0)
+
+    act(() => {
+      vi.advanceTimersByTime(STANDBY_TIMEOUT_MS + 1_000)
+    })
+    expect(result.current.state).toBe('listening')
+  })
+
+  it('does not arm the timer on a stale turn_complete in a fresh listening session', () => {
+    const { result } = renderHook(() => useVoiceModeMachine())
+
+    act(() => {
+      result.current.dispatch({ type: 'wake' })
+    })
+    // A late/stale turn_complete — e.g. a previous turn's stream-end racing a
+    // new push-to-talk, or O7 dispatching on isStreaming false at mount —
+    // no-ops in the reducer and must not start the dim clock on the live mic.
+    act(() => {
+      result.current.dispatch({ type: 'turn_complete' })
+    })
+    expect(result.current.state).toBe('listening')
     expect(vi.getTimerCount()).toBe(0)
 
     act(() => {

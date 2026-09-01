@@ -24,7 +24,10 @@
  *     (produced by `acousticWakeEvent()` in `voiceModeEvents.ts` when a
  *     proactive acoustic anomaly hits severity >= 2) forces wake from ANY
  *     state, including `standby` and `error` — full brightness on the mark
- *     while the anomaly lasts.
+ *     while the anomaly lasts. Such a wake opens an un-armed session: the
+ *     mark holds full listening brightness until a real event settles the
+ *     machine, which assumes O5's anomaly lifecycle keeps publishing
+ *     follow-up events for the screen to react to.
  *
  * `standby_timeout` is an internal event only the hook dispatches (from
  * its timer); it is part of the union so the decay stays an ordinary,
@@ -109,11 +112,9 @@ export function voiceModeReducer(s: VoiceModeState, e: VoiceModeEvent): VoiceMod
           return 'listening'
         case 'recognized':
           return 'recognized' // identity badge already held; keep it
-        case 'thinking':
-        case 'speaking':
+        default:
           return s
       }
-      return s
 
     // Listening/Recognized -> Thinking: voice activity ceases. From
     // `interrupted` it is the barge-in utterance being captured (§4.1 row 6:
@@ -282,7 +283,11 @@ export function useVoiceModeMachine(): UseVoiceModeMachineResult {
   // calling rawDispatch directly would leave stateRef/armedRef stale.
   const applyRef = useRef<(event: VoiceModeEvent) => void>(() => undefined)
   applyRef.current = (event: VoiceModeEvent): void => {
-    const next = voiceModeReducer(stateRef.current, event)
+    // This closure must capture only stable values (refs + the reducer) —
+    // it is written every render precisely so the timer callback inside it
+    // never sees a stale dispatch environment.
+    const prev = stateRef.current
+    const next = voiceModeReducer(prev, event)
     stateRef.current = next
 
     // Any event resets the timer.
@@ -292,13 +297,16 @@ export function useVoiceModeMachine(): UseVoiceModeMachineResult {
     }
 
     // Arm on settle; keep armed across no-op events in a settled state
-    // (e.g. a second `wake` while listening), disarm everywhere else. A
-    // no-op that never settled (e.g. `interrupt` in listening, `error` in
-    // standby) must not start the clock on a live or dimmed screen.
+    // (e.g. a second `wake` while listening), disarm everywhere else. The
+    // event types below are arming *origins* only — each must coincide
+    // with an actual state change, so a no-op (a late/stale `turn_complete`
+    // landing in a fresh `listening` session whose window never armed, an
+    // `interrupt` outside speaking, an `error` in standby) never starts
+    // the clock on a live or dimmed screen.
     const settled =
       next === 'listening' || next === 'recognized' || next === 'interrupted' || next === 'error'
     armedRef.current = settled
-      ? event.type === 'turn_complete' ||
+      ? (event.type === 'turn_complete' && prev !== next) ||
         next === 'interrupted' || // only reachable via a real interrupt
         next === 'error' || // only reachable via a real error event
         armedRef.current
