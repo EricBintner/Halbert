@@ -153,9 +153,9 @@ describe('energy sources', () => {
     expect(analysers[1].disconnected).toBe(false)
     expect(analysers[1].connected).toHaveLength(1)
 
-    // The live analyser still flows energy.
-    const out = new Float32Array(10)
-    expect(src.readEnergies(out, 0)).toBe(10)
+    // The live analyser still flows energy (6 tines — v2 medium default).
+    const out = new Float32Array(6)
+    expect(src.readEnergies(out, 0)).toBe(6)
     expect(out.every((v) => v > 0)).toBe(true)
 
     // stop() is idempotent.
