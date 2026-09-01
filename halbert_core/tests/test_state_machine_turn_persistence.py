@@ -116,7 +116,7 @@ async def test_end_turn_receives_text_blocks_terminals_status():
     tm = _FakeThreadManager()
     agent = _agent(_LLM([_tool("run_command", command="uptime")]))
 
-    async def fake_execute(tool_name, args, session_id=None, confirmed=False):
+    async def fake_execute(tool_name, args, session_id=None, confirmed=False, speaker_role="admin"):
         get_terminal_event_bus().publish(session_id, {"kind": "spawn", "terminal_session_id": "term-7", "command": "uptime", "pid": 3})
         get_terminal_event_bus().publish(session_id, {"kind": "complete", "terminal_session_id": "term-7", "exit_code": 0})
         return ExecutionResult(success=True, result="22:50 up 1 day")

@@ -261,56 +261,44 @@ class TestToolListCaching:
 class TestExecutorPeerFallback:
     """ToolExecutor routes unknown tools to the peer when configured."""
 
-    def test_unknown_tool_without_proxy_returns_error(self):
+    async def test_unknown_tool_without_proxy_returns_error(self):
         from halbert_core.tools.executor import ToolExecutor
         executor = ToolExecutor()
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
-            executor.execute("nonexistent_tool", {})
-        )
+        result = await executor.execute("nonexistent_tool", {})
         assert result.success is False
         assert "Unknown tool" in result.error
 
-    def test_unknown_tool_with_proxy_routes_to_peer(self):
+    async def test_unknown_tool_with_proxy_routes_to_peer(self):
         from halbert_core.tools.executor import ToolExecutor
         proxy = MagicMock()
         proxy.has_tool.return_value = True
         proxy.call_tool.return_value = {"result": "from peer"}
         proxy.peer_url = "http://workstation.lan:8000"
         executor = ToolExecutor(peer_tool_proxy=proxy)
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
-            executor.execute("search_knowledge", {"query": "test"})
-        )
+        result = await executor.execute("search_knowledge", {"query": "test"})
         assert result.success is True
         assert result.result == {"result": "from peer"}
         proxy.has_tool.assert_called_once_with("search_knowledge")
         proxy.call_tool.assert_called_once_with("search_knowledge", {"query": "test"})
 
-    def test_unknown_tool_peer_also_missing_returns_error(self):
+    async def test_unknown_tool_peer_also_missing_returns_error(self):
         from halbert_core.tools.executor import ToolExecutor
         proxy = MagicMock()
         proxy.has_tool.return_value = False
         proxy.peer_url = "http://workstation.lan:8000"
         executor = ToolExecutor(peer_tool_proxy=proxy)
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
-            executor.execute("nonexistent_tool", {})
-        )
+        result = await executor.execute("nonexistent_tool", {})
         assert result.success is False
         assert "Unknown tool" in result.error
 
-    def test_peer_failure_falls_through_to_error(self):
+    async def test_peer_failure_falls_through_to_error(self):
         from halbert_core.tools.executor import ToolExecutor
         proxy = MagicMock()
         proxy.has_tool.return_value = True
         proxy.call_tool.side_effect = PeerToolUnavailable("unreachable")
         proxy.peer_url = "http://workstation.lan:8000"
         executor = ToolExecutor(peer_tool_proxy=proxy)
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
-            executor.execute("search_knowledge", {"query": "test"})
-        )
+        result = await executor.execute("search_knowledge", {"query": "test"})
         assert result.success is False
         assert "Unknown tool" in result.error
 

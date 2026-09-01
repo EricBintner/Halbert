@@ -353,7 +353,12 @@ async def test_a_turn_with_no_pin_still_names_both_overrides_to_crag():
 
     [e async for e in agent._handle_planning()]
 
-    assert crag.kwargs == [{"model_override": None, "tier_override": None}]
+    # ``secure`` rides the same contract: the evaluator resolves a secure
+    # turn to a local model only, so it must be named on every call, not
+    # left for the stub to infer from its absence.
+    assert crag.kwargs == [
+        {"model_override": None, "tier_override": None, "secure": False}
+    ]
 
 
 @pytest.mark.asyncio
@@ -549,6 +554,7 @@ async def test_the_turns_pin_rides_along_to_crag(state):
     assert len(crag.kwargs) == 1
     assert crag.kwargs[0] == {
         "model_override": "pinned:3b", "tier_override": "specialist",
+        "secure": False,
     }
     assert agent.ctx.crag_action == CRAGAction.CORRECT
     assert events

@@ -139,7 +139,7 @@ async def test_e2e_agent_block_persisted_and_replayed():
     ])
     agent = _agent(llm)
 
-    async def fake_execute(tool_name, args, session_id=None, confirmed=False):
+    async def fake_execute(tool_name, args, session_id=None, confirmed=False, speaker_role="admin"):
         terminal_id = f"term-{uuid.uuid4().hex[:8]}"
         block_id = f"blk-{terminal_id}"
         bus.publish(session_id, {

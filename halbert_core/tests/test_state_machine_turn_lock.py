@@ -305,7 +305,7 @@ class TestTerminalSessionIds:
         agent = _agent(_SlowLLM([], delay=0))
         agent.ctx = StateContext(session_id="term", request_id="r", user_query="ls")
 
-        async def fake_execute(tool_name, args, session_id=None, confirmed=False):
+        async def fake_execute(tool_name, args, session_id=None, confirmed=False, speaker_role="admin"):
             bus = get_terminal_event_bus()
             bus.publish(session_id, {"kind": "spawn", "terminal_session_id": "t-1", "command": "ls", "pid": 1})
             bus.publish(session_id, {"kind": "output", "terminal_session_id": "t-1", "data": "a\n"})
