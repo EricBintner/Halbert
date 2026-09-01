@@ -1074,6 +1074,44 @@ class TestMergeThread:
         assert store.search_receipts("scanner") == []
         assert store.search_snippets("prev", "scanner") and store.search_snippets("new", "scanner") == []
 
+    def test_merge_carries_every_table_keyed_by_thread(self, store):
+        """R06-F5. A merge that moves only ``messages`` leaves the source
+        thread's other rows pointing at a thread that is now ``merged`` — so
+        the open loops, terminal blocks and compaction boundaries the merged
+        turns produced stop being reachable from the thread that owns them,
+        and are never returned again by any query."""
+        store.create_thread("prev", "Samba share")
+        store.create_thread("new", "Scanner share")
+        store.append_message("new", "user", "now the scanner share", turn_id="t2")
+
+        loop_id = store.add_open_loop("new", "confirm the scanner mounts", source="agent")
+        assert loop_id is not None
+        store.insert_terminal_block({
+            "block_id": "blk-1", "session_id": "s1", "thread_id": "new",
+            "turn_id": "t2", "command": "mount -a", "cwd": "/",
+            "owner": "agent", "started_at": 1.0,
+        })
+        store._conn.execute(
+            "INSERT INTO compact_boundaries (thread_id, trigger, created_at) "
+            "VALUES (?, ?, ?)", ("new", "manual", 1.0),
+        )
+        store._conn.commit()
+
+        assert store.merge_thread("new", "prev", now=50.0) == 1
+
+        assert [l["text"] for l in store.list_open_loops("prev")] == [
+            "confirm the scanner mounts"
+        ]
+        assert store.list_open_loops("new") == []
+        assert [b["block_id"] for b in store.list_terminal_blocks(thread_id="prev")] == [
+            "blk-1"
+        ]
+        assert store.list_terminal_blocks(thread_id="new") == []
+        counts = dict(store._conn.execute(
+            "SELECT thread_id, COUNT(*) FROM compact_boundaries GROUP BY thread_id"
+        ).fetchall())
+        assert counts == {"prev": 1}
+
     def test_merge_refuses_missing_or_same_thread(self, store):
         store.create_thread("prev", "P")
         assert store.merge_thread("nope", "prev") is None

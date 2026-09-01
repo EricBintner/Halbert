@@ -1823,7 +1823,8 @@ class SqliteConversationStore:
         """Fold thread ``src`` into thread ``dst`` in one transaction.
 
         Moves every message row (and its ``messages_fts`` row) of ``src`` onto
-        ``dst``; marks ``src`` ``merged`` (``merged_into = dst``, receipt
+        ``dst``, along with every other row keyed by thread (``open_loops``,
+        ``terminal_blocks``, ``compact_boundaries``); marks ``src`` ``merged`` (``merged_into = dst``, receipt
         dropped, ``receipts_fts`` row deleted); reopens ``dst`` (status open,
         ``paused_at`` cleared, ``turns_since_pause`` reset). Returns the number
         of rows moved, or ``None`` when either thread is missing or the write
@@ -1861,6 +1862,18 @@ class SqliteConversationStore:
                     )
                     self._conn.execute(
                         "DELETE FROM receipts_fts WHERE thread_id = ?", (src_thread_id,)
+                    )
+                # Everything else keyed by thread. The source thread is
+                # about to be marked ``merged``, so any row left pointing at
+                # it is unreachable from the thread that now owns the turns
+                # which produced it -- the loops it opened, the shell blocks
+                # it ran, the compaction boundaries drawn across it. These
+                # move in the same transaction as the messages, so the merge
+                # stays all-or-nothing.
+                for table in ("open_loops", "terminal_blocks", "compact_boundaries"):
+                    self._conn.execute(
+                        f"UPDATE {table} SET thread_id = ? WHERE thread_id = ?",
+                        (dst_thread_id, src_thread_id),
                     )
                 self._conn.execute(
                     """UPDATE conversations
