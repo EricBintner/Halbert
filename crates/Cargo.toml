@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "halbert-mqtt",
+    "halbert-telemetry",
+    "halbert-snapshots",
+    "halbert-sandbox",
+    "halbert-ffi",
+]
+# halbert-ffi requires Maturin (Python linking) — exclude from default cargo build.
+# Build it explicitly: cd crates/halbert-ffi && maturin build --release
+default-members = [
+    "halbert-mqtt",
+    "halbert-telemetry",
+    "halbert-snapshots",
+    "halbert-sandbox",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["Eric Bintner and Halbert Contributors"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Error handling
+thiserror = "2"
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+# Async traits
+async-trait = "0.1"
+# PyO3 (for halbert-ffi only)
+pyo3 = { version = "0.22", features = ["extension-module"] }
+pyo3-asyncio = { version = "0.22", features = ["tokio-runtime"] }
