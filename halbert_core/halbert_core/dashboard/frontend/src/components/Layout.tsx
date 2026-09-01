@@ -34,6 +34,13 @@ import {
   Loader2,
   ScanSearch,
   AudioLines,
+  Package,
+  Wifi,
+  Share2,
+  Cpu,
+  Container,
+  Code2,
+  CheckCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfigEditor } from './ConfigEditor'
@@ -50,44 +57,58 @@ type NavItem = { id: string; label: string; icon: typeof LayoutDashboard }
 type NavSection = { label: string; items: NavItem[] }
 
 /**
- * The rail carries the primary domains (TASK-PACKET-02, Task 2.3):
+ * The rail carries four domains (shell redesign, Section 9.3):
  *
- *   Being & Ambient Home     the host canvas and the spatial home
- *   Intelligence & Findings  what the scans surfaced — findings, not the
- *                            Settings > Security trust gates
- *   Host Controls            the sysadmin surface
+ *   Overview              the dashboard and the spatial home view
+ *   Findings & Approvals  what the agent surfaced — findings and proposals
+ *                         that need human attention
+ *   System                the sysadmin surface — services, storage, backups,
+ *                         terminal
+ *   Workloads             things running on the machine that aren't core
+ *                         system services — containers, GPU, apps, network,
+ *                         sharing, development
  *
- * Settings is the fourth domain but never a rail item: the Settings page
- * overtakes the shell and renders its own rail, so the top-bar gear is the
- * single entry point.
+ * Sections with a single visible item render without a header label — the
+ * item stands alone as a top-level nav entry (adaptive headers, 9.4).
  *
- * Pages that fall outside these domains — Apps, Network, Sharing, Containers,
- * GPU, Development, Approvals — stay routed but leave the rail. They are
- * slated for future sub-views (compute/homelab) and a top-bar approvals badge.
+ * Settings is never a rail item: the Settings page renders in the center
+ * panel, and the top-bar gear is the entry point.
  */
-const HOST_CONTROLS = 'Host Controls'
+const SYSTEM = 'System'
 
 const navSections: NavSection[] = [
   {
-    label: 'Being & Ambient Home',
+    label: 'Overview',
     items: [
       { id: '/', label: 'Dashboard', icon: LayoutDashboard },
       { id: '/home', label: 'Home', icon: HomeIcon },
     ],
   },
   {
-    label: 'Intelligence & Findings',
+    label: 'Findings & Approvals',
     items: [
       { id: '/findings', label: 'Findings', icon: Shield },
+      { id: '/approvals', label: 'Approvals', icon: CheckCircle },
     ],
   },
   {
-    label: HOST_CONTROLS,
+    label: SYSTEM,
     items: [
       { id: '/services', label: 'Services', icon: Server },
       { id: '/storage', label: 'Storage', icon: HardDrive },
       { id: '/backups', label: 'Backups', icon: Archive },
       { id: '/terminal', label: 'Terminal', icon: Terminal },
+    ],
+  },
+  {
+    label: 'Workloads',
+    items: [
+      { id: '/containers', label: 'Containers', icon: Container },
+      { id: '/gpu', label: 'GPU', icon: Cpu },
+      { id: '/apps', label: 'Apps', icon: Package },
+      { id: '/network', label: 'Network', icon: Wifi },
+      { id: '/sharing', label: 'Sharing', icon: Share2 },
+      { id: '/development', label: 'Development', icon: Code2 },
     ],
   },
 ]
@@ -169,17 +190,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [])
 
   // Filter nav sections based on the connected instance. Home hides when the
-  // instance lacks the home feature. The whole Host Controls domain hides on a
-  // paired 'home' instance: its services, storage, backups, and terminal
-  // belong to a machine the user does not administer from here.
+  // instance lacks the home feature. The whole System domain hides on a paired
+  // 'home' instance: its services, storage, backups, and terminal belong to a
+  // machine the user does not administer from here. Workloads' dev-oriented
+  // pages (Containers, GPU, Development) hide when the instance lacks the
+  // development feature.
   const filteredSections = navSections
-    .filter((section) => section.label !== HOST_CONTROLS || instanceInfo?.role !== 'home')
+    .filter((section) => section.label !== SYSTEM || instanceInfo?.role !== 'home')
     .map((section) => ({
       ...section,
       items: section.items.filter((item) => {
         if (!instanceInfo) return true
-        // Hide Home tab if instance doesn't have home feature
         if (item.id === '/home' && !instanceInfo.features.home) return false
+        if ((item.id === '/gpu' || item.id === '/development' || item.id === '/containers')
+            && !instanceInfo.features.development) return false
         return true
       }),
     }))

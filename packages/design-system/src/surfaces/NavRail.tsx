@@ -125,7 +125,9 @@ export const NavRail = React.forwardRef<HTMLElement, NavRailProps>(function NavR
       >
         {filtered.map((section) => (
           <div key={section.id} className="hb-navrail__section">
-            <p className="hb-navrail__section-label">{section.label}</p>
+            {section.items.length > 1 && (
+              <p className="hb-navrail__section-label">{section.label}</p>
+            )}
             {section.items.map((item) => {
               const isActive = item.id === activeId
               const Icon = item.icon
