@@ -61,6 +61,7 @@ import { useHostIdentity } from '@/hooks/useHostIdentity'
 import { acousticWakeEvent } from '@/hooks/voiceModeEvents'
 import { SpeakerBadge } from '@/components/voice/SpeakerBadge'
 import type { SpeakerStatus } from '@/components/voice/SpeakerBadge'
+import { StandbyController } from '@/components/voice/StandbyController'
 import { OnScreenKeyboard } from '@/components/voice/OnScreenKeyboard'
 import { SubtitleRibbon } from '@/components/voice/SubtitleRibbon'
 import { TouchBar } from '@/components/voice/TouchBar'
@@ -267,8 +268,10 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
 
   // Any entry into a mic posture while unmuted re-arms capture. The machine
   // reaches listening not only by push-to-talk but by `turn_complete`
-  // landing (mute during a turn, unmute before it ends) and by future
-  // standby transitions (P1) — the gesture paths cannot cover those.
+  // landing (mute during a turn, unmute before it ends) and by the O5
+  // acoustic-wake seam — the gesture paths cannot cover those. (P1's
+  // standby controller deliberately never dispatches: it is the visual
+  // layer only; a tap during the dim veil still wakes through the mark.)
   useEffect(() => {
     if (muted) return
     const s = state
@@ -445,6 +448,13 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
           }}
         />
       )}
+
+      {/* P1: the standby tiers over the machine's 30s decay — tier 1 dims
+       * the idle mark (which keeps breathing) under a room clock, tier 2
+       * blacks the screen out; any input or machine wake restores. The
+       * controller is visual-only; it reports idle duration to the P2
+       * display daemon and never dispatches machine events. */}
+      <StandbyController machineState={state} />
     </div>
   )
 }
