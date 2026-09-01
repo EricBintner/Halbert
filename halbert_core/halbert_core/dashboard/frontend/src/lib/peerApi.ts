@@ -12,7 +12,7 @@
  *
  * C2 — Extends Instance Switcher: The discovered peers and paired
  *      peers APIs feed the InstanceSwitch dropdown (already exists in
- *      shell/InstanceSwitch.tsx). This module provides the typed
+ *      shell/PresencePill.tsx). This module provides the typed
  *      fetchers; InstanceSwitch consumes them.
  *
  * C5 — Fleet inspection via MCP proxy: The inspectNode() function

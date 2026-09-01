@@ -684,9 +684,10 @@ export function Settings() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Settings rail — the same NavRail component the dashboard uses, so the
-       * typography is identical by construction. It sits in the exact position
-       * the dashboard rail occupied, with a back button to leave settings. */}
+      {/* Settings sub-rail — the same NavRail component the dashboard uses,
+       * rendered inside the center panel as a secondary navigation for the
+       * 12 settings tabs. The dashboard's primary NavRail is already on the
+       * left (provided by Layout.tsx); this sits to its right. */}
       <NavRail
         tabMode
         sections={SETTINGS_SECTIONS as NavRailSection[]}

@@ -1,16 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * InstanceSwitch — top-bar dropdown for switching between Halbert instances.
+ * PresencePill — the top-bar identity indicator.
  *
- * When multiple Halbert instances are running (e.g., host on :8000, home on :8001),
- * this component lets the user switch the frontend's API target without opening
- * a new browser tab. Selecting an instance calls setInstanceEndpoint() which
- * updates the apiBase for all subsequent fetches.
+ * Replaces InstanceSwitch. Shows the entity name + body name + entity mode
+ * (Singular / Independent) in a compact pill. Clicking opens a dropdown to
+ * switch to another paired body (which changes the API endpoint and reloads)
+ * or to manage linked devices via Settings.
+ *
+ * In Singular Entity mode, switching bodies changes the dashboard data source
+ * but not the conversation — same entity, same memory, same threads. In
+ * Independent mode, switching bodies switches everything.
+ *
+ * The pill text format:
+ *   Singular:    "Halbert @ desk"  (entity name @ body name)
+ *   Independent: "Halbert @ desk"  (same format — the mode badge is in the dropdown)
+ *
+ * The connectivity dot is emerald when the local instance is reachable,
+ * amber when it's a paired remote, gray when status is unknown.
  */
-
 import { useState, useEffect, useCallback } from 'react'
-import { Monitor, Home as HomeIcon, ChevronDown, Plus, Check, X } from 'lucide-react'
+import { Monitor, Home as HomeIcon, ChevronDown, Plus, Check, X, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -22,6 +32,7 @@ import {
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu'
 import { setInstanceEndpoint, getInstanceEndpoint } from '@/lib/apiBase'
+import { useNavigate } from 'react-router-dom'
 
 export interface InstanceInfo {
   persona_id: string
@@ -38,6 +49,8 @@ export interface InstanceInfo {
   }
   data_dir: string
   config_dir: string
+  body_name: string
+  singular: boolean
 }
 
 interface PairedInstance {
@@ -63,14 +76,9 @@ function savePairedInstances(instances: PairedInstance[]): void {
 }
 
 const roleIcon = (role: 'host' | 'home') =>
-  role === 'home' ? <HomeIcon className="h-4 w-4" /> : <Monitor className="h-4 w-4" />
+  role === 'home' ? <HomeIcon className="h-3.5 w-3.5" /> : <Monitor className="h-3.5 w-3.5" />
 
-const roleColor = (role: 'host' | 'home') =>
-  role === 'home'
-    ? 'text-amber-600 dark:text-amber-400'
-    : 'text-slate-600 dark:text-slate-300'
-
-export function InstanceSwitch() {
+export function PresencePill() {
   const [currentInfo, setCurrentInfo] = useState<InstanceInfo | null>(null)
   const [paired, setPaired] = useState<PairedInstance[]>(loadPairedInstances)
   const [activeEndpoint, setActiveEndpoint] = useState<string | null>(getInstanceEndpoint())
@@ -78,8 +86,8 @@ export function InstanceSwitch() {
   const [newLabel, setNewLabel] = useState('')
   const [newEndpoint, setNewEndpoint] = useState('http://localhost:8001')
   const [newRole, setNewRole] = useState<'host' | 'home'>('home')
+  const navigate = useNavigate()
 
-  // Fetch current instance info
   const refreshInfo = useCallback(async (endpoint: string | null) => {
     try {
       const base = endpoint || ''
@@ -101,7 +109,6 @@ export function InstanceSwitch() {
     setInstanceEndpoint(endpoint)
     setActiveEndpoint(endpoint)
     refreshInfo(endpoint)
-    // Reload the page to re-render all components with new API target
     window.location.reload()
   }
 
@@ -121,23 +128,39 @@ export function InstanceSwitch() {
     savePairedInstances(updated)
   }
 
-  const currentLabel = currentInfo?.display_name || 'Halbert'
-  const currentRole = currentInfo?.role || 'host'
+  const entityName = currentInfo?.display_name || 'Halbert'
+  const bodyName = currentInfo?.body_name || (currentInfo?.role === 'home' ? 'home' : 'workstation')
+  const singular = currentInfo?.singular ?? false
+  const isLocal = !activeEndpoint
+
+  // The pill text: "Entity @ body"
+  const pillText = `${entityName} @ ${bodyName}`
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs">
-          <span className={cn('flex items-center gap-1.5', roleColor(currentRole))}>
-            {roleIcon(currentRole)}
-          </span>
-          <span className="font-medium hidden sm:inline">{currentLabel}</span>
-          <ChevronDown className="h-3 w-3 opacity-50" />
-        </Button>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium hover:bg-accent transition-colors"
+          title={singular
+            ? `${entityName} — Singular Entity (shared memory across bodies)`
+            : `${entityName} — Independent Node (own memory)`}
+        >
+          {/* Connectivity dot */}
+          <span
+            className={cn(
+              'h-1.5 w-1.5 rounded-full shrink-0',
+              isLocal ? 'bg-success' : 'bg-amber-500',
+            )}
+            aria-hidden="true"
+          />
+          <span className="hidden sm:inline truncate max-w-[160px]">{pillText}</span>
+          <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />
+        </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72">
         <DropdownMenuLabel className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-          Switch Halbert Instance
+          {singular ? 'Singular Entity — one Halbert, many bodies' : 'Independent Node'}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
 
@@ -146,16 +169,16 @@ export function InstanceSwitch() {
           onClick={() => handleSwitch(null)}
           className="flex items-center gap-2 cursor-pointer"
         >
-          <span className={cn('flex-shrink-0', roleColor(currentRole))}>
-            {roleIcon(currentRole)}
+          <span className="flex-shrink-0 text-muted-foreground">
+            {roleIcon(currentInfo?.role || 'host')}
           </span>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium truncate">{currentLabel} (Local)</p>
+            <p className="text-xs font-medium truncate">{pillText} (Local)</p>
             <p className="text-[10px] text-muted-foreground truncate">
-              {currentInfo?.scene_context || 'Local instance'}
+              {currentInfo?.scene_context || 'This machine'}
             </p>
           </div>
-          {!activeEndpoint && <Check className="h-3 w-3 text-success" />}
+          {isLocal && <Check className="h-3 w-3 text-success" />}
         </DropdownMenuItem>
 
         {/* Paired instances */}
@@ -165,7 +188,7 @@ export function InstanceSwitch() {
             onClick={() => handleSwitch(inst.endpoint)}
             className="flex items-center gap-2 cursor-pointer"
           >
-            <span className={cn('flex-shrink-0', roleColor(inst.role))}>
+            <span className="flex-shrink-0 text-muted-foreground">
               {roleIcon(inst.role)}
             </span>
             <div className="flex-1 min-w-0">
@@ -184,6 +207,15 @@ export function InstanceSwitch() {
         ))}
 
         <DropdownMenuSeparator />
+
+        {/* Manage linked devices — navigates to Settings > Devices */}
+        <DropdownMenuItem
+          onClick={() => navigate('/settings?tab=devices')}
+          className="flex items-center gap-2 cursor-pointer"
+        >
+          <Settings className="h-4 w-4" />
+          <span className="text-xs">Manage Linked Devices...</span>
+        </DropdownMenuItem>
 
         {/* Add new instance */}
         {showAddForm ? (
@@ -235,7 +267,7 @@ export function InstanceSwitch() {
             className="flex items-center gap-2 cursor-pointer"
           >
             <Plus className="h-4 w-4" />
-            <span className="text-xs">Pair / Connect Another Instance...</span>
+            <span className="text-xs">Link Another Device...</span>
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>
