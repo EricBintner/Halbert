@@ -93,8 +93,13 @@ class StubAudioContext {
 
 class StubWebSocket {
   static instances: StubWebSocket[] = []
+  static readonly OPEN = 1
+  static readonly CLOSED = 3
   binaryType = 'blob'
+  readyState: number = StubWebSocket.OPEN
   closed = false
+  /** Text frames the client sent (the barge-in control frame). */
+  sentText: string[] = []
   onmessage: ((ev: { data: unknown }) => void) | null = null
   onclose: (() => void) | null = null
 
@@ -102,7 +107,12 @@ class StubWebSocket {
     StubWebSocket.instances.push(this)
   }
 
+  send(text: string): void {
+    this.sentText.push(text)
+  }
+
   close() {
+    this.readyState = StubWebSocket.CLOSED
     this.closed = true
     this.onclose?.()
   }
@@ -286,6 +296,43 @@ describe('TtsPlaybackClient protocol', () => {
     const last = ctx.sources[ctx.sources.length - 1]
     expect(last.startAt).toBe(3)
     expect(last.stopped).toBe(false)
+  })
+
+  it('cancel() sends the barge-in control frame so the hub aborts synthesis', () => {
+    // Without the frame, the server keeps synthesizing the silenced turn
+    // and its next `begin` re-arms the client into playing the rest.
+    const client = makeClient()
+    client.connect()
+    const ws = wsOf()
+    ws.receive(JSON.stringify({ type: 'begin', sample_rate: 22050, format: 's16le' }))
+    ws.receive(new ArrayBuffer(200))
+
+    client.cancel()
+
+    expect(ws.sentText).toEqual([JSON.stringify({ type: 'cancel' })])
+  })
+
+  it('a server `cancelled` frame does NOT echo the control frame back (no loop)', () => {
+    // hub.cancel() answers the control frame with `cancelled`; echoing it
+    // again would ping-pong forever.
+    const client = makeClient()
+    client.connect()
+    const ws = wsOf()
+    ws.receive(JSON.stringify({ type: 'begin', sample_rate: 22050, format: 's16le' }))
+    ws.receive(new ArrayBuffer(200))
+    ws.receive(JSON.stringify({ type: 'cancelled' }))
+
+    expect(ws.sentText).toEqual([])
+    expect(ctxOf().sources.every((s) => s.stopped)).toBe(true)
+  })
+
+  it('cancel() on a dead socket skips the control frame without throwing', () => {
+    const client = makeClient()
+    client.connect()
+    const ws = wsOf()
+    ws.readyState = StubWebSocket.CLOSED
+    expect(() => client.cancel()).not.toThrow()
+    expect(ws.sentText).toEqual([])
   })
 
   it('close() tears down the socket and the AudioContext', () => {

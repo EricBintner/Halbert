@@ -80,8 +80,31 @@ export class TtsPlaybackClient {
     this.ws = ws
   }
 
-  /** Stop every scheduled source and reset the timeline (barge-in). */
+  /** Stop every scheduled source, reset the timeline, and tell the hub to
+   * abort its synthesis too (barge-in).
+   *
+   * The `{"type":"cancel"}` control frame is the only meaningful
+   * client->server frame on /api/audio/tts (routes/websocket.py): it fires
+   * the session's registered barge-in token, so the server stops spending
+   * synthesis passes on segments nobody will hear — and, critically, no
+   * later `begin` frame re-arms this client into playing the rest of a
+   * turn the user just silenced. Best-effort: a dead or half-open socket
+   * needs no server-side abort. */
   cancel(): void {
+    this.stopSources()
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'cancel' }))
+      } catch {
+        // A send on a closing socket throws; the transport is gone either way.
+      }
+    }
+  }
+
+  /** Local half of cancel(): stop playback without notifying the hub (the
+   * server-initiated `cancelled` frame uses this — echoing the control
+   * frame back would loop: hub.cancel() republishes `cancelled`). */
+  private stopSources(): void {
     for (const source of this.sources) {
       try {
         source.stop()
@@ -142,7 +165,7 @@ export class TtsPlaybackClient {
         this.finish()
         break
       case 'cancelled':
-        this.cancel()
+        this.stopSources()
         this.finish()
         break
       default:
