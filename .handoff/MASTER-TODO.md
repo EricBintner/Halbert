@@ -162,3 +162,26 @@ Direction accepted per [`HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`](
 - [ ] **`FDR-DEC-02`: GPLv3 §7 Exception Text** — Commit `LICENSE-EXCEPTION-APPSTORE` and update SPDX headers. (See [`TASK-PACKET-06`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-06-FOUNDER-DECISIONS-AND-APPSTORE-LEGAL.md)).
 - [ ] **`FDR-DEC-03`: Bundle Identifiers** — Confirm `ai.halbert.home` vs `ai.halbert.pro` in `tauri.conf.json`. (See [`TASK-PACKET-06`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-06-FOUNDER-DECISIONS-AND-APPSTORE-LEGAL.md)).
 - [ ] **`FDR-DEC-04`: Perpetual Pricing** — $29 one-time terms and offline Ed25519 license verification. (See [`TASK-PACKET-06`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-06-FOUNDER-DECISIONS-AND-APPSTORE-LEGAL.md)).
+
+---
+
+### Rust Native Core & HalbertOS (Long-Term Project — added 2026-08-31)
+
+Separate living TODO with 56 tasks across 7 phases (R0-R7). Synced with the HA strategy scoping decisions (D1-D8) and the experimental docs corrections. Full plan with model tier + effort level per task:
+[`RUST-NATIVE-CORE-TODO-AND-IMPLEMENTATION-PLAN-2026-08-31.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/RUST-NATIVE-CORE-TODO-AND-IMPLEMENTATION-PLAN-2026-08-31.md)
+
+**Phase summary:**
+- **R0 — Foundation** (crates/ workspace + scaffolding): 8 tasks, Sonnet med, ~2 days
+- **R1 — Native Device Bus** (halbert-mqtt + Python registry): 9 tasks, Sonnet xhigh + GLM-5.3 high, ~2 weeks
+- **R2 — Kernel Telemetry** (eBPF probes): 10 tasks, Opus xhigh + Fable review, ~3 weeks
+- **R3 — Atomic Safety** (Btrfs snapshots + Landlock): 9 tasks, Opus xhigh + Fable review, ~2 weeks
+- **R4 — PyO3 Bridge** (halbert-ffi): 7 tasks, Sonnet xhigh, ~1 week
+- **R5 — halbertd Daemon** (systemd + MCP + wires all crates): 14 tasks, Opus xhigh + Fable review, ~3 weeks
+- **R6 — Deployment Paths** (sidecar + HA Add-on + OS-MCP): 7 tasks, Sonnet high, ~1 week
+- **R7 — Turnkey Appliance** (north-star, gated): 6 tasks, Opus xhigh, ~4 weeks
+
+**Recommended start:** R0 (scaffolding) can begin now in parallel with U-batches. R1 (MQTT bus) is the highest product-value first build — makes HA optional. R2 (eBPF) can run in parallel on a Linux VM.
+
+**Architectural principle:** Rewrite stable system API interfaces (eBPF, Btrfs, Landlock, MQTT) in Rust. Keep application logic (scanners, state machine, prompts, device registry) in Python. Rust crates are thin native layers; Python is the brain that calls them.
+
+**Explicitly deferred (D7):** Custom kernel, Wayland compositor, PID 1, initramfs sentinel, dm-verity, native Matter controller, BLE, Windows platform, APFS snapshot SPIs.
