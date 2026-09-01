@@ -4,14 +4,21 @@
 System status API routes.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from typing import Dict, Any, List, Optional
+import logging
 import os
 import platform
 import socket
 import threading
 import psutil
 from datetime import datetime, timezone
+
+from starlette.concurrency import run_in_threadpool
+
+from ...system import display_power
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -365,3 +372,94 @@ async def get_host_identity() -> Dict[str, Any]:
         "first_person": first_person,
         "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
     }
+
+
+# -----------------------------------------------------------------------------
+# Screen power (Task P2)
+#
+# GET/POST /api/system/display — the hardware half of the standby tiers.
+# The controller module (system/display_power.py) is best-effort and
+# self-reports availability, so these endpoints are harmless on machines
+# with no controllable hardware: they report available: false instead of
+# gating. Two POST shapes share the endpoint:
+#
+#   {"idle_seconds": <number>}       P1's StandbyController tier report
+#                                    (transition-only: 30/600/0 — mapped
+#                                    by threshold, never equality)
+#   {"backlight": 0..100, "blanked": bool}   direct control (admin/API)
+#
+# Unknown-shape bodies and non-numeric values are HTTP no-ops: 200 with
+# the current state, never a 500.
+# -----------------------------------------------------------------------------
+
+def _unavailable_state() -> Dict[str, Any]:
+    """The status answer for a machine (or a moment) with no control."""
+    return {
+        "backlight": None,
+        "blanked": False,
+        "available": {
+            "backlight": False,
+            "backlight_device": None,
+            "dpms": False,
+        },
+    }
+
+
+def _apply_display_body(body: Dict[str, Any]) -> None:
+    """Route one POST body onto the controller. Only valid values act;
+    everything else falls through as a no-op."""
+    if "idle_seconds" in body:
+        idle = body["idle_seconds"]
+        if isinstance(idle, bool) or not isinstance(idle, (int, float)):
+            return  # non-numeric idle report: contract says no-op
+        display_power.report_idle(idle)
+        return
+    backlight = body.get("backlight")
+    if (
+        isinstance(backlight, (int, float))
+        and not isinstance(backlight, bool)
+        and 0 <= backlight <= 100
+    ):
+        display_power.set_backlight(int(backlight))
+    blanked = body.get("blanked")
+    if isinstance(blanked, bool):
+        display_power.set_blanked(blanked)
+
+
+@router.get("/system/display")
+async def get_display_state() -> Dict[str, Any]:
+    """Current screen power state: backlight percent, DPMS blank flag, and
+    what is controllable on this machine."""
+    try:
+        return display_power.status()
+    except Exception:
+        logger.debug("GET /system/display failed (best-effort)", exc_info=True)
+        return _unavailable_state()
+
+
+@router.post("/system/display")
+async def post_display_state(request: Request) -> Dict[str, Any]:
+    """Apply a display control request, then return the current state.
+
+    Accepts P1's idle report (``{"idle_seconds": ...}``) or direct control
+    (``{"backlight": 0..100, "blanked": bool}``). Unknown shapes, malformed
+    JSON, and non-numeric values are no-ops — the caller always gets the
+    current state with a 200, never a 500.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict):
+        try:
+            # Off the event loop: the apply step may spawn xset, and a
+            # display hiccup must never stall every other request behind
+            # a blocking subprocess.
+            await run_in_threadpool(_apply_display_body, body)
+        except Exception:
+            logger.debug("POST /system/display body failed (best-effort)", exc_info=True)
+    try:
+        return display_power.status()
+    except Exception:
+        logger.debug("POST /system/display status failed (best-effort)", exc_info=True)
+        return _unavailable_state()
