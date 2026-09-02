@@ -332,6 +332,15 @@ export function applyTerminalEvent(event: StreamEvent): void {
 }
 
 export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStreamReturn {
+  // Callers pass an object literal, so `options` is a new object on every
+  // render. Depending on it directly gave handleEvent, sendMessage and
+  // confirmAction a new identity every render, which churned every memo and
+  // effect downstream of them (R11-13). The callbacks only ever fire after a
+  // commit — SSE events, timeouts — so reading the latest options through a
+  // ref is both stable and current.
+  const optionsRef = useRef(options);
+  useEffect(() => { optionsRef.current = options; });
+
   const [session, setSession] = useState<AgentSession | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   // rAF buffering: LLMs emit 30-80 tokens/sec but the screen refreshes at
@@ -460,10 +469,105 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     // so it must fire exactly once per event — outside the updater, where
     // StrictMode cannot double it.
     if (event.type === 'state_change') {
-      options.onStateChange?.(
+      optionsRef.current.onStateChange?.(
         event.state as AgentState,
         event.previous_state as AgentState | null,
       );
+    }
+
+    // Everything else with an effect outside this hook's session object.
+    // These all used to live inside the setSession updater below, which
+    // StrictMode runs twice in development: the module list gained a
+    // duplicate entry on every invoke, and the fallback sentence was
+    // announced twice (R11-03). An updater must be a pure function of the
+    // previous state.
+    switch (event.type) {
+      case 'model_selected':
+        // A fallback is the one thing about model selection that is not
+        // ordinary: the admin asked for one model and got another, possibly
+        // at a different price and certainly with different behaviour. It is
+        // said here rather than from the notice that shows it, because this
+        // event arrives once per turn while that notice mounts twice.
+        if (event.fallback_from) {
+          announce(
+            `${event.fallback_from as string} was unavailable. ` +
+            `${event.model as string} answered instead.`,
+          );
+        }
+        setTurnModel({
+          model: event.model as string,
+          endpoint: event.endpoint as string,
+          provider: event.provider as string,
+          tier: event.tier as string,
+          pinned: Boolean(event.pinned),
+          escalated: Boolean(event.escalated),
+          reason: (event.reason as string) || '',
+          fallbackFrom: (event.fallback_from as string) || undefined,
+        });
+        break;
+
+      case 'tool_start':
+        optionsRef.current.onToolStart?.(
+          event.tool as string,
+          event.args as Record<string, unknown>,
+        );
+        break;
+
+      case 'tool_complete':
+        optionsRef.current.onToolComplete?.(
+          event.execution_id as string,
+          event.success as boolean,
+        );
+        break;
+
+      case 'tool_confirmation_required':
+        optionsRef.current.onConfirmationRequired?.({
+          actionId: event.execution_id as string,
+          tool: event.tool as string,
+          description: event.description as string,
+          riskLevel: event.risk_level as string,
+        });
+        break;
+
+      case 'response_complete':
+        // Tolerate provenance riding on the completion event as well as the
+        // dedicated response_provenance event.
+        if (Array.isArray(event.provenance)) {
+          setProvenance(event.provenance as ProvenanceRef[]);
+        }
+        // The backend strips structured-action blocks (e.g. invoke_module
+        // JSON) from the final committed text; adopt it so the rendered
+        // bubble never shows the raw JSON tail that streamed in chunks. The
+        // rAF buffers were flushed just above, so this replaces the draft.
+        if (typeof event.content === 'string' && event.content.length > 0) {
+          setResponse(event.content);
+        }
+        setIsStreaming(false);
+        optionsRef.current.onComplete?.();
+        break;
+
+      case 'response_provenance':
+        setProvenance(event.provenance as ProvenanceRef[] || []);
+        break;
+
+      case 'module_invoke':
+        setModuleInvocations(prev => [...prev, {
+          module: event.module as string,
+          props: event.props as Record<string, any> || {},
+        }]);
+        break;
+
+      case 'error':
+        optionsRef.current.onError?.(event.message as string);
+        // An error event is terminal. Without this the UI keeps pulsing
+        // "responding" when the backend sends error with no session_ended.
+        setIsStreaming(false);
+        break;
+
+      case 'session_ended':
+        setIsStreaming(false);
+        optionsRef.current.onComplete?.();
+        break;
     }
 
     setSession(prev => {
@@ -490,30 +594,6 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           }
           return { ...prev, plan: updatedPlan };
 
-        case 'model_selected':
-          // A fallback is the one thing about model selection that is not
-          // ordinary: the admin asked for one model and got another, possibly
-          // at a different price and certainly with different behaviour. It is
-          // said here rather than from the notice that shows it, because this
-          // event arrives once per turn while that notice mounts twice.
-          if (event.fallback_from) {
-            announce(
-              `${event.fallback_from as string} was unavailable. ` +
-              `${event.model as string} answered instead.`,
-            );
-          }
-          setTurnModel({
-            model: event.model as string,
-            endpoint: event.endpoint as string,
-            provider: event.provider as string,
-            tier: event.tier as string,
-            pinned: Boolean(event.pinned),
-            escalated: Boolean(event.escalated),
-            reason: (event.reason as string) || '',
-            fallbackFrom: (event.fallback_from as string) || undefined,
-          });
-          return prev;
-
         case 'confidence_update':
           return { 
             ...prev, 
@@ -528,7 +608,6 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
             args: event.args as Record<string, unknown>,
             status: 'running'
           };
-          options.onToolStart?.(newExecution.tool, newExecution.args);
           return {
             ...prev,
             toolExecutions: [...prev.toolExecutions, newExecution]
@@ -546,58 +625,21 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
             }
             return exec;
           });
-          options.onToolComplete?.(event.execution_id as string, event.success as boolean);
           return { ...prev, toolExecutions: executions };
 
         case 'tool_confirmation_required':
-          const confirmation: ConfirmationRequest = {
-            actionId: event.execution_id as string,
-            tool: event.tool as string,
-            description: event.description as string,
-            riskLevel: event.risk_level as string
+          return {
+            ...prev,
+            pendingConfirmation: {
+              actionId: event.execution_id as string,
+              tool: event.tool as string,
+              description: event.description as string,
+              riskLevel: event.risk_level as string,
+            },
           };
-          options.onConfirmationRequired?.(confirmation);
-          return { ...prev, pendingConfirmation: confirmation };
-
-        case 'response_complete':
-          // The buffered stream text was flushed before this updater ran
-          // (see above); the final committed content replaces it, and the
-          // buffer's `set` drops any draft left for a frame that will now
-          // never matter.
-          // Tolerate provenance riding on the completion event as well as
-          // the dedicated response_provenance event.
-          if (Array.isArray(event.provenance)) {
-            setProvenance(event.provenance as ProvenanceRef[]);
-          }
-          // The backend strips structured-action blocks (e.g. invoke_module
-          // JSON) from the final committed text; adopt it so the rendered
-          // bubble never shows the raw JSON tail that streamed in chunks.
-          if (typeof event.content === 'string' && event.content.length > 0) {
-            setResponse(event.content);
-          }
-          setIsStreaming(false);
-          options.onComplete?.();
-          return prev;
-
-        case 'response_provenance':
-          setProvenance(event.provenance as ProvenanceRef[] || []);
-          return prev;
-
-        case 'module_invoke':
-          setModuleInvocations(prev => [...prev, {
-            module: event.module as string,
-            props: event.props as Record<string, any> || {},
-          }]);
-          return prev;
 
         case 'error':
-          const errorMsg = event.message as string;
-          options.onError?.(errorMsg);
-          // Stop streaming — an error event is terminal. Without this, the
-          // UI keeps pulsing "responding" if the backend sends error
-          // without a subsequent session_ended.
-          setIsStreaming(false);
-          return { ...prev, error: errorMsg, state: 'error' };
+          return { ...prev, error: event.message as string, state: 'error' };
 
         case 'loop_warning':
           return { 
@@ -606,8 +648,6 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           };
 
         case 'session_ended':
-          setIsStreaming(false);
-          options.onComplete?.();
           return { ...prev, state: 'idle', activeScan: null };
 
         case 'scan_start':
@@ -842,7 +882,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           return prev;
       }
     });
-  }, [options]);
+  }, []);
 
   const sendMessage = useCallback((message: string, sessionId?: string, selection?: ModelSelection, images?: string[]) => {
     // Close existing connection
@@ -888,7 +928,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
             state: 'error',
             error: `Connection timed out after ${timeoutMin} min. Try increasing timeout in Settings > AI > Performance Tweaks.` 
           } : null);
-          options.onError?.('Connection timed out');
+          optionsRef.current.onError?.('Connection timed out');
           if (timeoutCheckInterval) clearInterval(timeoutCheckInterval);
         }
       }, 10000); // Check every 10 seconds
@@ -975,13 +1015,13 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
         flushNow();
         setIsStreaming(false);
         setSession(prev => prev ? { ...prev, state: 'error', error: err.message || 'Connection error' } : null);
-        options.onError?.(err.message || 'Connection error');
+        optionsRef.current.onError?.(err.message || 'Connection error');
       }
     });
     
     // Store abort controller for cancel functionality
     eventSourceRef.current = { close: () => { stopTimeoutCheck(); controller.abort(); } } as EventSource;
-  }, [initSession, handleEvent, options, flushNow]);
+  }, [initSession, handleEvent, flushNow]);
 
   const confirmAction = useCallback((actionId: string, confirmed: boolean) => {
     if (!sessionIdRef.current) return;
