@@ -714,7 +714,7 @@ export function Settings() {
             <Tabs value={activeTab} onValueChange={selectTab}>
 
         {/* System Tab */}
-        <TabsContent value="system" className="space-y-4">
+        <TabsContent value="system" className="space-y-4" role="region" aria-label="System Info settings">
           <SystemTab
             systemInfo={systemInfo}
             discoveryStats={discoveryStats}
@@ -728,12 +728,12 @@ export function Settings() {
 
         {/* AI Models Tab - the full picker on sysadmin, the compute-peer link
             on home (which run no model of their own) */}
-        <TabsContent value="ai" className="space-y-4">
+        <TabsContent value="ai" className="space-y-4" role="region" aria-label="Models & Providers settings">
           {isHomeVariant ? <ComputePeerCard /> : <ModelSettings />}
         </TabsContent>
 
         {/* Knowledge Tab - ChromaDB + Self-Knowledge + RAG */}
-        <TabsContent value="knowledge" className="space-y-4">
+        <TabsContent value="knowledge" className="space-y-4" role="region" aria-label="Knowledge settings">
           <KnowledgeTab
             selfKnowledge={selfKnowledge}
             loadingSelfKnowledge={loadingSelfKnowledge}
@@ -783,7 +783,7 @@ export function Settings() {
         </TabsContent>
 
         {/* Safety Tab - Consolidated AI Rules, Policy, and Guardrails */}
-        <TabsContent value="safety" className="space-y-4">
+        <TabsContent value="safety" className="space-y-4" role="region" aria-label="Tool Permissions settings">
           <SafetyTab
             aiRules={aiRules}
             aiRulesExamples={aiRulesExamples}
@@ -802,38 +802,38 @@ export function Settings() {
         </TabsContent>
 
         {/* Alerts Tab */}
-        <TabsContent value="alerts" className="space-y-4">
+        <TabsContent value="alerts" className="space-y-4" role="region" aria-label="Alert Rules settings">
           <AlertsTab alertRules={alertRules} />
         </TabsContent>
 
         {/* Being Tab */}
-        <TabsContent value="being" className="space-y-4">
+        <TabsContent value="being" className="space-y-4" role="region" aria-label="Identity & Voice settings">
           <BeingTab />
         </TabsContent>
 
         {/* Devices Tab (G12/P7b — singular entity management) */}
-        <TabsContent value="devices" className="space-y-4">
+        <TabsContent value="devices" className="space-y-4" role="region" aria-label="Devices settings">
           <DevicesTab />
         </TabsContent>
 
         {/* Security Tab */}
-        <TabsContent value="security" className="space-y-4">
+        <TabsContent value="security" className="space-y-4" role="region" aria-label="Trust Boundary settings">
           <SecurityTab />
         </TabsContent>
 
         {/* Vision Tab */}
-        <TabsContent value="vision" className="space-y-4">
+        <TabsContent value="vision" className="space-y-4" role="region" aria-label="Vision settings">
           <VisionTab />
         </TabsContent>
 
         {/* Audio Tab */}
-        <TabsContent value="audio" className="space-y-4">
+        <TabsContent value="audio" className="space-y-4" role="region" aria-label="Audio & Voice settings">
           <AudioSettings />
           <SpeakerProfilesCard onEnroll={() => setShowEnrollmentModal(true)} />
         </TabsContent>
 
         {/* About Tab */}
-        <TabsContent value="about" className="space-y-4">
+        <TabsContent value="about" className="space-y-4" role="region" aria-label="About settings">
           <AboutTab
             onOpenComponentLibrary={() => setShowComponentLibrary(true)}
             onOpenLegalNotices={() => setShowLegalNotices(true)}
@@ -841,7 +841,7 @@ export function Settings() {
         </TabsContent>
 
         {/* Debug Tab — moved from the Layout top bar to the end of settings */}
-        <TabsContent value="debug" className="space-y-4">
+        <TabsContent value="debug" className="space-y-4" role="region" aria-label="Debug settings">
           <DebugTab />
         </TabsContent>
 

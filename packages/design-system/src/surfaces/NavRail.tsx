@@ -28,9 +28,18 @@ export interface NavRailProps extends Omit<React.HTMLAttributes<HTMLElement>, 't
   searchable?: boolean
   searchPlaceholder?: string
   /**
-   * Tab semantics. When true, the item list gets `role="tablist"` and each item
-   * gets `role="tab"` with `aria-selected`, so a settings panel reads as tabs
-   * rather than navigation. The active id is still driven by the consumer.
+   * Settings-rail flavor (R08-02). This was originally "tab semantics" —
+   * `role="tablist"`/`role="tab"`/`aria-selected` — but that promise was
+   * never kept: the WAI-ARIA Tabs pattern requires arrow-key/Home/End
+   * roving-tabindex navigation and `aria-controls`/`aria-labelledby` pairs
+   * with the panels it drives, and this rail has neither (it is a plain
+   * click-to-navigate list, and the panels it drives live in a consumer
+   * component it has no reference to). Selecting an item here changes
+   * *which page section is shown*, exactly like the primary dashboard
+   * rail — that is navigation, not a tab widget, so `tabMode` now only
+   * changes the rail's accessible name (still "Settings sections") and
+   * leaves the ARIA semantics identical to plain nav mode: `aria-current`
+   * on the active item, no tablist/tab roles to half-implement.
    */
   tabMode?: boolean
 }
@@ -118,11 +127,7 @@ export const NavRail = React.forwardRef<HTMLElement, NavRailProps>(function NavR
         </div>
       )}
 
-      <div
-        className="hb-navrail__sections"
-        role={tabMode ? 'tablist' : undefined}
-        aria-orientation={tabMode ? 'vertical' : undefined}
-      >
+      <div className="hb-navrail__sections">
         {filtered.map((section) => (
           <div key={section.id} className="hb-navrail__section">
             {section.items.length > 1 && (
@@ -135,8 +140,7 @@ export const NavRail = React.forwardRef<HTMLElement, NavRailProps>(function NavR
                 <button
                   key={item.id}
                   type="button"
-                  role={tabMode ? 'tab' : undefined}
-                  aria-selected={tabMode ? isActive : undefined}
+                  aria-current={isActive ? 'page' : undefined}
                   data-active={isActive}
                   className="hb-navrail__item"
                   onClick={() => onSelect(item.id)}

@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event'
 
 import { AppWindow } from '../surfaces/AppWindow'
 import { MetricCard } from '../surfaces/MetricCard'
+import { NavRail, type NavRailSection } from '../surfaces/NavRail'
 
 describe('AppWindow', () => {
   it('exposes itself as a landmark named by its title', () => {
@@ -65,5 +66,36 @@ describe('MetricCard', () => {
     expect(screen.getByText('[Sensor offline]')).toBeInTheDocument()
     expect(screen.queryByText('0 RPM')).not.toBeInTheDocument()
     expect(screen.queryByRole('meter')).not.toBeInTheDocument()
+  })
+})
+
+describe('NavRail', () => {
+  const sections: NavRailSection[] = [
+    { id: 'overview', label: 'Overview', items: [{ id: 'a', label: 'Dashboard' }, { id: 'b', label: 'Home' }] },
+    { id: 'system', label: 'System', items: [{ id: 'c', label: 'Terminal' }] },
+  ]
+
+  it('marks the active item with aria-current, not a half-implemented tab role (R08-02)', () => {
+    render(<NavRail sections={sections} activeId="b" onSelect={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Home' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: 'Dashboard' })).not.toHaveAttribute('aria-current')
+    // No tablist/tab roles: this rail has no arrow-key/roving-tabindex nav,
+    // so it must not claim the ARIA Tabs pattern it doesn't implement.
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+  })
+
+  it('calls onSelect with the clicked item id', async () => {
+    const onSelect = vi.fn()
+    render(<NavRail sections={sections} activeId="a" onSelect={onSelect} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Terminal' }))
+    expect(onSelect).toHaveBeenCalledWith('c')
+  })
+
+  it('tabMode keeps the same aria-current semantics — it only changes the rail label', () => {
+    render(<NavRail sections={sections} activeId="c" onSelect={vi.fn()} tabMode />)
+    expect(screen.getByRole('button', { name: 'Terminal' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'Settings sections' })).toBeInTheDocument()
   })
 })
