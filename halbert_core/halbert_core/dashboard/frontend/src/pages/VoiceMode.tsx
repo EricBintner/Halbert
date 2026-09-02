@@ -123,6 +123,10 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
   mutedRef.current = muted
 
   const uplinkRef = useRef<PcmUplink | null>(null)
+  // Set from the effect below; see the onTranscript comment in ensureUplink.
+  const submitTurnRef = useRef<((text: string) => void) | null>(null)
+  // Armed at end-of-speech, cleared when the transcript arrives.
+  const recognitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const ttsRef = useRef<TtsPlaybackClient | null>(null)
 
   // -------------------------------------------------------------------------
@@ -261,6 +265,11 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
     existing?.stop() // a stopped/failed uplink is rebuilt, not reused
     const uplink = new PcmUplink({
       onError: (message) => dispatch({ type: 'error', message }),
+      // A recognised transcript enters the machine by the same door the
+      // keyboard uses. Through a ref because submitTurn is defined below
+      // this callback and must not be a dependency of it — rebuilding the
+      // uplink on every render would churn the microphone.
+      onTranscript: ({ text }) => submitTurnRef.current?.(text),
     })
     uplinkRef.current = uplink
     await uplink.start()
@@ -309,6 +318,11 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
     (text: string) => {
       const trimmed = text.trim()
       if (!trimmed) return
+      // A real turn is starting; the recognition watchdog has done its job.
+      if (recognitionTimer.current) {
+        clearTimeout(recognitionTimer.current)
+        recognitionTimer.current = null
+      }
       const sessionId = crypto.randomUUID()
       // Subscribe BEFORE the turn starts: the egress hub synthesizes only
       // when a subscriber exists for this session id, and the id is
@@ -329,14 +343,33 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
     [agent.sendMessage, dispatch],
   )
 
+  useEffect(() => {
+    submitTurnRef.current = submitTurn
+  }, [submitTurn])
+
+  // How long to wait for the server to recognise an utterance before giving
+  // up on it. Generous: ASR runs after the speech segment closes, and a slow
+  // machine is not a failed one.
+  const RECOGNITION_TIMEOUT_MS = 8000
+
   const endOfSpeech = useCallback(() => {
+    // End-of-speech no longer completes the turn on the spot. The server
+    // recognises the audio asynchronously and hands the transcript back down
+    // the mic uplink, which calls submitTurn — so the machine holds
+    // `thinking` until the turn it started actually lands.
+    //
+    // If nothing comes back (no ASR engine, or the speech was silence), the
+    // timer below returns the machine to listening rather than leaving it
+    // thinking about nothing. submitTurn clears it, because from that point
+    // the real turn owns the state.
     dispatch({ type: 'vad_end' })
-    // v1: the STT observation channel is not live, so a manual
-    // end-of-speech has no transcript to submit — the empty turn
-    // completes immediately rather than parking the machine in `thinking`
-    // with nothing in flight. When STT lands, the transcript submission
-    // slots in right here (submitTurn(transcript)).
-    dispatch({ type: 'turn_complete' })
+    if (recognitionTimer.current) clearTimeout(recognitionTimer.current)
+    recognitionTimer.current = setTimeout(() => {
+      recognitionTimer.current = null
+      if (stateRef.current === 'thinking') {
+        dispatch({ type: 'turn_complete' })
+      }
+    }, RECOGNITION_TIMEOUT_MS)
   }, [dispatch])
 
   const handleMarkTap = useCallback(() => {
@@ -390,6 +423,7 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
     return () => {
       uplinkRef.current?.stop()
       ttsRef.current?.close()
+      if (recognitionTimer.current) clearTimeout(recognitionTimer.current)
     }
   }, [])
 

@@ -217,6 +217,21 @@ export interface PcmUplinkOptions {
   /** Mic / transport failure report — Voice Mode routes this to the
    * machine's `error` state. Never called for an explicit `stop()`. */
   onError?: (message: string) => void
+  /** A transcript the server recognised from this uplink's audio.
+   *
+   * The socket is bidirectional and was only ever read upward, so a
+   * completed voice turn had nowhere to land and "Tap to speak" ended in an
+   * empty turn (VM-STT). The status endpoint deliberately answers who spoke
+   * rather than what was said, so this is the return path: the same socket
+   * the audio went out on. */
+  onTranscript?: (transcript: VoiceTranscript) => void
+}
+
+export interface VoiceTranscript {
+  text: string
+  speakerName?: string
+  speakerRole?: string
+  areaId?: string
 }
 
 export type PcmUplinkStatus = 'idle' | 'starting' | 'running' | 'stopped'
@@ -296,6 +311,7 @@ export class PcmUplink {
       const ws = new WebSocket(this.opts.url ?? wsUrl('/api/audio/stream'))
       ws.binaryType = 'arraybuffer'
       ws.onopen = () => this.flushQueue()
+      ws.onmessage = (ev: MessageEvent) => this.handleServerMessage(ev.data)
       ws.onclose = () => {
         if (this.status === 'running' || this.status === 'starting') {
           this.fail('microphone uplink disconnected')
@@ -351,6 +367,28 @@ export class PcmUplink {
     } catch (err) {
       this.fail(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  /** Decode a server frame. Anything unrecognised is ignored rather than
+   * failing the uplink — the mic must keep flowing whatever the server
+   * decides to say back. */
+  private handleServerMessage(data: unknown): void {
+    if (typeof data !== 'string') return
+    let msg: Record<string, unknown>
+    try {
+      msg = JSON.parse(data) as Record<string, unknown>
+    } catch {
+      return
+    }
+    if (msg.type !== 'transcript') return
+    const text = typeof msg.text === 'string' ? msg.text : ''
+    if (!text.trim()) return
+    this.opts.onTranscript?.({
+      text,
+      speakerName: typeof msg.speaker_name === 'string' ? msg.speaker_name : undefined,
+      speakerRole: typeof msg.speaker_role === 'string' ? msg.speaker_role : undefined,
+      areaId: typeof msg.area_id === 'string' ? msg.area_id : undefined,
+    })
   }
 
   /** Tear the session down (idempotent). No onError: this is voluntary. */

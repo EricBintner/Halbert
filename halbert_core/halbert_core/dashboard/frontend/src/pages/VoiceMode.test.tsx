@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VoiceMode, STATUS_POLL_MS } from './VoiceMode'
 import {
@@ -45,7 +45,10 @@ const h = vi.hoisted(() => {
     identity: null as null | { display_name: string },
     tts: [] as Array<{ url: string; out: unknown; connect: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }>,
     uplinks: [] as Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; state: string; getAnalyserTap: () => unknown }>,
-    uplinkOptions: [] as Array<{ onError?: (message: string) => void }>,
+    uplinkOptions: [] as Array<{
+      onError?: (message: string) => void
+      onTranscript?: (t: { text: string }) => void
+    }>,
     /** When true, the next PcmUplink.start() stays 'starting' until the
      * test resolves it (a pending getUserMedia). */
     deferStart: false,
@@ -118,7 +121,12 @@ vi.mock('@/lib/pcmCapture', () => ({
     }
     constructor(opts: unknown) {
       h.uplinks.push(this)
-      h.uplinkOptions.push(opts as { onError?: (message: string) => void })
+      h.uplinkOptions.push(
+        opts as {
+          onError?: (message: string) => void
+          onTranscript?: (t: { text: string }) => void
+        },
+      )
     }
   },
 }))
@@ -353,16 +361,65 @@ describe('mark tap handling', () => {
     expect(h.uplinks[0].start).toHaveBeenCalledTimes(1)
   })
 
-  it('listening: submits the turn — vad_end now, turn_complete when v1 STT is absent', async () => {
+  it('listening: end-of-speech waits for the transcript rather than ending the turn', async () => {
+    // VM-STT. This used to dispatch turn_complete on the spot, because the
+    // transcript had nowhere to come from: on_voice_turn was never wired and
+    // the status endpoint answers who spoke, not what was said. The server
+    // now hands the transcript back down the mic uplink, so end-of-speech
+    // leaves the machine thinking about a turn that is genuinely in flight.
     const user = userEvent.setup()
     setMachine('listening', 'listening')
     mount()
     await user.click(screen.getByRole('button', { name: 'Submit speech' }))
     expect(h.machine!.dispatch).toHaveBeenCalledWith({ type: 'vad_end' })
-    // v1: the STT observation channel is not live; a manual end-of-speech
-    // with no transcript is an empty turn that completes immediately so the
-    // machine cannot park in `thinking` with nothing in flight.
-    expect(h.machine!.dispatch).toHaveBeenCalledWith({ type: 'turn_complete' })
+    expect(h.machine!.dispatch).not.toHaveBeenCalledWith({ type: 'turn_complete' })
+  })
+
+  it('listening: a recognised transcript becomes an agent turn', async () => {
+    setMachine('listening', 'listening')
+    mount()
+    // The re-arm effect opens the uplink on entry to a mic posture.
+    await waitFor(() => expect(h.uplinkOptions.length).toBeGreaterThan(0))
+
+    const onTranscript = h.uplinkOptions[0]?.onTranscript
+    expect(onTranscript).toBeTypeOf('function')
+    act(() => { onTranscript!({ text: 'what is my disk usage' }) })
+
+    expect(h.agent!.sendMessage).toHaveBeenCalledWith(
+      'what is my disk usage', expect.any(String),
+    )
+  })
+
+  it('listening: an empty transcript starts no turn', async () => {
+    setMachine('listening', 'listening')
+    mount()
+    await waitFor(() => expect(h.uplinkOptions.length).toBeGreaterThan(0))
+
+    const onTranscript = h.uplinkOptions[0]?.onTranscript
+    act(() => { onTranscript!({ text: '   ' }) })
+    expect(h.agent!.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('thinking: nothing recognised inside the timeout returns to listening', async () => {
+    vi.useFakeTimers()
+    try {
+      setMachine('listening', 'listening')
+      const h1 = mount()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Submit speech' }))
+      expect(h.machine!.dispatch).not.toHaveBeenCalledWith({ type: 'turn_complete' })
+
+      // The machine really did move to thinking; re-render so the component
+      // reads the new state (the timer only fires while still thinking).
+      const dispatch = h.machine!.dispatch
+      h.machine = { state: 'thinking', dispatch, visualState: 'thinking' }
+      act(() => { h1.rerender() })
+
+      act(() => { vi.advanceTimersByTime(9000) })
+      expect(dispatch).toHaveBeenCalledWith({ type: 'turn_complete' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('thinking: a tap is a no-op (a turn is already in flight)', async () => {

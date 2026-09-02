@@ -92,6 +92,31 @@ class WebRtcIngress(AudioIngressAdapter):
             if websocket in self._active_websockets:
                 self._active_websockets.remove(websocket)
 
+    async def broadcast(self, message: dict) -> int:
+        """Send one JSON frame down every connected browser socket.
+
+        The uplink is bidirectional and was only ever used upward. This is
+        the return path: the browser is already connected here pushing mic
+        audio, so a transcript needs no second endpoint and no session
+        bookkeeping to find its way back to the page that spoke.
+
+        Returns the number of sockets the message actually reached; a socket
+        that fails is dropped rather than retried.
+        """
+        import json as _json
+
+        payload = _json.dumps(message)
+        delivered = 0
+        for ws in list(self._active_websockets):
+            try:
+                await ws.send_text(payload)
+                delivered += 1
+            except Exception as e:
+                logger.debug(f"Dropping dashboard audio WebSocket: {e}")
+                if ws in self._active_websockets:
+                    self._active_websockets.remove(ws)
+        return delivered
+
     async def chunks(self) -> AsyncIterator[AudioChunk]:
         """Async iterator yielding AudioChunk objects."""
         while self._running:

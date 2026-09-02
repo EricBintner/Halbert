@@ -700,6 +700,40 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 app.state.audio_coordinator = None
                 set_audio_pipeline(None)
 
+        # Voice mode: a spoken turn has to reach the page that spoke it.
+        #
+        # ``on_voice_turn`` was declared on the coordinator and invoked by
+        # the speech track, and nothing ever set it — so a completed voice
+        # turn produced a VoiceTurnObservation that went nowhere, /voice's
+        # "Tap to speak" ended in an empty turn, and the on-screen keyboard
+        # was the only working input. The status endpoint deliberately never
+        # carries the transcript (it answers who spoke, not what was said),
+        # so the return path is the mic uplink the browser is already holding
+        # open (VM-STT).
+        if app.state.audio_coordinator is not None:
+            try:
+                _coordinator = app.state.audio_coordinator
+
+                async def _relay_voice_turn(observation) -> None:
+                    text = getattr(observation, "text", "") or ""
+                    if not text.strip():
+                        return
+                    ingress = _coordinator.get_ingress("dashboard")
+                    if ingress is None or not hasattr(ingress, "broadcast"):
+                        return
+                    await ingress.broadcast({
+                        "type": "transcript",
+                        "text": text,
+                        "speaker_name": getattr(observation, "speaker_name", ""),
+                        "speaker_role": getattr(observation, "speaker_role", "unknown"),
+                        "area_id": getattr(observation, "area_id", ""),
+                    })
+
+                _coordinator.on_voice_turn = _relay_voice_turn
+                logger.info("Voice turn relay wired to the dashboard uplink")
+            except Exception as e:
+                logger.warning(f"Voice turn relay not wired (non-fatal): {e}")
+
         # Voice mode (O5): acoustic anomalies ride the findings chain. The
         # bridge sets the coordinator's on_acoustic_event callback; a tagged
         # anomaly then flows AcousticAnomalyDetector -> DetectorRunner ->
