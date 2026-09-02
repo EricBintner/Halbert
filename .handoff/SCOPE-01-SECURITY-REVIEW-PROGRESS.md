@@ -95,15 +95,42 @@ related to the security review changes.
 
 ---
 
-## 6. Commits on Branch (not yet merged)
+## 6. Commits on Branch (merged 2026-09-02)
 
 ```
 c5b6bb91 fix(security): MCP path allowlist for config-query tools
 9e057db7 fix(security): harden redactor — base64 size/depth caps, nested JSON leaf redaction
+a09632e1 docs: Scope 01 security review progress and findings document
 ```
 
-These two commits complete the remaining code work for Scope 01. The branch
-is ready to merge to `main`.
+Merged to `main` via `909b56c4` (`merge: feat/security-review-01 into main`,
+SONNET-01 dispatch packet). Clean merge: `server.py` and `redaction.py`
+auto-merged; the sole conflict was in `test_mcp_server.py`, resolved by
+combining main's test classes with the branch's `TestPathAllowlist` class
+and its two `_load_latest_snapshot` monkeypatch inserts.
+
+This branch's fork point (`da75bca1`) predates a large amount of work that
+had already landed on `main` before this merge, including (non-exhaustive):
+
+- `5a132654` feat(security): U1 batch — dispatch egress pin, security test
+  gaps, unredacted rebuild script
+- `74401f12` fix(security): reconcile the canon DB on raw-by-design (REV-01 F1)
+- `51082f83` fix(security): gate all exposure-increasing changes and make the
+  egress hatch key-class agnostic (REV-01 F2+F3)
+- `360effab` fix(config): hold a cross-process advisory lock across
+  being.yml load-modify-save
+- `7e9ebaae` fix(config): key correlation-index hashes with a locally-stored
+  pepper
+- `0f750c3a` fix(mcp): require confirmation phrase for autonomy escalation
+  and high-risk proposal approval
+- `cb69442f` fix(mcp): harden HTTP transport — Content-Length bounds,
+  rate-limit-before-auth, SSE slot leak, non-ASCII bearer
+- The Opus 01-05 batch (agent-core, voice chain, compute-peer/devices,
+  terminals, chat-streaming — ends at `fe0d5017`)
+- SONNET-02's commit-and-cleanup packet (`ad0cb372`)
+
+None of this overlapped with the branch's own diff beyond the one resolved
+test file — `server.py`/`redaction.py` auto-merged clean against all of it.
 
 ---
 

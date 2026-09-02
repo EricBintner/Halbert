@@ -58,6 +58,14 @@ def _is_allowed_config_path(path: str) -> bool:
     for config analysis.  Without this gate an MCP client could pass
     ``/etc/shadow`` or ``~/.ssh/id_rsa`` to ``get_config_value`` and read
     arbitrary filesystem paths through the config-query layer.
+
+    NOTE: this re-reads ``latest.json`` and realpaths every entry on each
+    call. A mtime-keyed cache was tried here and reverted — it went stale
+    whenever the data source (``_load_latest_snapshot``) was swapped
+    without the underlying file changing, which is exactly what test
+    monkeypatching does, and would equally miss a same-mtime rewrite in
+    production. Manifests are small and this path isn't hot enough to
+    justify the correctness risk.
     """
     if not path:
         return False
@@ -798,7 +806,7 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     },
     {
         "name": "get_config_value",
-        "description": "Get a config value with tier routing. Tier 2 secrets return a deterministic description, not the raw value.",
+        "description": "Get a config value with tier routing. Tier 2 secrets return a deterministic description, not the raw value. Precondition: path must be in the host's config snapshot manifest; on hosts without a ConfigWatcher run a snapshot first.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -810,7 +818,7 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     },
     {
         "name": "get_config_structure",
-        "description": "Get the parsed structure of a config file — keys and shape, no values.",
+        "description": "Get the parsed structure of a config file — keys and shape, no values. Precondition: path must be in the host's config snapshot manifest; on hosts without a ConfigWatcher run a snapshot first.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -831,7 +839,7 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     },
     {
         "name": "get_config_dependencies",
-        "description": "Get dependency edges for a config file — relationships only, no values.",
+        "description": "Get dependency edges for a config file — relationships only, no values. Precondition: path must be in the host's config snapshot manifest; on hosts without a ConfigWatcher run a snapshot first.",
         "inputSchema": {
             "type": "object",
             "properties": {
