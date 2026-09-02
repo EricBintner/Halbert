@@ -607,6 +607,9 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     m.name.toLowerCase().includes(mentionFilter.toLowerCase())
   ).slice(0, 8);
 
+  // The one condition under which the mention listbox is actually rendered.
+  const mentionsOpen = showMentions && filteredMentionables.length > 0;
+
   // Image handling
   const processImageFile = (file: File): Promise<AttachedImage> => {
     return new Promise((resolve, reject) => {
@@ -1387,10 +1390,14 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
               // Combobox semantics for the mention listbox (see the popup
               // markup and handleKeyDown): expanded/pointing/active, so the
               // screen reader follows the arrows instead of guessing.
-              aria-expanded={showMentions}
-              aria-controls={showMentions ? MENTION_LISTBOX_ID : undefined}
+              // The listbox renders on showMentions AND a non-empty filter,
+              // so aria-expanded has to say the same. On showMentions alone
+              // a filter matching nothing left the composer announcing an
+              // open popup that was not on the screen (R11-11).
+              aria-expanded={mentionsOpen}
+              aria-controls={mentionsOpen ? MENTION_LISTBOX_ID : undefined}
               aria-activedescendant={
-                showMentions && filteredMentionables.length > 0
+                mentionsOpen
                   ? `mention-option-${filteredMentionables[Math.min(activeMentionIndex, filteredMentionables.length - 1)].id}`
                   : undefined
               }
