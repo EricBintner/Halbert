@@ -1,0 +1,43 @@
+        # Sentient home: Start cognitive loop if variant is "home"
+        if _variant == "home":
+            try:
+                from ..home.cognitive_loop import HomeCognitiveLoop
+                from ..integrations.home_assistant.autonomy_gate import AutonomyGate
+                from ..integrations.home_assistant.ha_governance import HAGovernancePolicy
+                from ..config.being_config import load_being_config
+                from ..integrations.cognition_wiring import get_cognition, get_cognition_tick
+
+                being_cfg = load_being_config()
+                gate = AutonomyGate(
+                    autonomy_level=being_cfg.autonomy_level,
+                    autonomy_overrides=being_cfg.autonomy_overrides,
+                    governance=HAGovernancePolicy(),
+                )
+                cognition = get_cognition()
+                cognition_tick = get_cognition_tick() if hasattr(
+                    __import__("halbert_core.integrations.cognition_wiring", fromlist=["get_cognition_tick"]),
+                    "get_cognition_tick"
+                ) else None
+
+                global _home_cognitive_loop
+                _home_cognitive_loop = HomeCognitiveLoop(
+                    autonomy_gate=gate,
+                    interval_seconds=300,
+                    cognition=cognition,
+                    cognition_tick=cognition_tick,
+                )
+                _home_cognitive_loop.start()
+                logger.info(f"Home cognitive loop started (autonomy={being_cfg.autonomy_level})")
+            except Exception as e:
+                logger.warning(f"Home cognitive loop not started: {e}")
+
+
+        # Sentient home: Stop cognitive loop
+        try:
+            global _home_cognitive_loop
+            if _home_cognitive_loop is not None:
+                _home_cognitive_loop.stop()
+                _home_cognitive_loop = None
+                logger.info("Home cognitive loop stopped")
+        except Exception as e:
+            logger.warning(f"Failed to stop home cognitive loop: {e}")
