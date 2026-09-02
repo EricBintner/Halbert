@@ -345,14 +345,32 @@ class TierRouter:
             return TierRouterConfig.from_legacy_config(normalised)
     
     def _get_provider(self, model: ModelDefinition) -> ModelProvider:
-        """Get or create provider for a model."""
+        """Get or create provider for a model.
+
+        STUB-01: this ``ModelProvider`` hierarchy (ollama/anthropic/peer)
+        is NOT the dashboard's chat path — dashboard/routes/chat.py and
+        model/client.py's ``call_llm_chat`` implement every
+        CHAT_CAPABLE_PROVIDERS entry (openai included) directly and never
+        call TierRouter. TierRouter's only consumer is
+        integrations/app_seam.py's HalbertModelBackend, used solely by the
+        optional cognitive-tick ThoughtGenerator (HALBERT_LLM_THOUGHTS) —
+        and that caller already wraps ``generate()``/``_get_provider`` in a
+        broad try/except that falls back to raw Ollama on any exception,
+        so an unsupported provider here degrades silently rather than
+        crashing a turn. "openai" previously got its own
+        NotImplementedError instead of the same generic unknown-provider
+        error every other provider this hierarchy doesn't implement
+        (llamacpp, mlx, lm-studio, ...) already gets — that TODO implied
+        future work on a path nothing routes real openai chat traffic
+        through, so it is removed rather than implemented.
+        """
         provider_key = f"{model.provider}:{model.endpoint or 'default'}"
-        
+
         if provider_key not in self._providers:
             if model.provider == ProviderType.OLLAMA or model.provider == "ollama":
                 endpoint = model.endpoint or "http://localhost:11434"
                 self._providers[provider_key] = OllamaProvider(base_url=endpoint)
-                
+
             elif model.provider == ProviderType.ANTHROPIC or model.provider == "anthropic":
                 try:
                     from .providers.anthropic import AnthropicProvider
@@ -360,10 +378,6 @@ class TierRouter:
                 except ImportError as e:
                     logger.error(f"Anthropic provider not available: {e}")
                     raise
-                    
-            elif model.provider == ProviderType.OPENAI or model.provider == "openai":
-                # TODO: Implement OpenAI provider
-                raise NotImplementedError("OpenAI provider not yet implemented")
 
             elif model.provider == ProviderType.PEER or model.provider == "peer":
                 # A paired node's compute endpoint (peer:// in models.yml).
