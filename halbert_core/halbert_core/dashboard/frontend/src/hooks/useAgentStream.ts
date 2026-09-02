@@ -367,27 +367,32 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     flushThinking();
   }, [flushResponse, flushThinking]);
 
-  // Cleanup on unmount or when isStreaming changes - cancel backend request
-  // to prevent zombie processing.
-  //
-  // The source is captured at effect-run time, NOT read from the ref at
-  // cleanup time. When sendMessage sets isStreaming=true, React re-renders
-  // and runs this cleanup from the previous render (isStreaming was false).
-  // By then sendMessage has already stored the NEW AbortController in
-  // eventSourceRef.current. Reading the ref in the cleanup would abort the
-  // fetch that was just started — the "Idle" with no response bug.
-  useEffect(() => {
-    const source = eventSourceRef.current;
-    return () => {
-      source?.close();
+  // Mirror of isStreaming for the unmount cleanup, which cannot read state.
+  const isStreamingRef = useRef(false);
+  useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
 
-      // Cancel backend request if streaming
-      if (sessionIdRef.current && isStreaming) {
+  // Abort a turn the user walked away from, on unmount and ONLY on unmount.
+  //
+  // This used to depend on [isStreaming], which meant React ran the cleanup
+  // on the true -> false transition as well — that is, on every normal
+  // completion — with the captured isStreaming still true. So each finished
+  // turn aborted its own stream and POSTed /api/agent/cancel, and the
+  // backend could persist a fully streamed reply as cancelled (R11-01). An
+  // explicit cancel() sent two.
+  //
+  // With [] the effect runs once, so eventSourceRef has to be read at
+  // cleanup time rather than captured — which is safe here for the reason it
+  // was not before: there is no re-render after an unmount, so there is no
+  // newly-started fetch to abort by mistake.
+  useEffect(() => {
+    return () => {
+      eventSourceRef.current?.close();
+      if (sessionIdRef.current && isStreamingRef.current) {
         fetch(apiUrl(`/api/agent/cancel/${sessionIdRef.current}`), { method: 'POST' })
           .catch(() => {}); // Ignore errors on cleanup
       }
     };
-  }, [isStreaming]);
+  }, []);
 
   const initSession = useCallback((sessionId: string) => {
     setSession({
