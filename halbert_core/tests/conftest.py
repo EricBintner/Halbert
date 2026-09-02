@@ -48,6 +48,32 @@ def _isolated_config_canon_store(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _reset_capability_registry(monkeypatch):
+    """No test's capability probe survives into the next test (U6-TEST-01).
+
+    ``capabilities.py`` holds a process-wide ``CapabilityRegistry`` singleton
+    that probes once and is never reset. ``_probe_secure_model`` in
+    particular reads whatever the process's models.yml resolves to at the
+    moment it first runs — the developer's REAL models.yml when no test-level
+    isolation (``models_config_dir``/``HALBERT_CONFIG_DIR``) is active yet.
+    Without a reset, whichever test happens to run first "wins" the probe
+    for the rest of the suite: test_agent_model_override.py priming a real
+    secure endpoint made test_llm_routes.py and test_llm_config_layers.py
+    order-dependent, and made test_auto_provision.py pass in the full suite
+    only because the pollution masked its own gating bug (U4-18).
+
+    The llm_config parse cache is reset alongside it: it is keyed by file
+    identity (path/mtime/size/inode), not content, so a probe that resolves
+    a slot through it should not be able to serve a stale parse either.
+    """
+    from halbert_core import capabilities as caps_mod
+    from halbert_core.model import llm_config as llm_config_mod
+
+    caps_mod.reset_registry()
+    llm_config_mod.invalidate_cache()
+
+
+@pytest.fixture(autouse=True)
 def _no_declared_workspace_layer(monkeypatch):
     """No suite inherits a workspace layer from the developer's shell.
 
