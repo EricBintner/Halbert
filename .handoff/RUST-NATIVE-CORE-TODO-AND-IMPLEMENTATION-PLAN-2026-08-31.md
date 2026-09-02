@@ -9,6 +9,8 @@
 - `MASTER-TODO.md` (existing work batches U1-U6)
 - `REVIEW-REQUEST-RUST-NATIVE-CORE-2026-08-31.md` (sanity review: 13 findings F1–F13 + 5 recommendations RA–RE, verified against `main` 2026-08-31; applied per founder directive 2026-08-31, landed 2026-09-01)
 
+> **Name collision note (RNC-06, 2026-09-01):** `feat/rust-native-core` carries a *different* 382-line document at this same path, `.handoff/REVIEW-REQUEST-RUST-NATIVE-CORE-2026-08-31.md` — an external-review request (7 architecture questions for an outside reviewer) unrelated to the 13-finding sanity review this doc cites. `main`'s copy (the sanity review referenced above) has been committed under its current name. When `feat/rust-native-core` is next touched, rename its same-named file to `REVIEW-REQUEST-RUST-NATIVE-CORE-EXTERNAL-2026-08-31.md` before merging, to avoid clobbering `main`'s copy.
+
 ---
 
 ## 0. Project Overview & Principles
