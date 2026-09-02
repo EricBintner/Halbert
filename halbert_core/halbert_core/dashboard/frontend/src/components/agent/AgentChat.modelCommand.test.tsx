@@ -190,14 +190,14 @@ describe('AgentChat /model on a peer-governed (home) variant', () => {
     await waitFor(() => expect(screen.queryByRole('combobox')).not.toBeInTheDocument())
   })
 
-  it('answers /model by naming the workstation, and never reaches the agent', async () => {
+  it('answers /model by naming the compute peer, and never reaches the agent', async () => {
     render(<AgentChat />)
     await screen.findByRole('textbox')
     await waitFor(() => expect(screen.queryByRole('combobox')).not.toBeInTheDocument())
 
     await type('/model auto')
     await waitFor(() =>
-      expect(screen.getByText(/governed by the paired workstation/i)).toBeInTheDocument(),
+      expect(screen.getByText(/governed by the compute peer/i)).toBeInTheDocument(),
     )
     expect(sends()).toHaveLength(0)
   })

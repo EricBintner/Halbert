@@ -83,18 +83,21 @@ function renderTab(state: DevicesState) {
 
 afterEach(() => vi.unstubAllGlobals())
 
-const addDeviceButton = () => screen.getByRole('button', { name: /add a device/i })
+const addDeviceButton = () => screen.getByRole('button', { name: /link a device/i })
 
 describe('DevicesTab', () => {
-  it('renders the empty state with an Add First Device CTA when no devices', async () => {
+  it('renders the empty state with a Link First Device CTA when no devices', async () => {
     renderTab(devicesState())
-    expect(await screen.findByText(/Add First Device/i)).toBeTruthy()
+    expect(await screen.findByText(/Link First Device/i)).toBeTruthy()
     expect(screen.getByText(/one entity across many machines/i)).toBeTruthy()
   })
 
   it('renders the device list with correct fields', async () => {
     renderTab(devicesState({ devices: [device()] }))
     expect(await screen.findByText('Mac Studio')).toBeTruthy()
+    // One noun for the list (T1-08): 'Linked Devices', never 'Paired Bodies'.
+    expect(screen.getByText(/^Linked Devices \(1\)$/)).toBeTruthy()
+    expect(screen.queryByText(/paired bodies/i)).toBeNull()
     expect(screen.getByText(/desk\.lan:8000/)).toBeTruthy()
     expect(screen.getByText('gpu_llm')).toBeTruthy()
   })
@@ -102,7 +105,7 @@ describe('DevicesTab', () => {
   it('switching to singular mode asks for confirmation first (review Q2)', async () => {
     const user = userEvent.setup()
     renderTab(devicesState())
-    await screen.findByText(/Add First Device/i)
+    await screen.findByText(/Link First Device/i)
     await user.click(screen.getByRole('radio', { name: /singular entity/i }))
     // The confirmation dialog names what changes before anything is sent.
     expect(screen.getByText('Join the canonical host?')).toBeTruthy()
@@ -112,7 +115,7 @@ describe('DevicesTab', () => {
   it('confirming singular mode sends the PUT with the base URL', async () => {
     const user = userEvent.setup()
     const { calls } = renderTab(devicesState())
-    await screen.findByText(/Add First Device/i)
+    await screen.findByText(/Link First Device/i)
     await user.type(screen.getByLabelText(/canonical host base url/i), 'http://n150.lan:8001')
     await user.click(screen.getByRole('radio', { name: /singular entity/i }))
     await user.click(screen.getByRole('button', { name: /share consciousness/i }))
@@ -144,7 +147,7 @@ describe('DevicesTab', () => {
   it('editing the body name sends PUT /api/devices/body-name', async () => {
     const user = userEvent.setup()
     const { calls } = renderTab(devicesState())
-    await screen.findByText(/Add First Device/i)
+    await screen.findByText(/Link First Device/i)
     const input = screen.getByLabelText('Body Name')
     await user.clear(input)
     await user.type(input, 'desk')
@@ -156,7 +159,7 @@ describe('DevicesTab', () => {
   it('a suggestion chip fills the body name input', async () => {
     const user = userEvent.setup()
     renderTab(devicesState())
-    await screen.findByText(/Add First Device/i)
+    await screen.findByText(/Link First Device/i)
     await user.click(screen.getByRole('button', { name: 'kitchen' }))
     expect((screen.getByLabelText('Body Name') as HTMLInputElement).value).toBe('kitchen')
   })
@@ -164,7 +167,7 @@ describe('DevicesTab', () => {
   it('Add Device opens the pairing modal (P7c, reused as-is)', async () => {
     const user = userEvent.setup()
     renderTab(devicesState())
-    await screen.findByText(/Add First Device/i)
+    await screen.findByText(/Link First Device/i)
     await user.click(addDeviceButton())
     // PeerPairingModal's two tabs.
     expect(await screen.findByRole('tab', { name: /discovered/i })).toBeTruthy()
