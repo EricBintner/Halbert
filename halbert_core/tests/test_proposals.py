@@ -166,3 +166,38 @@ class TestProposalSerialization:
         assert restored.action == sample_proposal.action
         assert restored.changes == sample_proposal.changes
         assert restored.blast_radius == sample_proposal.blast_radius
+
+
+class TestListProposals:
+    """list_proposals(status, limit) — one reader for MCP get_proposals and
+    the findings route (C2-05 / MCP-01)."""
+
+    def _seed(self, pstore, finding_id):
+        pending = pstore.add(Proposal(id="", finding_id=finding_id, action="a"))
+        approved = pstore.add(Proposal(id="", finding_id=finding_id, action="b"))
+        pstore.approve(approved)
+        rejected = pstore.add(Proposal(id="", finding_id=finding_id, action="c"))
+        pstore.reject(rejected, "no")
+        return pending, approved, rejected
+
+    def test_default_returns_every_status(self, pstore, finding_id):
+        ids = self._seed(pstore, finding_id)
+        assert {p.id for p in pstore.list_proposals()} == set(ids)
+        assert {p.id for p in pstore.list_proposals("all")} == set(ids)
+
+    def test_pending_only(self, pstore, finding_id):
+        pending, _, _ = self._seed(pstore, finding_id)
+        assert [p.id for p in pstore.list_proposals("pending")] == [pending]
+
+    def test_other_statuses(self, pstore, finding_id):
+        _, approved, rejected = self._seed(pstore, finding_id)
+        assert [p.id for p in pstore.list_proposals("approved")] == [approved]
+        assert [p.id for p in pstore.list_proposals("rejected")] == [rejected]
+
+    def test_limit_applies(self, pstore, finding_id):
+        self._seed(pstore, finding_id)
+        assert len(pstore.list_proposals(limit=1)) == 1
+
+    def test_unknown_status_is_rejected(self, pstore):
+        with pytest.raises(ValueError):
+            pstore.list_proposals("bogus")

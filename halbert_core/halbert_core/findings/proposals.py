@@ -182,6 +182,27 @@ class ProposalStore:
             ).fetchone()
         return _row_to_proposal(row) if row else None
 
+    def list_proposals(
+        self, status: Optional[str] = None, limit: int = 100
+    ) -> List[Proposal]:
+        """List proposals, newest first, optionally filtered by status.
+
+        The reader behind the MCP ``get_proposals`` tool and the findings
+        route (C2-05 / MCP-01). ``status`` is a ProposalStatus value, or
+        None / "all" for no filter. An unknown status raises ValueError.
+        """
+        if status is None or status == "all":
+            return self.list_all(limit=limit)
+        if status not in {s.value for s in ProposalStatus}:
+            raise ValueError(f"unknown proposal status: {status!r}")
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM proposals WHERE status = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        return [_row_to_proposal(r) for r in rows]
+
     def list_pending(self) -> List[Proposal]:
         """List all pending proposals."""
         with self._connect() as conn:
