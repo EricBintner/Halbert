@@ -346,3 +346,25 @@ class TestFrigateClient:
         cfg = FrigateConfig(url="http://frigate.local/")
         client = FrigateClient(cfg)
         assert client._base_url() == "http://frigate.local"
+
+
+# ── Pending-event queue bound (U6-BUG-03) ──────────────────────────────────
+
+class TestFrigateEventMapperQueueBound:
+    """``_pending_events`` must be capped like ``HAEventMapper`` (REV-03 F1):
+    with no cognition tick draining it — vision off, agent idle for days —
+    an unbounded list grows with every MQTT message Frigate publishes."""
+
+    def test_pending_events_capped_drop_oldest(self):
+        mapper = FrigateEventMapper()
+        mapper.MAX_PENDING_EVENTS = 3
+        for i in range(5):
+            mapper.handle_event(TOPIC_EVENTS, {"type": "update", "after": {"id": str(i), "label": "car"}})
+        with mapper._lock:
+            pending = list(mapper._pending_events)
+        assert len(pending) == 3
+        assert [e["payload"]["after"]["id"] for e in pending] == ["2", "3", "4"]
+
+    def test_default_cap_matches_ha_mapper(self):
+        from halbert_core.integrations.home_assistant.ha_event_mapper import HAEventMapper
+        assert FrigateEventMapper.MAX_PENDING_EVENTS == HAEventMapper.MAX_PENDING_EVENTS
