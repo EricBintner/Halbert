@@ -76,13 +76,16 @@ describe('Terminal page', () => {
   it('toggles the AI panel with the AI On/Off button', async () => {
     const user = userEvent.setup()
     renderTerminal()
-    expect(screen.getByText('AI Assistant')).toBeInTheDocument()
+    // The panel header is Halbert itself — never 'AI Assistant' or a persona name.
+    expect(screen.getByText('Halbert')).toBeInTheDocument()
+    expect(screen.queryByText('AI Assistant')).not.toBeInTheDocument()
+    expect(screen.queryByText('Coder')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /AI On/i }))
-    expect(screen.queryByText('AI Assistant')).not.toBeInTheDocument()
+    expect(screen.queryByText('Halbert')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /AI Off/i }))
-    expect(screen.getByText('AI Assistant')).toBeInTheDocument()
+    expect(screen.getByText('Halbert')).toBeInTheDocument()
   })
 
   it('previews a slash command in the AI panel as it is typed, without running it', async () => {
