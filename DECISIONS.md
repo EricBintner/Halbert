@@ -45,6 +45,9 @@ Append-only. One line per decision, dated, with its source. Status values: **dec
 | 2026-09-01 | `U3-26` | Precursor chat-UI doc was NOT subsumed; rescued to `documentation/design/chat-ui-audit-11-…`. | resolved contrary to default |
 | 2026-09-01 | `RNC-06` | Main's Rust review doc committed under the current name; branch file to be renamed on merge. | pending |
 | 2026-09-01 | Voice `is_speech` per-frame flush | Left as-is deliberately (untestable without sherpa-onnx). | pending |
+| 2026-09-02 | `U6-DESIGN-01` | SONNET-03: home preset is an explicit False override for `CAP_SOURCEPREP` unless `being.yml` opts in (`fc55d245`/`97d66158`). | pending |
+| 2026-09-02 | `STUB-01` | SONNET-03: `TierRouter` OpenAI stub removed; traced as off the chat path (`a4e4b5a3`); cost-cascade router deleted (`8911de68`). | pending |
+| 2026-09-02 | `CC-02` | SONNET-04: SendToChat "new conversation" affordance removed rather than wired, per the one-conversation direction (`cf7face5`). | pending |
 
 ## Open — founder calls (default assumed by work in flight)
 

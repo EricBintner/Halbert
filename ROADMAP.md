@@ -8,15 +8,16 @@
 
 The full Rust rebuild is deferred and a Linux OS is far future. Current features get completed and tested first. "Current features" are the rows in §3.
 
-## 2. Status snapshot (main `c36ae12e`, 2026-09-02)
+## 2. Status snapshot (main `25ba6ab5`, 2026-09-02 morning)
 
 | Gate | State |
 |---|---|
-| Python suite | 26 failed / 4,679 passed after the Opus batch (all 26 in SONNET-03/04/05 scope); root suite red on two SPDX headers |
-| Frontend suites | design-system 71/71, model-picker 103/103, dashboard 715/715, `tsc` clean |
-| CI | red: literal-colour ratchet (11 files), `vision` extra not installed, SPDX headers |
-| Merged since 2026-09-01 | shell redesign, Opus 01–05 batch, security-review-01, SONNET-02 cleanup |
-| Not run yet | SONNET-03 (capability registry), SONNET-04 (frontend mechanical), SONNET-05 (CI/tests/docs) |
+| Python suite | 19 failed / 4,710 passed after SONNET-03 (remaining: cv2 extra ×13, licence gate ×2, `test_llm_config_parse_cache` ×2, `test_multi_instance` ×1, `test_frontend_no_relative_urls` ×1); root suite red on two SPDX headers |
+| Frontend suites | design-system green, model-picker 103/103, dashboard green after SONNET-04 (+14 new test files), `tsc` clean, literal-colour ratchet re-baselined |
+| CI | red until SONNET-05: `vision` extra not installed, SPDX headers |
+| Merged since 2026-09-01 | shell redesign, Opus 01–05 batch, security-review-01 + SONNET-01 residuals (R1-F4, R2-P3/P4/P5), SONNET-02 cleanup, SONNET-03 (registry, secure-model gate, api-key redaction, tier-router cleanup), SONNET-04 (dead routes, approvals badge, ratchet, lazy tabs, dead affordances) |
+| In flight | SONNET-05 (CI/tests/docs); alignment fix branches `fix/identity-block`, `fix/one-name`, `fix/frontend-presence-labels`, `fix/findings-surface`, `fix/background-runtime`, `fix/web-search-switch` (2026-09-02) |
+| Open from SONNET-01 | the unredacted SourcePrep rebuild was not run (daemon `/status` hangs; restart `prep.cli serve` first); `SEC-14` daemon `/projects` unauthenticated (CoDRAG) |
 
 ## 3. Now — definition of done per workstream
 
@@ -36,7 +37,7 @@ The full Rust rebuild is deferred and a Linux OS is far future. Current features
 | VOICE-1 | Voice Mode tested | One real-audio run (Piper voice + sherpa-onnx) with TTS/mark sync and a spoken round trip; `/voice` served by the appliance deployment; N150 matrix ≥ 1 pass recorded; banned labels off the surface | Chain wired overnight; 0 real-audio runs; `W3-S09`, `VM-27`, `VM-15`, `T1-05/06` | `VM-22`, `FDR-08` |
 | HOME-1 | Home body | Env-only install gets the home preset; wizard peer prompt fires on home; HomeCognitiveLoop instantiated behind `CAP_HA_CONNECTION` with proposals through the why pipeline; Home page grouped by area with honest 403 handling; Frigate queue capped and snapshots routed to vision; Wyoming deploy docs match the new defaults; home proof slices 1H/2H defined | `W3-S01/S02/S07/S08/S11/S12/S13`, `U6-BUG-01/03/04` | `LOOP-01` (recommend instantiate); `W3-C07` v1 scope |
 | CFG-1 | One config and data story | One path resolver; stores honour `HALBERT_DATA_DIR` at call time; `policy.yml` written and read from the same dir; typed `capabilities` on `BeingConfig` survive a Settings save; env as seed only; `HALOYSIUS_DATA_HOME` under `data_dir()` | `A2-01/02/03/04/08/19` | `A2-05` split being.yml (schedule after P0s) |
-| GATE-1 | One gating model | `feature_flags.py` deleted; `is_home_variant()` callers replaced by capabilities; registry honours `HALBERT_VARIANT`; `CAP_SOURCEPREP` probes reachability; `CAP_WEB`/`CAP_CLOUD_LLM`/`CAP_PEER_COMPUTE` exist; circular secure-model gate fixed | `A1-04/05`, `U4-18`, `U6-BUG-01/02` (SONNET-03 scope) | `U6-DESIGN-01` |
+| GATE-1 | One gating model | `feature_flags.py` deleted; `is_home_variant()` callers replaced by capabilities; registry honours `HALBERT_VARIANT`; `CAP_SOURCEPREP` probes reachability; `CAP_WEB`/`CAP_CLOUD_LLM`/`CAP_PEER_COMPUTE` exist; circular secure-model gate fixed | SONNET-03 landed `fc55d245` (env variant, secure gate), `97d66158` (SourcePrep presence probe), `b338b599` (registry reset fixture); `CAP_WEB` in `fix/web-search-switch`; `feature_flags.py` and `is_home_variant()` callers still open (`A1-05`) | `U6-DESIGN-01` (implemented per default: home preset overrides probe) |
 | MCP-1 | MCP usable | `get_findings`, `get_proposals`, `search_knowledge` work; identity in the configured voice; discoveries/events read persisted state or the server is mounted in the dashboard; `set_autonomy_level` uses the locked composite; id-less `tools/call` does not execute; macOS snapshot path decided | 7/18 tools work (`MCP-01..06`, `C3-10`) | `MCP-04` topology; `SEC-05` |
 | CLI-1 | CLI coherent | `halbert` opens the conversation; `halbert license`/`info` work when installed; legacy persona/RAG commands hidden; CLI-REFERENCE regenerated | `CLI-01..04` | `CLI-01` |
 | KNOW-1 | Knowledge reaches a fresh install | One corpus number; retrieval works without a hidden dependency (sidecar + prebuilt index, or fallback retriever); citations open; `assigned_to_role` in the template; CUDA doc where retrieval sees it; CoDRAG daemon-side fixes committed | `P1-05/11/12`, `RAG-01/06/13/14`, `U4-08/14` | `P1-11`, `RAG-13/14` |
