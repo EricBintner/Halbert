@@ -168,13 +168,34 @@ class TestSubstitutedToolsAreNamed:
         return agent
 
     @pytest.mark.asyncio
-    async def test_recall_memory_substitution_is_stated(self):
-        agent = self._agent_asking_for("recall_memory")
+    async def test_search_discoveries_substitution_is_stated(self):
+        agent = self._agent_asking_for("search_discoveries")
         [e async for e in agent._handle_searching()]
 
         note = " ".join(agent.ctx.observations)
-        assert "recall_memory" in note
+        assert "search_discoveries" in note
         assert "not implemented" in note
+
+    def test_recall_memory_is_no_longer_substituted(self):
+        """It is a real tool over the change ledger now, and abstains in its
+        own words. Leaving it routed to SEARCHING while un-substituting it
+        would be worse than doing nothing: the generic search would run and
+        report success with the one mitigation removed."""
+        from halbert_core.agents.state_machine import (
+            _SEARCH_ROUTED_TOOLS,
+            _SUBSTITUTED_BY_SEARCH,
+        )
+
+        assert "recall_memory" not in _SEARCH_ROUTED_TOOLS
+        assert "recall_memory" not in _SUBSTITUTED_BY_SEARCH
+
+    def test_the_substitution_set_is_a_tuple_not_a_string(self):
+        """Without the trailing comma this is a str and ``in`` becomes
+        substring containment, so a plain ``search`` would be annotated
+        "not implemented"."""
+        from halbert_core.agents.state_machine import _SUBSTITUTED_BY_SEARCH
+
+        assert isinstance(_SUBSTITUTED_BY_SEARCH, tuple)
 
     @pytest.mark.asyncio
     async def test_a_real_search_is_not_annotated(self):
@@ -187,10 +208,14 @@ class TestSubstitutedToolsAreNamed:
 
     @pytest.mark.asyncio
     async def test_the_models_own_query_is_what_gets_searched(self):
-        """A recall_memory(query=...) used to search the user's raw question
-        instead of the term the model had picked out."""
+        """A search_discoveries(query=...) used to search the user's raw
+        question instead of the term the model had picked out.
+
+        Not about recall_memory (which no longer routes here) — this pins
+        _handle_searching reading tool_call.args['query'], and is the only
+        coverage of that fix."""
         rag = _EmptyRag()
-        agent = self._agent_asking_for("recall_memory")
+        agent = self._agent_asking_for("search_discoveries")
         agent.rag = rag
         [e async for e in agent._handle_searching()]
 

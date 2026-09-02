@@ -20,6 +20,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from ...continuity.provenance import FILE_CONTENT_PREDICATE
+from ...continuity.recall import LedgerUnavailable, recall_state
 from ...continuity.state_store import StateStore, default_state_db_path
 
 logger = logging.getLogger(__name__)
@@ -55,20 +56,19 @@ async def why(
     Returns the open triple with the value it replaced, so a caller has
     before and after without a second request.
     """
-    if path and not subject:
-        subject = f"file:{path}"
-    if not subject:
-        return WhyResponse(subject="", predicate=predicate, found=False)
-
-    store = _store()
     try:
-        answer = store.why(subject, predicate)
-        return WhyResponse(**answer.to_dict(), found=answer.found)
-    except Exception as e:
-        logger.warning(f"why({subject}, {predicate}) failed: {e}")
-        return WhyResponse(subject=subject, predicate=predicate, found=False)
-    finally:
-        store.close()
+        result = recall_state(subject=subject, path=path, predicate=predicate)
+    except LedgerUnavailable as e:
+        logger.warning(f"why({subject or path}, {predicate}) failed: {e}")
+        return WhyResponse(subject=subject or "", predicate=predicate, found=False)
+    # ``result`` already carries ``found``; passing it again alongside
+    # ``**result`` would raise TypeError, which this route's own except
+    # would then swallow into found=False for every request.
+    return WhyResponse(
+        subject=result["subject"], predicate=result["predicate"],
+        found=result["found"], current=result["current"],
+        superseded=result["superseded"],
+    )
 
 
 @router.get("/history")

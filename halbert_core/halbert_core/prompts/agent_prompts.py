@@ -674,6 +674,21 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
             "",
         ])
 
+        # Not a sixth numbered item: item 4 caps the plan at five steps.
+        # Gated like _continuity_section — a model that rejected tool schemas
+        # must not be told to call a tool it cannot see.
+        if tools_supported is not False:
+            parts.extend([
+                "## Recalling why something is the way it is",
+                "When asked why a config, service or file is as it is, who "
+                "changed it, when, or what it was before, call `recall_memory` "
+                "rather than searching or reasoning from the current state.",
+                "If it reports no record, say that nothing was recorded for it. "
+                "Do not say that nothing changed, and do not offer a reason of "
+                "your own for a change the ledger did not record.",
+                "",
+            ])
+
         if plan:
             parts.append("## Current Plan")
             for i, step in enumerate(plan):
