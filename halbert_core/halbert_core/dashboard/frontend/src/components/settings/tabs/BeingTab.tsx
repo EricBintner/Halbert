@@ -400,7 +400,7 @@ function BeingSettings() {
               ))}
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              {config.proactivity === 'off' && 'The being never initiates conversation.'}
+              {config.proactivity === 'off' && 'Halbert never starts a conversation on its own.'}
               {config.proactivity === 'quiet' && 'Only critical alerts trigger proactive messages.'}
               {config.proactivity === 'balanced' && 'Warnings and critical alerts trigger proactive messages.'}
               {config.proactivity === 'assertive' && 'All findings, including info-level, trigger proactive messages.'}
