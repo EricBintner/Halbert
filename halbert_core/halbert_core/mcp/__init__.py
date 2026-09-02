@@ -13,6 +13,11 @@ config tree reaches an external AI client's cloud model.  Internal reads
 not Halbert's internal data flow.
 
 The camera_gate module strips image data from any response that touches
-camera/vision data. No raw frames, snapshots, or base64 images ever leave
-the local host through MCP.
+camera/vision data — but it is NOT currently wired into server.py's
+dispatch (R2-OBS-1): TOOL_HANDLERS registers no frigate/vision/camera
+tool today, so the gate protects nothing yet. This is not presently a
+gap in practice (there is no camera-data-returning tool surface to leak
+through), but it is a landmine for whoever adds one: read camera_gate.py
+and call ``gate_response()`` around the new handler(s) before assuming
+this protection is already active.
 """

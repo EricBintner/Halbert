@@ -2,6 +2,15 @@
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """MCP security design for camera and vision data.
 
+STATUS (R2-OBS-1, 2026-09): this module is NOT wired into server.py's
+dispatch. TOOL_HANDLERS registers no frigate/vision/camera tool today,
+so nothing calls gate_response() or the ``_tool_frigate_*``/
+``_tool_vision_*`` handlers below in production — they exist here,
+tested in isolation (test_mcp_camera_gate.py), but unreachable from a
+real MCP request. Not a live gap (there is no camera-data tool surface
+to leak through yet), but wire this gate in — don't just add the new
+handlers to TOOL_HANDLERS — the moment one is registered.
+
 ## Threat Model
 
 The MCP server allows external LLM clients (Claude, GPT, etc.) to query
