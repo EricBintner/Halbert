@@ -157,6 +157,16 @@ def _format_tool_observation(name: str, args: Any, result: Any) -> str:
     return f"Executed {call}:\n{text}"
 
 
+# Tool names PLANNING routes to SEARCHING.
+_SEARCH_ROUTED_TOOLS = ("search", "search_discoveries", "recall_memory", "web_search")
+
+# Of those, the ones with no implementation behind them: SEARCHING serves a
+# general RAG/memory query instead. The turn is told this explicitly rather
+# than being handed a plain success, so the model does not report the generic
+# result as if the tool it asked for had run (R06-O2).
+_SUBSTITUTED_BY_SEARCH = ("search_discoveries", "recall_memory")
+
+
 class AgentStateMachine:
     """
     Core agent orchestration using a state machine pattern.
@@ -1821,7 +1831,7 @@ class AgentStateMachine:
             self.ctx.add_tool_call(tc)
 
             # Route based on tool type
-            if tool_name in ["search", "search_discoveries", "recall_memory", "web_search"]:
+            if tool_name in _SEARCH_ROUTED_TOOLS:
                 yield await self._transition(AgentState.SEARCHING)
             elif tool_name in ["read_file", "read_config", "cat"]:
                 yield await self._transition(AgentState.READING)
@@ -2188,11 +2198,16 @@ class AgentStateMachine:
         
         # Get pending tool call or use query
         tool_call = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
-        
-        if tool_call and tool_call.name in ["search", "web_search"]:
-            search_query = tool_call.args.get("query", self.ctx.user_query)
-        else:
-            search_query = self.ctx.user_query
+
+        # Whatever the model asked to search for, if it said. This used to be
+        # read only for "search"/"web_search", so a recall_memory(query=...)
+        # silently searched the user's raw question instead of the term the
+        # model had picked out.
+        search_query = self.ctx.user_query
+        if tool_call:
+            asked = tool_call.args.get("query") if tool_call.args else None
+            if asked:
+                search_query = asked
         
         # Narrow the search the same way PLANNING's context assembly does.
         # Routing sends every non-greeting first loop with no tool call
@@ -2246,10 +2261,21 @@ class AgentStateMachine:
         if tool_call:
             tool_call.status = "success"
             tool_call.result = {"count": len(self.ctx.retrieved_context)}
-        
-        self.ctx.add_observation(
-            f"Retrieved {len(self.ctx.retrieved_context)} context items"
-        )
+
+        count = len(self.ctx.retrieved_context)
+        if tool_call and tool_call.name in _SUBSTITUTED_BY_SEARCH:
+            # Say so. A model told that recall_memory succeeded and returned
+            # nothing concludes that nothing is remembered, and tells the user
+            # so — which is a claim this turn has no basis for. Naming the
+            # substitution lets it answer from what the search did find, and
+            # say plainly that it could not check memory (R06-O2).
+            self.ctx.add_observation(
+                f"{tool_call.name} is not implemented; a general search was "
+                f"run in its place and returned {count} context items. "
+                f"Do not report this as the result of {tool_call.name}."
+            )
+        else:
+            self.ctx.add_observation(f"Retrieved {count} context items")
         
         yield await self._transition(AgentState.OBSERVING)
     

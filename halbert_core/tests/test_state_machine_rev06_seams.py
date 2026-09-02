@@ -144,3 +144,69 @@ class TestDefangedQueryDoesNotLeakAcrossTurns:
         assert agent.ctx is not first_ctx, "process() must build a fresh context"
         assert seen, "_build_messages was never called"
         assert "stale from the first turn" not in [s for s in seen if s]
+
+
+# -----------------------------------------------------------------------------
+# R06-O2 — a substituted tool must not be reported as the tool that ran
+# -----------------------------------------------------------------------------
+
+class TestSubstitutedToolsAreNamed:
+    """SEARCHING serves recall_memory/search_discoveries with a generic
+    search. The turn has to know that, or it reports the generic result as
+    the tool's own."""
+
+    @staticmethod
+    def _agent_asking_for(tool_name):
+        from halbert_core.agents.states import AgentState, ToolCall
+
+        agent = AgentStateMachine(llm_client=_mk_llm(), rag_service=_EmptyRag(), max_loops=5)
+        agent.ctx = _ctx()
+        agent.current_state = AgentState.SEARCHING
+        agent.ctx.add_tool_call(
+            ToolCall(id="tc1", name=tool_name, args={"query": "the samba share"})
+        )
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_recall_memory_substitution_is_stated(self):
+        agent = self._agent_asking_for("recall_memory")
+        [e async for e in agent._handle_searching()]
+
+        note = " ".join(agent.ctx.observations)
+        assert "recall_memory" in note
+        assert "not implemented" in note
+
+    @pytest.mark.asyncio
+    async def test_a_real_search_is_not_annotated(self):
+        agent = self._agent_asking_for("search")
+        [e async for e in agent._handle_searching()]
+
+        note = " ".join(agent.ctx.observations)
+        assert "not implemented" not in note
+        assert "Retrieved" in note
+
+    @pytest.mark.asyncio
+    async def test_the_models_own_query_is_what_gets_searched(self):
+        """A recall_memory(query=...) used to search the user's raw question
+        instead of the term the model had picked out."""
+        rag = _EmptyRag()
+        agent = self._agent_asking_for("recall_memory")
+        agent.rag = rag
+        [e async for e in agent._handle_searching()]
+
+        assert rag.queries == ["the samba share"]
+
+
+class _EmptyRag:
+    def __init__(self):
+        self.queries = []
+
+    async def search(self, query, limit=5, **kwargs):
+        self.queries.append(query)
+        return []
+
+
+def _ctx():
+    from halbert_core.agents.states import StateContext
+
+    return StateContext(session_id="s", request_id="r", user_query="what about it?")

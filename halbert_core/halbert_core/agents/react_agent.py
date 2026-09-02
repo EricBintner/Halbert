@@ -221,7 +221,12 @@ class ReActAgent:
                     tool_calls_count=tool_calls_count,
                 )
             
-            # Step 2: Process tool calls
+            # Step 2: Process tool calls.
+            # Each pass through this loop appends exactly one OBSERVATION step
+            # — blocked, pending-approval, succeeded or errored — so these
+            # line up one-for-one with tool_calls and can be paired by
+            # position below.
+            iteration_observations: List[ThinkingStep] = []
             for tool_call in tool_calls:
                 func = tool_call.get("function", {})
                 tool_name = func.get("name", "")
@@ -249,6 +254,7 @@ class ReActAgent:
                             error=auth.get('reason'),
                             duration_ms=int((time.time() - action_start) * 1000)
                         ))
+                        iteration_observations.append(steps[-1])
                         continue
                     
                     if auth.get("approval_required"):
@@ -259,6 +265,7 @@ class ReActAgent:
                             tool_result={"pending_approval": True},
                             duration_ms=int((time.time() - action_start) * 1000)
                         ))
+                        iteration_observations.append(steps[-1])
                         continue
                 
                 # Execute the tool
@@ -275,7 +282,8 @@ class ReActAgent:
                         tool_result=result if isinstance(result, dict) else {"data": str(result)},
                         duration_ms=int((time.time() - action_start) * 1000)
                     ))
-                    
+                    iteration_observations.append(steps[-1])
+
                     # Update action step duration
                     steps[-2].duration_ms = int((time.time() - action_start) * 1000)
                     
@@ -288,7 +296,8 @@ class ReActAgent:
                         error=str(e),
                         duration_ms=int((time.time() - action_start) * 1000)
                     ))
-            
+                    iteration_observations.append(steps[-1])
+
             # Step 3: Add tool results to messages for next iteration
             messages.append({
                 "role": "assistant",
@@ -296,17 +305,18 @@ class ReActAgent:
                 "tool_calls": tool_calls
             })
             
-            # Add tool results
-            for tool_call in tool_calls:
-                tool_name = tool_call.get("function", {}).get("name", "")
-                # Find the corresponding observation step
-                for step in reversed(steps):
-                    if step.type == ThinkingStepType.OBSERVATION and step.tool_name == tool_name:
-                        result_content = json.dumps(step.tool_result or {"error": step.error})
-                        break
-                else:
+            # Add tool results, paired with their calls by position.
+            # This used to search backwards through every step for the last
+            # OBSERVATION with a matching tool_name, so a model that called
+            # the same tool twice in one response — two read_file calls on
+            # different paths — got the second result attached to both
+            # messages and never saw the first (R06-O1).
+            for tool_call, step in zip(tool_calls, iteration_observations):
+                if step is None:
                     result_content = '{"error": "No result found"}'
-                
+                else:
+                    result_content = json.dumps(step.tool_result or {"error": step.error})
+
                 messages.append({
                     "role": "tool",
                     "content": result_content
