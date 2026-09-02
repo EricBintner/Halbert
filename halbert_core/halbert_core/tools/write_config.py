@@ -9,6 +9,8 @@ import shutil
 from io import StringIO
 from typing import Any, Dict
 from .base import BaseTool, ToolRequest, ToolResponse
+from ..continuity.provenance import record_file_change
+from ..continuity.state_store import ACTOR_AGENT, UNRECORDED
 from ..obs.audit import write_audit
 import yaml  # type: ignore
 from ..obs.tracing import trace_call
@@ -17,9 +19,35 @@ class WriteConfig(BaseTool):
     name = "write_config"
     side_effects = True
 
+    @staticmethod
+    def _read(path) -> "str | None":
+        """Current text of the file, or None if there is not one."""
+        if not path or not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _provenance(req: ToolRequest) -> "tuple[str, str]":
+        """Why this write is happening, and who is doing it.
+
+        The reason comes from the tool call itself, i.e. from the turn that
+        decided to write. That is legitimate provenance -- what the ledger
+        forbids is inventing a reason for a write that already happened.
+        A caller that states none gets UNRECORDED, which renders as unknown
+        and is never later filled in.
+        """
+        reason = req.inputs.get("reason") or UNRECORDED
+        actor = req.inputs.get("actor") or ACTOR_AGENT
+        return str(reason), str(actor)
+
     @trace_call("write_config.execute")
     def execute(self, req: ToolRequest) -> ToolResponse:
         path = req.inputs.get("path")
+        reason, actor = self._provenance(req)
         changes = req.inputs.get("changes", {})
         backup = bool(req.inputs.get("backup", True))
         do_rollback = bool(req.inputs.get("rollback", False))
@@ -35,7 +63,7 @@ class WriteConfig(BaseTool):
             if do_rollback:
                 bak = f"{path}.bak"
                 if not os.path.exists(bak):
-                    write_audit(tool=self.name, mode="dry_run" if not is_apply else "apply", request_id=req.request_id, ok=False, summary=f"backup not found: {bak}", path=path)
+                    write_audit(tool=self.name, mode="dry_run" if not is_apply else "apply", request_id=req.request_id, ok=False, summary=f"backup not found: {bak}", path=path, reason=reason, actor=actor)
                     return ToolResponse(request_id=req.request_id, ok=False, error=f"backup not found: {bak}", outputs={"diff": "", "applied": False})
                 before_txt = ""
                 if os.path.exists(path):
@@ -49,15 +77,22 @@ class WriteConfig(BaseTool):
                 diff = self._unified_diff(before_txt, after_txt, path)
                 outputs = {"diff": diff, "applied": False}
                 if not is_apply:
-                    write_audit(tool=self.name, mode="dry_run", request_id=req.request_id, ok=True, summary=f"preview rollback for {path}", path=path)
+                    write_audit(tool=self.name, mode="dry_run", request_id=req.request_id, ok=True, summary=f"preview rollback for {path}", path=path, reason=reason, actor=actor)
                     return ToolResponse(request_id=req.request_id, ok=True, outputs=outputs)
                 # Apply rollback
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(after_txt)
-                write_audit(tool=self.name, mode="apply", request_id=req.request_id, ok=True, summary=f"rollback applied for {path}", path=path)
+                record_file_change(
+                    path=path, reason=reason, actor=actor,
+                    request_id=req.request_id, tool=self.name,
+                    before_text=before_txt, after_text=after_txt,
+                    mode="apply", ok=True,
+                    summary=f"rollback applied for {path}",
+                )
                 outputs["applied"] = True
                 return ToolResponse(request_id=req.request_id, ok=True, outputs=outputs)
 
+            before_txt = self._read(path)
             lower = str(path).lower()
             if lower.endswith((".yaml", ".yml")):
                 preview, applied = self._apply_yaml(path, changes, backup, apply=not (req.dry_run or not req.confirm))
@@ -75,10 +110,16 @@ class WriteConfig(BaseTool):
             mode = "dry_run" if (req.dry_run or not req.confirm) else "apply"
             ok = True
             summary = ("preview changes for " + path) if mode == "dry_run" else ("applied changes for " + path if applied else "no-op (already up to date) for " + path)
-            write_audit(tool=self.name, mode=mode, request_id=req.request_id, ok=ok, summary=summary, path=path)
+            record_file_change(
+                path=path, reason=reason, actor=actor,
+                request_id=req.request_id, tool=self.name,
+                before_text=before_txt,
+                after_text=self._read(path) if applied else before_txt,
+                mode=mode, ok=ok, summary=summary,
+            )
             return ToolResponse(request_id=req.request_id, ok=True, outputs={"diff": preview, "applied": applied})
         except Exception as e:
-            write_audit(tool=self.name, mode="apply" if req.confirm and not req.dry_run else "dry_run", request_id=req.request_id, ok=False, summary=str(e), path=path)
+            write_audit(tool=self.name, mode="apply" if req.confirm and not req.dry_run else "dry_run", request_id=req.request_id, ok=False, summary=str(e), path=path, reason=reason, actor=actor)
             return ToolResponse(request_id=req.request_id, ok=False, error=str(e), outputs={"diff": "", "applied": False})
 
     # Helpers

@@ -116,8 +116,17 @@ _LEGACY_TABLE = "state_triples_pre_provenance"
 
 
 def default_state_db_path() -> Path:
-    """Halbert's standalone state db, used until the table folds into the thread db."""
-    p = Path.home() / ".local" / "share" / "halbert" / "state_ledger.db"
+    """Halbert's standalone state db, used until the table folds into the thread db.
+
+    Resolved through ``utils.paths.data_dir`` at call time, so the ledger
+    honours ``HALBERT_DATA_DIR`` like every other store (CFG-1) and a second
+    instance does not write into the first one's history. With no override
+    and a non-root user this is ``~/.local/share/halbert``, exactly where it
+    has always been.
+    """
+    from ..utils.paths import data_dir
+
+    p = Path(data_dir()) / "state_ledger.db"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
