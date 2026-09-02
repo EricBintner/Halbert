@@ -344,6 +344,46 @@ class TestNonASCIIBearerToken:
         assert resp.status == 401
 
 
+class TestAuthSchemeCaseInsensitive:
+    """R2-P5 — the Bearer auth-scheme token match must be case-insensitive.
+
+    RFC 7235 defines auth-scheme as a case-insensitive token; matching it
+    with a literal ``startswith("Bearer ")`` rejects a perfectly valid
+    token from a client that sends "bearer" or "BEARER" — a client-side
+    interop bug turned into a hard 401, not a real security boundary.
+    """
+
+    @staticmethod
+    def _post_with_scheme(url: str, scheme: str, token: str) -> int:
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}).encode("utf-8")
+        p = urllib.parse.urlparse(url)
+        conn = http.client.HTTPConnection(p.hostname, p.port, timeout=5)
+        conn.request("POST", "/", body=body, headers={
+            "Content-Type": "application/json",
+            "Content-Length": str(len(body)),
+            "Authorization": f"{scheme} {token}",
+        })
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        return resp.status
+
+    @pytest.mark.parametrize("scheme", ["bearer", "BEARER", "BeArEr"])
+    def test_case_insensitive_scheme_authenticates(self, http_server_factory, scheme):
+        token = generate_bearer_token()
+        url, _ = http_server_factory(token=token)
+        status = self._post_with_scheme(url, scheme, token)
+        assert status == 200
+
+    def test_wrong_scheme_still_rejected(self, http_server_factory):
+        """Case-insensitivity is scoped to "bearer" — a different scheme
+        word entirely (e.g. "Basic") must still fail closed."""
+        token = generate_bearer_token()
+        url, _ = http_server_factory(token=token)
+        status = self._post_with_scheme(url, "Basic", token)
+        assert status == 401
+
+
 class TestSSESlotRelease:
     """REV-02 F4 — the SSE slot is released on every path.
 

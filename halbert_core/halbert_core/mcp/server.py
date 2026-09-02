@@ -1209,8 +1209,11 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization", "")
         # Always run the constant-time comparison, even when the Bearer
         # prefix is missing, so the branch timing does not leak which
-        # header format was used.
-        token = auth[7:] if auth.startswith("Bearer ") else ""
+        # header format was used. The scheme itself (auth-scheme, RFC
+        # 7235) is case-insensitive — "bearer"/"BEARER" is a valid client
+        # choice, not a different scheme (R2-P5) — so match it
+        # case-insensitively; only the token after it stays exact.
+        token = auth[7:] if auth[:7].lower() == "bearer " else ""
         # compare in bytes: on non-ASCII str (which BaseHTTPRequestHandler
         # hands us — it decodes headers latin-1, so raw non-ASCII bytes
         # survive as non-ASCII str) compare_digest raises TypeError and
