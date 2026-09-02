@@ -230,7 +230,7 @@ describe('VoiceMode layout', () => {
     expect(props.tone).toBe('accent')
     expect(screen.getByRole('button', { name: 'Tap the mark to speak' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Tap to speak' })).toBeTruthy() // TouchBar
-    expect(screen.getByRole('button', { name: 'Host canvas' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Open the conversation' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Mute microphone' })).toBeTruthy()
   })
 

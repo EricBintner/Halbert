@@ -4,8 +4,11 @@
 //
 // Three actions: push-to-talk (the same gesture as tapping the mark in
 // standby), the on-screen keyboard overlay (O9), and the return edge to
-// the Host Canvas. The bar itself owns no navigation — O8 wires the Host
-// Canvas edge to the router; this component only reports the tap.
+// the conversation. The bar itself owns no navigation — O8 wires the
+// return edge to the router; this component only reports the tap.
+//
+// The return edge is labelled 'Conversation' (shell review §9.2): 'Host
+// Canvas' is a banned label (§9.1 ruling #9) and never renders.
 //
 // Touch targets are h-12 (48px) — above the 44px floor of spec §8 (P5
 // hardware checklist). Vermilion accent for the primary action, canvas
@@ -18,7 +21,7 @@ interface TouchBarProps {
   onPushToTalk: () => void
   /** "[Keyboard]" — glide the on-screen keyboard (O9) up. */
   onKeyboard: () => void
-  /** "[ArrowUpRight] Host Canvas" — leave Voice Mode for the canvas. */
+  /** "Conversation [ArrowUpRight]" — leave Voice Mode for the conversation. */
   onHostCanvas: () => void
 }
 
@@ -47,8 +50,13 @@ export function TouchBar({ onPushToTalk, onKeyboard, onHostCanvas }: TouchBarPro
         <Keyboard className="h-5 w-5" aria-hidden="true" />
         Keyboard
       </button>
-      <button type="button" onClick={onHostCanvas} aria-label="Host canvas" className={SECONDARY_BUTTON}>
-        Host Canvas
+      <button
+        type="button"
+        onClick={onHostCanvas}
+        aria-label="Open the conversation"
+        className={SECONDARY_BUTTON}
+      >
+        Conversation
         <ArrowUpRight className="h-5 w-5" aria-hidden="true" />
       </button>
     </nav>
