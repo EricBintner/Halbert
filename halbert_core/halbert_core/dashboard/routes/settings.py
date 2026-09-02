@@ -3369,3 +3369,73 @@ async def blend_archetypes(req: ArchetypeBlendRequest) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Failed to blend archetypes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Network: outbound switches (C3-08 / C3-16)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Web search sends the query text off the machine, so it is a named switch,
+# off by default. The setting lives in web_search.yml (web/search_config);
+# the capability registry exposes it as CAP_WEB with the usual being.yml
+# `capabilities: {web: ...}` override on top, which is why the response
+# carries both `enabled` (the setting) and `effective` (what the registry
+# resolved). A PUT re-probes the registry and re-syncs the live agent's
+# ToolExecutor, so the tool appears in / disappears from the model's
+# schemas without a restart.
+
+class WebSearchUpdate(BaseModel):
+    enabled: bool
+
+
+def _web_search_state() -> Dict[str, Any]:
+    from ...capabilities import CAP_WEB, has_capability
+    from ...web import search_config
+    return {
+        "status": "ok",
+        "enabled": search_config.is_enabled(),
+        "effective": bool(has_capability(CAP_WEB)),
+        "path": str(search_config.user_config_path()),
+    }
+
+
+@router.get("/web-search")
+async def get_web_search_setting() -> Dict[str, Any]:
+    """The web-search switch: the saved setting and what the registry resolved."""
+    try:
+        return _web_search_state()
+    except Exception as e:
+        logger.error(f"Failed to read web search setting: {e}")
+        raise HTTPException(status_code=500, detail="Could not read the web search setting")
+
+
+@router.put("/web-search")
+async def update_web_search_setting(update: WebSearchUpdate) -> Dict[str, Any]:
+    """Flip the web-search switch; takes effect on the live agent at once."""
+    try:
+        from ...capabilities import get_capability_registry
+        from ...web import search_config
+
+        search_config.set_enabled(update.enabled)
+        # The registry probes once at startup; re-probe so CAP_WEB (and the
+        # handler's defence-in-depth check) sees the new setting.
+        get_capability_registry().probe()
+
+        # Make the live executor follow the switch. Read the module global
+        # rather than calling get_agent(): flipping a setting must not build
+        # an agent that nothing has asked for yet.
+        try:
+            from . import agent as _agent_routes
+            live = getattr(_agent_routes, "_agent_instance", None)
+            tools = getattr(live, "tools", None) if live is not None else None
+            if tools is not None and hasattr(tools, "sync_web_search_tool"):
+                tools.sync_web_search_tool()
+        except Exception as e:
+            logger.warning(f"Web search switch saved but live executor not synced: {e}")
+
+        return _web_search_state()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update web search setting: {e}")
+        raise HTTPException(status_code=500, detail="Could not save the web search setting")
