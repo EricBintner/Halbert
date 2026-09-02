@@ -28,24 +28,9 @@ from .providers import ModelProvider, ModelResponse, OllamaProvider
 from .providers.base import GenerationError, ModelNotFoundError
 from .rate_limiter import RateLimiter
 from .outcome_store import OutcomeStore
-from .cascade_router import MetaHarnessRouter
 from ..agents.error_recovery import get_recovery_manager
 
 logger = logging.getLogger('halbert.model.tier_router')
-
-
-def _is_home_variant() -> bool:
-    """True when the active instance runs a home automation variant.
-
-    Retained for backward compatibility. secure_model gating now uses
-    the capability registry (CAP_SECURE_MODEL) instead of this hard
-    variant gate.
-    """
-    try:
-        from ..integrations.cognition_wiring import is_home_variant
-        return is_home_variant()
-    except Exception:
-        return False
 
 
 class ProviderType(str, Enum):
@@ -278,13 +263,11 @@ class TierRouter:
         # HTTP rate-limit handler (A2b): 429/529 with Retry-After
         self.rate_limiter = RateLimiter()
 
-        # Outcome store for self-tuning router (A3): records per-call results
-        # so MetaHarnessRouter (C2a) can blend evidence with priors.
+        # Outcome store (A3): records per-call results as telemetry. Originally
+        # written to feed the cost-cascade MetaHarnessRouter's evidence
+        # blending; that router was never enabled by default and was removed
+        # (PICK-04) as dead code, but the store stands on its own.
         self.outcome_store = OutcomeStore()
-
-        # Cost-cascade router with outcome-based self-tuning (C2a/C2b). Opt-in;
-        # when disabled, route_request uses the heuristic path below.
-        self.cascade_router = MetaHarnessRouter(self, self.outcome_store)
 
         logger.info(f"TierRouter initialized with {len(self.config.models)} models")
     
@@ -544,34 +527,14 @@ class TierRouter:
                 require_vision=True,
             )
 
-        # Explicit overrides still apply even when cascade routing is enabled.
-        # The disabled path must stay byte-identical to the pre-C2b heuristic,
-        # so it uses the original _score_complexity scorer, not the shared
-        # cascade estimator (which scores differently by design).
+        # Explicit overrides still apply regardless of tier.
         if prefer_specialist or (task_type and task_type in self.config.force_specialist_tasks):
-            if self.cascade_router.is_enabled():
-                complexity = self.cascade_router.estimate_complexity(query)
-            else:
-                complexity = self._score_complexity(query)
+            complexity = self._score_complexity(query)
             return self.select_model(
                 tier=ModelTier.SPECIALIST,
                 require_reasoning=self._should_use_reasoning(query, complexity),
                 complexity_score=complexity,
             )
-
-        # Cost-cascade router (C2b): when enabled, delegate model selection to
-        # MetaHarnessRouter, which blends tier priors with recorded outcomes.
-        # When disabled (default), behavior is byte-identical to the old
-        # heuristic path below (restored original scorer).
-        if self.cascade_router.is_enabled():
-            model = self.cascade_router.route(query)
-            if model is not None:
-                return ModelSelection(
-                    model=model,
-                    reason="cascade_router",
-                    fallback_used=False,
-                    capabilities=model.capabilities,
-                )
 
         complexity = self._score_complexity(query)
         # Determine tier
@@ -590,12 +553,7 @@ class TierRouter:
         )
 
     def _score_complexity(self, query: str) -> float:
-        """Score query complexity (0.0 to 1.0).
-
-        Original heuristic path scorer — kept because the cascade-disabled
-        (default) routing path must stay byte-identical to pre-C2b behavior.
-        MetaHarnessRouter has its own estimate_complexity() for the enabled path.
-        """
+        """Score query complexity (0.0 to 1.0). The heuristic path's only scorer."""
         score = 0.0
         query_lower = query.lower()
         words = query.split()
@@ -768,11 +726,10 @@ class TierRouter:
     def _record_outcome(
         self, model_id: str, response: Optional[ModelResponse], success: bool
     ) -> None:
-        """Record a model-call outcome (A3). Best-effort; never raises.
+        """Record a model-call outcome (A3) as telemetry. Best-effort; never raises.
 
-        Tokens/cost feed the MetaHarnessRouter's evidence blending (C2a). The
-        store is guarded so a missing/None store (e.g. in tests that bypass
-        __init__) silently skips recording.
+        The store is guarded so a missing/None store (e.g. in tests that
+        bypass __init__) silently skips recording.
         """
         store = getattr(self, "outcome_store", None)
         if store is None:

@@ -1,11 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-"""Outcome store for model-call self-tuning (A3).
+"""Outcome store for model-call telemetry (A3).
 
 Records per-call outcomes (model, success, latency, tokens, cost, complexity,
-task) to SQLite so the ``MetaHarnessRouter`` (C2a) can blend recorded evidence
-with tier-based priors. The store is best-effort: recording must NEVER break
-generation — every public method swallows exceptions and logs at debug level.
+task) to SQLite. Originally written so the cost-cascade ``MetaHarnessRouter``
+(C2a, ``model/cascade_router.py``) could blend recorded evidence with
+tier-based priors; that router was never enabled by default and was removed
+(PICK-04) as dead code with no build/UI to turn it on. TierRouter still
+records every call's outcome here on its own — see ``_record_outcome`` — as
+plain telemetry, independent of any consumer that blends it into routing
+decisions. The store is best-effort: recording must NEVER break generation —
+every public method swallows exceptions and logs at debug level.
 
 Uses SQLite for queryability (the OPUS-HANDOFF chose SQLite over OCC's JSONL
 append-only). A single shared connection (``check_same_thread=False``) plus a
