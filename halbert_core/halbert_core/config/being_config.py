@@ -215,7 +215,11 @@ class BeingConfig:
     custom_personality_prompt: str = ""  # escape hatch: replaces generated layer
 
     # --- Character (Phase 3 UI) ---
-    name: str = ""  # display name; syncs with preferences.yml ai_name
+    # The entity's name. preferences.yml ai_name (the onboarding answer) is
+    # the source; this field mirrors it. Every writer of either updates both
+    # (routes/settings.py /being, /computer-name, /onboarding/complete) and
+    # readers go through halbert_core.identity.resolve_entity_name().
+    name: str = ""
     voice_presentation: str = "not_defined"  # not_defined | male | female
     model: Optional[str] = None  # per-persona model override (shadows chat_model when set)
     model_endpoint_id: Optional[str] = None  # saved-endpoint id for the persona model

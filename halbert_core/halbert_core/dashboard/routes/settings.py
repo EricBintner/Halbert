@@ -450,6 +450,22 @@ class ComputerNameUpdate(BaseModel):
     user_name: Optional[str] = None
 
 
+async def _mirror_name_to_being(name: str) -> None:
+    """Keep being.yml ``name`` in step with preferences.yml ``ai_name``.
+
+    ``ai_name`` is the source (the greeting and the Presence Pill resolve
+    it first); being.yml ``name`` is what the prompt builder reads. A
+    failure to mirror is logged, not raised: the source write already
+    succeeded and the resolver prefers it anyway.
+    """
+    try:
+        from ...identity import mirror_name_to_being
+        async with _being_config_lock:
+            mirror_name_to_being(name)
+    except Exception as e:
+        logger.warning(f"Could not mirror the entity name into being.yml: {e}")
+
+
 @router.post("/computer-name")
 async def update_computer_name(data: ComputerNameUpdate) -> Dict[str, Any]:
     """Update the AI name (computer name) in preferences.
@@ -477,6 +493,7 @@ async def update_computer_name(data: ComputerNameUpdate) -> Dict[str, Any]:
             yaml.dump(prefs, f, default_flow_style=False, sort_keys=False)
         
         logger.info(f"Updated computer name to: {data.ai_name}")
+        await _mirror_name_to_being(data.ai_name)
         
         return {
             'success': True,
@@ -1096,6 +1113,7 @@ async def complete_onboarding(data: OnboardingData) -> Dict[str, Any]:
             logger.info(f"Saved preferences: ai_name={data.computer_name}, user_name={data.admin_name}")
         except Exception as e:
             logger.warning(f"Failed to save preferences: {e}")
+        await _mirror_name_to_being(data.computer_name)
         
         return {
             "status": "complete",
@@ -3148,6 +3166,14 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
                     cfg.security.validate()
 
             cfg = update_being_config_locked(mutate)
+
+            # The name is mirrored: preferences.yml ai_name is the source
+            # the greeting and the Presence Pill read; being.yml name is
+            # what the prompt builder reads. Writing one without the other
+            # is how the machine ended up with two names (W1-01).
+            if update.name is not None:
+                from ...identity import write_chosen_name
+                write_chosen_name(update.name)
 
         # Hot-reload personality into the running agent
         try:
