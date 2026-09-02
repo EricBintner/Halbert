@@ -139,7 +139,15 @@ async def get_node_info(node_id: str) -> Dict[str, Any]:
     if proxy is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Peer {node_id} not found or revoked")
     # TODO(federation-9.9): return await proxy.get_satellite_info()
-    raise NotImplementedError("get_node_info — TODO(federation-9.9)")
+    # Not built yet (federation-9.9). 501 rather than letting
+    # NotImplementedError become a 500: a 500 says this node broke,
+    # and it did not — this part of the Fleet Cockpit was never
+    # written, which is a different thing to tell an operator
+    # (FED-01 / R10-F10).
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="A node's instance info is not implemented yet (Fleet Cockpit, federation-9.9).",
+    )
 
 
 @router.get("/api/fleet/{node_id}/telemetry")
@@ -151,7 +159,15 @@ async def get_node_telemetry(node_id: str) -> Dict[str, Any]:
        TelemetryAgent), or
     b) Pull from the satellite via an MCP tool call or REST endpoint.
     """
-    raise NotImplementedError("get_node_telemetry — TODO(federation-9.9)")
+    # Not built yet (federation-9.9). 501 rather than letting
+    # NotImplementedError become a 500: a 500 says this node broke,
+    # and it did not — this part of the Fleet Cockpit was never
+    # written, which is a different thing to tell an operator
+    # (FED-01 / R10-F10).
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Node telemetry is not implemented yet (Fleet Cockpit, federation-9.9).",
+    )
 
 
 @router.post("/api/fleet/{node_id}/inspect", response_model=InspectResponse)
@@ -173,7 +189,15 @@ async def inspect_node(node_id: str, req: InspectRequest) -> InspectResponse:
     # TODO(federation-9.9):
     # result = proxy.call_tool(req.tool_name, req.params)
     # return InspectResponse(node_id=node_id, tool_name=req.tool_name, result=result)
-    raise NotImplementedError("inspect_node — TODO(federation-9.9)")
+    # Not built yet (federation-9.9). 501 rather than letting
+    # NotImplementedError become a 500: a 500 says this node broke,
+    # and it did not — this part of the Fleet Cockpit was never
+    # written, which is a different thing to tell an operator
+    # (FED-01 / R10-F10).
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Node inspection is not implemented yet (Fleet Cockpit, federation-9.9).",
+    )
 
 
 @router.get("/api/fleet/{node_id}/logs")
@@ -183,7 +207,15 @@ async def stream_node_logs(node_id: str):
     TODO(federation-9.9): Connect to the satellite's log SSE endpoint
     via FleetProxy.stream_logs() and proxy the events to the client.
     """
-    raise NotImplementedError("stream_node_logs — TODO(federation-9.9)")
+    # Not built yet (federation-9.9). 501 rather than letting
+    # NotImplementedError become a 500: a 500 says this node broke,
+    # and it did not — this part of the Fleet Cockpit was never
+    # written, which is a different thing to tell an operator
+    # (FED-01 / R10-F10).
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Node log streaming is not implemented yet (Fleet Cockpit, federation-9.9).",
+    )
 
 
 @router.get("/api/fleet/{node_id}/discoveries")
@@ -196,4 +228,12 @@ async def get_node_discoveries(node_id: str) -> Dict[str, Any]:
 
     TODO(federation-9.9): Implement via FleetProxy.call_tool("get_discoveries", {}).
     """
-    raise NotImplementedError("get_node_discoveries — TODO(federation-9.9)")
+    # Not built yet (federation-9.9). 501 rather than letting
+    # NotImplementedError become a 500: a 500 says this node broke,
+    # and it did not — this part of the Fleet Cockpit was never
+    # written, which is a different thing to tell an operator
+    # (FED-01 / R10-F10).
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="A node's discoveries is not implemented yet (Fleet Cockpit, federation-9.9).",
+    )

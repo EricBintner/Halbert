@@ -129,12 +129,26 @@ def build_txt_record(
 
 
 def parse_txt_record(txt: Dict[str, Any]) -> Dict[str, Any]:
-    """Parse an mDNS TXT record into structured fields."""
+    """Parse an mDNS TXT record into structured fields.
+
+    A TXT record is whatever some other machine chose to broadcast, so
+    nothing in it is trusted to be well-formed. ``int()`` on an
+    attacker-chosen ``api_port`` used to raise straight out of the discovery
+    loop; a peer that advertises nonsense is a peer to ignore, not a reason
+    to stop discovering (R10-F11).
+    """
+    try:
+        port = int(txt.get("api_port", "8000"))
+    except (TypeError, ValueError):
+        logger.debug("Ignoring unparsable api_port in TXT record: %r",
+                     txt.get("api_port"))
+        port = 8000
+
     return {
         "node_id": txt.get("node_id", "unknown"),
         "node_name": txt.get("node_name", txt.get("node_id", "unknown")),
         "role": txt.get("role", "satellite"),
-        "port": int(txt.get("api_port", "8000")),
+        "port": port,
         "capabilities": txt.get("capabilities", "").split(",") if txt.get("capabilities") else [],
         "compute_backends": txt.get("compute_backends", "").split(",") if txt.get("compute_backends") else [],
     }

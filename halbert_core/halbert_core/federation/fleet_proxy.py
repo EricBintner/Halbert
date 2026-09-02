@@ -174,4 +174,14 @@ def get_fleet_proxy(node_id: str) -> Optional[FleetProxy]:
     4. Construct FleetProxy(satellite_endpoint, peer_token)
     5. Return the proxy
     """
-    raise NotImplementedError("get_fleet_proxy() — TODO(federation-9.4)")
+    # None, not NotImplementedError: None is this function's documented
+    # answer for "no proxy is available for that peer", and the callers all
+    # handle it. Raising turned every Fleet Cockpit route into a 500 —
+    # reporting a crash where the truth is that the outbound-token custody
+    # design above has not been made yet (FED-01 / R10-F10, and the R2-F6
+    # decision this note describes).
+    logger.debug(
+        "Fleet proxy unavailable for %s: outbound peer-token custody is not "
+        "designed yet (federation-9.4)", node_id,
+    )
+    return None
