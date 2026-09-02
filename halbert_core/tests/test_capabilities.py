@@ -436,21 +436,40 @@ class TestProbePresenceSemantics:
         assert os.path.exists("config-registry.yml")
         assert _probe_config_watcher() is False
 
-    def test_sourceprep_probe_ignores_variant(self, monkeypatch):
-        """A home-variant node with SourcePrep importable gets the
-        capability from the module, not the label."""
+    def test_sourceprep_probe_true_with_url_configured(self, monkeypatch):
+        """CAP-01: the daemon is a separate HTTP service, not an
+        importable package — the probe is a presence check on
+        SOURCEPREP_URL/a token, never importlib."""
+        from halbert_core.capabilities import _probe_sourceprep
+        monkeypatch.setenv("SOURCEPREP_URL", "http://localhost:8400")
+        assert _probe_sourceprep() is True
+
+    def test_sourceprep_probe_true_with_only_token_configured(self, monkeypatch):
+        from halbert_core.capabilities import _probe_sourceprep
+        monkeypatch.delenv("SOURCEPREP_URL", raising=False)
+        monkeypatch.setenv("PREP_DAEMON_TOKEN", "a-token")
+        assert _probe_sourceprep() is True
+
+    def test_sourceprep_probe_false_when_nothing_configured(self, monkeypatch, tmp_path):
+        from halbert_core.capabilities import _probe_sourceprep
+        monkeypatch.delenv("SOURCEPREP_URL", raising=False)
+        monkeypatch.delenv("PREP_DAEMON_TOKEN", raising=False)
+        monkeypatch.setattr(
+            "halbert_core.integrations.prep_token.config_dir", lambda: tmp_path)
+        assert _probe_sourceprep() is False
+
+    def test_sourceprep_probe_ignores_whether_the_package_is_importable(self, monkeypatch, tmp_path):
+        """The old probe used importlib.import_module("sourceprep"), which
+        was always False in a normal venv (the daemon is a separate
+        process). Presence of the module must not matter either way."""
         import sys
 
         from halbert_core.capabilities import _probe_sourceprep
         monkeypatch.setitem(sys.modules, "sourceprep", object())
-        assert _probe_sourceprep() is True
-
-    def test_sourceprep_probe_false_when_not_importable(self, monkeypatch):
-        import sys
-
-        from halbert_core.capabilities import _probe_sourceprep
-        # sys.modules[name] = None makes import_module raise ImportError.
-        monkeypatch.setitem(sys.modules, "sourceprep", None)
+        monkeypatch.delenv("SOURCEPREP_URL", raising=False)
+        monkeypatch.delenv("PREP_DAEMON_TOKEN", raising=False)
+        monkeypatch.setattr(
+            "halbert_core.integrations.prep_token.config_dir", lambda: tmp_path)
         assert _probe_sourceprep() is False
 
 
@@ -540,6 +559,42 @@ class TestVariantResolutionFollowsEnv:
         with patch("halbert_core.capabilities._PROBES", {}):
             reg.probe()
         assert reg.has(CAP_TERMINAL) is True
+
+
+class TestSourceprepHomeDefault:
+    """U6-DESIGN-01 (default pending founder ratification): a home
+    instance never re-enables sourceprep from the probe alone — the U6
+    handoff and deploy/README.md say home never uses it, but the
+    ordinary "probe beats preset" rule would silently flip it back on
+    for any home node with SOURCEPREP_URL/a token present (e.g.
+    inherited from a shared shell environment). being.yml can still opt
+    a specific home node in explicitly."""
+
+    def test_home_ignores_a_true_probe(self):
+        reg = CapabilityRegistry()
+        reg._load_config = MagicMock(return_value=("home", {}))
+        probes = {CAP_SOURCEPREP: lambda: True}
+        with patch("halbert_core.capabilities._PROBES", probes):
+            reg.probe()
+        assert reg.has(CAP_SOURCEPREP) is False
+
+    def test_sysadmin_still_gets_the_probe(self):
+        """The home-only special case must not leak onto sysadmin."""
+        reg = CapabilityRegistry()
+        reg._load_config = MagicMock(return_value=("sysadmin", {}))
+        probes = {CAP_SOURCEPREP: lambda: True}
+        with patch("halbert_core.capabilities._PROBES", probes):
+            reg.probe()
+        assert reg.has(CAP_SOURCEPREP) is True
+
+    def test_being_yml_can_still_opt_a_home_node_in(self):
+        reg = CapabilityRegistry()
+        reg._load_config = MagicMock(
+            return_value=("home", {CAP_SOURCEPREP: True}))
+        probes = {CAP_SOURCEPREP: lambda: False}
+        with patch("halbert_core.capabilities._PROBES", probes):
+            reg.probe()
+        assert reg.has(CAP_SOURCEPREP) is True
 
 
 class TestLocalLlmProbeLocalUrl:

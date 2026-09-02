@@ -16,7 +16,10 @@ present, not from a label.
 
 Capabilities:
   terminal          — can start PTY sessions (shell access)
-  sourceprep        — SourcePrep documentation index is available
+  sourceprep        — a SourcePrep daemon is configured (URL or token
+                       present) — never gated on the ``sourceprep``
+                       Python package being importable; the daemon is a
+                       separate HTTP service, not an in-process library
   config_watcher    — config-registry.yml exists, watcher can start
   ingestion         — journald/hwmon ingestion service can run
   scheduler         — autonomous scheduled jobs can run
@@ -162,21 +165,32 @@ def _probe_config_watcher() -> bool:
 
 
 def _probe_sourceprep() -> bool:
-    """Is the SourcePrep module importable (an index can be built/used)?
+    """Is a SourcePrep daemon actually configured for this body to use?
 
-    Presence only — no variant early-return (see _probe_config_watcher).
-    Importability is a deliberately coarse proxy for "index available":
-    it answers "this body can run SourcePrep", which is what the
-    sourceprep-gated adapters need before they try. Import side effects
-    are SourcePrep's own lazy-import discipline to keep cheap.
+    Presence only — no variant early-return (see _probe_config_watcher);
+    the registry applies the U6-DESIGN-01 home default separately, in
+    ``CapabilityRegistry.probe()``, so this function stays a pure
+    presence check.
+
+    CAP-01: the SourcePrepAdapter (context/adapters.py) and the
+    consumer at routes/agent.py talk to the daemon over HTTP — there is
+    no ``sourceprep`` Python package to import (the venv normally has
+    none at all), so the old ``importlib.import_module("sourceprep")``
+    probe was always False and silently disabled retrieval everywhere,
+    daemon or no daemon. True when either the daemon URL was explicitly
+    set (``SOURCEPREP_URL`` — not sourceprep_client's baked-in
+    ``localhost:8400`` fallback, which is not evidence of deliberate
+    configuration) or a client auth token exists (``PREP_DAEMON_TOKEN``
+    env, or the persisted ``~/.config/halbert/prep_token`` file) —
+    both signal an operator actually set SourcePrep up.
     """
     try:
-        import importlib
+        import os
 
-        sp = importlib.import_module("sourceprep")
-        return sp is not None
-    except ImportError:
-        return False
+        if os.environ.get("SOURCEPREP_URL", "").strip():
+            return True
+        from .integrations.prep_token import get_token
+        return bool(get_token())
     except Exception:
         return False
 
@@ -332,6 +346,21 @@ class CapabilityRegistry:
             # 1. Explicit override wins
             if cap in overrides:
                 self._capabilities[cap] = overrides[cap]
+                continue
+
+            # U6-DESIGN-01 (default pending founder ratification): a
+            # home instance never re-enables sourceprep from the probe
+            # alone. The general "probe beats preset" order below would
+            # otherwise silently turn SourcePrep back on for any home
+            # node that happens to have SOURCEPREP_URL/a token present
+            # (e.g. inherited from a shared shell environment) — the U6
+            # handoff and deploy/README.md say home never uses it. This
+            # makes the home preset act as an explicit False override
+            # for this one capability; being.yml can still opt a
+            # specific home node in via `capabilities: {sourceprep:
+            # true}` (handled by the overrides branch above).
+            if cap == CAP_SOURCEPREP and variant == "home":
+                self._capabilities[cap] = False
                 continue
 
             # 2. Active probe (if one exists)
