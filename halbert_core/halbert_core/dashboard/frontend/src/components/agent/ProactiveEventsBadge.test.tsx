@@ -22,6 +22,7 @@ vi.mock('../../hooks/useBeingEvents', async (importOriginal) => ({
     events: mockEvents,
     snooze: vi.fn().mockResolvedValue(true),
     dismiss: vi.fn().mockResolvedValue(true),
+    propose: proposeMock,
     pendingActions: new Set<string>(),
     actionError: null,
     clearActionError: vi.fn(),
@@ -63,11 +64,12 @@ const genericEvent: BeingEvent = {
 }
 
 let mockEvents: BeingEvent[] = []
+const proposeMock = vi.fn().mockResolvedValue(true)
 
 function openDropdown() {
   // The unread-count span inside the button wins the accessible-name
   // computation over the title attribute, so query by title.
-  fireEvent.click(screen.getByTitle('Proactive events'))
+  fireEvent.click(screen.getByTitle('Findings'))
 }
 
 describe('ProactiveEventsBadge acoustic branch (O5)', () => {
@@ -119,5 +121,85 @@ describe('ProactiveEventsBadge acoustic branch (O5)', () => {
     render(<ProactiveEventsBadge />)
 
     expect(screen.getByText('2')).toBeTruthy()
+  })
+})
+
+// -----------------------------------------------------------------------------
+// C2-02: the row carries its why, and the finding can be proposed from here.
+// -----------------------------------------------------------------------------
+
+const findingWithWhy: BeingEvent = {
+  id: 'evt-why',
+  type: 'finding',
+  severity: 'warning',
+  title: 'Loose key permissions',
+  body: 'id_rsa is mode 0644.',
+  finding_id: 'f-why',
+  created_at: '2026-09-02T08:00:00Z',
+  category: 'security',
+  why: {
+    now: 'sweep found id_rsa readable by group and others',
+    care: 'anyone on this machine can read your private key',
+    so: 'mode 0644 on ~/.ssh/id_rsa',
+    trust: ['~/.ssh/id_rsa:mode'],
+  },
+  affected_paths: ['~/.ssh/id_rsa'],
+}
+
+describe('ProactiveEventsBadge whys and propose (C2-02 / J3-7)', () => {
+  it('is labelled Findings, not proactive events', () => {
+    mockEvents = []
+    render(<ProactiveEventsBadge />)
+    expect(screen.getByTitle('Findings')).toBeTruthy()
+    expect(screen.queryByTitle('Proactive events')).toBeNull()
+  })
+
+  it('renders why_care as the second line when present', () => {
+    mockEvents = [findingWithWhy]
+    render(<ProactiveEventsBadge />)
+    openDropdown()
+    expect(screen.getByText('Loose key permissions')).toBeTruthy()
+    expect(screen.getByText('anyone on this machine can read your private key')).toBeTruthy()
+    // The raw description is not shown twice over the why.
+    expect(screen.queryByText('id_rsa is mode 0644.')).toBeNull()
+  })
+
+  it('falls back to the body when the event carries no why', () => {
+    mockEvents = [genericEvent]
+    render(<ProactiveEventsBadge />)
+    openDropdown()
+    expect(screen.getByText('Two services want port 22.')).toBeTruthy()
+  })
+
+  it('offers Propose fix when the finding has no proposal yet, and calls propose', () => {
+    proposeMock.mockClear()
+    mockEvents = [findingWithWhy]
+    render(<ProactiveEventsBadge />)
+    openDropdown()
+    const btn = screen.getByText('Propose fix')
+    fireEvent.click(btn)
+    expect(proposeMock).toHaveBeenCalledTimes(1)
+    expect(proposeMock.mock.calls[0][0].finding_id).toBe('f-why')
+  })
+
+  it('hides Propose fix once a proposal is linked', () => {
+    mockEvents = [{ ...findingWithWhy, proposal_id: 'p-1' }]
+    render(<ProactiveEventsBadge />)
+    openDropdown()
+    expect(screen.queryByText('Propose fix')).toBeNull()
+    expect(screen.getByText('Fix proposed')).toBeTruthy()
+  })
+
+  it('does not offer Propose fix on events that are not findings', () => {
+    mockEvents = [{
+      ...genericEvent,
+      id: 'evt-report',
+      type: 'morning_report',
+      finding_id: undefined,
+      title: 'Morning report',
+    }]
+    render(<ProactiveEventsBadge />)
+    openDropdown()
+    expect(screen.queryByText('Propose fix')).toBeNull()
   })
 })
