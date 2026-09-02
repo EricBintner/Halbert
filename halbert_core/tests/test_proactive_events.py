@@ -5,6 +5,8 @@
 import asyncio
 import threading
 
+import pytest
+
 from halbert_core.proactive.events import ProactiveEvent, ProactiveEventBus
 
 
@@ -159,3 +161,23 @@ class TestWhyOnTheWire:
         d = e.to_dict()
         assert d["why"] == why
         assert d["affected_paths"] == ["/etc/x"]
+
+
+class TestUserFacingChannel:
+    """C2-16: only attention events reach the human-facing stream."""
+
+    @pytest.mark.parametrize("etype", [
+        "finding", "visual_finding", "acoustic", "morning_report",
+        "approval_request", "system_anomaly",
+        "reflex_fired", "reflex_escalate", "reflex_command_proposed",
+    ])
+    def test_attention_types_are_user_facing(self, etype):
+        from halbert_core.proactive.events import is_user_facing
+        e = ProactiveEvent.create(type=etype, severity="info", title="t", body="b")
+        assert is_user_facing(e) is True
+
+    @pytest.mark.parametrize("etype", ["somatic_block", "subagent_event", "unknown_internal"])
+    def test_lifecycle_types_are_not(self, etype):
+        from halbert_core.proactive.events import is_user_facing
+        e = ProactiveEvent.create(type=etype, severity="info", title="t", body="b")
+        assert is_user_facing(e) is False

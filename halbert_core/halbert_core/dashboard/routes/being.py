@@ -22,12 +22,23 @@ from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ...proactive.events import get_event_bus, ProactiveEvent
+from ...proactive.events import get_event_bus, is_user_facing, ProactiveEvent
 from ...findings.store import FindingStore
 
 logger = logging.getLogger("halbert.dashboard.being")
 
 router = APIRouter()
+
+
+def _should_stream(event: ProactiveEvent) -> bool:
+    """Only attention events reach the human-facing channel (C2-16).
+
+    somatic_block / subagent_event are published straight to the bus by the
+    state machine and the subagent manager (ungated, and already on the
+    agent SSE stream); rendered here they were generic rows whose
+    snooze/dismiss 400'd.
+    """
+    return is_user_facing(event)
 
 
 @router.get("/being/events")
@@ -53,6 +64,9 @@ async def being_events(request: Request):
         # net so put_nowait never runs on a thread that doesn't own the
         # queue.
         def callback(event: ProactiveEvent) -> None:
+            if not _should_stream(event):
+                return
+
             def _offer() -> None:
                 try:
                     queue.put_nowait(event)
@@ -73,7 +87,8 @@ async def being_events(request: Request):
         try:
             # Send recent events first
             for event in bus.get_recent(limit=20):
-                yield f"data: {json.dumps(event.to_dict())}\n\n"
+                if _should_stream(event):
+                    yield f"data: {json.dumps(event.to_dict())}\n\n"
 
             # Then live events with heartbeat
             while True:
@@ -179,7 +194,11 @@ async def dismiss_event(event_id: str, req: DismissRequest = DismissRequest()):
 
 @router.get("/being/events/recent")
 async def recent_events(limit: int = Query(50, ge=1, le=200)):
-    """Get recent proactive events (non-streaming)."""
+    """Get recent user-facing proactive events (non-streaming).
+
+    ``limit`` counts rows the caller will see, so lifecycle events are
+    filtered before it applies (the ring buffer holds at most 50 anyway).
+    """
     bus = get_event_bus()
-    events = bus.get_recent(limit=limit)
-    return {"status": "ok", "events": [e.to_dict() for e in events]}
+    events = [e for e in bus.get_recent(limit=200) if _should_stream(e)]
+    return {"status": "ok", "events": [e.to_dict() for e in events[-limit:]]}

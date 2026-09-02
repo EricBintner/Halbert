@@ -75,6 +75,28 @@ class ProactiveEvent:
         )
 
 
+# The attention channel (C2-16): event types a human should see — the bell,
+# the Findings page, /api/being/events. Everything else on the bus is
+# lifecycle telemetry (somatic_block, subagent_event) that already reaches
+# the agent SSE stream and must not render as a generic row.
+USER_FACING_EVENT_TYPES = frozenset({
+    "finding",
+    "visual_finding",
+    "acoustic",
+    "morning_report",
+    "approval_request",
+    "system_anomaly",
+    "reflex_fired",
+    "reflex_escalate",
+    "reflex_command_proposed",
+})
+
+
+def is_user_facing(event: ProactiveEvent) -> bool:
+    """True when the event belongs on the human-facing channel."""
+    return event.type in USER_FACING_EVENT_TYPES
+
+
 # Type alias for subscriber callbacks
 Subscriber = Callable[[ProactiveEvent], None]
 
