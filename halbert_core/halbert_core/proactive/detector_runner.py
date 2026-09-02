@@ -127,6 +127,7 @@ class DetectorRunner:
             for finding in findings:
                 # Dedup by detector+title (single targeted query)
                 existing = self._find_existing(finding)
+                proposal_id: Optional[str] = None
                 if existing is not None:
                     if self._is_suppressed(existing):
                         continue  # Still known/active — don't re-add
@@ -138,6 +139,7 @@ class DetectorRunner:
                         snoozed_until="",
                     )
                     finding_id = existing.id
+                    proposal_id = existing.proposal_id
                     logger.info(
                         f"Finding {finding_id} re-surfaced "
                         f"(was {existing.status})"
@@ -146,18 +148,7 @@ class DetectorRunner:
                     # Store the finding
                     finding_id = self.findings.add(finding)
 
-                # Create a proactive event (``data`` carries the detector's
-                # structured payload when it built one — e.g. the acoustic
-                # module contract — else None).
-                event = ProactiveEvent.create(
-                    type="finding",
-                    severity=finding.severity,
-                    title=finding.title,
-                    body=finding.description,
-                    finding_id=finding_id,
-                    category=_EVENT_CATEGORY.get(finding.detector, "general"),
-                    data=finding.data,
-                )
+                event = self._finding_event(finding, finding_id, proposal_id)
 
                 # Check the gate
                 should_notify, reason = self.gate.should_notify(event)
@@ -205,6 +196,35 @@ class DetectorRunner:
                 logger.warning(f"Detector {name} failed: {e}")
 
         return published_events
+
+    @staticmethod
+    def _finding_event(
+        finding: Finding, finding_id: str, proposal_id: Optional[str] = None
+    ) -> ProactiveEvent:
+        """Project a Finding onto the proactive event that announces it.
+
+        The event carries the finding's four whys and affected paths
+        (C2-02) — the interrupt justifies itself — plus ``data``, the
+        detector's structured payload when it built one (e.g. the acoustic
+        module contract), else None.
+        """
+        return ProactiveEvent.create(
+            type="finding",
+            severity=finding.severity,
+            title=finding.title,
+            body=finding.description,
+            finding_id=finding_id,
+            proposal_id=proposal_id,
+            category=_EVENT_CATEGORY.get(finding.detector, "general"),
+            data=finding.data,
+            why={
+                "now": finding.why_now,
+                "care": finding.why_care,
+                "so": finding.why_so,
+                "trust": list(finding.why_trust or []),
+            },
+            affected_paths=list(finding.affected_paths or []),
+        )
 
     def _reflex_event(
         self, reflex: Any, finding: Finding, finding_id: str

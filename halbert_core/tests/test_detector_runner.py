@@ -226,3 +226,34 @@ class TestSyncWrapper:
         events = runner.run_all_sync()
         assert len(events) == 1
         assert bus.get_recent()[0].title == "SSH port conflict"
+
+
+class TestWhysOnTheEvent:
+    """C2-02: the finding event carries the four whys and affected paths."""
+
+    def test_event_carries_whys_and_paths(self, store, bus):
+        finding = make_finding()
+        finding.why_trust = ["/etc/ssh/sshd_config:5"]
+        finding.affected_paths = ["/etc/ssh/sshd_config"]
+        runner = make_runner(store, FakeGate(), [finding])
+        events = asyncio.run(runner.run_all())
+        ev = events[0]
+        assert ev.why == {
+            "now": "n", "care": "c", "so": "s",
+            "trust": ["/etc/ssh/sshd_config:5"],
+        }
+        assert ev.affected_paths == ["/etc/ssh/sshd_config"]
+        # ...and they survive the wire format the SSE route emits.
+        d = ev.to_dict()
+        assert d["why"]["care"] == "c"
+        assert d["affected_paths"] == ["/etc/ssh/sshd_config"]
+
+    def test_resurfaced_finding_keeps_its_proposal_id(self, store, bus):
+        finding = make_finding()
+        fid = store.add(finding)
+        store.link_proposal(fid, "prop-1")
+        store.update_status(fid, FindingStatus.RESOLVED.value)
+        runner = make_runner(store, FakeGate(), [make_finding()])
+        events = asyncio.run(runner.run_all())
+        assert events[0].finding_id == fid
+        assert events[0].proposal_id == "prop-1"

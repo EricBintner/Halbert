@@ -43,6 +43,13 @@ class ProactiveEvent:
     # the frontend module contract (sound_class, confidence, area_id,
     # decibel_level, anomaly_severity, source, timestamp ISO-8601).
     data: Optional[dict] = None
+    # The Four Whys of the finding this event projects (C2-02): keys
+    # now / care / so (str) and trust (list of provenance refs). None on
+    # events that are not findings. The interrupt must justify itself —
+    # this is how the why reaches the bell, the page and the conversation.
+    why: Optional[dict] = None
+    # Config paths the finding touches; what a proposal would change.
+    affected_paths: Optional[list] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
