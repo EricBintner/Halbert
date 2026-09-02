@@ -1027,6 +1027,50 @@ class LLMClientAdapter:
             logger.error(f"Guide model unreachable as well: {also_unreachable}")
             yield f"\n\n[Error: {also_unreachable}]"
 
+    async def _answer_from_peer(self, turn, messages, max_tokens, temperature,
+                                on_model_selected, requested):
+        """One buffered answer from a paired workstation's compute endpoint.
+
+        Same contract as _stream_turn — reports the model once the response
+        is good, raises _ModelUnreachable only from before that moment — but
+        yields a single chunk, because the endpoint does not stream.
+        """
+        import aiohttp
+
+        from ...model.client import api_key_for
+        from ...federation.compute_endpoint import COMPUTE_CHAT_PATH
+
+        endpoint = (turn.endpoint or "").replace("peer://", "http://", 1)
+        url = endpoint.rstrip("/") + COMPUTE_CHAT_PATH
+        token = api_key_for(turn.endpoint)
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        payload = {
+            "model": turn.model,
+            "messages": messages,
+            "stream": False,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        timeout = aiohttp.ClientTimeout(total=600)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            logger.info(f"Peer compute request to {url} model={turn.model}")
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"Peer compute error: {resp.status} - {error_text}")
+                    raise _ModelUnreachable(f"peer returned {resp.status}")
+
+                _report_model(on_model_selected, turn, requested)
+                body = await resp.json()
+
+        choices = body.get("choices") or []
+        content = ""
+        if choices:
+            content = (choices[0].get("message") or {}).get("content", "") or ""
+        if content:
+            yield content
+
     async def _stream_turn(self, turn, messages, max_tokens, temperature,
                            on_model_selected, requested):
         """Stream one model's answer, reporting it once the request is good.
@@ -1062,6 +1106,24 @@ class LLMClientAdapter:
             # planning call and then 401s on the answer the user actually sees.
             api_key = api_key_for(endpoint)
             headers = {}
+            if provider == "peer":
+                # A peer turn cannot go down the paths below: peer:// is not
+                # an HTTP scheme (aiohttp raises NonHttpUrlClientError), and
+                # the else-arm would post to Ollama's /api/chat, which the
+                # compute endpoint does not serve. So a home node linked to a
+                # workstation failed on every streamed turn (R05-F1).
+                #
+                # The compute endpoint answers whole rather than streaming:
+                # redaction is its egress boundary and a secret can straddle
+                # a chunk boundary, which is exactly why federation-9.4 defers
+                # streaming. So the answer arrives in one piece — later than a
+                # token stream, but it arrives, and it is redacted.
+                async for chunk in self._answer_from_peer(
+                    turn, messages, max_tokens, temperature,
+                    on_model_selected, requested,
+                ):
+                    yield chunk
+                return
             if provider in OPENAI_COMPATIBLE_PROVIDERS:
                 wire = "openai"
                 url = _api_url(endpoint, "/v1/chat/completions")
