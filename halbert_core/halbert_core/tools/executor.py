@@ -40,6 +40,31 @@ class ExecutionResult:
     confirmation_message: Optional[str] = None
 
 
+# The web_search tool's schema, kept apart from _register_builtins because
+# the tool comes and goes with the web switch (C3-08): registered at
+# construction only when CAP_WEB is on, and re-synced at runtime by the
+# Settings route through ``sync_web_search_tool``.
+WEB_SEARCH_SCHEMA: Dict[str, Any] = {
+    "name": "web_search",
+    "description": "Search the web for current information not in training data",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search query"
+            },
+            "num_results": {
+                "type": "integer",
+                "description": "Number of results (1-10)",
+                "default": 5
+            }
+        },
+        "required": ["query"]
+    }
+}
+
+
 class ToolExecutor:
     """
     Executes tools with safety checks, timeouts, and logging.
@@ -60,6 +85,7 @@ class ToolExecutor:
         audit_fn: Callable = None,
         role_gate=None,
         peer_tool_proxy=None,
+        web_search: Optional[bool] = None,
     ):
         """
         Initialize the tool executor.
@@ -76,11 +102,16 @@ class ToolExecutor:
                        to a paired peer when the tool doesn't exist locally.
                        When set and a tool is unknown locally, the executor
                        tries the peer before returning "Unknown tool".
+            web_search: Whether to offer the web_search tool. None (the
+                       default) consults the capability registry (CAP_WEB,
+                       off unless the operator switched it on — C3-08);
+                       True/False pins it explicitly (tests, embedders).
         """
         self.safety = safety or ToolSafetyFramework()
         self.audit_fn = audit_fn
         self.role_gate = role_gate
         self.peer_tool_proxy = peer_tool_proxy
+        self._web_search_pin = web_search
         
         # Registered tools
         self.tools: Dict[str, Callable] = {}
@@ -118,29 +149,9 @@ class ToolExecutor:
             }
         )
         
-        self.register(
-            "web_search",
-            self._web_search,
-            {
-                "name": "web_search",
-                "description": "Search the web for current information not in training data",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query"
-                        },
-                        "num_results": {
-                            "type": "integer",
-                            "description": "Number of results (1-10)",
-                            "default": 5
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        )
+        # web_search is an egress tool (query text leaves the machine): it
+        # is offered to the model only while the switch is on (C3-08).
+        self.sync_web_search_tool()
         
         self.register(
             "read_file",
@@ -290,6 +301,35 @@ class ToolExecutor:
     async def _meta_tool_inline(self, args: Dict) -> str:
         """Stub for the thread meta-tools; the state machine handles them."""
         return "handled inline"
+
+    def _web_search_wanted(self) -> bool:
+        """Should web_search be offered right now? Pin, else CAP_WEB."""
+        if self._web_search_pin is not None:
+            return bool(self._web_search_pin)
+        try:
+            from ..capabilities import CAP_WEB, has_capability
+            return bool(has_capability(CAP_WEB))
+        except Exception as e:
+            logger.debug("CAP_WEB lookup failed, web_search stays off: %s", e)
+            return False
+
+    def sync_web_search_tool(self) -> bool:
+        """Register or drop web_search to match the switch; returns its state.
+
+        Called at construction and again by the Settings route after the
+        switch is flipped, so the live executor follows it without a
+        restart. The handler refuses on its own when the capability is
+        off, so a stale registration is never a leak — only a stale
+        schema offered to the model.
+        """
+        wanted = self._web_search_wanted()
+        if wanted and "web_search" not in self.tools:
+            self.register("web_search", self._web_search, dict(WEB_SEARCH_SCHEMA))
+        elif not wanted and "web_search" in self.tools:
+            self.tools.pop("web_search", None)
+            self.schemas.pop("web_search", None)
+            logger.debug("Unregistered tool: web_search (switch off)")
+        return wanted
 
     def register(self, name: str, handler: Callable, schema: Dict):
         """
