@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useScan } from '@/contexts/ScanContext'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
@@ -24,36 +24,54 @@ import {
   ArrowLeft,
   Bug,
 } from 'lucide-react'
-import { ModelSettings, ComputePeerCard } from '@/components/llm'
-import { BeingTab } from '@/components/settings/tabs/BeingTab'
-import { DevicesTab } from '@/components/settings/tabs/DevicesTab'
-import { SecurityTab } from '@/components/settings/tabs/SecurityTab'
-import { VisionTab } from '@/components/settings/tabs/VisionTab'
-import { SystemTab, type DiscoveryStats, type SystemProfile } from '@/components/settings/tabs/SystemTab'
-import {
-  KnowledgeTab,
-  type AddSourceResult,
-  type CoreSource,
-  type CustomDoc,
-  type DocFreshness,
-  type DocSuggestion,
-  type IndexProgress,
-  type NewKnowledge,
-  type RagIndex,
-  type RagStats,
-  type SelfKnowledgeEntry,
-  type TrendingSuggestion,
-  type UserStack,
+import type { DiscoveryStats, SystemProfile } from '@/components/settings/tabs/SystemTab'
+import type {
+  AddSourceResult,
+  CoreSource,
+  CustomDoc,
+  DocFreshness,
+  DocSuggestion,
+  IndexProgress,
+  NewKnowledge,
+  RagIndex,
+  RagStats,
+  SelfKnowledgeEntry,
+  TrendingSuggestion,
+  UserStack,
 } from '@/components/settings/tabs/KnowledgeTab'
-import { SafetyTab, type AIRule, type NewRule, type ToolPolicy } from '@/components/settings/tabs/SafetyTab'
-import { AlertsTab, type AlertRule } from '@/components/settings/tabs/AlertsTab'
-import { AboutTab } from '@/components/settings/tabs/AboutTab'
-import { DebugTab } from '@/components/settings/tabs/DebugTab'
+import type { AIRule, NewRule, ToolPolicy } from '@/components/settings/tabs/SafetyTab'
+import type { AlertRule } from '@/components/settings/tabs/AlertsTab'
 import { useInstanceVariant } from '@/hooks/useInstanceVariant'
 import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
-import { AudioSettings, SpeakerProfilesCard, VoiceEnrollmentModal } from '@/components/audio'
+import { VoiceEnrollmentModal } from '@/components/audio'
 import { LegalNoticesModal } from '@/components/legal/LegalNoticesModal'
 import { apiUrl } from '@/lib/apiBase'
+
+/**
+ * U3-02/U3-04: the 12 settings tab bodies were all statically imported, so
+ * every one of them landed in Settings.tsx's own bundle chunk regardless of
+ * which single tab a visit ever renders (TabsContent only ever mounts the
+ * active one — Radix's Presence never rendered the other 11's React tree,
+ * but the JS to *define* all 12 still shipped and parsed up front). Each
+ * import() below is its own chunk, fetched the first time its tab is
+ * actually opened; the Suspense boundary around <Tabs> below covers all of
+ * them with one shared "Loading…" fallback (only one TabsContent is ever
+ * mounted at a time, so at most one of these is ever in flight).
+ */
+const ModelSettings = lazy(() => import('@/components/llm').then((m) => ({ default: m.ModelSettings })))
+const ComputePeerCard = lazy(() => import('@/components/llm').then((m) => ({ default: m.ComputePeerCard })))
+const SystemTab = lazy(() => import('@/components/settings/tabs/SystemTab').then((m) => ({ default: m.SystemTab })))
+const KnowledgeTab = lazy(() => import('@/components/settings/tabs/KnowledgeTab').then((m) => ({ default: m.KnowledgeTab })))
+const SafetyTab = lazy(() => import('@/components/settings/tabs/SafetyTab').then((m) => ({ default: m.SafetyTab })))
+const AlertsTab = lazy(() => import('@/components/settings/tabs/AlertsTab').then((m) => ({ default: m.AlertsTab })))
+const BeingTab = lazy(() => import('@/components/settings/tabs/BeingTab').then((m) => ({ default: m.BeingTab })))
+const DevicesTab = lazy(() => import('@/components/settings/tabs/DevicesTab').then((m) => ({ default: m.DevicesTab })))
+const SecurityTab = lazy(() => import('@/components/settings/tabs/SecurityTab').then((m) => ({ default: m.SecurityTab })))
+const VisionTab = lazy(() => import('@/components/settings/tabs/VisionTab').then((m) => ({ default: m.VisionTab })))
+const AudioSettings = lazy(() => import('@/components/audio').then((m) => ({ default: m.AudioSettings })))
+const SpeakerProfilesCard = lazy(() => import('@/components/audio').then((m) => ({ default: m.SpeakerProfilesCard })))
+const AboutTab = lazy(() => import('@/components/settings/tabs/AboutTab').then((m) => ({ default: m.AboutTab })))
+const DebugTab = lazy(() => import('@/components/settings/tabs/DebugTab').then((m) => ({ default: m.DebugTab })))
 
 const API_BASE = apiUrl('/api')
 
@@ -237,14 +255,52 @@ export function Settings() {
   const [newRule, setNewRule] = useState<NewRule>({ rule: '', category: 'general', priority: 'high' })
   const [addingRule, setAddingRule] = useState(false)
 
+  // U3-02: this used to fire all seven of these on mount regardless of
+  // which tab (if any) the user was about to look at — opening Settings
+  // on the About tab still fetched System's discovery stats, Alerts'
+  // rules, Safety's policy and AI rules, and all five pieces of
+  // Knowledge's state. Tracked which tabs have already loaded their own
+  // data and load a tab's data once, the first time it becomes active
+  // (including the initial tab on mount) — switching back to an
+  // already-visited tab doesn't refetch.
+  const loadedTabsRef = useRef<Set<string>>(new Set())
+
+  const loadTabData = (tab: string) => {
+    switch (tab) {
+      case 'system':
+        loadSystemInfoAndDiscoveries()
+        loadSystemProfile()
+        break
+      case 'alerts':
+        loadAlertRules()
+        break
+      case 'safety':
+        loadPolicy()
+        loadAiRules()
+        break
+      case 'knowledge':
+        loadRagStatsAndIndexes()
+        loadSelfKnowledge()
+        checkIndexingStatus()
+        loadDocSuggestions()
+        loadTrendingSuggestions()
+        break
+      default:
+        // ai/being/devices/security/vision/audio/about/debug each load
+        // their own data internally — nothing owned by Settings itself.
+        break
+    }
+  }
+
   useEffect(() => {
-    loadSettings()
-    loadSystemProfile()
-    loadAiRules()
-    loadSelfKnowledge()
-    checkIndexingStatus()
-    loadDocSuggestions()
-    loadTrendingSuggestions()
+    if (!loadedTabsRef.current.has(activeTab)) {
+      loadedTabsRef.current.add(activeTab)
+      loadTabData(activeTab)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab])
+
+  useEffect(() => {
     // R08-05: stop the indexing poll if Settings unmounts mid-index —
     // pollIndexingStatus previously had no consumer for the cleanup it
     // computed, so this interval outlived the page.
@@ -291,7 +347,7 @@ export function Settings() {
         setToast({ open: true, message: `Added ${data.title || docKey} to knowledge base`, variant: 'success' })
         // Remove from suggestions list
         setDocSuggestions(prev => prev.filter(s => s.doc_key !== docKey))
-        loadSettings() // Refresh stats
+        loadRagStatsAndIndexes() // Refresh stats
       } else {
         setToast({ open: true, message: data.error || 'Failed to add documentation', variant: 'error' })
       }
@@ -332,8 +388,14 @@ export function Settings() {
     }
   }
 
-  const loadSettings = async () => {
-    // Load system info
+  // U3-02: these four used to be one loadSettings() firing all six fetches
+  // together on every mount regardless of tab, and firing all six again on
+  // every Knowledge-tab mutation (add source, reindex, add suggestion) that
+  // only actually needed the RAG ones refreshed. Split by which tab owns
+  // the data so loadTabData can load only what the active tab needs.
+
+  /** System tab: host info + discovery cache stats. */
+  const loadSystemInfoAndDiscoveries = async () => {
     try {
       const info = await getSystemInfo()
       setSystemInfo(info)
@@ -341,7 +403,16 @@ export function Settings() {
       console.error('getSystemInfo failed', err)
     }
 
-    // Load alert rules
+    try {
+      const stats = await api.getDiscoveryStats()
+      setDiscoveryStats(stats)
+    } catch (err) {
+      console.error('Failed to load discovery stats:', err)
+    }
+  }
+
+  /** Alerts tab. */
+  const loadAlertRules = async () => {
     try {
       const res = await fetch(`${API_BASE}/alerts/rules`)
       const data = await res.json()
@@ -349,16 +420,10 @@ export function Settings() {
     } catch (err) {
       console.error('Failed to load alert rules:', err)
     }
+  }
 
-    // Load discovery stats
-    try {
-      const stats = await api.getDiscoveryStats()
-      setDiscoveryStats(stats)
-    } catch (err) {
-      console.error('Failed to load discovery stats:', err)
-    }
-    
-    // Load policy
+  /** Safety tab: tool policy (AI rules load separately, see loadAiRules). */
+  const loadPolicy = async () => {
     try {
       const res = await fetch(`${API_BASE}/settings/policy`)
       const data = await res.json()
@@ -369,9 +434,10 @@ export function Settings() {
     } catch (err) {
       console.error('Failed to load policy:', err)
     }
-    
+  }
 
-    // Load RAG stats
+  /** Knowledge tab: RAG corpus stats + configured indexes. */
+  const loadRagStatsAndIndexes = async () => {
     try {
       const res = await fetch(`${API_BASE}/rag/stats`)
       const data = await res.json()
@@ -379,8 +445,7 @@ export function Settings() {
     } catch (err) {
       console.error('Failed to load RAG stats:', err)
     }
-    
-    // Load RAG indexes
+
     try {
       const res = await fetch(`${API_BASE}/rag/indexes`)
       const data = await res.json()
@@ -389,7 +454,8 @@ export function Settings() {
       console.error('Failed to load RAG indexes:', err)
     }
   }
-  
+
+
   // System Profile functions
   const loadSystemProfile = async () => {
     try {
@@ -515,7 +581,7 @@ export function Settings() {
         setNewSourceUrl('')
         setNewSourceName('')
         // Reload RAG stats and docs
-        loadSettings()
+        loadRagStatsAndIndexes()
         if (showDocList) loadRagDocuments()
       } else if (data.already_exists) {
         setAddSourceResult({ 
@@ -577,7 +643,7 @@ export function Settings() {
       } else {
         // Legacy sync response
         setIndexResult({ total: data.total_indexed || 0, sources: data.sources_indexed || [] })
-        loadSettings()
+        loadRagStatsAndIndexes()
         if (showDocList) loadRagDocuments()
         setToast({ open: true, message: `Indexed ${data.total_indexed || 0} documents`, variant: 'success' })
         setIndexing(false)
@@ -622,7 +688,7 @@ export function Settings() {
             } else {
               setIndexResult({ total: status.total_indexed || 0, sources: status.sources_completed || [] })
               setToast({ open: true, message: `Indexed ${status.total_indexed || 0} documents`, variant: 'success' })
-              loadSettings()
+              loadRagStatsAndIndexes()
               if (showDocList) loadRagDocuments()
             }
           }
@@ -717,6 +783,10 @@ export function Settings() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <main className="flex-1 p-6 md:p-8 overflow-auto">
           <div className="max-w-6xl mx-auto w-full">
+            {/* U3-02: one Suspense boundary for every lazy tab body — Radix's
+             * TabsContent only ever mounts the active panel, so at most one
+             * of these is ever loading at a time. */}
+            <Suspense fallback={<div className="py-12 text-center text-sm text-muted-foreground">Loading…</div>}>
             <Tabs value={activeTab} onValueChange={selectTab}>
 
         {/* System Tab */}
@@ -850,6 +920,7 @@ export function Settings() {
         </TabsContent>
 
             </Tabs>
+            </Suspense>
           </div>
         </main>
       </div>
