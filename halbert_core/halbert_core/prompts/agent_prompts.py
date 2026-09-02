@@ -194,7 +194,19 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
     # which renders the receipts recall_thread pulled in. The third,
     # `_history_section`, is the pre-merge prose path and has no production
     # caller — the guard did not disappear with it, it moved.
-    _CONTINUITY_TAG_RE = re.compile(r"</?\s*continuity\s*>", re.IGNORECASE)
+    # Every tag the prompt layer treats as structure rather than as text.
+    # `continuity` was the only one here, but the modality engine added three
+    # more that steer delivery — a row that says `<speech>say this out loud`
+    # could make the machine speak an attacker's sentence on a satellite, and
+    # `<modality_context>` is the block the resolver reads. Untrusted text
+    # reaches this from command stdout, log lines, pasted files and history
+    # rows, so all four are neutralised the same way (U2-07).
+    _CONTROL_TAG_RE = re.compile(
+        r"</?\s*(?:continuity|speech|text|modality_context)\s*>", re.IGNORECASE,
+    )
+    # Kept as an alias: the old name says what it used to cover, and a caller
+    # or test may still reach for it.
+    _CONTINUITY_TAG_RE = _CONTROL_TAG_RE
 
     # How much of a row `_defang_continuity` scans before it caps the result,
     # mirroring threads.py's `_SCAN_MIN` / `_SCAN_FACTOR` (`_fence` clips to
@@ -214,7 +226,10 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
 
     @classmethod
     def _defang_continuity(cls, text: str, cap: int) -> str:
-        """Neutralise ``<continuity>``/``</continuity>`` in untrusted text.
+        """Neutralise the prompt layer's control tags in untrusted text.
+
+        ``<continuity>``, and since the modality engine landed, ``<speech>``,
+        ``<text>`` and ``<modality_context>`` — see ``_CONTROL_TAG_RE``.
 
         ``cap`` is the caller's truncation limit for this row (500 for
         user/assistant, the system ceiling for system, ``RECEIPT_ROW_MAX``
@@ -241,8 +256,8 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         shrinks and the loop terminates.
         """
         text = text[: max(cls._DEFANG_SCAN_MIN, cap * cls._DEFANG_SCAN_FACTOR)]
-        while cls._CONTINUITY_TAG_RE.search(text):
-            text = cls._CONTINUITY_TAG_RE.sub(" ", text)
+        while cls._CONTROL_TAG_RE.search(text):
+            text = cls._CONTROL_TAG_RE.sub(" ", text)
         return text
 
     # Neutralises a leading `#`/`*` run at the start of any line of a

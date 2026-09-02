@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import uuid
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -109,12 +110,21 @@ class HalbertWyomingAgent:
         self,
         config: Optional[WyomingConfig] = None,
         agent_factory=None,
+        main_loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
         self.config = config or WyomingConfig.from_env()
         self._agent_factory = agent_factory
         self._server: Optional[asyncio.AbstractServer] = None
         self._running = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # The loop the dashboard runs on. This server runs on its own loop in
+        # a daemon thread but shares the dashboard's AgentStateMachine, and
+        # that machine's turn lock is rebuilt per loop (a lock bound to a dead
+        # loop raises) — so voice and dashboard each held their OWN lock and
+        # neither excluded the other. Two turns then ran at once on a machine
+        # whose whole design is one at a time (R9-F02). Turns are submitted
+        # here instead when it is set.
+        self._main_loop = main_loop
 
     async def handle_transcript(
         self,
@@ -147,11 +157,39 @@ class HalbertWyomingAgent:
 
         # Collect response text from the agent's stream events
         # TASK-07: thread conversation_id through the full turn lifecycle.
-        response_text = await self._process_agent_turn(
-            agent, text, spatial_context, conversation_id=conversation_id,
+        response_text = await self._run_turn(
+            agent, text, spatial_context, conversation_id,
         )
 
         return response_text or "I'm not sure how to help with that."
+
+    async def _run_turn(
+        self,
+        agent,
+        text: str,
+        spatial_context: str,
+        conversation_id: str,
+    ) -> str:
+        """Run one voice turn, on the dashboard's loop when there is one.
+
+        The state machine serialises turns with a lock it builds against the
+        running loop, so a turn driven from this thread's own loop is locked
+        against nothing the dashboard does. Submitting to the main loop puts
+        both channels behind the same lock, which is what "one turn at a
+        time" was supposed to mean (R9-F02).
+
+        Without a main loop (a standalone Wyoming process, or a test) this is
+        an ordinary local await.
+        """
+        coro = self._process_agent_turn(
+            agent, text, spatial_context, conversation_id=conversation_id,
+        )
+        loop = self._main_loop
+        if loop is None or loop.is_closed() or loop is asyncio.get_running_loop():
+            return await coro
+        return await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(coro, loop)
+        )
 
     async def _process_agent_turn(
         self,
@@ -197,7 +235,14 @@ class HalbertWyomingAgent:
             # asyncio.timeout() is 3.11+; the project floor is 3.10, so the
             # turn is bounded with wait_for instead.
             async def _collect_turn() -> None:
-                async for event in agent.process(
+                # aclosing, because this loop BREAKS. process() releases the
+                # turn lock from its finally, and an abandoned async generator
+                # runs its finally only when it is closed — or, failing that,
+                # whenever the collector gets to it. So every completed voice
+                # turn held the lock until GC, and the next turn (voice or
+                # dashboard) waited on a generator nobody was iterating
+                # (R06-F6). Timing out inside wait_for is the same shape.
+                stream = agent.process(
                     query=full_query,
                     session_id=turn_session_id,
                     # TASK-07: group voice turns by HA conversation, the same
@@ -209,12 +254,14 @@ class HalbertWyomingAgent:
                     # dashboard-chat "admin" default, or the RoleGate
                     # tightening for unidentified speakers never applies.
                     speaker_role="unknown",
-                ):
-                    if isinstance(event, StreamEvent):
-                        if event.type == "response_chunk":
-                            response_chunks.append(event.data.get("content", ""))
-                        elif event.type == "response_complete":
-                            break
+                )
+                async with aclosing(stream) as events:
+                    async for event in events:
+                        if isinstance(event, StreamEvent):
+                            if event.type == "response_chunk":
+                                response_chunks.append(event.data.get("content", ""))
+                            elif event.type == "response_complete":
+                                break
 
             await asyncio.wait_for(_collect_turn(), timeout=TURN_TIMEOUT_S)
         except asyncio.TimeoutError:

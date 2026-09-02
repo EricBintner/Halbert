@@ -424,6 +424,101 @@ class TestSatelliteRepliesAreSpeakable:
         assert "/etc/samba/smb.conf" in spoken
 
 
+class TestVoiceTurnsShareTheDashboardsLock:
+    """R9-F02. The Wyoming server runs on its own loop in a daemon thread but
+    shares the dashboard's AgentStateMachine, whose turn lock is rebuilt per
+    loop (a lock bound to a dead loop raises). So voice and dashboard each
+    held their own lock and neither excluded the other: two turns at once on
+    a machine whose whole design is one at a time."""
+
+    @pytest.mark.asyncio
+    async def test_a_turn_runs_on_the_main_loop_not_the_wyoming_one(self):
+        import threading
+
+        from halbert_core.agents.events import StreamEvent
+
+        main_loop = asyncio.get_running_loop()
+        ran_on = {}
+
+        class _Agent:
+            async def process(self, *a, **k):
+                ran_on["loop"] = asyncio.get_running_loop()
+                yield StreamEvent(type="response_chunk", session_id="s",
+                                  timestamp=0, data={"content": "hi"})
+                yield StreamEvent(type="response_complete", session_id="s",
+                                  timestamp=0, data={})
+
+        wy = HalbertWyomingAgent(
+            config=WyomingConfig(host="127.0.0.1"), main_loop=main_loop,
+        )
+
+        result = {}
+
+        def wyoming_thread():
+            own = asyncio.new_event_loop()
+            asyncio.set_event_loop(own)
+            try:
+                result["text"] = own.run_until_complete(
+                    wy._run_turn(_Agent(), "hi", "", "c1"))
+                result["own_loop"] = own
+            finally:
+                own.close()
+
+        t = threading.Thread(target=wyoming_thread)
+        t.start()
+        while t.is_alive():
+            await asyncio.sleep(0.01)
+        t.join()
+
+        assert result["text"] == "hi"
+        assert ran_on["loop"] is main_loop
+        assert ran_on["loop"] is not result["own_loop"]
+
+    @pytest.mark.asyncio
+    async def test_without_a_main_loop_the_turn_runs_locally(self):
+        """A standalone Wyoming process, or a test, has no dashboard loop to
+        submit to — that must not stop a turn."""
+        from halbert_core.agents.events import StreamEvent
+
+        ran_on = {}
+
+        class _Agent:
+            async def process(self, *a, **k):
+                ran_on["loop"] = asyncio.get_running_loop()
+                yield StreamEvent(type="response_complete", session_id="s",
+                                  timestamp=0, data={})
+
+        wy = HalbertWyomingAgent(config=WyomingConfig(host="127.0.0.1"))
+        await wy._run_turn(_Agent(), "hi", "", "c1")
+        assert ran_on["loop"] is asyncio.get_running_loop()
+
+    @pytest.mark.asyncio
+    async def test_the_turn_generator_is_closed_when_the_loop_breaks(self):
+        """R06-F6. The collector breaks on response_complete. process()
+        releases the turn lock from its finally, and an abandoned async
+        generator runs its finally only when closed — so every completed
+        voice turn used to hold the lock until GC."""
+        from halbert_core.agents.events import StreamEvent
+
+        closed = {"value": False}
+
+        class _Agent:
+            async def process(self, *a, **k):
+                try:
+                    yield StreamEvent(type="response_chunk", session_id="s",
+                                      timestamp=0, data={"content": "hi"})
+                    yield StreamEvent(type="response_complete", session_id="s",
+                                      timestamp=0, data={})
+                    yield StreamEvent(type="session_ended", session_id="s",
+                                      timestamp=0, data={})
+                finally:
+                    closed["value"] = True
+
+        wy = HalbertWyomingAgent(config=WyomingConfig(host="127.0.0.1"))
+        assert await wy._run_turn(_Agent(), "hi", "", "c1") == "hi"
+        assert closed["value"], "the turn generator was left open"
+
+
 class TestProactiveSpeak:
     @pytest.mark.asyncio
     async def test_disabled_returns_false(self):

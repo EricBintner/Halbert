@@ -812,7 +812,16 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             wyoming_cfg = WyomingConfig.from_env()
             if wyoming_cfg.enabled:
                 global _wyoming_agent
-                _wyoming_agent = HalbertWyomingAgent(config=wyoming_cfg)
+                # Hand it this loop: the Wyoming server runs on its own loop
+                # in a daemon thread but shares this process's state machine,
+                # whose turn lock is per-loop — so without this, voice and
+                # dashboard turns ran concurrently on a machine designed for
+                # one at a time (R9-F02).
+                import asyncio as _asyncio
+                _wyoming_agent = HalbertWyomingAgent(
+                    config=wyoming_cfg,
+                    main_loop=_asyncio.get_running_loop(),
+                )
                 def start_wyoming_delayed():
                     import time, asyncio
                     time.sleep(7)  # after Frigate
