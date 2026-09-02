@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useScan } from '@/contexts/ScanContext'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
@@ -170,8 +170,7 @@ export function Settings() {
   })
   const [policyPath, setPolicyPath] = useState<string>('')
   const [savingPolicy, setSavingPolicy] = useState(false)
-  const [clearing, setClearing] = useState(false)
-  
+
   // Editing endpoint state
   const [showAddKnowledgeSource, setShowAddKnowledgeSource] = useState(false)
   
@@ -189,6 +188,14 @@ export function Settings() {
   const [indexing, setIndexing] = useState(false)
   const [_indexResult, setIndexResult] = useState<{total: number, sources: string[]} | null>(null)
   const [indexProgress, setIndexProgress] = useState<IndexProgress>({ percent: 0, currentSource: null, completed: 0, total: 0 })
+  // R08-05: pollIndexingStatus used to return its interval id as a cleanup
+  // closure that nothing ever called — a stray interval every time Re-index
+  // ran while a previous poll was still ticking (it never cleared the old
+  // one before starting a new one), and one left running forever if
+  // Settings unmounted mid-index. Tracking the id in a ref fixes both:
+  // clear any existing interval before starting a new one, and clear it
+  // on unmount.
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [docFreshness, setDocFreshness] = useState<DocFreshness | null>(null)
 
   // Documentation Suggestions state (self-learning)
@@ -238,8 +245,14 @@ export function Settings() {
     checkIndexingStatus()
     loadDocSuggestions()
     loadTrendingSuggestions()
+    // R08-05: stop the indexing poll if Settings unmounts mid-index —
+    // pollIndexingStatus previously had no consumer for the cleanup it
+    // computed, so this interval outlived the page.
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+    }
   }, [])
-  
+
   // Load trending suggestions from GitHub
   const loadTrendingSuggestions = async () => {
     if (!trendingEnabled) return
@@ -375,16 +388,6 @@ export function Settings() {
     } catch (err) {
       console.error('Failed to load RAG indexes:', err)
     }
-  }
-  
-  const handleClearDiscoveries = async () => {
-    if (!confirm('Clear all cached discoveries? They will be re-scanned on next scan.')) {
-      return
-    }
-    setClearing(true)
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    setClearing(false)
-    alert('Cache cleared. Run a new scan to refresh.')
   }
   
   // System Profile functions
@@ -587,12 +590,17 @@ export function Settings() {
   }
   
   const pollIndexingStatus = () => {
-    const interval = setInterval(async () => {
+    // Clear any interval already running (Re-index clicked again, or the
+    // mount-time check and a fresh Re-index both wanting to poll) instead
+    // of letting a second one stack on top of it.
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+
+    pollIntervalRef.current = setInterval(async () => {
       try {
         const res = await fetch(`${API_BASE}/settings/docs/stats`)
         const data = await res.json()
         const status = data.indexing
-        
+
         if (status) {
           // Update progress bar
           setIndexProgress({
@@ -601,13 +609,14 @@ export function Settings() {
             completed: status.sources_completed?.length || 0,
             total: status.sources_total || 0
           })
-          
+
           if (!status.is_running) {
             // Indexing completed
-            clearInterval(interval)
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+            pollIntervalRef.current = null
             setIndexing(false)
             setIndexProgress({ percent: 100, currentSource: null, completed: 0, total: 0 })
-            
+
             if (status.error) {
               setToast({ open: true, message: `Indexing failed: ${status.error}`, variant: 'error' })
             } else {
@@ -622,9 +631,6 @@ export function Settings() {
         console.error('Failed to poll indexing status:', err)
       }
     }, 2000) // Poll every 2 seconds for smoother progress
-    
-    // Store interval ID for cleanup
-    return () => clearInterval(interval)
   }
   
   // Self-Knowledge management functions
@@ -718,10 +724,8 @@ export function Settings() {
           <SystemTab
             systemInfo={systemInfo}
             discoveryStats={discoveryStats}
-            clearing={clearing}
             systemProfile={systemProfile}
             isDeepScanning={isDeepScanning}
-            onClearDiscoveries={handleClearDiscoveries}
             onDeepScan={handleDeepScan}
           />
         </TabsContent>

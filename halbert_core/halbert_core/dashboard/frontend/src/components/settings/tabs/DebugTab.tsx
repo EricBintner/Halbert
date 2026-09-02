@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { useDebug } from '@/contexts/DebugContext'
 import { cn } from '@/lib/utils'
 import { Bug } from 'lucide-react'
@@ -30,14 +30,17 @@ export function DebugTab() {
               When on, request, response, timing, and error events are captured below.
             </p>
           </div>
-          <Button
+          {/* R08-07: a Label's `for` on a plain Button leaves the button's own
+           * (state-dependent) text as its accessible name — "Debug ON"/"Debug
+           * OFF" says nothing about what the control does, only its current
+           * state. Switch is the toggle idiom used everywhere else in
+           * Settings (AudioSettings, BeingTab): a stable-purpose label
+           * ("Enable debug logging") paired with role="switch" aria-checked. */}
+          <Switch
             id="debug-toggle"
-            variant={isDebugMode ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setDebugMode(!isDebugMode)}
-          >
-            {isDebugMode ? 'Debug ON' : 'Debug OFF'}
-          </Button>
+            checked={isDebugMode}
+            onCheckedChange={setDebugMode}
+          />
         </div>
 
         <div className="border border-border rounded-md flex flex-col max-h-96">

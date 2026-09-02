@@ -3,7 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import type { SystemInfo } from '@/lib/tauri'
-import { Cpu, Database, RefreshCw, Trash2, ScanSearch, Clock } from 'lucide-react'
+import { Cpu, Database, RefreshCw, ScanSearch, Clock } from 'lucide-react'
 
 export interface DiscoveryStats {
   total: number
@@ -19,10 +19,8 @@ export interface SystemProfile {
 interface SystemTabProps {
   systemInfo: SystemInfo | null
   discoveryStats: DiscoveryStats | null
-  clearing: boolean
   systemProfile: SystemProfile | null
   isDeepScanning: boolean
-  onClearDiscoveries: () => void
   onDeepScan: () => void
 }
 
@@ -30,10 +28,8 @@ interface SystemTabProps {
 export function SystemTab({
   systemInfo,
   discoveryStats,
-  clearing,
   systemProfile,
   isDeepScanning,
-  onClearDiscoveries,
   onDeepScan,
 }: SystemTabProps) {
   return (
@@ -86,20 +82,19 @@ export function SystemTab({
           <CardDescription>Manage cached system discoveries</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">{discoveryStats?.total || 0} discoveries cached</p>
-              <p className="text-sm text-muted-foreground">
-                {Object.entries(discoveryStats?.by_type || {})
-                  .map(([type, count]) => `${count} ${type}`)
-                  .join(', ')
-                }
-              </p>
-            </div>
-            <Button variant="outline" onClick={onClearDiscoveries} disabled={clearing}>
-              {clearing ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
-              Clear Cache
-            </Button>
+          {/* R08-07: "Clear Cache" used to be a placebo — it waited a second
+           * and told the user the cache was cleared without calling any
+           * backend route (none exists yet to clear discoveries). A fake
+           * success message is worse than no button; removed until a real
+           * clear-discoveries endpoint backs it. */}
+          <div>
+            <p className="font-medium">{discoveryStats?.total || 0} discoveries cached</p>
+            <p className="text-sm text-muted-foreground">
+              {Object.entries(discoveryStats?.by_type || {})
+                .map(([type, count]) => `${count} ${type}`)
+                .join(', ')
+              }
+            </p>
           </div>
         </CardContent>
       </Card>
