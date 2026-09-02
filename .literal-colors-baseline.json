@@ -6,15 +6,14 @@
     "halbert_core/halbert_core/dashboard/frontend/src/components/Onboarding.tsx": 7,
     "halbert_core/halbert_core/dashboard/frontend/src/components/agent/ContextBar.tsx": 8,
     "halbert_core/halbert_core/dashboard/frontend/src/components/agent/ScanBlock.tsx": 6,
-    "halbert_core/halbert_core/dashboard/frontend/src/components/agent/StateBadge.tsx": 7,
     "halbert_core/halbert_core/dashboard/frontend/src/components/domain/DataVersionCard.tsx": 1,
     "halbert_core/halbert_core/dashboard/frontend/src/components/domain/SystemItemActions.tsx": 4,
     "halbert_core/halbert_core/dashboard/frontend/src/components/legal/CloudDisclosureModal.tsx": 3,
     "halbert_core/halbert_core/dashboard/frontend/src/components/modules/VitalsModule.tsx": 2,
-    "halbert_core/halbert_core/dashboard/frontend/src/components/prep-primitives/Button.tsx": 4,
     "halbert_core/halbert_core/dashboard/frontend/src/components/prep-primitives/Toggle.tsx": 1,
     "halbert_core/halbert_core/dashboard/frontend/src/components/ui/activity-indicators.tsx": 7,
     "halbert_core/halbert_core/dashboard/frontend/src/components/ui/badge.tsx": 2,
+    "halbert_core/halbert_core/dashboard/frontend/src/components/ui/button.tsx": 4,
     "halbert_core/halbert_core/dashboard/frontend/src/components/ui/confirm-dialog.tsx": 7,
     "halbert_core/halbert_core/dashboard/frontend/src/components/ui/model-reasoning.tsx": 13,
     "halbert_core/halbert_core/dashboard/frontend/src/components/ui/thinking-steps.tsx": 20,
@@ -25,11 +24,10 @@
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Backups.tsx": 4,
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Containers.tsx": 10,
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Development.tsx": 4,
-    "halbert_core/halbert_core/dashboard/frontend/src/pages/GPU.tsx": 2,
+    "halbert_core/halbert_core/dashboard/frontend/src/pages/Findings.tsx": 1,
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Network.tsx": 5,
-    "halbert_core/halbert_core/dashboard/frontend/src/pages/Security.tsx": 1,
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Services.tsx": 10,
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Sharing.tsx": 13
   },
-  "total": 236
+  "total": 227
 }

@@ -132,13 +132,13 @@ export function VisionTab() {
         </CardHeader>
         <CardContent className="space-y-2">
           <div className="flex items-center gap-2 text-sm">
-            <span className={deps.mss ? 'text-green-500' : 'text-red-500'}>
+            <span className={deps.mss ? 'text-success' : 'text-destructive'}>
               {deps.mss ? '✓' : '✗'} mss
             </span>
-            <span className={deps.cv2 ? 'text-green-500' : 'text-red-500'}>
+            <span className={deps.cv2 ? 'text-success' : 'text-destructive'}>
               {deps.cv2 ? '✓' : '✗'} opencv-python
             </span>
-            <span className={deps.numpy ? 'text-green-500' : 'text-red-500'}>
+            <span className={deps.numpy ? 'text-success' : 'text-destructive'}>
               {deps.numpy ? '✓' : '✗'} numpy
             </span>
           </div>

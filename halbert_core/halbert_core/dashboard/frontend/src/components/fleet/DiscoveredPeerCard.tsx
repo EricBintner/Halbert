@@ -89,7 +89,7 @@ export function DiscoveredPeerCard({ peer, onPaired, onClose }: DiscoveredPeerCa
 
   return (
     <div className="flex items-center gap-2 p-2 rounded border border-border hover:border-primary/30 transition-colors">
-      <Radio className="h-4 w-4 text-blue-500 dark:text-blue-400 shrink-0" />
+      <Radio className="h-4 w-4 text-info shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-xs font-medium truncate">{peer.node_name}</p>
         <p className="text-[10px] text-muted-foreground font-mono truncate">

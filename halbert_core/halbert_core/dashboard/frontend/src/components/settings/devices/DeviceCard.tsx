@@ -23,11 +23,11 @@ import type { DeviceInfo, DiscoverResult } from '@/lib/peerApi'
 
 /** Capability badge colour map (design review §15.3.2). */
 const CAPABILITY_STYLES: Record<string, string> = {
-  gpu_llm: 'text-purple-400 bg-purple-500/10 border-purple-500/30',
-  mcp: 'text-blue-400 bg-blue-500/10 border-blue-500/30',
-  terminal: 'text-amber-400 bg-amber-500/10 border-amber-500/30',
-  canonical_memory: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
-  canonical_threads: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+  gpu_llm: 'text-vermilion-strong bg-vermilion-tint border-vermilion/30',
+  mcp: 'text-info bg-info/10 border-info/30',
+  terminal: 'text-warning bg-warning/10 border-warning/30',
+  canonical_memory: 'text-success bg-success/10 border-success/30',
+  canonical_threads: 'text-success bg-success/10 border-success/30',
 }
 
 /** Human descriptions for the badge title attribute (accessibility, §8). */

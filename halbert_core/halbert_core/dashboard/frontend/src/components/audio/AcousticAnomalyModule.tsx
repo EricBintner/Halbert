@@ -36,10 +36,10 @@ export interface AcousticAnomalyModuleProps {
 
 const SEVERITY_LABELS = ['Info', 'Warning', 'Confirm', 'Critical']
 const SEVERITY_COLORS = [
-  'bg-blue-100 text-blue-700',
-  'bg-yellow-100 text-yellow-700',
-  'bg-orange-100 text-orange-700',
-  'bg-red-100 text-red-700',
+  'bg-info-muted text-info',
+  'bg-warning-muted text-warning',
+  'bg-error-muted text-error',
+  'bg-destructive/10 text-destructive',
 ]
 
 export function AcousticAnomalyModule({ data, showActions = false }: AcousticAnomalyModuleProps) {
@@ -54,7 +54,7 @@ export function AcousticAnomalyModule({ data, showActions = false }: AcousticAno
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <AlertTriangle className={`h-5 w-5 ${isCritical ? 'text-destructive' : 'text-yellow-500'}`} />
+            <AlertTriangle className={`h-5 w-5 ${isCritical ? 'text-destructive' : 'text-warning'}`} />
             <span className="font-medium">
               {isCritical ? 'Critical Acoustic Anomaly' : 'Acoustic Observation'}
             </span>
