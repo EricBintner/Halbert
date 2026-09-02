@@ -10,7 +10,7 @@ aliases over the peer store.  Pairing itself stays in routes/peers.py.
 from __future__ import annotations
 
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from halbert_core.agents.peer_tool_proxy import PeerToolUnavailable
@@ -33,6 +33,71 @@ def client(monkeypatch, tmp_path):
     app = FastAPI()
     app.include_router(router, prefix="/api")
     return TestClient(app), peers, tmp_path
+
+
+class TestTheRoutesAreMountedWhereTheFrontendLooks:
+    """ROUTE-01. The fixture above builds its own FastAPI() with
+    prefix="/api", which is exactly how this went unnoticed: every test
+    passed against a router mounted the way the app did NOT mount it. These
+    go through create_app()."""
+
+    def test_the_real_app_serves_the_devices_path(self):
+        from halbert_core.dashboard.app import create_app
+
+        client = TestClient(create_app())
+        resp = client.get("/api/devices")
+        assert resp.status_code != 404, (
+            "Settings > Devices calls /api/devices; the app serves nothing there"
+        )
+
+    def test_the_unprefixed_path_is_not_the_contract(self):
+        from halbert_core.dashboard.app import create_app
+
+        client = TestClient(create_app())
+        assert client.get("/devices").status_code == 404
+
+
+class TestOnlyThisMachineMayReconfigureIt:
+    """R10-F5. Every mutating device route shipped with no auth dependency
+    at all: any caller that could reach the dashboard could rewrite this
+    node's entity mode, rename its body, replace the peer token it trusts,
+    or revoke another peer. The dashboard binds loopback by default, but
+    HALBERT_HOST opens it — and the compute-peer feature gives operators a
+    reason to."""
+
+    def test_the_gate_refuses_a_non_loopback_client(self):
+        from fastapi import FastAPI
+        from halbert_core.federation.peer_middleware import require_local_admin
+
+        app = FastAPI()
+
+        @app.get("/probe", dependencies=[Depends(require_local_admin)])
+        async def probe():
+            return {"ok": True}
+
+        remote = TestClient(app, client=("203.0.113.7", 51234))
+        assert remote.get("/probe").status_code == 403
+
+        local = TestClient(app, client=("127.0.0.1", 51234))
+        assert local.get("/probe").status_code == 200
+
+    def test_every_mutating_device_route_carries_the_gate(self):
+        """Named individually rather than spot-checked: a route added later
+        without the dependency is the same bug again."""
+        from halbert_core.dashboard.routes.devices import router
+        from halbert_core.federation.peer_middleware import require_local_admin
+
+        mutating = [
+            r for r in router.routes
+            if set(getattr(r, "methods", set())) & {"PUT", "POST", "DELETE"}
+        ]
+        assert mutating, "no mutating device routes found"
+
+        for route in mutating:
+            gates = [d.call for d in route.dependant.dependencies]
+            assert require_local_admin in gates, (
+                f"{sorted(route.methods)} {route.path} has no local-admin gate"
+            )
 
 
 def _pair(peers, node_id="desk", **kwargs):

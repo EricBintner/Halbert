@@ -42,15 +42,21 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from ...federation.peer_middleware import get_peers_config
+from ...federation.peer_middleware import get_peers_config, require_local_admin
 from ...federation.peers_config import KNOWN_PEER_CAPABILITIES
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# These routes rewrite this node's own identity — its entity mode, its body
+# name, the peer token it trusts — and revoke other peers. They had no auth
+# dependency at all, so any caller that could reach the dashboard could do
+# all of it (R10-F5). Local-admin, not peer auth: a peer must not be able to
+# rename the body it federates with or cut the others off.
 
 #: Serializes being.yml load-modify-save cycles inside this process (the
 #: cross-process advisory lock is held by ``update_being_config`` itself;
@@ -218,7 +224,7 @@ async def list_devices() -> Dict[str, Any]:
     return {"status": "ok", **_entity_state(), "devices": devices}
 
 
-@router.put("/devices/entity-mode")
+@router.put("/devices/entity-mode", dependencies=[Depends(require_local_admin)])
 async def set_entity_mode(req: EntityModeRequest) -> Dict[str, Any]:
     """Toggle this node's entity mode (singular vs independent).
 
@@ -267,7 +273,7 @@ async def set_entity_mode(req: EntityModeRequest) -> Dict[str, Any]:
     return {"status": "ok", **_entity_state()}
 
 
-@router.put("/devices/body-name")
+@router.put("/devices/body-name", dependencies=[Depends(require_local_admin)])
 async def set_body_name(req: BodyNameRequest) -> Dict[str, Any]:
     """Label which physical body this node is — the name the entity and
     the UI use for it ("desk", "home", "kitchen")."""
@@ -298,7 +304,7 @@ def _device_or_404(node_id: str):
     return config, peer
 
 
-@router.put("/devices/{node_id}/capabilities")
+@router.put("/devices/{node_id}/capabilities", dependencies=[Depends(require_local_admin)])
 async def set_device_capabilities(
     node_id: str, req: CapabilitiesRequest
 ) -> Dict[str, Any]:
@@ -320,7 +326,7 @@ async def set_device_capabilities(
     }
 
 
-@router.post("/devices/{node_id}/discover")
+@router.post("/devices/{node_id}/discover", dependencies=[Depends(require_local_admin)])
 async def discover_device_capabilities(
     node_id: str, req: DiscoverRequest
 ) -> Dict[str, Any]:
@@ -360,7 +366,7 @@ async def discover_device_capabilities(
             "tools": len(tools), "capabilities": discovered}
 
 
-@router.put("/devices/{node_id}/wol")
+@router.put("/devices/{node_id}/wol", dependencies=[Depends(require_local_admin)])
 async def toggle_device_wol(node_id: str, req: WolToggleRequest) -> Dict[str, Any]:
     """Toggle Wake-on-LAN for a device — thin alias of
     ``PUT /api/peers/{node_id}/wol`` so the Devices page has one surface."""
@@ -384,7 +390,7 @@ class PeerTokenRequest(BaseModel):
     token: str = Field("", max_length=512)
 
 
-@router.put("/devices/peer-token")
+@router.put("/devices/peer-token", dependencies=[Depends(require_local_admin)])
 async def set_peer_token(req: PeerTokenRequest) -> Dict[str, Any]:
     """Persist (or clear) the peer token for the canonical host.
 
@@ -415,7 +421,7 @@ async def set_peer_token(req: PeerTokenRequest) -> Dict[str, Any]:
     return {"status": "ok", "peer_token_set": bool(token)}
 
 
-@router.delete("/devices/{node_id}")
+@router.delete("/devices/{node_id}", dependencies=[Depends(require_local_admin)])
 async def remove_device(node_id: str, forget: bool = False) -> Dict[str, Any]:
     """Remove a device — thin alias of ``DELETE /api/peers/{node_id}``:
     surgical token revocation, record retained for audit.

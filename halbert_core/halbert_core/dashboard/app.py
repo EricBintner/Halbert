@@ -303,7 +303,12 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(frigate.router, prefix="/api", tags=["frigate"])  # Frigate NVR panel
     app.include_router(instance.router, tags=["instance"])  # Multi-instance info
     app.include_router(peers.router, tags=["peers"])  # Phase 9.1: Peer pairing
-    app.include_router(devices.router, tags=["devices"])  # P7a: Devices page & entity mode
+    # prefix="/api": devices.py writes its paths as "/devices/..." (unlike
+    # peers.py, which spells "/api/peers/..." into each decorator), so
+    # mounting it bare put every route at /devices/* while the frontend and
+    # the G12 design both call /api/devices/* — Settings > Devices was a 404
+    # from the day it shipped (ROUTE-01 / R10-N1).
+    app.include_router(devices.router, prefix="/api", tags=["devices"])  # P7a: Devices page & entity mode
     app.include_router(fleet.router, tags=["fleet"])  # Phase 9.9: Fleet Cockpit
     app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])  # P3b: Peer conversation API
     

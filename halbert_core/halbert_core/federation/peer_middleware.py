@@ -214,3 +214,45 @@ async def optional_peer_auth(
     )
     request.state.peer = ctx
     return ctx
+
+
+# ---------------------------------------------------------------------------
+# Local administration
+# ---------------------------------------------------------------------------
+
+
+def _is_local_client(request: "Request") -> bool:
+    """Did this request come from this machine?"""
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", None) if client else None
+    if not host:
+        # No peer address at all (some ASGI transports, and TestClient's
+        # default) — treat as local. A real network request always has one.
+        return True
+    try:
+        import ipaddress
+
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host in ("localhost", "testclient")
+
+
+async def require_local_admin(request: "Request") -> None:
+    """Restrict a route to the operator sitting at this machine.
+
+    Distinct from ``require_peer_auth``, and deliberately not satisfiable by
+    a peer token: these are the controls that rewrite this node's own
+    identity — its entity mode, its body name, the token it trusts — and
+    revoke other peers. A peer that could reach them could rename the body
+    it federates with, or cut every other peer off (R10-F5).
+
+    The dashboard binds 127.0.0.1 by default, but HALBERT_HOST can open it —
+    and the compute-peer feature gives operators a reason to. This boundary
+    holds either way.
+    """
+    if _is_local_client(request):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This control is available only from the machine it configures.",
+    )
