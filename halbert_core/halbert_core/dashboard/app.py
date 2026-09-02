@@ -9,7 +9,7 @@ Provides REST API + WebSocket for Halbert dashboard.
 from __future__ import annotations
 import logging
 import json
-from typing import List
+from typing import Dict, List
 from pathlib import Path
 
 try:
@@ -168,6 +168,69 @@ def run_conversation_boot_hooks() -> dict:
     except Exception as e:
         logger.warning(f"Conversation boot hooks failed (non-fatal): {e}")
     return result
+
+
+def register_proactive_jobs(executor, *, load_config=None) -> Dict[str, str]:
+    """Register the scheduled background jobs on a started executor.
+
+    T7e.1 detector sweep every 6 hours, and the T7d.2 daily morning report
+    at being.yml ``morning_report.time`` when ``morning_report.enabled``
+    (on by default at Balanced, C2-10). Returns a per-job outcome —
+    ``"scheduled"``, ``"disabled"`` or ``"error: ..."`` — and never raises:
+    a missing or malformed being.yml must not stop the dashboard.
+
+    ``load_config`` is the being.yml loader (tests inject one). Split out of
+    the startup thread so the registration path is testable; before C4-01
+    every call here failed inside APScheduler and the failure was only ever
+    a warning in the log.
+    """
+    from ..scheduler.autonomous_tasks import create_autonomous_task
+
+    outcome: Dict[str, str] = {}
+
+    # T7e.1: scheduled detector sweep every 6 hours
+    try:
+        sweep_task = create_autonomous_task('detector_sweep')
+        executor.schedule_cron_job(
+            job_id='detector_sweep',
+            task_func=lambda: sweep_task.execute({}),
+            cron_expr={'hour': '*/6', 'minute': 12},
+            description='Detector sweep (drop-ins, fstab, permissions)',
+        )
+        logger.info("Detector sweep scheduled every 6 hours")
+        outcome['detector_sweep'] = 'scheduled'
+    except Exception as e:
+        logger.warning(f"Failed to schedule detector sweep: {e}")
+        outcome['detector_sweep'] = f'error: {e}'
+
+    # T7d.2: daily morning report per being.yml
+    try:
+        if load_config is None:
+            from ..config.being_config import load_being_config as load_config
+        being_config = load_config()
+        report_cfg = being_config.morning_report or {}
+        if not isinstance(report_cfg, dict) or not report_cfg.get('enabled'):
+            logger.info("Morning report disabled; not scheduled")
+            outcome['morning_report'] = 'disabled'
+        else:
+            hour, minute = _parse_hhmm(report_cfg.get('time', '08:00'))
+            report_task = create_autonomous_task('morning_report')
+            executor.schedule_cron_job(
+                job_id='morning_report',
+                task_func=lambda: report_task.execute({}),
+                cron_expr={'hour': hour, 'minute': minute},
+                description='Daily morning report',
+            )
+            logger.info(
+                f"Morning report scheduled daily at {hour:02d}:{minute:02d} "
+                f"{getattr(executor, 'timezone', '')}"
+            )
+            outcome['morning_report'] = 'scheduled'
+    except Exception as e:
+        logger.warning(f"Failed to schedule morning report: {e}")
+        outcome['morning_report'] = f'error: {e}'
+
+    return outcome
 
 
 def get_recent_config_changes(within_hours: int = 24) -> list:
@@ -548,50 +611,17 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                         logger.info("Scheduler not running; proactive jobs not scheduled")
                         return
 
-                    from ..scheduler.autonomous_tasks import create_autonomous_task
-
-                    # T7e.1: scheduled detector sweep every 6 hours
-                    try:
-                        sweep_task = create_autonomous_task('detector_sweep')
-                        executor.schedule_cron_job(
-                            job_id='detector_sweep',
-                            task_func=lambda: sweep_task.execute({}),
-                            cron_expr={'hour': '*/6', 'minute': 12},
-                            description='Detector sweep (drop-ins, fstab, permissions)',
-                        )
-                        logger.info("Detector sweep scheduled every 6 hours")
-                    except Exception as e:
-                        logger.warning(f"Failed to schedule detector sweep: {e}")
-
-                    # T7d.2: daily morning report per being.yml
-                    # Missing / disabled / malformed being.yml → log and skip,
-                    # never crash startup.
-                    try:
-                        from ..config.being_config import load_being_config
-                        being_config = load_being_config()
-                        report_cfg = being_config.morning_report or {}
-                        if not isinstance(report_cfg, dict) or not report_cfg.get('enabled'):
-                            logger.info("Morning report disabled or unconfigured; not scheduled")
-                            return
-                        hour, minute = _parse_hhmm(report_cfg.get('time', '08:00'))
-                        report_task = create_autonomous_task('morning_report')
-                        executor.schedule_cron_job(
-                            job_id='morning_report',
-                            task_func=lambda: report_task.execute({}),
-                            cron_expr={'hour': hour, 'minute': minute},
-                            description='Daily morning report',
-                        )
-                        logger.info(
-                            f"Morning report scheduled daily at {hour:02d}:{minute:02d} {executor.timezone}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to schedule morning report: {e}")
+                    # Detector sweep + morning report (C4-01: registration
+                    # is a plain helper so it is tested; missing / disabled /
+                    # malformed being.yml is logged, never a startup crash).
+                    register_proactive_jobs(executor)
 
                     # VisualWatcher: standalone background thread for proactive
                     # screen monitoring. NOT a cron job — cadence is adaptive
                     # (30s-5min), too fast for the cron scheduler. Gated by
                     # both vision_config.yml (system) and being.yml (persona).
                     try:
+                        from ..config.being_config import load_being_config
                         from ..vision.config import is_screen_capture_enabled
                         being_config = load_being_config()
                         if (being_config.senses.vision.enabled

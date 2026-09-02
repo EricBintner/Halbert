@@ -5,9 +5,17 @@ Autonomous scheduler execution engine for Phase 3 M3.
 
 Based on APScheduler best practices:
 - BackgroundScheduler (non-blocking)
-- SQLAlchemyJobStore (persistence)
+- MemoryJobStore (jobs are re-registered at every boot; see below)
 - ThreadPoolExecutor (parallelism)
 - Cron triggers (sophisticated patterns)
+
+Why the APScheduler store is in memory (C4-01): ``_wrap_task`` hands
+APScheduler a local closure, and a persistent store pickles the job's
+callable — so the SQLAlchemyJobStore this module started with refused every
+``add_job`` on a started scheduler ("This Job cannot be serialized"). No
+dashboard job ever registered. Every caller re-registers its jobs at boot
+anyway; durable status and history live in the SchedulerEngine's JSON
+records, not in APScheduler.
 
 Research: https://betterstack.com/community/guides/scaling-python/apscheduler-scheduled-tasks/
 """
@@ -15,6 +23,7 @@ Research: https://betterstack.com/community/guides/scaling-python/apscheduler-sc
 from __future__ import annotations
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -22,7 +31,7 @@ from dataclasses import dataclass
 
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
-    from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+    from apscheduler.jobstores.memory import MemoryJobStore
     from apscheduler.executors.pool import ThreadPoolExecutor
     from apscheduler.triggers.cron import CronTrigger
     APSCHEDULER_AVAILABLE = True
@@ -46,6 +55,33 @@ from ..autonomy import (
 logger = logging.getLogger('halbert.scheduler.executor')
 
 
+def _call_with_timeout(func: Callable[[], Any], timeout_s: Optional[float], job_id: str) -> Any:
+    """Run ``func()`` on a helper thread and wait at most ``timeout_s``.
+
+    Raises ``TimeoutError`` when the deadline passes; the task thread is a
+    daemon and is left to finish on its own (a thread cannot be killed, and
+    the previous SIGALRM approach only ever worked on the main thread, which
+    APScheduler's worker pool is not). ``timeout_s`` of ``None`` or ``<= 0``
+    waits without a deadline. Exceptions from ``func`` propagate unchanged.
+    """
+    outcome: Dict[str, Any] = {}
+
+    def runner():
+        try:
+            outcome['result'] = func()
+        except BaseException as exc:  # re-raised on the calling thread
+            outcome['error'] = exc
+
+    worker = threading.Thread(target=runner, name=f"halbert-job-{job_id}", daemon=True)
+    worker.start()
+    worker.join(timeout_s if timeout_s and timeout_s > 0 else None)
+    if worker.is_alive():
+        raise TimeoutError(f"Job {job_id} exceeded {timeout_s}s timeout")
+    if 'error' in outcome:
+        raise outcome['error']
+    return outcome.get('result')
+
+
 @dataclass
 class JobResult:
     """Result of autonomous job execution."""
@@ -67,8 +103,8 @@ class AutonomousExecutor:
     - Exponential backoff retry
     - LLM-driven decision making
     - Memory integration for outcomes
-    - Timeout enforcement
-    - Job persistence
+    - Timeout enforcement (thread-based, so it works on the worker pool)
+    - Job status/history persistence (SchedulerEngine JSON records)
     
     Example:
         executor = AutonomousExecutor()
@@ -95,7 +131,9 @@ class AutonomousExecutor:
 
         Args:
             max_workers: Maximum parallel jobs (default: 5)
-            db_path: SQLite database path for job persistence
+            db_path: Kept for call compatibility. APScheduler jobs are no
+                longer persisted (see the module docstring); the path is
+                recorded on ``self.db_path`` and nothing is written there.
             enable_llm: Enable LLM-driven decisions (default: True)
             enable_guardrails: Enable guardrail enforcement (default: True, Phase 3 M6)
             timezone: Timezone for cron triggers (default: UTC; use IANA name or "local")
@@ -134,16 +172,16 @@ class AutonomousExecutor:
             self.anomaly_detector = None
             self.recovery_executor = None
         
-        # Database path for job persistence
+        # Recorded only: the SchedulerEngine above owns persistence.
         if db_path is None:
-            data_dir = data_subdir("scheduler")
-            db_path = os.path.join(data_dir, "jobs.db")
-        
+            db_path = os.path.join(data_subdir("scheduler"), "jobs.db")
         self.db_path = db_path
         
-        # Job store (persistence)
+        # Job store: in memory. A persistent store pickles the callable and
+        # the wrapped closures cannot be pickled (C4-01); jobs are
+        # re-registered at every boot regardless.
         jobstores = {
-            'default': SQLAlchemyJobStore(url=f'sqlite:///{db_path}')
+            'default': MemoryJobStore()
         }
         
         # Executors (parallelism)
@@ -371,7 +409,6 @@ class AutonomousExecutor:
             )
         )
         def wrapped():
-            import signal
             import time
             
             start_time = time.time()
@@ -387,9 +424,18 @@ class AutonomousExecutor:
                         )
                         return None
                     
-                    # Check confidence and budgets
-                    # Confidence comes from job metadata if available, else default to medium
-                    estimated_confidence = getattr(job, 'confidence', 0.7)
+                    # Check confidence and budgets. Confidence comes from
+                    # the job record's inputs when the caller set one, else
+                    # medium. (This read an undefined name before C4-01.)
+                    job_record = self.scheduler_engine.get_job(job_id)
+                    estimated_confidence = 0.7
+                    if job_record is not None:
+                        try:
+                            estimated_confidence = float(
+                                (job_record.inputs or {}).get('confidence', 0.7)
+                            )
+                        except (TypeError, ValueError):
+                            estimated_confidence = 0.7
                     estimated_resources = {
                         'cpu_percent': 30,  # Conservative estimate
                         'memory_mb': 512,
@@ -427,19 +473,11 @@ class AutonomousExecutor:
                 )
                 budget_tracker.start()
             
-            # Set timeout
-            def timeout_handler(signum, frame):
-                raise TimeoutError(f"Job {job_id} exceeded {timeout_s}s timeout")
-            
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(timeout_s)
-            
             try:
-                # Execute task
-                result = task_func()
-                
-                # Cancel timeout
-                signal.alarm(0)
+                # Execute task under the timeout. SIGALRM is main-thread
+                # only and APScheduler runs jobs on its worker pool, so the
+                # deadline is a thread join, not a signal (C4-01).
+                result = _call_with_timeout(task_func, timeout_s, job_id)
                 
                 # Phase 3 M6: Check budgets during execution
                 if budget_tracker:
@@ -480,7 +518,6 @@ class AutonomousExecutor:
                 return result
             
             except Exception as e:
-                signal.alarm(0)
                 execution_time = time.time() - start_time
                 
                 # Phase 3 M6: Stop budget tracking on failure
