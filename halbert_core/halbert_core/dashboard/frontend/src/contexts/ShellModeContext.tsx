@@ -12,7 +12,10 @@
  *   'voice'    — the /voice route: full-bleed, all panels hidden.
  *
  * Cmd+B flips between 'engaged' and 'browsing' (the two focus states).
- * Cmd+D toggles the center panel. Cmd+J toggles the right panel.
+ * Cmd+D toggles the center panel. Cmd+J toggles the right panel. All three
+ * bail when the key lands inside an '.xterm' element: a focused PTY tile
+ * owns its keystrokes, and hiding the panel the tile lives in mid-command
+ * is the one thing the shortcut must never do.
  *
  * The base choice is per-machine (localStorage), so the app reopens where the
  * user left it. Voice is never persisted: a reload lands on the route that
@@ -169,6 +172,9 @@ export function ShellModeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      // Inside a terminal tile the keystroke belongs to xterm.
+      const target = e.target as Element | null
+      if (target && typeof target.closest === 'function' && target.closest('.xterm')) return;
       const key = e.key.toLowerCase()
       if (key === 'b') {
         e.preventDefault();

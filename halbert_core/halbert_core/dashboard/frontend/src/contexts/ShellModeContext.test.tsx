@@ -184,3 +184,73 @@ describe('ShellModeContext voice mode', () => {
     expect(screen.getByTestId('mode')).toHaveTextContent('browsing')
   })
 })
+
+/**
+ * Panel shortcuts (Cmd/Ctrl+B, +D, +J) must bail when the key lands inside a
+ * PTY tile: xterm owns every keystroke in a focused terminal, and flipping
+ * or hiding the panel the tile lives in mid-command is exactly the failure
+ * the continuous-conversation design (§11 Keyboard) rules out.
+ */
+function fireShortcut(target: EventTarget, key: string) {
+  act(() => {
+    target.dispatchEvent(
+      new KeyboardEvent('keydown', { key, metaKey: true, bubbles: true, cancelable: true }),
+    )
+  })
+}
+
+describe('ShellModeContext panel shortcuts', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  function renderWithTerminal() {
+    return render(
+      <ShellModeProvider>
+        <Probe />
+        <div className="xterm">
+          <textarea data-testid="pty" aria-label="terminal input" />
+        </div>
+        <input data-testid="plain" aria-label="plain input" />
+      </ShellModeProvider>,
+    )
+  }
+
+  it('flips the focus state on Cmd+B from an ordinary target', () => {
+    renderWithTerminal()
+    fireShortcut(screen.getByTestId('plain'), 'b')
+    expect(screen.getByTestId('mode')).toHaveTextContent('engaged')
+  })
+
+  it('bails on Cmd+B when the key lands inside an .xterm element', () => {
+    renderWithTerminal()
+    fireShortcut(screen.getByTestId('pty'), 'b')
+    expect(screen.getByTestId('mode')).toHaveTextContent('both')
+  })
+
+  it('bails on Cmd+D and Cmd+J inside an .xterm element too', () => {
+    renderWithTerminal()
+    fireShortcut(screen.getByTestId('pty'), 'd')
+    expect(screen.getByTestId('mode')).toHaveTextContent('both')
+    fireShortcut(screen.getByTestId('pty'), 'j')
+    expect(screen.getByTestId('mode')).toHaveTextContent('both')
+  })
+
+  it('leaves the keystroke to xterm (no preventDefault) inside a tile', () => {
+    renderWithTerminal()
+    const event = new KeyboardEvent('keydown', {
+      key: 'b',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    act(() => {
+      screen.getByTestId('pty').dispatchEvent(event)
+    })
+    expect(event.defaultPrevented).toBe(false)
+  })
+})
