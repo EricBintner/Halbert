@@ -504,3 +504,108 @@ def test_verifying_while_writing_does_not_report_tampering():
         t.join()
 
     assert state["alarms"] == [], f"{len(state['alarms'])} false tamper reports"
+
+
+# ---------------------------------------------------------------------------
+# Provenance -- reason/actor/digests are stated by the record, not by an extra.
+# ---------------------------------------------------------------------------
+
+
+def test_provenance_fields_round_trip():
+    write_audit(
+        tool="write_config", mode="apply", request_id="r1", ok=True,
+        reason="user asked to raise the worker count",
+        actor="user",
+        before_sha256="a" * 64,
+        after_sha256="b" * 64,
+    )
+
+    payload = audit_log().read_all()[-1].payload
+    assert payload["reason"] == "user asked to raise the worker count"
+    assert payload["actor"] == "user"
+    assert payload["before_sha256"] == "a" * 64
+    assert payload["after_sha256"] == "b" * 64
+
+
+def test_a_stray_extra_cannot_overwrite_a_stated_provenance_field():
+    """Another extra must not get to rewrite who changed something, or why."""
+    write_audit(
+        tool="write_config", mode="apply", request_id="r1", ok=True,
+        reason="the real reason", actor="agent",
+        detail="a tool result string", ts="1999-01-01T00:00:00+00:00",
+    )
+
+    payload = audit_log().read_all()[-1].payload
+    assert payload["reason"] == "the real reason"
+    assert payload["actor"] == "agent"
+    assert payload["detail"] == "a tool result string"
+    assert payload["shadowed"]["ts"] == "1999-01-01T00:00:00+00:00"
+
+
+def test_naming_reason_twice_is_an_error_not_a_silent_pick():
+    """Promotion to a named parameter turns a collision into a hard failure.
+
+    While ``reason`` rode ``**extra`` a duplicate was resolved silently. Now
+    Python refuses the call, which is the outcome we want for a field the
+    record exists to state.
+    """
+    with pytest.raises(TypeError):
+        write_audit(
+            tool="write_config", mode="apply", request_id="r1", ok=True,
+            reason="the real reason", **{"reason": "a nicer story"},
+        )
+
+
+def test_splatting_an_untrusted_dict_binds_its_reason_to_the_parameter():
+    """The residual hazard, pinned so it stays visible.
+
+    A named keyword-only parameter is bound by ``**result_dict`` just as an
+    explicit keyword is, so a stray ``reason`` key inside a tool result
+    would become the audit's provenance. Nothing in the signature can stop
+    that -- binding happens before the body runs -- so the rule is a caller
+    rule: never splat an unvetted dict into write_audit. This test exists so
+    that anyone who changes the behaviour has to change the statement of it.
+    """
+    untrusted = {"reason": "whatever the tool happened to return"}
+    write_audit(tool="probe", mode="read", request_id="r1", ok=True, **untrusted)
+
+    payload = audit_log().read_all()[-1].payload
+    assert payload["reason"] == "whatever the tool happened to return"
+    assert "shadowed" not in payload
+
+
+def test_provenance_is_absent_rather_than_null_when_not_stated():
+    """An absent field says "not stated"; a null would look like an answer."""
+    write_audit(tool="probe", mode="read", request_id="r1", ok=True)
+
+    payload = audit_log().read_all()[-1].payload
+    assert "reason" not in payload
+    assert "actor" not in payload
+    assert "before_sha256" not in payload
+
+
+def test_request_id_joins_the_audit_record_to_the_ledger_row(tmp_path):
+    """The join key across both planes -- never an event seq.
+
+    A seq is not unique under a concurrent append, so a seq-keyed join can
+    silently point at the wrong record.
+    """
+    from halbert_core.continuity.state_store import ACTOR_USER, StateStore
+
+    store = StateStore(db_path=str(tmp_path / "state.db"))
+    store.record_state(
+        "config:/etc/nginx.conf", "worker_processes", "4", "write_config",
+        reason="user asked to raise the worker count", actor=ACTOR_USER,
+        request_id="req-7",
+    )
+    write_audit(
+        tool="write_config", mode="apply", request_id="req-7", ok=True,
+        reason="user asked to raise the worker count", actor=ACTOR_USER,
+    )
+
+    payload = audit_log().read_all()[-1].payload
+    rows = store.by_request(payload["request_id"])
+    assert len(rows) == 1
+    assert rows[0].reason == payload["reason"]
+    assert rows[0].actor == payload["actor"]
+    store.close()

@@ -65,8 +65,19 @@ AUDIT_EVENT_KIND = "tool_execution"
 
 #: Payload keys the audit record owns. A caller's keyword argument may not
 #: land on any of them -- see write_audit.
+#:
+#: ``reason``, ``actor``, ``before_sha256`` and ``after_sha256`` are here
+#: rather than in ``**extra`` on purpose. Provenance is what the record
+#: exists to state, and an extra is whatever a tool result or a
+#: model-supplied string happened to contain: leaving them shadowable would
+#: let the audited event decide what the audit says about who changed
+#: something and why. They are also the fields ``StateStore`` records on the
+#: same write, so the two planes state the same thing about it.
 AUDITED_FIELDS = frozenset(
-    {"ts", "tool", "mode", "request_id", "ok", "summary", "shadowed"}
+    {
+        "ts", "tool", "mode", "request_id", "ok", "summary", "shadowed",
+        "reason", "actor", "before_sha256", "after_sha256",
+    }
 )
 
 #: Set to 1/true/yes to have the audit log resolve a signing key from the
@@ -203,6 +214,11 @@ def write_audit(
     request_id: str,
     ok: bool,
     summary: str = "",
+    *,
+    reason: Optional[str] = None,
+    actor: Optional[str] = None,
+    before_sha256: Optional[str] = None,
+    after_sha256: Optional[str] = None,
     **extra: Any,
 ) -> str:
     """Append one tool execution to the audit log; return the shard path.
@@ -210,6 +226,22 @@ def write_audit(
     Never raises.  An audit record is a side effect of a tool call, not its
     purpose, and a full disk should not turn a successful ``write_config``
     into a failed one -- the failure is logged instead.
+
+    Args:
+        reason: why this happened -- a human utterance from the causing turn,
+            a deterministic rule that names itself, or
+            ``state_store.UNRECORDED``. Never a generated rationale: a
+            plausible invented reason is unfalsifiable and everything
+            downstream then reads it as evidence.
+        actor: who caused it (``ACTOR_USER`` / ``ACTOR_AGENT`` /
+            ``ACTOR_SYSTEM``, or a specific identifier).
+        before_sha256/after_sha256: content digests for a mutation, so a
+            record states what changed without carrying the content.
+
+    These four are named parameters rather than ``**extra`` entries so they
+    cannot be shadowed by a caller's keyword, and they are omitted from the
+    payload entirely when not supplied -- an absent field says "not stated",
+    which a null or an empty string would not.
     """
     try:
         payload: Dict[str, Any] = {
@@ -220,6 +252,14 @@ def write_audit(
             "ok": ok,
             "summary": summary,
         }
+        for key, value in (
+            ("reason", reason),
+            ("actor", actor),
+            ("before_sha256", before_sha256),
+            ("after_sha256", after_sha256),
+        ):
+            if value is not None:
+                payload[key] = value
         extras = _canonical_safe(extra or {})
         # A keyword argument must never land on top of an audited field.
         # `ok`, `tool` and `ts` are what the record exists to state, and
