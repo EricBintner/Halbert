@@ -16,6 +16,12 @@ from datetime import datetime, timezone
 
 from starlette.concurrency import run_in_threadpool
 
+from ...identity import (
+    FALLBACK_NAME as _FALLBACK_NAME,
+    chosen_name as _chosen_name,
+    resolve_entity_name as _display_name,
+    short_hostname as _short_hostname,
+)
 from ...system import display_power
 
 logger = logging.getLogger(__name__)
@@ -226,48 +232,10 @@ def _cpu_percent() -> float:
 # ``ai_name`` in preferences.yml. That answer is the machine's name — the
 # hostname is a technical fact about it, not what it is called. Everything
 # user-facing leads with the chosen name; ``hostname`` stays in the payload for
-# callers that need the real thing.
-_FALLBACK_NAME = "Halbert"
-
-# Suffixes a hostname picks up from mDNS/DHCP that nobody means as part of the
-# name. Only stripped when we are falling back to the hostname at all.
-_HOSTNAME_SUFFIXES = (".local", ".lan", ".home", ".localdomain")
-
-
-def _chosen_name() -> Optional[str]:
-    """The name the user picked in onboarding, or None if they never did.
-
-    Deliberately distinguishes "picked" from "fell back": the caller needs to
-    know whether it is holding a name or a hostname. Written by
-    ``POST /api/settings/computer-name`` and the onboarding step.
-    """
-    try:
-        from ...utils.platform import get_config_dir
-        import yaml
-
-        config_path = get_config_dir() / "preferences.yml"
-        if not config_path.exists():
-            return None
-        with open(config_path, "r", encoding="utf-8") as fh:
-            prefs = yaml.safe_load(fh) or {}
-        name = prefs.get("ai_name")
-        return str(name).strip() or None if name else None
-    except Exception:
-        # Preferences are a convenience here, never a hard dependency.
-        return None
-
-
-def _short_hostname(hostname: str) -> str:
-    """A hostname without the plumbing suffix, for use as a fallback name."""
-    for suffix in _HOSTNAME_SUFFIXES:
-        if hostname.endswith(suffix):
-            return hostname[: -len(suffix)]
-    return hostname
-
-
-def _display_name(hostname: str) -> str:
-    """What this machine should be called, in that order of preference."""
-    return _chosen_name() or _short_hostname(hostname) or _FALLBACK_NAME
+# callers that need the real thing. The resolution lives in
+# ``halbert_core.identity`` (imported above as ``_display_name`` and friends)
+# so the Presence Pill, the MCP server and the mDNS announcement introduce the
+# machine by the same name as this greeting.
 
 
 def _humanize_uptime(seconds: int) -> str:
