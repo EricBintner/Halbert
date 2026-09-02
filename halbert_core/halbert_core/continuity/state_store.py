@@ -97,7 +97,8 @@ CREATE TABLE IF NOT EXISTS state_triples (
     actor         TEXT NOT NULL,
     request_id    TEXT,
     closed_reason TEXT,
-    closed_by     TEXT
+    closed_by     TEXT,
+    closed_by_request TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_state_current
     ON state_triples(subject, predicate, valid_to);
@@ -113,6 +114,22 @@ _PROVENANCE_COLUMNS = ("reason", "actor", "request_id", "closed_reason", "closed
 #: history, they simply cannot answer *why* and must never be backfilled with a
 #: guess. Left on disk, unread.
 _LEGACY_TABLE = "state_triples_pre_provenance"
+
+#: Columns added *after* the provenance set, which are migrated in place.
+#:
+#: These are deliberately NOT in :data:`_PROVENANCE_COLUMNS`. That set decides
+#: whether a database predates provenance entirely and should be set aside;
+#: adding a later column to it would make an existing, perfectly good ledger
+#: get renamed away and its rows orphaned — a worse outcome dressed as a fix.
+#:
+#: They also cannot be added by ``_SCHEMA`` alone. Every CREATE there is
+#: ``IF NOT EXISTS``, so on an existing table the statement is a no-op, the
+#: column never appears, ``_row()`` raises on the missing key, and every read
+#: method's fail-soft ``except`` turns that into a logged warning and an empty
+#: list. The ledger would read blank with nothing raising anywhere — and no
+#: tmp-directory test could catch it, because a fresh database gets the column
+#: from ``_SCHEMA`` on creation. Hence a real ``ALTER TABLE``.
+_ADDITIVE_COLUMNS = {"closed_by_request": "TEXT"}
 
 
 def default_state_db_path() -> Path:
@@ -159,6 +176,7 @@ class StateTriple:
     request_id: Optional[str] = None
     closed_reason: Optional[str] = None
     closed_by: Optional[str] = None
+    closed_by_request: Optional[str] = None
 
     @property
     def is_current(self) -> bool:
@@ -179,6 +197,7 @@ class StateTriple:
             "request_id": self.request_id,
             "closed_reason": self.closed_reason,
             "closed_by": self.closed_by,
+            "closed_by_request": self.closed_by_request,
         }
 
 
@@ -216,7 +235,7 @@ def _row(r: sqlite3.Row) -> StateTriple:
         valid_from=r["valid_from"], valid_to=r["valid_to"],
         thread_id=r["thread_id"], reason=r["reason"], actor=r["actor"],
         request_id=r["request_id"], closed_reason=r["closed_reason"],
-        closed_by=r["closed_by"],
+        closed_by=r["closed_by"], closed_by_request=r["closed_by_request"],
     )
 
 
@@ -247,6 +266,7 @@ class StateStore:
         with self._conn:
             self._set_legacy_table_aside()
             self._conn.executescript(_SCHEMA)
+            self._add_missing_columns()
 
     def _set_legacy_table_aside(self) -> None:
         """Move a pre-provenance ``state_triples`` out of the way.
@@ -274,6 +294,33 @@ class StateStore:
             )
         except Exception as e:  # pragma: no cover - defensive
             logger.warning(f"Could not set the pre-provenance table aside: {e}")
+
+    def _add_missing_columns(self) -> None:
+        """Add later columns to a table that already exists.
+
+        ``_SCHEMA``'s ``CREATE TABLE IF NOT EXISTS`` cannot do this: on an
+        existing table it is a no-op, so a column declared there alone never
+        appears on a real database. See :data:`_ADDITIVE_COLUMNS`.
+        """
+        try:
+            cols = {
+                r["name"]
+                for r in self._conn.execute("PRAGMA table_info(state_triples)").fetchall()
+            }
+        except Exception:  # pragma: no cover - defensive
+            return
+        if not cols:
+            return  # no table yet; _SCHEMA creates it complete
+        for name, decl in _ADDITIVE_COLUMNS.items():
+            if name in cols:
+                continue
+            try:
+                self._conn.execute(
+                    f"ALTER TABLE state_triples ADD COLUMN {name} {decl}"
+                )
+                logger.info("state ledger: added column %s", name)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(f"Could not add column {name}: {e}")
 
     # ------------------------------------------------------------------
     # Write
@@ -333,11 +380,17 @@ class StateStore:
                         return None            # unchanged; leave the history alone
                     # The predecessor closed *because of this write*, so its
                     # close is explained by this write's provenance.
+                    # The predecessor closed *because of this write*, so it
+                    # records this write's request id too. Without that, the
+                    # predecessor carries a copy of this reason under a
+                    # *different* request_id, and a request-keyed redaction
+                    # leaves the words standing on a row it cannot find.
                     self._conn.execute(
                         "UPDATE state_triples "
-                        "SET valid_to = ?, closed_reason = ?, closed_by = ? "
+                        "SET valid_to = ?, closed_reason = ?, closed_by = ?, "
+                        "    closed_by_request = ? "
                         "WHERE id = ?",
-                        (ts, f"superseded: {reason}", actor, cur["id"]),
+                        (ts, f"superseded: {reason}", actor, request_id, cur["id"]),
                     )
                 c = self._conn.execute(
                     "INSERT INTO state_triples "
@@ -380,6 +433,43 @@ class StateStore:
                 return c.rowcount or 0
         except Exception as e:
             logger.warning(f"Failed to invalidate {subject}/{predicate}: {e}")
+            return 0
+
+    def redact_request(self, request_id: str, *, actor: str) -> int:
+        """Replace the stated reasons written under one request with UNRECORDED.
+
+        This is the ledger's half of "forget that". It removes the *words* —
+        which is where a human utterance lives — while leaving the facts and
+        their timeline intact: what was true and when is not the thing being
+        forgotten, and deleting rows would make the history lie.
+
+        Two sets of rows carry those words, and missing the second is a real
+        leak. The rows this request *wrote* hold it in ``reason``; the rows
+        this request *closed* hold a copy in ``closed_reason``, under their
+        own different ``request_id``. ``closed_by_request`` is what makes the
+        second set findable — string-matching ``"superseded: " + reason``
+        would be a guess, and would miss anything already partly redacted.
+
+        Returns the number of rows changed. Calling it twice is safe and the
+        second call returns 0: already forgotten is not a failure.
+        """
+        actor = _require(actor, "actor")
+        try:
+            with self._lock, self._conn:
+                own = self._conn.execute(
+                    "UPDATE state_triples SET reason = ? "
+                    "WHERE request_id = ? AND reason != ?",
+                    (UNRECORDED, request_id, UNRECORDED),
+                ).rowcount or 0
+                closed = self._conn.execute(
+                    "UPDATE state_triples "
+                    "SET closed_reason = ?, closed_by = ? "
+                    "WHERE closed_by_request = ? AND closed_reason != ?",
+                    (UNRECORDED, actor, request_id, UNRECORDED),
+                ).rowcount or 0
+                return own + closed
+        except Exception as e:
+            logger.warning(f"Failed to redact request {request_id}: {e}")
             return 0
 
     # ------------------------------------------------------------------

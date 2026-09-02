@@ -372,12 +372,18 @@ async def write_file(request: FileWriteRequest) -> FileWriteResponse:
         if success:
             # A person edited a config file, possibly with pkexec or sudo
             # behind it. Until now that left no trace on either plane.
+            # Re-read rather than recording request.content. The write may
+            # have gone through open() with the locale encoding, or piped
+            # through pkexec or `sudo tee`, so the string we were handed is
+            # what was *intended* -- a digest of it is not necessarily
+            # re-derivable from what landed on disk, which makes every
+            # downstream drift check permanently wrong.
             _record_editor_change(
                 path=path,
                 reason=request.reason or UNRECORDED,
                 request_id=request_id,
                 before_text=before_text,
-                after_text=request.content,
+                after_text=_current_text(path),
                 summary=f"editor save of {path}",
             )
             return FileWriteResponse(

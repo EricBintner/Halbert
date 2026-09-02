@@ -361,3 +361,148 @@ class TestFailSoft:
         store.close()
         with pytest.raises(TypeError):
             store.record_state("system", "cpu_load", "1%", "t")
+
+
+class TestAdditiveMigration:
+    """A column added to _SCHEMA alone never appears on an existing database.
+
+    Every CREATE in _SCHEMA is IF NOT EXISTS, so on a real ledger the
+    statement is a no-op, _row() then raises on the missing key, and each
+    read method's fail-soft except turns that into an empty list. The ledger
+    would read blank with nothing raising anywhere. These tests build a
+    database from the PREVIOUS schema on purpose -- a tmp-dir database
+    created by the current code gets the column for free and proves nothing.
+    """
+
+    #: The schema as it shipped before closed_by_request.
+    _PREVIOUS = (
+        "CREATE TABLE state_triples ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, subject TEXT NOT NULL,"
+        " predicate TEXT NOT NULL, object TEXT NOT NULL, source TEXT NOT NULL,"
+        " confidence REAL NOT NULL DEFAULT 1.0, valid_from REAL NOT NULL,"
+        " valid_to REAL, thread_id TEXT, reason TEXT NOT NULL,"
+        " actor TEXT NOT NULL, request_id TEXT, closed_reason TEXT,"
+        " closed_by TEXT)"
+    )
+
+    def _previous_schema_db(self, path):
+        conn = sqlite3.connect(str(path))
+        conn.execute(self._PREVIOUS)
+        conn.execute(
+            "INSERT INTO state_triples"
+            " (subject, predicate, object, source, confidence, valid_from,"
+            "  reason, actor)"
+            " VALUES ('system', 'cpu_load', '42%', 'tracker', 1.0, 1.0,"
+            "         'a real reason', 'user')"
+        )
+        conn.commit()
+        conn.close()
+
+    def test_an_existing_ledger_still_reads_after_the_upgrade(self, tmp_path):
+        """The failure this guards is silent: blank reads, no exception."""
+        db = tmp_path / "live.db"
+        self._previous_schema_db(db)
+
+        s = StateStore(db_path=str(db))
+        rows = s.current_state()
+        assert len(rows) == 1, "the ledger read blank after adding a column"
+        assert rows[0].object == "42%"
+        assert rows[0].reason == "a real reason"
+        assert rows[0].closed_by_request is None
+        s.close()
+
+    def test_the_column_is_actually_added(self, tmp_path):
+        db = tmp_path / "live.db"
+        self._previous_schema_db(db)
+        StateStore(db_path=str(db)).close()
+
+        conn = sqlite3.connect(str(db))
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(state_triples)")}
+        assert "closed_by_request" in cols
+        conn.close()
+
+    def test_the_existing_table_is_not_set_aside(self, tmp_path):
+        """A later column must not trip the pre-provenance guard.
+
+        Putting it in _PROVENANCE_COLUMNS would rename the live table away
+        and orphan every row -- a worse outcome dressed as the fix.
+        """
+        db = tmp_path / "live.db"
+        self._previous_schema_db(db)
+        s = StateStore(db_path=str(db))
+        names = {r[0] for r in s._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "state_triples_pre_provenance" not in names
+        s.close()
+
+    def test_reopening_is_idempotent(self, tmp_path):
+        db = tmp_path / "live.db"
+        self._previous_schema_db(db)
+        StateStore(db_path=str(db)).close()
+        s = StateStore(db_path=str(db))
+        assert len(s.current_state()) == 1
+        s.close()
+
+
+class TestRedactRequest:
+    """The ledger's half of "forget that": remove the words, keep the facts."""
+
+    def test_it_clears_the_reason_on_rows_the_request_wrote(self, store):
+        _rec(store, "file:/etc/a.conf", "content_sha256", "aaa",
+             reason="a private explanation", actor=ACTOR_USER, request_id="req-1")
+        assert store.redact_request("req-1", actor=ACTOR_USER) == 1
+        assert store.current_state()[0].reason == UNRECORDED
+
+    def test_it_also_clears_the_copy_on_the_row_it_closed(self, store):
+        """The leak: a predecessor holds the reason under a DIFFERENT request_id.
+
+        by_request() would never return that row, so a request-keyed
+        redaction that only looked there would leave the words standing.
+        """
+        _rec(store, "file:/etc/a.conf", "content_sha256", "aaa",
+             reason="first", actor=ACTOR_USER, request_id="req-1")
+        _rec(store, "file:/etc/a.conf", "content_sha256", "bbb",
+             reason="a private explanation", actor=ACTOR_USER, request_id="req-2")
+
+        old = store.state_history("file:/etc/a.conf", "content_sha256")[0]
+        assert old.closed_reason == "superseded: a private explanation"
+        assert old.request_id == "req-1" and old.closed_by_request == "req-2"
+
+        store.redact_request("req-2", actor=ACTOR_USER)
+        old = store.state_history("file:/etc/a.conf", "content_sha256")[0]
+        assert "private" not in (old.closed_reason or "")
+        assert old.closed_reason == UNRECORDED
+
+    def test_the_facts_and_their_timeline_survive(self, store):
+        """What was true and when is not the thing being forgotten."""
+        _rec(store, "file:/etc/a.conf", "content_sha256", "aaa",
+             reason="first", actor=ACTOR_USER, request_id="req-1")
+        _rec(store, "file:/etc/a.conf", "content_sha256", "bbb",
+             reason="second", actor=ACTOR_USER, request_id="req-2")
+        store.redact_request("req-2", actor=ACTOR_USER)
+
+        hist = store.state_history("file:/etc/a.conf", "content_sha256")
+        assert [h.object for h in hist] == ["aaa", "bbb"]
+        assert hist[0].valid_to is not None and hist[1].valid_to is None
+
+    def test_a_second_call_is_a_no_op_not_a_failure(self, store):
+        _rec(store, "system", "cpu_load", "42%", reason="why", request_id="req-1")
+        assert store.redact_request("req-1", actor=ACTOR_USER) == 1
+        assert store.redact_request("req-1", actor=ACTOR_USER) == 0
+
+    def test_an_unknown_request_is_zero(self, store):
+        assert store.redact_request("nope", actor=ACTOR_USER) == 0
+
+    def test_other_requests_are_untouched(self, store):
+        _rec(store, "file:/etc/a.conf", "content_sha256", "aaa",
+             reason="keep me", actor=ACTOR_USER, request_id="req-1")
+        _rec(store, "file:/etc/b.conf", "content_sha256", "bbb",
+             reason="forget me", actor=ACTOR_USER, request_id="req-2")
+        store.redact_request("req-2", actor=ACTOR_USER)
+
+        kept = store.current_state(subject="file:/etc/a.conf")[0]
+        assert kept.reason == "keep me"
+
+    def test_it_requires_an_actor(self, store):
+        with pytest.raises(TypeError):
+            store.redact_request("req-1")

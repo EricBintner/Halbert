@@ -106,6 +106,7 @@ class ConfigWatcher:
                         "kind", "error" if row.get("error") else "unknown"
                     )
                     self._changes.append({"ts": ts, "path": path, "kind": kind})
+                    self._record_on_ledger(path, kind)
             if self._baseline_taken:
                 for removed in set(self._last_state) - set(seen):
                     self._changes.append(
@@ -113,6 +114,48 @@ class ConfigWatcher:
                     )
             self._last_state = seen
             self._baseline_taken = True
+
+    @staticmethod
+    def _record_on_ledger(path: str, kind: str) -> None:
+        """Put a watcher-observed change on the audit log and the ledger.
+
+        The digest is computed from the file here rather than reused from the
+        snapshot row. ``config/parser.py`` hashes plain files the same way we
+        do, but its plist branch re-serialises to XML and hashes *that*, so a
+        snapshot hash for any ``.plist`` would differ from ours permanently
+        and every tick would supersede the real row -- replacing a human's
+        stated reason with the watcher's.
+
+        The reason is a deterministic rule naming itself, which MEM-06
+        permits; the actor is the system, because nobody asked for this --
+        the file changed underneath us.
+        """
+        import uuid
+
+        from ..continuity.provenance import record_file_change
+        from ..continuity.state_store import ACTOR_SYSTEM
+
+        try:
+            text = None
+            if kind != "deleted":
+                try:
+                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                        text = fh.read()
+                except OSError:
+                    return  # unreadable (root-owned, gone again): nothing to state
+            if text is None:
+                return
+            record_file_change(
+                path=path,
+                reason=f"watcher: config changed on disk ({kind})",
+                actor=ACTOR_SYSTEM,
+                request_id=f"watch-{uuid.uuid4().hex[:12]}",
+                tool="config_watcher",
+                after_text=text,
+                summary=f"watcher observed {kind} on {path}",
+            )
+        except Exception as exc:
+            logger.warning("could not record watched change for %s: %s", path, exc)
 
     def get_recent_changes(self, within_hours: float = 24) -> List[Dict[str, Any]]:
         """Return change log entries recorded within the last N hours.

@@ -31,10 +31,26 @@ from typing import Any, Optional
 
 logger = logging.getLogger("halbert.continuity.provenance")
 
-__all__ = ["content_digest", "record_file_change", "FILE_CONTENT_PREDICATE"]
+__all__ = [
+    "content_digest",
+    "record_file_change",
+    "record_file_mode_change",
+    "FILE_CONTENT_PREDICATE",
+    "FILE_MODE_PREDICATE",
+]
 
 #: Predicate under which a file's current content digest is held.
 FILE_CONTENT_PREDICATE = "content_sha256"
+
+#: Predicate for a file's permission bits, as an octal string ("0644").
+#:
+#: A separate predicate, not a second use of the content one. A chmod does
+#: not change content, so routing it through :func:`record_file_change` would
+#: find the content digest unchanged, take ``record_state``'s no-op branch,
+#: and discard the ledger row *and its reason* while the audit half still
+#: landed. A test asserting "a record exists" would pass with half the
+#: contract missing.
+FILE_MODE_PREDICATE = "mode_octal"
 
 
 def content_digest(text: Optional[str]) -> Optional[str]:
@@ -128,6 +144,84 @@ def record_file_change(
         )
     except Exception as e:
         logger.warning(f"state ledger row for {path} could not be written: {e}")
+    finally:
+        if owned is not None:
+            owned.close()
+
+
+def record_file_mode_change(
+    *,
+    path: str,
+    mode_octal: str,
+    reason: str,
+    actor: str,
+    request_id: str,
+    tool: str,
+    before_mode: Optional[str] = None,
+    ok: bool = True,
+    summary: str = "",
+    thread_id: Optional[str] = None,
+    store: Any = None,
+    strict: bool = False,
+) -> None:
+    """Record a permission change on both planes.
+
+    The mode's own predicate (:data:`FILE_MODE_PREDICATE`) rather than the
+    content digest, for the reason given on that constant.
+
+    Args:
+        strict: let a failure of the **audit** half propagate instead of
+            being logged. Default False, because recording must not break
+            the change it describes. An approved chmod passes True: a
+            privileged change that cannot be accounted for must not stand,
+            and its caller rolls the mode back (R06-F4). The ledger half
+            stays fail-soft either way -- it is not part of that contract,
+            and losing it must not undo a mode the caller was told held.
+
+    Raises:
+        ValueError: if ``reason`` or ``actor`` is empty.
+        Exception: from the audit write, when ``strict`` is set.
+    """
+    from .state_store import StateStore, default_state_db_path, _require
+
+    reason = _require(reason, "reason")
+    actor = _require(actor, "actor")
+
+    try:
+        from ..obs.audit import write_audit
+
+        write_audit(
+            tool=tool,
+            mode="apply",
+            request_id=request_id,
+            ok=ok,
+            summary=summary or f"chmod {mode_octal} {path}",
+            reason=reason,
+            actor=actor,
+            path=path,
+            mode_octal=mode_octal,
+            before_mode=before_mode,
+        )
+    except Exception as e:
+        if strict:
+            raise
+        logger.warning(f"audit record for chmod {path} could not be written: {e}")
+
+    if not ok:
+        return
+    owned = None
+    try:
+        target = store
+        if target is None:
+            owned = StateStore(db_path=str(default_state_db_path()))
+            target = owned
+        target.record_state(
+            f"file:{path}", FILE_MODE_PREDICATE, mode_octal, tool,
+            reason=reason, actor=actor, request_id=request_id,
+            thread_id=thread_id,
+        )
+    except Exception as e:
+        logger.warning(f"state ledger row for chmod {path} could not be written: {e}")
     finally:
         if owned is not None:
             owned.close()
