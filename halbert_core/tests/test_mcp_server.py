@@ -699,3 +699,52 @@ class TestPathAllowlist:
         result = self._call(server, "get_config_structure",
                             {"path": traversal})
         assert "not in snapshot manifest" in result.get("error", "")
+
+
+class TestStdioLineSizeLimit:
+    """R2-P4: run_stdio's reads are bounded.
+
+    The old code did ``for line in sys.stdin:`` — an unbounded readline.
+    A malfunctioning or adversarial peer holding stdin open and sending
+    one line that never ends grows the input buffer without limit
+    (analogous to the HTTP transport's _MAX_REQUEST_SIZE gap it already
+    closes for Content-Length). A bounded, finite line here stands in for
+    that unbounded case — it proves the cap trips and the stream resyncs,
+    without needing a genuinely infinite test fixture.
+    """
+
+    def test_oversized_unterminated_line_is_rejected(self, server, monkeypatch, capsys):
+        import io
+
+        huge = "x" * (MCPServer._MAX_STDIO_LINE_BYTES + 1000)  # no trailing newline
+        monkeypatch.setattr(sys, "stdin", io.StringIO(huge))
+        server.run_stdio()
+        lines = [l for l in capsys.readouterr().out.strip().split("\n") if l]
+        assert len(lines) == 1
+        resp = json.loads(lines[0])
+        assert resp["error"]["code"] == -32600
+        assert "large" in resp["error"]["message"].lower()
+
+    def test_oversized_line_then_valid_request_resyncs(self, server, monkeypatch, capsys):
+        import io
+
+        huge = "x" * (MCPServer._MAX_STDIO_LINE_BYTES + 1000) + "\n"
+        valid = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}) + "\n"
+        monkeypatch.setattr(sys, "stdin", io.StringIO(huge + valid))
+        server.run_stdio()
+        lines = [l for l in capsys.readouterr().out.strip().split("\n") if l]
+        assert len(lines) == 2
+        assert json.loads(lines[0])["error"]["code"] == -32600
+        second = json.loads(lines[1])
+        assert second["id"] == 1
+        assert "result" in second
+
+    def test_normal_line_under_cap_unaffected(self, server, monkeypatch, capsys):
+        import io
+
+        req = json.dumps({"jsonrpc": "2.0", "id": 5, "method": "ping"}) + "\n"
+        monkeypatch.setattr(sys, "stdin", io.StringIO(req))
+        server.run_stdio()
+        resp = json.loads(capsys.readouterr().out.strip())
+        assert resp["id"] == 5
+        assert "result" in resp

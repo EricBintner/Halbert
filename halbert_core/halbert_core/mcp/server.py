@@ -1149,9 +1149,40 @@ class MCPServer:
     def _error(self, req_id: Any, code: int, message: str) -> Dict[str, Any]:
         return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
 
+    # R2-P4: `for line in sys.stdin` is an unbounded readline — a
+    # malfunctioning or adversarial peer holding stdin open and never
+    # sending a newline grows the input buffer without limit. The HTTP
+    # transport already caps request size (_MAX_REQUEST_SIZE); this is
+    # the analogous cap for stdio.
+    _MAX_STDIO_LINE_BYTES = 1024 * 1024  # 1MB, matching the HTTP transport
+
     def run_stdio(self) -> None:
-        """Run the server over stdin/stdout, reading JSON-RPC messages line by line."""
-        for line in sys.stdin:
+        """Run the server over stdin/stdout, reading JSON-RPC messages line by line.
+
+        Bounded reads: ``readline(size)`` caps how much a single call can
+        buffer. A line that hits the cap without a trailing newline is
+        rejected outright (-32600) instead of parsed as a truncated
+        fragment; the rest of it is drained (still bounded, one chunk at
+        a time) so the stream resyncs at the next newline instead of
+        treating its tail as the start of the next request.
+        """
+        max_line = self._MAX_STDIO_LINE_BYTES
+        while True:
+            line = sys.stdin.readline(max_line)
+            if line == "":
+                break  # EOF
+            if len(line) >= max_line and not line.endswith("\n"):
+                response = self._error(None, -32600, "Request too large")
+                sys.stdout.write(json.dumps(response) + "\n")
+                sys.stdout.flush()
+                # Best-effort resync: drain the remainder of this
+                # oversized line before reading the next request.
+                while not line.endswith("\n"):
+                    line = sys.stdin.readline(max_line)
+                    if line == "":
+                        return  # EOF while draining
+                continue
+
             line = line.strip()
             if not line:
                 continue
