@@ -3,13 +3,13 @@
 **Packet:** `DISPATCH-2026-09-01-SONNET-05-ci-tests-docs.md`
 **Branch:** `chore/ci-tests-docs`, fresh worktree at `/Volumes/4TB-BAD/Halbert-worktrees/chore-ci-tests-docs`, off `main` @ `25ba6ab5` (the state right after SONNET-04's merge, per the dispatching session's instructions).
 **Date:** 2026-09-02
-**Status:** DONE. All five commits are local to this branch. **Nothing pushed to origin** — confirmed via `git status --short` (clean) and by never running `git push` at any point this session. `gh` is still not installed on this machine, so the "confirm remote CI status" sub-item of Task 1 was skipped per the dispatching session's explicit deviation note.
+**Status:** DONE. All six commits are local to this branch (a final verification-only commit, `66ac2bde`, followed the original five after re-checking U6 S3/S4 against code and finding a stale `SE-15` claim in this doc's own review-remediation section, corrected before finalizing — see §7). **Nothing pushed to origin** — confirmed via `git status --short` (clean), `git branch -vv` (no upstream tracking ref), and by never running `git push` at any point this session. `gh` is still not installed on this machine, so the "confirm remote CI status" sub-item of Task 1 was skipped per the dispatching session's explicit deviation note. One pre-existing, out-of-scope test failure remains on this branch (already fixed on `main` after the fork point) — see §1.
 
 Note on scope: while this packet ran, a separate concurrent session kept committing an unrelated "alignment review" workstream directly to `main` (`ROADMAP.md`, `DECISIONS.md`, `documentation/design/CORE-CONCEPTS-AND-ALIGNMENT-2026-09-02.md`, and more — `origin/main` had reached `5c49c8c1`, 41 commits past this branch's fork point, by the time this packet finished). None of that was touched, reverted, or incorporated here, per instruction — this branch's merge-base with `main` stays exactly `25ba6ab5`.
 
 ---
 
-## 1. Commits (5, in order)
+## 1. Commits (6, in order)
 
 | SHA | Subject |
 |---|---|
@@ -18,10 +18,13 @@ Note on scope: while this packet ran, a separate concurrent session kept committ
 | `f63e61ec` | feat(rag): wire assigned_to_role for skill routing, land the CUDA doc in the real corpus |
 | `53d6c09d` | docs: resync FEATURES.md and 21 handoffs against what actually shipped |
 | `5db950d0` | docs(handoff): resync MASTER-TODO.md against RESULTS-* docs, not the stale audit |
+| `66ac2bde` | docs(handoff): verify U6 S3/S4 done against code, not just ROADMAP pointer |
 
 Test counts, before this packet's changes (verified fresh at branch creation, matching the dispatching session's own just-verified baseline exactly): **18 failed / 4,711 passed / 40 skipped** (`test_corpus_license_gate.py` 2, `test_cv_extensions.py` 11, `test_llm_config_parse_cache.py` 2, `test_multi_instance.py` 1, `test_vision_tools.py` 2).
 
-Test counts, after (full suite, run repeatedly through the session, most recently after the final commit): **0 failed / 4,765 passed / 14 skipped.** The 26 skip-count drop and 54-pass increase over the raw 18-failure fix are the vision extra unskipping unrelated cv2-dependent tests elsewhere in the suite, plus 10 new tests this packet added (`test_nvidia_cuda_knowledge.py` ×6, 4 new in `test_sourceprep_setup.py`).
+Test counts, after, `halbert_core/tests` only (run repeatedly through the session): **0 failed / 4,755 passed / 14 skipped.** The 26 skip-count drop is the `vision` extra unskipping unrelated cv2-dependent tests elsewhere in the suite.
+
+Test counts, after, the full CI-representative surface (`halbert_core/tests` + root `tests/` together, matching what `ci.yml`'s two pytest steps actually cover, run once at the very end after all 6 commits): **1 failed / 4,900 passed / 14 skipped.** The 1 failure — `tests/test_legal_metadata.py::test_all_first_party_sources_have_spdx_headers` (flagging `build_aec_arm64.sh` + `test_terminal_e2e.py`) — is **pre-existing and out of this packet's scope**: verified it is unrelated to anything this packet touched, and confirmed it is **already fixed on `main`** at `382eadbe4` ("chore(legal): add SPDX headers to two untagged first-party files (DEV-02)", 2026-09-02, a different concurrent session) — that commit landed on `main` after this branch forked at `25ba6ab5`, so it isn't present here. Not fixed in this branch (out of scope, and fixing it here would just be redone by that commit on integration); flagged rather than silently left unexplained. 10 new tests this packet added (`test_nvidia_cuda_knowledge.py` ×6, 4 new in `test_sourceprep_setup.py`) are included in both counts above and all pass.
 
 Frontend, re-verified in this worktree after `npm install` (fresh worktree, no `node_modules`): dashboard `vitest` 86 files / 833 passed, `tsc --noEmit` clean; design-system `vitest` 74/74, `tsc --noEmit` clean. `scripts/check_contrast.py`, `gen_shadcn_theme.py --check`, `check_literal_colors.py --check` (211, none gained), `vendor_fonts.py --verify` all pass. `marketing/web-v7`: `npm install && npm run build` succeeds. The new Rust CI job's command (`cargo test`, default features, `src-tauri/`) was run locally first: 24 passed, 0 failed.
 
@@ -92,6 +95,8 @@ Full list of 24 documents changed is in the commit `53d6c09d` message. Highlight
 ## 7. Task 5 — `MASTER-TODO.md` resync
 
 Rewrote §0 (struck all six Ultracode batches with accurate, sourced status), added a new §2a "Review remediation backlog" (one row per `REV-04/05/06/08/09/10/11` finding, its packet owner, and done/open status — the finding-id granularity the concurrent alignment-review session's own `ROADMAP.md` doesn't carry), reduced §3 to per-subsystem pointers into §2a/`ROADMAP.md` (its own prior banner, written by that concurrent session, had already called §0/§3 stale and asked for exactly this), added rows for Voice Mode visual UI / singular entity / branch hygiene / CI status, moved founder-gated items to a pointer at `DISPATCH-2026-09-01-FOUNDER-DECISIONS.md`, and added the Rust section's `HA-01` deferral note (the section's own "Recommended start: R0... can begin now" line contradicted the founder's 2026-09-01 direction).
+
+**One real error caught and fixed during a self-review pass before finalizing**: an earlier draft of §2a's REV-10 table marked `SE-15` (UI pairing cannot succeed — mDNS list hardcoded empty, manual entry throws, token never reaches the other machine's `being.yml`) as `~~Done~~ per OPUS-03 pairing work above`. Re-checked against OPUS-03's actual fixed-finding table in `RESULTS-OPUS-BATCH-2026-09-01.md` (`ROUTE-01`/`SE-16`/`SE-09`/`SE-08`/`R05-F1`/`FED-01` only — `SE-15` is not in it) and the original state-of-work audit (which lists `SE-15` as a distinct P0, separate from `SE-16`'s backend pairing-security fix): confirmed `SE-15` is genuinely still open. Corrected in `MASTER-TODO.md`'s §2a table, its own singular-entity summary bullet, and `IMPL-PLAN-SINGULAR-ENTITY-TASKS-2026-08-31.md`'s corrected Status block — all three consistent now. Also added a missing `SE-10` (`PeerToolProxy` never injected) row that had been omitted from §2a entirely.
 
 Base for all of this: the actual `RESULTS-OPUS-BATCH-2026-09-01.md` and `RESULTS-SONNET-01/02/03/04-2026-09-02.md` docs, read in full before writing anything — not the original packet text's predictions, per the dispatching session's explicit instruction.
 
