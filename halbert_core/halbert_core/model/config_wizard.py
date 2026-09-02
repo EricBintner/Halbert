@@ -434,7 +434,9 @@ class ConfigWizard:
         """
         import requests
 
-        http_url = url.replace("peer://", "http://", 1) + "/api/compute/v1/health"
+        from ..federation.compute_endpoint import COMPUTE_HEALTH_PATH
+
+        http_url = url.replace("peer://", "http://", 1) + COMPUTE_HEALTH_PATH
         try:
             resp = requests.get(http_url, timeout=1.5)
             if resp.status_code == 200:

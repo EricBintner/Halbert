@@ -269,6 +269,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.state.ws_manager = manager
     
     # Register routes
+    from ..federation import compute_endpoint
     from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations, devices
     
     app.include_router(system.router, prefix="/api", tags=["system"])
@@ -296,6 +297,11 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(modules.router, prefix="/api", tags=["modules"])  # Phase 8: Module registry
     app.include_router(llm.router, tags=["llm"])  # Unified LLM model picker
     app.include_router(compute.router, tags=["compute"])  # Endpoint capacity probe
+    # The workstation side of peer compute. routes/compute is the capacity
+    # PROBE — a different module — so mounting only that left
+    # /api/compute/v1/* served by nothing: a home node linked through the
+    # Compute Peer card 404'd on every turn (SE-09 / R10-F2).
+    app.include_router(compute_endpoint.router, tags=["compute-peer"])
     app.include_router(legal.router, tags=["legal"])  # LEG-MOD-01/02: Legal notices & cloud disclosure
     app.include_router(vision.router, prefix="/api", tags=["vision"])  # Screen capture for vision model
     app.include_router(audio.router, prefix="/api", tags=["audio"])  # Auditory cortex

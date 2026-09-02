@@ -622,8 +622,10 @@ class ComputeRouter:
         """Blocking single GET of the peer's health route (executor-safe)."""
         import requests
 
+        from .compute_endpoint import COMPUTE_HEALTH_PATH
+
         endpoint = self.peer_endpoint.replace("peer://", "http://", 1)
-        url = endpoint.rstrip("/") + "/api/compute/v1/health"
+        url = endpoint.rstrip("/") + COMPUTE_HEALTH_PATH
         headers = {"Authorization": f"Bearer {self.peer_token}"} if self.peer_token else {}
         try:
             resp = requests.get(url, headers=headers, timeout=1.5)

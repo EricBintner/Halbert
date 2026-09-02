@@ -101,10 +101,16 @@ PEER_ELIGIBLE_SLOTS = frozenset({"chat_model", "specialist_model", "vision_model
 # 2. PeerProvider.can_serve_slot() returns False for secure_model
 SECURE_SLOT = "secure_model"
 
-# The compute contract on the paired node (federation/compute_endpoint.py):
-# OpenAI's wire format served under /api/compute/v1 rather than /v1.
-COMPUTE_MODELS_PATH = "/api/compute/v1/models"
-COMPUTE_CHAT_PATH = "/api/compute/v1/chat/completions"
+# The compute contract on the paired node: OpenAI's wire format served under
+# /api/compute/v1 rather than /v1. Re-exported from the module that SERVES
+# these paths, so the client and the server cannot disagree about the address
+# again — /health had three spellings across three files and existed in none
+# of them (SE-08 / R10-F3).
+from ...federation.compute_endpoint import (  # noqa: E402
+    COMPUTE_CHAT_PATH,
+    COMPUTE_HEALTH_PATH,
+    COMPUTE_MODELS_PATH,
+)
 
 # Health probe budget (Pillar 3: lightweight, no GPU time).
 HEALTH_TIMEOUT_S = 1.5

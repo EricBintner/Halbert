@@ -88,11 +88,44 @@ class TestPeerRedaction:
         assert service_config["port"] == 22  # non-secret preserved
         assert "hunter2" not in str(redacted)
 
-    @pytest.mark.skip(reason="TODO(federation-9.4) — requires compute_endpoint implementation")
-    def test_compute_endpoint_applies_redaction(self):
-        """The actual compute endpoint applies mcp_response() on the response.
+    LEAKS = [
+        ("a private key", "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----"),
+        ("a bearer token", "use eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop"),
+        ("a credentialled URL", "clone https://bob:s3cret@git.example.com/repo.git"),
+    ]
 
-        This test requires the compute endpoint to be implemented and
-        will call it with a mocked local model that returns a secret.
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("what,text", LEAKS)
+    async def test_compute_endpoint_applies_redaction(self, monkeypatch, what, text):
+        """The egress choke point, exercised end to end.
+
+        Unskipped: it waited on _submit_to_broker, which raised
+        NotImplementedError, so nothing had ever run through this path.
+
+        The boundary is redact_text's, not a general secrecy claim: it covers
+        the shapes a secret actually takes on the wire (PEM blocks, JWTs,
+        credentials in URLs, secret-keyed dicts). Prose that merely *says* a
+        password out loud is not caught here and is not meant to be — the
+        tool allowlist and the model's own prompt are what keep the model
+        from being asked in the first place.
         """
-        pass
+        from halbert_core.federation import compute_endpoint as ce
+
+        async def _leaky(request, tools, peer):
+            return {"content": text, "finish_reason": "stop", "usage": {}}
+
+        monkeypatch.setattr(ce, "_submit_to_broker", _leaky)
+
+        resp = await ce.peer_compute_chat(
+            ce.ChatCompletionRequest(
+                model="local-model",
+                messages=[ce.ChatMessage(role="user", content="tell me")],
+            ),
+            peer=ce.PeerContext(
+                node_id="sat-1", node_name="Kitchen", role="satellite",
+                capabilities=[], credential=None,
+            ),
+        )
+        assert resp.choices[0].message.content != text, (
+            f"{what} reached the peer unredacted"
+        )
