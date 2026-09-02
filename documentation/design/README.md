@@ -30,6 +30,8 @@ This documentation serves two audiences:
 | [COMPONENT-ARCHITECTURE.md](COMPONENT-ARCHITECTURE.md) | Component Catalog & Architecture: Atoms, Molecules, Organisms, and existing dashboard component migration |
 | [USER-JOURNEY-METHODOLOGY.md](USER-JOURNEY-METHODOLOGY.md) | User-Journey Methodology: Attention economics, Four Whys matrix, and 5 end-to-end user workflows |
 | [DOMAIN-MODULES-AND-WHY-MECHANICS.md](DOMAIN-MODULES-AND-WHY-MECHANICS.md) | Summonable Domain Modules & Four Whys Mechanics: Module lifecycle, Vitals, ConfigDiff, Storage, Evidence, and Approvals |
+| [CORE-CONCEPTS-AND-ALIGNMENT-2026-09-02.md](CORE-CONCEPTS-AND-ALIGNMENT-2026-09-02.md) | **Start here for the current concept model:** reconciled identity/bodies/surfaces/mind/knowledge/trust, lexicon extensions, founding principles vs code, workflow verdicts, prioritised architecture fixes, planning corrections (2026-09-02) |
+| [16-voice-mode-visual-ui-implementation-plan.md](16-voice-mode-visual-ui-implementation-plan.md) | Voice Mode visual UI implementation plan of record (task list, tiers, build status) |
 | [the-being.md](the-being.md) | The vision for Halbert's next form — the conversation as core layer, the being concept, the two proof slices |
 | [explorations.md](explorations.md) | Design-to-implementation catalog — every idea mapped to concrete code seams, with curation at section 10 |
 | [REVIEW-DIRECTION-2026-08-23.md](REVIEW-DIRECTION-2026-08-23.md) | External review — overall direction and planning critique |
