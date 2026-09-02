@@ -813,7 +813,7 @@ def _env_chat_model_override() -> Optional[ResolvedModel]:
     try:
         from ..integrations.cognition_wiring import _get_variant
 
-        if _get_variant() in ("home", "home-light"):
+        if _get_variant() == "home":
             return None
     except Exception:
         return None

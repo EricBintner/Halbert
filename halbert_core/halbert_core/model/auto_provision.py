@@ -30,32 +30,20 @@ logger = logging.getLogger("halbert.model.auto_provision")
 _SINGLE_MODEL_MAX_GB = 24
 
 
-def _is_home_variant() -> bool:
-    """True when the active instance runs a home automation variant.
-
-    secure_model is a sysadmin-instance slot (see the module docstring in
-    ``integrations/cognition_wiring.py``): an HA variant's LLM reaches the
-    house through tool calls that abstract credentials away, so it never
-    provisions a dedicated secure model. The import is lazy so the model
-    layer carries no module-level dependency on the integrations package.
-    """
-    try:
-        from ..integrations.cognition_wiring import is_home_variant
-        return is_home_variant()
-    except Exception:
-        return False
-
-
 def auto_provision_apple_intelligence(hardware: HardwareCapabilities) -> bool:
     """Register the Apple Intelligence endpoint and assign empty slots.
 
     Called on first boot (or wizard run) when the host is eligible for
     Apple Intelligence. Does nothing when:
 
-    - ``hardware.apple_intelligence_available`` is False
-    - the active variant is home (secure_model is a
-      sysadmin-instance slot, so Apple Intelligence is not provisioned
-      for home automation variants at all)
+    - ``hardware.apple_intelligence_available`` is False (not eligible)
+    - ``hardware.apple_intelligence_bridge_running`` is False (eligible,
+      but the Swift FoundationModels sidecar is not actually up — the
+      endpoint would be inert, so it is not registered at all)
+    - the active variant is not allowed to host a secure model
+      (``CAP_SECURE_MODEL_ALLOWED`` — the preset/override signal, never
+      the probe: secure_model is a sysadmin-instance slot, so home
+      instances are not provisioned by default)
     - the ``apple-foundation`` endpoint is already registered (idempotent)
 
     Slot assignment rules:
@@ -69,16 +57,28 @@ def auto_provision_apple_intelligence(hardware: HardwareCapabilities) -> bool:
     if not hardware.apple_intelligence_available:
         return False
 
-    _has_secure_cap = False
+    # Gate on "this variant may host a secure model" (preset/override,
+    # never probed) — not CAP_SECURE_MODEL, which means "one is already
+    # configured". Gating on the probe was circular: a fresh install has
+    # nothing configured yet, so the probe was always False and
+    # provisioning could never run (U4-18/R05-N1/U6-BUG-02).
+    _secure_allowed = False
     try:
-        from ..capabilities import has_capability, CAP_SECURE_MODEL
-        _has_secure_cap = has_capability(CAP_SECURE_MODEL)
+        from ..capabilities import has_capability, CAP_SECURE_MODEL_ALLOWED
+        _secure_allowed = has_capability(CAP_SECURE_MODEL_ALLOWED)
     except Exception:
         pass
-    if not _has_secure_cap:
+    if not _secure_allowed:
         logger.debug(
             "Apple Intelligence provisioning skipped "
-            "(no secure_model capability)"
+            "(secure_model not allowed for this variant)"
+        )
+        return False
+
+    if not hardware.apple_intelligence_bridge_running:
+        logger.debug(
+            "Apple Intelligence provisioning skipped "
+            "(eligible but the FoundationModels bridge is not running)"
         )
         return False
 

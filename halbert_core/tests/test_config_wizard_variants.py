@@ -85,7 +85,7 @@ def variant(monkeypatch, capability_registry):
 
 
 def test_build_config_writes_secure_model_for_sysadmin(variant, capability_registry):
-    capability_registry.set_capability("secure_model", True)
+    capability_registry.set_capability("secure_model_allowed", True)
     cfg = _wizard()._build_config("chat-a", "ollama", _budget(), _hardware_ai(),
                                   endpoint=OLLAMA)
     assert cfg["llm_config"]["secure_model"] == {
@@ -117,6 +117,18 @@ def test_home_variant_keeps_the_chat_model_rule(variant, ha):
     assert chat["enabled"] is True
 
 
+def test_single_model_rule_never_overrides_an_explicit_choice(variant):
+    """R05-F2: a caller who explicitly named a model (a CLI --model arg,
+    or the user's answer to the interactive prompt) must keep it even on
+    a 16-24GB Mac where the single-model rule would otherwise hand
+    chat_model to Apple Intelligence."""
+    cfg = _wizard()._build_config("my-explicit-model", "ollama", _budget(),
+                                  _hardware_ai(mem_gb=16), endpoint=OLLAMA)
+    chat = cfg["llm_config"]["chat_model"]
+    assert chat["model"] == "my-explicit-model"
+    assert chat["endpoint_id"] == "ep_local_ollama"
+
+
 # ── run_auto ───────────────────────────────────────────────────────────
 
 
@@ -142,7 +154,7 @@ def test_run_auto_skips_apple_provisioning_for_home_variants(variant, monkeypatc
 
 
 def test_run_auto_provisions_for_sysadmin(variant, monkeypatch, capability_registry):
-    capability_registry.set_capability("secure_model", True)
+    capability_registry.set_capability("secure_model_allowed", True)
     wizard, provisioned = _run_auto_wizard(monkeypatch)
     wizard.run_auto(model="chat-a", endpoint=OLLAMA)
     provisioned.assert_called_once()
@@ -170,7 +182,7 @@ def test_save_config_clears_a_stale_secure_slot_for_home_variant(variant, models
 
 def test_save_config_keeps_secure_model_for_sysadmin(variant, models_config_dir,
                                                        capability_registry):
-    capability_registry.set_capability("secure_model", True)
+    capability_registry.set_capability("secure_model_allowed", True)
     variant["variant"] = "sysadmin"
     wizard = _wizard()
     wizard.save_config(wizard._build_config("chat-a", "ollama", _budget(), _hardware_ai(),

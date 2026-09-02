@@ -138,9 +138,12 @@ class TestDiscoverRoute:
         with patch.object(llm.requests, "get", side_effect=_routed):
             out = llm.discover_local_engines()
         assert set(out) == {"data"}
-        assert set(out["data"]) == {"ollama", "lm_studio"}
+        # The route also probes the Apple FoundationModels bridge
+        # (apple_foundation) alongside ollama and lm_studio.
+        assert set(out["data"]) == {"ollama", "lm_studio", "apple_foundation"}
         assert out["data"]["ollama"]["running"] is True
         assert out["data"]["lm_studio"]["running"] is True
+        assert out["data"]["apple_foundation"]["running"] is True
 
     def test_one_dead_engine_does_not_hide_the_other(self):
         def _half(url, **kwargs):

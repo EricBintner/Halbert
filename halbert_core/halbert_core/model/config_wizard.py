@@ -26,22 +26,6 @@ from ..obs.logging import get_logger
 logger = get_logger("halbert")
 
 
-def _is_home_variant() -> bool:
-    """True when the active instance runs a home automation variant.
-
-    secure_model is a sysadmin-instance slot: an HA variant's LLM reaches
-    the house through tool calls that abstract credentials away, so the
-    wizard neither provisions nor writes the slot for home. The
-    import is lazy so the model layer carries no module-level dependency
-    on the integrations package.
-    """
-    try:
-        from ..integrations.cognition_wiring import is_home_variant
-        return is_home_variant()
-    except Exception:
-        return False
-
-
 class ConfigWizard:
     """
     Interactive configuration wizard for model setup.
@@ -134,24 +118,24 @@ class ConfigWizard:
         # Apple Intelligence: provision secure_model (and chat_model on
         # 16-24GB Macs) before looking at Ollama. On 16-24GB Macs the
         # single-model rule means chat_model is already set and the Ollama
-        # model lookup below is skipped. Apple Intelligence provisioning
-        # for secure_model is gated by the secure_model capability —
-        # the variant preset sets defaults (home = no secure_model), but
-        # being.yml can override.
+        # model lookup below is skipped. Provisioning is gated on "may this
+        # variant host a secure model at all" (CAP_SECURE_MODEL_ALLOWED —
+        # preset/override, home defaults off) rather than CAP_SECURE_MODEL
+        # ("one is already configured"), which was circular on a fresh
+        # install (U4-18): a home instance must never even attempt the call.
         if hardware.apple_intelligence_available:
-            _has_secure_cap = False
+            _secure_allowed = False
             try:
-                from ..capabilities import has_capability, CAP_SECURE_MODEL
-                _has_secure_cap = has_capability(CAP_SECURE_MODEL)
+                from ..capabilities import has_capability, CAP_SECURE_MODEL_ALLOWED
+                _secure_allowed = has_capability(CAP_SECURE_MODEL_ALLOWED)
             except Exception:
                 pass
-            if not _has_secure_cap:
+            if not _secure_allowed:
                 logger.info(
                     "Apple Intelligence provisioning skipped "
-                    "(no secure_model capability)"
+                    "(secure_model not allowed for this variant)"
                 )
-            else:
-                auto_provision_apple_intelligence(hardware)
+            elif auto_provision_apple_intelligence(hardware):
                 logger.info("Apple Intelligence (On-Device) detected — configured as secure model")
 
         # Size budget
@@ -258,25 +242,30 @@ class ConfigWizard:
             print(f"  - {note}")
         print()
 
-        # Apple Intelligence provisioning. Gated by the secure_model
-        # capability — the variant preset sets defaults (home = no
-        # secure_model), but being.yml can override. chat_model still
-        # gets Apple Intelligence on 16-24GB Macs — that is the Mac's
-        # own on-device use, written by _build_config).
+        # Apple Intelligence provisioning: allowed for this variant
+        # (secure_model_allowed capability — the preset/override signal
+        # for "may host one at all", not whether one is already
+        # configured) and only takes effect once the FoundationModels
+        # bridge is actually running (checked above). chat_model still
+        # gets Apple Intelligence on 16-24GB Macs regardless — that is
+        # the Mac's own on-device use, written by _build_config).
         if hardware.apple_intelligence_available:
-            _has_secure_cap = False
+            _secure_allowed = False
             try:
-                from ..capabilities import has_capability, CAP_SECURE_MODEL
-                _has_secure_cap = has_capability(CAP_SECURE_MODEL)
+                from ..capabilities import has_capability, CAP_SECURE_MODEL_ALLOWED
+                _secure_allowed = has_capability(CAP_SECURE_MODEL_ALLOWED)
             except Exception:
                 pass
-            if _has_secure_cap:
+            _secure_active = _secure_allowed and hardware.apple_intelligence_bridge_running
+            if _secure_allowed:
                 auto_provision_apple_intelligence(hardware)
             print("Apple Intelligence (On-Device) detected:")
-            if not _has_secure_cap:
-                print("  secure_model: left empty (no secure_model capability)")
-            else:
+            if _secure_active:
                 print(f"  secure_model: Apple Intelligence (zero download, ANE-powered)")
+            elif not _secure_allowed:
+                print("  secure_model: left empty (not allowed for this variant)")
+            else:
+                print("  secure_model: left empty (bridge not started)")
             mem = hardware.unified_memory_gb or 0
             if mem and mem <= 24:
                 print(f"  chat_model: Apple Intelligence (single local model rule for {mem}GB)")
@@ -490,14 +479,17 @@ class ConfigWizard:
         ai_ep_id = "ep_apple_foundation" if ai_available else ""
         ai_model = llm_config.APPLE_FOUNDATION_MODEL if ai_available else ""
         mem = hardware.unified_memory_gb or 0
-        ai_takes_chat = ai_available and mem and mem <= 24
-        _has_secure_cap = False
+        # Never override a model the caller explicitly chose (a CLI --model
+        # arg, or the user's answer to the interactive prompt): the
+        # single-model rule only applies when nothing was picked (R05-F2).
+        ai_takes_chat = ai_available and mem and mem <= 24 and not model
+        _secure_allowed = False
         try:
-            from ..capabilities import has_capability, CAP_SECURE_MODEL
-            _has_secure_cap = has_capability(CAP_SECURE_MODEL)
+            from ..capabilities import has_capability, CAP_SECURE_MODEL_ALLOWED
+            _secure_allowed = has_capability(CAP_SECURE_MODEL_ALLOWED)
         except Exception:
             pass
-        secure_allowed = _has_secure_cap
+        secure_allowed = _secure_allowed
         secure_model = ai_model if secure_allowed else ""
         secure_ep_id = ai_ep_id if secure_allowed else ""
 

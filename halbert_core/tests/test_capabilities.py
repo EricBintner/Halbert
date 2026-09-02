@@ -20,6 +20,7 @@ from halbert_core.capabilities import (
     CAP_HA_CONNECTION,
     CAP_LOCAL_LLM,
     CAP_SECURE_MODEL,
+    CAP_SECURE_MODEL_ALLOWED,
     _variant_preset,
     _PRESET_SYSADMIN,
     _PRESET_HOME,
@@ -451,6 +452,94 @@ class TestProbePresenceSemantics:
         # sys.modules[name] = None makes import_module raise ImportError.
         monkeypatch.setitem(sys.modules, "sourceprep", None)
         assert _probe_sourceprep() is False
+
+
+class TestSecureModelAllowed:
+    """CAP_SECURE_MODEL_ALLOWED answers "may this variant host a secure
+    model at all" from the preset/override alone, never the probe — the
+    signal provisioning code gates on (U4-18/R05-N1/U6-BUG-02). It must
+    never appear in _PROBES: an active probe would make it re-derive
+    "already configured", the exact circularity it exists to break."""
+
+    def test_not_probed(self):
+        from halbert_core.capabilities import _PROBES
+        assert CAP_SECURE_MODEL_ALLOWED not in _PROBES
+
+    def test_sysadmin_preset_allows_secure_model(self):
+        preset = _variant_preset("sysadmin")
+        assert preset[CAP_SECURE_MODEL_ALLOWED] is True
+
+    def test_home_preset_disallows_secure_model(self):
+        preset = _variant_preset("home")
+        assert preset[CAP_SECURE_MODEL_ALLOWED] is False
+
+    def test_allowed_independent_of_configured_probe(self):
+        """A fresh sysadmin install has nothing configured yet
+        (CAP_SECURE_MODEL probes False) but is still ALLOWED to
+        provision one — the bug this capability exists to fix."""
+        reg = CapabilityRegistry()
+        reg._load_config = MagicMock(return_value=("sysadmin", {}))
+        probes = {CAP_SECURE_MODEL: lambda: False}
+        with patch("halbert_core.capabilities._PROBES", probes):
+            reg.probe()
+        assert reg.has(CAP_SECURE_MODEL) is False
+        assert reg.has(CAP_SECURE_MODEL_ALLOWED) is True
+
+    def test_being_yml_can_override_allowed_on_home(self):
+        """A Mac Studio running both duties can opt a home instance in."""
+        reg = CapabilityRegistry()
+        reg._load_config = MagicMock(
+            return_value=("home", {CAP_SECURE_MODEL_ALLOWED: True}))
+        with patch("halbert_core.capabilities._PROBES", {}):
+            reg.probe()
+        assert reg.has(CAP_SECURE_MODEL_ALLOWED) is True
+
+
+# ---------------------------------------------------------------------------
+# Variant resolution — being.yml > HALBERT_VARIANT env > 'sysadmin' (U6-BUG-01)
+# ---------------------------------------------------------------------------
+
+class TestVariantResolutionFollowsEnv:
+    """The registry must resolve variant through the same chain as the
+    rest of the backend (cognition_wiring._get_variant), not
+    load_being_config().variant directly — the latter defaults to
+    'sysadmin' and never looks at HALBERT_VARIANT, so an env-only home
+    deployment (deploy/halbert-home.service, no being.yml) silently got
+    the sysadmin preset (scheduler/ingestion/discovery/terminal all
+    True)."""
+
+    def test_env_only_home_gets_home_preset(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HALBERT_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("Halbert_CONFIG_DIR", raising=False)
+        monkeypatch.setenv("HALBERT_VARIANT", "home")
+        # No being.yml written — explicit_variant() must fall through to
+        # the env var rather than the 'sysadmin' dataclass default.
+        reg = CapabilityRegistry()
+        with patch("halbert_core.capabilities._PROBES", {}):
+            reg.probe()
+        assert reg.has(CAP_TERMINAL) is False
+        assert reg.has(CAP_HA_CONNECTION) is True
+        assert reg.has(CAP_SECURE_MODEL_ALLOWED) is False
+
+    def test_env_only_sysadmin_default_when_unset(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HALBERT_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("Halbert_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("HALBERT_VARIANT", raising=False)
+        reg = CapabilityRegistry()
+        with patch("halbert_core.capabilities._PROBES", {}):
+            reg.probe()
+        assert reg.has(CAP_TERMINAL) is True
+        assert reg.has(CAP_SECURE_MODEL_ALLOWED) is True
+
+    def test_being_yml_variant_wins_over_env(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HALBERT_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("Halbert_CONFIG_DIR", raising=False)
+        monkeypatch.setenv("HALBERT_VARIANT", "home")
+        (tmp_path / "being.yml").write_text("variant: sysadmin\n")
+        reg = CapabilityRegistry()
+        with patch("halbert_core.capabilities._PROBES", {}):
+            reg.probe()
+        assert reg.has(CAP_TERMINAL) is True
 
 
 class TestLocalLlmProbeLocalUrl:

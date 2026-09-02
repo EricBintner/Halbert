@@ -84,9 +84,11 @@ def test_build_config_home_variants_write_empty_secure_slot(variant, capability_
 
 
 def test_build_config_sysadmin_writes_ai_secure_slot(capability_registry):
-    # F5: pin the capability explicitly — a body eligible for a secure
-    # local model provisions it — instead of the dead variant helpers.
-    capability_registry.set_capability("secure_model", True)
+    # F5: pin the capability explicitly — a body ALLOWED to host a secure
+    # local model (secure_model_allowed: the preset/override signal, not
+    # whether one happens to be configured yet) provisions it — instead of
+    # the dead variant helpers.
+    capability_registry.set_capability("secure_model_allowed", True)
     cfg = _wizard()._build_config(None, "ollama", _ai_budget(), _ai_hardware())
     secure = cfg["llm_config"]["secure_model"]
     assert secure["enabled"] is True

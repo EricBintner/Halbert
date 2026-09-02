@@ -60,7 +60,7 @@ def config_dir(tmp_path, monkeypatch):
 
 class TestAutoProvisionAppleIntelligence:
     def test_provisions_secure_model_on_eligible_host(self, config_dir):
-        hw = _hw(ai_available=True, unified_mem_gb=128)
+        hw = _hw(ai_available=True, unified_mem_gb=128, bridge_running=True)
         changed = auto_provision_apple_intelligence(hw)
         assert changed is True
 
@@ -75,7 +75,7 @@ class TestAutoProvisionAppleIntelligence:
 
     def test_does_not_assign_chat_model_on_32gb_plus(self, config_dir):
         """On 32GB+ Macs chat_model is left for the user to configure."""
-        hw = _hw(ai_available=True, unified_mem_gb=128)
+        hw = _hw(ai_available=True, unified_mem_gb=128, bridge_running=True)
         auto_provision_apple_intelligence(hw)
 
         cfg = store.load_global(use_cache=False)
@@ -84,7 +84,7 @@ class TestAutoProvisionAppleIntelligence:
 
     def test_assigns_chat_model_on_16_to_24gb(self, config_dir):
         """On 16-24GB Macs the single local model rule applies."""
-        hw = _hw(ai_available=True, unified_mem_gb=16)
+        hw = _hw(ai_available=True, unified_mem_gb=16, bridge_running=True)
         auto_provision_apple_intelligence(hw)
 
         cfg = store.load_global(use_cache=False)
@@ -92,14 +92,14 @@ class TestAutoProvisionAppleIntelligence:
         assert cfg["chat_model"]["enabled"] is True
 
     def test_assigns_chat_model_on_24gb_boundary(self, config_dir):
-        hw = _hw(ai_available=True, unified_mem_gb=24)
+        hw = _hw(ai_available=True, unified_mem_gb=24, bridge_running=True)
         auto_provision_apple_intelligence(hw)
 
         cfg = store.load_global(use_cache=False)
         assert cfg["chat_model"]["model"] == store.APPLE_FOUNDATION_MODEL
 
     def test_does_not_assign_chat_model_on_25gb(self, config_dir):
-        hw = _hw(ai_available=True, unified_mem_gb=25)
+        hw = _hw(ai_available=True, unified_mem_gb=25, bridge_running=True)
         auto_provision_apple_intelligence(hw)
 
         cfg = store.load_global(use_cache=False)
@@ -107,7 +107,7 @@ class TestAutoProvisionAppleIntelligence:
 
     def test_idempotent_when_endpoint_exists(self, config_dir):
         """Second call does nothing when the endpoint is already registered."""
-        hw = _hw(ai_available=True, unified_mem_gb=128)
+        hw = _hw(ai_available=True, unified_mem_gb=128, bridge_running=True)
         assert auto_provision_apple_intelligence(hw) is True
         # Second call: endpoint already exists, should return False
         assert auto_provision_apple_intelligence(hw) is False
@@ -123,7 +123,7 @@ class TestAutoProvisionAppleIntelligence:
         ]
         _write_config(Path(config_dir), cfg)
 
-        hw = _hw(ai_available=True, unified_mem_gb=128)
+        hw = _hw(ai_available=True, unified_mem_gb=128, bridge_running=True)
         auto_provision_apple_intelligence(hw)
 
         cfg = store.load_global(use_cache=False)
@@ -140,7 +140,7 @@ class TestAutoProvisionAppleIntelligence:
         ]
         _write_config(Path(config_dir), cfg)
 
-        hw = _hw(ai_available=True, unified_mem_gb=16)
+        hw = _hw(ai_available=True, unified_mem_gb=16, bridge_running=True)
         auto_provision_apple_intelligence(hw)
 
         cfg = store.load_global(use_cache=False)
@@ -148,6 +148,19 @@ class TestAutoProvisionAppleIntelligence:
 
     def test_no_provisioning_when_not_eligible(self, config_dir):
         hw = _hw(ai_available=False)
+        changed = auto_provision_apple_intelligence(hw)
+        assert changed is False
+
+        cfg = store.load_global(use_cache=False)
+        assert cfg["secure_model"]["model"] == ""
+        eps = [e for e in cfg["saved_endpoints"] if e["provider"] == "apple-foundation"]
+        assert len(eps) == 0
+
+    def test_no_provisioning_when_eligible_but_bridge_not_running(self, config_dir):
+        """Eligible hardware with the FoundationModels sidecar not started
+        yet is a valid state (R05-F2/U4-20): the endpoint would be inert,
+        so it is not registered at all — nothing to hide from the picker."""
+        hw = _hw(ai_available=True, unified_mem_gb=128, bridge_running=False)
         changed = auto_provision_apple_intelligence(hw)
         assert changed is False
 
@@ -166,8 +179,9 @@ class TestHomeVariantGate:
     def home_variant(self, request, monkeypatch, capability_registry):
         from halbert_core.integrations import cognition_wiring
         monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: request.param)
-        # F5: provisioning is capability-gated (CAP_SECURE_MODEL); the
-        # home preset carries no secure_model, which is what this pins.
+        # F5: provisioning is capability-gated (CAP_SECURE_MODEL_ALLOWED);
+        # the home preset carries no secure_model_allowed, which is what
+        # this pins.
         capability_registry.set_variant(request.param)
 
     def test_home_variant_skips_provisioning_entirely(self, home_variant, config_dir):
@@ -188,9 +202,9 @@ class TestHomeVariantGate:
         from halbert_core.integrations import cognition_wiring
         monkeypatch.setattr(cognition_wiring, "_get_variant", lambda: "sysadmin")
         # F5: pin the capability explicitly rather than inheriting this
-        # machine's real secure-model probe result.
-        capability_registry.set_capability("secure_model", True)
-        hw = _hw(ai_available=True, unified_mem_gb=128)
+        # machine's real secure-model-allowed preset resolution.
+        capability_registry.set_capability("secure_model_allowed", True)
+        hw = _hw(ai_available=True, unified_mem_gb=128, bridge_running=True)
         assert auto_provision_apple_intelligence(hw) is True
 
         cfg = store.load_global(use_cache=False)

@@ -63,6 +63,14 @@ def _installed(entries, chooses="model-a"):
     budget.to_dict.return_value = {"max_params_b_4bit": 14}
     detector = MagicMock()
     detector.recommend_budget.return_value = budget
+    # These tests exercise the Ollama fresh-install flow, not Apple
+    # Intelligence — an unconfigured MagicMock is truthy on every
+    # attribute, which used to be harmless because the old (buggy)
+    # CAP_SECURE_MODEL gate short-circuited before HardwareDetector was
+    # ever instantiated. Now that provisioning is correctly gated on
+    # CAP_SECURE_MODEL_ALLOWED (sysadmin-preset True by default), the
+    # detector actually runs, so its result must say "not eligible".
+    detector.detect.return_value = MagicMock(apple_intelligence_available=False)
     return patch.multiple(
         "halbert_core.model.hardware_detector",
         HardwareDetector=MagicMock(return_value=detector),
