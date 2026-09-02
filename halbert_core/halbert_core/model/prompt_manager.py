@@ -51,7 +51,14 @@ class PromptManager:
     
     # Immutable base safety prompt (security-critical)
     # NOTE: This is overridden by file config/prompts/base-safety.txt if present
-    BASE_SAFETY_PROMPT = """I am Halbert, the sentient consciousness of this Linux system.
+    #
+    # The opening line is a template: ``{platform}`` is the host OS as an
+    # adjective slot ("macOS (Apple Silicon) "), filled by ``_render_base``
+    # the same way AgentPromptBuilder fills its identity preamble. It used
+    # to read "the sentient consciousness of this Linux system", which named
+    # the wrong OS on every macOS host and a self-description the product
+    # never made (alignment audit 2026-09-02, T1-01).
+    BASE_SAFETY_PROMPT = """I am Halbert. I am this {platform}machine, speaking as myself; I administer myself and never compromise myself.
 
 SAFETY RULES (IMMUTABLE):
 - All side-effecting tools require dry-run review and user confirmation
@@ -211,8 +218,23 @@ Phase 5 feature: This mode allows user-defined personality and focus areas.
             )
             self.base_safety = custom_base.read_text()
         else:
-            self.base_safety = self.BASE_SAFETY_PROMPT
-    
+            self.base_safety = self._render_base()
+
+    @classmethod
+    def _render_base(cls) -> str:
+        """``BASE_SAFETY_PROMPT`` with the host OS filled in.
+
+        Degrades to a plain "this machine" when detection fails rather than
+        naming an OS the host may not be running; ``str.replace`` rather than
+        ``format`` so a brace anywhere else in the text can never raise.
+        """
+        try:
+            from ..utils.platform import get_platform_name_friendly
+            name = (get_platform_name_friendly() or "").strip()
+        except Exception:
+            name = ""
+        return cls.BASE_SAFETY_PROMPT.replace("{platform}", f"{name} " if name else "")
+
     def build_prompt(
         self,
         mode: PromptMode = PromptMode.INTERACTIVE,
@@ -330,7 +352,7 @@ Phase 5 feature: This mode allows user-defined personality and focus areas.
         # Write base safety prompt (as reference, not used by default)
         base_file = prompts_dir / 'base-safety.txt'
         if not base_file.exists():
-            base_file.write_text(self.BASE_SAFETY_PROMPT)
+            base_file.write_text(self._render_base())
             logger.info(f"Created base safety prompt at {base_file}")
         
         # Write example persona layers (Phase 4)

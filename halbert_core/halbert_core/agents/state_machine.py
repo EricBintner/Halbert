@@ -1476,8 +1476,50 @@ class AgentStateMachine:
     # State Handlers
     # -------------------------------------------------------------------------
     
-    def _build_messages(self, prompt: str, tail: str = "") -> List[Dict[str, Any]]:
-        """Instructions, then the prior turns, then the new question.
+    @property
+    def prompt_builder(self):
+        """The builder this machine renders prompts with, under the name the
+        settings and persona routes hot-reload it by.
+
+        Both routes guard on ``hasattr(agent, 'prompt_builder')`` before
+        calling ``reload_personality()``; the constructor keeps the builder as
+        ``self.prompts``, so every voice or personality change made in
+        Settings was a silent no-op until the next restart (alignment audit
+        2026-09-02, C1-04). One object, two names.
+        """
+        return self.prompts
+
+    def _identity_block(self, response_modality: str = "text") -> str:
+        """Who is speaking this turn, rendered by the builder; "" without one.
+
+        Tolerates a builder without the hook (a test double, an out-of-tree
+        builder) and a hook that raises: the turn goes on without the block,
+        as it did before the block existed, rather than ending with an
+        error.
+        """
+        render = getattr(self.prompts, "build_identity_block", None) if self.prompts else None
+        if not callable(render):
+            return ""
+        try:
+            block = render(response_modality=response_modality)
+        except Exception as e:
+            logger.warning(f"Identity block unavailable this turn: {e}")
+            return ""
+        return block.strip() if isinstance(block, str) else ""
+
+    def _build_messages(
+        self, prompt: str, tail: str = "", response_modality: str = "text",
+    ) -> List[Dict[str, Any]]:
+        """Identity, instructions, then the prior turns, then the new question.
+
+        The identity block (``AgentPromptBuilder.build_identity_block``: who
+        this machine is in the configured voice, which body it is at, what it
+        is for) leads ``messages[0]`` on both LLM calls of a turn. It goes
+        first because the head of the system message is the one position
+        every provider path reads as "who you are", and because before the
+        merge nothing put the identity in front of the model at all (C1-01).
+        With no prompt builder nothing is prepended: RESPONDING's own fallback
+        prompt already opens with ``_fallback_identity``.
 
         Conversation lives in this array and nowhere else: the context
         assembler is no longer handed the history, and its memory source drops
@@ -1510,7 +1552,9 @@ class AgentStateMachine:
         so a stranded unanswered user turn folds in ahead of the hint. That
         is correct — the hint stays adjacent to the query it qualifies.
         """
-        messages: List[Dict[str, Any]] = [{"role": "system", "content": prompt}]
+        identity = self._identity_block(response_modality)
+        content = f"{identity}\n\n{prompt}" if identity else prompt
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": content}]
         if self.ctx.thread_receipt_block:
             messages[0]["content"] += "\n\n" + self.ctx.thread_receipt_block
         for msg in (self.ctx.conversation_history or []):
@@ -2829,7 +2873,9 @@ class AgentStateMachine:
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
             chunk_count = 0
             async for chunk in self.llm.stream(
-                messages=self._build_messages(prompt, tail=tail),
+                messages=self._build_messages(
+                    prompt, tail=tail, response_modality=response_modality,
+                ),
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,
@@ -2852,7 +2898,9 @@ class AgentStateMachine:
         else:
             # Non-streaming fallback
             response = await self.llm.chat(
-                messages=self._build_messages(prompt, tail=tail),
+                messages=self._build_messages(
+                    prompt, tail=tail, response_modality=response_modality,
+                ),
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,
