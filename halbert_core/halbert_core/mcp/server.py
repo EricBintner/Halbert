@@ -151,17 +151,29 @@ def _tool_get_discoveries(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"discoveries": [], "error": str(e)}
 
 
+# Upper bound on rows pulled from the store when a post-filter (severity)
+# is applied before the caller's limit.
+_FINDINGS_SCAN_CAP = 500
+
+
 def _tool_get_findings(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Open/snoozed findings from the FindingStore."""
+    """Findings from the FindingStore with their four whys (MCP-01).
+
+    ``status``: open (default) | snoozed | resolved | dismissed | all.
+    ``severity`` post-filters; ``limit`` caps the result (default 50).
+    """
     try:
         from ..findings.store import FindingStore
         store = FindingStore()
         status = params.get("status", "open")
         severity = params.get("severity")
-        findings = store.list_findings(status=status)
+        limit = int(params.get("limit", 50))
+        findings = store.list_findings(
+            status=status,
+            limit=_FINDINGS_SCAN_CAP if severity else limit,
+        )
         if severity:
             findings = [f for f in findings if f.severity == severity]
-        limit = params.get("limit", 50)
         return {"findings": [f.to_dict() for f in findings[:limit]]}
     except Exception as e:
         logger.debug("get_findings error: %s", e)
@@ -169,24 +181,34 @@ def _tool_get_findings(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _tool_get_proposals(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Pending proposals from the ProposalStore."""
+    """Proposals from the ProposalStore (MCP-01).
+
+    ``status``: pending (default) | approved | rejected | applied |
+    rolled_back | all. Each proposal carries its changes, dry_run_result
+    and blast_radius so a client can inspect before approve_proposal.
+    """
     try:
         from ..findings.proposals import ProposalStore
         store = ProposalStore()
         status = params.get("status", "pending")
-        proposals = store.list_proposals(status=status)
-        limit = params.get("limit", 50)
-        return {"proposals": [p.to_dict() for p in proposals[:limit]]}
+        limit = int(params.get("limit", 50))
+        proposals = store.list_proposals(status=status, limit=limit)
+        return {"proposals": [p.to_dict() for p in proposals]}
     except Exception as e:
         logger.debug("get_proposals error: %s", e)
         return {"proposals": [], "error": str(e)}
 
 
 def _tool_get_proactive_events(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Recent proactive events from the event bus."""
+    """Recent proactive events from the process-wide event bus.
+
+    Reads the get_event_bus() singleton — a fresh ProactiveEventBus() is
+    empty by construction. (In the standalone stdio process the singleton
+    is still only as full as this process made it; see MCP-03/MCP-04.)
+    """
     try:
-        from ..proactive.events import ProactiveEventBus
-        bus = ProactiveEventBus()
+        from ..proactive.events import get_event_bus
+        bus = get_event_bus()
         limit = params.get("limit", 20)
         events = bus.get_recent(limit=limit)
         return {"events": [e.to_dict() if hasattr(e, "to_dict") else e
@@ -297,17 +319,63 @@ def _tool_get_config_dependencies(params: Dict[str, Any]) -> Dict[str, Any]:
         return mcp_response({"path": path, "error": str(e)})
 
 
+_SNIPPET_CHARS = 500
+
+
+def _normalise_search_results(response: Any) -> List[Dict[str, Any]]:
+    """Reduce a SourcePrep search/context response to openable citations.
+
+    SourcePrep answers ``{'data': {'results': [...]}}`` (raw search) or
+    ``{'data': {'chunks': [...]}}`` (structured context); items carry
+    ``text``/``content``, ``source_path``/``path``, ``score``. Each becomes
+    ``{title, source, score, snippet}`` — the source is the path a client
+    can open, the title its basename.
+    """
+    if isinstance(response, dict):
+        data = response.get("data", response)
+        items = data.get("results") or data.get("chunks") or []
+    elif isinstance(response, list):
+        items = response
+    else:
+        items = []
+    out: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        source = (
+            item.get("source_path") or item.get("path") or item.get("source") or ""
+        )
+        text = item.get("text") or item.get("content") or ""
+        title = item.get("title") or os.path.basename(str(source)) or "untitled"
+        out.append({
+            "title": title,
+            "source": source,
+            "score": item.get("score", 0.0),
+            "snippet": str(text)[:_SNIPPET_CHARS],
+        })
+    return out
+
+
 def _tool_search_knowledge(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Semantic search over SourcePrep knowledge base."""
+    """Semantic search over the SourcePrep knowledge base (MCP-02).
+
+    Unscoped queries hit the raw search endpoint (``search(query, k)``);
+    a ``scope`` routes to the context endpoint, the only one that filters
+    by scope. Results are normalised to {title, source, score, snippet}.
+    """
     query = params.get("query", "")
     if not query:
         return {"error": "query is required"}
     scope = params.get("scope")
-    limit = params.get("limit", 5)
+    limit = int(params.get("limit", 5))
     try:
         from ..integrations.sourceprep_client import SourcePrepClient
         client = SourcePrepClient()
-        results = client.search(query, limit=limit, scope=scope)
+        if scope:
+            raw = client.get_context(query=query, k=limit, scope=scope)
+        else:
+            raw = client.search(query, k=limit)
+        results = _normalise_search_results(raw)[:limit]
         return mcp_response({"results": results, "query": query})
     except Exception as e:
         logger.debug("search_knowledge error: %s", e)
@@ -781,11 +849,11 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     },
     {
         "name": "get_findings",
-        "description": "Get open or snoozed findings.",
+        "description": "Get findings with their four whys (why now / care / so / trust).",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "status": {"type": "string", "description": "Filter by status (default 'open')"},
+                "status": {"type": "string", "description": "open (default) | snoozed | resolved | dismissed | all"},
                 "severity": {"type": "string", "description": "Filter by severity"},
                 "limit": {"type": "integer", "description": "Max results (default 50)"},
             },
@@ -793,11 +861,11 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     },
     {
         "name": "get_proposals",
-        "description": "Get pending proposals.",
+        "description": "Get proposals with their changes, dry-run result and blast radius.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "status": {"type": "string", "description": "Filter by status (default 'pending')"},
+                "status": {"type": "string", "description": "pending (default) | approved | rejected | applied | rolled_back | all"},
                 "limit": {"type": "integer", "description": "Max results (default 50)"},
             },
         },
@@ -868,7 +936,7 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
-                "scope": {"type": "string", "description": "Optional scope filter"},
+                "scope": {"type": "string", "description": "Optional SourcePrep scope (routes to the context endpoint)"},
                 "limit": {"type": "integer", "description": "Max results (default 5)"},
             },
             "required": ["query"],
