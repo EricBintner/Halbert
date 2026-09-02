@@ -2,8 +2,11 @@
 # Uses SearXNG public instances for web grounding
 
 web_search:
-  # Enable/disable web search
-  enabled: true
+  # Enable/disable web search.
+  # Query text leaves the machine (it is sent to a search engine), so this
+  # is off by default. Turn it on in Settings, or set it here; a being.yml
+  # `capabilities: {web: false}` override pins it off regardless.
+  enabled: false
   
   # SearXNG settings
   searxng:
