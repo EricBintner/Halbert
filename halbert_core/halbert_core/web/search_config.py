@@ -27,6 +27,14 @@ logger = logging.getLogger("halbert.web.search_config")
 
 SECTION = "web_search"
 
+# What every refusing path says — the agent tool, the SearXNG client behind
+# the GPU driver tool, and the /api/web-search routes. Reached only when the
+# switch is off; nothing has been sent anywhere by then.
+WEB_SEARCH_OFF_MESSAGE = (
+    "Web search is off; enable it in Settings (System tab, Network) before "
+    "using it. Query text is not sent anywhere while it is off."
+)
+
 
 def user_config_path() -> Path:
     """The file every writer targets."""
@@ -67,6 +75,20 @@ def is_enabled() -> bool:
     if not isinstance(section, dict):
         return False
     return section.get("enabled") is True
+
+
+def is_web_search_enabled() -> bool:
+    """The switch as resolved by the capability registry (CAP_WEB).
+
+    Unlike :func:`is_enabled` this includes the being.yml override, so it
+    is what every egress path checks. Any failure reads as off.
+    """
+    try:
+        from ..capabilities import CAP_WEB, has_capability
+        return bool(has_capability(CAP_WEB))
+    except Exception as e:
+        logger.debug("CAP_WEB lookup failed, treating web search as off: %s", e)
+        return False
 
 
 def set_enabled(enabled: bool) -> Path:

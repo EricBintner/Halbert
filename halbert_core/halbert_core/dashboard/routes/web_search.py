@@ -13,9 +13,18 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ...web.search import WebSearch, get_web_search, SearchResult
+from ...web.search_config import WEB_SEARCH_OFF_MESSAGE, is_web_search_enabled
 
 logger = logging.getLogger("halbert")
 router = APIRouter(prefix="/web-search", tags=["web-search"])
+
+
+def _require_web_search() -> None:
+    """The search endpoints send query text off the machine: refuse while
+    the switch (CAP_WEB, off by default — C3-08) is off. Raised before the
+    handlers' own try/except so it surfaces as a 403, not a 500."""
+    if not is_web_search_enabled():
+        raise HTTPException(status_code=403, detail=WEB_SEARCH_OFF_MESSAGE)
 
 
 class SearchRequest(BaseModel):
@@ -44,6 +53,7 @@ async def search(request: SearchRequest) -> Dict[str, Any]:
     
     Returns search results from SearXNG instances.
     """
+    _require_web_search()
     try:
         ws = get_web_search()
         results = await ws.search(
@@ -76,6 +86,7 @@ async def search_get(
     """
     Perform a web search (GET version for easy testing).
     """
+    _require_web_search()
     engine_list = engines.split(",") if engines else None
     
     try:
@@ -106,6 +117,7 @@ async def search_for_rag(request: SearchRequest) -> Dict[str, Any]:
     
     Returns formatted text suitable for LLM context injection.
     """
+    _require_web_search()
     try:
         ws = get_web_search()
         context = await ws.search_for_rag(

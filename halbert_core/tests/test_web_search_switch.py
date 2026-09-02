@@ -378,3 +378,91 @@ class TestSettingsRoute:
         monkeypatch.setattr(agent_routes, "_agent_instance", None)
         out = asyncio.run(routes.update_web_search_setting(routes.WebSearchUpdate(enabled=True)))
         assert out["enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# The other egress paths follow the same switch: the SearXNG client used by
+# the GPU driver tool and the /api/web-search routes.
+# ---------------------------------------------------------------------------
+
+class TestSearxngClientFollowsTheSwitch:
+    def test_search_refuses_when_off_without_contacting_an_instance(self, capability_registry):
+        from halbert_core.web import search as web
+        capability_registry.set_capability(CAP_WEB, False)
+        ws = web.WebSearch()
+
+        async def _never(self, *a, **kw):
+            raise AssertionError("no instance may be contacted while web search is off")
+
+        with patch.object(web.WebSearch, "_search_instance", _never):
+            with pytest.raises(web.WebSearchDisabled) as exc:
+                asyncio.run(ws.search("latest kernel"))
+        assert "off" in str(exc.value).lower() and "settings" in str(exc.value).lower()
+
+    def test_search_for_rag_refuses_when_off(self, capability_registry):
+        from halbert_core.web import search as web
+        capability_registry.set_capability(CAP_WEB, False)
+        with pytest.raises(web.WebSearchDisabled):
+            asyncio.run(web.WebSearch().search_for_rag("latest kernel"))
+
+    def test_search_runs_when_on(self, capability_registry):
+        from halbert_core.web import search as web
+        capability_registry.set_capability(CAP_WEB, True)
+        ws = web.WebSearch(instances=["https://one.example"])
+
+        async def _fake(self, instance, query, max_results, engines, time_range):
+            return [web.SearchResult(title="T", url="https://r.example", snippet="s")]
+
+        with patch.object(web.WebSearch, "_search_instance", _fake):
+            out = asyncio.run(ws.search("latest kernel", use_cache=False))
+        assert out and out[0].url == "https://r.example"
+
+    def test_gpu_driver_tool_reports_the_switch(self, capability_registry):
+        """search_latest_driver_info sends the GPU model off the machine;
+        when the switch is off the model is told why, not handed nothing."""
+        from halbert_core.tools.gpu_tools import search_latest_driver_info
+        from halbert_core.web import search as web
+        capability_registry.set_capability(CAP_WEB, False)
+
+        async def _never(self, *a, **kw):
+            raise AssertionError("no instance may be contacted while web search is off")
+
+        with patch.object(web.WebSearch, "_search_instance", _never):
+            info = asyncio.run(search_latest_driver_info("GeForce RTX 3060", "NVIDIA"))
+        assert info["sources"] == []
+        assert "off" in info["error"].lower()
+
+
+class TestWebSearchRoutesFollowTheSwitch:
+    def test_search_routes_403_when_off(self, capability_registry):
+        from fastapi import HTTPException
+        from halbert_core.dashboard.routes import web_search as routes
+        from halbert_core.web import search as web
+        capability_registry.set_capability(CAP_WEB, False)
+
+        async def _never(self, *a, **kw):
+            raise AssertionError("no instance may be contacted while web search is off")
+
+        with patch.object(web.WebSearch, "_search_instance", _never):
+            for call in (
+                lambda: routes.search(routes.SearchRequest(query="q")),
+                lambda: routes.search_get(q="q"),
+                lambda: routes.search_for_rag(routes.SearchRequest(query="q")),
+            ):
+                with pytest.raises(HTTPException) as exc:
+                    asyncio.run(call())
+                assert exc.value.status_code == 403
+                assert "off" in str(exc.value.detail).lower()
+
+    def test_search_route_runs_when_on(self, capability_registry, monkeypatch):
+        from halbert_core.dashboard.routes import web_search as routes
+        from halbert_core.web import search as web
+        capability_registry.set_capability(CAP_WEB, True)
+
+        class _WS:
+            async def search(self, **kw):
+                return [web.SearchResult(title="T", url="https://r.example", snippet="s")]
+
+        monkeypatch.setattr(routes, "get_web_search", lambda: _WS())
+        out = asyncio.run(routes.search(routes.SearchRequest(query="q")))
+        assert out["count"] == 1

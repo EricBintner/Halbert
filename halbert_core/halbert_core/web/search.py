@@ -94,6 +94,16 @@ class SearchCache:
         logger.debug(f"Cached {len(results)} results for: {query[:50]}...")
 
 
+class WebSearchDisabled(PermissionError):
+    """Raised by :meth:`WebSearch.search` while the web-search switch is off.
+
+    A PermissionError, not an empty result: an empty list would read as
+    "nothing found" to a caller (the GPU driver tool, the RAG helper) and
+    the model would repeat that as fact. Callers that catch broadly get
+    the switch's own message in ``str(exc)``.
+    """
+
+
 class WebSearch:
     """
     Web search using SearXNG public instances.
@@ -175,7 +185,18 @@ class WebSearch:
             
         Returns:
             List of SearchResult objects
+
+        Raises:
+            WebSearchDisabled: while the web-search switch (CAP_WEB) is off.
+                Checked before the cache and before any instance is picked:
+                query text must not leave the machine, and a cached hit
+                would still tell the user a search "ran".
         """
+        from .search_config import WEB_SEARCH_OFF_MESSAGE, is_web_search_enabled
+        if not is_web_search_enabled():
+            logger.info("Web search refused: switch is off")
+            raise WebSearchDisabled(WEB_SEARCH_OFF_MESSAGE)
+
         if not query.strip():
             return []
         

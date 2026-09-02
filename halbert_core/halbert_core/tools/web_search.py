@@ -15,25 +15,11 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from urllib.parse import quote_plus
 
+# The switch and the refusal text are shared with the SearXNG client and
+# the /api/web-search routes so every egress path says the same thing.
+from ..web.search_config import WEB_SEARCH_OFF_MESSAGE, is_web_search_enabled
+
 logger = logging.getLogger('halbert.tools.web_search')
-
-# What the model (and the user reading the transcript) sees when the tool
-# runs while the switch is off. Reached only if a stale registration or a
-# direct caller bypassed the executor gate (C3-08 defence in depth).
-WEB_SEARCH_OFF_MESSAGE = (
-    "Web search is off; enable it in Settings (System tab, Network) before "
-    "using this tool. Query text is not sent anywhere while it is off."
-)
-
-
-def is_web_search_enabled() -> bool:
-    """The switch as the capability registry sees it (CAP_WEB)."""
-    try:
-        from ..capabilities import CAP_WEB, has_capability
-        return bool(has_capability(CAP_WEB))
-    except Exception as e:
-        logger.debug("CAP_WEB lookup failed, treating web search as off: %s", e)
-        return False
 
 
 @dataclass
