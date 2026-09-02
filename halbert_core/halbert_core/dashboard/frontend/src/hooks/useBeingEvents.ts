@@ -22,23 +22,64 @@ import type { AcousticAnomalyData } from '@/components/audio';
 // Types
 // -----------------------------------------------------------------------------
 
+/** The Four Whys of the finding an event projects (C2-02). */
+export interface FindingWhy {
+  /** What triggered this detection right now. */
+  now: string;
+  /** Consequence if ignored — the one line the row shows. */
+  care: string;
+  /** The reasoning / evidence. */
+  so: string;
+  /** Provenance refs (path:line, log cursors, snapshot ids). */
+  trust: string[];
+}
+
 export interface BeingEvent {
   id: string;
-  // 'acoustic' is accepted alongside the four wire types: today the backend
+  // The user-facing channel (proactive/events.py USER_FACING_EVENT_TYPES).
+  // 'acoustic' is accepted alongside the wire types: today the backend
   // publishes acoustic anomalies as type 'finding' + category 'acoustic'
   // (DetectorRunner._EVENT_CATEGORY) — discriminate with isAcousticEvent();
   // the union member keeps a future direct-acoustic publisher type-safe.
-  type: 'finding' | 'acoustic' | 'morning_report' | 'approval_request' | 'system_anomaly';
+  type:
+    | 'finding'
+    | 'acoustic'
+    | 'visual_finding'
+    | 'morning_report'
+    | 'approval_request'
+    | 'system_anomaly'
+    | 'reflex_fired'
+    | 'reflex_escalate'
+    | 'reflex_command_proposed';
   severity: 'info' | 'warning' | 'critical';
   title: string;
   body: string;
   finding_id?: string;
-  proposal_id?: string;
+  proposal_id?: string | null;
   created_at: string;
   category?: string;
   /** Structured payload (O5): present on acoustic findings — the exact
    * AcousticAnomalyData contract the AcousticAnomalyModule renders. */
   data?: AcousticAnomalyData | null;
+  /** The finding's four whys — the interrupt justifies itself (C2-02).
+   * Absent on events that are not findings. */
+  why?: FindingWhy | null;
+  /** Config paths the finding touches; what a proposal would change. */
+  affected_paths?: string[] | null;
+}
+
+/**
+ * True when the event is a finding without a proposal yet — the row can
+ * offer "Propose fix" (POST /api/findings/{id}/propose). Acoustic findings
+ * have no config fix to propose.
+ */
+export function canProposeFix(event: BeingEvent): boolean {
+  return (
+    event.type === 'finding' &&
+    !!event.finding_id &&
+    !event.proposal_id &&
+    !isAcousticEvent(event)
+  );
 }
 
 /**
@@ -54,6 +95,9 @@ interface UseBeingEventsResult {
   events: BeingEvent[];
   snooze: (event: BeingEvent, days?: number) => Promise<boolean>;
   dismiss: (event: BeingEvent, reason?: string) => Promise<boolean>;
+  /** Ask for the finding's proposal (J3-7 manual path). On success the
+   * event gains its proposal_id and stays in the list. */
+  propose: (event: BeingEvent) => Promise<boolean>;
   /** Ids of events with an in-flight snooze/dismiss request. */
   pendingActions: Set<string>;
   /** Error from the most recent failed snooze/dismiss, if any. */
@@ -162,11 +206,54 @@ export function useBeingEvents(): UseBeingEventsResult {
     [actOnEvent]
   );
 
+  const propose = useCallback(async (event: BeingEvent): Promise<boolean> => {
+    const findingId = event.finding_id;
+    if (!findingId) {
+      setActionError('This event is not linked to a finding');
+      return false;
+    }
+    setActionError(null);
+    setPendingActions((prev) => new Set(prev).add(event.id));
+    try {
+      const resp = await fetch(
+        apiUrl(`/api/findings/${encodeURIComponent(findingId)}/propose`),
+        { method: 'POST' }
+      );
+      if (!resp.ok) {
+        const detail = await resp.text().catch(() => '');
+        throw new Error(
+          `Failed to propose a fix (HTTP ${resp.status})${detail ? `: ${detail.slice(0, 160)}` : ''}`
+        );
+      }
+      const body = await resp.json().catch(() => ({}));
+      const proposalId: string | undefined = body?.proposal?.id;
+      if (proposalId) {
+        setEvents((prev) =>
+          prev.map((e) =>
+            e.id === event.id || e.finding_id === findingId ? { ...e, proposal_id: proposalId } : e
+          )
+        );
+      }
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('Failed to propose a fix:', err);
+      setActionError(message);
+      return false;
+    } finally {
+      setPendingActions((prev) => {
+        const next = new Set(prev);
+        next.delete(event.id);
+        return next;
+      });
+    }
+  }, []);
+
   const clearActionError = useCallback(() => setActionError(null), []);
 
   const clear = useCallback(() => {
     setEvents([]);
   }, []);
 
-  return { events, snooze, dismiss, pendingActions, actionError, clearActionError, clear };
+  return { events, snooze, dismiss, propose, pendingActions, actionError, clearActionError, clear };
 }

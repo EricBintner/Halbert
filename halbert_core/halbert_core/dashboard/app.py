@@ -545,7 +545,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     
     # Register routes
     from ..federation import compute_endpoint
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations, devices
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations, devices, findings
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -569,6 +569,8 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     app.include_router(downloads.router, prefix="/api/downloads", tags=["downloads"])  # Dataset downloads
     app.include_router(compression.router, tags=["compression"])  # Phase 72: Compression cascade
     app.include_router(being.router, prefix="/api", tags=["being"])  # Phase 7: Proactive channel
+    # prefix="/api": findings.py writes its paths as "/findings/...".
+    app.include_router(findings.router, prefix="/api", tags=["findings"])  # C2-03: Finding is the unit of attention
     app.include_router(modules.router, prefix="/api", tags=["modules"])  # Phase 8: Module registry
     app.include_router(llm.router, tags=["llm"])  # Unified LLM model picker
     app.include_router(compute.router, tags=["compute"])  # Endpoint capacity probe

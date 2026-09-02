@@ -24,6 +24,7 @@ from ..findings.store import (
     parse_timestamp,
 )
 from ..findings.proposals import ProposalStore
+from ..findings.proposal_generator import has_executable_fix
 from ..findings.detectors.dropin_conflicts import DropinConflictDetector
 from ..findings.detectors.fstab_phantom import FstabPhantomDetector
 from ..findings.detectors.permissions_hygiene import PermissionsHygieneDetector
@@ -61,9 +62,14 @@ class DetectorRunner:
         guardrails: GuardrailEnforcer | None = None,
         gate: ProactiveGate | None = None,
         reflex_matcher: ReflexMatcher | None = None,
+        proposal_generator: Any | None = None,
     ):
         self.findings = finding_store or FindingStore()
         self.proposals = proposal_store or ProposalStore()
+        # J3-7: built lazily on the first finding with an executable fix
+        # (constructing it eagerly would touch the approval store on every
+        # sweep, including the acoustic bridge's per-sound-event runs).
+        self.proposal_generator = proposal_generator
         self.config = being_config or load_being_config()
         self.guardrails = guardrails or GuardrailEnforcer()
         self.gate = gate or ProactiveGate(
@@ -127,6 +133,7 @@ class DetectorRunner:
             for finding in findings:
                 # Dedup by detector+title (single targeted query)
                 existing = self._find_existing(finding)
+                proposal_id: Optional[str] = None
                 if existing is not None:
                     if self._is_suppressed(existing):
                         continue  # Still known/active — don't re-add
@@ -138,26 +145,18 @@ class DetectorRunner:
                         snoozed_until="",
                     )
                     finding_id = existing.id
+                    proposal_id = existing.proposal_id
                     logger.info(
                         f"Finding {finding_id} re-surfaced "
                         f"(was {existing.status})"
                     )
                 else:
-                    # Store the finding
+                    # Store the finding, then propose its fix when the
+                    # executor can actually apply one (J3-7).
                     finding_id = self.findings.add(finding)
+                    proposal_id = self._propose_at_detection(finding, finding_id)
 
-                # Create a proactive event (``data`` carries the detector's
-                # structured payload when it built one — e.g. the acoustic
-                # module contract — else None).
-                event = ProactiveEvent.create(
-                    type="finding",
-                    severity=finding.severity,
-                    title=finding.title,
-                    body=finding.description,
-                    finding_id=finding_id,
-                    category=_EVENT_CATEGORY.get(finding.detector, "general"),
-                    data=finding.data,
-                )
+                event = self._finding_event(finding, finding_id, proposal_id)
 
                 # Check the gate
                 should_notify, reason = self.gate.should_notify(event)
@@ -205,6 +204,81 @@ class DetectorRunner:
                 logger.warning(f"Detector {name} failed: {e}")
 
         return published_events
+
+    def _propose_at_detection(
+        self, finding: Finding, finding_id: str
+    ) -> Optional[str]:
+        """Generate the proposal for a NEW finding whose fix is executable.
+
+        The proposal is created pending and its approval request queued,
+        so "propose fix" is already done when the bell rings and the
+        Approvals queue fills without an MCP client (J3-7). Findings whose
+        only change is prose for a human (drop-in conflicts, phantom fstab
+        entries) get no proposal here — the user asks for one via
+        POST /api/findings/{id}/propose or the conversation. Never fatal:
+        a generator failure leaves the finding stored and announced.
+        """
+        try:
+            if not has_executable_fix(finding):
+                return None
+            generator = self._get_proposal_generator()
+            if generator is None:
+                return None
+            proposal_id = generator.generate_for_finding(finding_id)
+            if proposal_id:
+                logger.info(
+                    f"Finding {finding_id} proposed at detection: {proposal_id}"
+                )
+            return proposal_id
+        except Exception as e:
+            logger.warning(f"Proposal at detection failed for {finding_id}: {e}")
+            return None
+
+    def _get_proposal_generator(self):
+        """The injected generator, else the real one over this runner's stores."""
+        if self.proposal_generator is None:
+            from ..approval.engine import ApprovalEngine
+            from ..findings.blast_radius import BlastRadiusCalculator
+            from ..findings.proposal_generator import ProposalGenerator
+            from ..tools.write_config import WriteConfig
+
+            self.proposal_generator = ProposalGenerator(
+                finding_store=self.findings,
+                proposal_store=self.proposals,
+                approval_engine=ApprovalEngine(),
+                write_config=WriteConfig(),
+                blast_radius=BlastRadiusCalculator(),
+            )
+        return self.proposal_generator
+
+    @staticmethod
+    def _finding_event(
+        finding: Finding, finding_id: str, proposal_id: Optional[str] = None
+    ) -> ProactiveEvent:
+        """Project a Finding onto the proactive event that announces it.
+
+        The event carries the finding's four whys and affected paths
+        (C2-02) — the interrupt justifies itself — plus ``data``, the
+        detector's structured payload when it built one (e.g. the acoustic
+        module contract), else None.
+        """
+        return ProactiveEvent.create(
+            type="finding",
+            severity=finding.severity,
+            title=finding.title,
+            body=finding.description,
+            finding_id=finding_id,
+            proposal_id=proposal_id,
+            category=_EVENT_CATEGORY.get(finding.detector, "general"),
+            data=finding.data,
+            why={
+                "now": finding.why_now,
+                "care": finding.why_care,
+                "so": finding.why_so,
+                "trust": list(finding.why_trust or []),
+            },
+            affected_paths=list(finding.affected_paths or []),
+        )
 
     def _reflex_event(
         self, reflex: Any, finding: Finding, finding_id: str

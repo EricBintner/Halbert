@@ -156,3 +156,59 @@ class TestFindingSerialization:
         assert restored.title == sample_finding.title
         assert restored.why_trust == sample_finding.why_trust
         assert restored.affected_paths == sample_finding.affected_paths
+
+
+class TestListFindings:
+    """list_findings(status, limit) — the one reader the route, the MCP
+    tool and the page share (C2-05 / MCP-01)."""
+
+    def _seed(self, store, sample_finding):
+        open_id = store.add(sample_finding)
+        snoozed = Finding.from_dict({**sample_finding.to_dict(), "id": "",
+                                     "title": "snoozed one", "created_at": ""})
+        snoozed_id = store.add(snoozed)
+        store.snooze(snoozed_id, days=3)
+        dismissed = Finding.from_dict({**sample_finding.to_dict(), "id": "",
+                                       "title": "dismissed one", "created_at": ""})
+        dismissed_id = store.add(dismissed)
+        store.dismiss(dismissed_id, "not a problem")
+        return open_id, snoozed_id, dismissed_id
+
+    def test_default_returns_every_status(self, store, sample_finding):
+        ids = self._seed(store, sample_finding)
+        got = {f.id for f in store.list_findings()}
+        assert got == set(ids)
+
+    def test_all_is_the_same_as_no_filter(self, store, sample_finding):
+        self._seed(store, sample_finding)
+        assert [f.id for f in store.list_findings("all")] == [
+            f.id for f in store.list_findings(None)
+        ]
+
+    def test_open_only(self, store, sample_finding):
+        open_id, _, _ = self._seed(store, sample_finding)
+        assert [f.id for f in store.list_findings("open")] == [open_id]
+
+    def test_snoozed_and_dismissed(self, store, sample_finding):
+        _, snoozed_id, dismissed_id = self._seed(store, sample_finding)
+        assert [f.id for f in store.list_findings("snoozed")] == [snoozed_id]
+        assert [f.id for f in store.list_findings("dismissed")] == [dismissed_id]
+
+    def test_limit_applies(self, store, sample_finding):
+        self._seed(store, sample_finding)
+        assert len(store.list_findings(limit=2)) == 2
+        assert len(store.list_findings("open", limit=0)) == 0
+
+    def test_unknown_status_is_rejected(self, store):
+        with pytest.raises(ValueError):
+            store.list_findings("bogus")
+
+    def test_rows_carry_the_four_whys(self, store, sample_finding):
+        store.add(sample_finding)
+        f = store.list_findings("open")[0]
+        assert (f.why_now, f.why_care, f.why_so) == (
+            "detected during scan",
+            "service may not bind expected port",
+            "base sets Port=22, drop-in sets Port=2222",
+        )
+        assert f.why_trust == sample_finding.why_trust

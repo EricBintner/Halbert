@@ -5,6 +5,8 @@
 import asyncio
 import threading
 
+import pytest
+
 from halbert_core.proactive.events import ProactiveEvent, ProactiveEventBus
 
 
@@ -137,3 +139,45 @@ class TestCrossThreadPublish:
             assert [e.title for e in received] == ["same-loop"]
 
         asyncio.run(run())
+
+
+class TestWhyOnTheWire:
+    """C2-02: the proactive interrupt carries its why."""
+
+    def test_why_and_affected_paths_default_to_none(self):
+        e = ProactiveEvent.create(type="finding", severity="info", title="t", body="b")
+        assert e.why is None
+        assert e.affected_paths is None
+        d = e.to_dict()
+        assert "why" in d and d["why"] is None
+        assert "affected_paths" in d and d["affected_paths"] is None
+
+    def test_why_and_affected_paths_serialise(self):
+        why = {"now": "n", "care": "c", "so": "s", "trust": ["/etc/x:1"]}
+        e = ProactiveEvent.create(
+            type="finding", severity="warning", title="t", body="b",
+            why=why, affected_paths=["/etc/x"],
+        )
+        d = e.to_dict()
+        assert d["why"] == why
+        assert d["affected_paths"] == ["/etc/x"]
+
+
+class TestUserFacingChannel:
+    """C2-16: only attention events reach the human-facing stream."""
+
+    @pytest.mark.parametrize("etype", [
+        "finding", "visual_finding", "acoustic", "morning_report",
+        "approval_request", "system_anomaly",
+        "reflex_fired", "reflex_escalate", "reflex_command_proposed",
+    ])
+    def test_attention_types_are_user_facing(self, etype):
+        from halbert_core.proactive.events import is_user_facing
+        e = ProactiveEvent.create(type=etype, severity="info", title="t", body="b")
+        assert is_user_facing(e) is True
+
+    @pytest.mark.parametrize("etype", ["somatic_block", "subagent_event", "unknown_internal"])
+    def test_lifecycle_types_are_not(self, etype):
+        from halbert_core.proactive.events import is_user_facing
+        e = ProactiveEvent.create(type=etype, severity="info", title="t", body="b")
+        assert is_user_facing(e) is False
