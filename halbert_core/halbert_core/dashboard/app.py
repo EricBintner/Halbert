@@ -61,6 +61,81 @@ def _find_config_registry():
     return None
 
 
+#: Client-side routes served with index.html (W3-S09). Explicit rather than
+#: a catch-all so a mistyped API URL still 404s instead of returning the
+#: shell. Every ``<Route path=...>`` in frontend/src/App.tsx must appear
+#: here or it is a 404 as a deep link under the systemd deployment — which
+#: is how the kiosk's ``/voice`` served nothing. tests/test_spa_routes.py
+#: keeps the two in step. "/" is served by its own handler.
+SPA_ROUTES = (
+    "/dashboard",
+    "/terminal",
+    "/services",
+    "/storage",
+    "/gpu",
+    "/containers",
+    "/development",
+    "/network",
+    "/sharing",
+    "/findings",
+    "/security",
+    "/backups",
+    "/apps",
+    "/approvals",
+    "/settings",
+    "/home",
+    "/voice",
+    "/voice-hud",
+    "/frigate",
+)
+
+_NO_STORE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+
+def mount_frontend(app: FastAPI, frontend_dist: Path) -> None:
+    """Serve the built React app from ``frontend_dist``.
+
+    Static assets, the self-hosted fonts, the brand logo, "/" and every
+    path in ``SPA_ROUTES`` (all of which get index.html so the client
+    router can take over). Split out of ``create_app`` so the route table
+    is testable against a throwaway dist directory.
+    """
+    app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
+
+    # The self-hosted brand typefaces. This mount is load-bearing: the SPA
+    # route table is explicit rather than a catch-all, so without it
+    # /fonts/fonts.css 404s and the whole triad silently falls back to
+    # system faces in the packaged app — which is the one place a CDN is
+    # not available to paper over it.
+    fonts_dir = frontend_dist / "fonts"
+    if fonts_dir.exists():
+        app.mount("/fonts", StaticFiles(directory=fonts_dir), name="fonts")
+    else:
+        logger.warning(
+            "frontend/dist/fonts is missing - run scripts/sync_fonts.py before "
+            "building the frontend, or the app will render without its typefaces"
+        )
+
+    index_html = frontend_dist / "index.html"
+
+    @app.get("/Halbert.png")
+    async def serve_logo():
+        """Serve brand logo."""
+        return FileResponse(frontend_dist / "Halbert.png")
+
+    @app.get("/")
+    async def serve_frontend():
+        """Serve React app."""
+        return FileResponse(index_html, headers=_NO_STORE)
+
+    async def serve_spa():
+        """Serve React app for frontend routes."""
+        return FileResponse(index_html, headers=_NO_STORE)
+
+    for path in SPA_ROUTES:
+        app.get(path, include_in_schema=False)(serve_spa)
+
+
 def run_conversation_boot_hooks() -> dict:
     """Plan A boot hooks for the one continuous conversation (spec §8, §12).
 
@@ -321,66 +396,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"
     if frontend_dist.exists():
-        app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
-
-        # The self-hosted brand typefaces. This mount is load-bearing: the SPA
-        # route table below is explicit rather than a catch-all, so without it
-        # /fonts/fonts.css 404s and the whole triad silently falls back to
-        # system faces in the packaged app — which is the one place a CDN is
-        # not available to paper over it.
-        fonts_dir = frontend_dist / "fonts"
-        if fonts_dir.exists():
-            app.mount("/fonts", StaticFiles(directory=fonts_dir), name="fonts")
-        else:
-            logger.warning(
-                "frontend/dist/fonts is missing - run scripts/sync_fonts.py before "
-                "building the frontend, or the app will render without its typefaces"
-            )
-
-        @app.get("/Halbert.png")
-        async def serve_logo():
-            """Serve brand logo."""
-            return FileResponse(frontend_dist / "Halbert.png")
-
-        @app.get("/")
-        async def serve_frontend():
-            """Serve React app."""
-            return FileResponse(
-                frontend_dist / "index.html",
-                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-            )
-
-        # SPA routes - explicit frontend paths only (not a catch-all)
-        # This avoids conflicts with API routes
-        @app.get("/dashboard")
-        @app.get("/terminal")
-        @app.get("/services")
-        @app.get("/storage")
-        @app.get("/gpu")
-        @app.get("/containers")
-        @app.get("/development")
-        @app.get("/network")
-        @app.get("/sharing")
-        @app.get("/security")
-        @app.get("/backups")
-        @app.get("/apps")
-        @app.get("/approvals")
-        @app.get("/settings")
-        @app.get("/home")
-        async def serve_spa():
-            """Serve React app for frontend routes."""
-            return FileResponse(
-                frontend_dist / "index.html",
-                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-            )
-
-        @app.get("/frigate")
-        async def serve_spa_frigate():
-            """Serve React app for Frigate panel route."""
-            return FileResponse(
-                frontend_dist / "index.html",
-                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-            )
+        mount_frontend(app, frontend_dist)
     
     # Startup event: auto-start services
     @app.on_event("startup")
