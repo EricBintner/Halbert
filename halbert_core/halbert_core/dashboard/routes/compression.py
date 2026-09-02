@@ -64,16 +64,9 @@ async def get_status():
 async def get_config():
     """Get current compression config from models.yml."""
     try:
-        import yaml
-        from ...model.config_locator import find_models_config
+        from ...model import llm_config as llm_store
 
-        config_path = find_models_config()
-        if config_path is not None:
-            with open(config_path) as f:
-                config = yaml.safe_load(f) or {}
-            comp_config = config.get("compression", {})
-        else:
-            comp_config = {}
+        comp_config = llm_store.load_file().get("compression") or {}
 
         # Defaults
         return {
@@ -90,34 +83,32 @@ async def get_config():
 
 @router.post("/config")
 async def update_config(req: ConfigUpdateRequest):
-    """Update compression config in models.yml."""
+    """Update compression config in models.yml.
+
+    PICK-02: this used to read whichever models.yml find_models_config()
+    resolved to (the git-tracked repo template on a fresh install, since
+    no user file exists yet) and write the WHOLE dict — llm_config,
+    routing, everything — to the user's own file via a bare yaml.safe_dump
+    (no atomic rename, no .bak, no 0600). Going through the store instead
+    means only the compression key is ever touched, the write always lands
+    on $HALBERT_MODELS_CONFIG or the user file (never the repo template or
+    /etc), and it gets the store's usual atomic-rename + 0600 handling.
+    """
     try:
-        import yaml
-        from ...model.config_locator import find_models_config, write_models_config
+        from ...model import llm_config as llm_store
 
-        # Read from wherever config currently lives (the repo checkout and
-        # /etc are allowed here, purely to seed defaults), but NEVER write
-        # back to the git-tracked repo config/models.yml or to /etc: writes go
-        # to $HALBERT_MODELS_CONFIG or the user file (write_models_config()).
-        read_path = find_models_config()
-        write_path = write_models_config()
-        write_path.parent.mkdir(parents=True, exist_ok=True)
-        if read_path is not None:
-            with open(read_path) as f:
-                config = yaml.safe_load(f) or {}
-        else:
-            config = {}
+        # One-shot repair for a file an earlier version of this route
+        # already corrupted this way (PICK-02): a routing: block
+        # byte-identical to the repo template is almost certainly that
+        # copy, not a deliberate customisation.
+        llm_store.strip_stray_default_routing()
 
-        if "compression" not in config:
-            config["compression"] = {}
-
+        comp_config = dict(llm_store.load_file().get("compression") or {})
         updates = req.model_dump(exclude_none=True)
-        config["compression"].update(updates)
+        comp_config.update(updates)
+        llm_store.set_top_level("compression", comp_config)
 
-        with open(write_path, 'w') as f:
-            yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
-
-        return {"status": "ok", "config": config["compression"]}
+        return {"status": "ok", "config": comp_config}
     except HTTPException:
         raise
     except Exception as e:

@@ -763,6 +763,38 @@ def set_top_level(key: str, value: Any) -> None:
     _write_raw(raw)
 
 
+# The repo's config/models.yml template ships this default `routing:`
+# block. PICK-02: dashboard/routes/compression.py used to read whichever
+# models.yml find_models_config() resolved to — including this template
+# when no user file existed yet — and write the WHOLE dict back to the
+# user's file, copying `routing:` (and everything else, including the
+# template's placeholder llm_config) into a file that never customised
+# any of it. A `routing:` block byte-identical to the template is strong
+# evidence of that copy rather than a deliberate choice, so a one-shot
+# cleanup can safely drop it without risking a real customisation.
+_STRAY_ROUTING_TEMPLATE = {
+    "strategy": "auto",
+    "prefer_specialist_for": ["code_generation", "code_analysis", "reasoning", "system_command"],
+    "complexity_threshold": 0.5,
+}
+
+
+def strip_stray_default_routing() -> bool:
+    """Remove a top-level ``routing:`` block if it exactly matches the repo
+    template default (PICK-02). Returns True when a key was removed.
+
+    Safe to call unconditionally: a file with no ``routing:`` key, or one
+    that differs from the template in any way (an operator's own
+    ``routing:`` customisation), is left untouched.
+    """
+    raw = _read_for_write()
+    if raw.get("routing") != _STRAY_ROUTING_TEMPLATE:
+        return False
+    del raw["routing"]
+    _write_raw(raw)
+    return True
+
+
 def resolve_from(file_cfg: Dict[str, Any], slot: str) -> Optional[ResolvedModel]:
     """Resolve a slot against an already-loaded (normalised) models.yml dict."""
     llm = file_cfg.get("llm_config") or {}

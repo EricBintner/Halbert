@@ -43,18 +43,31 @@ def test_post_creates_user_file(client):
 
 
 def test_post_preserves_other_keys(client):
+    """PICK-02: going through the store (llm_config.load_file/set_top_level)
+    means a legacy key like ``orchestrator`` is migrated into ``llm_config``
+    the same way every other write path already migrates it, rather than
+    being copied through verbatim by a bare yaml.safe_dump."""
     c, tmp = client
     (tmp / "models.yml").write_text("orchestrator:\n  model: example-model:latest\ncompression:\n  enabled: true\n")
     r = c.post("/api/compression/config", json={"threshold": 1234})
     assert r.status_code == 200, r.text
     cfg = yaml.safe_load((tmp / "models.yml").read_text())
-    assert cfg["orchestrator"] == {"model": "example-model:latest"}
+    assert "orchestrator" not in cfg
+    assert cfg["llm_config"]["chat_model"]["model"] == "example-model:latest"
     assert cfg["compression"] == {"enabled": True, "threshold": 1234}
 
 
 def test_post_never_writes_repo_config(monkeypatch, tmp_path):
-    """Reviewer repro: with only the repo config present, POST must create the
-    user file (seeded from the repo defaults) and leave the repo file untouched."""
+    """PICK-02: with only the repo config present, POST must create the user
+    file and leave the repo file untouched — and, unlike the old
+    yaml.safe_dump-the-whole-dict implementation, must NOT copy the repo
+    template's other sections (routing, handoff, its placeholder
+    llm_config) into the user's file. The store's own read path
+    (find_models_config(include_repo=False)) never considers the
+    git-tracked repo file a config source at all — the picker's GET
+    /llm/config has never seeded from it either, so this endpoint is now
+    consistent with the rest of the system rather than a second, buggier
+    seeding path."""
     import shutil
 
     from halbert_core.model.config_locator import repo_root
@@ -79,10 +92,12 @@ def test_post_never_writes_repo_config(monkeypatch, tmp_path):
     assert (repo_copy / "config" / "models.yml").read_bytes() == before
     cfg = yaml.safe_load((user_dir / "models.yml").read_text())
     assert cfg["compression"]["backend"] == "lingua"
-    # seeded from repo defaults, not an empty file
-    repo_cfg = yaml.safe_load(before)
-    for k in repo_cfg:
-        assert k in cfg
+    # NOT seeded from the repo template: no routing/handoff sections, and
+    # the user file's own llm_config stays the normalised empty scaffold.
+    assert "routing" not in cfg
+    assert "handoff" not in cfg
+    assert cfg["llm_config"]["chat_model"]["model"] == ""
+    assert cfg["llm_config"]["saved_endpoints"] == []
     assert c.get("/api/compression/config").json()["backend"] == "lingua"
 
 
@@ -111,8 +126,67 @@ def test_post_never_writes_etc_when_no_user_file(monkeypatch, tmp_path):
     assert r.status_code == 200, r.text
     assert etc.read_bytes() == before
     cfg = yaml.safe_load((user_dir / "models.yml").read_text())
-    assert cfg["orchestrator"] == {"model": "sys"}
+    # /etc/halbert/models.yml is a real system layer (unlike the repo
+    # template) and still seeds the user file; its legacy orchestrator
+    # key is migrated into llm_config like any other write path does.
+    assert "orchestrator" not in cfg
+    assert cfg["llm_config"]["chat_model"]["model"] == "sys"
     assert cfg["compression"] == {"enabled": True, "backend": "lingua"}
+
+
+def test_post_writes_0600_and_atomically(client):
+    """PICK-02: the old implementation wrote with a bare open()+yaml.safe_dump
+    (no atomic rename, no 0600). Going through set_top_level gets both for
+    free — this pins that the file this route creates actually has them."""
+    import os
+    import stat
+
+    c, tmp = client
+    r = c.post("/api/compression/config", json={"backend": "lingua"})
+    assert r.status_code == 200, r.text
+    path = tmp / "models.yml"
+    assert path.exists()
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
+def test_post_strips_a_stray_default_routing_block_once(client):
+    """PICK-02: a routing: block byte-identical to the repo template is a
+    remnant of the old bug (which copied the whole repo dict, routing
+    included, into the user file) and is removed as a one-shot repair."""
+    c, tmp = client
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "models.yml").write_text(
+        "routing:\n"
+        "  strategy: auto\n"
+        "  prefer_specialist_for: [code_generation, code_analysis, reasoning, system_command]\n"
+        "  complexity_threshold: 0.5\n"
+        "compression:\n"
+        "  enabled: true\n"
+    )
+    r = c.post("/api/compression/config", json={"backend": "lingua"})
+    assert r.status_code == 200, r.text
+    cfg = yaml.safe_load((tmp / "models.yml").read_text())
+    assert "routing" not in cfg
+    assert cfg["compression"]["backend"] == "lingua"
+
+
+def test_post_keeps_a_customised_routing_block(client):
+    """A routing: block that does NOT match the template default is a real
+    customisation, not a copy artifact, and must survive untouched."""
+    c, tmp = client
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "models.yml").write_text(
+        "routing:\n"
+        "  strategy: auto\n"
+        "  prefer_specialist_for: [code_generation, code_analysis, reasoning, system_command]\n"
+        "  complexity_threshold: 0.9\n"
+        "compression:\n"
+        "  enabled: true\n"
+    )
+    r = c.post("/api/compression/config", json={"backend": "lingua"})
+    assert r.status_code == 200, r.text
+    cfg = yaml.safe_load((tmp / "models.yml").read_text())
+    assert cfg["routing"]["complexity_threshold"] == 0.9
 
 
 def test_post_writes_env_override_file(monkeypatch, tmp_path):
