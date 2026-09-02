@@ -8,6 +8,7 @@ tests don't contaminate the global singleton.
 """
 
 import asyncio
+import time
 import pytest
 
 fastapi_ok = True
@@ -151,6 +152,51 @@ async def test_spawn_list_kill_session(fresh_manager):
 
     ok = await term.kill_session(resp.session_id)
     assert ok["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_spawned_tiles_are_user_shells_not_oneshots(fresh_manager):
+    """R04-F1. The manager reaps by kind: oneshot at 60s idle, user at 1800s
+    and never while a client is attached. /sessions is the interactive tile
+    endpoint, so a session it spawns is a user shell — spawning it without a
+    kind made every dashboard terminal a oneshot, and the reaper killed a
+    shell the user was simply not typing into."""
+    resp = await term.spawn_session(term.SpawnRequest(command="sleep 2"))
+    manager = term.get_terminal_manager()
+
+    row = next(
+        s for s in manager.list_active() if s["session_id"] == resp.session_id
+    )
+    assert row["kind"] == "user"
+    await term.kill_session(resp.session_id)
+
+
+@pytest.mark.asyncio
+async def test_a_quiet_user_shell_survives_the_oneshot_ttl(fresh_manager):
+    """The behaviour the kind exists to produce, asserted end to end."""
+    resp = await term.spawn_session(term.SpawnRequest(command="sleep 30"))
+    manager = term.get_terminal_manager()
+    sid = resp.session_id
+
+    manager.attach_client(sid)
+    # Older than the 60s oneshot TTL, younger than the 1800s user TTL.
+    manager._last_activity[sid] = time.monotonic() - 300
+    manager._reap_once()
+    assert manager.get(sid) is not None, "a live user shell was reaped"
+
+    # Detached and past the user TTL, it is reclaimed like anything else.
+    manager.detach_client(sid)
+    manager._last_activity[sid] = time.monotonic() - 2000
+    manager._reap_once()
+    assert manager.get(sid) is None
+
+    
+@pytest.mark.asyncio
+async def test_spawn_rejects_an_unknown_kind(fresh_manager):
+    with pytest.raises(Exception):
+        await term.spawn_session(
+            term.SpawnRequest(command="sleep 2", kind="agent-pool-ish")
+        )
 
 
 @pytest.mark.asyncio

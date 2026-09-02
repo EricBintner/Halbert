@@ -21,7 +21,7 @@ import asyncio
 import json
 import logging
 import shlex
-from typing import Optional, List
+from typing import Literal, Optional, List
 from enum import Enum
 
 try:
@@ -89,6 +89,13 @@ class SpawnRequest(BaseModel):
     cols: int = 80
     rows: int = 24
     writable_paths: Optional[List[str]] = None
+    # The manager reaps by kind: oneshot at 60s idle, user at 1800s and never
+    # while a client is attached. This endpoint backs the interactive tiles,
+    # so its default is "user" -- spawning without one made every dashboard
+    # terminal a oneshot and the reaper killed shells the user simply was not
+    # typing into (R04-F1). Whitelisted: a caller must not be able to name a
+    # kind with a longer TTL or a different cap than the manager expects.
+    kind: Literal["user", "oneshot"] = "user"
 
 
 class SpawnResponse(BaseModel):
@@ -320,6 +327,7 @@ if FASTAPI_AVAILABLE:
             session_id = await manager.spawn(
                 wrapped, cwd=request.cwd,
                 cols=request.cols, rows=request.rows,
+                kind=request.kind,
             )
         except AtCapacityError:
             raise HTTPException(503, "Terminal session manager at capacity")

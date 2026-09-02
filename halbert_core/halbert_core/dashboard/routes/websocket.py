@@ -78,6 +78,10 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
         return
 
     await websocket.accept()
+    # An attached client is what keeps a user shell out of the reaper's reach
+    # (session_manager._reap_once). Without this the count stayed at zero and
+    # the exemption was dead code (R04-F1).
+    manager.attach_client(session_id)
     logger.info(f"WS attached to terminal session {session_id}")
 
     async def pump_stdout():
@@ -131,8 +135,10 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
         for t in (stdout_task, stdin_task):
             t.cancel()
     finally:
+        manager.detach_client(session_id)
         logger.info(f"WS detached from terminal session {session_id}")
-        # Leave the session alive for potential reattach; reaper reclaims idle.
+        # Leave the session alive for potential reattach; the reaper reclaims
+        # it once it has been idle past its kind's TTL with nobody attached.
 
 
 @router.websocket("/api/audio/stream")

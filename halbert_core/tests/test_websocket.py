@@ -3,6 +3,7 @@
 """Tests for the terminal WebSocket bridge (B1f)."""
 
 import json
+import time
 import pytest
 
 fastapi_ok = True
@@ -54,6 +55,32 @@ def test_ws_unknown_session_closes(app_client):
     with pytest.raises(Exception):
         with app_client.websocket_connect("/ws/terminal/nope") as ws:
             ws.receive_text()
+
+
+def test_ws_attachment_protects_the_session_from_the_reaper(app_client):
+    """R04-F1, second half. The reaper's \"never reap an attached user
+    shell\" rule reads _attach_counts, and nothing ever incremented it — so
+    the exemption was dead code and the rule protected nothing."""
+    from halbert_core.dashboard.routes.websocket import get_terminal_manager
+
+    sid = _spawn(app_client, "sleep 30")
+    manager = get_terminal_manager()
+
+    def _attach_count():
+        return next(
+            r["attach_count"] for r in manager.list_active()
+            if r["session_id"] == sid
+        )
+
+    assert _attach_count() == 0
+    with app_client.websocket_connect(f"/ws/terminal/{sid}"):
+        assert _attach_count() == 1
+        manager._last_activity[sid] = time.monotonic() - 300
+        manager._reap_once()
+        assert manager.get(sid) is not None, "an attached user shell was reaped"
+
+    assert _attach_count() == 0
+    manager.kill(sid)
 
 
 def test_ws_streams_stdout_and_exit(app_client):
