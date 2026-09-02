@@ -226,3 +226,77 @@ async def test_echo_true_default_echoes_stdin():
     # With echo on, "world" appears at least once from echo
     assert b"world" in output
     session.kill()
+
+
+@pytest.mark.asyncio
+async def test_kill_does_not_block_the_event_loop():
+    """R04-F5. kill() is sync and called from async paths — the routes, the
+    pool, and the reaper sweep, which can kill several sessions in a row. It
+    used to sleep up to 70ms per call waiting on SIGTERM before escalating,
+    stalling the loop for every one of them."""
+    # A shell that ignores SIGTERM, so the escalation path is the one taken.
+    session = PTYSession("trap '' TERM; sleep 30")
+    await session.spawn()
+    await asyncio.sleep(0.2)
+
+    started = asyncio.get_running_loop().time()
+    session.kill()
+    blocked_for = asyncio.get_running_loop().time() - started
+
+    # kill() is synchronous, so nothing else can run *during* it — the point
+    # is that it hands control back promptly instead of sitting on two
+    # sleeps. The old code took ~70ms here; the SIGKILL escalation now goes
+    # on the loop with call_later.
+    assert blocked_for < 0.02, f"kill() blocked the loop for {blocked_for:.3f}s"
+    assert not session.is_alive()
+
+    await asyncio.sleep(0.15)  # let the deferred escalation run
+
+
+@pytest.mark.asyncio
+async def test_kill_still_reaps_a_child_that_ignores_sigterm():
+    """The deferred escalation must actually happen, not just be scheduled."""
+    session = PTYSession("trap '' TERM; sleep 30")
+    await session.spawn()
+    await asyncio.sleep(0.2)
+    pid = session.pid
+
+    session.kill()
+    await asyncio.sleep(0.3)  # past the 50ms escalation delay
+
+    import os
+    with pytest.raises(OSError):
+        # Reaped: the pid is gone from this process's children.
+        os.waitpid(pid, os.WNOHANG)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fork_does_not_leak_the_pty_fd_pair():
+    """R04-F13. os.openpty() opens two fds before the fork; if the fork raises
+    — EAGAIN, i.e. the process table is full — this session will never own a
+    child, so nothing else ever closes them. Every retry burned two more fds
+    at exactly the moment that mattered."""
+    import os
+    from unittest import mock
+
+    def _open_fds():
+        r, w = os.pipe()
+        os.close(w)
+        return r
+
+    probe = _open_fds()
+    os.close(probe)
+    before = probe  # the lowest free fd number right now
+
+    session = PTYSession("echo hi")
+    with mock.patch("os.fork", side_effect=OSError(11, "Resource temporarily unavailable")):
+        with pytest.raises(OSError):
+            await session.spawn()
+
+    assert session._master_fd is None
+    assert session._slave_fd is None
+
+    # The next free fd is no higher than it was, i.e. nothing stayed open.
+    after = _open_fds()
+    os.close(after)
+    assert after <= before, f"fds leaked: next free fd moved {before} -> {after}"

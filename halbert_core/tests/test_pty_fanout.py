@@ -186,7 +186,7 @@ async def test_buffer_independent_of_queue_overflow():
     """A full queue doesn't lose scrollback data."""
     session = PTYSession("printf 'overflow test\\n'")
     await session.spawn()
-    q = await session.attach(_maxsize=1)  # tiny queue
+    q = await session.attach(maxsize=1)  # tiny queue
     await asyncio.wait_for(q.get(), timeout=3.0)  # replay
 
     # Let output flow; queue may overflow
@@ -227,4 +227,23 @@ async def test_attach_after_exit_gets_replay_and_eof():
     # Should get None (EOF) since child is dead
     item = await asyncio.wait_for(q.get(), timeout=3.0)
     assert item is None
+    session.detach(q)
+
+
+@pytest.mark.asyncio
+async def test_fanout_queues_are_bounded_by_default():
+    """R04-F6. _push_to_all has always had a drop-on-overflow branch and the
+    scrollback to recover from it, but attach()'s default maxsize was 0, so
+    no queue in production was ever bounded and the branch was unreachable —
+    a consumer that stopped reading grew its queue without limit."""
+    from halbert_core.streaming.pty import FANOUT_QUEUE_CHUNKS
+
+    session = PTYSession("sleep 5")
+    await session.spawn()
+    q = await session.attach()
+
+    assert q.maxsize == FANOUT_QUEUE_CHUNKS
+    assert q.maxsize > 0, "an unbounded fan-out queue can never drop"
+
+    session.kill()
     session.detach(q)

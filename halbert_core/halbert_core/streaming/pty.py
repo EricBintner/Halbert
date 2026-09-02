@@ -29,6 +29,11 @@ from typing import AsyncIterator, Optional, Set
 
 logger = logging.getLogger("halbert.streaming.pty")
 
+# Per-consumer fan-out bound, in 4 KiB chunks (the reader's os.read size), so
+# roughly 4 MiB of unread output before a consumer starts dropping. Anything
+# dropped is still in the session's scrollback and comes back on re-attach.
+FANOUT_QUEUE_CHUNKS = 1024
+
 _DEFAULT_BUFFER_BYTES = 1024 * 1024  # 1 MiB scrollback
 
 
@@ -116,12 +121,19 @@ class PTYSession:
     # Fan-out reader (Plan B: B4)
     # ------------------------------------------------------------------
 
-    async def attach(self, *, _maxsize: int = 0) -> "asyncio.Queue":
+    async def attach(self, *, maxsize: int = FANOUT_QUEUE_CHUNKS) -> "asyncio.Queue":
         """Subscribe to this session's output stream.
 
         Returns a queue that receives every future chunk. The first item
         is ``("__replay__", self.get_buffer())`` so a newly-attached xterm
         can render history without a separate fetch.
+
+        The queue is bounded. ``_push_to_all`` has always had a
+        drop-on-overflow branch documented as the design — a slow consumer
+        loses chunks and re-attaches to replay from the scrollback, rather
+        than the reader blocking on it — but the default maxsize was 0 and no
+        caller passed one, so the branch was unreachable and a consumer that
+        stopped reading grew its queue without bound (R04-F6).
 
         Starts the single reader task if it is not already running.
         """
@@ -129,7 +141,7 @@ class PTYSession:
         # master fd before replaying so late attachers see the full output.
         if self._exited and self._master_fd is not None:
             self._drain_master()
-        q: "asyncio.Queue" = asyncio.Queue(maxsize=_maxsize)
+        q: "asyncio.Queue" = asyncio.Queue(maxsize=maxsize)
         # Replay first
         q.put_nowait(("__replay__", self.get_buffer()))
         self._fanout_queues.add(q)
@@ -222,21 +234,29 @@ class PTYSession:
         ECHO is cleared on the slave fd before exec (pool sessions).
         """
         self._master_fd, self._slave_fd = os.openpty()
-        self._set_winsize(self._cols, self._rows)
+        try:
+            self._set_winsize(self._cols, self._rows)
 
-        # Clear ECHO on the slave fd before forking (pool sessions).
-        # The line discipline echo duplicates every stdin write as stdout,
-        # which corrupts block output for agent-pool sessions.
-        if not echo and self._slave_fd is not None:
-            try:
-                attrs = termios.tcgetattr(self._slave_fd)
-                # ECHO is bit 3 (0x8) in c_lflag
-                attrs[3] = attrs[3] & ~termios.ECHO
-                termios.tcsetattr(self._slave_fd, termios.TCSANOW, attrs)
-            except OSError:
-                pass
+            # Clear ECHO on the slave fd before forking (pool sessions).
+            # The line discipline echo duplicates every stdin write as stdout,
+            # which corrupts block output for agent-pool sessions.
+            if not echo and self._slave_fd is not None:
+                try:
+                    attrs = termios.tcgetattr(self._slave_fd)
+                    # ECHO is bit 3 (0x8) in c_lflag
+                    attrs[3] = attrs[3] & ~termios.ECHO
+                    termios.tcsetattr(self._slave_fd, termios.TCSANOW, attrs)
+                except OSError:
+                    pass
 
-        pid = os.fork()
+            pid = os.fork()
+        except BaseException:
+            # The fd pair is open and this session will never own a child, so
+            # nothing else will ever close them. os.fork() raises EAGAIN when
+            # the process table is full — precisely the moment a leak here
+            # compounds, since every retry burns two more fds (R04-F13).
+            self._close_fds()
+            raise
         if pid == 0:
             # --- Child ---
             try:
@@ -336,16 +356,24 @@ class PTYSession:
                 os.kill(self._pid, signal.SIGTERM)
             except OSError:
                 pass
-            # Bounded, non-blocking reap: give SIGTERM a moment, then SIGKILL.
-            time.sleep(0.05)
             self._reap(blocking=False)
             if not self._exited:
+                # Give SIGTERM a moment before escalating. kill() is sync and
+                # is called from async paths (the routes, the pool, and the
+                # reaper sweep, which can kill many sessions in a row), so
+                # sleeping here stalled the event loop ~70ms per session
+                # (R04-F5). When a loop is running, escalate on it instead;
+                # only a caller with no loop -- interpreter teardown, tests --
+                # pays the blocking wait.
                 try:
-                    os.kill(self._pid, signal.SIGKILL)
-                except OSError:
-                    pass
-                time.sleep(0.02)
-                self._reap(blocking=False)
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None:
+                    loop.call_later(0.05, self._escalate_kill)
+                else:
+                    time.sleep(0.05)
+                    self._escalate_kill()
         if self._master_fd is not None:
             try:
                 os.close(self._master_fd)
@@ -357,6 +385,34 @@ class PTYSession:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _close_fds(self) -> None:
+        """Close whichever of the master/slave pair is still open. Idempotent."""
+        for attr in ("_master_fd", "_slave_fd"):
+            fd = getattr(self, attr)
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                setattr(self, attr, None)
+
+    def _escalate_kill(self) -> None:
+        """SIGKILL a child that did not go down on SIGTERM, then reap it.
+
+        Split out of ``kill()`` so it can run from a loop callback instead of
+        behind a blocking sleep. Idempotent, and safe if the child has since
+        exited on its own -- ``_reap`` is non-blocking and ``os.kill`` on a
+        gone pid raises OSError, which is what the guard is for.
+        """
+        self._reap(blocking=False)
+        if self._exited or self._pid is None:
+            return
+        try:
+            os.kill(self._pid, signal.SIGKILL)
+        except OSError:
+            pass
+        self._reap(blocking=False)
 
     def _set_winsize(self, cols: int, rows: int) -> None:
         if self._master_fd is None:
