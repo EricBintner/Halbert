@@ -127,7 +127,7 @@ class PeerCredential:
 
     node_id: str                           # unique identifier (hostname or user-provided)
     node_name: str                         # human-readable display name
-    role: str                              # "compute_provider" | "satellite" (legacy, kept for compat)
+    role: str                              # "compute_provider" | "body" (another body of this entity) | "satellite" (legacy, kept for compat)
     token_hash: str                        # "sha256:<hex>"
     paired_at: str                         # ISO 8601 timestamp
     last_seen: Optional[str] = None        # ISO 8601, updated on each authenticated request

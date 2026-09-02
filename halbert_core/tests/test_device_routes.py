@@ -119,8 +119,35 @@ class TestListDevices:
         body = c.get("/api/devices").json()
         assert body["status"] == "ok"
         assert body["entity_mode"] == "independent"
+        assert body["entity_role"] == "independent"
         assert body["canonical_memory_url"] == ""
         assert body["devices"] == []
+
+    def test_a_paired_body_makes_this_node_the_canonical_host(self, client):
+        """W4-05: 'singular' used to be defined only on the proxying body;
+        the host that IS the memory reported Independent Node."""
+        c, peers, _ = client
+        _pair(peers, "mac", role="body")
+        body = c.get("/api/devices").json()
+        assert body["entity_role"] == "canonical"
+        assert body["entity_mode"] == "singular"
+        assert body["canonical_memory_url"] == ""
+
+    def test_a_revoked_body_no_longer_makes_a_canonical_host(self, client):
+        c, peers, _ = client
+        _pair(peers, "mac", role="body")
+        peers.revoke_peer("mac")
+        body = c.get("/api/devices").json()
+        assert body["entity_role"] == "independent"
+        assert body["entity_mode"] == "independent"
+
+    def test_a_node_proxying_to_a_canonical_host_is_a_body(self, client):
+        c, _, _ = client
+        c.put("/api/devices/entity-mode",
+              json={"mode": "singular", "base_url": "http://n150.lan:8001"})
+        body = c.get("/api/devices").json()
+        assert body["entity_role"] == "body"
+        assert body["entity_mode"] == "singular"
 
     def test_devices_include_capabilities_wol_and_revoked(self, client):
         c, peers, _ = client

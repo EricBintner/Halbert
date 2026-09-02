@@ -123,7 +123,7 @@ class PairRequest(BaseModel):
     """Satellite → Desktop: request to pair."""
     node_id: str = Field(..., description="Satellite's unique node ID")
     node_name: str = Field(..., description="Satellite's display name")
-    role: str = Field("satellite", description="Peer role: 'satellite' or 'compute_provider'")
+    role: str = Field("satellite", description="Peer role: 'satellite', 'compute_provider' or 'body' (another body of this entity; makes the approving node the canonical host)")
     capabilities: List[str] = Field(default_factory=list, description="Capabilities the satellite offers")
     endpoint: Optional[str] = Field(None, description="Satellite's endpoint URL (for Desktop→Satellite MCP proxy)")
     compute_direction: str = Field("outbound", description="Compute flow: 'outbound' (local→peer) or 'inbound' (peer→local)")

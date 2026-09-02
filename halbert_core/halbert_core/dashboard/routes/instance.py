@@ -12,6 +12,13 @@ from typing import Any, Dict
 
 from fastapi import APIRouter
 
+from ...identity import (
+    resolve_body_name,
+    resolve_entity_name,
+    resolve_entity_role,
+    resolve_persona_id,
+)
+
 router = APIRouter()
 
 
@@ -23,8 +30,15 @@ async def get_instance_info() -> Dict[str, Any]:
     - Filter sidebar navigation (hide Home tab on host, hide Dev tabs on home)
     - Display the Instance Switcher with correct label and color
     - Show the right persona name in the top bar
+
+    ``display_name`` comes from the same resolver as ``/api/identity``
+    (``halbert_core.identity``), so the Presence Pill and the greeting
+    never disagree about what this machine is called. ``persona_id``
+    honours being.yml ``persona_id_override`` the way the memory wiring
+    does. ``entity_role`` is the tri-state (canonical | body |
+    independent); ``singular`` is its two-state view for the pill.
     """
-    persona_id = os.environ.get("HALBERT_PERSONA_ID", "halbert")
+    persona_id = resolve_persona_id()
     scene_context = os.environ.get("HALBERT_SCENE_CONTEXT", "")
     port = int(os.environ.get("HALBERT_PORT", "8000"))
 
@@ -45,20 +59,19 @@ async def get_instance_info() -> Dict[str, Any]:
         "wyoming_port": int(os.environ.get("WYOMING_PORT", "10400")),
     }
 
-    # Display info
-    display_name = persona_id.capitalize()
-    if role == "host":
-        display_name = os.environ.get("HALBERT_DISPLAY_NAME", "Host")
-    elif role == "home":
-        display_name = os.environ.get("HALBERT_DISPLAY_NAME", "Home")
+    # The entity's name: HALBERT_DISPLAY_NAME launch override > onboarding
+    # ai_name > being.yml name > short hostname > "Halbert". Never a
+    # role literal — "Host"/"Home" are what the machine does, not its name.
+    display_name = resolve_entity_name()
 
-    # Body name and entity mode (from being.yml via cognition_wiring).
     # body_name labels which physical body the entity is speaking from
-    # (e.g. "desk", "home"). singular is true when canonical_memory_url
-    # is set — the node proxies memory/threads to the canonical host.
-    from ...integrations.cognition_wiring import _get_body_name, is_singular_entity_mode
-    body_name = _get_body_name()
-    singular = is_singular_entity_mode()
+    # (e.g. "desk", "home"). entity_role is "body" when this node proxies
+    # memory/threads to a canonical host, "canonical" when it IS the host
+    # for at least one paired body, else "independent". singular is true
+    # on both sides of a pair — one entity, many bodies.
+    body_name = resolve_body_name()
+    entity_role = resolve_entity_role()
+    singular = entity_role != "independent"
 
     return {
         "persona_id": persona_id,
@@ -71,5 +84,6 @@ async def get_instance_info() -> Dict[str, Any]:
         "data_dir": os.environ.get("HALBERT_DATA_DIR") or os.environ.get("Halbert_DATA_DIR", ""),
         "config_dir": os.environ.get("HALBERT_CONFIG_DIR") or os.environ.get("Halbert_CONFIG_DIR", ""),
         "body_name": body_name,
+        "entity_role": entity_role,
         "singular": singular,
     }
