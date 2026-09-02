@@ -691,7 +691,7 @@ class ConfigWizard:
                     logger.error(f"Missing required key: {key}")
                     return False
 
-            # Check llm_config has the three slots
+            # Check llm_config has all four slots
             llm = config["llm_config"]
             for slot in ("chat_model", "specialist_model", "vision_model", "secure_model"):
                 if slot not in llm:
