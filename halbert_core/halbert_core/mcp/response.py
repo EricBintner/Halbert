@@ -48,6 +48,23 @@ Design
    vocabulary keys (rule 1 re-redacts what the tier legitimately let
    through) while leaking silently for user-classified keys.
 
+   KNOWN RISK (NEW-01, tracked not fixed): "set only by
+   ``get_config_value``" is a naming convention, not an enforced
+   invariant — ``_redact_dict`` honours the marker on ANY dict at ANY
+   depth of the payload purely by structural shape (see
+   ``test_egress_ack_does_not_leak_to_sibling_dicts`` and
+   ``test_nested_secret_dict_keys_still_redacted_under_marker`` in
+   test_mcp_response_boundary.py, which deliberately exercise and rely
+   on that at-any-depth behaviour for nested/multi-result payloads).
+   Nothing stops a different, careless, or compromised tool handler
+   from returning ``{"_egress_ack": True, "value": <anything>}``
+   anywhere in its own response and getting the same unredacted pass.
+   Narrowing this to a provenance-checked exemption (e.g. only the
+   direct top-level result, or a signed marker) is a real design
+   change — it would need to preserve or deliberately retire the
+   nested-payload contract those tests encode — not a mechanical fix,
+   so it is left open rather than changed under time pressure.
+
 After the structural rules, every remaining string is passed through
 ``redact_text()``, which catches credentials embedded in text:
 ``key=value`` shapes, PEM blocks, JWTs, URL-embedded credentials,

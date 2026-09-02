@@ -265,7 +265,11 @@ def get_config_value(
     ``_egress_ack: True`` so the MCP response boundary lets the value
     through instead of re-redacting it — the hatch then behaves
     identically for vocabulary and user-classified keys. The marker is
-    set only here; see ``security_constants.EGRESS_ACK_FIELD``.
+    set only HERE, by convention — see ``security_constants.EGRESS_ACK_FIELD``
+    and the "KNOWN RISK (NEW-01)" note on ``mcp.response._redact_dict``:
+    this is not an enforced invariant, and the response boundary honours
+    the marker on any dict it finds it on, not only this function's
+    output.
     """
     # Runtime TTL check — never trust a stale cloud_ok_acknowledged
     if secret_tier == "cloud_ok_acknowledged" and secret_tier_expiry:
