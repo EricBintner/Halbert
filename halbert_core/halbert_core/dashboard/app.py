@@ -7,9 +7,10 @@ Provides REST API + WebSocket for Halbert dashboard.
 """
 
 from __future__ import annotations
+import asyncio
 import logging
 import json
-from typing import Dict, List
+from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 
 try:
@@ -231,6 +232,142 @@ def register_proactive_jobs(executor, *, load_config=None) -> Dict[str, str]:
         outcome['morning_report'] = f'error: {e}'
 
     return outcome
+
+
+# ---------------------------------------------------------------------------
+# C4-03: the idle heartbeat — ThreadManager.tick() gets a production caller
+# ---------------------------------------------------------------------------
+
+#: Cadence of the idle thread sweep + consolidator when being.yml does not
+#: set ``heartbeat_s``. tick() is cheap when nothing is due (one indexed
+#: list of paused rows), so a minute is about visibility, not cost.
+DEFAULT_HEARTBEAT_S = 60.0
+#: Floor for a configured ``heartbeat_s``: below this the sweep would
+#: compete with turns for the store for no benefit.
+MIN_HEARTBEAT_S = 5.0
+
+
+def heartbeat_interval_s(default: float = DEFAULT_HEARTBEAT_S) -> float:
+    """Idle-tick cadence: being.yml ``heartbeat_s`` when set, else 60 s.
+
+    Read straight from the file rather than BeingConfig — the dataclass
+    drops keys it does not declare, and the heartbeat is a runtime knob of
+    the host process, not a persona field to be written back on every save.
+    Never raises: a missing or broken being.yml means the default.
+    """
+    try:
+        import yaml
+        from ..utils.platform import get_config_dir
+
+        path = get_config_dir() / "being.yml"
+        if path.is_file():
+            with open(path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            value = data.get("heartbeat_s") if isinstance(data, dict) else None
+            if value is not None:
+                return max(MIN_HEARTBEAT_S, float(value))
+    except Exception as e:
+        logger.debug(f"heartbeat_s not read from being.yml ({e}); using {default}s")
+    return default
+
+
+def _agent_turn_busy() -> bool:
+    """Is a conversation turn in flight?
+
+    The process-wide agent (routes/agent.py) holds ``turn_lock`` for the
+    whole of ``process()``; the lock is built lazily, so ``None`` means no
+    turn has ever run. Fail-soft: an unreadable agent reads as "not busy" —
+    tick() is lock-safe in its own right, this check only keeps the sweep
+    out of the user's turn time.
+    """
+    try:
+        from .routes import agent as agent_routes
+
+        agent = agent_routes._agent_instance
+        lock = getattr(agent, "_turn_lock", None) if agent is not None else None
+        return bool(lock is not None and lock.locked())
+    except Exception:
+        return False
+
+
+def _tick_thread_manager() -> list:
+    """One idle tick on the process-wide ThreadManager; returns closed ids.
+
+    A satellite's manager proxies to the canonical host's store (singular
+    entity mode); the host sweeps its own threads, so the satellite does
+    not tick through the peer link.
+    """
+    from ..agents import threads as threads_mod
+
+    manager = threads_mod.get_thread_manager()
+    if isinstance(manager.store, threads_mod._PeerConversationStoreType):
+        return []
+    return manager.tick()
+
+
+async def run_thread_tick_loop(
+    interval_s: float,
+    *,
+    tick: Callable[[], Any] = _tick_thread_manager,
+    turn_busy: Callable[[], bool] = _agent_turn_busy,
+    max_beats: Optional[int] = None,
+) -> int:
+    """Every ``interval_s`` seconds, run ``tick`` off the event loop unless a
+    turn is in flight (then wait for the next beat). Returns the number of
+    beats (tests pass ``max_beats``; production cancels the task instead).
+
+    A failing tick is logged and the loop carries on: the sweep is the
+    being's housekeeping, and a locked store this minute is not a reason to
+    stop sweeping for the rest of the process's life.
+    """
+    beats = 0
+    while max_beats is None or beats < max_beats:
+        await asyncio.sleep(interval_s)
+        beats += 1
+        if turn_busy():
+            continue
+        try:
+            closed = await asyncio.to_thread(tick)
+            if closed:
+                logger.info(f"Idle tick closed {len(closed)} thread(s)")
+        except Exception as e:
+            logger.warning(f"Thread tick failed (non-fatal): {e}")
+    return beats
+
+
+def start_thread_tick_heartbeat(
+    app: FastAPI,
+    *,
+    interval_s: Optional[float] = None,
+    tick: Callable[[], Any] = _tick_thread_manager,
+    turn_busy: Callable[[], bool] = _agent_turn_busy,
+) -> "asyncio.Task":
+    """Start the heartbeat task on the running loop and park it on ``app.state``."""
+    if interval_s is None:
+        interval_s = heartbeat_interval_s()
+    task = asyncio.get_running_loop().create_task(
+        run_thread_tick_loop(interval_s, tick=tick, turn_busy=turn_busy),
+        name="halbert-thread-tick",
+    )
+    app.state.thread_tick_task = task
+    logger.info(f"Thread tick heartbeat started (every {interval_s:g}s)")
+    return task
+
+
+async def stop_thread_tick_heartbeat(app: FastAPI) -> None:
+    """Cancel the heartbeat task started by ``start_thread_tick_heartbeat``."""
+    task = getattr(app.state, "thread_tick_task", None)
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning(f"Thread tick heartbeat ended with an error: {e}")
+    app.state.thread_tick_task = None
+    logger.info("Thread tick heartbeat stopped")
 
 
 def get_recent_config_changes(within_hours: int = 24) -> list:
@@ -497,6 +634,15 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         # Synchronous on purpose: the first /api/agent/message must see the
         # migrated threads and no phantom in_progress rows.
         run_conversation_boot_hooks()
+
+        # C4-03: the idle heartbeat. ThreadManager.tick() (grace-window
+        # close sweep + R8 Consolidator) had no production caller; this
+        # task runs it every heartbeat_s (being.yml, else 60 s) whenever no
+        # turn is in flight. Cancelled in shutdown_event.
+        try:
+            start_thread_tick_heartbeat(app)
+        except Exception as e:
+            logger.warning(f"Thread tick heartbeat not started (non-fatal): {e}")
         
         # Bootstrap system identity (if not already done)
         try:
@@ -923,6 +1069,13 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         """Stop background services on app shutdown."""
         global _scheduler_executor
         global _config_watcher
+
+        # C4-03: stop the idle heartbeat first so no sweep starts while the
+        # stores below are being closed.
+        try:
+            await stop_thread_tick_heartbeat(app)
+        except Exception as e:
+            logger.warning(f"Failed to stop thread tick heartbeat: {e}")
 
         # Stop config watcher (T5a.2 + T7e.1)
         if _config_watcher is not None:
