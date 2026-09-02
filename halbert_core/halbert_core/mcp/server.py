@@ -1095,16 +1095,21 @@ class MCPServer:
                 return None if is_notification else self._success(req_id, {"tools": self._tool_list()})
 
             if method == "tools/call":
+                # A notification (no id) gets no response, per spec — but
+                # that must mean no dispatch, not just a suppressed reply.
+                # A tools/call notification is never legitimate: every real
+                # client needs the result to act on, and a tool can have
+                # side effects (run_scanner, approve_proposal), so running
+                # it and only then discarding the response is itself the
+                # bug (R2-P3) — reject before invoking the handler.
+                if is_notification:
+                    return None
                 if not isinstance(params, dict):
-                    if is_notification:
-                        return None
                     return self._error(req_id, -32602, "params must be an object")
                 tool_name = params.get("name", "")
                 tool_args = params.get("arguments", {})
                 handler = TOOL_HANDLERS.get(tool_name)
                 if handler is None:
-                    if is_notification:
-                        return None
                     return self._error(req_id, -32601, f"Unknown tool: {tool_name}")
                 # The egress boundary is enforced HERE, at the single choke
                 # point, not left to each tool author: every tool result
@@ -1113,8 +1118,6 @@ class MCPServer:
                 # happens when it is left to the handler). Per-tool wraps
                 # stay as harmless double-redaction.
                 result = mcp_response(handler(tool_args))
-                if is_notification:
-                    return None
                 return self._success(req_id, {
                     "content": [{"type": "text", "text": json.dumps(result, default=str)}],
                 })

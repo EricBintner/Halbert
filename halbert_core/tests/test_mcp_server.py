@@ -264,15 +264,39 @@ class TestProtocolHardening:
         resp = server.handle_request({"jsonrpc": "2.0", "method": "bogus"})
         assert resp is None
 
-    def test_notification_tools_call_no_response(self, server):
+    def test_notification_tools_call_no_response(self, server, monkeypatch):
+        """R2-P3: an id-less tools/call must not even run the handler.
+
+        The old code ran the handler unconditionally and only decided
+        AFTER whether to suppress the response — so a notification could
+        still execute a side-effecting tool (e.g. run_scanner,
+        approve_proposal), it just never learned the result. Reject
+        before dispatch, not after.
+        """
+        import halbert_core.mcp.server as server_module
+
+        calls = []
+        monkeypatch.setitem(
+            server_module.TOOL_HANDLERS, "get_vitals",
+            lambda args: calls.append(args) or {"ok": True},
+        )
+
         resp = server.handle_request({
             "jsonrpc": "2.0", "method": "tools/call",
             "params": {"name": "get_vitals", "arguments": {}},
         })
         assert resp is None
+        assert calls == [], "handler must not run for a notification"
 
     def test_notification_error_path_no_response(self, server):
-        """Even an internal error on a notification produces no response."""
+        """A malformed tools/call notification produces no response either.
+
+        Since R2-P3, a notification is rejected before dispatch — this
+        would have exercised the handler's own internal-error path
+        (get_config_value crashing on path=None) prior to that fix; now
+        it never reaches the handler at all, and still correctly yields
+        no response.
+        """
         resp = server.handle_request({
             "jsonrpc": "2.0", "method": "tools/call",
             "params": {"name": "get_config_value", "arguments": {"path": None}},
