@@ -48,6 +48,11 @@ Append-only. One line per decision, dated, with its source. Status values: **dec
 | 2026-09-02 | `U6-DESIGN-01` | SONNET-03: home preset is an explicit False override for `CAP_SOURCEPREP` unless `being.yml` opts in (`fc55d245`/`97d66158`). | pending |
 | 2026-09-02 | `STUB-01` | SONNET-03: `TierRouter` OpenAI stub removed; traced as off the chat path (`a4e4b5a3`); cost-cascade router deleted (`8911de68`). | pending |
 | 2026-09-02 | `CC-02` | SONNET-04: SendToChat "new conversation" affordance removed rather than wired, per the one-conversation direction (`cf7face5`). | pending |
+| 2026-09-02 | `C1-02` / `W4-06` phrasing | Alignment fixes: identity block on every turn with provisional body/canonical-host wording ("You are currently at your {body} body ({hostname})"; the_computer: "This machine is the {body} body"); name precedence HALBERT_DISPLAY_NAME > preferences ai_name > being.yml name > short hostname > "Halbert"; tri-state entity role (canonical / body / independent). | pending |
+| 2026-09-02 | `C2-10` | Morning report defaults to enabled at 08:00 regardless of dial (gating stays in ProactiveGate). | pending |
+| 2026-09-02 | `C3-08` | Web search off by default; setting lives in `web_search.yml`, `being.yml capabilities.web` overrides; classified MEDIUM egress; dashboard `/api/web-search` and the GPU driver lookup follow the same switch. | pending |
+| 2026-09-02 | `J3-7` | Proposals are auto-generated at detection only for executable fixes (permissions chmod today); drop-in/fstab stay manual-review. | pending |
+| 2026-09-02 | `C4-01` | Scheduler uses an in-memory APScheduler job store (jobs re-register at boot; SchedulerEngine JSON keeps history); heartbeat 60 s, floor 5 s. | pending |
 
 ## Open — founder calls (default assumed by work in flight)
 
