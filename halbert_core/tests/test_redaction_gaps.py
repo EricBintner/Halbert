@@ -234,3 +234,87 @@ class TestRedactionGaps:
         result = redact_text(text)
         assert "2222" in result
         assert "PermitRootLogin" in result
+
+
+class TestNestedJsonHardening:
+    """Scope 01 review: nested objects and non-string leaves."""
+
+    def test_numeric_secret_under_secret_key(self):
+        """An int PIN under a password key is still a secret."""
+        text = '{"password": 1234, "port": 2222}'
+        result = redact_text(text)
+        assert "1234" not in result
+        assert "2222" in result
+
+    def test_nested_object_secret(self):
+        """docker config.json shape: a container under a neutral key still
+        exposes its inner secret keys."""
+        text = '{"auths": {"registry.example.com": {"auth": "c2VjcmV0LXZhbHVl"}}}'
+        result = redact_text(text)
+        assert "c2VjcmV0LXZhbHVl" not in result
+        assert "registry.example.com" in result
+
+    def test_container_under_secret_key_redacted_wholesale(self):
+        text = '{"credentials": {"nested": {"anything": "here"}}, "ok": true}'
+        result = redact_text(text)
+        assert "anything" not in result
+        assert "true" in result
+
+    def test_bool_and_null_under_secret_key_over_redacted(self):
+        """Pre-existing conservative behaviour: the line pass redacts any
+        value under a secret key, including bools.  ``PasswordAuthentication
+        no`` is structural, not a credential, but over-redaction is the safe
+        direction -- fixing it would require the line pass to skip bool-like
+        values, which risks leaking ``password: true``-style secrets.  This
+        test documents the current behaviour so a future change is caught."""
+        text = '{"PasswordAuthentication": false, "other": null}'
+        result = redact_text(text)
+        # The whole key/value pair is replaced; "false" does not survive.
+        assert "false" not in result
+        assert "<secret>" in result
+
+    def test_prose_embedded_flat_json_still_works(self):
+        text = 'the value was {"token":"ghp_abcdefghijklmnopqrstuvwxyz012345"} ok'
+        result = redact_text(text)
+        assert "ghp_" not in result
+
+    def test_deep_nesting_capped_not_crashing(self):
+        """Nesting beyond the depth cap returns without hanging or raising."""
+        import json as j
+        inner = {"token": "deepsecretvalue"}
+        for _ in range(20):
+            inner = {"wrap": inner}
+        result = redact_text(j.dumps(inner))
+        assert isinstance(result, str)
+
+
+class TestBase64Hardening:
+    """Scope 01 review: size and recursion caps on the base64 pass."""
+
+    def test_nested_base64_still_caught(self):
+        """base64(base64(secret)) — two levels of nesting are unwound."""
+        import base64 as b
+        inner = b.b64encode(b"password=hunter2").decode()
+        outer = b.b64encode(inner.encode()).decode()
+        result = redact_text(outer)
+        assert outer not in result
+
+    def test_deep_base64_chain_does_not_recurse_forever(self):
+        """A base64-of-base64 chain deeper than the cap must terminate fast
+        and still be caught by the high-entropy backstop at the cap depth."""
+        import base64 as b
+        import time
+        value = "password=hunter2"
+        for _ in range(8):
+            value = b.b64encode(value.encode()).decode()
+        start = time.monotonic()
+        result = redact_text(value)
+        assert time.monotonic() - start < 5.0
+        assert value not in result
+
+    def test_oversized_base64_not_decoded(self):
+        """A multi-MB base64 blob is skipped, not decoded (DoS surface)."""
+        import base64 as b
+        big = b.b64encode(b"x" * (1024 * 1024)).decode()
+        result = redact_text(big)
+        assert result == big
