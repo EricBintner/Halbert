@@ -682,9 +682,11 @@ def _tool_set_autonomy_level(params: Dict[str, Any]) -> Dict[str, Any]:
             "requested_level": level,
         })
 
-    try:
-        from ..config.being_config import load_being_config, save_being_config
-        cfg = load_being_config()
+    class _PhraseRequired(Exception):
+        """Raised inside the update_being_config mutator to abort the
+        composite without persisting anything (R1-F4)."""
+
+    def mutate(cfg: Any) -> None:
         if _autonomy_change_is_escalation(
                 cfg.autonomy_level, cfg.autonomy_overrides, level, overrides):
             # Same high-friction phrase the dashboard's Tier 2 unlock
@@ -696,23 +698,34 @@ def _tool_set_autonomy_level(params: Dict[str, Any]) -> Dict[str, Any]:
             phrase = params.get("phrase")
             normalized = " ".join(str(phrase or "").split()).upper()
             if normalized != UNLOCK_PHRASE:
-                return mcp_response({
-                    "error": (
-                        "raising the autonomy level requires the confirmation "
-                        "phrase in the 'phrase' parameter (the same phrase the "
-                        "dashboard Security tab shows)"
-                    ),
-                    "requested_level": level,
-                })
+                raise _PhraseRequired()
         cfg.autonomy_level = level
         if overrides is not None:
             cfg.autonomy_overrides = overrides
-        cfg.validate()
-        save_being_config(cfg)
+
+    try:
+        # update_being_config holds ONE exclusive lock across the whole
+        # load-modify-save cycle (R1-F4): the escalation/phrase check
+        # above and the write both happen against a config read freshly
+        # inside that lock, so a relock persisted by another process
+        # between a separate load and save can never be clobbered — see
+        # being_config.update_being_config's docstring and
+        # TestSetAutonomyLevelRace.
+        from ..config.being_config import update_being_config
+        cfg = update_being_config(mutate)
         return mcp_response({
             "autonomy_level": cfg.autonomy_level,
             "autonomy_overrides": cfg.autonomy_overrides,
             "message": f"Autonomy level set to '{level}'",
+        })
+    except _PhraseRequired:
+        return mcp_response({
+            "error": (
+                "raising the autonomy level requires the confirmation "
+                "phrase in the 'phrase' parameter (the same phrase the "
+                "dashboard Security tab shows)"
+            ),
+            "requested_level": level,
         })
     except Exception as e:
         return mcp_response({"error": str(e)})

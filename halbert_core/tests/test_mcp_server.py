@@ -359,6 +359,11 @@ class TestAutonomyEscalationPhrase:
         return json.loads(resp["result"]["content"][0]["text"])
 
     def _patch_being(self, monkeypatch, level="observe", overrides=None):
+        # _tool_set_autonomy_level goes through update_being_config (R1-F4:
+        # one exclusive lock across the whole load-modify-save cycle), not
+        # a separate load_being_config/save_being_config pair — so the
+        # fake here plays update_being_config's role: run the mutator
+        # against the fixture cfg and record what would have been saved.
         from halbert_core.config import being_config as bc
         from halbert_core.config.being_config import BeingConfig
 
@@ -366,8 +371,14 @@ class TestAutonomyEscalationPhrase:
         cfg.autonomy_level = level
         cfg.autonomy_overrides = dict(overrides or {})
         saved = []
-        monkeypatch.setattr(bc, "load_being_config", lambda: cfg)
-        monkeypatch.setattr(bc, "save_being_config", lambda c: saved.append(c))
+
+        def fake_update_being_config(mutator, path=None):
+            mutator(cfg)
+            cfg.validate()
+            saved.append(cfg)
+            return cfg
+
+        monkeypatch.setattr(bc, "update_being_config", fake_update_being_config)
         return saved
 
     def test_escalation_without_phrase_rejected(self, server, monkeypatch):
@@ -434,6 +445,85 @@ class TestAutonomyEscalationPhrase:
             "level": "orchestrate", "confirm": True,
             "overrides": {"lock": "observe"}})
         assert "error" not in result, result
+
+
+class TestSetAutonomyLevelRace:
+    """R1-F4: set_autonomy_level must not clobber a concurrent relock.
+
+    The old implementation did ``cfg = load_being_config(); ...;
+    save_being_config(cfg)`` — two separate lock cycles with an
+    unprotected window between them. If another process (e.g. a TTL
+    expiry relock) completes its own load-modify-save inside that
+    window, this tool's stale ``cfg`` object reverts it on save.
+
+    The fix is to route through ``update_being_config``, which holds
+    ONE exclusive lock across the whole load-modify-save cycle. To
+    prove it, this test hooks the shared primitive both old and new
+    code call — ``being_config_lock`` — so that a genuine concurrent
+    actor's own complete, correctly locked load-modify-save cycle (the
+    same shape a TTL expiry relock takes) fires the FIRST time any
+    lock cycle here releases:
+
+    - Old code's first lock cycle is ``load_being_config``'s own
+      (read-only) one — it releases before ``save_being_config``'s
+      separate cycle even starts, so the concurrent write lands
+      squarely in the gap and gets overwritten by the tool's stale
+      object.
+    - New code's only lock cycle is ``update_being_config``'s single
+      read-modify-write one — it doesn't release until the tool's own
+      change is already persisted, so the concurrent write always
+      lands after, and a proper load-modify-save (not a stale
+      overwrite) can never lose it either way.
+    """
+
+    def _call_set(self, server, args):
+        req = {
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "set_autonomy_level", "arguments": args},
+        }
+        resp = server.handle_request(req)
+        return json.loads(resp["result"]["content"][0]["text"])
+
+    def test_relock_persisted_between_load_and_save_is_not_clobbered(
+            self, server, monkeypatch, tmp_path):
+        from contextlib import contextmanager
+        from pathlib import Path
+        from halbert_core.config import being_config as bc
+
+        path = str(tmp_path / "being.yml")
+        cfg = bc.BeingConfig()
+        cfg.autonomy_level = "act"
+        cfg.security.secret_tier = "cloud_ok_acknowledged"
+        bc.save_being_config(cfg, path)
+
+        monkeypatch.setattr(bc, "_default_path", lambda: Path(path))
+
+        real_lock = bc.being_config_lock
+        fired = []
+
+        @contextmanager
+        def lock_then_maybe_inject_concurrent_relock(*args, **kwargs):
+            with real_lock(*args, **kwargs) as acquired:
+                yield acquired
+            # Runs immediately after THIS lock cycle releases. Guarded so
+            # the concurrent actor's own lock use (below) doesn't re-fire.
+            if not fired:
+                fired.append(True)
+                bc.update_being_config(
+                    lambda c: setattr(c.security, "secret_tier", "local_only"),
+                    path,
+                )
+
+        monkeypatch.setattr(bc, "being_config_lock", lock_then_maybe_inject_concurrent_relock)
+
+        result = self._call_set(server, {"level": "suggest", "confirm": True})
+        assert "error" not in result, result
+
+        final = bc.load_being_config(path)
+        assert final.autonomy_level == "suggest"
+        # The concurrent relock must survive — not reverted by a stale,
+        # pre-relock config object saved separately from the load.
+        assert final.security.secret_tier == "local_only"
 
 
 class TestHighRiskProposalPhrase:
