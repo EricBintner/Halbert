@@ -116,6 +116,13 @@ class FrigateEventMapper:
     subscriber) and flushed on each cognitive tick.
     """
 
+    # Maximum pending events before the oldest are dropped. Mirrors
+    # HAEventMapper.MAX_PENDING_EVENTS (REV-03 F1): with no cognition tick
+    # draining the queue (vision off, agent idle) a Frigate camera publishes
+    # a steady stream of update events and the list grew without bound
+    # (U6-BUG-03).
+    MAX_PENDING_EVENTS = 500
+
     def __init__(self, state_tracker: Optional[FrigateStateTracker] = None):
         self._pending_events: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
@@ -137,6 +144,9 @@ class FrigateEventMapper:
                 "payload": payload,
                 "timestamp": time.time(),
             })
+            # Cap the queue: drop oldest if over limit (U6-BUG-03).
+            if len(self._pending_events) > self.MAX_PENDING_EVENTS:
+                del self._pending_events[: len(self._pending_events) - self.MAX_PENDING_EVENTS]
 
     def populate_cognition(self, cognition) -> None:
         """Flush pending events into PersonaCognition cognitive layers."""

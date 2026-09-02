@@ -232,3 +232,45 @@ class TestSingularEntityFields:
             assert "body_name" not in text
             assert "canonical_memory_url" not in text
             assert "canonical_thread_url" not in text
+
+
+class TestMorningReportDefault:
+    """C2-10: the morning report is on by default at Balanced (the-being §4).
+
+    Before this the field defaulted to ``None`` and dashboard/app.py read that
+    as "disabled or unconfigured; not scheduled" — so a fresh install never
+    got the report the anchor promises. An explicit ``{"enabled": false}``
+    (what Settings > Being writes on Disable) still turns it off.
+    """
+
+    def test_default_is_enabled_at_0800(self):
+        cfg = BeingConfig()
+        assert cfg.morning_report == {"enabled": True, "time": "08:00"}
+        assert cfg.proactivity == "balanced"
+
+    def test_default_dict_is_not_shared_between_instances(self):
+        a, b = BeingConfig(), BeingConfig()
+        a.morning_report["time"] = "09:30"
+        assert b.morning_report["time"] == "08:00"
+
+    def test_missing_key_in_yaml_gets_the_default(self):
+        cfg = BeingConfig.from_dict({"voice": "first_person"})
+        assert cfg.morning_report == {"enabled": True, "time": "08:00"}
+
+    def test_null_in_yaml_is_unset_not_disabled(self):
+        # A hand-edited ``morning_report: null`` reads as "not configured",
+        # the same way ``security: null`` falls back to defaults.
+        cfg = BeingConfig.from_dict({"morning_report": None})
+        assert cfg.morning_report == {"enabled": True, "time": "08:00"}
+
+    def test_explicit_disable_is_honoured(self):
+        cfg = BeingConfig.from_dict({"morning_report": {"enabled": False}})
+        assert cfg.morning_report == {"enabled": False}
+
+    def test_roundtrip_keeps_the_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "being.yml"
+            save_being_config(BeingConfig(), str(path))
+            assert "morning_report" in path.read_text()
+            loaded = load_being_config(str(path))
+            assert loaded.morning_report == {"enabled": True, "time": "08:00"}

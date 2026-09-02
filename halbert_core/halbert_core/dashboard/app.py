@@ -7,9 +7,10 @@ Provides REST API + WebSocket for Halbert dashboard.
 """
 
 from __future__ import annotations
+import asyncio
 import logging
 import json
-from typing import List
+from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 
 try:
@@ -61,6 +62,81 @@ def _find_config_registry():
     return None
 
 
+#: Client-side routes served with index.html (W3-S09). Explicit rather than
+#: a catch-all so a mistyped API URL still 404s instead of returning the
+#: shell. Every ``<Route path=...>`` in frontend/src/App.tsx must appear
+#: here or it is a 404 as a deep link under the systemd deployment — which
+#: is how the kiosk's ``/voice`` served nothing. tests/test_spa_routes.py
+#: keeps the two in step. "/" is served by its own handler.
+SPA_ROUTES = (
+    "/dashboard",
+    "/terminal",
+    "/services",
+    "/storage",
+    "/gpu",
+    "/containers",
+    "/development",
+    "/network",
+    "/sharing",
+    "/findings",
+    "/security",
+    "/backups",
+    "/apps",
+    "/approvals",
+    "/settings",
+    "/home",
+    "/voice",
+    "/voice-hud",
+    "/frigate",
+)
+
+_NO_STORE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+
+def mount_frontend(app: FastAPI, frontend_dist: Path) -> None:
+    """Serve the built React app from ``frontend_dist``.
+
+    Static assets, the self-hosted fonts, the brand logo, "/" and every
+    path in ``SPA_ROUTES`` (all of which get index.html so the client
+    router can take over). Split out of ``create_app`` so the route table
+    is testable against a throwaway dist directory.
+    """
+    app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
+
+    # The self-hosted brand typefaces. This mount is load-bearing: the SPA
+    # route table is explicit rather than a catch-all, so without it
+    # /fonts/fonts.css 404s and the whole triad silently falls back to
+    # system faces in the packaged app — which is the one place a CDN is
+    # not available to paper over it.
+    fonts_dir = frontend_dist / "fonts"
+    if fonts_dir.exists():
+        app.mount("/fonts", StaticFiles(directory=fonts_dir), name="fonts")
+    else:
+        logger.warning(
+            "frontend/dist/fonts is missing - run scripts/sync_fonts.py before "
+            "building the frontend, or the app will render without its typefaces"
+        )
+
+    index_html = frontend_dist / "index.html"
+
+    @app.get("/Halbert.png")
+    async def serve_logo():
+        """Serve brand logo."""
+        return FileResponse(frontend_dist / "Halbert.png")
+
+    @app.get("/")
+    async def serve_frontend():
+        """Serve React app."""
+        return FileResponse(index_html, headers=_NO_STORE)
+
+    async def serve_spa():
+        """Serve React app for frontend routes."""
+        return FileResponse(index_html, headers=_NO_STORE)
+
+    for path in SPA_ROUTES:
+        app.get(path, include_in_schema=False)(serve_spa)
+
+
 def run_conversation_boot_hooks() -> dict:
     """Plan A boot hooks for the one continuous conversation (spec §8, §12).
 
@@ -93,6 +169,205 @@ def run_conversation_boot_hooks() -> dict:
     except Exception as e:
         logger.warning(f"Conversation boot hooks failed (non-fatal): {e}")
     return result
+
+
+def register_proactive_jobs(executor, *, load_config=None) -> Dict[str, str]:
+    """Register the scheduled background jobs on a started executor.
+
+    T7e.1 detector sweep every 6 hours, and the T7d.2 daily morning report
+    at being.yml ``morning_report.time`` when ``morning_report.enabled``
+    (on by default at Balanced, C2-10). Returns a per-job outcome —
+    ``"scheduled"``, ``"disabled"`` or ``"error: ..."`` — and never raises:
+    a missing or malformed being.yml must not stop the dashboard.
+
+    ``load_config`` is the being.yml loader (tests inject one). Split out of
+    the startup thread so the registration path is testable; before C4-01
+    every call here failed inside APScheduler and the failure was only ever
+    a warning in the log.
+    """
+    from ..scheduler.autonomous_tasks import create_autonomous_task
+
+    outcome: Dict[str, str] = {}
+
+    # T7e.1: scheduled detector sweep every 6 hours
+    try:
+        sweep_task = create_autonomous_task('detector_sweep')
+        executor.schedule_cron_job(
+            job_id='detector_sweep',
+            task_func=lambda: sweep_task.execute({}),
+            cron_expr={'hour': '*/6', 'minute': 12},
+            description='Detector sweep (drop-ins, fstab, permissions)',
+        )
+        logger.info("Detector sweep scheduled every 6 hours")
+        outcome['detector_sweep'] = 'scheduled'
+    except Exception as e:
+        logger.warning(f"Failed to schedule detector sweep: {e}")
+        outcome['detector_sweep'] = f'error: {e}'
+
+    # T7d.2: daily morning report per being.yml
+    try:
+        if load_config is None:
+            from ..config.being_config import load_being_config as load_config
+        being_config = load_config()
+        report_cfg = being_config.morning_report or {}
+        if not isinstance(report_cfg, dict) or not report_cfg.get('enabled'):
+            logger.info("Morning report disabled; not scheduled")
+            outcome['morning_report'] = 'disabled'
+        else:
+            hour, minute = _parse_hhmm(report_cfg.get('time', '08:00'))
+            report_task = create_autonomous_task('morning_report')
+            executor.schedule_cron_job(
+                job_id='morning_report',
+                task_func=lambda: report_task.execute({}),
+                cron_expr={'hour': hour, 'minute': minute},
+                description='Daily morning report',
+            )
+            logger.info(
+                f"Morning report scheduled daily at {hour:02d}:{minute:02d} "
+                f"{getattr(executor, 'timezone', '')}"
+            )
+            outcome['morning_report'] = 'scheduled'
+    except Exception as e:
+        logger.warning(f"Failed to schedule morning report: {e}")
+        outcome['morning_report'] = f'error: {e}'
+
+    return outcome
+
+
+# ---------------------------------------------------------------------------
+# C4-03: the idle heartbeat — ThreadManager.tick() gets a production caller
+# ---------------------------------------------------------------------------
+
+#: Cadence of the idle thread sweep + consolidator when being.yml does not
+#: set ``heartbeat_s``. tick() is cheap when nothing is due (one indexed
+#: list of paused rows), so a minute is about visibility, not cost.
+DEFAULT_HEARTBEAT_S = 60.0
+#: Floor for a configured ``heartbeat_s``: below this the sweep would
+#: compete with turns for the store for no benefit.
+MIN_HEARTBEAT_S = 5.0
+
+
+def heartbeat_interval_s(default: float = DEFAULT_HEARTBEAT_S) -> float:
+    """Idle-tick cadence: being.yml ``heartbeat_s`` when set, else 60 s.
+
+    Read straight from the file rather than BeingConfig — the dataclass
+    drops keys it does not declare, and the heartbeat is a runtime knob of
+    the host process, not a persona field to be written back on every save.
+    Never raises: a missing or broken being.yml means the default.
+    """
+    try:
+        import yaml
+        from ..utils.platform import get_config_dir
+
+        path = get_config_dir() / "being.yml"
+        if path.is_file():
+            with open(path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            value = data.get("heartbeat_s") if isinstance(data, dict) else None
+            if value is not None:
+                return max(MIN_HEARTBEAT_S, float(value))
+    except Exception as e:
+        logger.debug(f"heartbeat_s not read from being.yml ({e}); using {default}s")
+    return default
+
+
+def _agent_turn_busy() -> bool:
+    """Is a conversation turn in flight?
+
+    The process-wide agent (routes/agent.py) holds ``turn_lock`` for the
+    whole of ``process()``; the lock is built lazily, so ``None`` means no
+    turn has ever run. Fail-soft: an unreadable agent reads as "not busy" —
+    tick() is lock-safe in its own right, this check only keeps the sweep
+    out of the user's turn time.
+    """
+    try:
+        from .routes import agent as agent_routes
+
+        agent = agent_routes._agent_instance
+        lock = getattr(agent, "_turn_lock", None) if agent is not None else None
+        return bool(lock is not None and lock.locked())
+    except Exception:
+        return False
+
+
+def _tick_thread_manager() -> list:
+    """One idle tick on the process-wide ThreadManager; returns closed ids.
+
+    A satellite's manager proxies to the canonical host's store (singular
+    entity mode); the host sweeps its own threads, so the satellite does
+    not tick through the peer link.
+    """
+    from ..agents import threads as threads_mod
+
+    manager = threads_mod.get_thread_manager()
+    if isinstance(manager.store, threads_mod._PeerConversationStoreType):
+        return []
+    return manager.tick()
+
+
+async def run_thread_tick_loop(
+    interval_s: float,
+    *,
+    tick: Callable[[], Any] = _tick_thread_manager,
+    turn_busy: Callable[[], bool] = _agent_turn_busy,
+    max_beats: Optional[int] = None,
+) -> int:
+    """Every ``interval_s`` seconds, run ``tick`` off the event loop unless a
+    turn is in flight (then wait for the next beat). Returns the number of
+    beats (tests pass ``max_beats``; production cancels the task instead).
+
+    A failing tick is logged and the loop carries on: the sweep is the
+    being's housekeeping, and a locked store this minute is not a reason to
+    stop sweeping for the rest of the process's life.
+    """
+    beats = 0
+    while max_beats is None or beats < max_beats:
+        await asyncio.sleep(interval_s)
+        beats += 1
+        if turn_busy():
+            continue
+        try:
+            closed = await asyncio.to_thread(tick)
+            if closed:
+                logger.info(f"Idle tick closed {len(closed)} thread(s)")
+        except Exception as e:
+            logger.warning(f"Thread tick failed (non-fatal): {e}")
+    return beats
+
+
+def start_thread_tick_heartbeat(
+    app: FastAPI,
+    *,
+    interval_s: Optional[float] = None,
+    tick: Callable[[], Any] = _tick_thread_manager,
+    turn_busy: Callable[[], bool] = _agent_turn_busy,
+) -> "asyncio.Task":
+    """Start the heartbeat task on the running loop and park it on ``app.state``."""
+    if interval_s is None:
+        interval_s = heartbeat_interval_s()
+    task = asyncio.get_running_loop().create_task(
+        run_thread_tick_loop(interval_s, tick=tick, turn_busy=turn_busy),
+        name="halbert-thread-tick",
+    )
+    app.state.thread_tick_task = task
+    logger.info(f"Thread tick heartbeat started (every {interval_s:g}s)")
+    return task
+
+
+async def stop_thread_tick_heartbeat(app: FastAPI) -> None:
+    """Cancel the heartbeat task started by ``start_thread_tick_heartbeat``."""
+    task = getattr(app.state, "thread_tick_task", None)
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning(f"Thread tick heartbeat ended with an error: {e}")
+    app.state.thread_tick_task = None
+    logger.info("Thread tick heartbeat stopped")
 
 
 def get_recent_config_changes(within_hours: int = 24) -> list:
@@ -321,66 +596,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"
     if frontend_dist.exists():
-        app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
-
-        # The self-hosted brand typefaces. This mount is load-bearing: the SPA
-        # route table below is explicit rather than a catch-all, so without it
-        # /fonts/fonts.css 404s and the whole triad silently falls back to
-        # system faces in the packaged app — which is the one place a CDN is
-        # not available to paper over it.
-        fonts_dir = frontend_dist / "fonts"
-        if fonts_dir.exists():
-            app.mount("/fonts", StaticFiles(directory=fonts_dir), name="fonts")
-        else:
-            logger.warning(
-                "frontend/dist/fonts is missing - run scripts/sync_fonts.py before "
-                "building the frontend, or the app will render without its typefaces"
-            )
-
-        @app.get("/Halbert.png")
-        async def serve_logo():
-            """Serve brand logo."""
-            return FileResponse(frontend_dist / "Halbert.png")
-
-        @app.get("/")
-        async def serve_frontend():
-            """Serve React app."""
-            return FileResponse(
-                frontend_dist / "index.html",
-                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-            )
-
-        # SPA routes - explicit frontend paths only (not a catch-all)
-        # This avoids conflicts with API routes
-        @app.get("/dashboard")
-        @app.get("/terminal")
-        @app.get("/services")
-        @app.get("/storage")
-        @app.get("/gpu")
-        @app.get("/containers")
-        @app.get("/development")
-        @app.get("/network")
-        @app.get("/sharing")
-        @app.get("/security")
-        @app.get("/backups")
-        @app.get("/apps")
-        @app.get("/approvals")
-        @app.get("/settings")
-        @app.get("/home")
-        async def serve_spa():
-            """Serve React app for frontend routes."""
-            return FileResponse(
-                frontend_dist / "index.html",
-                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-            )
-
-        @app.get("/frigate")
-        async def serve_spa_frigate():
-            """Serve React app for Frigate panel route."""
-            return FileResponse(
-                frontend_dist / "index.html",
-                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-            )
+        mount_frontend(app, frontend_dist)
     
     # Startup event: auto-start services
     @app.on_event("startup")
@@ -418,6 +634,15 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         # Synchronous on purpose: the first /api/agent/message must see the
         # migrated threads and no phantom in_progress rows.
         run_conversation_boot_hooks()
+
+        # C4-03: the idle heartbeat. ThreadManager.tick() (grace-window
+        # close sweep + R8 Consolidator) had no production caller; this
+        # task runs it every heartbeat_s (being.yml, else 60 s) whenever no
+        # turn is in flight. Cancelled in shutdown_event.
+        try:
+            start_thread_tick_heartbeat(app)
+        except Exception as e:
+            logger.warning(f"Thread tick heartbeat not started (non-fatal): {e}")
         
         # Bootstrap system identity (if not already done)
         try:
@@ -532,50 +757,17 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                         logger.info("Scheduler not running; proactive jobs not scheduled")
                         return
 
-                    from ..scheduler.autonomous_tasks import create_autonomous_task
-
-                    # T7e.1: scheduled detector sweep every 6 hours
-                    try:
-                        sweep_task = create_autonomous_task('detector_sweep')
-                        executor.schedule_cron_job(
-                            job_id='detector_sweep',
-                            task_func=lambda: sweep_task.execute({}),
-                            cron_expr={'hour': '*/6', 'minute': 12},
-                            description='Detector sweep (drop-ins, fstab, permissions)',
-                        )
-                        logger.info("Detector sweep scheduled every 6 hours")
-                    except Exception as e:
-                        logger.warning(f"Failed to schedule detector sweep: {e}")
-
-                    # T7d.2: daily morning report per being.yml
-                    # Missing / disabled / malformed being.yml → log and skip,
-                    # never crash startup.
-                    try:
-                        from ..config.being_config import load_being_config
-                        being_config = load_being_config()
-                        report_cfg = being_config.morning_report or {}
-                        if not isinstance(report_cfg, dict) or not report_cfg.get('enabled'):
-                            logger.info("Morning report disabled or unconfigured; not scheduled")
-                            return
-                        hour, minute = _parse_hhmm(report_cfg.get('time', '08:00'))
-                        report_task = create_autonomous_task('morning_report')
-                        executor.schedule_cron_job(
-                            job_id='morning_report',
-                            task_func=lambda: report_task.execute({}),
-                            cron_expr={'hour': hour, 'minute': minute},
-                            description='Daily morning report',
-                        )
-                        logger.info(
-                            f"Morning report scheduled daily at {hour:02d}:{minute:02d} {executor.timezone}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to schedule morning report: {e}")
+                    # Detector sweep + morning report (C4-01: registration
+                    # is a plain helper so it is tested; missing / disabled /
+                    # malformed being.yml is logged, never a startup crash).
+                    register_proactive_jobs(executor)
 
                     # VisualWatcher: standalone background thread for proactive
                     # screen monitoring. NOT a cron job — cadence is adaptive
                     # (30s-5min), too fast for the cron scheduler. Gated by
                     # both vision_config.yml (system) and being.yml (persona).
                     try:
+                        from ..config.being_config import load_being_config
                         from ..vision.config import is_screen_capture_enabled
                         being_config = load_being_config()
                         if (being_config.senses.vision.enabled
@@ -877,6 +1069,13 @@ def create_app(enable_cors: bool = True) -> FastAPI:
         """Stop background services on app shutdown."""
         global _scheduler_executor
         global _config_watcher
+
+        # C4-03: stop the idle heartbeat first so no sweep starts while the
+        # stores below are being closed.
+        try:
+            await stop_thread_tick_heartbeat(app)
+        except Exception as e:
+            logger.warning(f"Failed to stop thread tick heartbeat: {e}")
 
         # Stop config watcher (T5a.2 + T7e.1)
         if _config_watcher is not None:
