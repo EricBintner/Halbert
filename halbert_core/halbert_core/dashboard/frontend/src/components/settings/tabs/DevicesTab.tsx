@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * Settings → Devices tab (G12 / P7b): the singular-entity management
- * surface. This device's identity, the paired bodies list, and the
- * "Add a device to Halbert" flow (P7c — the existing PeerPairingModal,
+ * Settings → Linked Devices tab (G12 / P7b): the singular-entity
+ * management surface. This body's identity, the linked devices list, and
+ * the "Link a device to Halbert" flow (P7c — the existing PeerPairingModal,
  * reused as-is per the design review).
+ *
+ * One noun for the list, 'Linked Devices' (shell review §9.2; T1-08): a
+ * linked device is a body when it shares the entity and a compute peer when
+ * it only serves models — the card, not the list title, says which.
  *
  * "One mind (being), many bodies (devices)" — the tab sits in the
  * Personality & Identity section next to the being tab (review §15.1 Q1).
  * Every variant sees it; a lone install shows the empty state with an
- * "Add First Device" CTA (§15.3.1). Revoked devices collapse into an
+ * "Link First Device" CTA (§15.3.1). Revoked devices collapse into an
  * archived section with Re-pair and Permanently Forget (Q5) — hidden
  * entirely, they would ghost-collide on re-pairing the same hostname.
  */
@@ -79,16 +83,16 @@ export function DevicesTab() {
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div className="space-y-1.5">
             <CardTitle className="text-sm">
-              Paired Bodies & Compute Providers ({active.length})
+              Linked Devices ({active.length})
             </CardTitle>
             <CardDescription>
               Other machines that are part of this Halbert — or that it can
               lean on for compute.
             </CardDescription>
           </div>
-          <Button size="sm" onClick={() => setShowPairing(true)} aria-label="Add a device">
+          <Button size="sm" onClick={() => setShowPairing(true)} aria-label="Link a device">
             <Plus className="h-4 w-4 mr-1.5" />
-            Add Device
+            Link Device
           </Button>
         </CardHeader>
         <CardContent>
@@ -102,13 +106,13 @@ export function DevicesTab() {
                 one memory and one conversation. Pair the first one to
                 begin.
               </p>
-              <Button onClick={() => setShowPairing(true)} aria-label="Add first device">
+              <Button onClick={() => setShowPairing(true)} aria-label="Link first device">
                 <Plus className="h-4 w-4 mr-1.5" />
-                Add First Device
+                Link First Device
               </Button>
             </div>
           ) : (
-            <ul className="grid gap-3" aria-label="Paired devices" role="list">
+            <ul className="grid gap-3" aria-label="Linked devices" role="list">
               {active.map((device) => (
                 <li key={device.node_id}>
                   <DeviceCard device={device} onRefresh={refresh} />

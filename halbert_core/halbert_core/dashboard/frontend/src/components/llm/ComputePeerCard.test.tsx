@@ -105,7 +105,7 @@ function renderCard({ linked = false, probe, linkStatus = 200 }: Options = {}) {
 
 afterEach(() => vi.unstubAllGlobals())
 
-const addressInput = () => screen.getByLabelText(/workstation address/i)
+const addressInput = () => screen.getByLabelText(/compute peer address/i)
 const testButton = () => screen.getByRole('button', { name: /test connection/i })
 const linkButton = () => screen.getByRole('button', { name: /use this peer/i })
 
@@ -143,7 +143,7 @@ describe('ComputePeerCard', () => {
     await user.click(testButton())
 
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/reachable/i))
-    expect(screen.getByText(/The workstation serves:/i)).toBeInTheDocument()
+    expect(screen.getByText(/The compute peer serves:/i)).toBeInTheDocument()
     expect(screen.getByText(/m-alpha, m-beta/i)).toBeInTheDocument()
 
     const probeCall = calls.find((c) => c.url === '/compute/peer-probe')
@@ -172,7 +172,7 @@ describe('ComputePeerCard', () => {
     await user.click(testButton())
 
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/unreachable/i))
-    expect(screen.queryByText(/The workstation serves:/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/The compute peer serves:/i)).not.toBeInTheDocument()
   })
 
   it('surfaces a probe error the backend refused to make', async () => {

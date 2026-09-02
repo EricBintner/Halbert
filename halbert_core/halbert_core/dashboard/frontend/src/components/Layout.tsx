@@ -3,23 +3,28 @@
 /**
  * Layout — the application shell.
  *
- * Halbert has two surfaces and this is where they meet:
+ * The shell is three panels, and this is where they are composed:
  *
- *   engaged   the host canvas — conversation spine + context stage. The mode
- *             switch names it after the machine itself.
- *   browsing  the system administration hub — the full navigation rail, every
- *             dashboard page, and the side panel, unchanged.
+ *   left    the navigation rail — always present
+ *   center  the active page: the dashboard, a system page, or Settings
+ *   right   the conversation — Halbert, the one continuous conversation
  *
- * A global top bar carries the voice entry, the mode switch (Cmd/Ctrl+B), the
- * background-work indicators and debug, so nothing that used to live in the
- * sidebar footer disappears when the sidebar does.
+ * The center and right panels are independently togglable (Cmd/Ctrl+D and
+ * Cmd/Ctrl+J via the PanelToggle; Cmd/Ctrl+B flips between the two focus
+ * states). The visibility model lives in ShellModeContext: 'both' is the
+ * side-by-side default, 'engaged' is the conversation alone, 'browsing' is
+ * the page alone. Nothing here ever hides both.
+ *
+ * A global top bar carries the voice entry, the Presence Pill, the panel
+ * toggles, the background-work indicators and debug, so nothing that used to
+ * live in the sidebar footer disappears when a panel does.
  *
  * One route overtakes the whole shell, not just the content area: /voice
  * (O8) is a full-bleed surface with its own dark canvas and its own header,
  * so neither the rail nor the shell top bar renders over it.
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -255,8 +260,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isVoiceHudRoute = location.pathname === '/voice-hud'
 
   // Route <-> mode synchronization. Entering /voice parks the current
-  // surface; leaving the route (the screen's Host Canvas edge sets the base
-  // surface explicitly before navigating) restores it.
+  // panel state; leaving the route (the screen's return edge sets the base
+  // state explicitly before navigating) restores it.
   useEffect(() => {
     if (isVoiceRoute && !isVoice) {
       enterVoice()
@@ -294,19 +299,33 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [navigate, centerVisible, rightVisible, setMode])
 
   // Listen for open-config-editor events from chat
+  // The bridge below reads panel visibility at event time; a ref keeps the
+  // listeners stable instead of re-subscribing on every toggle.
+  const visibilityRef = useRef({ centerVisible, rightVisible })
+  useEffect(() => {
+    visibilityRef.current = { centerVisible, rightVisible }
+  }, [centerVisible, rightVisible])
+
   /**
    * The dashboard-to-conversation bridge.
    *
-   * Mounted HERE, above the mode ternary, and deliberately not on AgentChat:
-   * every one of these buttons renders in browsing mode, where AgentChat does
-   * not exist. A listener on AgentChat could never hear the event whose job is
-   * to bring AgentChat up.
+   * Mounted HERE, above the panel composition, and deliberately not on
+   * AgentChat: every one of these buttons renders with the conversation
+   * hidden ('browsing'), where AgentChat does not exist. A listener on
+   * AgentChat could never hear the event whose job is to bring AgentChat up.
    *
-   * Each handler parks the request and flips to engaged; the conversation
-   * drains it once it mounts.
+   * Each handler parks the request and makes sure the conversation is on
+   * screen; the conversation drains it once it mounts. Only the right panel
+   * is revealed — the center keeps whatever state the user chose, so a
+   * 'Run in Terminal' issued while the conversation has the whole shell does
+   * not pop the dashboard open (shell §9.6: the user hides panels to focus).
    */
   useEffect(() => {
-    const toEngaged = () => setMode('both')
+    const revealConversation = () => {
+      const { centerVisible: cv, rightVisible: rv } = visibilityRef.current
+      if (rv) return
+      setMode(cv ? 'both' : 'engaged')
+    }
 
     const onOpenChat = (event: Event) => {
       const detail = (event as CustomEvent).detail ?? {}
@@ -318,7 +337,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         title: detail.title,
         configPath: detail.configPath,
       })
-      toEngaged()
+      revealConversation()
     }
 
     // Staged, never executed — see runOnHost.
@@ -327,7 +346,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       const command = typeof detail === 'string' ? detail : detail.command
       if (!command) return
       runOnHost(command, detail.title)
-      toEngaged()
+      revealConversation()
     }
 
     const onSendToChat = (event: Event) => {
@@ -341,7 +360,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         context: detail.context,
         title: detail.title,
       })
-      toEngaged()
+      revealConversation()
     }
 
     const onSetConfigContext = (event: Event) => {

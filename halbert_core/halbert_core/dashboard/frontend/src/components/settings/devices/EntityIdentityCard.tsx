@@ -120,7 +120,7 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm">This Device Identity</CardTitle>
+        <CardTitle className="text-sm">This Body</CardTitle>
         <CardDescription>
           Which body Halbert is speaking from here, and whether this body
           shares the one autobiography or keeps its own.

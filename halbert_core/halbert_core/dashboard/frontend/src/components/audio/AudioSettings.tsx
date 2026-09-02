@@ -162,8 +162,8 @@ export function AudioSettings() {
             Audio Subsystem
           </CardTitle>
           <CardDescription>
-            Master switch for the Halbert Auditory Cortex. All audio features are
-            OFF by default and must be explicitly enabled.
+            Master switch for audio. All audio features are OFF by default and
+            must be explicitly enabled.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -476,8 +476,8 @@ export function AudioSettings() {
         <CardContent>
           <p className="text-sm text-muted-foreground">
             Music identification requires network access for the AcoustID API
-            lookup. In offline/sovereign mode, fingerprints are generated but
-            song names are not resolved.
+            lookup. Offline (no network): fingerprints are generated but song
+            names are not resolved.
           </p>
         </CardContent>
       </Card>

@@ -817,11 +817,11 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
 
     // The command still belongs to the user on a peer-governed variant, so
     // it is consumed with an answer rather than swallowed — but it has no
-    // pin to move: the workstation's own model configuration governs.
+    // pin to move: the compute peer's own model configuration governs.
     if (peerGovernedVariant) {
       notify({
         tone: 'info',
-        text: 'Model choice is governed by the paired workstation. Link or change the peer in Settings, under Models & Providers.',
+        text: 'Model choice is governed by the compute peer. Link or change the peer in Settings, under Models & Providers.',
       });
       return true;
     }

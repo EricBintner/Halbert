@@ -19,7 +19,7 @@ export function AboutTab({ onOpenComponentLibrary, onOpenLegalNotices }: AboutTa
           About Halbert
         </CardTitle>
         <CardDescription>
-          AI-powered Linux system assistant
+          The AI that is this computer. Local-first, for macOS and Linux.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">

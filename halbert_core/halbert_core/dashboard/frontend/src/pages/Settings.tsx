@@ -96,7 +96,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
     label: 'Personality & Identity',
     items: [
       { id: 'being', label: 'Identity & Voice', icon: Sparkles },
-      { id: 'devices', label: 'Devices', icon: MonitorSmartphone },
+      { id: 'devices', label: 'Linked Devices', icon: MonitorSmartphone },
     ],
   },
   {

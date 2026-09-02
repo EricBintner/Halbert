@@ -5,8 +5,8 @@
  *
  * Replaces InstanceSwitch. Shows the entity name + body name + entity mode
  * (Singular / Independent) in a compact pill. Clicking opens a dropdown to
- * switch to another paired body (which changes the API endpoint and reloads)
- * or to manage linked devices via Settings.
+ * switch to another linked body (which persists the API endpoint override
+ * and reloads — see lib/apiBase.ts) or to manage linked devices via Settings.
  *
  * In Singular Entity mode, switching bodies changes the dashboard data source
  * but not the conversation — same entity, same memory, same threads. In
@@ -31,7 +31,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu'
-import { setInstanceEndpoint, getInstanceEndpoint } from '@/lib/apiBase'
+import { setInstanceEndpoint, getInstanceEndpoint, apiUrl } from '@/lib/apiBase'
 import { useNavigate } from 'react-router-dom'
 
 export interface InstanceInfo {
@@ -90,8 +90,11 @@ export function PresencePill() {
 
   const refreshInfo = useCallback(async (endpoint: string | null) => {
     try {
-      const base = endpoint || ''
-      const res = await fetch(`${base}/api/instance/info`)
+      // The local body resolves through apiUrl(): a bare relative URL would
+      // resolve against tauri://localhost in the packaged app.
+      const res = await fetch(
+        endpoint ? `${endpoint}/api/instance/info` : apiUrl('/api/instance/info'),
+      )
       if (res.ok) {
         const data = await res.json()
         setCurrentInfo(data)

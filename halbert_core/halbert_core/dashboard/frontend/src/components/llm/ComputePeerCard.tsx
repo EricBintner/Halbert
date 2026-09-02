@@ -105,7 +105,7 @@ export function ComputePeerCard() {
         </CardTitle>
         <CardDescription>
           This node runs no model of its own. Language-model work is served by the
-          paired workstation, and its own model configuration governs which model
+          compute peer, and its own model configuration governs which model
           answers — change it there, not here.
         </CardDescription>
       </CardHeader>
@@ -125,14 +125,14 @@ export function ComputePeerCard() {
                 {link.slots.chat_model && link.slots.specialist_model
                   ? '. '
                   : ' — re-link to refresh the slots. '}
-                The workstation&apos;s own model picker governs which model serves them.
+                The compute peer&apos;s own model picker governs which model serves them.
               </p>
             </div>
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No compute peer linked yet. Enter the workstation&apos;s address and pair
-            this node with it.
+            No compute peer linked yet. Enter the compute peer&apos;s address and
+            pair this node with it.
           </p>
         )}
 
@@ -147,7 +147,7 @@ export function ComputePeerCard() {
 
         <div className="space-y-3">
           <div className="space-y-2">
-            <Label htmlFor="compute-peer-address">Workstation address</Label>
+            <Label htmlFor="compute-peer-address">Compute peer address</Label>
             <Input
               id="compute-peer-address"
               value={address}
@@ -157,7 +157,7 @@ export function ComputePeerCard() {
               autoComplete="off"
             />
             <p className="text-xs text-muted-foreground">
-              Hostname and port of the workstation&apos;s dashboard — hostname:port,
+              Hostname and port of the compute peer&apos;s dashboard — hostname:port,
               peer://host:port, or an http(s):// address all work.
             </p>
           </div>
@@ -169,7 +169,7 @@ export function ComputePeerCard() {
               type="password"
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              placeholder="Bearer token from the workstation's pairing"
+              placeholder="Bearer token from the compute peer's pairing"
               autoComplete="off"
             />
             <p className="text-xs text-muted-foreground">
@@ -212,12 +212,12 @@ export function ComputePeerCard() {
                 </p>
                 {probe.ok && probe.models.length > 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    The workstation serves:{' '}
+                    The compute peer serves:{' '}
                     <span className="font-mono">{probe.models.join(', ')}</span>
                   </p>
                 ) : probe.ok ? (
                   <p className="text-xs text-muted-foreground">
-                    The workstation advertises no specific model list — its own
+                    The compute peer advertises no specific model list — its own
                     configuration governs which model answers.
                   </p>
                 ) : null}

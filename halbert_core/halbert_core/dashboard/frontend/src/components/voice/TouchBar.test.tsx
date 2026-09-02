@@ -2,8 +2,11 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * TouchBar (O7): the three touch controls of spec doc 15 §6.2 — push to
- * talk, the on-screen keyboard, and the return edge to the Host Canvas
+ * talk, the on-screen keyboard, and the return edge to the conversation
  * (the navigation itself is O8's; this bar only reports the taps).
+ *
+ * The third control is labelled 'Conversation': 'Host Canvas' is a banned
+ * label (shell review §9.1 ruling #9), so the test pins its absence too.
  */
 
 import { describe, it, expect, vi } from 'vitest'
@@ -18,7 +21,17 @@ describe('TouchBar', () => {
     )
     expect(screen.getByRole('button', { name: 'Tap to speak' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Open keyboard' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Host canvas' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Open the conversation' })).toBeTruthy()
+  })
+
+  it('names the return edge Conversation, never the banned Host Canvas', () => {
+    const { container } = render(
+      <TouchBar onPushToTalk={vi.fn()} onKeyboard={vi.fn()} onHostCanvas={vi.fn()} />,
+    )
+    const button = screen.getByRole('button', { name: 'Open the conversation' })
+    expect(button.textContent).toContain('Conversation')
+    expect(container.textContent ?? '').not.toMatch(/host canvas/i)
+    expect(container.innerHTML).not.toMatch(/host canvas/i)
   })
 
   it('dispatches each handler on tap', async () => {
@@ -36,7 +49,7 @@ describe('TouchBar', () => {
 
     await user.click(screen.getByRole('button', { name: 'Tap to speak' }))
     await user.click(screen.getByRole('button', { name: 'Open keyboard' }))
-    await user.click(screen.getByRole('button', { name: 'Host canvas' }))
+    await user.click(screen.getByRole('button', { name: 'Open the conversation' }))
 
     expect(onPushToTalk).toHaveBeenCalledTimes(1)
     expect(onKeyboard).toHaveBeenCalledTimes(1)
@@ -47,7 +60,7 @@ describe('TouchBar', () => {
     render(
       <TouchBar onPushToTalk={vi.fn()} onKeyboard={vi.fn()} onHostCanvas={vi.fn()} />,
     )
-    for (const name of ['Tap to speak', 'Open keyboard', 'Host canvas']) {
+    for (const name of ['Tap to speak', 'Open keyboard', 'Open the conversation']) {
       const button = screen.getByRole('button', { name }) as HTMLElement
       expect(button.className).toContain('h-12')
     }

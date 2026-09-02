@@ -160,7 +160,7 @@ export function Onboarding({ open, onComplete }: OnboardingProps) {
             <DialogHeader>
               <DialogTitle className="text-2xl">Welcome to Halbert</DialogTitle>
               <DialogDescription className="text-base">
-                Let's set up your AI-powered Linux assistant. This will only take a moment.
+                Let me introduce myself. This will only take a moment.
               </DialogDescription>
             </DialogHeader>
             
@@ -217,7 +217,7 @@ export function Onboarding({ open, onComplete }: OnboardingProps) {
             <DialogHeader>
               <DialogTitle className="text-2xl">Scanning Your System</DialogTitle>
               <DialogDescription className="text-base">
-                Discovering everything about your Linux setup...
+                Discovering everything about this machine...
               </DialogDescription>
             </DialogHeader>
             
@@ -360,7 +360,7 @@ export function Onboarding({ open, onComplete }: OnboardingProps) {
                 <Check className="h-8 w-8 text-green-600 dark:text-green-400" />
               </div>
               <p className="text-muted-foreground">
-                {computerName || suggestedName} is ready to help you manage your Linux system.
+                {computerName || suggestedName} is ready.
               </p>
               <Badge variant="secondary">{userTypes.find(t => t.id === userType)?.label}</Badge>
             </div>

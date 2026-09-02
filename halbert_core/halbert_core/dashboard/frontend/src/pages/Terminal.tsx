@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * Terminal Page - AI-enhanced terminal with Coder persona.
+ * Terminal Page - terminal with a Halbert overlay for /explain, /dryrun, /fix.
  * 
  * Architecture:
  * - xterm.js for output display
@@ -430,9 +430,8 @@ export function Terminal() {
             <div className="p-3 border-b flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-primary" />
-                <span className="font-medium text-sm">AI Assistant</span>
+                <span className="font-medium text-sm">Halbert</span>
               </div>
-              <span className="text-xs text-muted-foreground">Coder</span>
             </div>
             <CardContent className="flex-1 p-3 overflow-auto">
               {isAiLoading ? (
