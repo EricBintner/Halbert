@@ -557,8 +557,18 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [tailTurnId, anchored, isAtBottom, liveUser, response, session?.toolExecutions]);
 
-  // Process queued messages when streaming completes
+  // Process queued messages when streaming completes.
+  //
+  // "Not streaming" is not the same as "finished": a turn that stopped on
+  // tool_confirmation_required, or one holding a diff nobody has answered,
+  // is parked and still owns the screen. Draining into it folded the live
+  // turn away and started a new one, so the ConfirmationDialog vanished and
+  // the approval was silently dropped (R11-02). Same three conditions the
+  // fold effect above uses, for the same reason; `session` is in the deps so
+  // the queue drains as soon as the user answers.
   useEffect(() => {
+    if (session?.pendingConfirmation || session?.state === 'awaiting_confirmation') return;
+    if (session?.diffProposals.some((diff) => diff.status === 'pending')) return;
     if (!isStreaming && messageQueue.length > 0) {
       const nextMessage = messageQueue[0];
       setMessageQueue(prev => prev.slice(1));
@@ -589,7 +599,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
         setInput('');
       }, 100);
     }
-  }, [isStreaming, messageQueue]);
+  }, [isStreaming, messageQueue, session]);
 
   // Filter mentionables based on input
   const filteredMentionables = mentionables.filter(m =>
