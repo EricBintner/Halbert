@@ -8,7 +8,9 @@ Based on research5.md Part 14.
 """
 
 from typing import Dict, List, Any, Optional
+from urllib.parse import urlparse
 import logging
+import platform
 import re
 
 logger = logging.getLogger('halbert.prompts.agent')
@@ -462,7 +464,105 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         agent_name = getattr(self._being_cfg, "name", "") or "Halbert"
         preamble = self._IDENTITY_PREAMBLE.format(platform=self._platform_phrase(), name=agent_name)
         return template.format(preamble=preamble)
-    
+
+    # Longest ``purpose`` rendered into the identity block. being.yml is
+    # admin-owned, but the field is free text and the block is meant to stay
+    # a few hundred characters, not become a second prompt.
+    _PURPOSE_CHARS = 200
+
+    def build_identity_block(self, response_modality: str = "text") -> str:
+        """Who is speaking, where from, and what for — one block per turn.
+
+        The state machine prepends this to ``messages[0]`` on both LLM calls
+        of a turn (PLANNING and RESPONDING), ahead of the planning/response
+        prose and the receipt block. Before it existed the per-voice identity
+        lived in ``build_system_prompt``, which nothing called, so the model
+        was never told who it was on any production path (alignment audit
+        2026-09-02, C1-01).
+
+        Three parts, in order: the per-voice identity (``_get_identity``),
+        the personality section when one is configured, and the embodiment
+        lines — which body this is, the canonical host in singular-entity
+        mode, and the machine's purpose (C1-03, W1-03, W4-06). Each of the
+        last three is omitted when its field is unset, so the block never
+        says "your  body ()".
+
+        ``response_modality`` reaches the personality renderer only: a voice
+        turn omits the voice-presentation guidance the engine's
+        PersonaVoiceProfile already carries.
+        """
+        parts = [self._get_identity()]
+        personality = self._generate_personality(response_modality)
+        if personality:
+            parts.append(personality)
+        embodiment = self._embodiment_lines()
+        if embodiment:
+            parts.append("\n".join(embodiment))
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _hostname() -> str:
+        try:
+            return (platform.node() or "").strip()
+        except Exception:
+            return ""
+
+    def _embodiment_lines(self) -> List[str]:
+        """Body, canonical host and purpose as short lines; [] without config.
+
+        Read from the ``BeingConfig`` in hand rather than re-loading
+        being.yml: it is the same snapshot ``reload_personality`` refreshes,
+        so the name, the voice and these lines cannot disagree within one
+        turn. ``canonical_memory_url`` set is exactly
+        ``cognition_wiring.is_singular_entity_mode()``'s rule, applied to
+        that snapshot.
+
+        ``body_name`` is rendered only when the admin set one — the
+        variant-based default ``_get_body_name`` falls back to ("workstation")
+        is a UI label, not something the machine should claim about itself.
+        """
+        cfg = self._being_cfg
+        if cfg is None:
+            return []
+        third_person = self.voice == "the_computer"
+        lines: List[str] = []
+
+        body = " ".join(str(getattr(cfg, "body_name", "") or "").split())
+        if body:
+            host = self._hostname()
+            where = f"{body} body ({host})" if host else f"{body} body"
+            if third_person:
+                lines.append(f"This machine is the {where}.")
+            else:
+                lines.append(f"You are currently at your {where}.")
+
+        canonical = str(getattr(cfg, "canonical_memory_url", "") or "").strip()
+        if canonical:
+            try:
+                host = urlparse(canonical).hostname or ""
+            except Exception:
+                host = ""
+            at = f"on {host}" if host else "on the canonical host"
+            if third_person:
+                lines.append(
+                    f"This machine is one body of a single entity whose memory "
+                    f"and conversations live {at}."
+                )
+            else:
+                lines.append(
+                    f"You are one entity with more than one body; your memory "
+                    f"and conversations live {at}."
+                )
+
+        purpose = " ".join(str(getattr(cfg, "purpose", "") or "").split()).rstrip(".")
+        if purpose:
+            if len(purpose) > self._PURPOSE_CHARS:
+                purpose = purpose[: self._PURPOSE_CHARS - 1].rstrip() + "…"
+            end = "" if purpose.endswith("…") else "."
+            lines.append(f"This machine's purpose: {purpose}{end}")
+
+        return lines
+
     def build_system_prompt(
         self,
         user_preferences: Dict[str, Any] = None,

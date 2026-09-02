@@ -238,8 +238,9 @@ async def activate_persona(persona_id: str) -> Dict[str, Any]:
         try:
             from .agent import get_agent
             agent = get_agent()
-            if agent and hasattr(agent, 'prompt_builder'):
-                agent.prompt_builder.reload_personality()
+            builder = getattr(agent, "prompt_builder", None) if agent else None
+            if builder is not None:
+                builder.reload_personality()
         except Exception as e:
             logger.warning(f"Agent hot-reload after persona switch: {e}")
         return {"status": "ok", "active_id": persona_id}
