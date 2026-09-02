@@ -81,6 +81,26 @@ class TestHalbertModelOverride:
             del os.environ["HALBERT_MODEL"]
             monkeypatch.undo()
 
+    def test_variant_resolution_failure_fails_open_not_closed(self, models_config_dir, monkeypatch):
+        """R05-P2: an unrelated error resolving the variant (e.g. a broken
+        cognition_wiring import) must not silently disable the ONLY chat
+        model a sysadmin box without a models.yml has configured."""
+        import os
+
+        def _boom():
+            raise RuntimeError("import exploded")
+
+        monkeypatch.setattr(
+            "halbert_core.integrations.cognition_wiring._get_variant", _boom
+        )
+        os.environ["HALBERT_MODEL"] = "qwen3:4b"
+        try:
+            resolved = store.resolve("chat_model")
+        finally:
+            del os.environ["HALBERT_MODEL"]
+        assert resolved is not None
+        assert resolved.model == "qwen3:4b"
+
     def test_client_get_configured_model_sees_override(self, models_config_dir):
         import os
 

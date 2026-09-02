@@ -145,10 +145,34 @@ def _providers() -> List[str]:
     return sorted(CHAT_CAPABLE_PROVIDERS)
 
 
+def _redact_api_keys(llm_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """A shallow copy of an llm_config dict with every endpoint's api_key redacted.
+
+    R05-F3: GET (and the PUT response, which re-serves the same payload)
+    must never carry a saved secret back to the browser. The real value
+    is replaced with "" and ``key_set`` tells the UI whether one is
+    configured, so a saved key can still be shown as present without
+    ever leaving the server. This is safe for the write side too:
+    ``_carry_forward_api_keys`` (llm_config.py) re-attaches the stored
+    key to any endpoint a client PUTs back without an ``api_key`` field,
+    so the client never needs to see — or echo — the real value to keep
+    it. An explicit ``api_key: ""`` in a PUT still clears it, unchanged.
+    """
+    out = dict(llm_cfg)
+    endpoints = out.get("saved_endpoints")
+    if isinstance(endpoints, list):
+        out["saved_endpoints"] = [
+            {**ep, "api_key": "", "key_set": bool(ep.get("api_key"))}
+            if isinstance(ep, dict) else ep
+            for ep in endpoints
+        ]
+    return out
+
+
 def _effective_block(layered: llm_store.LayeredConfig) -> Dict[str, Any]:
     """The read-only half: what is in force, and which layer put it there."""
     return {
-        "llm_config": layered.effective,
+        "llm_config": _redact_api_keys(layered.effective),
         "slot_layers": layered.slot_layers,
         "layers": layered.layers,
         "overridden_slots": {
@@ -168,7 +192,7 @@ def _editor_payload(session_id: Optional[str] = None) -> Dict[str, Any]:
     """
     layered = llm_store.load_layered(session_id)
     return {
-        "llm_config": layered.global_config,
+        "llm_config": _redact_api_keys(layered.global_config),
         "chat_capable_providers": _providers(),
         "effective": _effective_block(layered),
     }
@@ -206,17 +230,22 @@ def get_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
         # The hardware detection (system_profiler + sysctl + bridge probe)
         # is expensive (~1s), so it is skipped when the apple-foundation
         # endpoint is already registered — the common case after first boot.
-        # Gated by the secure_model capability — the variant preset sets
-        # defaults (home = no secure_model), but being.yml can override.
+        # Gated by CAP_SECURE_MODEL_ALLOWED — "may this variant host a
+        # secure model at all" (preset/override, home defaults off, being.yml
+        # can override) — never CAP_SECURE_MODEL, which means "one is
+        # already configured" and would make this gate circular on a fresh
+        # install (U4-18): auto_provision_apple_intelligence itself checks
+        # whether the FoundationModels bridge is actually running before
+        # assigning anything.
         try:
-            from ...capabilities import has_capability, CAP_SECURE_MODEL
+            from ...capabilities import has_capability, CAP_SECURE_MODEL_ALLOWED
             from ...model.auto_provision import auto_provision_apple_intelligence
             from ...model import llm_config as _cfg
             already_provisioned = any(
                 ep.get("provider") == _cfg.APPLE_FOUNDATION_PROVIDER
                 for ep in _cfg.load_global(use_cache=False).get("saved_endpoints", [])
             )
-            if not already_provisioned and has_capability(CAP_SECURE_MODEL):
+            if not already_provisioned and has_capability(CAP_SECURE_MODEL_ALLOWED):
                 from ...model.hardware_detector import HardwareDetector
                 hw = HardwareDetector().detect()
                 auto_provision_apple_intelligence(hw)

@@ -23,6 +23,45 @@ def test_get_config_shape(models_config_dir):
     assert "anthropic" in data["chat_capable_providers"]
 
 
+def test_api_keys_are_redacted_from_get_and_put_responses(models_config_dir):
+    """R05-F3: a saved api_key must never round-trip back to the browser —
+    GET /llm/config carried it twice (llm_config and effective.llm_config)
+    and GET /llm/config/effective once. key_set tells the UI a key is
+    configured without exposing the value; a client that PUTs an endpoint
+    back without an api_key field still keeps its stored key
+    (_carry_forward_api_keys already covers that round trip)."""
+    SECRET = "sk-super-secret-do-not-leak"
+    store.save({"saved_endpoints": [
+        {"id": "cloud", "name": "Cloud", "provider": "openai",
+         "url": "https://api.example.com/v1", "api_key": SECRET},
+    ]})
+
+    def _assert_redacted(body):
+        text = json.dumps(body)
+        assert SECRET not in text
+        ep = next(e for e in body["llm_config"]["saved_endpoints"] if e["id"] == "cloud")
+        assert ep["api_key"] == ""
+        assert ep["key_set"] is True
+
+    get_out = routes.get_llm_config()["data"]
+    _assert_redacted(get_out)
+    _assert_redacted(get_out["effective"])
+
+    eff_out = routes.get_effective_llm_config()["data"]
+    assert SECRET not in json.dumps(eff_out)
+    eff_ep = next(e for e in eff_out["llm_config"]["saved_endpoints"] if e["id"] == "cloud")
+    assert eff_ep["api_key"] == ""
+    assert eff_ep["key_set"] is True
+
+    put_out = routes.update_llm_config(routes.LLMConfigUpdate(llm_config={
+        "chat_model": {"enabled": True, "endpoint_id": "cloud", "model": "m"},
+    }))["data"]
+    _assert_redacted(put_out)
+    # The round trip through the store itself is untouched: the real key
+    # is still there for the runtime to actually call the endpoint with.
+    assert store.load()["saved_endpoints"][0]["api_key"] == SECRET
+
+
 def test_put_merges_and_returns_config(models_config_dir):
     body = routes.LLMConfigUpdate(llm_config={
         "saved_endpoints": [{"id": "e1", "name": "Local", "provider": "ollama", "url": OLLAMA}],
@@ -63,6 +102,14 @@ def _installed(entries, chooses="model-a"):
     budget.to_dict.return_value = {"max_params_b_4bit": 14}
     detector = MagicMock()
     detector.recommend_budget.return_value = budget
+    # These tests exercise the Ollama fresh-install flow, not Apple
+    # Intelligence — an unconfigured MagicMock is truthy on every
+    # attribute, which used to be harmless because the old (buggy)
+    # CAP_SECURE_MODEL gate short-circuited before HardwareDetector was
+    # ever instantiated. Now that provisioning is correctly gated on
+    # CAP_SECURE_MODEL_ALLOWED (sysadmin-preset True by default), the
+    # detector actually runs, so its result must say "not eligible".
+    detector.detect.return_value = MagicMock(apple_intelligence_available=False)
     return patch.multiple(
         "halbert_core.model.hardware_detector",
         HardwareDetector=MagicMock(return_value=detector),

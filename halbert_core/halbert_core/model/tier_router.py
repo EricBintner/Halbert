@@ -28,24 +28,9 @@ from .providers import ModelProvider, ModelResponse, OllamaProvider
 from .providers.base import GenerationError, ModelNotFoundError
 from .rate_limiter import RateLimiter
 from .outcome_store import OutcomeStore
-from .cascade_router import MetaHarnessRouter
 from ..agents.error_recovery import get_recovery_manager
 
 logger = logging.getLogger('halbert.model.tier_router')
-
-
-def _is_home_variant() -> bool:
-    """True when the active instance runs a home automation variant.
-
-    Retained for backward compatibility. secure_model gating now uses
-    the capability registry (CAP_SECURE_MODEL) instead of this hard
-    variant gate.
-    """
-    try:
-        from ..integrations.cognition_wiring import is_home_variant
-        return is_home_variant()
-    except Exception:
-        return False
 
 
 class ProviderType(str, Enum):
@@ -148,18 +133,24 @@ class TierRouterConfig:
         chat = _resolve_slot('chat_model')
         spec = _resolve_slot('specialist_model')
         vision = _resolve_slot('vision_model')
-        # secure_model is only resolved when the secure_model capability
-        # is available (a local-only secure endpoint is configured).
-        # The variant preset sets defaults (home = no secure_model), but
-        # being.yml can override — a Mac Studio with HA configured can
-        # still use a local secure model.
+        # U6-25: TierRouter never routes to a dedicated secure-model tier —
+        # secure turns are handled elsewhere (routes/agent.py's turn gate),
+        # not by this config. The capability-gated resolve below is kept
+        # anyway, purely for its read-gate side effect: it is the one
+        # place that guarantees secure_model is never even READ out of
+        # llm_config when the capability says no (home instances, by
+        # default), which test_tier_router_config.py pins directly
+        # (test_home_variant_does_not_read_the_secure_slot). The resolved
+        # value itself is intentionally discarded — there is no
+        # cfg.models['secure-model'] to populate it into.
         _has_secure_cap = False
         try:
             from ..capabilities import has_capability, CAP_SECURE_MODEL
             _has_secure_cap = has_capability(CAP_SECURE_MODEL)
         except Exception:
             pass
-        secure = _resolve_slot('secure_model') if _has_secure_cap else None
+        if _has_secure_cap:
+            _resolve_slot('secure_model')
 
         # Fall back to legacy keys when llm_config slots are empty
         if chat is None:
@@ -278,13 +269,11 @@ class TierRouter:
         # HTTP rate-limit handler (A2b): 429/529 with Retry-After
         self.rate_limiter = RateLimiter()
 
-        # Outcome store for self-tuning router (A3): records per-call results
-        # so MetaHarnessRouter (C2a) can blend evidence with priors.
+        # Outcome store (A3): records per-call results as telemetry. Originally
+        # written to feed the cost-cascade MetaHarnessRouter's evidence
+        # blending; that router was never enabled by default and was removed
+        # (PICK-04) as dead code, but the store stands on its own.
         self.outcome_store = OutcomeStore()
-
-        # Cost-cascade router with outcome-based self-tuning (C2a/C2b). Opt-in;
-        # when disabled, route_request uses the heuristic path below.
-        self.cascade_router = MetaHarnessRouter(self, self.outcome_store)
 
         logger.info(f"TierRouter initialized with {len(self.config.models)} models")
     
@@ -333,17 +322,34 @@ class TierRouter:
         return {}
 
     def refresh(self) -> bool:
-        """Re-resolve the config when the bound session changed. True if it did.
+        """Re-resolve the config when the bound session OR the underlying
+        models.yml content changed. True if either did.
 
         The router is cached for the life of the process, so a session pinned
         after it was built would be honoured by every other resolution in the
-        turn and ignored by this one.
+        turn and ignored by this one — that was the original reason this
+        method exists. R05-F7: it used to check ONLY the session, so an edit
+        to models.yml via Settings -> AI Models within the same session (a
+        different guide model, a new endpoint) was never picked up until the
+        process restarted or an unrelated session change happened to also
+        trigger a re-parse. _load_raw_config() delegates to llm_config's own
+        freshness-checked read (already cheap — a 1s TTL/file-stamp cache,
+        not a disk hit every call), so comparing its result here on every
+        refresh() costs nothing extra when nothing has changed.
         """
+        old_session = self._config_session
         session = self._active_session()
-        if session == self._config_session:
-            return False
+        # _load_raw_config() reads through self._config_session (the layered
+        # store needs to know which session to resolve pins against), so it
+        # must be updated before the read — not after, or a session change
+        # would load the OLD session's layer here while still reporting the
+        # NEW session as active. old_session is captured above so the
+        # "did anything change" comparison below still has both sides.
         self._config_session = session
-        self.raw_config = self._load_raw_config()
+        raw = self._load_raw_config()
+        if session == old_session and raw == self.raw_config:
+            return False
+        self.raw_config = raw
         self.config = self._parse_config(self.raw_config)
         return True
 
@@ -362,14 +368,32 @@ class TierRouter:
             return TierRouterConfig.from_legacy_config(normalised)
     
     def _get_provider(self, model: ModelDefinition) -> ModelProvider:
-        """Get or create provider for a model."""
+        """Get or create provider for a model.
+
+        STUB-01: this ``ModelProvider`` hierarchy (ollama/anthropic/peer)
+        is NOT the dashboard's chat path — dashboard/routes/chat.py and
+        model/client.py's ``call_llm_chat`` implement every
+        CHAT_CAPABLE_PROVIDERS entry (openai included) directly and never
+        call TierRouter. TierRouter's only consumer is
+        integrations/app_seam.py's HalbertModelBackend, used solely by the
+        optional cognitive-tick ThoughtGenerator (HALBERT_LLM_THOUGHTS) —
+        and that caller already wraps ``generate()``/``_get_provider`` in a
+        broad try/except that falls back to raw Ollama on any exception,
+        so an unsupported provider here degrades silently rather than
+        crashing a turn. "openai" previously got its own
+        NotImplementedError instead of the same generic unknown-provider
+        error every other provider this hierarchy doesn't implement
+        (llamacpp, mlx, lm-studio, ...) already gets — that TODO implied
+        future work on a path nothing routes real openai chat traffic
+        through, so it is removed rather than implemented.
+        """
         provider_key = f"{model.provider}:{model.endpoint or 'default'}"
-        
+
         if provider_key not in self._providers:
             if model.provider == ProviderType.OLLAMA or model.provider == "ollama":
                 endpoint = model.endpoint or "http://localhost:11434"
                 self._providers[provider_key] = OllamaProvider(base_url=endpoint)
-                
+
             elif model.provider == ProviderType.ANTHROPIC or model.provider == "anthropic":
                 try:
                     from .providers.anthropic import AnthropicProvider
@@ -377,10 +401,6 @@ class TierRouter:
                 except ImportError as e:
                     logger.error(f"Anthropic provider not available: {e}")
                     raise
-                    
-            elif model.provider == ProviderType.OPENAI or model.provider == "openai":
-                # TODO: Implement OpenAI provider
-                raise NotImplementedError("OpenAI provider not yet implemented")
 
             elif model.provider == ProviderType.PEER or model.provider == "peer":
                 # A paired node's compute endpoint (peer:// in models.yml).
@@ -544,34 +564,14 @@ class TierRouter:
                 require_vision=True,
             )
 
-        # Explicit overrides still apply even when cascade routing is enabled.
-        # The disabled path must stay byte-identical to the pre-C2b heuristic,
-        # so it uses the original _score_complexity scorer, not the shared
-        # cascade estimator (which scores differently by design).
+        # Explicit overrides still apply regardless of tier.
         if prefer_specialist or (task_type and task_type in self.config.force_specialist_tasks):
-            if self.cascade_router.is_enabled():
-                complexity = self.cascade_router.estimate_complexity(query)
-            else:
-                complexity = self._score_complexity(query)
+            complexity = self._score_complexity(query)
             return self.select_model(
                 tier=ModelTier.SPECIALIST,
                 require_reasoning=self._should_use_reasoning(query, complexity),
                 complexity_score=complexity,
             )
-
-        # Cost-cascade router (C2b): when enabled, delegate model selection to
-        # MetaHarnessRouter, which blends tier priors with recorded outcomes.
-        # When disabled (default), behavior is byte-identical to the old
-        # heuristic path below (restored original scorer).
-        if self.cascade_router.is_enabled():
-            model = self.cascade_router.route(query)
-            if model is not None:
-                return ModelSelection(
-                    model=model,
-                    reason="cascade_router",
-                    fallback_used=False,
-                    capabilities=model.capabilities,
-                )
 
         complexity = self._score_complexity(query)
         # Determine tier
@@ -590,12 +590,7 @@ class TierRouter:
         )
 
     def _score_complexity(self, query: str) -> float:
-        """Score query complexity (0.0 to 1.0).
-
-        Original heuristic path scorer — kept because the cascade-disabled
-        (default) routing path must stay byte-identical to pre-C2b behavior.
-        MetaHarnessRouter has its own estimate_complexity() for the enabled path.
-        """
+        """Score query complexity (0.0 to 1.0). The heuristic path's only scorer."""
         score = 0.0
         query_lower = query.lower()
         words = query.split()
@@ -768,11 +763,10 @@ class TierRouter:
     def _record_outcome(
         self, model_id: str, response: Optional[ModelResponse], success: bool
     ) -> None:
-        """Record a model-call outcome (A3). Best-effort; never raises.
+        """Record a model-call outcome (A3) as telemetry. Best-effort; never raises.
 
-        Tokens/cost feed the MetaHarnessRouter's evidence blending (C2a). The
-        store is guarded so a missing/None store (e.g. in tests that bypass
-        __init__) silently skips recording.
+        The store is guarded so a missing/None store (e.g. in tests that
+        bypass __init__) silently skips recording.
         """
         store = getattr(self, "outcome_store", None)
         if store is None:

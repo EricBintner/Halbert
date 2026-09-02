@@ -16,14 +16,28 @@ present, not from a label.
 
 Capabilities:
   terminal          — can start PTY sessions (shell access)
-  sourceprep        — SourcePrep documentation index is available
+  sourceprep        — a SourcePrep daemon is configured (URL or token
+                       present) — never gated on the ``sourceprep``
+                       Python package being importable; the daemon is a
+                       separate HTTP service, not an in-process library
   config_watcher    — config-registry.yml exists, watcher can start
   ingestion         — journald/hwmon ingestion service can run
   scheduler         — autonomous scheduled jobs can run
   discovery         — system discovery scanners can run
   ha_connection     — Home Assistant is configured (ha_url + ha_token)
   local_llm         — a local Ollama/LMStudio endpoint is configured
-  secure_model      — a secure (local-only) model endpoint is configured
+  secure_model      — a secure (local-only) model endpoint is CONFIGURED
+                       right now (probed). This is the runtime "is it
+                       configured" signal a turn gate reads before
+                       resolving the secure_model slot.
+  secure_model_allowed — this variant is ALLOWED to host a secure model
+                       at all (preset/override only, no probe). Fresh
+                       installs have no secure_model configured yet, so
+                       gating provisioning on `secure_model` itself is
+                       circular — it never fires. Provisioning code (and
+                       the wizard's secure-slot write) gates on this one
+                       instead; `secure_model` stays the "already
+                       configured" signal for the turn gate.
   audio             — the voice pipeline can run (config enabled + sherpa-onnx)
 
 Design:
@@ -55,6 +69,7 @@ CAP_DISCOVERY = "discovery"
 CAP_HA_CONNECTION = "ha_connection"
 CAP_LOCAL_LLM = "local_llm"
 CAP_SECURE_MODEL = "secure_model"
+CAP_SECURE_MODEL_ALLOWED = "secure_model_allowed"
 CAP_AUDIO = "audio"
 
 ALL_CAPABILITIES: Set[str] = {
@@ -67,6 +82,7 @@ ALL_CAPABILITIES: Set[str] = {
     CAP_HA_CONNECTION,
     CAP_LOCAL_LLM,
     CAP_SECURE_MODEL,
+    CAP_SECURE_MODEL_ALLOWED,
     CAP_AUDIO,
 }
 
@@ -84,6 +100,7 @@ _PRESET_SYSADMIN: Dict[str, bool] = {
     CAP_HA_CONNECTION: False,  # only if ha_url is configured
     CAP_LOCAL_LLM: False,      # only if a local endpoint is configured
     CAP_SECURE_MODEL: False,   # only if a secure endpoint is configured
+    CAP_SECURE_MODEL_ALLOWED: True,   # sysadmin may host a secure model
     CAP_AUDIO: True,           # any node can be the voice terminal (probe gates)
 }
 
@@ -97,6 +114,10 @@ _PRESET_HOME: Dict[str, bool] = {
     CAP_HA_CONNECTION: True,   # home variant expects HA to be configured
     CAP_LOCAL_LLM: False,
     CAP_SECURE_MODEL: False,
+    # secure_model is a sysadmin-instance slot: an HA variant's LLM reaches
+    # the house through tool calls that abstract credentials away, so home
+    # never provisions or writes one (HOME-AUTOMATION-SIMPLIFICATION S1).
+    CAP_SECURE_MODEL_ALLOWED: False,
     CAP_AUDIO: True,           # any node can be the voice terminal (probe gates)
 }
 
@@ -144,21 +165,32 @@ def _probe_config_watcher() -> bool:
 
 
 def _probe_sourceprep() -> bool:
-    """Is the SourcePrep module importable (an index can be built/used)?
+    """Is a SourcePrep daemon actually configured for this body to use?
 
-    Presence only — no variant early-return (see _probe_config_watcher).
-    Importability is a deliberately coarse proxy for "index available":
-    it answers "this body can run SourcePrep", which is what the
-    sourceprep-gated adapters need before they try. Import side effects
-    are SourcePrep's own lazy-import discipline to keep cheap.
+    Presence only — no variant early-return (see _probe_config_watcher);
+    the registry applies the U6-DESIGN-01 home default separately, in
+    ``CapabilityRegistry.probe()``, so this function stays a pure
+    presence check.
+
+    CAP-01: the SourcePrepAdapter (context/adapters.py) and the
+    consumer at routes/agent.py talk to the daemon over HTTP — there is
+    no ``sourceprep`` Python package to import (the venv normally has
+    none at all), so the old ``importlib.import_module("sourceprep")``
+    probe was always False and silently disabled retrieval everywhere,
+    daemon or no daemon. True when either the daemon URL was explicitly
+    set (``SOURCEPREP_URL`` — not sourceprep_client's baked-in
+    ``localhost:8400`` fallback, which is not evidence of deliberate
+    configuration) or a client auth token exists (``PREP_DAEMON_TOKEN``
+    env, or the persisted ``~/.config/halbert/prep_token`` file) —
+    both signal an operator actually set SourcePrep up.
     """
     try:
-        import importlib
+        import os
 
-        sp = importlib.import_module("sourceprep")
-        return sp is not None
-    except ImportError:
-        return False
+        if os.environ.get("SOURCEPREP_URL", "").strip():
+            return True
+        from .integrations.prep_token import get_token
+        return bool(get_token())
     except Exception:
         return False
 
@@ -256,18 +288,39 @@ class CapabilityRegistry:
         self._capabilities: Dict[str, bool] = {}
         self._probed = False
 
+    @staticmethod
+    def _resolve_variant() -> str:
+        """Resolve the variant the same way the rest of the backend does.
+
+        being.yml > HALBERT_VARIANT env > 'sysadmin' — delegates to
+        ``cognition_wiring._get_variant()`` rather than reading
+        ``load_being_config().variant`` directly, which defaults to
+        'sysadmin' and never consults the env var (U6-BUG-01). A home
+        node deployed env-only (``deploy/halbert-home.service``, no
+        being.yml) was getting the sysadmin preset — scheduler,
+        ingestion, discovery and terminal all True — because this
+        method never looked past the (absent) file.
+
+        The import is lazy: capabilities.py has no module-level
+        dependency on integrations, and any failure there simply falls
+        back to 'sysadmin' rather than breaking capability resolution.
+        """
+        try:
+            from .integrations.cognition_wiring import _get_variant
+            return _get_variant()
+        except Exception:
+            return "sysadmin"
+
     def _load_config(self) -> tuple:
         """Load variant and explicit capability overrides from being.yml.
 
         Returns (variant, overrides_dict).
         """
+        variant = self._resolve_variant()
+        overrides: Dict[str, bool] = {}
         try:
-            from .config.being_config import load_being_config
-            cfg = load_being_config()
-            variant = cfg.variant
             # The capabilities section is not a typed field on BeingConfig
             # (yet) — read it from the raw YAML to avoid a migration.
-            overrides: Dict[str, bool] = {}
             import yaml
             from .config.being_config import _default_path
             path = _default_path()
@@ -279,10 +332,10 @@ class CapabilityRegistry:
                     for k, v in caps.items():
                         if k in ALL_CAPABILITIES and isinstance(v, bool):
                             overrides[k] = v
-            return variant, overrides
         except Exception as e:
-            logger.debug("Capability config load failed, using defaults: %s", e)
-            return "sysadmin", {}
+            logger.debug("Capability override load failed, using defaults: %s", e)
+            return variant, {}
+        return variant, overrides
 
     def probe(self) -> None:
         """Probe all capabilities. Called once at startup."""
@@ -293,6 +346,21 @@ class CapabilityRegistry:
             # 1. Explicit override wins
             if cap in overrides:
                 self._capabilities[cap] = overrides[cap]
+                continue
+
+            # U6-DESIGN-01 (default pending founder ratification): a
+            # home instance never re-enables sourceprep from the probe
+            # alone. The general "probe beats preset" order below would
+            # otherwise silently turn SourcePrep back on for any home
+            # node that happens to have SOURCEPREP_URL/a token present
+            # (e.g. inherited from a shared shell environment) — the U6
+            # handoff and deploy/README.md say home never uses it. This
+            # makes the home preset act as an explicit False override
+            # for this one capability; being.yml can still opt a
+            # specific home node in via `capabilities: {sourceprep:
+            # true}` (handled by the overrides branch above).
+            if cap == CAP_SOURCEPREP and variant == "home":
+                self._capabilities[cap] = False
                 continue
 
             # 2. Active probe (if one exists)

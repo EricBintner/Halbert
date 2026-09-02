@@ -763,6 +763,38 @@ def set_top_level(key: str, value: Any) -> None:
     _write_raw(raw)
 
 
+# The repo's config/models.yml template ships this default `routing:`
+# block. PICK-02: dashboard/routes/compression.py used to read whichever
+# models.yml find_models_config() resolved to — including this template
+# when no user file existed yet — and write the WHOLE dict back to the
+# user's file, copying `routing:` (and everything else, including the
+# template's placeholder llm_config) into a file that never customised
+# any of it. A `routing:` block byte-identical to the template is strong
+# evidence of that copy rather than a deliberate choice, so a one-shot
+# cleanup can safely drop it without risking a real customisation.
+_STRAY_ROUTING_TEMPLATE = {
+    "strategy": "auto",
+    "prefer_specialist_for": ["code_generation", "code_analysis", "reasoning", "system_command"],
+    "complexity_threshold": 0.5,
+}
+
+
+def strip_stray_default_routing() -> bool:
+    """Remove a top-level ``routing:`` block if it exactly matches the repo
+    template default (PICK-02). Returns True when a key was removed.
+
+    Safe to call unconditionally: a file with no ``routing:`` key, or one
+    that differs from the template in any way (an operator's own
+    ``routing:`` customisation), is left untouched.
+    """
+    raw = _read_for_write()
+    if raw.get("routing") != _STRAY_ROUTING_TEMPLATE:
+        return False
+    del raw["routing"]
+    _write_raw(raw)
+    return True
+
+
 def resolve_from(file_cfg: Dict[str, Any], slot: str) -> Optional[ResolvedModel]:
     """Resolve a slot against an already-loaded (normalised) models.yml dict."""
     llm = file_cfg.get("llm_config") or {}
@@ -804,8 +836,15 @@ def _env_chat_model_override() -> Optional[ResolvedModel]:
     ``cognition_wiring._get_variant()`` (being.yml > env > sysadmin) so the
     backend gating and this override agree on which instance they are on;
     the import is lazy because integrations has no place in model's import
-    time, and any failure there simply disables the override rather than
-    breaking model resolution.
+    time.
+
+    R05-P2: a failure resolving the variant fails OPEN (proceeds as if
+    sysadmin, the same default ``_get_variant()`` itself falls back to on
+    error) rather than closed. ``HALBERT_MODEL`` exists specifically as a
+    sysadmin box's reliable fallback when it has no models.yml at all — an
+    unrelated import error transiently disabling the ONLY chat model that
+    box has configured would be a worse failure mode than the home-variant
+    check this try/except exists for occasionally being skipped.
     """
     model = os.environ.get("HALBERT_MODEL", "").strip()
     if not model:
@@ -813,10 +852,13 @@ def _env_chat_model_override() -> Optional[ResolvedModel]:
     try:
         from ..integrations.cognition_wiring import _get_variant
 
-        if _get_variant() in ("home", "home-light"):
+        if _get_variant() == "home":
             return None
-    except Exception:
-        return None
+    except Exception as e:
+        logger.debug(
+            "HALBERT_MODEL: variant resolution failed (%s); "
+            "proceeding as sysadmin rather than disabling the override", e,
+        )
     return ResolvedModel(
         model=model,
         url=DEFAULT_OLLAMA_URL,

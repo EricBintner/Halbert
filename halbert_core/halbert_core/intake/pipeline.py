@@ -117,7 +117,10 @@ class IntakePipeline:
                 - llm_config.chat_model.model
                 - llm_config.specialist_model.{enabled,model}
                 - llm_config.vision_model.{enabled,model}
-                - routing.complexity_threshold: int (default 3)
+                - routing.complexity_threshold: float 0.0-1.0 (default 0.5) —
+                  same scale and key model.tier_router reads (PICK-03); this
+                  pipeline's own 1-5 complexity score is normalised to
+                  score/5.0 before comparing
             skill_matcher: optional skills.SkillMatcher. When present, the
                 skills active for the turn are matched from the signals and
                 carried on MessageIntake. Left None, intake behaves exactly
@@ -164,7 +167,18 @@ class IntakePipeline:
         chat = llm.get("chat_model") or {}
         specialist = llm.get("specialist_model") or {}
         vision = llm.get("vision_model") or {}
-        threshold = self._model_config.get("routing", {}).get("complexity_threshold", 3)
+        # PICK-03: routing.complexity_threshold is a single shared config key
+        # also read by model.tier_router on a 0.0-1.0 float scale (default
+        # 0.5, matching the repo template) — this pipeline's own complexity
+        # score is a 1-5 int (intake.complexity.ComplexityLevel). Reading the
+        # same key as an int with its own default of 3 meant a threshold
+        # tuned for tier_router's scale (e.g. the shipped 0.5) compared as
+        # `score >= 0.5`, which is true for every possible score and made
+        # this threshold a no-op. Normalise the score onto the same 0.0-1.0
+        # scale for the comparison instead: score/5.0 >= 0.5 reproduces the
+        # original intent (specialist from MODERATE=3 upward) exactly.
+        threshold = self._model_config.get("routing", {}).get("complexity_threshold", 0.5)
+        normalised_complexity = complexity.score / 5.0
         specialist_enabled = bool(specialist.get("enabled")) and bool(specialist.get("model"))
         vision_model_name = vision.get("model", "") if vision.get("enabled") else ""
 
@@ -186,7 +200,7 @@ class IntakePipeline:
         elif skill_tier == "chat":
             recommended_model_name = "guide"
             model_name = chat.get("model", "")
-        elif complexity.score >= threshold and specialist_enabled:
+        elif normalised_complexity >= threshold and specialist_enabled:
             recommended_model_name = "specialist"
             model_name = specialist.get("model", "")
         else:
@@ -197,7 +211,7 @@ class IntakePipeline:
 
         # ── Stage 4: Derived flags ────────────────────────────────
         needs_retrieval = not (signals.is_greeting or signals.is_farewell)
-        needs_tools = signals.is_troubleshooting and complexity.score >= threshold
+        needs_tools = signals.is_troubleshooting and normalised_complexity >= threshold
         needs_web_search = bool(_WEB_SEARCH_RE.search(message))
 
         return MessageIntake(

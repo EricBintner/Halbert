@@ -209,6 +209,38 @@ def test_set_slot_and_set_top_level(models_config_dir):
     assert on_disk["llm_config"]["chat_model"] == {"enabled": True, "endpoint_id": ep_id, "model": "m9"}
 
 
+def test_strip_stray_default_routing_removes_a_template_identical_block(models_config_dir):
+    """PICK-02: a routing: block byte-identical to the repo template's
+    default is a remnant of a previous bug that copied the whole repo
+    config into the user file — a one-shot cleanup drops it."""
+    _write(models_config_dir, {
+        "routing": {
+            "strategy": "auto",
+            "prefer_specialist_for": ["code_generation", "code_analysis", "reasoning", "system_command"],
+            "complexity_threshold": 0.5,
+        },
+        "llm_config": store.default_llm_config(),
+    })
+    assert store.strip_stray_default_routing() is True
+    on_disk = _read(models_config_dir)
+    assert "routing" not in on_disk
+
+
+def test_strip_stray_default_routing_keeps_a_customised_block(models_config_dir):
+    _write(models_config_dir, {
+        "routing": {"strategy": "auto", "prefer_specialist_for": [], "complexity_threshold": 0.9},
+        "llm_config": store.default_llm_config(),
+    })
+    assert store.strip_stray_default_routing() is False
+    on_disk = _read(models_config_dir)
+    assert on_disk["routing"]["complexity_threshold"] == 0.9
+
+
+def test_strip_stray_default_routing_noop_when_absent(models_config_dir):
+    _write(models_config_dir, {"llm_config": store.default_llm_config()})
+    assert store.strip_stray_default_routing() is False
+
+
 def test_atomic_write_leaves_original_intact_on_failure(models_config_dir, monkeypatch):
     """A crash during write must not truncate the existing file."""
     _write(models_config_dir, {"llm_config": store.default_llm_config()})

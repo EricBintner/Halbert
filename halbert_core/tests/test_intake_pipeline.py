@@ -23,7 +23,10 @@ MODEL_CONFIG = {
         "specialist_model": {"enabled": True, "endpoint_id": "ep", "model": "example-specialist:32b"},
         "vision_model": {"enabled": False, "endpoint_id": "", "model": ""},
     },
-    "routing": {"complexity_threshold": 3},
+    # PICK-03: unified to the same 0.0-1.0 scale model.tier_router reads —
+    # 0.5 reproduces the pre-fix intent of an int threshold of 3 exactly,
+    # since this pipeline normalises its own 1-5 score to score/5.0.
+    "routing": {"complexity_threshold": 0.5},
 }
 
 MODEL_CONFIG_WITH_VISION = {
@@ -46,6 +49,40 @@ def make_router(score: int = 3, cached: bool = False) -> ComplexityRouter:
 def make_pipeline(score: int = 3) -> IntakePipeline:
     router = make_router(score)
     return IntakePipeline(router, get_context_budget, MODEL_CONFIG)
+
+
+# ── PICK-03: routing.complexity_threshold shares a scale with tier_router ──
+
+class TestComplexityThresholdScale:
+    """The repo template ships routing.complexity_threshold: 0.5 — the
+    scale model.tier_router's own (separate) complexity scorer uses.
+    Reading that same value as an int against this pipeline's 1-5 score
+    used to make the threshold a no-op (score >= 0.5 is true for every
+    possible score), so specialist routing fired on every turn whenever a
+    real deployment's models.yml carried the shipped default."""
+
+    def test_shipped_default_of_half_does_not_make_the_threshold_a_no_op(self):
+        cfg = {**MODEL_CONFIG, "routing": {"complexity_threshold": 0.5}}
+        low = IntakePipeline(make_router(score=2), get_context_budget, cfg)
+        result = low.analyze("show me disk usage")
+        assert result.recommended_model == "guide"
+
+    def test_high_complexity_still_routes_to_specialist(self):
+        cfg = {**MODEL_CONFIG, "routing": {"complexity_threshold": 0.5}}
+        high = IntakePipeline(make_router(score=4), get_context_budget, cfg)
+        result = high.analyze("configure a complex multi-tier backup strategy")
+        assert result.recommended_model == "specialist"
+
+    def test_missing_routing_section_defaults_to_the_shared_scale(self):
+        """No routing: key at all (a fresh, non-repo-seeded install) must
+        default to the same 0.5 float scale, not the old int default of 3."""
+        cfg = {k: v for k, v in MODEL_CONFIG.items() if k != "routing"}
+        pipeline = IntakePipeline(make_router(score=2), get_context_budget, cfg)
+        result = pipeline.analyze("show me disk usage")
+        assert result.recommended_model == "guide"
+        pipeline = IntakePipeline(make_router(score=4), get_context_budget, cfg)
+        result = pipeline.analyze("configure a complex multi-tier backup strategy")
+        assert result.recommended_model == "specialist"
 
 
 # ── Acceptance cases ─────────────────────────────────────────────
